@@ -99,13 +99,13 @@ namespace tangent
 			auto* attestation_argument = query.get("attestation");
 			auto* offset_argument = query.get("offset");
 			auto* count_argument = query.get("count");
-			uint64_t count = count_argument && count_argument->value.is(var_type::integer) ? count_argument->value.get_integer() : protocol::now().user.discovery.cursor_size;
-			if (!count || count > protocol::now().user.discovery.cursor_size)
+			uint64_t count = count_argument && count_argument->value.is(var_type::integer) ? count_argument->value.get_integer() : protocol::now().message.items_per_query;
+			if (!count || count > protocol::now().message.items_per_query)
 			{
 				if (protocol::now().user.discovery.logging)
 					VI_WARN("peer %s discovery failed: bad arguments (time: %" PRId64 " ms, args: %s)", base->get_peer_ip_address().or_else("[bad_address]").c_str(), date_time().milliseconds() - base->info.start, base->request.query.empty() ? "none" : base->request.query.c_str());
 
-				return base->abort(400, "Bad page size. count must not exceed %" PRIu64 " elements.", protocol::now().user.discovery.cursor_size);
+				return base->abort(400, "Bad page size. count must not exceed %" PRIu64 " elements.", protocol::now().message.items_per_query);
 			}
 
 			uint32_t services = 0;

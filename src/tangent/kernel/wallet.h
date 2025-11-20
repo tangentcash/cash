@@ -78,11 +78,13 @@ namespace tangent
 			} services;
 
 			socket_address address;
+			uint32_t version = 0;
 
 			bool store_payload(format::wo_stream* stream) const override;
 			bool load_payload(format::ro_stream& stream) override;
 			bool is_valid() const;
 			uint64_t get_preference() const;
+			string as_version() const;
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;

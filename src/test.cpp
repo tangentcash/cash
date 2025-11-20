@@ -2080,6 +2080,7 @@ public:
 			ledger::wallet wallet = ledger::wallet::from_seed(stringify::text("00000%i", *test_account - 1));
 			ledger::node node;
 			node.address = socket_address(params.user.consensus.address, params.user.consensus.port);
+			node.version = protocol::now().message.protocol_version;
 			if (args.has("test-chain"))
 			{
 				tests::use_clean_state([&]()

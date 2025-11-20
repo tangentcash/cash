@@ -534,14 +534,6 @@ namespace tangent
 			if (value != nullptr && value->value.is(var_type::integer))
 				user.consensus.aggregation_cooldown = value->value.get_integer();
 
-			value = config->fetch("consensus.hashes_per_query");
-			if (value != nullptr && value->value.is(var_type::integer))
-				user.consensus.hashes_per_query = value->value.get_integer();
-
-			value = config->fetch("consensus.headers_per_query");
-			if (value != nullptr && value->value.is(var_type::integer))
-				user.consensus.headers_per_query = value->value.get_integer();
-
 			value = config->fetch("consensus.may_propose");
 			if (value != nullptr && value->value.is(var_type::boolean))
 				user.consensus.may_propose = value->value.get_boolean();
@@ -565,10 +557,6 @@ namespace tangent
 			value = config->fetch("discovery.port");
 			if (value != nullptr && value->value.is(var_type::integer))
 				user.discovery.port = value->value.get_integer();
-
-			value = config->fetch("discovery.cursor_size");
-			if (value != nullptr && value->value.is(var_type::integer))
-				user.discovery.cursor_size = value->value.get_integer();
 
 			value = config->fetch("discovery.server");
 			if (value != nullptr && value->value.is(var_type::boolean))
@@ -621,14 +609,6 @@ namespace tangent
 			value = config->fetch("rpc.password");
 			if (value != nullptr && value->value.is(var_type::string))
 				user.rpc.password = value->value.get_blob();
-
-			value = config->fetch("rpc.cursor_size");
-			if (value != nullptr && value->value.is(var_type::integer))
-				user.rpc.cursor_size = value->value.get_integer();
-
-			value = config->fetch("rpc.page_size");
-			if (value != nullptr && value->value.is(var_type::integer))
-				user.rpc.page_size = value->value.get_integer();
 
 			value = config->fetch("rpc.websockets");
 			if (value != nullptr && value->value.is(var_type::boolean))

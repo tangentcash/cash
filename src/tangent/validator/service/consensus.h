@@ -102,8 +102,10 @@ namespace tangent
 			static callable::descriptor query_state();
 			static callable::descriptor query_headers();
 			static callable::descriptor query_block();
+			static callable::descriptor query_blocks();
 			static callable::descriptor query_mempool();
 			static callable::descriptor query_transaction();
+			static callable::descriptor query_transactions();
 			static callable::descriptor aggregate_secret_share_state();
 			static callable::descriptor aggregate_public_state();
 			static callable::descriptor aggregate_signature_state();
@@ -262,8 +264,10 @@ namespace tangent
 			expects_rt<format::variables> query_state(uref<relay>&& state, const exchange& event, bool is_acknowledgement);
 			expects_rt<format::variables> query_headers(uref<relay>&& state, const exchange& event);
 			expects_rt<format::variables> query_block(uref<relay>&& state, const exchange& event);
+			expects_rt<format::variables> query_blocks(uref<relay>&& state, const exchange& event);
 			expects_rt<format::variables> query_mempool(uref<relay>&& state, const exchange& event);
 			expects_rt<format::variables> query_transaction(uref<relay>&& state, const exchange& event);
+			expects_rt<format::variables> query_transactions(uref<relay>&& state, const exchange& event);
 			expects_rt<format::variables> aggregate_secret_share_state(uref<relay>&& state, const exchange& event);
 			expects_rt<format::variables> aggregate_public_state(uref<relay>&& state, const exchange& event);
 			expects_rt<format::variables> aggregate_signature_state(uref<relay>&& state, const exchange& event);

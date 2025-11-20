@@ -458,7 +458,7 @@ namespace tangent
 		{
 			descriptor = memory::init<relay_descriptor>(std::move(new_descriptor));
 			if (protocol::now().user.consensus.logging)
-				VI_INFO("node %s channel accept (%s %s)", peer_address().c_str(), routing_util::node_type_of(this).data(), peer_service().c_str());
+				VI_INFO("node %s channel accept (mode: %s, port: %s, version: %s)", peer_address().c_str(), routing_util::node_type_of(this).data(), peer_service().c_str(), descriptor->first.as_version().c_str());
 
 			auto* socket = as_socket();
 			if (socket != nullptr)
@@ -471,7 +471,7 @@ namespace tangent
 			{
 				report_call(0, 0);
 				if (protocol::now().user.consensus.logging)
-					VI_INFO("node %s channel shutdown (%s %s)", peer_address().c_str(), routing_util::node_type_of(this).data(), peer_service().c_str());
+					VI_INFO("node %s channel shutdown", peer_address().c_str());
 			}
 			abort();
 
@@ -691,25 +691,33 @@ namespace tangent
 		{
 			return callable::descriptor(__func__, 9);
 		}
-		callable::descriptor descriptors::query_mempool()
+		callable::descriptor descriptors::query_blocks()
 		{
 			return callable::descriptor(__func__, 10);
 		}
-		callable::descriptor descriptors::query_transaction()
+		callable::descriptor descriptors::query_mempool()
 		{
 			return callable::descriptor(__func__, 11);
 		}
-		callable::descriptor descriptors::aggregate_secret_share_state()
+		callable::descriptor descriptors::query_transaction()
 		{
 			return callable::descriptor(__func__, 12);
 		}
-		callable::descriptor descriptors::aggregate_public_state()
+		callable::descriptor descriptors::query_transactions()
 		{
 			return callable::descriptor(__func__, 13);
 		}
-		callable::descriptor descriptors::aggregate_signature_state()
+		callable::descriptor descriptors::aggregate_secret_share_state()
 		{
 			return callable::descriptor(__func__, 14);
+		}
+		callable::descriptor descriptors::aggregate_public_state()
+		{
+			return callable::descriptor(__func__, 15);
+		}
+		callable::descriptor descriptors::aggregate_signature_state()
+		{
+			return callable::descriptor(__func__, 16);
 		}
 
 		server_node::server_node() noexcept : socket_server(), control_sys("consensus-node")
@@ -809,6 +817,7 @@ namespace tangent
 			}
 
 			fill_node_services();
+			node.version = protocol::now().message.protocol_version;
 			node.ports.consensus = protocol::now().user.consensus.port;
 			node.ports.discovery = protocol::now().user.discovery.port;
 			node.ports.rpc = protocol::now().user.rpc.port;
@@ -1206,7 +1215,7 @@ namespace tangent
 			if (!branch_number)
 				return remote_exception("invalid branch");
 
-			const uint64_t blocks_count = protocol::now().user.consensus.headers_per_query;
+			const uint64_t blocks_count = protocol::now().message.headers_per_query;
 			const uint64_t pivot_number = branch_number > blocks_count ? branch_number - blocks_count : 1;
 			auto chain = storages::chainstate();
 			auto headers = chain.get_block_headers(pivot_number, blocks_count);
@@ -1227,6 +1236,10 @@ namespace tangent
 				return remote_exception("invalid arguments");
 
 			uint256_t block_hash = event.args[0].as_uint256();
+			uint256_t block_number = event.args[1].as_uint64();
+			if (!block_hash && !block_number)
+				return remote_exception("invalid arguments");
+
 			if (block_hash > 0)
 			{
 				auto chain = storages::chainstate();
@@ -1235,7 +1248,6 @@ namespace tangent
 					return format::variables({ format::variable(block->as_message().data) });
 			}
 
-			uint256_t block_number = event.args[1].as_uint64();
 			if (block_number > 0)
 			{
 				auto chain = storages::chainstate();
@@ -1246,13 +1258,44 @@ namespace tangent
 
 			return format::variables();
 		}
+		expects_rt<format::variables> server_node::query_blocks(uref<relay>&& state, const exchange& event)
+		{
+			if (event.args.size() != 2)
+				return remote_exception("invalid arguments");
+
+			uint256_t block_hash = event.args[0].as_uint256();
+			uint256_t block_number = event.args[1].as_uint64();
+			if (!block_hash && !block_number)
+				return remote_exception("invalid arguments");
+
+			auto chain = storages::chainstate();
+			if (block_hash > 0)
+			{
+				auto result = chain.get_block_number_by_hash(block_hash);
+				if (result)
+					block_number = *result;
+			}
+			if (!block_number)
+				return format::variables();
+
+			format::variables result;
+			result.reserve(protocol::now().message.blocks_per_query);
+			for (size_t i = 0; i < protocol::now().message.blocks_per_query; i++)
+			{
+				auto block = chain.get_block_by_number(block_number + i, BLOCK_RATE_NORMAL, BLOCK_DATA_CONSENSUS);
+				if (block)
+					result.push_back(format::variable(block->as_message().data));
+			}
+
+			return expects_rt<format::variables>(std::move(result));
+		}
 		expects_rt<format::variables> server_node::query_mempool(uref<relay>&& state, const exchange& event)
 		{
 			if (event.args.size() != 1)
 				return remote_exception("invalid arguments");
 
 			uint64_t cursor = event.args.front().as_uint64();
-			const uint64_t transactions_count = protocol::now().user.consensus.hashes_per_query;
+			const uint64_t transactions_count = protocol::now().message.hashes_per_query;
 			auto mempool = storages::mempoolstate();
 			auto hashes = mempool.get_transaction_hashset(cursor, transactions_count);
 			if (!hashes || hashes->empty())
@@ -1286,6 +1329,30 @@ namespace tangent
 				return format::variables({ format::variable((*transaction)->as_message().data) });	
 
 			return format::variables();
+		}
+		expects_rt<format::variables> server_node::query_transactions(uref<relay>&& state, const exchange& event)
+		{
+			if (event.args.empty() || event.args.size() > protocol::now().message.transactions_per_query)
+				return remote_exception("invalid arguments");
+
+			format::variables result;
+			result.reserve(event.args.size());
+
+			auto mempool = storages::mempoolstate();
+			auto chain = storages::chainstate();
+			for (auto& target : event.args)
+			{
+				uint256_t transaction_hash = target.as_uint256();
+				if (!transaction_hash)
+					return remote_exception("invalid hash");
+
+				auto transaction = mempool.get_transaction_by_hash(transaction_hash);
+				if (!transaction)
+					transaction = chain.get_transaction_by_hash(transaction_hash);
+				if (transaction)
+					result.push_back(format::variable((*transaction)->as_message().data));
+			}
+			return expects_rt<format::variables>(std::move(result));
 		}
 		expects_rt<format::variables> server_node::aggregate_secret_share_state(uref<relay>&& state, const exchange& event)
 		{
@@ -1721,19 +1788,31 @@ namespace tangent
 						}
 					}
 
-					for (auto& transaction_hash : transaction_hashes)
+					while (!transaction_hashes.empty())
 					{
-						auto subresult = coawait(query(uref(state), descriptors::query_transaction(), { format::variable(transaction_hash) }, protocol::now().user.tcp.timeout));
-						if (!subresult || subresult->args.empty())
-							continue;
+						format::variables messages;
+						for (size_t i = 0; i < protocol::now().message.transactions_per_query; i++)
+						{
+							messages.push_back(format::variable(*transaction_hashes.begin()));
+							transaction_hashes.erase(transaction_hashes.begin());
+							if (transaction_hashes.empty())
+								break;
+						}
 
-						format::ro_stream transaction_message = format::ro_stream(subresult->args.front().as_string());
-						uptr<ledger::transaction> candidate = tangent::transactions::resolver::from_stream(transaction_message);
-						if (candidate && candidate->load(transaction_message))
-							accept_transaction(uref(state), std::move(candidate));
+						auto subresult = coawait(query(uref(state), descriptors::query_transactions(), std::move(messages), protocol::now().user.tcp.timeout));
+						if (subresult && !subresult->args.empty())
+						{
+							for (auto& transaction : subresult->args)
+							{
+								format::ro_stream transaction_message = format::ro_stream(transaction.as_string());
+								uptr<ledger::transaction> candidate = tangent::transactions::resolver::from_stream(transaction_message);
+								if (candidate && candidate->load(transaction_message))
+									accept_transaction(uref(state), std::move(candidate));
+							}
+						}
 					}
 
-					const uint64_t transactions_count = protocol::now().user.consensus.hashes_per_query;
+					const uint64_t transactions_count = protocol::now().message.hashes_per_query;
 					cursor = result->args.front().as_uint64();
 					if (result->args.size() < transactions_count)
 						break;
@@ -1823,21 +1902,24 @@ namespace tangent
 				new_tip_number = new_tip_hash > 0 ? 0 : 1;
 				while (is_active() && (new_tip_number > 0 || new_tip_hash > 0))
 				{
-					auto result = coawait(query(uref(new_tip.state), descriptors::query_block(), { format::variable(new_tip_hash), format::variable(new_tip_number) }, protocol::now().user.tcp.timeout));
+					auto result = coawait(query(uref(new_tip.state), descriptors::query_blocks(), { format::variable(new_tip_hash), format::variable(new_tip_number) }, protocol::now().user.tcp.timeout));
 					if (!result)
 						coreturn result.error();
 					else if (result->args.empty())
 						break;
 
-					ledger::block_evaluation tip;
-					format::ro_stream block_message = format::ro_stream(result->args.front().as_string());
-					if (!tip.block.load(block_message))
-						coreturn remote_exception("fork block rejected");
-
 					new_tip_hash = 0;
-					new_tip_number = tip.block.number + 1;
-					if (!accept_block(uref(new_tip.state), std::move(tip), new_tip_fork_hash))
-						coreturn remote_exception("fork block rejected");
+					for (auto& block : result->args)
+					{
+						ledger::block_evaluation tip;
+						format::ro_stream block_message = format::ro_stream(block.as_string());
+						if (!tip.block.load(block_message))
+							coreturn remote_exception("fork block rejected");
+
+						new_tip_number = tip.block.number + 1;
+						if (!accept_block(uref(new_tip.state), std::move(tip), new_tip_fork_hash))
+							coreturn remote_exception("fork block rejected");
+					}
 				}
 
 				coreturn expectation::met;
@@ -1849,7 +1931,7 @@ namespace tangent
 				return expects_promise_rt<exchange>(remote_exception("node is not in valid state (offline/unauthorized)"));
 
 			if (protocol::now().user.consensus.logging)
-				VI_DEBUG("node %s query \"%.*s\" out: %s (%s %s)", state->peer_address().c_str(), (int)descriptor.name.size(), descriptor.name.data(), args.empty() ? "OK" : stringify::text("[%i values]", (int)args.size()).c_str(), routing_util::node_type_of(*state).data(), state->peer_service().c_str());
+				VI_DEBUG("node %s query \"%.*s\" out: %s", state->peer_address().c_str(), (int)descriptor.name.size(), descriptor.name.data(), args.empty() ? "OK" : stringify::text("[%i values]", (int)args.size()).c_str());
 
 			auto result = state->push_query(descriptor, std::move(args), timeout_ms);
 			push_messages(uref(state));
@@ -1861,7 +1943,7 @@ namespace tangent
 				return layer_exception("node is not in valid state (offline/unauthorized)");
 
 			if (protocol::now().user.consensus.logging)
-				VI_DEBUG("node %s notify \"%.*s\" out: %s (%s %s)", state->peer_address().c_str(), (int)descriptor.name.size(), descriptor.name.data(), args.empty() ? "OK" : stringify::text("[%i values]", (int)args.size()).c_str(), routing_util::node_type_of(*state).data(), state->peer_service().c_str());
+				VI_DEBUG("node %s notify \"%.*s\" out: %s", state->peer_address().c_str(), (int)descriptor.name.size(), descriptor.name.data(), args.empty() ? "OK" : stringify::text("[%i values]", (int)args.size()).c_str());
 
 			if (!state->push_event(descriptor, std::move(args)))
 				return layer_exception("duplicate notification");
@@ -1902,7 +1984,7 @@ namespace tangent
 			};
 
 			auto mempool = storages::mempoolstate();
-			auto nodes = mempool.get_random_nodes_with(protocol::now().user.consensus.hashes_per_query).or_else(vector<storages::node_location_pair>());
+			auto nodes = mempool.get_random_nodes_with(protocol::now().message.hashes_per_query).or_else(vector<storages::node_location_pair>());
 			args.reserve(2 + nodes.size());
 			for (auto& [account, address] : nodes)
 			{
@@ -2012,14 +2094,14 @@ namespace tangent
 						if (!result && !result.error().is_retry())
 						{
 							if (protocol::now().user.consensus.logging)
-								VI_WARN("node %s query \"%.*s\" error out: %s (%s %s)", state->peer_address().c_str(), (int)target.name.size(), target.name.data(), result.what().c_str(), routing_util::node_type_of(*state).data(), state->peer_service().c_str());
+								VI_WARN("node %s query \"%.*s\" error out: %s", state->peer_address().c_str(), (int)target.name.size(), target.name.data(), result.what().c_str());
 							goto abort;
 						}
 
 						state->push_event(message.session, pack_query_result(result));
 						push_messages(uref(state));
 						if (protocol::now().user.consensus.logging)
-							VI_DEBUG("node %s %s \"%.*s\" result%s: %s (%s %s)", state->peer_address().c_str(), message.type == exchange::side::query ? "query" : "event", (int)target.name.size(), target.name.data(), message.type == exchange::side::query ? " out" : "", result->empty() ? "OK" : stringify::text("[%i values]", (int)result->size()).c_str(), routing_util::node_type_of(*state).data(), state->peer_service().c_str());
+							VI_DEBUG("node %s %s \"%.*s\" result%s: %s", state->peer_address().c_str(), message.type == exchange::side::query ? "query" : "event", (int)target.name.size(), target.name.data(), message.type == exchange::side::query ? " out" : "", result->empty() ? "OK" : stringify::text("[%i values]", (int)result->size()).c_str());
 					}
 					else if (message.type == exchange::side::event)
 					{
@@ -2032,12 +2114,12 @@ namespace tangent
 						if (!result && !result.error().is_retry())
 						{
 							if (protocol::now().user.consensus.logging)
-								VI_WARN("node %s event \"%.*s\" error: %s (%s %s)", state->peer_address().c_str(), (int)target.name.size(), target.name.data(), result.what().c_str(), routing_util::node_type_of(*state).data(), state->peer_service().c_str());
+								VI_WARN("node %s event \"%.*s\" error: %s", state->peer_address().c_str(), (int)target.name.size(), target.name.data(), result.what().c_str());
 							goto abort;
 						}
 
 						if (protocol::now().user.consensus.logging)
-							VI_DEBUG("node %s %s \"%.*s\" result%s: OK (%s %s)", state->peer_address().c_str(), message.type == exchange::side::query ? "query" : "event", (int)target.name.size(), target.name.data(), message.type == exchange::side::query ? " out" : "", routing_util::node_type_of(*state).data(), state->peer_service().c_str());
+							VI_DEBUG("node %s %s \"%.*s\" result%s: OK", state->peer_address().c_str(), message.type == exchange::side::query ? "query" : "event", (int)target.name.size(), target.name.data(), message.type == exchange::side::query ? " out" : "");
 
 					}
 
@@ -2514,8 +2596,10 @@ namespace tangent
 			bind_query(descriptors::query_state(), std::bind(&server_node::query_state, this, std::placeholders::_2, std::placeholders::_3, false));
 			bind_query(descriptors::query_headers(), std::bind(&server_node::query_headers, this, std::placeholders::_2, std::placeholders::_3));
 			bind_query(descriptors::query_block(), std::bind(&server_node::query_block, this, std::placeholders::_2, std::placeholders::_3));
+			bind_query(descriptors::query_blocks(), std::bind(&server_node::query_blocks, this, std::placeholders::_2, std::placeholders::_3));
 			bind_query(descriptors::query_mempool(), std::bind(&server_node::query_mempool, this, std::placeholders::_2, std::placeholders::_3));
 			bind_query(descriptors::query_transaction(), std::bind(&server_node::query_transaction, this, std::placeholders::_2, std::placeholders::_3));
+			bind_query(descriptors::query_transactions(), std::bind(&server_node::query_transactions, this, std::placeholders::_2, std::placeholders::_3));
 			bind_query(descriptors::aggregate_secret_share_state(), std::bind(&server_node::aggregate_secret_share_state, this, std::placeholders::_2, std::placeholders::_3));
 			bind_query(descriptors::aggregate_public_state(), std::bind(&server_node::aggregate_public_state, this, std::placeholders::_2, std::placeholders::_3));
 			bind_query(descriptors::aggregate_signature_state(), std::bind(&server_node::aggregate_signature_state, this, std::placeholders::_2, std::placeholders::_3));

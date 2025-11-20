@@ -933,7 +933,7 @@ namespace tangent
 		server_response server_node::blockstate_get_blocks(http::connection* base, format::variables&& args)
 		{
 			uint64_t count = args[1].as_uint64();
-			if (!count || count > protocol::now().user.rpc.page_size)
+			if (!count || count > protocol::now().message.pages_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			uint64_t number = args[0].as_uint64();
@@ -1027,13 +1027,13 @@ namespace tangent
 				auto* transactions = data->set("transactions", var::set::array());
 				while (true)
 				{
-					auto list = chain.get_transactions_by_number(block_header->number, transactions->size(), protocol::now().user.rpc.cursor_size);
+					auto list = chain.get_transactions_by_number(block_header->number, transactions->size(), protocol::now().message.items_per_query);
 					if (!list)
 						return server_response().error(error_codes::not_found, "block not found");
 
 					for (auto& item : *list)
 						transactions->push(item->as_schema().reset());
-					if (list->size() < protocol::now().user.rpc.cursor_size)
+					if (list->size() < protocol::now().message.items_per_query)
 						break;
 				}
 
@@ -1049,13 +1049,13 @@ namespace tangent
 				auto* transactions = data->set("transactions", var::set::array());
 				while (true)
 				{
-					auto list = chain.get_block_transactions_by_number(block_header->number, transactions->size(), protocol::now().user.rpc.cursor_size);
+					auto list = chain.get_block_transactions_by_number(block_header->number, transactions->size(), protocol::now().message.items_per_query);
 					if (!list)
 						return server_response().error(error_codes::not_found, "block not found");
 
 					for (auto& item : *list)
 						transactions->push(item.as_schema().reset());
-					if (list->size() < protocol::now().user.rpc.cursor_size)
+					if (list->size() < protocol::now().message.items_per_query)
 						break;
 				}
 
@@ -1110,13 +1110,13 @@ namespace tangent
 				auto* transactions = data->set("transactions", var::set::array());
 				while (true)
 				{
-					auto list = chain.get_transactions_by_number(block_header->number, transactions->size(), protocol::now().user.rpc.cursor_size);
+					auto list = chain.get_transactions_by_number(block_header->number, transactions->size(), protocol::now().message.items_per_query);
 					if (!list)
 						return server_response().error(error_codes::not_found, "block not found");
 
 					for (auto& item : *list)
 						transactions->push(item->as_schema().reset());
-					if (list->size() < protocol::now().user.rpc.cursor_size)
+					if (list->size() < protocol::now().message.items_per_query)
 						break;
 				}
 
@@ -1132,13 +1132,13 @@ namespace tangent
 				auto* transactions = data->set("transactions", var::set::array());
 				while (true)
 				{
-					auto list = chain.get_block_transactions_by_number(block_header->number, transactions->size(), protocol::now().user.rpc.cursor_size);
+					auto list = chain.get_block_transactions_by_number(block_header->number, transactions->size(), protocol::now().message.items_per_query);
 					if (!list)
 						return server_response().error(error_codes::not_found, "block not found");
 
 					for (auto& item : *list)
 						transactions->push(item.as_schema().reset());
-					if (list->size() < protocol::now().user.rpc.cursor_size)
+					if (list->size() < protocol::now().message.items_per_query)
 						break;
 				}
 
@@ -1278,13 +1278,13 @@ namespace tangent
 				uptr<schema> data = var::set::array();
 				while (true)
 				{
-					auto list = chain.get_transactions_by_number(*block_number, data->size(), protocol::now().user.rpc.cursor_size);
+					auto list = chain.get_transactions_by_number(*block_number, data->size(), protocol::now().message.items_per_query);
 					if (!list)
 						return server_response().error(error_codes::not_found, "block not found");
 
 					for (auto& item : *list)
 						data->push(item->as_schema().reset());
-					if (list->size() < protocol::now().user.rpc.cursor_size)
+					if (list->size() < protocol::now().message.items_per_query)
 						break;
 				}
 
@@ -1299,13 +1299,13 @@ namespace tangent
 				uptr<schema> data = var::set::array();
 				while (true)
 				{
-					auto list = chain.get_block_transactions_by_number(*block_number, data->size(), protocol::now().user.rpc.cursor_size);
+					auto list = chain.get_block_transactions_by_number(*block_number, data->size(), protocol::now().message.items_per_query);
 					if (!list)
 						return server_response().error(error_codes::not_found, "block not found");
 
 					for (auto& item : *list)
 						data->push(item.as_schema().reset());
-					if (list->size() < protocol::now().user.rpc.cursor_size)
+					if (list->size() < protocol::now().message.items_per_query)
 						break;
 				}
 
@@ -1323,7 +1323,7 @@ namespace tangent
 				uptr<schema> data = var::set::array();
 				while (true)
 				{
-					auto list = chain.get_block_transactions_by_number(*block_number, data->size(), protocol::now().user.rpc.cursor_size);
+					auto list = chain.get_block_transactions_by_number(*block_number, data->size(), protocol::now().message.items_per_query);
 					if (!list)
 						return server_response().error(error_codes::not_found, "block not found");
 
@@ -1344,7 +1344,7 @@ namespace tangent
 						parties.clear();
 						aliases.clear();
 					}
-					if (list->size() < protocol::now().user.rpc.cursor_size)
+					if (list->size() < protocol::now().message.items_per_query)
 						break;
 				}
 
@@ -1372,13 +1372,13 @@ namespace tangent
 				uptr<schema> data = var::set::array();
 				while (true)
 				{
-					auto list = chain.get_transactions_by_number(number, data->size(), protocol::now().user.rpc.cursor_size);
+					auto list = chain.get_transactions_by_number(number, data->size(), protocol::now().message.items_per_query);
 					if (!list)
 						return server_response().error(error_codes::not_found, "block not found");
 
 					for (auto& item : *list)
 						data->push(item->as_schema().reset());
-					if (list->size() < protocol::now().user.rpc.cursor_size)
+					if (list->size() < protocol::now().message.items_per_query)
 						break;
 				}
 
@@ -1389,13 +1389,13 @@ namespace tangent
 				uptr<schema> data = var::set::array();
 				while (true)
 				{
-					auto list = chain.get_block_transactions_by_number(number, data->size(), protocol::now().user.rpc.cursor_size);
+					auto list = chain.get_block_transactions_by_number(number, data->size(), protocol::now().message.items_per_query);
 					if (!list)
 						return server_response().error(error_codes::not_found, "block not found");
 
 					for (auto& item : *list)
 						data->push(item.as_schema().reset());
-					if (list->size() < protocol::now().user.rpc.cursor_size)
+					if (list->size() < protocol::now().message.items_per_query)
 						break;
 				}
 
@@ -1409,7 +1409,7 @@ namespace tangent
 				uptr<schema> data = var::set::array();
 				while (true)
 				{
-					auto list = chain.get_block_transactions_by_number(number, data->size(), protocol::now().user.rpc.cursor_size);
+					auto list = chain.get_block_transactions_by_number(number, data->size(), protocol::now().message.items_per_query);
 					if (!list)
 						return server_response().error(error_codes::not_found, "block not found");
 
@@ -1430,7 +1430,7 @@ namespace tangent
 						parties.clear();
 						aliases.clear();
 					}
-					if (list->size() < protocol::now().user.rpc.cursor_size)
+					if (list->size() < protocol::now().message.items_per_query)
 						break;
 				}
 
@@ -1451,13 +1451,13 @@ namespace tangent
 				uptr<schema> data = var::set::array();
 				while (true)
 				{
-					auto list = chain.get_block_receipts_by_number(*block_number, data->size(), protocol::now().user.rpc.cursor_size);
+					auto list = chain.get_block_receipts_by_number(*block_number, data->size(), protocol::now().message.items_per_query);
 					if (!list)
 						return server_response().error(error_codes::not_found, "block not found");
 
 					for (auto& item : *list)
 						data->push(var::set::string(algorithm::encoding::encode_0xhex256(item.as_hash())));
-					if (list->size() < protocol::now().user.rpc.cursor_size)
+					if (list->size() < protocol::now().message.items_per_query)
 						break;
 				}
 
@@ -1468,13 +1468,13 @@ namespace tangent
 				uptr<schema> data = var::set::array();
 				while (true)
 				{
-					auto list = chain.get_block_receipts_by_number(*block_number, data->size(), protocol::now().user.rpc.cursor_size);
+					auto list = chain.get_block_receipts_by_number(*block_number, data->size(), protocol::now().message.items_per_query);
 					if (!list)
 						return server_response().error(error_codes::not_found, "block not found");
 
 					for (auto& item : *list)
 						data->push(item.as_schema().reset());
-					if (list->size() < protocol::now().user.rpc.cursor_size)
+					if (list->size() < protocol::now().message.items_per_query)
 						break;
 				}
 
@@ -1491,13 +1491,13 @@ namespace tangent
 				uptr<schema> data = var::set::array();
 				while (true)
 				{
-					auto list = chain.get_block_receipts_by_number(number, data->size(), protocol::now().user.rpc.cursor_size);
+					auto list = chain.get_block_receipts_by_number(number, data->size(), protocol::now().message.items_per_query);
 					if (!list)
 						return server_response().error(error_codes::not_found, "block not found");
 
 					for (auto& item : *list)
 						data->push(var::set::string(algorithm::encoding::encode_0xhex256(item.as_hash())));
-					if (list->size() < protocol::now().user.rpc.cursor_size)
+					if (list->size() < protocol::now().message.items_per_query)
 						break;
 				}
 
@@ -1508,13 +1508,13 @@ namespace tangent
 				uptr<schema> data = var::set::array();
 				while (true)
 				{
-					auto list = chain.get_block_receipts_by_number(number, data->size(), protocol::now().user.rpc.cursor_size);
+					auto list = chain.get_block_receipts_by_number(number, data->size(), protocol::now().message.items_per_query);
 					if (!list)
 						return server_response().error(error_codes::not_found, "block not found");
 
 					for (auto& item : *list)
 						data->push(item.as_schema().reset());
-					if (list->size() < protocol::now().user.rpc.cursor_size)
+					if (list->size() < protocol::now().message.items_per_query)
 						break;
 				}
 
@@ -1524,7 +1524,7 @@ namespace tangent
 		server_response server_node::txnstate_get_pending_transactions(http::connection* base, format::variables&& args)
 		{
 			uint64_t offset = args[0].as_uint64(), count = args[1].as_uint64();
-			if (!count || count > protocol::now().user.rpc.page_size)
+			if (!count || count > protocol::now().message.pages_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			uint8_t unrolling = args.size() > 2 ? args[2].as_uint8() : 0;
@@ -1570,7 +1570,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "owner address not valid");
 
 			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
-			if (!count || count > protocol::now().user.rpc.page_size)
+			if (!count || count > protocol::now().message.pages_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			uint8_t direction = args.size() > 3 ? args[3].as_uint8() : 1;
@@ -1750,7 +1750,7 @@ namespace tangent
 				if (!block_number)
 					return server_response().error(error_codes::not_found, "block not found");
 
-				auto list = chain.get_block_state_by_number(*block_number, protocol::now().user.rpc.cursor_size);
+				auto list = chain.get_block_state_by_number(*block_number, protocol::now().message.items_per_query);
 				if (!list)
 					return server_response().error(error_codes::not_found, "block not found");
 
@@ -1779,7 +1779,7 @@ namespace tangent
 			}
 			else
 			{
-				auto list = chain.get_block_state_by_number(number, protocol::now().user.rpc.cursor_size);
+				auto list = chain.get_block_state_by_number(number, protocol::now().message.items_per_query);
 				if (!list)
 					return server_response().error(error_codes::not_found, "block not found");
 
@@ -1881,7 +1881,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "location not valid: " + location.error().message());
 
 			uint64_t offset = args[2].as_uint64(), count = args[3].as_uint64();
-			if (!count || count > protocol::now().user.rpc.page_size)
+			if (!count || count > protocol::now().message.pages_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto chain = storages::chainstate();
@@ -1901,7 +1901,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "location not valid: " + location.error().message());
 
 			uint64_t offset = args[5].as_uint64(), count = args[6].as_uint64();
-			if (!count || count > protocol::now().user.rpc.page_size)
+			if (!count || count > protocol::now().message.pages_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto filter = storages::result_filter::from(args[2].as_string(), args[3].as_uint256(), args[4].as_decimal().to_int8());
@@ -1922,7 +1922,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "location not valid: " + location.error().message());
 
 			uint64_t offset = args[2].as_uint64(), count = args[3].as_uint64();
-			if (!count || count > protocol::now().user.rpc.page_size)
+			if (!count || count > protocol::now().message.pages_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto chain = storages::chainstate();
@@ -1942,7 +1942,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "location not valid: " + location.error().message());
 
 			uint64_t offset = args[5].as_uint64(), count = args[6].as_uint64();
-			if (!count || count > protocol::now().user.rpc.page_size)
+			if (!count || count > protocol::now().message.pages_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto filter = storages::result_filter::from(args[2].as_string(), args[3].as_uint256(), args[4].as_decimal().to_int8());
@@ -2058,7 +2058,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "account address not valid");
 
 			uint64_t offset = args[2].as_uint64(), count = args[3].as_uint64();
-			if (!count || count > protocol::now().user.rpc.page_size)
+			if (!count || count > protocol::now().message.pages_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto chain = storages::chainstate();
@@ -2108,7 +2108,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "account address not valid");
 
 			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
-			if (!count || count > protocol::now().user.rpc.page_size)
+			if (!count || count > protocol::now().message.pages_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto chain = storages::chainstate();
@@ -2135,7 +2135,7 @@ namespace tangent
 		{
 			uint256_t commitment = args[0].as_uint256();
 			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
-			if (!count || count > protocol::now().user.rpc.page_size)
+			if (!count || count > protocol::now().message.pages_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto filter = commitment > 0 ? storages::result_filter::greater_equal(commitment, -1) : storages::result_filter::equal(commitment, -1);
@@ -2167,7 +2167,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "account address not valid");
 
 			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
-			if (!count || count > protocol::now().user.rpc.page_size)
+			if (!count || count > protocol::now().message.pages_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto chain = storages::chainstate();
@@ -2185,7 +2185,7 @@ namespace tangent
 			auto asset = algorithm::asset::id_of_handle(args[0].as_string());
 			uint256_t commitment = args[1].as_uint256();
 			uint64_t offset = args[2].as_uint64(), count = args[3].as_uint64();
-			if (!count || count > protocol::now().user.rpc.page_size)
+			if (!count || count > protocol::now().message.pages_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto filter = commitment > 0 ? storages::result_filter::greater_equal(commitment, -1) : storages::result_filter::equal(commitment, -1);
@@ -2217,7 +2217,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "account address not valid");
 
 			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
-			if (!count || count > protocol::now().user.rpc.page_size)
+			if (!count || count > protocol::now().message.pages_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto chain = storages::chainstate();
@@ -2235,7 +2235,7 @@ namespace tangent
 			auto asset = algorithm::asset::id_of_handle(args[0].as_string());
 			uint256_t commitment = args[1].as_uint256();
 			uint64_t offset = args[2].as_uint64(), count = args[3].as_uint64();
-			if (!count || count > protocol::now().user.rpc.page_size)
+			if (!count || count > protocol::now().message.pages_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto filter = commitment > 0 ? storages::result_filter::greater_equal(commitment, -1) : storages::result_filter::equal(commitment, -1);
@@ -2267,7 +2267,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "account address not valid");
 
 			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
-			if (!count || count > protocol::now().user.rpc.page_size)
+			if (!count || count > protocol::now().message.pages_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto chain = storages::chainstate();
@@ -2284,7 +2284,7 @@ namespace tangent
 		{
 			auto asset = algorithm::asset::id_of_handle(args[0].as_string());
 			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
-			if (!count || count > protocol::now().user.rpc.page_size)
+			if (!count || count > protocol::now().message.pages_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto filter = storages::result_filter::greater_equal(0, 1);
@@ -2302,7 +2302,7 @@ namespace tangent
 		{
 			auto asset = algorithm::asset::id_of_handle(args[0].as_string());
 			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
-			if (!count || count > protocol::now().user.rpc.page_size)
+			if (!count || count > protocol::now().message.pages_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto filter = storages::result_filter::greater_equal(0, 1);
@@ -2360,7 +2360,7 @@ namespace tangent
 		server_response server_node::chainstate_get_bridge_accounts(http::connection* base, format::variables&& args)
 		{
 			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
-			if (!count || count > protocol::now().user.rpc.page_size)
+			if (!count || count > protocol::now().message.pages_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			algorithm::pubkeyhash_t proposer;
@@ -2396,7 +2396,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "account address not valid");
 
 			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
-			if (!count || count > protocol::now().user.rpc.page_size)
+			if (!count || count > protocol::now().message.pages_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto chain = storages::chainstate();
@@ -2413,7 +2413,7 @@ namespace tangent
 		{
 			auto asset = algorithm::asset::id_of_handle(args[0].as_string());
 			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
-			if (!count || count > protocol::now().user.rpc.page_size)
+			if (!count || count > protocol::now().message.pages_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto filter = storages::result_filter::greater_equal(0, -1);
@@ -2431,7 +2431,7 @@ namespace tangent
 		{
 			auto asset = algorithm::asset::id_of_handle(args[0].as_string());
 			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
-			if (!count || count > protocol::now().user.rpc.page_size)
+			if (!count || count > protocol::now().message.pages_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto filter = storages::result_filter::greater_equal(0, -1);
@@ -2462,7 +2462,7 @@ namespace tangent
 		{
 			auto asset = algorithm::asset::id_of_handle(args[0].as_string());
 			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
-			if (!count || count > protocol::now().user.rpc.page_size)
+			if (!count || count > protocol::now().message.pages_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto filter = storages::result_filter::greater(0, -1);
@@ -2480,7 +2480,7 @@ namespace tangent
 		{
 			auto asset = algorithm::asset::id_of_handle(args[0].as_string());
 			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
-			if (!count || count > protocol::now().user.rpc.page_size)
+			if (!count || count > protocol::now().message.pages_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto filter = storages::result_filter::greater(0, -1);
@@ -2543,7 +2543,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "account address not valid");
 
 			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
-			if (!count || count > protocol::now().user.rpc.page_size)
+			if (!count || count > protocol::now().message.pages_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto chain = storages::chainstate();
@@ -2574,7 +2574,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "address purpose not valid");
 
 			uint64_t offset = args[2].as_uint64(), count = args[3].as_uint64();
-			if (!count || count > protocol::now().user.rpc.page_size)
+			if (!count || count > protocol::now().message.pages_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto chain = storages::chainstate();
@@ -2669,7 +2669,7 @@ namespace tangent
 		server_response server_node::mempoolstate_get_addresses(http::connection* base, format::variables&& args)
 		{
 			uint64_t offset = args[0].as_uint64(), count = args[1].as_uint64();
-			if (!count || count > protocol::now().user.rpc.cursor_size)
+			if (!count || count > protocol::now().message.items_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			uint32_t services = 0;
@@ -2839,7 +2839,7 @@ namespace tangent
 		{
 			bool commitment = args[0].as_boolean();
 			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
-			if (!count || count > protocol::now().user.rpc.page_size)
+			if (!count || count > protocol::now().message.pages_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			uint8_t unrolling = args.size() > 3 ? args[3].as_uint8() : 0;
@@ -2874,7 +2874,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "owner address not valid");
 
 			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
-			if (!count || count > protocol::now().user.rpc.page_size)
+			if (!count || count > protocol::now().message.pages_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			uint8_t direction = args.size() > 3 ? args[3].as_uint8() : 1;
@@ -3209,8 +3209,6 @@ namespace tangent
 				auto* consensus = data->set("consensus", var::set::object());
 				consensus->set("port", var::integer(protocol::now().user.consensus.port));
 				consensus->set("time_offset", var::integer(protocol::now().user.consensus.time_offset));
-				consensus->set("hashes_per_query", var::integer(protocol::now().user.consensus.hashes_per_query));
-				consensus->set("headers_per_query", var::integer(protocol::now().user.consensus.headers_per_query));
 				consensus->set("max_inbound_connection", var::integer(protocol::now().user.consensus.max_inbound_connections));
 				consensus->set("max_outbound_connection", var::integer(protocol::now().user.consensus.max_outbound_connections));
 			}
@@ -3219,7 +3217,6 @@ namespace tangent
 			{
 				auto* discovery = data->set("discovery", var::set::object());
 				discovery->set("port", var::integer(protocol::now().user.discovery.port));
-				discovery->set("cursor_size", var::integer(protocol::now().user.discovery.cursor_size));
 			}
 
 			if (protocol::now().user.oracle.server)
@@ -3237,8 +3234,8 @@ namespace tangent
 			{
 				auto* rpc = data->set("rpc", var::set::object());
 				rpc->set("port", var::integer(protocol::now().user.rpc.port));
-				rpc->set("cursor_size", var::integer(protocol::now().user.rpc.cursor_size));
-				rpc->set("page_size", var::integer(protocol::now().user.rpc.page_size));
+				rpc->set("cursor_size", var::integer(protocol::now().message.items_per_query));
+				rpc->set("page_size", var::integer(protocol::now().message.pages_per_query));
 				rpc->set("websockets", var::boolean(protocol::now().user.rpc.web_sockets));
 				rpc->set("isolated", var::boolean(protocol::now().user.rpc.isolated));
 				rpc->set("restricted", var::boolean(!protocol::now().user.rpc.username.empty()));

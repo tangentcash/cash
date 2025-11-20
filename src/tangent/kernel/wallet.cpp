@@ -266,6 +266,7 @@ namespace tangent
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_string(address.get_ip_address().or_else(string()));
 			stream->write_integer(address.get_ip_port().or_else(0));
+			stream->write_integer(version);
 			stream->write_integer(availability.latency);
 			stream->write_integer(availability.timestamp);
 			stream->write_integer(availability.calls);
@@ -292,6 +293,9 @@ namespace tangent
 
 			uint16_t ip_port;
 			if (!stream.read_integer(stream.read_type(), &ip_port))
+				return false;
+
+			if (!stream.read_integer(stream.read_type(), &version))
 				return false;
 
 			if (!stream.read_integer(stream.read_type(), &availability.latency))
@@ -366,6 +370,7 @@ namespace tangent
 		{
 			schema* data = var::set::object();
 			data->set("address", var::string(address.get_ip_address().or_else("[bad_address]") + ":" + to_string(address.get_ip_port().or_else(0))));
+			data->set("version", var::string(as_version()));
 
 			auto* availability_data = data->set("availability");
 			availability_data->set("latency", algorithm::encoding::serialize_uint256(availability.latency));
@@ -389,6 +394,10 @@ namespace tangent
 			services_data->set("participation", var::boolean(services.has_participation));
 			services_data->set("attestation", var::boolean(services.has_attestation));
 			return data;
+		}
+		string node::as_version() const
+		{
+			return algorithm::encoding::encode_0xhex128(uint128_t(version));
 		}
 		uint32_t node::as_type() const
 		{

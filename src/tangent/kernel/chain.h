@@ -153,9 +153,7 @@ namespace tangent
 				string address = "0.0.0.0";
 				uint16_t port = 18418;
 				uint64_t time_offset = 300000;
-				uint64_t hashes_per_query = 2048;
-				uint64_t headers_per_query = 256;
-				uint32_t max_inbound_connections = 24;
+				uint32_t max_inbound_connections = 128;
 				uint32_t max_outbound_connections = 8;
 				uint64_t inventory_timeout = 300000;
 				uint32_t inventory_size = 65536;
@@ -172,7 +170,6 @@ namespace tangent
 			{
 				string address = "0.0.0.0";
 				uint16_t port = 18420;
-				uint64_t cursor_size = 512;
 				bool server = false;
 				bool logging = true;
 			} discovery;
@@ -193,8 +190,6 @@ namespace tangent
 				uint16_t port = 18419;
 				string username;
 				string password;
-				uint64_t cursor_size = 512;
-				uint64_t page_size = 64;
 				bool web_sockets = false;
 				bool isolated = true;
 				bool server = false;
@@ -251,6 +246,12 @@ namespace tangent
 			uint32_t max_body_size = 1024 * 1024 * 32;
 			uint32_t decimal_precision = 18;
 			uint32_t integer_precision = 78;
+			uint64_t hashes_per_query = 8192;
+			uint64_t headers_per_query = 2048;
+			uint64_t blocks_per_query = 10;
+			uint64_t transactions_per_query = 32;
+			uint64_t items_per_query = 512;
+			uint64_t pages_per_query = 64;
 		} message;
 		struct protocol_account_config
 		{
