@@ -522,9 +522,13 @@ namespace tangent
 		}
 		expects_lr<void> chainstate::reorganize(int64_t* block_delta, int64_t* transaction_delta, int64_t* state_delta)
 		{
+			auto cursor = get_block_storage().query(__func__, "DELETE FROM checkpoints");
+			if (!cursor || cursor->error())
+				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
+
 			for (auto& [type, uniform_storage] : get_uniform_multi_storage())
 			{
-				auto cursor = uniform_storage.query(__func__,
+				cursor = uniform_storage.query(__func__,
 					"DELETE FROM snapshots;"
 					"DELETE FROM uniforms;"
 					"DELETE FROM indices;");
@@ -534,7 +538,7 @@ namespace tangent
 
 			for (auto& [type, multiform_storage] : get_multiform_multi_storage())
 			{
-				auto cursor = multiform_storage.query(__func__,
+				cursor = multiform_storage.query(__func__,
 					"DELETE FROM snapshots;"
 					"DELETE FROM multiforms;"
 					"DELETE FROM columns;"
@@ -585,6 +589,7 @@ namespace tangent
 			map.push_back(var::set::integer(block_number));
 			map.push_back(var::set::integer(block_number));
 
+			auto checkpoint_number = get_checkpoint_block_number();
 			auto cursor = get_block_storage().emplace_query(__func__,
 				"DELETE FROM blocks WHERE block_number > ? RETURNING block_hash;"
 				"DELETE FROM checkpoints WHERE block_number > ?;", &map);
@@ -672,8 +677,6 @@ namespace tangent
 			account_cache::get()->clear_locations();
 			uniform_cache::get()->clear_locations();
 			multiform_cache::get()->clear_locations();
-
-			auto checkpoint_number = get_checkpoint_block_number();
 			if (checkpoint_number && *checkpoint_number > block_number)
 				return reorganize(block_delta, transaction_delta, state_delta);
 
@@ -1383,14 +1386,14 @@ namespace tangent
 				return expectation::met;
 
 			auto checkpoint_number = evaluation.block.number - evaluation.block.number % checkpoint_size;
-			if (checkpoint_number < evaluation.block.number)
+			if (checkpoint_number < evaluation.block.number || evaluation.block.number < checkpoint_size * 2)
 				return expectation::met;
 
 			auto latest_checkpoint = get_checkpoint_block_number().or_else(0);
 			if (evaluation.block.number <= latest_checkpoint)
 				return expectation::met;
 
-			return prune(protocol::now().user.storage.prune_aggressively ? (uint32_t)pruning::block | (uint32_t)pruning::transaction | (uint32_t)pruning::state : (uint32_t)pruning::state, evaluation.block.number);
+			return prune(protocol::now().user.storage.prune_aggressively ? (uint32_t)pruning::block | (uint32_t)pruning::transaction | (uint32_t)pruning::state : (uint32_t)pruning::state, evaluation.block.number - checkpoint_size);
 		}
 		expects_lr<void> chainstate::resolve_block_transactions(vector<ledger::block_transaction>& result, uint64_t block_number, bool fully, size_t chunk)
 		{
