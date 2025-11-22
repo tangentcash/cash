@@ -2755,8 +2755,9 @@ namespace tangent
 			reference->checksum = 0;
 			reference->gas_limit = transaction->is_commitment() ? block::get_commitment_gas_limit() : block::get_transaction_gas_limit();
 
+			auto chain = storages::chainstate();
 			ledger::block temp_block;
-			temp_block.number = std::numeric_limits<int64_t>::max() - 1;
+			temp_block.number = chain.get_latest_block_number().or_else(0) + 1;
 
 			ledger::evaluation_context temp_environment;
 			memset(temp_environment.validator.public_key_hash.data, 1, sizeof(algorithm::pubkeyhash_t));

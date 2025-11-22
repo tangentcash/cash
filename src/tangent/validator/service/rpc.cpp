@@ -1660,7 +1660,7 @@ namespace tangent
 
 			auto block = ledger::block();
 			block.set_parent_block(environment.tip.address());
-			block.number = 0;
+			block.number = environment.tip ? environment.tip->number + 1 : 1;
 
 			auto receipt = ledger::receipt();
 			receipt.transaction_hash = transaction.as_hash();
