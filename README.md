@@ -25,8 +25,7 @@ Tangent Protocol supports interoperability with other blockchains, focusing on e
 Nodes download and validate data from seeder nodes, gradually forming a list of neighboring nodes. They can also publish new network data, including transactions and blocks.
 
 - **Producer**: Acts as block producer that can create, solve and broadcast blocks to network of nodes.
-- **Coordinator**: Acts as an asset bridge and must become an attestator, locking the native currency of the blockchain being bridged.
-- **Attestator**: Acts as an oracle publishing off-chain transaction into Tangent blockchain.
+- **Attestator**: Acts as an asset bridge and an oracle publishing off-chain transaction into Tangent blockchain.
 - **Participant**: Holds a private key share, allowing it to create deposit addresses on other blockchains and sign transactions for withdrawals. Participants are randomly selected into bridges to ensure unpredictability and fairness.
 
 ### Security
