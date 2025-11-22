@@ -265,34 +265,49 @@ namespace tangent
 		} account;
 		struct protocol_policy_config
 		{
+			struct
+			{
+				string base = "2786a4886c124f36871891095339534d0209538631bc0225d52faab6792df26c";
+				uint64_t time = 6000;
+				uint64_t adjustment_time = 60000;
+				uint64_t difficulty = 2048;
+				uint16_t security = 2048;
+				uint64_t genesis_length = 14400;
+				decimal max_increase = std::string_view("2.00");
+				decimal max_decrease = std::string_view("0.50");
+				decimal bump_per_priority = std::string_view("1.3625");
+				decimal bump_outside_priority = std::string_view("90.0");
+			} pow;
+			struct
+			{
+				uint64_t max_per_transaction = 32;
+				decimal min_stake_value = std::string_view("120");
+				decimal max_reward_increase = std::string_view("0.05");
+				decimal consensus_threshold = std::string_view("0.80");
+				decimal fee_rate = std::string_view("0.15");
+			} attestation;
+			struct
+			{
+				uint64_t min_per_account = 3;
+				uint64_t std_per_account = 4;
+				uint64_t max_per_account = 16;
+				decimal min_stake_value = std::string_view("240");
+				decimal stake_threshold = std::string_view("0.20");
+				decimal fee_rate = std::string_view("0.30");
+			} participation;
+			struct
+			{
+				uint64_t max_per_block = 12;
+				decimal min_stake_value = std::string_view("36");
+				decimal reward_value = std::string_view("1.2");
+				decimal genesis_reward_value = std::string_view("240");
+			} production;
 			string token = "TAN";
-			string wesolowski_base = "2786a4886c124f36871891095339534d0209538631bc0225d52faab6792df26c";
-			uint64_t production_max_per_block = 12;
-			uint64_t participation_min_per_account = 2;
-			uint64_t participation_std_per_account = 4;
-			uint64_t participation_max_per_account = 16;
-			uint64_t attestation_max_per_transaction = 32;
-			uint64_t consensus_proof_time = 6000;
-			uint64_t consensus_adjustment_time = 60000;
-			uint64_t commitment_throughput = 10;
-			uint64_t transaction_throughput = 200;
+			uint64_t commitment_tps = 10;
+			uint64_t transaction_tps = 200;
 			uint64_t transaction_gas = 30000;
-			uint64_t wesolowski_difficulty = 2048;
-			uint64_t genesis_round_length = 14400;
 			uint32_t delegations_max_per_account = 6;
-			uint32_t delegations_zeroing_time = 25000;
-			uint16_t wesolowski_security = 2048;
-			decimal production_reward_value = std::string_view("1.2");
-			decimal production_penalty_rate = std::string_view("0.10");
-			decimal participation_stake_threshold = std::string_view("0.20");
-			decimal participation_fee_rate = std::string_view("0.30");
-			decimal attestation_consensus_threshold = std::string_view("0.80");
-			decimal attestation_fee_rate = std::string_view("0.15");
-			decimal bridge_reward_max_increase = std::string_view("0.05");
-			decimal consensus_difficulty_max_increase = std::string_view("2.00");
-			decimal consensus_difficulty_max_decrease = std::string_view("0.50");
-			decimal consensus_difficulty_bump_per_priority = std::string_view("1.3625");
-			decimal consensus_difficulty_bump_outside_priority = std::string_view("90.0");
+			uint32_t delegations_reset_time = 25000;
 		} policy;
 
 	private:

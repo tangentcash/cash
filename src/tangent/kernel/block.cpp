@@ -361,7 +361,7 @@ namespace tangent
 			if (!generation_time || generation_time > evaluation_time)
 				return layer_exception("invalid time");
 
-			if (priority > protocol::now().policy.production_max_per_block)
+			if (priority > protocol::now().policy.production.max_per_block)
 				return layer_exception("invalid priority");
 
 			if (!transaction_count && !is_genesis_round(number))
@@ -632,7 +632,7 @@ namespace tangent
 		uint64_t block_header::get_proof_slot_target(const block_header* parent_block) const
 		{
 			auto prev_duration = parent_block ? parent_block->get_slot_proof_duration_average() : 0;
-			auto prev_target = parent_block ? parent_block->difficulty : protocol::now().policy.wesolowski_difficulty;
+			auto prev_target = parent_block ? parent_block->difficulty : protocol::now().policy.pow.difficulty;
 			if (parent_block && parent_block->priority > 0)
 				prev_target = algorithm::wesolowski::scale(difficulty, 1.0 / parent_block->get_proof_difficulty_multiplier());
 
@@ -670,7 +670,7 @@ namespace tangent
 			pow_data->set("mdifficulty", var::decimal(get_proof_difficulty_multiplier()));
 			pow_data->set("kdifficulty", algorithm::encoding::serialize_uint256(algorithm::wesolowski::kdifficulty(difficulty)));
 			pow_data->set("difficulty", var::integer(difficulty));
-			pow_data->set("security", var::integer(protocol::now().policy.wesolowski_security));
+			pow_data->set("security", var::integer(protocol::now().policy.pow.security));
 			pow_data->set("size", var::integer(proof.size()));
 			auto* witnesses_data = data->set("witnesses", var::set::array());
 			for (auto& item : witnesses)
@@ -725,12 +725,12 @@ namespace tangent
 		}
 		uint64_t block_header::get_commitment_limit()
 		{
-			static uint64_t limit = algorithm::arithmetic::ceil(algorithm::arithmetic::divide(protocol::now().policy.consensus_proof_time * protocol::now().policy.commitment_throughput, 1000)).to_uint64();
+			static uint64_t limit = algorithm::arithmetic::ceil(algorithm::arithmetic::divide(protocol::now().policy.pow.time * protocol::now().policy.commitment_tps, 1000)).to_uint64();
 			return limit;
 		}
 		uint64_t block_header::get_transaction_limit()
 		{
-			static uint64_t limit = algorithm::arithmetic::ceil(algorithm::arithmetic::divide(protocol::now().policy.consensus_proof_time * protocol::now().policy.transaction_throughput, 1000)).to_uint64();
+			static uint64_t limit = algorithm::arithmetic::ceil(algorithm::arithmetic::divide(protocol::now().policy.pow.time * protocol::now().policy.transaction_tps, 1000)).to_uint64();
 			return limit;
 		}
 		uint256_t block_header::get_commitment_gas_limit()
@@ -755,14 +755,14 @@ namespace tangent
 
 			auto& policy = protocol::now().policy;
 			uint256_t alignment = 16;
-			uint256_t committee = policy.production_max_per_block;
+			uint256_t committee = policy.production.max_per_block;
 			uint256_t multiplier = priority >= committee ? 0 : math64u::pow3(committee - priority);
 			uint256_t work = (multiplier * gas_use) / gas_limit;
 			return work - (work % alignment) + alignment;
 		}
 		bool block_header::is_genesis_round(const uint64_t block_number)
 		{
-			uint64_t ending_block_number = protocol::now().policy.genesis_round_length;
+			uint64_t ending_block_number = protocol::now().policy.pow.genesis_length;
 			return ending_block_number > 0 && block_number <= ending_block_number;
 		}
 
@@ -776,7 +776,7 @@ namespace tangent
 			auto& policy = protocol::now().policy;
 			auto position = std::find_if(environment->producers.begin(), environment->producers.end(), [&environment](const states::validator_production& a) { return a.owner == environment->validator.public_key_hash; });
 			bool genesis = is_genesis_round(number);
-			priority = (uint64_t)(position == environment->producers.end() ? policy.production_max_per_block : std::distance(environment->producers.begin(), position));
+			priority = (uint64_t)(position == environment->producers.end() ? policy.production.max_per_block : std::distance(environment->producers.begin(), position));
 			difficulty = algorithm::wesolowski::scale(get_proof_slot_target(parent_block), get_proof_difficulty_multiplier());
 			if (!genesis && environment->incoming.empty())
 				return layer_exception("block must include transactions");
@@ -789,11 +789,10 @@ namespace tangent
 				current_gas_limit += item.candidate->gas_limit;
 			}
 
-			auto fees = ordered_map<algorithm::asset_id, decimal>({ { algorithm::asset::native(), policy.production_reward_value } });
+			auto fees = ordered_map<algorithm::asset_id, decimal>({ { algorithm::asset::native(), genesis ? policy.production.genesis_reward_value : policy.production.reward_value } });
 			auto executionlog = string();
 			auto changelog = block_changelog();
 			auto context = transaction_context(environment, this, &changelog, nullptr, { });
-			auto activation = context.get_validator_production(environment->validator.public_key_hash).or_else(states::validator_production(algorithm::pubkeyhash_t(), nullptr)).active;
 			for (auto& item : environment->incoming)
 			{
 			retry_replacement_transaction:
@@ -842,20 +841,18 @@ namespace tangent
 				return layer_exception(std::move(stringify::trim(executionlog)));
 			}
 
-			bool reactivation = context.get_validator_production(environment->validator.public_key_hash).or_else(states::validator_production(algorithm::pubkeyhash_t(), nullptr)).active;
-			if (!activation && !reactivation)
+			auto penalty = -fees[algorithm::asset::native()];
+			bool reward = context.get_validator_production(environment->validator.public_key_hash).or_else(states::validator_production(algorithm::pubkeyhash_t(), nullptr)).is_active();
+			if (reward)
 			{
-				executionlog.append("\n  producer must activate themselves");
-				return layer_exception(std::move(stringify::trim(executionlog)));
+				auto work = context.apply_validator_production(environment->validator.public_key_hash, transaction_context::stake_type::reward_or_penalty, std::move(fees));
+				if (!work)
+					return work.error();
 			}
-
-			auto work = context.apply_validator_production(environment->validator.public_key_hash, reactivation ? transaction_context::production_type::mint_and_activate : transaction_context::production_type::mint, fees);
-			if (!work)
-				return work.error();
 
 			for (size_t i = 0; i < (size_t)priority; i++)
 			{
-				auto work = context.apply_validator_production(environment->producers[i].owner, transaction_context::production_type::burn_and_deactivate, { { algorithm::asset::native(), -policy.production_penalty_rate } });
+				auto work = context.apply_validator_production(environment->producers[i].owner, transaction_context::stake_type::reward_or_penalty, { { algorithm::asset::native(), penalty } });
 				if (!work)
 					return work.error();
 			}
@@ -1617,17 +1614,6 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<void> transaction_context::verify_validator_attestation(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner) const
-		{
-			if (!environment)
-				return layer_exception("invalid evaluation context");
-
-			auto attestation = get_validator_attestation(asset, owner);
-			if (!attestation || !attestation->is_active())
-				return layer_exception("validator attestation is inactive");
-
-			return expectation::met;
-		}
 		expects_lr<algorithm::wesolowski::distribution> transaction_context::calculate_random(const uint256_t& seed)
 		{
 			if (!block)
@@ -1646,6 +1632,28 @@ namespace tangent
 			distribution.signature = message.data;
 			distribution.value = algorithm::hashing::hash256i(*crypto::hash(digests::sha512(), distribution.signature));
 			return distribution;
+		}
+		expects_lr<decimal> transaction_context::calculate_amount_considered_dust(const algorithm::asset_id& asset) const
+		{
+			auto chain = storages::chainstate();
+			auto filter = storages::result_filter::greater(0, -1);
+			auto states = chain.get_multiforms_by_row_filter(states::validator_attestation::as_instance_type(), changelog, states::validator_attestation::as_instance_row(asset), filter, get_validation_nonce(), storages::result_range_window(0, 32));
+			if (!states || states->empty())
+				return layer_exception("validator attestation required but not applicable (" + (states ? string("state not found") : states.what()) + ")");
+
+			vector<decimal> amounts;
+			amounts.reserve(states->size());
+			for (auto& state : *states)
+			{
+				auto status = ((transaction_context*)this)->query(state.ptr(), !state.cached);
+				if (!status)
+					return status.error();
+
+				auto* attestation = state.as<states::validator_attestation>();
+				amounts.emplace_back(std::max(attestation->incoming_fee, attestation->outgoing_fee));
+			}
+			std::sort(amounts.begin(), amounts.end());
+			return expects_lr<decimal>(amounts.empty() ? decimal::zero() : std::move(amounts[amounts.size() / 2]));
 		}
 		expects_lr<size_t> transaction_context::calculate_attesters_size(const algorithm::asset_id& asset) const
 		{
@@ -1740,7 +1748,7 @@ namespace tangent
 
 			return expects_lr<vector<states::validator_attestation>>(std::move(committee));
 		}
-		expects_lr<vector<states::validator_participation>> transaction_context::calculate_participants(const algorithm::asset_id& asset, ordered_set<algorithm::pubkeyhash_t>& exclusion, size_t target_size, const decimal& threshold)
+		expects_lr<states::validator_attestation> transaction_context::calculate_attester_for_migration(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& exclusion)
 		{
 			auto random = calculate_random(1);
 			if (!random)
@@ -1748,12 +1756,50 @@ namespace tangent
 
 			auto nonce = get_validation_nonce();
 			auto chain = storages::chainstate();
+			auto filter = storages::result_filter::greater(0, -1);
+			auto pool = chain.get_multiforms_count_by_row_filter(states::validator_attestation::as_instance_type(), changelog, states::validator_attestation::as_instance_row(asset), filter, nonce).or_else(0);
+			if (pool < 2)
+				return layer_exception("committee threshold not met");
+
+			auto indices = ordered_set<uint64_t>();
+		retry:
+			uint64_t index = algorithm::hashing::erd64(random->derive(), pool);
+			if (indices.find(index) != indices.end())
+				goto retry;
+
+			auto window = storages::result_index_window();
+			window.indices.push_back(index);
+			indices.insert(index);
+
+			auto results = chain.get_multiforms_by_row_filter(states::validator_attestation::as_instance_type(), changelog, states::validator_attestation::as_instance_row(asset), filter, nonce, window);
+			if (!results || results->empty())
+				return layer_exception("committee threshold not met");
+
+			auto& result = results->front();
+			auto status = load(result.ptr(), !result.cached);
+			if (!status)
+				return status.error();
+
+			auto& target = *(states::validator_attestation*)result.ptr();
+			if (target.owner == exclusion || !target.accepts_account_requests || !target.accepts_withdrawal_requests)
+				goto retry;
+
+			return expects_lr<states::validator_attestation>(std::move(target));
+		}
+		expects_lr<vector<states::validator_participation>> transaction_context::calculate_participants(ordered_set<algorithm::pubkeyhash_t>& exclusion, size_t target_size, const decimal& threshold)
+		{
+			auto random = calculate_random(2);
+			if (!random)
+				return random.error();
+
+			auto nonce = get_validation_nonce();
+			auto chain = storages::chainstate();
 			auto filter = storages::result_filter::greater_equal(threshold.is_zero_or_nan() ? uint256_t(1) : states::validator_production::to_rank(threshold), -1);
-			auto pool = chain.get_multiforms_count_by_row_filter(states::validator_participation::as_instance_type(), changelog, states::validator_participation::as_instance_row(asset), filter, nonce).or_else(0);
+			auto pool = chain.get_multiforms_count_by_row_filter(states::validator_participation::as_instance_type(), changelog, states::validator_participation::as_instance_row(), filter, nonce).or_else(0);
 			if (pool < target_size)
 				return layer_exception("committee threshold not met");
 
-			size_t median_pool = (size_t)algorithm::arithmetic::ceil(decimal(pool) * decimal(protocol::now().policy.participation_stake_threshold)).to_uint64();
+			size_t median_pool = (size_t)algorithm::arithmetic::ceil(decimal(pool) * decimal(protocol::now().policy.participation.stake_threshold)).to_uint64();
 			if (median_pool <= target_size + exclusion.size())
 				median_pool = pool;
 
@@ -1784,7 +1830,7 @@ namespace tangent
 					}
 				}
 
-				auto results = chain.get_multiforms_by_row_filter(states::validator_participation::as_instance_type(), changelog, states::validator_participation::as_instance_row(asset), filter, nonce, window);
+				auto results = chain.get_multiforms_by_row_filter(states::validator_participation::as_instance_type(), changelog, states::validator_participation::as_instance_row(), filter, nonce, window);
 				if (!results || results->empty())
 					break;
 
@@ -1930,106 +1976,47 @@ namespace tangent
 
 			return new_state1;
 		}
-		expects_lr<states::validator_production> transaction_context::apply_validator_production(const algorithm::pubkeyhash_t& owner, production_type action, const ordered_map<algorithm::asset_id, decimal>& stakes)
+		expects_lr<states::validator_production> transaction_context::apply_validator_production(const algorithm::pubkeyhash_t& owner, stake_type type, ordered_map<algorithm::asset_id, decimal>&& rewards)
 		{
-			switch (action)
+			states::validator_production new_state = get_validator_production(owner).or_else(states::validator_production(owner, block));
+			if (type == stake_type::unlock)
 			{
-				case production_type::burn:
-				case production_type::burn_and_deactivate:
-				{
-					auto it = stakes.find(algorithm::asset::native());
-					if (!(stakes.empty() || (stakes.size() == 1 && it != stakes.end() && it->second.is_negative())))
-						return layer_exception("unstaking is either all or none");
-
-					auto new_state = get_validator_production(owner).or_else(states::validator_production(owner, block));
-					new_state.active = action == production_type::burn_and_deactivate ? false : new_state.active;
-					if (action == production_type::burn_and_deactivate && !new_state.stakes.empty())
-					{
-						if (it != stakes.end())
-						{
-							auto stake = new_state.get_ranked_stake();
-							auto transfer = apply_transfer(it->first, owner, stake * it->second, -stake);
-							if (!transfer)
-								return transfer.error();
-
-							new_state.stakes.erase(it->first);
-						}
-						for (auto& [asset, stake] : new_state.stakes)
-						{
-							if (stake.is_positive())
-							{
-								auto transfer = apply_transfer(asset, owner, decimal::zero(), -stake);
-								if (!transfer)
-									return transfer.error();
-							}
-						}
-						new_state.stakes.clear();
-					}
-
-					auto result = store(&new_state, true);
-					if (!result)
-						return result.error();
-
-					return new_state;
-				}
-				case production_type::mint:
-				case production_type::mint_and_activate:
-				{
-					auto new_state = get_validator_production(owner).or_else(states::validator_production(owner, block));
-					new_state.active = (action == production_type::mint_and_activate) || new_state.active;
-
-					for (auto& [asset, stake] : stakes)
-					{
-						auto& prev_stake = new_state.stakes[asset];
-						prev_stake = (prev_stake.is_nan() ? decimal::zero() : prev_stake) + stake;
-						if (stake.is_positive())
-						{
-							auto transfer = apply_transfer(asset, owner, stake, stake);
-							if (!transfer)
-								return transfer.error();
-						}
-					}
-
-					auto result = store(&new_state, true);
-					if (!result)
-						return result.error();
-
-					return new_state;
-				}
-				default:
-					return layer_exception("invalid production action");
+				rewards[algorithm::asset::native()] = -new_state.stake;
+				for (auto& [asset, reward] : new_state.rewards)
+					rewards[asset] = -reward;
 			}
-		}
-		expects_lr<states::validator_participation> transaction_context::apply_validator_participation(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, stake_type type, int64_t participations, const ordered_map<algorithm::asset_id, decimal>& stakes)
-		{
-			states::validator_participation new_state = get_validator_participation(asset, owner).or_else(states::validator_participation(owner, asset, block));
-			new_state.participations = participations >= 0 || new_state.participations >= (uint64_t)-participations ? (int64_t)new_state.participations + participations : 0;
-			for (auto& [token_asset, stake] : stakes)
-			{
-				auto change = stake;
-				auto& value = new_state.stakes[token_asset];
-				if (change.is_nan())
-				{
-					change = -value;
-					if (type != stake_type::unlock)
-						return layer_exception("invalid stake");
-				}
 
-				auto delta = change.is_positive() ? change : std::max((value.is_nan() ? decimal::zero() : -value), stake);
+			for (auto& [token_asset, reward] : rewards)
+			{
+				auto change = reward;
+				auto& value = token_asset == algorithm::asset::native() ? new_state.stake : new_state.rewards[token_asset];
+				if (change.is_nan() && type != stake_type::unlock)
+					return layer_exception("invalid stake");
+
+				auto delta = change.is_positive() ? change : std::max((value.is_nan() ? decimal::zero() : -value), reward);
 				value = value.is_nan() ? delta : (value + delta);
 				if (!delta.is_zero_or_nan())
 				{
-					auto transfer = apply_transfer(asset, owner, type == stake_type::reward_or_penalty ? delta : decimal::zero(), delta);
+					auto transfer = apply_transfer(token_asset, owner, type == stake_type::reward_or_penalty ? delta : decimal::zero(), delta);
 					if (!transfer)
 						return transfer.error();
 				}
 			}
 
-			auto it = new_state.stakes.begin();
-			while (it != new_state.stakes.end())
+			auto it = new_state.rewards.find(algorithm::asset::native());
+			if (it != new_state.rewards.end())
 			{
-				if (!it->second.is_positive() && (it->first != new_state.asset || type == stake_type::unlock))
-					it = new_state.stakes.erase(it);
+				new_state.stake = std::move(it->second);
+				new_state.rewards.erase(it);
+			}
+			if (type == stake_type::unlock)
+				new_state.stake = decimal::nan();
+
+			it = new_state.rewards.begin();
+			while (it != new_state.rewards.end())
+			{
+				if (!it->second.is_positive() || type == stake_type::unlock)
+					it = new_state.rewards.erase(it);
 				else
 					++it;
 			}
@@ -2040,35 +2027,99 @@ namespace tangent
 
 			return new_state;
 		}
-		expects_lr<states::validator_attestation> transaction_context::apply_validator_attestation(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, stake_type type, const ordered_map<algorithm::asset_id, decimal>& stakes)
+		expects_lr<states::validator_participation> transaction_context::apply_validator_participation(const algorithm::pubkeyhash_t& owner, stake_type type, int64_t participations, ordered_map<algorithm::asset_id, decimal>&& rewards)
+		{
+			states::validator_participation new_state = get_validator_participation(owner).or_else(states::validator_participation(owner, block));
+			new_state.participations = participations >= 0 || new_state.participations >= (uint64_t)-participations ? (int64_t)new_state.participations + participations : 0;
+			if (type == stake_type::unlock)
+			{
+				rewards[algorithm::asset::native()] = -new_state.stake;
+				for (auto& [asset, reward] : new_state.rewards)
+					rewards[asset] = -reward;
+			}
+
+			for (auto& [token_asset, reward] : rewards)
+			{
+				auto change = reward;
+				auto& value = token_asset == algorithm::asset::native() ? new_state.stake : new_state.rewards[token_asset];
+				if (change.is_nan() && type != stake_type::unlock)
+					return layer_exception("invalid stake");
+
+				auto delta = change.is_positive() ? change : std::max((value.is_nan() ? decimal::zero() : -value), reward);
+				value = value.is_nan() ? delta : (value + delta);
+				if (!delta.is_zero_or_nan())
+				{
+					auto transfer = apply_transfer(token_asset, owner, type == stake_type::reward_or_penalty ? delta : decimal::zero(), delta);
+					if (!transfer)
+						return transfer.error();
+				}
+			}
+
+			auto it = new_state.rewards.find(algorithm::asset::native());
+			if (it != new_state.rewards.end())
+			{
+				new_state.stake = std::move(it->second);
+				new_state.rewards.erase(it);
+			}
+			if (type == stake_type::unlock)
+				new_state.stake = decimal::nan();
+
+			it = new_state.rewards.begin();
+			while (it != new_state.rewards.end())
+			{
+				if (!it->second.is_positive() || type == stake_type::unlock)
+					it = new_state.rewards.erase(it);
+				else
+					++it;
+			}
+
+			auto result = store(&new_state, true);
+			if (!result)
+				return result.error();
+
+			return new_state;
+		}
+		expects_lr<states::validator_attestation> transaction_context::apply_validator_attestation(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, stake_type type, ordered_map<algorithm::asset_id, decimal>&& rewards)
 		{
 			states::validator_attestation new_state = get_validator_attestation(asset, owner).or_else(states::validator_attestation(owner, asset, block));
-			for (auto& [token_asset, stake] : stakes)
+			if (type == stake_type::unlock)
 			{
-				auto change = stake;
-				auto& value = new_state.stakes[token_asset];
-				if (change.is_nan())
-				{
-					change = -value;
-					if (type != stake_type::unlock)
-						return layer_exception("invalid stake");
-				}
+				rewards[algorithm::asset::native()] = -new_state.stake;
+				for (auto& [asset, reward] : new_state.rewards)
+					rewards[asset] = -reward;
+			}
 
-				auto delta = change.is_positive() ? change : std::max((value.is_nan() ? decimal::zero() : -value), stake);
+			for (auto& [token_asset, reward] : rewards)
+			{
+				auto change = reward;
+				auto& value = token_asset == algorithm::asset::native() ? new_state.stake : new_state.rewards[token_asset];
+				if (change.is_nan() && type != stake_type::unlock)
+					return layer_exception("invalid stake");
+
+				auto delta = change.is_positive() ? change : std::max((value.is_nan() ? decimal::zero() : -value), reward);
 				value = value.is_nan() ? delta : (value + delta);
 				if (!delta.is_zero_or_nan())
 				{
-					auto transfer = apply_transfer(asset, owner, type == stake_type::reward_or_penalty ? delta : decimal::zero(), delta);
+					auto transfer = apply_transfer(token_asset, owner, type == stake_type::reward_or_penalty ? delta : decimal::zero(), delta);
 					if (!transfer)
 						return transfer.error();
 				}
 			}
 
-			auto it = new_state.stakes.begin();
-			while (it != new_state.stakes.end())
+			auto it = new_state.rewards.find(algorithm::asset::native());
+			if (it != new_state.rewards.end())
 			{
-				if (!it->second.is_positive() && (it->first != new_state.asset || type == stake_type::unlock))
-					it = new_state.stakes.erase(it);
+				new_state.stake = std::move(it->second);
+				new_state.rewards.erase(it);
+			}
+			if (type == stake_type::unlock)
+				new_state.stake = decimal::nan();
+
+			it = new_state.rewards.begin();
+			while (it != new_state.rewards.end())
+			{
+				if (!it->second.is_positive() || type == stake_type::unlock)
+					it = new_state.rewards.erase(it);
 				else
 					++it;
 			}
@@ -2079,13 +2130,51 @@ namespace tangent
 
 			return new_state;
 		}
-		expects_lr<states::bridge_reward> transaction_context::apply_bridge_reward(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const decimal& incoming_fee, const decimal& outgoing_fee)
+		expects_lr<states::validator_attestation> transaction_context::apply_validator_attestation_policy(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, uint8_t security_level, const decimal& participation_threshold, const decimal& incoming_fee, const decimal& outgoing_fee, bool accepts_account_requests, bool accepts_withdrawal_requests)
 		{
-			states::bridge_reward new_state = states::bridge_reward(owner, asset, block);
+			auto new_state = get_validator_attestation(asset, owner).or_else(states::validator_attestation(owner, asset, block));
+			new_state.participation_threshold = participation_threshold;
 			new_state.incoming_fee = incoming_fee;
 			new_state.outgoing_fee = outgoing_fee;
+			new_state.security_level = security_level;
+			new_state.accepts_account_requests = accepts_account_requests;
+			new_state.accepts_withdrawal_requests = accepts_withdrawal_requests;
 
 			auto status = store(&new_state, true);
+			if (!status)
+				return status.error();
+
+			status = emit_event<states::validator_attestation>({ format::variable(asset), format::variable(owner.view()), format::variable((uint8_t)2) });
+			if (!status)
+				return status.error();
+
+			return new_state;
+		}
+		expects_lr<states::validator_attestation> transaction_context::apply_validator_attestation_queue(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const uint256_t& transaction_hash)
+		{
+			auto new_state = get_validator_attestation(asset, owner).or_else(states::validator_attestation(owner, asset, block));
+			new_state.queue_transaction_hash = transaction_hash;
+
+			auto status = store(&new_state, true);
+			if (!status)
+				return status.error();
+
+			status = emit_event<states::validator_attestation>({ format::variable(asset), format::variable(owner.view()), format::variable((uint8_t)1), format::variable(transaction_hash) });
+			if (!status)
+				return status.error();
+
+			return new_state;
+		}
+		expects_lr<states::validator_attestation> transaction_context::apply_validator_attestation_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, uint64_t new_accounts)
+		{
+			auto new_state = get_validator_attestation(asset, owner).or_else(states::validator_attestation(owner, asset, block));
+			new_state.accounts_under_management += new_accounts;
+
+			auto status = store(&new_state, true);
+			if (!status)
+				return status.error();
+
+			status = emit_event<states::validator_attestation>({ format::variable(asset), format::variable(owner.view()), format::variable((uint8_t)0), format::variable(new_accounts) });
 			if (!status)
 				return status.error();
 
@@ -2106,54 +2195,6 @@ namespace tangent
 				if (!status)
 					return status.error();
 			}
-
-			return new_state;
-		}
-		expects_lr<states::bridge_policy> transaction_context::apply_bridge_policy_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, uint64_t new_accounts)
-		{
-			auto new_state = get_bridge_policy(asset, owner).or_else(states::bridge_policy(owner, asset, block));
-			new_state.accounts_under_management += new_accounts;
-
-			auto status = store(&new_state, true);
-			if (!status)
-				return status.error();
-
-			status = emit_event<states::bridge_policy>({ format::variable(asset), format::variable(owner.view()), format::variable((uint8_t)0), format::variable(new_accounts) });
-			if (!status)
-				return status.error();
-
-			return new_state;
-		}
-		expects_lr<states::bridge_policy> transaction_context::apply_bridge_policy_queue(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const uint256_t& transaction_hash)
-		{
-			auto new_state = get_bridge_policy(asset, owner).or_else(states::bridge_policy(owner, asset, block));
-			new_state.queue_transaction_hash = transaction_hash;
-
-			auto status = store(&new_state, true);
-			if (!status)
-				return status.error();
-
-			status = emit_event<states::bridge_policy>({ format::variable(asset), format::variable(owner.view()), format::variable((uint8_t)1), format::variable(transaction_hash) });
-			if (!status)
-				return status.error();
-
-			return new_state;
-		}
-		expects_lr<states::bridge_policy> transaction_context::apply_bridge_policy(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, uint8_t security_level, const decimal& participation_threshold, bool accepts_account_requests, bool accepts_withdrawal_requests)
-		{
-			auto new_state = get_bridge_policy(asset, owner).or_else(states::bridge_policy(owner, asset, block));
-			new_state.participation_threshold = participation_threshold;
-			new_state.security_level = security_level;
-			new_state.accepts_account_requests = accepts_account_requests;
-			new_state.accepts_withdrawal_requests = accepts_withdrawal_requests;
-
-			auto status = store(&new_state, true);
-			if (!status)
-				return status.error();
-
-			status = emit_event<states::bridge_policy>({ format::variable(asset), format::variable(owner.view()), format::variable((uint8_t)2), format::variable(security_level), format::variable(accepts_account_requests), format::variable(accepts_withdrawal_requests) });
-			if (!status)
-				return status.error();
 
 			return new_state;
 		}
@@ -2436,10 +2477,10 @@ namespace tangent
 
 			return states::validator_production(std::move(*state->as<states::validator_production>()));
 		}
-		expects_lr<states::validator_participation> transaction_context::get_validator_participation(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner) const
+		expects_lr<states::validator_participation> transaction_context::get_validator_participation(const algorithm::pubkeyhash_t& owner) const
 		{
 			auto chain = storages::chainstate();
-			auto state = chain.get_multiform(states::validator_participation::as_instance_type(), changelog, states::validator_participation::as_instance_column(owner), states::validator_participation::as_instance_row(asset), get_validation_nonce());
+			auto state = chain.get_multiform(states::validator_participation::as_instance_type(), changelog, states::validator_participation::as_instance_column(owner), states::validator_participation::as_instance_row(), get_validation_nonce());
 			if (!state)
 				return layer_exception("validator participation required but not applicable (" + state.what() + ")");
 
@@ -2448,25 +2489,6 @@ namespace tangent
 				return status.error();
 
 			return states::validator_participation(std::move(*state->as<states::validator_participation>()));
-		}
-		expects_lr<vector<states::validator_participation>> transaction_context::get_validator_participations(const algorithm::pubkeyhash_t& owner, size_t offset, size_t count) const
-		{
-			auto chain = storages::chainstate();
-			auto states = chain.get_multiforms_by_column(states::validator_participation::as_instance_type(), changelog, states::validator_participation::as_instance_column(owner), get_validation_nonce(), offset, count);
-			if (!states)
-				return layer_exception("validator participation(s) required but not applicable (" + states.what() + ")");
-
-			vector<states::validator_participation> addresses;
-			addresses.reserve(states->size());
-			for (auto& state : *states)
-			{
-				auto status = ((transaction_context*)this)->query(state.ptr(), !state.cached);
-				if (!status)
-					return status.error();
-
-				addresses.emplace_back(std::move(*state.as<states::validator_participation>()));
-			}
-			return addresses;
 		}
 		expects_lr<states::validator_attestation> transaction_context::get_validator_attestation(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner) const
 		{
@@ -2480,6 +2502,14 @@ namespace tangent
 				return status.error();
 
 			return states::validator_attestation(std::move(*state->as<states::validator_attestation>()));
+		}
+		expects_lr<states::validator_attestation> transaction_context::get_verified_validator_attestation(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner) const
+		{
+			auto attestation = get_validator_attestation(asset, owner);
+			if (attestation && !attestation->is_active())
+				return layer_exception("validator attestation is inactive");
+
+			return attestation;
 		}
 		expects_lr<vector<states::validator_attestation>> transaction_context::get_validator_attestations(const algorithm::pubkeyhash_t& owner, size_t offset, size_t count) const
 		{
@@ -2500,35 +2530,6 @@ namespace tangent
 			}
 			return addresses;
 		}
-		expects_lr<states::bridge_reward> transaction_context::get_bridge_reward(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner) const
-		{
-			auto chain = storages::chainstate();
-			auto state = chain.get_multiform(states::bridge_reward::as_instance_type(), changelog, states::bridge_reward::as_instance_column(owner), states::bridge_reward::as_instance_row(asset), get_validation_nonce());
-			if (!state)
-				return layer_exception("bridge reward required but not applicable (" + state.what() + ")");
-
-			auto status = ((transaction_context*)this)->load(state->ptr(), !state->cached);
-			if (!status)
-				return status.error();
-
-			return states::bridge_reward(std::move(*state->as<states::bridge_reward>()));
-		}
-		expects_lr<states::bridge_reward> transaction_context::get_bridge_reward_median(const algorithm::asset_id& asset) const
-		{
-			auto chain = storages::chainstate();
-			auto filter = storages::result_filter::greater(0, -1);
-			auto median = chain.get_multiforms_count_by_row_filter(states::bridge_reward::as_instance_type(), changelog, states::bridge_reward::as_instance_row(asset), filter, get_validation_nonce()).or_else(0) / 2;
-			auto states = chain.get_multiforms_by_row_filter(states::bridge_reward::as_instance_type(), changelog, states::bridge_reward::as_instance_row(asset), filter, get_validation_nonce(), storages::result_range_window(median, 1));
-			if (!states || states->empty())
-				return layer_exception("bridge reward required but not applicable (" + (states ? string("state not found") : states.what()) + ")");
-
-			auto& state = states->front();
-			auto status = ((transaction_context*)this)->load(state.ptr(), !state.cached);
-			if (!status)
-				return status.error();
-
-			return states::bridge_reward(std::move(*state.as<states::bridge_reward>()));
-		}
 		expects_lr<states::bridge_balance> transaction_context::get_bridge_balance(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner) const
 		{
 			auto chain = storages::chainstate();
@@ -2541,19 +2542,6 @@ namespace tangent
 				return status.error();
 
 			return states::bridge_balance(std::move(*state->as<states::bridge_balance>()));
-		}
-		expects_lr<states::bridge_policy> transaction_context::get_bridge_policy(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner) const
-		{
-			auto chain = storages::chainstate();
-			auto state = chain.get_multiform(states::bridge_policy::as_instance_type(), changelog, states::bridge_policy::as_instance_column(owner), states::bridge_policy::as_instance_row(asset), get_validation_nonce());
-			if (!state)
-				return layer_exception("bridge policy required but not applicable (" + state.what() + ")");
-
-			auto status = ((transaction_context*)this)->load(state->ptr(), !state->cached);
-			if (!status)
-				return status.error();
-
-			return states::bridge_policy(std::move(*state->as<states::bridge_policy>()));
 		}
 		expects_lr<vector<states::bridge_account>> transaction_context::get_bridge_accounts(const algorithm::pubkeyhash_t& manager, size_t offset, size_t count) const
 		{
@@ -3212,7 +3200,7 @@ namespace tangent
 				++validation.context.block->number;
 
 			auto& policy = protocol::now().policy;
-			auto committee = validation.context.calculate_producers(policy.production_max_per_block);
+			auto committee = validation.context.calculate_producers(policy.production.max_per_block);
 			if (committee)
 				producers = std::move(*committee);
 

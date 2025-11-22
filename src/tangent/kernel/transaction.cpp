@@ -90,7 +90,7 @@ namespace tangent
 			nonce = new_nonce;
 			return sign(secret_key);
 		}
-		expects_lr<void> transaction::sign(const algorithm::seckey_t& secret_key, uint64_t new_nonce, const decimal& price)
+		expects_lr<void> transaction::sign(const algorithm::seckey_t& secret_key, uint64_t new_nonce, const decimal& price, const uint256_t& gas_padding)
 		{
 			set_gas(price, is_commitment() ? block::get_commitment_gas_limit() : block::get_transaction_gas_limit());
 			if (!sign(secret_key, new_nonce))
@@ -99,7 +99,9 @@ namespace tangent
 			auto optimal_gas = ledger::transaction_context::calculate_tx_gas(this);
 			if (!optimal_gas)
 				return optimal_gas.error();
-			else if (gas_limit == *optimal_gas)
+			
+			*optimal_gas += gas_padding;
+			if (gas_limit == *optimal_gas)
 				return expectation::met;
 
 			gas_limit = *optimal_gas;

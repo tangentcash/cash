@@ -893,25 +893,37 @@ namespace tangent
 
 		expects_lr<void> validator_adjustment::validate(uint64_t block_number) const
 		{
-			if (!production && participation_stakes.empty() && attestation_stakes.empty())
+			if (attestations.empty() && !participation && !production)
 				return layer_exception("invalid validator change");
 
-			if (production && production->is_negative())
-				return layer_exception("production must not be negative");
-
-			for (auto& [asset, stake] : participation_stakes)
+			attestation_setup default_setup;
+			for (auto& [asset, setup] : attestations)
 			{
-				uint64_t expiry_number = algorithm::asset::expiry_of(asset);
-				if (!expiry_number || (block_number > expiry_number && !stake.is_nan() && !stake.is_negative()))
-					return layer_exception("invalid participation asset");
-			}
+				if (setup.stake.is_negative())
+					return layer_exception("attestation stake must not be negative");
 
-			for (auto& [asset, stake] : attestation_stakes)
-			{
 				uint64_t expiry_number = algorithm::asset::expiry_of(asset);
-				if (!expiry_number || (block_number > expiry_number && !stake.is_nan() && !stake.is_negative()))
+				if (!expiry_number || (block_number > expiry_number && !setup.stake.is_nan()))
 					return layer_exception("invalid attestation asset");
+
+				if (setup.incoming_fee && (setup.incoming_fee->is_nan() || setup.incoming_fee->is_negative()))
+					return layer_exception("invalid incoming fee");
+
+				if (setup.outgoing_fee && (setup.outgoing_fee->is_nan() || setup.outgoing_fee->is_negative()))
+					return layer_exception("invalid outgoing fee");
+
+				if (setup.participation_threshold && (setup.participation_threshold->is_nan() || setup.participation_threshold->is_negative()))
+					return layer_exception("invalid participation threshold");
+
+				if (setup.security_level && (*setup.security_level < protocol::now().policy.participation.min_per_account || *setup.security_level > protocol::now().policy.participation.max_per_account))
+					return layer_exception("invalid security level");
 			}
+
+			if (participation && participation->is_negative())
+				return layer_exception("participation stake must not be negative");
+
+			if (production && production->is_negative())
+				return layer_exception("production stake must not be negative");
 
 			return ledger::transaction::validate(block_number);
 		}
@@ -921,92 +933,57 @@ namespace tangent
 			if (!validation)
 				return validation.error();
 
-			if (production)
-			{
-				if (production->is_zero() || production->is_positive())
-				{
-					auto stake_allocation = -(*production);
-					if (stake_allocation.is_negative())
-					{
-						auto burn = context->apply_transfer(asset, context->receipt.from, stake_allocation, decimal::zero());
-						if (!burn)
-							return burn.error();
-					}
-
-					auto status = context->apply_validator_production(context->receipt.from, ledger::transaction_context::production_type::mint_and_activate, { { algorithm::asset::native(), *production } });
-					if (!status)
-						return status.error();
-				}
-				else
-				{
-					auto status = context->apply_validator_production(context->receipt.from, ledger::transaction_context::production_type::burn_and_deactivate, { });
-					if (!status)
-						return status.error();
-				}
-			}
-
-			for (auto& [asset, stake] : participation_stakes)
+			for (auto& [asset, setup] : attestations)
 			{
 				if (!algorithm::asset::token_of(asset).empty())
 					continue;
 
-				auto type = stake.is_nan() || stake.is_negative() ? ledger::transaction_context::stake_type::unlock : ledger::transaction_context::stake_type::lock;
-				auto blockchain = algorithm::asset::blockchain_of(asset);
-				ordered_map<algorithm::asset_id, decimal> stakes;
-				for (auto& [token_asset, token_stake] : participation_stakes)
+				auto prev_policy = context->get_validator_attestation(asset, context->receipt.from).or_else(states::validator_attestation(context->receipt.from, asset, nullptr));
+				auto next_policy = context->apply_validator_attestation_policy(algorithm::asset::base_id_of(asset), context->receipt.from,
+					setup.security_level.or_else(prev_policy.security_level),
+					setup.participation_threshold.or_else(prev_policy.participation_threshold),
+					setup.incoming_fee.or_else(prev_policy.incoming_fee),
+					setup.outgoing_fee.or_else(prev_policy.outgoing_fee),
+					setup.accepts_account_requests.or_else(prev_policy.accepts_account_requests),
+					setup.accepts_withdrawal_requests.or_else(prev_policy.accepts_withdrawal_requests));
+				if (!next_policy)
+					return next_policy.error();
+
+				auto type = setup.stake.is_nan() ? ledger::transaction_context::stake_type::unlock : ledger::transaction_context::stake_type::lock;
+				if (type == ledger::transaction_context::stake_type::unlock && (next_policy->accepts_account_requests || next_policy->accepts_withdrawal_requests))
+					return layer_exception(algorithm::asset::handle_of(asset) + " bridge is still active");
+
+				auto balance = context->get_bridge_balance(asset, context->receipt.from);
+				if (balance && (type == ledger::transaction_context::stake_type::unlock || (prev_policy.is_active() && prev_policy.accepts_withdrawal_requests != next_policy->accepts_withdrawal_requests && !next_policy->accepts_withdrawal_requests)))
 				{
-					if (algorithm::asset::blockchain_of(token_asset) != blockchain)
-						continue;
-
-					auto subtype = stake.is_nan() || stake.is_negative() ? ledger::transaction_context::stake_type::unlock : ledger::transaction_context::stake_type::lock;
-					if (type != subtype)
-						return layer_exception("token stake action mismatch");
-
-					stakes[token_asset] = token_stake;
+					for (auto& [token_asset, token_value] : balance->balances)
+					{
+						if (algorithm::asset::is_aux(token_asset, true))
+						{
+							auto dust = context->calculate_amount_considered_dust(token_asset).or_else(decimal::zero());
+							if (token_value > dust)
+								return layer_exception(algorithm::asset::handle_of(token_asset) + " bridge has non-dust custodial balance (max_dust: " + dust.to_string() + ")");
+						}
+						else if (token_value.is_positive())
+							return layer_exception(algorithm::asset::handle_of(token_asset) + " bridge has custodial token balance");
+					}
 				}
 
-				auto status = context->apply_validator_participation(asset, context->receipt.from, type, 0, stakes);
+				auto status = context->apply_validator_attestation(asset, context->receipt.from, type, { { algorithm::asset::native(), setup.stake } });
 				if (!status)
 					return status.error();
 			}
 
-			for (auto& [asset, stake] : attestation_stakes)
+			if (participation)
 			{
-				if (!algorithm::asset::token_of(asset).empty())
-					continue;
+				auto status = context->apply_validator_participation(context->receipt.from, participation->is_nan() ? ledger::transaction_context::stake_type::unlock : ledger::transaction_context::stake_type::lock, 0, { { algorithm::asset::native(), *participation } });
+				if (!status)
+					return status.error();
+			}
 
-				auto type = stake.is_nan() || stake.is_negative() ? ledger::transaction_context::stake_type::unlock : ledger::transaction_context::stake_type::lock;
-				auto bridge = context->get_bridge_policy(asset, context->receipt.from);
-				if (type == ledger::transaction_context::stake_type::unlock && bridge && (bridge->accepts_account_requests || bridge->accepts_withdrawal_requests))
-					return layer_exception(algorithm::asset::handle_of(asset) + " bridge is still active");
-
-				auto balance = context->get_bridge_balance(asset, context->receipt.from);
-				auto blockchain = algorithm::asset::blockchain_of(asset);
-				ordered_map<algorithm::asset_id, decimal> stakes;
-				for (auto& [token_asset, token_stake] : attestation_stakes)
-				{
-					if (algorithm::asset::blockchain_of(token_asset) != blockchain)
-						continue;
-
-					auto subtype = stake.is_nan() || stake.is_negative() ? ledger::transaction_context::stake_type::unlock : ledger::transaction_context::stake_type::lock;
-					if (type != subtype)
-						return layer_exception("token stake action mismatch");
-
-					stakes[token_asset] = token_stake;
-					if (type == ledger::transaction_context::stake_type::lock || !bridge || !balance)
-						continue;
-
-					if (algorithm::asset::is_aux(token_asset, true))
-					{
-						auto reward = context->get_bridge_reward_median(token_asset).or_else(states::bridge_reward(context->receipt.from, token_asset, nullptr));
-						if (balance->get_balance(token_asset) > reward.outgoing_fee)
-							return layer_exception(algorithm::asset::handle_of(token_asset) + " bridge has non-dust custodial balance (max: " + reward.outgoing_fee.to_string() + ")");
-					}
-					else if (balance->get_balance(token_asset).is_positive())
-						return layer_exception(algorithm::asset::handle_of(token_asset) + " bridge has custodial token balance");
-				}
-
-				auto status = context->apply_validator_attestation(asset, context->receipt.from, type, stakes);
+			if (production)
+			{
+				auto status = context->apply_validator_production(context->receipt.from, participation->is_nan() ? ledger::transaction_context::stake_type::unlock : ledger::transaction_context::stake_type::lock, { { algorithm::asset::native(), *production } });
 				if (!status)
 					return status.error();
 			}
@@ -1016,26 +993,137 @@ namespace tangent
 		bool validator_adjustment::store_body(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
+			stream->write_integer((uint8_t)attestations.size());
+			for (auto& [asset, setup] : attestations)
+			{
+				stream->write_integer(asset);
+				stream->write_decimal(setup.stake);
+				stream->write_boolean(!!setup.accepts_account_requests);
+				stream->write_boolean(!!setup.accepts_withdrawal_requests);
+				stream->write_boolean(!!setup.security_level);
+				stream->write_boolean(!!setup.incoming_fee);
+				stream->write_boolean(!!setup.outgoing_fee);
+				stream->write_boolean(!!setup.participation_threshold);
+				if (setup.accepts_account_requests)
+					stream->write_boolean(*setup.accepts_account_requests);
+				if (setup.accepts_withdrawal_requests)
+					stream->write_boolean(*setup.accepts_withdrawal_requests);
+				if (setup.security_level)
+					stream->write_integer(*setup.security_level);
+				if (setup.incoming_fee)
+					stream->write_decimal(*setup.incoming_fee);
+				if (setup.outgoing_fee)
+					stream->write_decimal(*setup.outgoing_fee);
+				if (setup.participation_threshold)
+					stream->write_decimal(*setup.participation_threshold);
+			}
+			stream->write_boolean(!!participation);
+			if (participation)
+				stream->write_decimal(*participation);
 			stream->write_boolean(!!production);
 			if (production)
 				stream->write_decimal(*production);
-
-			stream->write_integer((uint8_t)participation_stakes.size());
-			for (auto& [asset, stake] : participation_stakes)
-			{
-				stream->write_integer(asset);
-				stream->write_decimal(stake);
-			}
-			stream->write_integer((uint8_t)attestation_stakes.size());
-			for (auto& [asset, stake] : attestation_stakes)
-			{
-				stream->write_integer(asset);
-				stream->write_decimal(stake);
-			}
 			return true;
 		}
 		bool validator_adjustment::load_body(format::ro_stream& stream)
 		{
+			uint8_t attestations_size = 0;
+			if (!stream.read_integer(stream.read_type(), &attestations_size))
+				return false;
+
+			attestations.clear();
+			for (uint16_t i = 0; i < attestations_size; i++)
+			{
+				algorithm::asset_id asset;
+				if (!stream.read_integer(stream.read_type(), &asset))
+					return false;
+
+				attestation_setup setup;
+				if (!stream.read_decimal(stream.read_type(), &setup.stake))
+					return false;
+
+				bool has_accepts_account_requests;
+				if (!stream.read_boolean(stream.read_type(), &has_accepts_account_requests))
+					return false;
+
+				bool has_accepts_withdrawal_requests;
+				if (!stream.read_boolean(stream.read_type(), &has_accepts_withdrawal_requests))
+					return false;
+
+				bool has_security_level;
+				if (!stream.read_boolean(stream.read_type(), &has_security_level))
+					return false;
+
+				bool has_incoming_fee;
+				if (!stream.read_boolean(stream.read_type(), &has_incoming_fee))
+					return false;
+
+				bool has_outgoing_fee;
+				if (!stream.read_boolean(stream.read_type(), &has_outgoing_fee))
+					return false;
+
+				bool has_participation_threshold;
+				if (!stream.read_boolean(stream.read_type(), &has_participation_threshold))
+					return false;
+
+				if (has_accepts_account_requests)
+				{
+					setup.accepts_account_requests = true;
+					if (!stream.read_boolean(stream.read_type(), setup.accepts_account_requests.address()))
+						return false;
+				}
+
+				if (has_accepts_withdrawal_requests)
+				{
+					setup.accepts_withdrawal_requests = true;
+					if (!stream.read_boolean(stream.read_type(), setup.accepts_withdrawal_requests.address()))
+						return false;
+				}
+
+				if (has_security_level)
+				{
+					setup.security_level = protocol::now().policy.participation.std_per_account;
+					if (!stream.read_integer(stream.read_type(), setup.security_level.address()))
+						return false;
+				}
+
+				if (has_incoming_fee)
+				{
+					setup.incoming_fee = decimal::zero();
+					if (!stream.read_decimal(stream.read_type(), setup.incoming_fee.address()))
+						return false;
+				}
+
+				if (has_outgoing_fee)
+				{
+					setup.outgoing_fee = decimal::zero();
+					if (!stream.read_decimal(stream.read_type(), setup.outgoing_fee.address()))
+						return false;
+				}
+
+				if (has_participation_threshold)
+				{
+					setup.participation_threshold = decimal::zero();
+					if (!stream.read_decimal(stream.read_type(), setup.participation_threshold.address()))
+						return false;
+				}
+
+				attestations[asset] = std::move(setup);
+			}
+
+			bool has_participation;
+			if (!stream.read_boolean(stream.read_type(), &has_participation))
+				return false;
+
+			if (has_participation)
+			{
+				participation = decimal::nan();
+				if (!stream.read_decimal(stream.read_type(), participation.address()))
+					return false;
+			}
+			else
+				participation = optional::none;
+
 			bool has_production;
 			if (!stream.read_boolean(stream.read_type(), &has_production))
 				return false;
@@ -1048,42 +1136,6 @@ namespace tangent
 			}
 			else
 				production = optional::none;
-
-			uint8_t participation_stakes_size = 0;
-			if (!stream.read_integer(stream.read_type(), &participation_stakes_size))
-				return false;
-
-			participation_stakes.clear();
-			for (uint16_t i = 0; i < participation_stakes_size; i++)
-			{
-				algorithm::asset_id asset;
-				if (!stream.read_integer(stream.read_type(), &asset))
-					return false;
-
-				decimal stake;
-				if (!stream.read_decimal(stream.read_type(), &stake))
-					return false;
-
-				participation_stakes[asset] = stake;
-			}
-
-			uint8_t attestation_stakes_size = 0;
-			if (!stream.read_integer(stream.read_type(), &attestation_stakes_size))
-				return false;
-
-			attestation_stakes.clear();
-			for (uint16_t i = 0; i < attestation_stakes_size; i++)
-			{
-				algorithm::asset_id asset;
-				if (!stream.read_integer(stream.read_type(), &asset))
-					return false;
-
-				decimal stake;
-				if (!stream.read_decimal(stream.read_type(), &stake))
-					return false;
-
-				attestation_stakes[asset] = stake;
-			}
 
 			return true;
 		}
@@ -1099,63 +1151,67 @@ namespace tangent
 		{
 			production = optional::none;
 		}
-		void validator_adjustment::allocate_participation_stake(const algorithm::asset_id& asset, const decimal& value)
+		void validator_adjustment::allocate_participation_stake(const decimal& value)
 		{
-			if (value >= 0.0)
-				participation_stakes[asset] = value;
+			participation = value;
 		}
-		void validator_adjustment::deallocate_participation_stake(const algorithm::asset_id& asset, const decimal& value)
+		void validator_adjustment::disable_participation()
 		{
-			if (value.is_positive())
-				participation_stakes[asset] = -value;
+			participation = decimal::nan();
 		}
-		void validator_adjustment::disable_participation(const algorithm::asset_id& asset)
+		void validator_adjustment::standby_on_participation()
 		{
-			participation_stakes[asset] = decimal::nan();
-		}
-		void validator_adjustment::standby_on_participation(const algorithm::asset_id& asset)
-		{
-			participation_stakes.erase(asset);
+			participation = optional::none;
 		}
 		void validator_adjustment::allocate_attestation_stake(const algorithm::asset_id& asset, const decimal& value)
 		{
-			if (value >= 0.0)
-				attestation_stakes[asset] = value;
+			attestations[asset].stake = value;
 		}
-		void validator_adjustment::deallocate_attestation_stake(const algorithm::asset_id& asset, const decimal& value)
+		void validator_adjustment::configure_attestation_security(const algorithm::asset_id& asset, uint8_t new_security_level, const decimal& new_participation_threshold, bool new_accepts_account_requests, bool new_accepts_withdrawal_requests)
 		{
-			if (value.is_positive())
-				attestation_stakes[asset] = -value;
+			auto& setup = attestations[asset];
+			setup.security_level = new_security_level;
+			setup.participation_threshold = new_participation_threshold;
+			setup.accepts_account_requests = new_accepts_account_requests;
+			setup.accepts_withdrawal_requests = new_accepts_withdrawal_requests;
+		}
+		void validator_adjustment::configure_attestation_reward(const algorithm::asset_id& asset, const decimal& new_incoming_fee, const decimal& new_outgoing_fee)
+		{
+			auto& setup = attestations[asset];
+			setup.incoming_fee = new_incoming_fee;
+			setup.outgoing_fee = new_outgoing_fee;
 		}
 		void validator_adjustment::disable_attestation(const algorithm::asset_id& asset)
 		{
-			attestation_stakes[asset] = decimal::nan();
+			attestations[asset].stake = decimal::nan();
 		}
 		void validator_adjustment::standby_on_attestation(const algorithm::asset_id& asset)
 		{
-			attestation_stakes.erase(asset);
+			attestations.erase(asset);
 		}
 		uptr<schema> validator_adjustment::as_schema() const
 		{
 			schema* data = ledger::transaction::as_schema().reset();
+			if (!attestations.empty())
+			{
+				auto* attestations_data = data->set("bridge_attestations", var::set::array());
+				for (auto& [asset, setup] : attestations)
+				{
+					auto* attestation_data = attestations_data->push(var::set::object());
+					attestation_data->set("asset", algorithm::asset::serialize(asset));
+					attestation_data->set("accepts_account_requests", setup.accepts_account_requests ? var::boolean(*setup.accepts_account_requests) : var::null());
+					attestation_data->set("accepts_withdrawal_requests", setup.accepts_withdrawal_requests ? var::boolean(*setup.accepts_withdrawal_requests) : var::null());
+					attestation_data->set("security_level", setup.security_level ? var::integer(*setup.security_level) : var::null());
+					attestation_data->set("incoming_fee", setup.incoming_fee ? var::decimal(*setup.incoming_fee) : var::null());
+					attestation_data->set("outgoing_fee", setup.outgoing_fee ? var::decimal(*setup.outgoing_fee) : var::null());
+					attestation_data->set("participation_threshold", setup.participation_threshold ? var::decimal(*setup.participation_threshold) : var::null());
+					attestation_data->set("stake", var::decimal(setup.stake));
+				}
+			}
+			if (participation)
+				data->set("bridge_participation", participation->is_zero() || participation->is_positive() ? var::decimal(*participation) : var::boolean(false));
 			if (production)
 				data->set("block_production", production->is_zero() || production->is_positive() ? var::decimal(*production) : var::boolean(false));
-
-			auto* participation_stakes_data = data->set("participation_stakes", var::set::array());
-			for (auto& [asset, stake] : participation_stakes)
-			{
-				auto* stake_data = participation_stakes_data->push(var::set::object());
-				stake_data->set("asset", algorithm::asset::serialize(asset));
-				stake_data->set("stake", var::decimal(stake));
-			}
-
-			auto* attestation_stakes_data = data->set("attestation_stakes", var::set::array());
-			for (auto& [asset, stake] : attestation_stakes)
-			{
-				auto* stake_data = attestation_stakes_data->push(var::set::object());
-				stake_data->set("asset", algorithm::asset::serialize(asset));
-				stake_data->set("stake", var::decimal(stake));
-			}
 			return data;
 		}
 		uint32_t validator_adjustment::as_type() const
@@ -1174,6 +1230,552 @@ namespace tangent
 		std::string_view validator_adjustment::as_instance_typename()
 		{
 			return "validator_adjustment";
+		}
+
+		expects_lr<void> bridge_attestation::validate(uint64_t block_number) const
+		{
+			if (!algorithm::asset::token_of(asset).empty())
+				return layer_exception("invalid asset");
+
+			if (!proof.is_valid())
+				return layer_exception("invalid proof");
+
+			if (!proof.block_id)
+				return layer_exception("transaction has no block reference");
+
+			auto chain = oracle::server_node::get()->get_chainparams(asset);
+			if (!chain)
+				return layer_exception("invalid operation");
+
+			auto blockchain = algorithm::asset::blockchain_of(asset);
+			if (!proof.is_valid())
+				return layer_exception("invalid proof data");
+
+			for (auto& [hash, input] : proof.inputs)
+			{
+				if (input.is_account() && algorithm::asset::blockchain_of(input.get_asset(asset)) != blockchain)
+					return layer_exception("proof input asset not valid");
+			}
+
+			for (auto& [hash, output] : proof.outputs)
+			{
+				if (output.is_account() && algorithm::asset::blockchain_of(output.get_asset(asset)) != blockchain)
+					return layer_exception("proof output asset not valid");
+			}
+
+			ordered_set<algorithm::pubkeyhash_t> attesters;
+			for (auto& [commitment_hash, signatures] : commitments)
+			{
+				if (!commitment_hash)
+					return layer_exception("invalid commitment hash");
+
+				for (auto& signature : signatures)
+				{
+					algorithm::pubkeyhash_t attester;
+					if (!algorithm::signing::recover_hash(commitment_hash, attester, signature))
+						return layer_exception("invalid commitment signature");
+					else if (attesters.find(attester) != attesters.end())
+						return layer_exception("duplicate commitment attester");
+
+					attesters.insert(attester);
+				}
+			}
+
+			return ledger::commitment::validate(block_number);
+		}
+		expects_lr<void> bridge_attestation::execute(ledger::transaction_context* context) const
+		{
+			auto validation = commitment::execute(context);
+			if (!validation)
+				return validation.error();
+
+			auto* chain = oracle::server_node::get()->get_chainparams(asset);
+			if (!chain)
+				return layer_exception("invalid chain");
+
+			auto collision = context->get_witness_transaction(asset, proof.transaction_id);
+			if (collision)
+				return layer_exception("proof " + proof.transaction_id + " finalized");
+
+			uint256_t best_commitment_hash = 0;
+			ordered_map<uint256_t, ordered_set<algorithm::pubkeyhash_t>> attesters;
+			auto verification = verify_proof_commitment(context, asset, commitments, best_commitment_hash, attesters);
+			if (!verification)
+				return verification;
+			else if (best_commitment_hash != proof.as_hash())
+				return layer_exception("provided proof is not the chosen one");
+
+			transition operations;
+			ordered_set<algorithm::pubkeyhash_t> bridges, routers;
+			auto rebalance_weights = [&](const oracle::coin_utxo& inout, bool accountable, int8_t sign)
+			{
+				if (inout.value.is_positive())
+				{
+					if (accountable)
+						operations.weights[inout.get_asset(asset)].accountable += sign >= 0 ? inout.value : -inout.value;
+					else
+						operations.weights[inout.get_asset(asset)].unaccountable += sign >= 0 ? inout.value : -inout.value;
+				}
+				for (auto& [hash, token] : inout.tokens)
+				{
+					if (accountable)
+						operations.weights[token.get_asset(asset)].accountable += sign >= 0 ? token.value : -token.value;
+					else
+						operations.weights[token.get_asset(asset)].unaccountable += sign >= 0 ? token.value : -token.value;
+				}
+			};
+			for (auto& [hash, input] : proof.inputs)
+			{
+				auto source = context->get_witness_account(asset, input.link.address, 0);
+				if (source && source->is_bridge_account())
+				{
+					auto from_bridge = algorithm::pubkeyhash_t(source->manager);
+					auto& bridge = operations.bridges[from_bridge];
+					rebalance_weights(input, true, -1);
+					if (input.value.is_positive())
+						bridge.transfers[input.get_asset(asset)].supply -= input.value;
+					for (auto& [token_hash, token] : input.tokens)
+						bridge.transfers[token.get_asset(asset)].supply -= token.value;
+
+					auto account = context->get_bridge_account(asset, from_bridge.data, source->owner);
+					if (account)
+						bridge.participants.insert(account->group.begin(), account->group.end());
+					bridges.insert(from_bridge);
+				}
+				else
+				{
+					rebalance_weights(input, !bridges.empty(), -1);
+					if (source && source->is_routing_account())
+						routers.insert(algorithm::pubkeyhash_t(source->owner));
+				}
+			}
+
+			if (!bridges.empty())
+			{
+				for (auto& [asset, weight] : operations.weights)
+				{
+					weight.accountable += weight.unaccountable;
+					weight.unaccountable = decimal::zero();
+				}
+			}
+
+			for (auto& [hash, output] : proof.outputs)
+			{
+				auto source = context->get_witness_account(asset, output.link.address, 0);
+				if (source && source->is_bridge_account())
+				{
+					auto to_bridge = algorithm::pubkeyhash_t(source->manager);
+					auto& bridge = operations.bridges[to_bridge];
+					auto amounts = ordered_map<algorithm::asset_id, decimal>();
+					rebalance_weights(output, true, 1);
+					if (output.value.is_positive())
+						amounts[output.get_asset(asset)] = output.value;
+					for (auto& [token_hash, token] : output.tokens)
+						amounts[token.get_asset(asset)] = token.value;
+
+					auto account = context->get_bridge_account(asset, to_bridge.data, source->owner);
+					if (account)
+						bridge.participants.insert(account->group.begin(), account->group.end());
+
+					auto to_account = routers.empty() ? algorithm::pubkeyhash_t(source->owner) : *routers.begin();
+					for (auto& [token_asset, token_value] : amounts)
+					{
+						auto& transfer = bridge.transfers[token_asset];
+						transfer.supply += token_value;
+						if (token_value.is_positive() && bridges.empty())
+						{
+							auto& balance = operations.transfers[to_account][token_asset];
+							balance.supply += token_value;
+							if (!to_bridge.equals(to_account.data))
+							{
+								auto reward = context->get_verified_validator_attestation(token_asset, to_bridge.data);
+								if (reward && reward->incoming_fee.is_positive())
+								{
+									balance.supply -= reward->incoming_fee;
+									transfer.incoming_fee += reward->incoming_fee;
+								}
+							}
+						}
+					}
+				}
+				else
+				{
+					rebalance_weights(output, !bridges.empty(), 1);
+					if (!source || !source->is_routing_account())
+						continue;
+
+					auto from_account = routers.empty() ? algorithm::pubkeyhash_t(source->owner) : *routers.begin();
+					auto& from_transfers = operations.transfers[from_account];
+					auto amounts = ordered_map<algorithm::asset_id, decimal>();
+					if (output.value.is_positive())
+						amounts[output.get_asset(asset)] = output.value;
+					for (auto& [token_hash, token] : output.tokens)
+						amounts[token.get_asset(asset)] = token.value;
+
+					for (auto& [token_asset, token_value] : amounts)
+					{
+						auto& balance = from_transfers[token_asset];
+						balance.supply -= token_value;
+						balance.reserve -= token_value;
+						if (token_value.is_positive())
+						{
+							for (auto from_bridge = bridges.begin(); from_bridge != bridges.end(); from_bridge++)
+							{
+								auto reward = context->get_verified_validator_attestation(asset, from_bridge->data);
+								auto outgoing_fee = reward ? algorithm::arithmetic::divide(reward->outgoing_fee, bridges.size()) : decimal::zero();
+								if (outgoing_fee.is_positive())
+								{
+									auto& base_transfer = operations.bridges[*from_bridge].transfers[asset];
+									auto& base_balance = from_transfers[asset];
+									base_balance.supply -= outgoing_fee;
+									base_balance.reserve -= outgoing_fee;
+									base_transfer.outgoing_fee += outgoing_fee;
+								}
+							}
+						}
+					}
+				}
+			}
+
+			if (operations.transfers.empty() && operations.bridges.empty())
+				return layer_exception("invalid transaction");
+
+			for (auto& [asset, weight] : operations.weights)
+			{
+				decimal fee = weight.accountable + weight.unaccountable;
+				weight.accountable = math0::abs(std::min(decimal::zero(), weight.accountable - std::min(decimal::zero(), fee)));
+			}
+
+			auto& succeeding_attesters = attesters[best_commitment_hash];
+			auto failing_attesters = ordered_set<algorithm::pubkeyhash_t>();
+			for (auto& [commitment_hash, group] : attesters)
+			{
+				if (commitment_hash != best_commitment_hash)
+					failing_attesters.insert(group.begin(), group.end());
+			}
+
+			for (auto& [owner, transfers] : operations.transfers)
+			{
+				for (auto& [transfer_asset, transfer] : transfers)
+				{
+					if (transfer.supply.is_zero_or_nan() && transfer.reserve.is_zero_or_nan())
+						continue;
+
+					auto supply_delta = transfer.supply.is_nan() ? decimal::zero() : transfer.supply;
+					auto reserve_delta = transfer.reserve.is_nan() ? decimal::zero() : transfer.reserve;
+					if (supply_delta.is_negative() || reserve_delta.is_negative())
+					{
+						auto balance = context->get_account_balance(transfer_asset, owner.data);
+						auto supply = (balance ? balance->supply : decimal::zero()) + supply_delta;
+						auto reserve = (balance ? balance->reserve : decimal::zero()) + reserve_delta;
+						operations.weights[transfer_asset].accountable += std::min(decimal::zero(), std::min(supply, reserve));
+						if (supply.is_negative())
+							supply_delta = (balance ? -balance->supply : decimal::zero());
+						if (reserve.is_negative())
+							reserve_delta = (balance ? -balance->reserve : decimal::zero());
+					}
+
+					if (!supply_delta.is_zero() || !reserve_delta.is_zero())
+					{
+						auto delta_transfer = context->apply_transfer(transfer_asset, owner.data, supply_delta, reserve_delta);
+						if (!delta_transfer)
+							return delta_transfer.error();
+					}
+				}
+			}
+
+			for (auto& [owner, batch] : operations.bridges)
+			{
+				for (auto& [transfer_asset, transfer] : batch.transfers)
+				{
+					auto& penalty = operations.weights[transfer_asset].accountable;
+					auto consume_penalty = [&penalty](const decimal& delta) -> decimal
+					{
+						auto adjustment = std::max(decimal::zero(), penalty - delta);
+						auto result = std::max(decimal::zero(), delta - penalty);
+						penalty = adjustment;
+						return result;
+					};
+					penalty = math0::abs(penalty);
+					if (transfer.supply.is_negative())
+					{
+						auto balance = context->get_bridge_balance(transfer_asset, owner.data);
+						auto supply = balance ? -balance->get_balance(transfer_asset) : decimal::zero();
+						if (supply > transfer.supply)
+						{
+							consume_penalty(transfer.supply - supply);
+							transfer.supply = supply;
+						}
+					}
+
+					if (!transfer.supply.is_zero())
+					{
+						auto bridge = context->apply_bridge_balance(transfer_asset, owner.data, { { transfer_asset, transfer.supply } });
+						if (!bridge)
+							return bridge.error();
+					}
+
+					auto total_fee = consume_penalty(transfer.incoming_fee + transfer.outgoing_fee);
+					auto attestation_cut = succeeding_attesters.empty() ? decimal::zero() : decimal(protocol::now().policy.attestation.fee_rate);
+					auto participation_cut = batch.participants.empty() ? decimal::zero() : decimal(protocol::now().policy.participation.fee_rate);
+					auto bridge_fee = total_fee * (1 - attestation_cut - participation_cut);
+					auto attestation_fee = !succeeding_attesters.empty() ? algorithm::arithmetic::divide(total_fee * attestation_cut, succeeding_attesters.size()) : decimal::zero();
+					auto participation_fee = !batch.participants.empty() ? algorithm::arithmetic::divide(total_fee * participation_cut, batch.participants.size()) : decimal::zero();
+					if (attestation_fee.is_positive())
+					{
+						for (auto& failing_attester : failing_attesters)
+						{
+							auto prev_attestation = context->get_verified_validator_attestation(transfer_asset, failing_attester.data);
+							if (!prev_attestation)
+								continue;
+
+							auto next_attestation = context->apply_validator_attestation(transfer_asset, failing_attester.data, ledger::transaction_context::stake_type::lock, { { transfer_asset, -attestation_fee } });
+							if (!next_attestation)
+								return next_attestation.error();
+
+							auto& prev_value = prev_attestation->rewards[transfer_asset];
+							auto& next_value = next_attestation->rewards[transfer_asset];
+							prev_value = prev_value.is_nan() ? decimal::zero() : prev_value;
+							next_value = next_value.is_nan() ? decimal::zero() : next_value;
+
+							auto compensation_adjustment = std::max(decimal::zero(), prev_value - next_value);
+							if (compensation_adjustment.is_positive())
+								bridge_fee += consume_penalty(compensation_adjustment);
+						}
+
+						for (auto& succeeding_attester : succeeding_attesters)
+						{
+							auto attestation = context->apply_validator_attestation(transfer_asset, succeeding_attester, ledger::transaction_context::stake_type::reward_or_penalty, { { transfer_asset, attestation_fee } });
+							if (!attestation)
+								return attestation.error();
+						}
+					}
+
+					if (penalty.is_positive() || participation_fee.is_positive())
+					{
+						auto individual_penalty = -algorithm::arithmetic::divide(penalty, batch.participants.size());
+						for (auto& participant : batch.participants)
+						{
+							auto participation = context->apply_validator_participation(participant.data, ledger::transaction_context::stake_type::reward_or_penalty, 0, { { transfer_asset, individual_penalty.is_negative() ? individual_penalty : participation_fee } });
+							if (!participation)
+								return participation.error();
+						}
+					}
+
+					if (bridge_fee.is_positive())
+					{
+						auto attestation = context->apply_validator_attestation(transfer_asset, owner.data, ledger::transaction_context::stake_type::reward_or_penalty, { { transfer_asset, bridge_fee } });
+						if (!attestation)
+							return attestation.error();
+					}
+				}
+			}
+
+			auto finalization = context->apply_witness_transaction(asset, proof.transaction_id);
+			if (!finalization)
+				return finalization.error();
+
+			return context->emit_witness(asset, proof.block_id);
+		}
+		bool bridge_attestation::store_body(format::wo_stream* stream) const
+		{
+			if (!proof.store_payload(stream))
+				return false;
+
+			stream->write_integer((uint16_t)commitments.size());
+			for (auto& [commitment_hash, signatures] : commitments)
+			{
+				stream->write_integer(commitment_hash);
+				stream->write_integer((uint16_t)signatures.size());
+				for (auto& signature : signatures)
+					stream->write_string(signature.optimized_view());
+			}
+			return true;
+		}
+		bool bridge_attestation::load_body(format::ro_stream& stream)
+		{
+			if (!proof.load_payload(stream))
+				return false;
+
+			uint16_t commitments_size;
+			if (!stream.read_integer(stream.read_type(), &commitments_size))
+				return false;
+
+			commitments.clear();
+			for (uint16_t i = 0; i < commitments_size; i++)
+			{
+				uint256_t commitment_hash;
+				if (!stream.read_integer(stream.read_type(), &commitment_hash))
+					return false;
+
+				uint16_t signatures_size;
+				if (!stream.read_integer(stream.read_type(), &signatures_size))
+					return false;
+
+				auto& signatures = commitments[commitment_hash];
+				for (uint16_t j = 0; j < signatures_size; j++)
+				{
+					algorithm::hashsig_t commitment; string signature_assembly;
+					if (!stream.read_string(stream.read_type(), &signature_assembly) || !algorithm::encoding::decode_bytes(signature_assembly, commitment.data, sizeof(commitment.data)))
+						return false;
+
+					signatures.insert(commitment);
+				}
+			}
+
+			return true;
+		}
+		bool bridge_attestation::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
+		{
+			for (auto& event : receipt.find_events<states::account_balance>())
+			{
+				if (event->size() >= 2 && event->at(1).as_string().size() == sizeof(algorithm::pubkeyhash_t))
+					parties.insert(algorithm::pubkeyhash_t(event->at(1).as_blob()));
+			}
+			for (auto& event : receipt.find_events<states::bridge_balance>())
+			{
+				if (event->size() >= 2 && event->at(1).as_string().size() == sizeof(algorithm::pubkeyhash_t))
+					parties.insert(algorithm::pubkeyhash_t(event->at(1).as_blob()));
+			}
+			return true;
+		}
+		void bridge_attestation::set_finalized_proof(uint64_t block_id, const std::string_view& transaction_id, const vector<oracle::value_transfer>& inputs, const vector<oracle::value_transfer>& outputs)
+		{
+			auto* chain = oracle::server_node::get()->get_chainparams(asset);
+			oracle::computed_transaction witness;
+			witness.transaction_id = transaction_id;
+			witness.block_id = block_id;
+			for (auto& input : inputs)
+			{
+				auto utxo = oracle::coin_utxo(oracle::wallet_link::from_address(input.address), { { input.asset, input.value } });
+				witness.inputs[utxo.as_hash()] = std::move(utxo);
+			}
+			for (auto& output : outputs)
+			{
+				auto utxo = oracle::coin_utxo(oracle::wallet_link::from_address(output.address), { { output.asset, output.value } });
+				witness.outputs[utxo.as_hash()] = std::move(utxo);
+			}
+			set_computed_proof(std::move(witness), { });
+		}
+		void bridge_attestation::set_computed_proof(oracle::computed_transaction&& new_proof, ordered_map<uint256_t, ordered_set<algorithm::hashsig_t>>&& new_commitments)
+		{
+			proof = std::move(new_proof);
+			commitments = std::move(new_commitments);
+		}
+		bool bridge_attestation::add_commitment(const algorithm::seckey_t& secret_key)
+		{
+			uint256_t commitment_hash;
+			algorithm::hashsig_t commitment_signature;
+			if (!commit_to_proof(proof, secret_key, commitment_hash, commitment_signature))
+				return false;
+
+			commitments[commitment_hash].insert(commitment_signature);
+			return true;
+		}
+		uptr<schema> bridge_attestation::as_schema() const
+		{
+			schema* data = ledger::commitment::as_schema().reset();
+			schema* commitments_data = data->set("commitments", var::set::object());
+			for (auto& [commitment_hash, signatures] : commitments)
+			{
+				auto signatures_data = commitments_data->set(algorithm::encoding::encode_0xhex256(commitment_hash), var::set::array());
+				for (auto& signature : signatures)
+					signatures_data->push(signature.empty() ? var::null() : var::string(format::util::encode_0xhex(signature.view())));
+			}
+			data->set("proof", proof.as_schema().reset());
+			return data;
+		}
+		uint32_t bridge_attestation::as_type() const
+		{
+			return as_instance_type();
+		}
+		std::string_view bridge_attestation::as_typename() const
+		{
+			return as_instance_typename();
+		}
+		uint32_t bridge_attestation::as_instance_type()
+		{
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
+		}
+		std::string_view bridge_attestation::as_instance_typename()
+		{
+			return "bridge_attestation";
+		}
+		expects_lr<void> bridge_attestation::verify_proof_commitment(ledger::transaction_context* context, const algorithm::asset_id& asset, const ordered_map<uint256_t, ordered_set<algorithm::hashsig_t>>& commitments, uint256_t& best_commitment_hash, ordered_map<uint256_t, ordered_set<algorithm::pubkeyhash_t>>& attesters)
+		{
+			ordered_set<algorithm::pubkeyhash_t> duplicates;
+			best_commitment_hash = 0;
+			attesters.clear();
+
+			size_t best_commitment_size = 0;
+			decimal best_commitment_stake = -1;
+			for (auto& [commitment_hash, signatures] : commitments)
+			{
+				if (!commitment_hash)
+					return layer_exception("invalid commitment hash");
+
+				for (auto& signature : signatures)
+				{
+					algorithm::pubkeyhash_t attester;
+					if (!algorithm::signing::recover_hash(commitment_hash, attester, signature))
+						return layer_exception("invalid commitment signature");
+					else if (duplicates.find(attester) != duplicates.end())
+						return layer_exception("duplicate commitment attester");
+
+					attesters[commitment_hash].insert(attester);
+					duplicates.insert(attester);
+				}
+
+				size_t commitment_size = 0;
+				decimal commitment_stake = decimal::zero();
+				for (auto& attester : attesters[commitment_hash])
+				{
+					auto attestation = context->get_verified_validator_attestation(asset, attester);
+					if (attestation)
+					{
+						commitment_stake += attestation->stake;
+						++commitment_size;
+					}
+				}
+
+				if (commitment_stake > best_commitment_stake)
+				{
+					best_commitment_hash = commitment_hash;
+					best_commitment_stake = commitment_stake;
+					best_commitment_size = commitment_size;
+				}
+			}
+
+			if (!best_commitment_hash || !best_commitment_size || best_commitment_stake.is_negative())
+				return layer_exception("proof requires more attestations");
+
+			auto& params = protocol::now();
+			auto best_attesters = context->calculate_attesters(asset, params.policy.attestation.max_per_transaction);
+			if (!best_attesters)
+				return best_attesters.error();
+
+			size_t global_commitment_size = 0;
+			decimal global_commitment_stake = decimal::zero();
+			for (auto& attester : *best_attesters)
+			{
+				global_commitment_stake += attester.stake;
+				++global_commitment_size;
+			}
+
+			global_commitment_size = std::min(global_commitment_size, params.policy.attestation.max_per_transaction);
+			if (global_commitment_size > 0 && decimal(best_commitment_size) < decimal(global_commitment_size) * params.policy.attestation.consensus_threshold)
+				return layer_exception("proof requires more attestations");
+
+			if (best_commitment_stake < global_commitment_stake * params.policy.attestation.consensus_threshold)
+				return layer_exception("proof requires better attestations");
+
+			return expectation::met;
+		}
+		bool bridge_attestation::commit_to_proof(const oracle::computed_transaction& new_proof, const algorithm::seckey_t& secret_key, uint256_t& commitment_hash, algorithm::hashsig_t& signature)
+		{
+			commitment_hash = new_proof.as_hash();
+			return algorithm::signing::sign(commitment_hash, secret_key, signature);
 		}
 
 		expects_lr<void> bridge_account::validate(uint64_t block_number) const
@@ -1204,14 +1806,10 @@ namespace tangent
 			if (!params)
 				return layer_exception("invalid operation");
 
-			auto attestation_requirement = context->verify_validator_attestation(asset, manager);
-			if (!attestation_requirement)
-				return attestation_requirement.error();
-
-			auto bridge_policy = context->get_bridge_policy(asset, manager);
-			if (!bridge_policy)
-				return bridge_policy.error();
-			else if (!bridge_policy->accepts_account_requests)
+			auto policy = context->get_verified_validator_attestation(asset, manager);
+			if (!policy)
+				return policy.error();
+			else if (!policy->accepts_account_requests)
 				return layer_exception("bridge forbids account requests");
 
 			bool routing_address_application = false;
@@ -1244,7 +1842,7 @@ namespace tangent
 			{
 				case oracle::routing_policy::account:
 				{
-					if (!bridge_policy->accounts_under_management)
+					if (!policy->accounts_under_management)
 					{
 						if (context->receipt.from != manager)
 							return layer_exception("bridge account for manager required");
@@ -1257,7 +1855,7 @@ namespace tangent
 				}
 				case oracle::routing_policy::memo:
 				{
-					if (!bridge_policy->accounts_under_management)
+					if (!policy->accounts_under_management)
 					{
 						if (context->receipt.from != manager)
 							return layer_exception("bridge account for manager required");
@@ -1281,11 +1879,11 @@ namespace tangent
 						return addresses.error();
 
 					for (auto& address : *addresses)
-						address.second = oracle::address_util::encode_tag_address(address.second, to_string(bridge_policy->accounts_under_management));
+						address.second = oracle::address_util::encode_tag_address(address.second, to_string(policy->accounts_under_management));
 					
-					auto bridge_policy_status = context->apply_bridge_policy_account(asset, manager, 1);
-					if (!bridge_policy_status)
-						return bridge_policy_status.error();
+					auto policy_status = context->apply_validator_attestation_account(asset, manager, 1);
+					if (!policy_status)
+						return policy_status.error();
 
 					auto witness_account_status = context->apply_witness_bridge_account(asset, context->receipt.from, manager, *addresses);
 					if (!witness_account_status)
@@ -1300,7 +1898,7 @@ namespace tangent
 			}
 
 			ordered_set<algorithm::pubkeyhash_t> exclusion;
-			auto committee = context->calculate_participants(asset, exclusion, bridge_policy->security_level, bridge_policy->participation_threshold);
+			auto committee = context->calculate_participants(exclusion, policy->security_level, policy->participation_threshold);
 			if (!committee)
 				return committee.error();
 
@@ -1494,37 +2092,37 @@ namespace tangent
 			if (!addresses)
 				return addresses.error();
 
-			auto bridge_policy = context->get_bridge_policy(asset, setup_transaction->manager);
-			if (!bridge_policy)
-				return bridge_policy.error();
+			auto policy = context->get_verified_validator_attestation(asset, setup_transaction->manager);
+			if (!policy)
+				return policy.error();
 
 			switch (params->routing)
 			{
 				case oracle::routing_policy::account:
 				case oracle::routing_policy::memo:
 				{
-					if (bridge_policy->accounts_under_management > 0)
+					if (policy->accounts_under_management > 0)
 						return layer_exception("too many accounts for a bridge");
 
 					if (params->routing == oracle::routing_policy::account)
 						break;
 
 					for (auto& address : *addresses)
-						address.second = oracle::address_util::encode_tag_address(address.second, to_string(bridge_policy->accounts_under_management));
+						address.second = oracle::address_util::encode_tag_address(address.second, to_string(policy->accounts_under_management));
 					break;
 				}
 				default:
 					break;
 			}
 
-			auto bridge_policy_status = context->apply_bridge_policy_account(asset, setup_transaction->manager, 1);
-			if (!bridge_policy_status)
-				return bridge_policy_status.error();
+			auto policy_status = context->apply_validator_attestation_account(asset, setup_transaction->manager, 1);
+			if (!policy_status)
+				return policy_status.error();
 
 			auto group = setup_transaction->get_group(setup->receipt);
 			for (auto& participant : group)
 			{
-				auto status = context->apply_validator_participation(asset, participant.data, ledger::transaction_context::stake_type::lock, 1, { });
+				auto status = context->apply_validator_participation(participant.data, ledger::transaction_context::stake_type::lock, 1, { });
 				if (!status)
 					return status.error();
 			}
@@ -1649,8 +2247,8 @@ namespace tangent
 
 		expects_lr<void> bridge_withdrawal::validate(uint64_t block_number) const
 		{
-			if (from_manager == to_manager)
-				return layer_exception("invalid from/to manager");
+			if (manager.empty())
+				return layer_exception("invalid manager");
 
 			auto* chain = oracle::server_node::get()->get_chainparams(asset);
 			if (!chain)
@@ -1659,11 +2257,8 @@ namespace tangent
 			if (!algorithm::asset::is_aux(asset))
 				return layer_exception("not a valid withdrawal asset");
 
-			if (to_manager.empty())
+			if (!to.empty())
 			{
-				if (to.empty())
-					return layer_exception("invalid to");
-
 				if (!chain->supports_bulk_transfer && to.size() > 1)
 					return layer_exception("too many to addresses");
 
@@ -1679,8 +2274,6 @@ namespace tangent
 					addresses.insert(item.first);
 				}
 			}
-			else if (!to.empty())
-				return layer_exception("invalid to");		
 
 			return ledger::transaction::validate(block_number);
 		}
@@ -1690,43 +2283,57 @@ namespace tangent
 			if (!validation)
 				return validation.error();
 
-			auto attestation_requirement = context->verify_validator_attestation(asset, from_manager);
-			if (!attestation_requirement)
-				return attestation_requirement.error();
+			bool migration = to.empty() && context->receipt.from == manager;
+			if (to.empty() && !migration)
+				return layer_exception("must include at least one withdrawal destination");
 
-			auto bridge_policy = context->get_bridge_policy(asset, from_manager);
-			if (!bridge_policy)
-				return bridge_policy.error();
-			else if (!bridge_policy->accepts_withdrawal_requests)
+			auto policy = context->get_verified_validator_attestation(asset, manager);
+			if (!policy)
+				return policy.error();
+			else if (!policy->accepts_withdrawal_requests && !migration)
 				return layer_exception("bridge forbids withdrawal requests");
-			else if (only_if_not_in_queue && bridge_policy->queue_transaction_hash > 0)
+			else if (only_if_not_in_queue && policy->queue_transaction_hash > 0)
 				return layer_exception("bridge is in use - withdrawal will be queued");
 
 			auto token_value = get_token_value(context);
 			if (!token_value.is_positive())
 				return layer_exception("zero value withdrawal not allowed");
 
-			if (!to_manager.empty())
+			auto fee_asset = algorithm::asset::base_id_of(asset);
+			if (migration)
 			{
-				if (context->receipt.from != from_manager)
-					return layer_exception("invalid transaction origin");
+				auto bridge = context->get_bridge_balance(fee_asset, manager);
+				if (!bridge || !bridge->get_balance(asset).is_positive())
+					return layer_exception(algorithm::asset::handle_of(asset) + " balance is insufficient perform migration");
 
-				attestation_requirement = context->verify_validator_attestation(asset, to_manager);
-				if (!attestation_requirement)
-					return attestation_requirement.error();
+				if (asset != fee_asset)
+				{
+					for (auto& [token_asset, token_balance] : bridge->balances)
+					{
+						if (token_asset != fee_asset && token_balance.is_positive())
+							return layer_exception(algorithm::asset::handle_of(token_asset) + " balance must be migrated before " + algorithm::asset::handle_of(fee_asset));
+					}
+				}
 
-				auto account = find_receiving_account(context, asset, from_manager, to_manager);
+				auto next_policy = context->calculate_attester_for_migration(asset, manager);
+				if (!next_policy)
+					return next_policy.error();
+
+				auto account = find_receiving_account(context, asset, manager, next_policy->owner);
 				if (!account)
 					return account.error();
 
-				auto registration = context->apply_bridge_policy_queue(asset, from_manager, context->receipt.transaction_hash);
+				auto registration = context->apply_validator_attestation_queue(asset, manager, context->receipt.transaction_hash);
 				if (!registration)
 					return registration.error();
+
+				auto event = context->emit_event<bridge_withdrawal>({ format::variable(next_policy->owner.view()) });
+				if (!event)
+					return event;
 
 				return expectation::met;
 			}
 
-			auto fee_asset = algorithm::asset::base_id_of(asset);
 			auto fee_value = get_fee_value(context);
 			if (fee_asset != asset)
 			{
@@ -1734,7 +2341,7 @@ namespace tangent
 				if (!balance_requirement)
 					return balance_requirement.error();
 
-				auto bridge = context->get_bridge_balance(fee_asset, from_manager);
+				auto bridge = context->get_bridge_balance(fee_asset, manager);
 				if (!bridge || bridge->get_balance(fee_asset) < fee_value)
 					return layer_exception(algorithm::asset::handle_of(fee_asset) + " balance is insufficient to cover base withdrawal value (value: " + fee_value.to_string() + ")");
 			}
@@ -1745,7 +2352,7 @@ namespace tangent
 			if (!balance_requirement)
 				return balance_requirement;
 
-			auto bridge = context->get_bridge_balance(asset, from_manager);
+			auto bridge = context->get_bridge_balance(asset, manager);
 			if (!bridge || bridge->get_balance(asset) < token_value)
 				return layer_exception(algorithm::asset::handle_of(asset) + " balance is insufficient to cover token withdrawal value (value: " + token_value.to_string() + ")");
 
@@ -1771,7 +2378,7 @@ namespace tangent
 			if (!token_transfer)
 				return token_transfer.error();
 
-			auto registration = context->apply_bridge_policy_queue(asset, from_manager, context->receipt.transaction_hash);
+			auto registration = context->apply_validator_attestation_queue(asset, manager, context->receipt.transaction_hash);
 			if (!registration)
 				return registration.error();
 
@@ -1779,14 +2386,14 @@ namespace tangent
 		}
 		expects_promise_rt<void> bridge_withdrawal::dispatch(const ledger::transaction_context* context, ledger::dispatch_context* dispatcher) const
 		{
-			if (!dispatcher->is_running_on(from_manager))
+			if (!dispatcher->is_running_on(manager))
 				return expects_promise_rt<void>(expectation::met);
 
 			if (context->get_witness_event(context->receipt.transaction_hash))
 				return expects_promise_rt<void>(expectation::met);
 
-			auto bridge_policy = context->get_bridge_policy(asset, from_manager);
-			if (bridge_policy && bridge_policy->queue_transaction_hash != context->receipt.transaction_hash)
+			auto policy = context->get_verified_validator_attestation(asset, manager);
+			if (policy && policy->queue_transaction_hash != context->receipt.transaction_hash)
 				return expects_promise_rt<void>(remote_exception::retry());
 
 			return coasync<expects_rt<void>>([this, context, dispatcher]() mutable -> expects_promise_rt<void>
@@ -1803,9 +2410,13 @@ namespace tangent
 				};
 
 				vector<oracle::value_transfer> transfers;
-				if (!to_manager.empty())
+				auto new_manager = get_new_manager(context->receipt);
+				if (!new_manager.empty())
 				{
-					auto account = find_receiving_account(context, asset, from_manager, to_manager);
+					if (new_manager.empty() || new_manager == manager)
+						coreturn cancel(remote_exception(remote_exception("invalid manager to migrate to")));
+
+					auto account = find_receiving_account(context, asset, manager, new_manager);
 					if (!account)
 						coreturn cancel(remote_exception(std::move(account.error().message())));
 
@@ -1813,6 +2424,9 @@ namespace tangent
 				}
 				else
 				{
+					if (to.empty())
+						coreturn cancel(remote_exception(remote_exception("invalid withdrawal destination(s)")));
+
 					for (auto& item : to)
 						transfers.push_back(oracle::value_transfer(asset, item.first, decimal(item.second)));
 				}
@@ -1821,7 +2435,7 @@ namespace tangent
 				auto state = ledger::dispatch_context::signature_state();
 				if (chain->requires_transaction_expiration || !state.load_message_if_preferred(cache))
 				{
-					auto message = coawait(resolver::prepare_transaction(algorithm::asset::base_id_of(asset), oracle::wallet_link::from_owner(from_manager), transfers, get_fee_value(context)));
+					auto message = coawait(resolver::prepare_transaction(algorithm::asset::base_id_of(asset), oracle::wallet_link::from_owner(manager), transfers, get_fee_value(context)));
 					if (!message)
 						coreturn message.error().is_retry() || message.error().is_shutdown() ? expects_rt<void>(std::move(message.error())) : cancel(std::move(message.error()));
 					else if (message->inputs.size() > std::numeric_limits<uint8_t>::max())
@@ -1923,8 +2537,7 @@ namespace tangent
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_boolean(only_if_not_in_queue);
-			stream->write_string(from_manager.optimized_view());
-			stream->write_string(to_manager.optimized_view());
+			stream->write_string(manager.optimized_view());
 			stream->write_integer((uint16_t)to.size());
 			for (auto& item : to)
 			{
@@ -1938,12 +2551,8 @@ namespace tangent
 			if (!stream.read_boolean(stream.read_type(), &only_if_not_in_queue))
 				return false;
 
-			string from_manager_assembly;
-			if (!stream.read_string(stream.read_type(), &from_manager_assembly) || !algorithm::encoding::decode_bytes(from_manager_assembly, from_manager.data, sizeof(from_manager)))
-				return false;
-
-			string to_manager_assembly;
-			if (!stream.read_string(stream.read_type(), &to_manager_assembly) || !algorithm::encoding::decode_bytes(to_manager_assembly, to_manager.data, sizeof(to_manager)))
+			string manager_assembly;
+			if (!stream.read_string(stream.read_type(), &manager_assembly) || !algorithm::encoding::decode_bytes(manager_assembly, manager.data, sizeof(manager)))
 				return false;
 
 			uint16_t to_size;
@@ -1967,8 +2576,10 @@ namespace tangent
 		}
 		bool bridge_withdrawal::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
 		{
-			parties.insert(algorithm::pubkeyhash_t(from_manager));
-			parties.insert(algorithm::pubkeyhash_t(to_manager));
+			auto new_manager = get_new_manager(receipt);
+			parties.insert(algorithm::pubkeyhash_t(manager));
+			if (!new_manager.empty())
+				parties.insert(algorithm::pubkeyhash_t(new_manager));
 			return true;
 		}
 		void bridge_withdrawal::set_to(const std::string_view& address, const decimal& value)
@@ -1983,21 +2594,33 @@ namespace tangent
 			}
 			to.push_back(std::make_pair(string(address), decimal(value)));
 		}
-		void bridge_withdrawal::set_manager(const algorithm::pubkeyhash_t& new_from_manager, const algorithm::pubkeyhash_t& new_to_manager)
+		void bridge_withdrawal::set_manager(const algorithm::pubkeyhash_t& new_manager)
 		{
-			from_manager = new_from_manager;
-			to_manager = new_to_manager;
+			manager = new_manager;
 		}
 		bool bridge_withdrawal::is_dispatchable() const
 		{
 			return true;
 		}
+		algorithm::pubkeyhash_t bridge_withdrawal::get_new_manager(const ledger::receipt& receipt) const
+		{
+			algorithm::pubkeyhash_t result;
+			auto* event = receipt.find_event<bridge_withdrawal>();
+			if (event != nullptr)
+			{
+				if (!event->empty() && event->front().as_string().size() == sizeof(algorithm::pubkeyhash_t))
+					result = algorithm::pubkeyhash_t(event->front().as_blob());
+			}
+			if (result == manager)
+				result = algorithm::pubkeyhash_t();
+			return result;
+		}
 		decimal bridge_withdrawal::get_token_value(const ledger::transaction_context* context) const
 		{
 			decimal value = 0.0;
-			if (!to_manager.empty())
+			if (to.empty() && context->receipt.from == manager)
 			{
-				auto bridge = context->get_bridge_balance(asset, from_manager);
+				auto bridge = context->get_bridge_balance(asset, manager);
 				if (bridge)
 					value += bridge->get_balance(asset);
 			}
@@ -2010,7 +2633,7 @@ namespace tangent
 		}
 		decimal bridge_withdrawal::get_fee_value(const ledger::transaction_context* context) const
 		{
-			auto reward = context->get_bridge_reward(algorithm::asset::base_id_of(asset), from_manager);
+			auto reward = context->get_verified_validator_attestation(algorithm::asset::base_id_of(asset), manager);
 			if (!reward)
 				return decimal::zero();
 
@@ -2019,8 +2642,7 @@ namespace tangent
 		uptr<schema> bridge_withdrawal::as_schema() const
 		{
 			schema* data = ledger::transaction::as_schema().reset();
-			data->set("from_manager", algorithm::signing::serialize_address(from_manager));
-			data->set("to_manager", algorithm::signing::serialize_address(to_manager));
+			data->set("manager", algorithm::signing::serialize_address(manager));
 			data->set("only_if_not_in_queue", var::boolean(only_if_not_in_queue));
 			if (!to.empty())
 			{
@@ -2107,24 +2729,24 @@ namespace tangent
 				return layer_exception("parent transaction not found");
 
 			auto* parent_transaction = (bridge_withdrawal*)*parent->transaction;
-			if (parent_transaction->from_manager != context->receipt.from)
+			if (parent_transaction->manager != context->receipt.from)
 				return layer_exception("parent transaction not valid");
 
 			auto event = context->apply_witness_event(bridge_withdrawal_hash, context->receipt.transaction_hash);
 			if (!event)
 				return event.error();
 
-			auto finalization = context->apply_bridge_policy_queue(parent_transaction->asset, parent_transaction->from_manager, 0);
+			auto finalization = context->apply_validator_attestation_queue(parent_transaction->asset, parent_transaction->manager, 0);
 			if (!finalization)
 				return finalization.error();
 
-			auto confirmation = proof ? validate_finalized_proof(context, parent_transaction, *proof) : proof.error();
+			auto confirmation = proof ? validate_finalized_proof(context, parent_transaction, parent->receipt, *proof) : proof.error();
 			if (confirmation)
 				return expectation::met;
 			else if (proof)
 				return confirmation.error();
 
-			if (!parent_transaction->to_manager.empty())
+			if (!parent_transaction->get_new_manager(parent->receipt).empty())
 				return expectation::met;
 
 			auto fee_asset = algorithm::asset::base_id_of(parent_transaction->asset);
@@ -2228,7 +2850,7 @@ namespace tangent
 		{
 			return "bridge_withdrawal_finalization";
 		}
-		expects_lr<void> bridge_withdrawal_finalization::validate_possible_proof(const ledger::transaction_context* context, const bridge_withdrawal* transaction, const oracle::prepared_transaction& prepared)
+		expects_lr<void> bridge_withdrawal_finalization::validate_possible_proof(const ledger::transaction_context* context, const bridge_withdrawal* transaction, const ledger::receipt& receipt, const oracle::prepared_transaction& prepared)
 		{
 			if (prepared.as_status() == oracle::prepared_transaction::status::invalid)
 				return layer_exception("invalid prepared transaction");
@@ -2256,12 +2878,14 @@ namespace tangent
 				auto& value = required_output_value[transaction->asset];
 				value = value.is_nan() ? output_value : (value + output_value);
 			}
-			if (!transaction->to_manager.empty())
+
+			auto new_manager = transaction->get_new_manager(receipt);
+			if (!new_manager.empty())
 			{
 				if (!transaction->to.empty())
 					return layer_exception("migration/withdrawal confusion");
 
-				auto witness = bridge_withdrawal::find_receiving_account(context, transaction->asset, transaction->from_manager, transaction->to_manager);
+				auto witness = bridge_withdrawal::find_receiving_account(context, transaction->asset, transaction->manager, new_manager);
 				if (!witness)
 					return layer_exception("prepared transaction not possible");
 
@@ -2306,7 +2930,7 @@ namespace tangent
 					it = inout_witness.find(normalized_address);
 				}
 
-				if (!it->second.is_bridge_account() || !it->second.manager.equals(transaction->from_manager))
+				if (!it->second.is_bridge_account() || !it->second.manager.equals(transaction->manager))
 					return layer_exception("witness transaction input spends from unrelated address");
 
 				auto& value = input_value[input.utxo.get_asset(base_asset)];
@@ -2390,9 +3014,9 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<void> bridge_withdrawal_finalization::validate_finalized_proof(const ledger::transaction_context* context, const bridge_withdrawal* transaction, const oracle::finalized_transaction& finalized)
+		expects_lr<void> bridge_withdrawal_finalization::validate_finalized_proof(const ledger::transaction_context* context, const bridge_withdrawal* transaction, const ledger::receipt& receipt, const oracle::finalized_transaction& finalized)
 		{
-			auto validation = validate_possible_proof(context, transaction, finalized.prepared);
+			auto validation = validate_possible_proof(context, transaction, receipt, finalized.prepared);
 			if (!validation)
 				return validation;
 
@@ -2406,690 +3030,6 @@ namespace tangent
 				return finalization.error();
 
 			return expectation::met;
-		}
-
-		expects_lr<void> bridge_attestation::validate(uint64_t block_number) const
-		{
-			if (!algorithm::asset::token_of(asset).empty())
-				return layer_exception("invalid asset");
-
-			if (!proof.is_valid())
-				return layer_exception("invalid proof");
-
-			if (!proof.block_id)
-				return layer_exception("transaction has no block reference");
-
-			auto chain = oracle::server_node::get()->get_chainparams(asset);
-			if (!chain)
-				return layer_exception("invalid operation");
-
-			auto blockchain = algorithm::asset::blockchain_of(asset);
-			if (!proof.is_valid())
-				return layer_exception("invalid proof data");
-
-			for (auto& [hash, input] : proof.inputs)
-			{
-				if (input.is_account() && algorithm::asset::blockchain_of(input.get_asset(asset)) != blockchain)
-					return layer_exception("proof input asset not valid");
-			}
-
-			for (auto& [hash, output] : proof.outputs)
-			{
-				if (output.is_account() && algorithm::asset::blockchain_of(output.get_asset(asset)) != blockchain)
-					return layer_exception("proof output asset not valid");
-			}
-
-			ordered_set<algorithm::pubkeyhash_t> attesters;
-			for (auto& [commitment_hash, signatures] : commitments)
-			{
-				if (!commitment_hash)
-					return layer_exception("invalid commitment hash");
-
-				for (auto& signature : signatures)
-				{
-					algorithm::pubkeyhash_t attester;
-					if (!algorithm::signing::recover_hash(commitment_hash, attester, signature))
-						return layer_exception("invalid commitment signature");
-					else if (attesters.find(attester) != attesters.end())
-						return layer_exception("duplicate commitment attester");
-
-					attesters.insert(attester);
-				}
-			}
-
-			return ledger::commitment::validate(block_number);
-		}
-		expects_lr<void> bridge_attestation::execute(ledger::transaction_context* context) const
-		{
-			auto validation = commitment::execute(context);
-			if (!validation)
-				return validation.error();
-
-			auto* chain = oracle::server_node::get()->get_chainparams(asset);
-			if (!chain)
-				return layer_exception("invalid chain");
-
-			auto collision = context->get_witness_transaction(asset, proof.transaction_id);
-			if (collision)
-				return layer_exception("proof " + proof.transaction_id + " finalized");
-
-			uint256_t best_commitment_hash = 0;
-			ordered_map<uint256_t, ordered_set<algorithm::pubkeyhash_t>> attesters;
-			auto verification = verify_proof_commitment(context, asset, commitments, best_commitment_hash, attesters);
-			if (!verification)
-				return verification;
-			else if (best_commitment_hash != proof.as_hash())
-				return layer_exception("provided proof is not the chosen one");
-
-			transition operations;
-			ordered_set<algorithm::pubkeyhash_t> bridges, routers;
-			auto rebalance_weights = [&](const oracle::coin_utxo& inout, bool accountable, int8_t sign)
-			{
-				if (inout.value.is_positive())
-				{
-					if (accountable)
-						operations.weights[inout.get_asset(asset)].accountable += sign >= 0 ? inout.value : -inout.value;
-					else
-						operations.weights[inout.get_asset(asset)].unaccountable += sign >= 0 ? inout.value : -inout.value;
-				}
-				for (auto& [hash, token] : inout.tokens)
-				{
-					if (accountable)
-						operations.weights[token.get_asset(asset)].accountable += sign >= 0 ? token.value : -token.value;
-					else
-						operations.weights[token.get_asset(asset)].unaccountable += sign >= 0 ? token.value : -token.value;
-				}
-			};
-			for (auto& [hash, input] : proof.inputs)
-			{
-				auto source = context->get_witness_account(asset, input.link.address, 0);
-				if (source && source->is_bridge_account())
-				{
-					auto from_bridge = algorithm::pubkeyhash_t(source->manager);
-					auto& bridge = operations.bridges[from_bridge];
-					rebalance_weights(input, true, -1);
-					if (input.value.is_positive())
-						bridge.transfers[input.get_asset(asset)].supply -= input.value;
-					for (auto& [token_hash, token] : input.tokens)
-						bridge.transfers[token.get_asset(asset)].supply -= token.value;
-
-					auto account = context->get_bridge_account(asset, from_bridge.data, source->owner);
-					if (account)
-						bridge.participants.insert(account->group.begin(), account->group.end());
-					bridges.insert(from_bridge);
-				}
-				else
-				{
-					rebalance_weights(input, !bridges.empty(), -1);
-					if (source && source->is_routing_account())
-						routers.insert(algorithm::pubkeyhash_t(source->owner));
-				}
-			}
-
-			if (!bridges.empty())
-			{
-				for (auto& [asset, weight] : operations.weights)
-				{
-					weight.accountable += weight.unaccountable;
-					weight.unaccountable = decimal::zero();
-				}
-			}
-
-			for (auto& [hash, output] : proof.outputs)
-			{
-				auto source = context->get_witness_account(asset, output.link.address, 0);
-				if (source && source->is_bridge_account())
-				{
-					auto to_bridge = algorithm::pubkeyhash_t(source->manager);
-					auto& bridge = operations.bridges[to_bridge];
-					auto amounts = ordered_map<algorithm::asset_id, decimal>();
-					rebalance_weights(output, true, 1);
-					if (output.value.is_positive())
-						amounts[output.get_asset(asset)] = output.value;
-					for (auto& [token_hash, token] : output.tokens)
-						amounts[token.get_asset(asset)] = token.value;
-
-					auto account = context->get_bridge_account(asset, to_bridge.data, source->owner);
-					if (account)
-						bridge.participants.insert(account->group.begin(), account->group.end());
-
-					auto to_account = routers.empty() ? algorithm::pubkeyhash_t(source->owner) : *routers.begin();
-					for (auto& [token_asset, token_value] : amounts)
-					{
-						auto& transfer = bridge.transfers[token_asset];
-						transfer.supply += token_value;
-						if (token_value.is_positive() && bridges.empty())
-						{
-							auto& balance = operations.transfers[to_account][token_asset];
-							balance.supply += token_value;
-							if (!to_bridge.equals(to_account.data))
-							{
-								auto reward = context->get_bridge_reward(token_asset, to_bridge.data);
-								if (reward && reward->incoming_fee.is_positive())
-								{
-									balance.supply -= reward->incoming_fee;
-									transfer.incoming_fee += reward->incoming_fee;
-								}
-							}
-						}
-					}
-				}
-				else
-				{
-					rebalance_weights(output, !bridges.empty(), 1);
-					if (!source || !source->is_routing_account())
-						continue;
-
-					auto from_account = routers.empty() ? algorithm::pubkeyhash_t(source->owner) : *routers.begin();
-					auto& from_transfers = operations.transfers[from_account];
-					auto amounts = ordered_map<algorithm::asset_id, decimal>();
-					if (output.value.is_positive())
-						amounts[output.get_asset(asset)] = output.value;
-					for (auto& [token_hash, token] : output.tokens)
-						amounts[token.get_asset(asset)] = token.value;
-
-					for (auto& [token_asset, token_value] : amounts)
-					{
-						auto& balance = from_transfers[token_asset];
-						balance.supply -= token_value;
-						balance.reserve -= token_value;
-						if (token_value.is_positive())
-						{
-							for (auto from_bridge = bridges.begin(); from_bridge != bridges.end(); from_bridge++)
-							{
-								auto reward = context->get_bridge_reward(asset, from_bridge->data);
-								auto outgoing_fee = reward ? algorithm::arithmetic::divide(reward->outgoing_fee, bridges.size()) : decimal::zero();
-								if (outgoing_fee.is_positive())
-								{
-									auto& base_transfer = operations.bridges[*from_bridge].transfers[asset];
-									auto& base_balance = from_transfers[asset];
-									base_balance.supply -= outgoing_fee;
-									base_balance.reserve -= outgoing_fee;
-									base_transfer.outgoing_fee += outgoing_fee;
-								}
-							}
-						}
-					}
-				}
-			}
-
-			if (operations.transfers.empty() && operations.bridges.empty())
-				return layer_exception("invalid transaction");
-
-			for (auto& [asset, weight] : operations.weights)
-			{
-				decimal fee = weight.accountable + weight.unaccountable;
-				weight.accountable = math0::abs(std::min(decimal::zero(), weight.accountable - std::min(decimal::zero(), fee)));
-			}
-
-			auto& succeeding_attesters = attesters[best_commitment_hash];
-			auto failing_attesters = ordered_set<algorithm::pubkeyhash_t>();
-			for (auto& [commitment_hash, group] : attesters)
-			{
-				if (commitment_hash != best_commitment_hash)
-					failing_attesters.insert(group.begin(), group.end());
-			}
-
-			for (auto& [owner, transfers] : operations.transfers)
-			{
-				for (auto& [transfer_asset, transfer] : transfers)
-				{
-					if (transfer.supply.is_zero_or_nan() && transfer.reserve.is_zero_or_nan())
-						continue;
-
-					auto supply_delta = transfer.supply.is_nan() ? decimal::zero() : transfer.supply;
-					auto reserve_delta = transfer.reserve.is_nan() ? decimal::zero() : transfer.reserve;
-					if (supply_delta.is_negative() || reserve_delta.is_negative())
-					{
-						auto balance = context->get_account_balance(transfer_asset, owner.data);
-						auto supply = (balance ? balance->supply : decimal::zero()) + supply_delta;
-						auto reserve = (balance ? balance->reserve : decimal::zero()) + reserve_delta;
-						operations.weights[transfer_asset].accountable += std::min(decimal::zero(), std::min(supply, reserve));
-						if (supply.is_negative())
-							supply_delta = (balance ? -balance->supply : decimal::zero());
-						if (reserve.is_negative())
-							reserve_delta = (balance ? -balance->reserve : decimal::zero());
-					}
-
-					if (!supply_delta.is_zero() || !reserve_delta.is_zero())
-					{
-						auto delta_transfer = context->apply_transfer(transfer_asset, owner.data, supply_delta, reserve_delta);
-						if (!delta_transfer)
-							return delta_transfer.error();
-					}
-				}
-			}
-
-			for (auto& [owner, batch] : operations.bridges)
-			{
-				for (auto& [transfer_asset, transfer] : batch.transfers)
-				{
-					auto& penalty = operations.weights[transfer_asset].accountable;
-					auto consume_penalty = [&penalty](const decimal& delta) -> decimal
-					{
-						auto adjustment = std::max(decimal::zero(), penalty - delta);
-						auto result = std::max(decimal::zero(), delta - penalty);
-						penalty = adjustment;
-						return result;
-					};
-					penalty = math0::abs(penalty);
-					if (transfer.supply.is_negative())
-					{
-						auto balance = context->get_bridge_balance(transfer_asset, owner.data);
-						auto supply = balance ? -balance->get_balance(transfer_asset) : decimal::zero();
-						if (supply > transfer.supply)
-						{
-							consume_penalty(transfer.supply - supply);
-							transfer.supply = supply;
-						}
-					}
-
-					if (!transfer.supply.is_zero())
-					{
-						auto bridge = context->apply_bridge_balance(transfer_asset, owner.data, { { transfer_asset, transfer.supply } });
-						if (!bridge)
-							return bridge.error();
-					}
-
-					auto total_fee = consume_penalty(transfer.incoming_fee + transfer.outgoing_fee);
-					auto attestation_cut = succeeding_attesters.empty() ? decimal::zero() : decimal(protocol::now().policy.attestation_fee_rate);
-					auto participation_cut = batch.participants.empty() ? decimal::zero() : decimal(protocol::now().policy.participation_fee_rate);
-					auto bridge_fee = total_fee * (1 - attestation_cut - participation_cut);
-					auto attestation_fee = !succeeding_attesters.empty() ? algorithm::arithmetic::divide(total_fee * attestation_cut, succeeding_attesters.size()) : decimal::zero();
-					auto participation_fee = !batch.participants.empty() ? algorithm::arithmetic::divide(total_fee * participation_cut, batch.participants.size()) : decimal::zero();
-					if (attestation_fee.is_positive())
-					{
-						for (auto& failing_attester : failing_attesters)
-						{
-							auto prev_attestation = context->get_validator_attestation(transfer_asset, failing_attester.data);
-							if (!prev_attestation)
-								continue;
-
-							auto next_attestation = context->apply_validator_attestation(transfer_asset, failing_attester.data, ledger::transaction_context::stake_type::lock, { { transfer_asset, -attestation_fee } });
-							if (!next_attestation)
-								return next_attestation.error();
-
-							auto& prev_value = prev_attestation->stakes[transfer_asset];
-							auto& next_value = next_attestation->stakes[transfer_asset];
-							prev_value = prev_value.is_nan() ? decimal::zero() : prev_value;
-							next_value = next_value.is_nan() ? decimal::zero() : next_value;
-
-							auto compensation_adjustment = std::max(decimal::zero(), prev_value - next_value);
-							if (compensation_adjustment.is_positive())
-								bridge_fee += consume_penalty(compensation_adjustment);
-						}
-
-						for (auto& succeeding_attester : succeeding_attesters)
-						{
-							auto attestation = context->apply_validator_attestation(transfer_asset, succeeding_attester, ledger::transaction_context::stake_type::reward_or_penalty, { { transfer_asset, attestation_fee } });
-							if (!attestation)
-								return attestation.error();
-						}
-					}
-
-					if (penalty.is_positive() || participation_fee.is_positive())
-					{
-						auto individual_penalty = -algorithm::arithmetic::divide(penalty, batch.participants.size());
-						for (auto& participant : batch.participants)
-						{
-							auto participation = context->apply_validator_participation(transfer_asset, participant.data, ledger::transaction_context::stake_type::reward_or_penalty, 0, { { transfer_asset, individual_penalty.is_negative() ? individual_penalty : participation_fee } });
-							if (!participation)
-								return participation.error();
-						}
-					}
-
-					if (bridge_fee.is_positive())
-					{
-						auto attestation = context->apply_validator_attestation(transfer_asset, owner.data, ledger::transaction_context::stake_type::reward_or_penalty, { { transfer_asset, bridge_fee } });
-						if (!attestation)
-							return attestation.error();
-					}
-				}
-			}
-
-			auto finalization = context->apply_witness_transaction(asset, proof.transaction_id);
-			if (!finalization)
-				return finalization.error();
-
-			return context->emit_witness(asset, proof.block_id);
-		}
-		bool bridge_attestation::store_body(format::wo_stream* stream) const
-		{
-			if (!proof.store_payload(stream))
-				return false;
-
-			stream->write_integer((uint16_t)commitments.size());
-			for (auto& [commitment_hash, signatures] : commitments)
-			{
-				stream->write_integer(commitment_hash);
-				stream->write_integer((uint16_t)signatures.size());
-				for (auto& signature : signatures)
-					stream->write_string(signature.optimized_view());
-			}
-			return true;
-		}
-		bool bridge_attestation::load_body(format::ro_stream& stream)
-		{
-			if (!proof.load_payload(stream))
-				return false;
-
-			uint16_t commitments_size;
-			if (!stream.read_integer(stream.read_type(), &commitments_size))
-				return false;
-
-			commitments.clear();
-			for (uint16_t i = 0; i < commitments_size; i++)
-			{
-				uint256_t commitment_hash;
-				if (!stream.read_integer(stream.read_type(), &commitment_hash))
-					return false;
-
-				uint16_t signatures_size;
-				if (!stream.read_integer(stream.read_type(), &signatures_size))
-					return false;
-
-				auto& signatures = commitments[commitment_hash];
-				for (uint16_t j = 0; j < signatures_size; j++)
-				{
-					algorithm::hashsig_t commitment; string signature_assembly;
-					if (!stream.read_string(stream.read_type(), &signature_assembly) || !algorithm::encoding::decode_bytes(signature_assembly, commitment.data, sizeof(commitment.data)))
-						return false;
-
-					signatures.insert(commitment);
-				}
-			}
-
-			return true;
-		}
-		bool bridge_attestation::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
-		{
-			for (auto& event : receipt.find_events<states::account_balance>())
-			{
-				if (event->size() >= 2 && event->at(1).as_string().size() == sizeof(algorithm::pubkeyhash_t))
-					parties.insert(algorithm::pubkeyhash_t(event->at(1).as_blob()));
-			}
-			for (auto& event : receipt.find_events<states::bridge_balance>())
-			{
-				if (event->size() >= 2 && event->at(1).as_string().size() == sizeof(algorithm::pubkeyhash_t))
-					parties.insert(algorithm::pubkeyhash_t(event->at(1).as_blob()));
-			}
-			return true;
-		}
-		void bridge_attestation::set_finalized_proof(uint64_t block_id, const std::string_view& transaction_id, const vector<oracle::value_transfer>& inputs, const vector<oracle::value_transfer>& outputs)
-		{
-			auto* chain = oracle::server_node::get()->get_chainparams(asset);
-			oracle::computed_transaction witness;
-			witness.transaction_id = transaction_id;
-			witness.block_id = block_id;
-			for (auto& input : inputs)
-			{
-				auto utxo = oracle::coin_utxo(oracle::wallet_link::from_address(input.address), { { input.asset, input.value } });
-				witness.inputs[utxo.as_hash()] = std::move(utxo);
-			}
-			for (auto& output : outputs)
-			{
-				auto utxo = oracle::coin_utxo(oracle::wallet_link::from_address(output.address), { { output.asset, output.value } });
-				witness.outputs[utxo.as_hash()] = std::move(utxo);
-			}
-			set_computed_proof(std::move(witness), { });
-		}
-		void bridge_attestation::set_computed_proof(oracle::computed_transaction&& new_proof, ordered_map<uint256_t, ordered_set<algorithm::hashsig_t>>&& new_commitments)
-		{
-			proof = std::move(new_proof);
-			commitments = std::move(new_commitments);
-		}
-		bool bridge_attestation::add_commitment(const algorithm::seckey_t& secret_key)
-		{
-			uint256_t commitment_hash;
-			algorithm::hashsig_t commitment_signature;
-			if (!commit_to_proof(proof, secret_key, commitment_hash, commitment_signature))
-				return false;
-
-			commitments[commitment_hash].insert(commitment_signature);
-			return true;
-		}
-		uptr<schema> bridge_attestation::as_schema() const
-		{
-			schema* data = ledger::commitment::as_schema().reset();
-			schema* commitments_data = data->set("commitments", var::set::object());
-			for (auto& [commitment_hash, signatures] : commitments)
-			{
-				auto signatures_data = commitments_data->set(algorithm::encoding::encode_0xhex256(commitment_hash), var::set::array());
-				for (auto& signature : signatures)
-					signatures_data->push(signature.empty() ? var::null() : var::string(format::util::encode_0xhex(signature.view())));
-			}
-			data->set("proof", proof.as_schema().reset());
-			return data;
-		}
-		uint32_t bridge_attestation::as_type() const
-		{
-			return as_instance_type();
-		}
-		std::string_view bridge_attestation::as_typename() const
-		{
-			return as_instance_typename();
-		}
-		uint32_t bridge_attestation::as_instance_type()
-		{
-			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
-			return hash;
-		}
-		std::string_view bridge_attestation::as_instance_typename()
-		{
-			return "bridge_attestation";
-		}
-		expects_lr<void> bridge_attestation::verify_proof_commitment(ledger::transaction_context* context, const algorithm::asset_id& asset, const ordered_map<uint256_t, ordered_set<algorithm::hashsig_t>>& commitments, uint256_t& best_commitment_hash, ordered_map<uint256_t, ordered_set<algorithm::pubkeyhash_t>>& attesters)
-		{
-			ordered_set<algorithm::pubkeyhash_t> duplicates;
-			best_commitment_hash = 0;
-			attesters.clear();
-
-			size_t best_commitment_size = 0;
-			decimal best_commitment_stake = -1;
-			for (auto& [commitment_hash, signatures] : commitments)
-			{
-				if (!commitment_hash)
-					return layer_exception("invalid commitment hash");
-
-				for (auto& signature : signatures)
-				{
-					algorithm::pubkeyhash_t attester;
-					if (!algorithm::signing::recover_hash(commitment_hash, attester, signature))
-						return layer_exception("invalid commitment signature");
-					else if (duplicates.find(attester) != duplicates.end())
-						return layer_exception("duplicate commitment attester");
-
-					attesters[commitment_hash].insert(attester);
-					duplicates.insert(attester);
-				}
-
-				size_t commitment_size = 0;
-				decimal commitment_stake = decimal::zero();
-				for (auto& attester : attesters[commitment_hash])
-				{
-					auto attestation = context->get_validator_attestation(asset, attester);
-					if (attestation)
-					{
-						commitment_stake += attestation->get_ranked_stake();
-						++commitment_size;
-					}
-				}
-
-				if (commitment_stake > best_commitment_stake)
-				{
-					best_commitment_hash = commitment_hash;
-					best_commitment_stake = commitment_stake;
-					best_commitment_size = commitment_size;
-				}
-			}
-
-			if (!best_commitment_hash || !best_commitment_size || best_commitment_stake.is_negative())
-				return layer_exception("proof requires more attestations");
-
-			auto& params = protocol::now();
-			auto best_attesters = context->calculate_attesters(asset, params.policy.attestation_max_per_transaction);
-			if (!best_attesters)
-				return best_attesters.error();
-
-			size_t global_commitment_size = 0;
-			decimal global_commitment_stake = decimal::zero();
-			for (auto& attester : *best_attesters)
-			{
-				auto attester_stake = attester.get_ranked_stake();
-				global_commitment_stake += attester_stake;
-				if (attester_stake.is_positive())
-					++global_commitment_size;
-			}
-
-			global_commitment_size = std::min(global_commitment_size, params.policy.attestation_max_per_transaction);
-			if (global_commitment_size > 0 && decimal(best_commitment_size) < decimal(global_commitment_size) * params.policy.attestation_consensus_threshold)
-				return layer_exception("proof requires more attestations");
-
-			if (best_commitment_stake < global_commitment_stake * params.policy.attestation_consensus_threshold)
-				return layer_exception("proof requires better attestations");
-
-			return expectation::met;
-		}
-		bool bridge_attestation::commit_to_proof(const oracle::computed_transaction& new_proof, const algorithm::seckey_t& secret_key, uint256_t& commitment_hash, algorithm::hashsig_t& signature)
-		{
-			commitment_hash = new_proof.as_hash();
-			return algorithm::signing::sign(commitment_hash, secret_key, signature);
-		}
-
-		expects_lr<void> bridge_adjustment::validate(uint64_t block_number) const
-		{
-			if (incoming_fee.is_nan() || incoming_fee.is_negative())
-				return layer_exception("invalid incoming fee");
-
-			if (outgoing_fee.is_nan() || outgoing_fee.is_negative())
-				return layer_exception("invalid outgoing fee");
-
-			if (participation_threshold.is_nan() || participation_threshold.is_negative())
-				return layer_exception("invalid participation threshold");
-
-			if (security_level > 0 && security_level < protocol::now().policy.participation_min_per_account)
-				return layer_exception("invalid security level");
-
-			if (security_level > 0 && security_level > protocol::now().policy.participation_max_per_account)
-				return layer_exception("invalid security level");
-
-			return ledger::transaction::validate(block_number);
-		}
-		expects_lr<void> bridge_adjustment::execute(ledger::transaction_context* context) const
-		{
-			auto validation = transaction::execute(context);
-			if (!validation)
-				return validation.error();
-
-			auto attestation_requirement = context->verify_validator_attestation(asset, context->receipt.from);
-			if (!attestation_requirement)
-				return attestation_requirement;
-
-			auto reward = context->apply_bridge_reward(algorithm::asset::base_id_of(asset), context->receipt.from, incoming_fee, outgoing_fee);
-			if (!reward)
-				return reward.error();
-
-			auto bridge = context->get_bridge_policy(asset, context->receipt.from).or_else(states::bridge_policy(context->receipt.from, asset, nullptr));
-			if (bridge.accepts_withdrawal_requests != accepts_withdrawal_requests && !accepts_withdrawal_requests)
-			{
-				auto balance = context->get_bridge_balance(asset, context->receipt.from);
-				if (balance)
-				{
-					for (auto& [token_asset, token_value] : balance->balances)
-					{
-						if (algorithm::asset::is_aux(token_asset, true))
-						{
-							auto reward = context->get_bridge_reward_median(token_asset).or_else(states::bridge_reward(context->receipt.from, token_asset, nullptr));
-							if (token_value > reward.outgoing_fee)
-								return layer_exception(algorithm::asset::handle_of(token_asset) + " bridge has non-dust custodial balance (max: " + reward.outgoing_fee.to_string() + ")");
-						}
-						else if (token_value.is_positive())
-							return layer_exception(algorithm::asset::handle_of(token_asset) + " bridge has custodial token balance");
-					}
-				}
-			}
-
-			if ((security_level > 0 && security_level != bridge.security_level) || bridge.participation_threshold != participation_threshold || bridge.accepts_account_requests != accepts_account_requests || bridge.accepts_withdrawal_requests != accepts_withdrawal_requests)
-			{
-				auto policy = context->apply_bridge_policy(asset, context->receipt.from, security_level, participation_threshold, accepts_account_requests, accepts_withdrawal_requests);
-				if (!policy)
-					return policy.error();
-			}
-
-			return expectation::met;
-		}
-		bool bridge_adjustment::store_body(format::wo_stream* stream) const
-		{
-			VI_ASSERT(stream != nullptr, "stream should be set");
-			stream->write_decimal(incoming_fee);
-			stream->write_decimal(outgoing_fee);
-			stream->write_decimal(participation_threshold);
-			stream->write_integer(security_level);
-			stream->write_boolean(accepts_account_requests);
-			stream->write_boolean(accepts_withdrawal_requests);
-			return true;
-		}
-		bool bridge_adjustment::load_body(format::ro_stream& stream)
-		{
-			if (!stream.read_decimal(stream.read_type(), &incoming_fee))
-				return false;
-
-			if (!stream.read_decimal(stream.read_type(), &outgoing_fee))
-				return false;
-
-			if (!stream.read_decimal(stream.read_type(), &participation_threshold))
-				return false;
-
-			if (!stream.read_integer(stream.read_type(), &security_level))
-				return false;
-
-			if (!stream.read_boolean(stream.read_type(), &accepts_account_requests))
-				return false;
-
-			if (!stream.read_boolean(stream.read_type(), &accepts_withdrawal_requests))
-				return false;
-
-			return true;
-		}
-		void bridge_adjustment::set_reward(const decimal& new_incoming_fee, const decimal& new_outgoing_fee)
-		{
-			incoming_fee = new_incoming_fee;
-			outgoing_fee = new_outgoing_fee;
-		}
-		void bridge_adjustment::set_security(uint8_t new_security_level, const decimal& new_participation_threshold, bool new_accepts_account_requests, bool new_accepts_withdrawal_requests)
-		{
-			participation_threshold = new_participation_threshold;
-			security_level = new_security_level;
-			accepts_account_requests = new_accepts_account_requests;
-			accepts_withdrawal_requests = new_accepts_withdrawal_requests;
-		}
-		uptr<schema> bridge_adjustment::as_schema() const
-		{
-			schema* data = ledger::transaction::as_schema().reset();
-			data->set("incoming_fee", var::decimal(incoming_fee));
-			data->set("outgoing_fee", var::decimal(outgoing_fee));
-			data->set("participation_threshold", var::decimal(participation_threshold));
-			data->set("security_level", var::integer(security_level));
-			data->set("accepts_account_requests", var::boolean(accepts_account_requests));
-			data->set("accepts_withdrawal_requests", var::boolean(accepts_withdrawal_requests));
-			return data;
-		}
-		uint32_t bridge_adjustment::as_type() const
-		{
-			return as_instance_type();
-		}
-		std::string_view bridge_adjustment::as_typename() const
-		{
-			return as_instance_typename();
-		}
-		uint32_t bridge_adjustment::as_instance_type()
-		{
-			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
-			return hash;
-		}
-		std::string_view bridge_adjustment::as_instance_typename()
-		{
-			return "bridge_adjustment";
 		}
 
 		expects_lr<void> bridge_migration::validate(uint64_t block_number) const
@@ -3131,15 +3071,15 @@ namespace tangent
 				else if (target->group.find(old_manager) == target->group.end())
 					return layer_exception("migration of other group member is forbidden");
 
-				auto bridge_policy = context->get_bridge_policy(asset, share.manager);
-				if (!bridge_policy)
-					return bridge_policy.error();
+				auto attestation = context->get_verified_validator_attestation(asset, share.manager);
+				if (!attestation)
+					return attestation.error();
 
-				new_threshold = math0::max(new_threshold, bridge_policy->participation_threshold);
+				new_threshold = math0::max(new_threshold, attestation->participation_threshold);
 				exclusion.insert(target->group.begin(), target->group.end());
 			}
 
-			auto committee = context->calculate_participants(asset, exclusion, 1, new_threshold);
+			auto committee = context->calculate_participants(exclusion, 1, new_threshold);
 			if (!committee)
 				return committee.error();
 
@@ -3358,20 +3298,20 @@ namespace tangent
 				if (!target)
 					return target.error();
 
-				auto status = context->apply_validator_participation(share.asset, old_manager.data, ledger::transaction_context::stake_type::lock, -1, { });
-				if (!status)
-					return status.error();
-
-				status = context->apply_validator_participation(share.asset, new_manager.data, ledger::transaction_context::stake_type::lock, 1, { });
-				if (!status)
-					return status.error();
-
 				target->group.erase(old_manager);
 				target->group.insert(new_manager);
 				target = context->apply_bridge_account(share.asset, share.manager, share.owner, target->public_key, std::move(target->group));
 				if (!target)
 					return target.error();
 			}
+
+			auto status = context->apply_validator_participation(old_manager.data, ledger::transaction_context::stake_type::lock, -((int64_t)migration_transaction->shares.size()), { });
+			if (!status)
+				return status.error();
+
+			status = context->apply_validator_participation(new_manager.data, ledger::transaction_context::stake_type::lock, (int64_t)migration_transaction->shares.size(), { });
+			if (!status)
+				return status.error();
 
 			return expectation::met;
 		}
@@ -3439,6 +3379,8 @@ namespace tangent
 				return memory::init<rollup>();
 			else if (hash == validator_adjustment::as_instance_type())
 				return memory::init<validator_adjustment>();
+			else if (hash == bridge_attestation::as_instance_type())
+				return memory::init<bridge_attestation>();
 			else if (hash == bridge_account::as_instance_type())
 				return memory::init<bridge_account>();
 			else if (hash == bridge_account_finalization::as_instance_type())
@@ -3447,10 +3389,6 @@ namespace tangent
 				return memory::init<bridge_withdrawal>();
 			else if (hash == bridge_withdrawal_finalization::as_instance_type())
 				return memory::init<bridge_withdrawal_finalization>();
-			else if (hash == bridge_attestation::as_instance_type())
-				return memory::init<bridge_attestation>();
-			else if (hash == bridge_adjustment::as_instance_type())
-				return memory::init<bridge_adjustment>();
 			else if (hash == bridge_migration::as_instance_type())
 				return memory::init<bridge_migration>();
 			else if (hash == bridge_migration_finalization::as_instance_type())
@@ -3470,6 +3408,8 @@ namespace tangent
 				return memory::init<rollup>(*(const rollup*)base);
 			else if (hash == validator_adjustment::as_instance_type())
 				return memory::init<validator_adjustment>(*(const validator_adjustment*)base);
+			else if (hash == bridge_attestation::as_instance_type())
+				return memory::init<bridge_attestation>(*(const bridge_attestation*)base);
 			else if (hash == bridge_account::as_instance_type())
 				return memory::init<bridge_account>(*(const bridge_account*)base);
 			else if (hash == bridge_account_finalization::as_instance_type())
@@ -3478,10 +3418,6 @@ namespace tangent
 				return memory::init<bridge_withdrawal>(*(const bridge_withdrawal*)base);
 			else if (hash == bridge_withdrawal_finalization::as_instance_type())
 				return memory::init<bridge_withdrawal_finalization>(*(const bridge_withdrawal_finalization*)base);
-			else if (hash == bridge_attestation::as_instance_type())
-				return memory::init<bridge_attestation>(*(const bridge_attestation*)base);
-			else if (hash == bridge_adjustment::as_instance_type())
-				return memory::init<bridge_adjustment>(*(const bridge_adjustment*)base);
 			else if (hash == bridge_migration::as_instance_type())
 				return memory::init<bridge_migration>(*(const bridge_migration*)base);
 			else if (hash == bridge_migration_finalization::as_instance_type())

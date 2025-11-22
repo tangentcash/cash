@@ -94,7 +94,7 @@ namespace tangent
 					return mpz::import0((uint8_t*)params.wesolowski.data(), params.wesolowski.size(), order);
 
 				auto& policy = protocol::now().policy;
-				auto entropy = format::util::decode_0xhex(policy.wesolowski_base);
+				auto entropy = format::util::decode_0xhex(policy.pow.base);
 
 				mpz_t seed;
 				mpz_init(seed);
@@ -103,7 +103,7 @@ namespace tangent
 				hashing::hash512((uint8_t*)entropy.data(), entropy.size(), mdata);
 				mpz::import0(mdata, sizeof(mdata), seed);
 
-				uint16_t half_bits = policy.wesolowski_security / 2;
+				uint16_t half_bits = policy.pow.security / 2;
 				gmp_randstate_t random;
 				gmp_randinit_mt(random);
 
@@ -155,7 +155,7 @@ namespace tangent
 		uint64_t wesolowski::calibrate(uint64_t confidence, uint64_t target_time)
 		{
 			uint64_t target_nonce = confidence;
-			uint64_t difficulty = protocol::now().policy.wesolowski_difficulty;
+			uint64_t difficulty = protocol::now().policy.pow.difficulty;
 			while (true)
 			{
 			retry:
@@ -181,7 +181,7 @@ namespace tangent
 		}
 		uint64_t wesolowski::adjust(uint64_t prev_difficulty, uint64_t prev_time, uint64_t target_index)
 		{
-			uint64_t default_difficulty = protocol::now().policy.wesolowski_difficulty;
+			uint64_t default_difficulty = protocol::now().policy.pow.difficulty;
 			if (target_index <= 1)
 				return default_difficulty;
 
@@ -193,25 +193,25 @@ namespace tangent
 
 			auto next_difficulty = prev_difficulty;
 			auto& policy = protocol::now().policy;
-			prev_time = std::max(policy.consensus_proof_time / 4, std::min(policy.consensus_proof_time * 4, prev_time));
-			if (policy.consensus_proof_time >= prev_time)
+			prev_time = std::max(policy.pow.time / 4, std::min(policy.pow.time * 4, prev_time));
+			if (policy.pow.time >= prev_time)
 			{
-				uint64_t time_delta = policy.consensus_proof_time - prev_time;
-				if (algorithm::arithmetic::divide(time_delta, policy.consensus_proof_time) < 0.1)
+				uint64_t time_delta = policy.pow.time - prev_time;
+				if (algorithm::arithmetic::divide(time_delta, policy.pow.time) < 0.1)
 					goto leave_as_is;
 
-				decimal adjustment = std::min(policy.consensus_difficulty_max_increase, 1 + arithmetic::divide(time_delta, prev_time));
+				decimal adjustment = std::min(policy.pow.max_increase, 1 + arithmetic::divide(time_delta, prev_time));
 				next_difficulty = (decimal(next_difficulty) * adjustment).to_uint64();
 				if (next_difficulty < prev_difficulty)
 					next_difficulty = std::numeric_limits<uint64_t>::max();
 			}
 			else
 			{
-				uint64_t time_delta = prev_time - policy.consensus_proof_time;
-				if (algorithm::arithmetic::divide(time_delta, policy.consensus_proof_time) < 0.1)
+				uint64_t time_delta = prev_time - policy.pow.time;
+				if (algorithm::arithmetic::divide(time_delta, policy.pow.time) < 0.1)
 					goto leave_as_is;
 
-				decimal adjustment = std::max(policy.consensus_difficulty_max_decrease, 1 - arithmetic::divide(time_delta, prev_time));
+				decimal adjustment = std::max(policy.pow.max_decrease, 1 - arithmetic::divide(time_delta, prev_time));
 				next_difficulty = (decimal(next_difficulty) * adjustment).to_uint64();
 			}
 			return next_difficulty;
@@ -220,7 +220,7 @@ namespace tangent
 		{
 			uint64_t new_difficulty = difficulty;
 			if (multiplier > 1)
-				new_difficulty = std::max((decimal(new_difficulty) * multiplier).to_uint64(), std::max(new_difficulty, protocol::now().policy.wesolowski_difficulty));
+				new_difficulty = std::max((decimal(new_difficulty) * multiplier).to_uint64(), std::max(new_difficulty, protocol::now().policy.pow.difficulty));
 			return new_difficulty;
 		}
 		string wesolowski::evaluate(uint64_t difficulty, const std::string_view& message)
@@ -349,7 +349,7 @@ namespace tangent
 		uint64_t wesolowski::adjustment_interval()
 		{
 			auto& policy = protocol::now().policy;
-			return policy.consensus_adjustment_time / policy.consensus_proof_time;
+			return policy.pow.adjustment_time / policy.pow.time;
 		}
 		uint64_t wesolowski::adjustment_index(uint64_t index)
 		{
@@ -360,11 +360,11 @@ namespace tangent
 			if (index == 0)
 				return 1;
 
-			bool outside_priority = index >= protocol::now().policy.production_max_per_block;
+			bool outside_priority = index >= protocol::now().policy.production.max_per_block;
 			if (outside_priority)
-				return protocol::now().policy.consensus_difficulty_bump_outside_priority;
+				return protocol::now().policy.pow.bump_outside_priority;
 
-			auto scale = decimal(protocol::now().policy.consensus_difficulty_bump_per_priority);
+			auto scale = decimal(protocol::now().policy.pow.bump_per_priority);
 			auto result = scale;
 			while (index--)
 				result *= scale;
@@ -383,7 +383,7 @@ namespace tangent
 				data->set("scaling", var::decimal(scaling));
 			data->set("kdifficulty", algorithm::encoding::serialize_uint256(kdifficulty(difficulty)));
 			data->set("difficulty", var::integer(difficulty));
-			data->set("security", var::integer(protocol::now().policy.wesolowski_security));
+			data->set("security", var::integer(protocol::now().policy.pow.security));
 			data->set("size", var::integer(signature.size()));
 			mpz_clear(p);
 			mpz_clear(l);
@@ -392,7 +392,7 @@ namespace tangent
 		uint128_t wesolowski::kdifficulty(uint64_t difficulty)
 		{
 			auto& policy = protocol::now().policy;
-			uint128_t x = uint128_t(policy.wesolowski_security / 8);
+			uint128_t x = uint128_t(policy.pow.security / 8);
 			uint128_t y = uint128_t(difficulty);
 			return x * x * y;
 		}

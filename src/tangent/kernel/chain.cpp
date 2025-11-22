@@ -853,13 +853,16 @@ namespace tangent
 				account.secret_key_version = 0xD;
 				account.public_key_version = 0xC;
 				account.address_version = 0x6;
-				policy.participation_min_per_account = 1;
-				policy.participation_std_per_account = 2;
+				policy.pow.genesis_length = 0;
+				policy.attestation.min_stake_value = decimal::zero();
+				policy.participation.min_stake_value = decimal::zero();
+				policy.participation.min_per_account = 1;
+				policy.participation.std_per_account = 2;
+				policy.production.min_stake_value = decimal::zero();
 				policy.delegations_max_per_account = std::numeric_limits<uint32_t>::max();
-				policy.genesis_round_length = 0;
-				policy.consensus_proof_time = 120;
-				policy.commitment_throughput = 500;
-				policy.transaction_throughput = 10000;
+				policy.pow.time = 120;
+				policy.transaction_tps = 10000;
+				policy.commitment_tps = 500;
 				break;
 			case tangent::network_type::testnet:
 				message.packet_magic = 0xf815c95c;

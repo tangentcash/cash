@@ -1063,7 +1063,7 @@ namespace tangent
 				return remote_exception("invalid commitment");
 
 			auto context = ledger::transaction_context();
-			auto validation = context.verify_validator_attestation(asset, attester);
+			auto validation = context.get_verified_validator_attestation(asset, attester);
 			if (!validation)
 				return remote_exception(std::move(validation.error().message()));
 
@@ -1079,7 +1079,7 @@ namespace tangent
 		}
 		expects_rt<void> server_node::notify_of_aggregation(uref<relay>&& state, const exchange& event)
 		{
-			if (event.args.size() < 3 || event.args.size() > 2 + protocol::now().policy.participation_max_per_account)
+			if (event.args.size() < 3 || event.args.size() > 2 + protocol::now().policy.participation.max_per_account)
 				return remote_exception("invalid arguments");
 
 			auto signature = algorithm::hashsig_t(event.args[0].as_string());
@@ -1454,11 +1454,6 @@ namespace tangent
 			auto aggregator = algorithm::composition::load_signature_state(reader);
 			if (!aggregator)
 				return remote_exception("in state machine not valid");
-
-			auto* proof_transaction_ptr = (transactions::bridge_withdrawal*)*proof_transaction->transaction;
-			auto validation = transactions::bridge_withdrawal_finalization::validate_possible_proof(&context, proof_transaction_ptr, message);
-			if (!validation)
-				return remote_exception("group validation error");
 
 			auto dispatcher = dispatch_context(this);
 			context.transaction = *proof_transaction->transaction;
@@ -2432,7 +2427,7 @@ namespace tangent
 				auto chain = storages::chainstate();
 				auto tip = chain.get_latest_block_header();
 				auto priority = environment.configure_priority_from_validator(wallet.public_key_hash, wallet.secret_key, tip.address());
-				auto position = priority.or_else(protocol::now().policy.production_max_per_block);
+				auto position = priority.or_else(protocol::now().policy.production.max_per_block);
 				auto baseline_solution_time = tip ? tip->get_slot_proof_duration_average() : 0;
 				auto current_node_solution_time = (uint64_t)((double)baseline_solution_time * algorithm::wesolowski::adjustment_scaling(position));
 				if (position > 0 && tip)
@@ -2927,41 +2922,14 @@ namespace tangent
 		{
 			auto& [node, wallet] = descriptor;
 			auto context = ledger::transaction_context();
-			node.services.has_production = false;
-			node.services.has_participation = false;
+			node.services.has_production = protocol::now().user.consensus.may_propose ? context.get_validator_production(wallet.public_key_hash).or_else(states::validator_production(algorithm::pubkeyhash_t(), nullptr)).is_active() : false;
+			node.services.has_participation = context.get_validator_participation(wallet.public_key_hash).or_else(states::validator_participation(algorithm::pubkeyhash_t(), nullptr)).is_active();
 			node.services.has_attestation = false;
-			if (protocol::now().user.consensus.may_propose)
-			{
-				auto production = context.get_validator_production(wallet.public_key_hash);
-				node.services.has_production = production && production->active;
-				if (!node.services.has_production)
-					node.services.has_production = context.calculate_producers_size().or_else(0) == 0;
-			}
+			if (protocol::now().user.consensus.may_propose && !node.services.has_production)
+				node.services.has_production = context.calculate_producers_size().or_else(0) == 0;
 
 			size_t count = 64;
 			size_t offset = 0;
-			while (true)
-			{
-				auto participations = context.get_validator_participations(wallet.public_key_hash, offset, count);
-				if (!participations || participations->empty())
-					break;
-
-				for (auto& participation : *participations)
-				{
-					node.services.has_participation = participation.is_active();
-					if (node.services.has_participation)
-					{
-						participations->clear();
-						break;
-					}
-				}
-
-				offset += participations->size();
-				if (participations->size() < count)
-					break;
-			}
-
-			offset = 0;
 			while (true)
 			{
 				auto attestations = context.get_validator_attestations(wallet.public_key_hash, offset, count);
@@ -2972,10 +2940,7 @@ namespace tangent
 				{
 					node.services.has_attestation = attestation.is_active();
 					if (node.services.has_attestation)
-					{
-						attestations->clear();
 						break;
-					}
 				}
 
 				offset += attestations->size();
@@ -3565,7 +3530,7 @@ namespace tangent
 			if (!bridge_withdrawal)
 				return remote_exception("invalid transaction");
 
-			auto validation = transactions::bridge_withdrawal_finalization::validate_possible_proof(context, bridge_withdrawal, message);
+			auto validation = transactions::bridge_withdrawal_finalization::validate_possible_proof(context, bridge_withdrawal, context->receipt, message);
 			if (!validation)
 				return remote_exception(std::move(validation.error().message()));
 

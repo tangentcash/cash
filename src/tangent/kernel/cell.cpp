@@ -3780,14 +3780,14 @@ namespace tangent
 			if (!p)
 				return 0;
 
-			uint64_t milliseconds = p->context->block->generation_time - p->context->block->generation_time % protocol::now().policy.consensus_proof_time;
+			uint64_t milliseconds = p->context->block->generation_time - p->context->block->generation_time % protocol::now().policy.pow.time;
 			return milliseconds / 1000;
 		}
 		uint64_t contract::block_time_between(uint64_t block_number_a, uint64_t block_number_b)
 		{
 			uint64_t left = std::min(block_number_a, block_number_b);
 			uint64_t right = std::max(block_number_a, block_number_b);
-			return (right - left) * protocol::now().policy.consensus_proof_time / 1000;
+			return (right - left) * protocol::now().policy.pow.time / 1000;
 		}
 		uint64_t contract::block_priority()
 		{

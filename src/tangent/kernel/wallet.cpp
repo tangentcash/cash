@@ -397,7 +397,9 @@ namespace tangent
 		}
 		string node::as_version() const
 		{
-			return algorithm::encoding::encode_0xhex128(uint128_t(version));
+			uint8_t data[16]; size_t data_size = sizeof(data);
+			uint128_t(version).encode_compact(data, &data_size);
+			return "0x" + codec::hex_encode(std::string_view((char*)data, data_size));
 		}
 		uint32_t node::as_type() const
 		{
