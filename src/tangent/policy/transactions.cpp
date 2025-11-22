@@ -983,7 +983,7 @@ namespace tangent
 
 			if (production)
 			{
-				auto status = context->apply_validator_production(context->receipt.from, participation->is_nan() ? ledger::transaction_context::stake_type::unlock : ledger::transaction_context::stake_type::lock, { { algorithm::asset::native(), *production } });
+				auto status = context->apply_validator_production(context->receipt.from, production->is_nan() ? ledger::transaction_context::stake_type::unlock : ledger::transaction_context::stake_type::lock, { { algorithm::asset::native(), *production } });
 				if (!status)
 					return status.error();
 			}
