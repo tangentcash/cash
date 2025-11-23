@@ -2015,18 +2015,6 @@ public:
 			ledger::node node;
 			node.address = socket_address(params.user.consensus.address, params.user.consensus.port);
 			node.version = protocol::now().message.protocol_version;
-			if (args.has("test-chain"))
-			{
-				tests::use_clean_state([&]()
-				{
-					auto* activation = memory::init<transactions::validator_adjustment>();
-					activation->allocate_production_stake(decimal::zero());
-					activation->sign(wallet.secret_key, 0, decimal::zero()).expect("pre-validation failed");
-
-					vector<tests::account> users = { tests::account(wallet, 1) };
-					tests::new_block_from_one(nullptr, users, activation);
-				});
-			}
 
 			auto mempool = storages::mempoolstate();
 			mempool.apply_node(std::make_pair(node, wallet));

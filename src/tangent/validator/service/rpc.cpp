@@ -278,7 +278,7 @@ namespace tangent
 			router->base->callbacks.headers = std::bind(&server_node::headers, this, std::placeholders::_1, std::placeholders::_2);
 			router->base->callbacks.options = std::bind(&server_node::options, this, std::placeholders::_1);
 			router->base->auth.type = "Basic";
-			router->base->auth.realm = "rpc.tangent.cash";
+			router->base->auth.realm = "p2p.tangent.cash";
 			router->temporary_directory.clear();
 			if (protocol::now().user.rpc.web_sockets)
 			{

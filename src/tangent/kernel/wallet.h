@@ -51,6 +51,7 @@ namespace tangent
 		{
 			struct
 			{
+				ordered_set<algorithm::pubkey_t> neighbors;
 				uint64_t latency = (uint64_t)std::numeric_limits<int64_t>::max();
 				uint64_t timestamp = 0;
 				uint64_t calls = 0;

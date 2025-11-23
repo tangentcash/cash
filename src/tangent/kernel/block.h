@@ -445,7 +445,7 @@ namespace tangent
 			dispatch_context& operator=(dispatch_context&&) noexcept = default;
 			virtual expects_lr<void> apply_secret_share(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner, const uint256_t& scalar);
 			virtual expects_lr<void> recover_secret_share(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner, uint256_t& scalar) const;
-			virtual expects_promise_rt<void> aggregate_validators(const uint256_t& transaction_hash, const ordered_set<algorithm::pubkeyhash_t>& validators) = 0;
+			virtual expects_promise_rt<void> aggregate_validators(const ordered_set<algorithm::pubkeyhash_t>& validators) = 0;
 			virtual expects_promise_rt<void> aggregate_secret_share_state(const transaction_context* context, secret_share_state& state, const algorithm::pubkeyhash_t& validator) = 0;
 			virtual expects_promise_rt<void> aggregate_public_state(const transaction_context* context, public_state& state, const algorithm::pubkeyhash_t& validator) = 0;
 			virtual expects_promise_rt<void> aggregate_signature_state(const transaction_context* context, signature_state& state, const algorithm::pubkeyhash_t& validator) = 0;

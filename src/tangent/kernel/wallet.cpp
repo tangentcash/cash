@@ -264,6 +264,9 @@ namespace tangent
 		bool node::store_payload(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
+			stream->write_integer((uint16_t)availability.neighbors.size());
+			for (auto& neighbor : availability.neighbors)
+				stream->write_string(neighbor.optimized_view());
 			stream->write_string(address.get_ip_address().or_else(string()));
 			stream->write_integer(address.get_ip_port().or_else(0));
 			stream->write_integer(version);
@@ -287,6 +290,20 @@ namespace tangent
 		}
 		bool node::load_payload(format::ro_stream& stream)
 		{
+			uint16_t neighbors_size;
+			if (!stream.read_integer(stream.read_type(), &neighbors_size))
+				return false;
+
+			availability.neighbors.clear();
+			for (uint16_t i = 0; i < neighbors_size; i++)
+			{
+				string public_key_assembly; algorithm::pubkey_t public_key;
+				if (!stream.read_string(stream.read_type(), &public_key_assembly) || !algorithm::encoding::decode_bytes(public_key_assembly, public_key.data, sizeof(public_key.data)))
+					return false;
+
+				availability.neighbors.insert(public_key);
+			}
+
 			string ip_address;
 			if (!stream.read_string(stream.read_type(), &ip_address))
 				return false;
@@ -373,6 +390,9 @@ namespace tangent
 			data->set("version", var::string(as_version()));
 
 			auto* availability_data = data->set("availability");
+			auto* neighbors_data = availability_data->set("neighbors", var::set::array());
+			for (auto& public_key : availability.neighbors)
+				neighbors_data->push(algorithm::signing::serialize_public_key(public_key));
 			availability_data->set("latency", algorithm::encoding::serialize_uint256(availability.latency));
 			availability_data->set("timestamp", algorithm::encoding::serialize_uint256(availability.timestamp));
 			availability_data->set("calls", algorithm::encoding::serialize_uint256(availability.calls));

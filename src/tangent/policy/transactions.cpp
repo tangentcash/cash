@@ -1939,7 +1939,7 @@ namespace tangent
 					state.alg = chain->composition;
 				}
 
-				auto session = coawait(dispatcher->aggregate_validators(context->receipt.transaction_hash, state.participants));
+				auto session = coawait(dispatcher->aggregate_validators(state.participants));
 				if (!session)
 					coreturn session.error();
 
@@ -2455,7 +2455,7 @@ namespace tangent
 					if (!account)
 						coreturn cancel(remote_exception(std::move(account.error().message())));
 
-					auto session = coawait(dispatcher->aggregate_validators(context->receipt.transaction_hash, account->group));
+					auto session = coawait(dispatcher->aggregate_validators(account->group));
 					if (!session)
 						coreturn session.error().is_retry() || session.error().is_shutdown() ? expects_rt<void>(std::move(session.error())) : cancel(std::move(session.error()));
 
@@ -3109,7 +3109,7 @@ namespace tangent
 				if (!chain)
 					coreturn remote_exception("invalid operation");
 
-				auto session = coawait(dispatcher->aggregate_validators(context->receipt.transaction_hash, { new_manager }));
+				auto session = coawait(dispatcher->aggregate_validators({ new_manager }));
 				if (!session)
 					coreturn session.error();
 
