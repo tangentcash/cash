@@ -264,14 +264,12 @@ namespace tangent
 			static asset_id base_id_of(const asset_id& value);
 			static string handle_of(const std::string_view& blockchain, const std::string_view& token = std::string_view(), const std::string_view& contract_address = std::string_view());
 			static string handle_of(const asset_id& value);
-			static string base_handle_of(const asset_id& value);
 			static string blockchain_of(const asset_id& value);
 			static string token_of(const asset_id& value);
 			static string checksum_of(const asset_id& value);
 			static string name_of(const asset_id& value);
-			static bool is_any(const asset_id& value, bool require_no_token = false);
+			static bool is_any(const asset_id& value, bool require_no_token = false, bool auxiliary_only = false);
 			static bool is_aux(const asset_id& value, bool require_no_token = false);
-			static uint64_t expiry_of(const asset_id& value);
 			static schema* serialize(const asset_id& value);
 		};
 

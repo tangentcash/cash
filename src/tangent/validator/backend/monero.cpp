@@ -648,10 +648,6 @@ namespace tangent
 				address_map result = { { (uint8_t)1, *address } };
 				return expects_lr<address_map>(std::move(result));
 			}
-			uint64_t monero::get_retirement_block_number() const
-			{
-				return 0;
-			}
 			const btc_chainparams_* monero::get_chain()
 			{
 				switch (protocol::now().user.network)

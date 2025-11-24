@@ -899,12 +899,11 @@ namespace tangent
 			attestation_setup default_setup;
 			for (auto& [asset, setup] : attestations)
 			{
+				if (!algorithm::asset::is_aux(asset, true))
+					return layer_exception("invalid attestation asset");
+
 				if (setup.stake.is_negative())
 					return layer_exception("attestation stake must not be negative");
-
-				uint64_t expiry_number = algorithm::asset::expiry_of(asset);
-				if (!expiry_number || (block_number > expiry_number && !setup.stake.is_nan()))
-					return layer_exception("invalid attestation asset");
 
 				if (setup.incoming_fee && (setup.incoming_fee->is_nan() || setup.incoming_fee->is_negative()))
 					return layer_exception("invalid incoming fee");

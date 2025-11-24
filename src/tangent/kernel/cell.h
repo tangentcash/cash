@@ -464,6 +464,8 @@ namespace tangent
 			address_repr(const address_repr&) = default;
 			address_repr& operator=(const address_repr&) = default;
 			void pay(const uint256_t& asset, const decimal& value);
+			void mint(const string_repr& token, const decimal& supply, const decimal& reserve);
+			void burn(const string_repr& token, const decimal& supply, const decimal& reserve);
 			decimal balance_of(const uint256_t& asset) const;
 			string_repr to_string() const;
 			uint256_t to_public_key_hash() const;
@@ -669,6 +671,7 @@ namespace tangent
 			static uint256_t tx_gas_limit();
 			static uint256_t tx_asset();
 			static uint256_t coin_native();
+			static uint256_t coin_token(const string_repr& token);
 			static uint256_t coin_from_decimal(const decimal& value);
 			static decimal coin_to_decimal(const uint256_t& value);
 			static uint256_t coin_id_of(const string_repr& blockchain, const string_repr& token, const string_repr& contract_address);

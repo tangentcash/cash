@@ -395,7 +395,6 @@ namespace tangent
 			virtual decimal to_value(const decimal& value) const;
 			virtual uint256_t to_baseline_value(const decimal& value) const;
 			virtual decimal from_baseline_value(const uint256_t& value) const;
-			virtual uint64_t get_retirement_block_number() const;
 			virtual const chainparams& get_chainparams() const = 0;
 		};
 

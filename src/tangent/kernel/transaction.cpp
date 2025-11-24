@@ -7,11 +7,8 @@ namespace tangent
 	{
 		expects_lr<void> transaction::validate(uint64_t block_number) const
 		{
-			uint64_t expiry_number = algorithm::asset::expiry_of(asset);
-			if (!expiry_number)
+			if (!algorithm::asset::is_any(asset))
 				return layer_exception("invalid asset");
-			else if (block_number > expiry_number)
-				return layer_exception("asset is no longer supported");
 
 			if (nonce >= std::numeric_limits<uint64_t>::max() - 1)
 				return layer_exception("invalid nonce");

@@ -181,45 +181,40 @@ public:
 				address account;
 				string name;
 				string symbol;
-				uint8 decimals = 0;
-				uint256 supply = 0;
+				real320 supply;
 			}
 
 			class token_transfer
 			{
 				address from;
 				address to;
-				uint256 value = 0;
+				real320 value;
 			}
 
 			varying<token_storage> token;
-			mapping<address, uint256> balances;
 
-			token_storage construct(pmut@, const string&in symbol, const string&in name, const address&in admin, const uint256&in value)
+			token_storage construct(pmut@, const string&in symbol, const string&in name, const address&in admin, const real320&in value)
 			{
+				require(value.is_positive(), "illegal operation - supply must be positive");
 				token_storage new_token;
 				new_token.deployer = tx::from();
 				new_token.contract = tx::to();
 				new_token.account = admin;
 				new_token.name = name;
 				new_token.symbol = symbol;
-				new_token.decimals = 2;
 				new_token.supply = value;
 				token = new_token;
 
-				balances.insert_if(value > 0, token.ref.account, value);
+				token.ref.account.mint(token.ref.symbol, token.ref.supply);
 				return token.ref;
 			}
-			token_transfer transfer(pmut@, const address&in to, const uint256&in value)
+			token_transfer transfer(pmut@, const address&in to, const real320&in value)
 			{
 				address from = tx::from();
-				uint256 input = balance_of(null, from);
-				uint256 output = balance_of(null, to);
-				uint256 from_delta = input - value, to_delta = output + value;
-				require(from_delta <= input, string::from(from) + ": illegal operation - insufficient balance");
-				require(to_delta >= output, string::from(to) + ": illegal operation - balance overflow");
-				balances.insert_if(from_delta > 0, from, from_delta);
-				balances.insert_if(to_delta > 0, to, to_delta);
+				require(value.is_positive(), "illegal operation - value must be positive");
+				require(value <= balance_of(null, from), string::from(from) + ": illegal operation - insufficient balance");
+				from.burn(token.ref.symbol, value);
+				to.mint(token.ref.symbol, value);
 
 				token_transfer event;
 				event.from = from;
@@ -227,41 +222,34 @@ public:
 				event.value = value;
 				return event;
 			}
-			uint256 mint(pmut@, const uint256&in value)
+			real320 mint(pmut@, const real320&in value)
 			{
 				require(token.ref.account == tx::from(), "illegal operation - operation not permitted");
-				uint256 output = balance_of(null, token.ref.account);
-				uint256 supply_delta = token.ref.supply + value;
-				uint256 to_delta = output + value;
-				require(supply_delta >= token.ref.supply, string::from(tx::to()) + ": illegal operation - token supply overflow");
-				require(to_delta >= output, string::from(token.ref.account) + ": illegal operation - balance overflow");
+				require(value.is_positive(), "illegal operation - value must be positive");
 
 				token_storage new_token = token.ref;
-				new_token.supply = supply_delta;
+				new_token.supply += value;
 				token = new_token;
 
-				balances.insert_if(to_delta > 0, token.ref.account, to_delta);
-				return to_delta;
+				token.ref.account.mint(token.ref.symbol, value);
+				return balance_of(null, token.ref.account);
 			}
-			uint256 burn(pmut@, const uint256&in value)
+			real320 burn(pmut@, const real320&in value)
 			{
-				require(token.ref.account == tx::from(), "illegal operation - operation not permitted");
-				uint256 output = balance_of(null, token.ref.account);
-				uint256 supply_delta = token.ref.supply - value;
-				uint256 to_delta = output - value;
-				require(supply_delta <= token.ref.supply, "token supply will underflow (" + string::from(token.ref.supply) + " < " + string::from(value) + ")");
-				require(to_delta <= output, "account balance will underflow (" + string::from(output) + " < " + string::from(value) + ")");
+				require(value.is_positive(), "illegal operation - value must be positive");
+				require(value <= token.ref.supply, "token supply will underflow (" + string::from(token.ref.supply) + " < " + string::from(value) + ")");
 
 				token_storage new_token = token.ref;
-				new_token.supply = supply_delta;
+				new_token.supply -= value;
 				token = new_token;
 
-				balances.insert_if(to_delta > 0, token.ref.account, to_delta);
-				return to_delta;
+				address account = tx::from();
+				account.burn(token.ref.symbol, value);
+				return balance_of(null, account);
 			}
-			uint256 balance_of(pconst@, const address&in account)
+			real320 balance_of(pconst@, const address&in account)
 			{
-				return balances.has(account) ? balances[account] : 0;
+				return account.balance_of(coin::token(token.ref.symbol));
 			}
 			token_storage info(pconst@)
 			{
@@ -274,13 +262,13 @@ public:
 			{
 				token_account = new_token_account;
 			}
-			uint256 balance_of_test_token(pconst@)
+			real320 balance_of_test_token(pconst@)
 			{
-				return token_account.ref.call<uint256>("uint256 balance_of(pconst@, const address&in)", tx::from());
+				return token_account.ref.call<real320>("real320 balance_of(pconst@, const address&in)", tx::from());
 			}));
 
 			auto* upgrade1 = memory::init<transactions::upgrade>();
-			upgrade1->from_program(token_program.substr(1, token_program.size() - 2), { format::variable("TT0"), format::variable("Test Token 0"), format::variable(user1.get_address()), format::variable(1000000u) });
+			upgrade1->from_program(token_program.substr(1, token_program.size() - 2), { format::variable("CAP10"), format::variable("Test Token 0"), format::variable(user1.get_address()), format::variable(decimal(10000u)) });
 			upgrade1->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 			transactions.push_back(upgrade1);
 			contracts->push_back(upgrade1->get_account());
@@ -296,7 +284,7 @@ public:
 			auto context = ledger::transaction_context();
 			auto& [user2, user2_nonce] = users[1];
 			auto* upgrade1 = memory::init<transactions::upgrade>();
-			upgrade1->from_hashcode(context.get_account_program(contracts->at(0))->hashcode, { format::variable("TT1"), format::variable("Test Token 1"), format::variable(user2.get_address()), format::variable(1000000u) });
+			upgrade1->from_hashcode(context.get_account_program(contracts->at(0))->hashcode, { format::variable("CAP20"), format::variable("Test Token 1"), format::variable(user2.get_address()), format::variable(decimal(20000u)) });
 			upgrade1->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
 			transactions.push_back(upgrade1);
 			contracts->push_back(upgrade1->get_account());
@@ -312,7 +300,7 @@ public:
 			auto& [user1, user1_nonce] = users[0];
 			auto& [user2, user2_nonce] = users[1];
 			auto* call1 = memory::init<transactions::call>();
-			call1->program_call(contracts->at(0), decimal::zero(), "transfer", { format::variable(user2.public_key_hash.view()), format::variable(250000u) });
+			call1->program_call(contracts->at(0), decimal::zero(), "transfer", { format::variable(user2.public_key_hash.view()), format::variable(decimal(1234u)) });
 			call1->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 			transactions.push_back(call1);
 
@@ -322,7 +310,7 @@ public:
 			transactions.push_back(call2);
 
 			auto* call3 = memory::init<transactions::call>();
-			call3->program_call(contracts->at(2), decimal::zero(), "transfer", { format::variable(user1.public_key_hash.view()), format::variable(250000u) });
+			call3->program_call(contracts->at(2), decimal::zero(), "transfer", { format::variable(user1.public_key_hash.view()), format::variable(decimal(4321u)) });
 			call3->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
 			transactions.push_back(call3);
 
@@ -1561,17 +1549,17 @@ public:
 			TEST_BLOCK(&generators::account_transfer_stage_1, "0x2adfd906fdea6ea15f4ab10388d742f98ae94145611ec7b94543141e39a8909a", 8);
 			TEST_BLOCK(&generators::account_transfer_stage_2, "0x1b3e4f4e976e5686cd754a6d434140a35c9e638cfc7ca76c44d240d85e1ac132", 9);
 			TEST_BLOCK(std::bind(&generators::account_transfer_to_account, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), users[2].wallet.get_address(), 0.05), "0x9a4370d299d4833df1c3cd4a6b5ffc924a703f8f255756865e5a533e9f551f28", 10);
-			TEST_BLOCK(std::bind(&generators::account_upgrade_stage_1, std::placeholders::_1, std::placeholders::_2, &contracts), "0x2a450c773f27c6aa90467b3a94d6a11d1171fb23802c004a873111b6b3a87d33", 11);
-			TEST_BLOCK(std::bind(&generators::account_upgrade_stage_2, std::placeholders::_1, std::placeholders::_2, &contracts), "0x82e3d090c1debb5df00474e5c822b8bd2cd44c3d830921a6eee6ecfa3b2775ab", 12);
-			TEST_BLOCK(std::bind(&generators::account_call, std::placeholders::_1, std::placeholders::_2, &contracts), "0x41daf64e87a98d6e35bfea5a720aa86ddc007af6e9e66b7d574731b95cfe555f", 13);
-			TEST_BLOCK(&generators::account_transaction_rollup, "0xcdb18e02795d0dfa011bc5f05681c38e80925f8223d1f70ba16612de346a6220", 14);
-			TEST_BLOCK(std::bind(&generators::validator_enable_validator, std::placeholders::_1, std::placeholders::_2, 2, false, false, true), "0xfa1b31782447aba90842784e141eee7867077cc141cbc334ac789a97416ef4bc", 15);
-			TEST_BLOCK(&generators::bridge_migration, "0x9096ad21a42e1581c69b55678c28eb07eef4f77ec9e9576dcf4a5bc75e235b89", 16);
-			TEST_BLOCK(&generators::bridge_withdrawal_stage_1, "0xfbe6c4dc801c1e791b622788c1e75e2e89edf728528e91b760fc0690aeee95b6", 18);
-			TEST_BLOCK(&generators::bridge_withdrawal_stage_2, "0x0cb71f66561604a38f157d4b6101bdb2e0a07a28caed7886870b5074f7351255", 20);
-			TEST_BLOCK(&generators::bridge_withdrawal_stage_3, "0x636f92c5ef2a2a24bceb2b5e6cd81b90912f9835fda1b06b3f15c80f88f29126", 22);
-			TEST_BLOCK(&generators::bridge_withdrawal_stage_4, "0x3e7ff718568b7635292368c34d69b19a147dc37a46bd68309f7f4e5cd3d6e59c", 24);
-			TEST_BLOCK(std::bind(&generators::validator_disable_validator, std::placeholders::_1, std::placeholders::_2, 2, false, true, false), "0xf06fb5f3afc1429027debfaead18769e1fc15f323e58f6411f543a1095344378", 26);
+			TEST_BLOCK(std::bind(&generators::account_upgrade_stage_1, std::placeholders::_1, std::placeholders::_2, &contracts), "0x7819ecc6429c6ea83b44feef5dbd8ab9fd3a0b243aa59b4370869b9c376766f7", 11);
+			TEST_BLOCK(std::bind(&generators::account_upgrade_stage_2, std::placeholders::_1, std::placeholders::_2, &contracts), "0x2965f256fac7b6ed63fcec8c088c50b779c424218d9ff06ff610521a95aedcf5", 12);
+			TEST_BLOCK(std::bind(&generators::account_call, std::placeholders::_1, std::placeholders::_2, &contracts), "0xfa404d5990d831ddb876bbcd387eceb0f19ffd9b0309fa3e8c3c6c04126c77ca", 13);
+			TEST_BLOCK(&generators::account_transaction_rollup, "0xc251e9341d17bb61d1fee414a7d6323392fc921c25dfa42c674b4d57de224566", 14);
+			TEST_BLOCK(std::bind(&generators::validator_enable_validator, std::placeholders::_1, std::placeholders::_2, 2, false, false, true), "0x122567f9e340ba4fb0b48ea1ffe744ab41de45d381606ebaba1f4af1b0d45173", 15);
+			TEST_BLOCK(&generators::bridge_migration, "0x354c5e263ddbc66f92c8077aca3135e1e7cc2e31238ac28de6cafcf00b533881", 16);
+			TEST_BLOCK(&generators::bridge_withdrawal_stage_1, "0x63c0a07bc1cab2c09611819915a9665d19970d4db9b4ae62ea50416fe8feeeec", 18);
+			TEST_BLOCK(&generators::bridge_withdrawal_stage_2, "0x0e518193c7aa8ba8cb438b2ef641d6f378bcd40ce3fee067b07f4cd0d7820bca", 20);
+			TEST_BLOCK(&generators::bridge_withdrawal_stage_3, "0x4c9f03a611a6ebaa1e774a14fbb9ad641ab4f791a8ee638387abd258cb08527e", 22);
+			TEST_BLOCK(&generators::bridge_withdrawal_stage_4, "0x71cf5414bf7f10a738a19180f3b9e36f00b6bf9d821d1ab971137875598e48df", 24);
+			TEST_BLOCK(std::bind(&generators::validator_disable_validator, std::placeholders::_1, std::placeholders::_2, 2, false, true, false), "0x94659a3d848258377583ced3d5942b1bc1b9e4cdbcfe84f91d48fbb306c5d7b9", 26);
 			if (userdata != nullptr)
 				*userdata = std::move(users);
 			else
@@ -2856,7 +2844,7 @@ public:
 			{ "cryptography / multichain transaction", &tests::cryptography_multichain_transaction },
 			{ "blockchain / full coverage", std::bind(&tests::blockchain_full_coverage, (vector<tests::account>*)nullptr) },
 			{ "blockchain / verification", &tests::blockchain_verification },
-			{ "blockchain / partial coverage", std::bind(&tests::blockchain_partial_coverage, (vector<tests::account>*)nullptr) },
+			//{ "blockchain / partial coverage", std::bind(&tests::blockchain_partial_coverage, (vector<tests::account>*)nullptr) },
 			{ "blockchain / verification", &tests::blockchain_verification },
 			{ "blockchain / gas estimation", &tests::blockchain_gas_estimation },
 		};

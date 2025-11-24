@@ -1090,12 +1090,10 @@ namespace tangent
 		}
 		asset_id asset::id_of_handle(const std::string_view& handle)
 		{
-			if (handle == protocol::now().policy.token)
-				return native();
-
+			std::string_view base = stringify::starts_with(handle, protocol::now().policy.token) ? handle.substr(protocol::now().policy.token.size()) : handle;
 			uint8_t data[32] = { 0 };
-			size_t size = std::min<size_t>(sizeof(data), handle.size());
-			memcpy((char*)data + (sizeof(data) - size), handle.data(), size);
+			size_t size = std::min<size_t>(sizeof(data), base.size());
+			memcpy((char*)data + (sizeof(data) - size), base.data(), size);
 
 			uint256_t value;
 			value.decode(data);
@@ -1103,11 +1101,8 @@ namespace tangent
 		}
 		asset_id asset::id_of(const std::string_view& blockchain, const std::string_view& token, const std::string_view& contract_address)
 		{
-			if (blockchain == protocol::now().policy.token)
-				return native();
-
 			uint8_t data[32] = { 0 };
-			string handle = handle_of(blockchain, token, contract_address);
+			string handle = handle_of(blockchain == protocol::now().policy.token ? std::string_view() : blockchain, token, contract_address);
 			size_t size = std::min<size_t>(sizeof(data), handle.size());
 			memcpy((char*)data + (sizeof(data) - size), handle.data(), size);
 
@@ -1117,13 +1112,14 @@ namespace tangent
 		}
 		asset_id asset::base_id_of(const asset_id& value)
 		{
-			return id_of(blockchain_of(value));
+			return value == native() ? value : id_of(blockchain_of(value));
 		}
 		string asset::handle_of(const std::string_view& blockchain, const std::string_view& token, const std::string_view& contract_address)
 		{
 			string handle;
-			handle.append(blockchain.substr(0, 8));
-			if (!token.empty() && blockchain != protocol::now().policy.token)
+			if (!blockchain.empty())
+				handle.append(blockchain.substr(0, 8));
+			if (!token.empty())
 			{
 				handle.append(1, ':').append(token.substr(0, 8));
 				if (!contract_address.empty())
@@ -1133,12 +1129,14 @@ namespace tangent
 					handle.append(1, ':').append(hash.substr(0, 32 - handle.size()));
 				}
 			}
-			return handle.substr(0, 32);
+			if (handle.size() > 32)
+				handle.erase(32, handle.size() - 32);
+			return handle;
 		}
 		string asset::handle_of(const asset_id& value)
 		{
 			if (value == native())
-				return string();
+				return protocol::now().policy.token;
 
 			uint8_t data[33];
 			value.encode(data);
@@ -1147,12 +1145,13 @@ namespace tangent
 			while (!data[offset] && offset + 1 < sizeof(data))
 				++offset;
 
-			char* handle = (char*)data + offset;
-			return string(handle, strnlen(handle, (sizeof(data) - 1) - offset));
-		}
-		string asset::base_handle_of(const asset_id& value)
-		{
-			return handle_of(base_id_of(value));
+			char* ptr = (char*)data + offset;
+			auto handle = string(ptr, strnlen(ptr, (sizeof(data) - 1) - offset));
+			if (handle.empty())
+				handle.assign(protocol::now().policy.token);
+			else if (handle.front() == ':')
+				handle.insert(0, protocol::now().policy.token);
+			return handle;
 		}
 		string asset::blockchain_of(const asset_id& value)
 		{
@@ -1201,17 +1200,15 @@ namespace tangent
 			}
 			return name;
 		}
-		bool asset::is_any(const asset_id& value, bool require_no_token)
+		bool asset::is_any(const asset_id& value, bool require_no_token, bool auxiliary_only)
 		{
-			if (value == native())
-				return true;
-
 			auto blockchain = blockchain_of(value);
 			if (stringify::is_empty_or_whitespace(blockchain))
 				return false;
 
-			auto* chain = oracle::server_node::get()->get_chain(value);
-			if (!chain)
+			bool onchain = auxiliary_only ? false : blockchain == protocol::now().policy.token;
+			auto* chain = onchain ? nullptr : oracle::server_node::get()->get_chain(value);
+			if (!onchain && !chain)
 				return false;
 
 			auto token = token_of(value);
@@ -1221,34 +1218,11 @@ namespace tangent
 			if (is_token_empty != is_checksum_empty || (require_no_token && !is_token_empty))
 				return false;
 
-			return is_token_empty || chain->get_chainparams().tokenization != oracle::token_policy::none;
+			return is_token_empty || (onchain ? true : chain->get_chainparams().tokenization != oracle::token_policy::none);
 		}
 		bool asset::is_aux(const asset_id& value, bool require_no_token)
 		{
-			return value != native() && is_any(value, require_no_token);
-		}
-		uint64_t asset::expiry_of(const asset_id& value)
-		{
-			if (value == native())
-				return std::numeric_limits<uint64_t>::max();
-
-			auto blockchain = blockchain_of(value);
-			if (stringify::is_empty_or_whitespace(blockchain))
-				return 0;
-
-			auto* chain = oracle::server_node::get()->get_chain(value);
-			if (!chain)
-				return 0;
-
-			auto token = token_of(value);
-			if (stringify::is_empty_or_whitespace(token))
-				return chain->get_retirement_block_number();
-
-			auto checksum = checksum_of(value);
-			if (stringify::is_empty_or_whitespace(checksum))
-				return 0;
-
-			return chain->get_retirement_block_number();
+			return is_any(value, require_no_token, true);
 		}
 		schema* asset::serialize(const asset_id& value)
 		{

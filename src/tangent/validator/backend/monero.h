@@ -75,7 +75,6 @@ namespace tangent
 				virtual expects_lr<string> encode_transaction_id(const std::string_view& transaction_id) override;
 				virtual expects_lr<string> decode_transaction_id(const std::string_view& transaction_id) override;
 				virtual expects_lr<address_map> to_addresses(const std::string_view& public_key) override;
-				virtual uint64_t get_retirement_block_number() const override;
 				virtual const btc_chainparams_* get_chain();
 				virtual const chainparams& get_chainparams() const override;
 

@@ -183,7 +183,7 @@ namespace tangent
 				{
 					apply_token_value(algorithm::asset::handle_of(asset), std::string_view(), std::move(asset_value), 0);
 					if (transaction_id.empty())
-						transaction_id = algorithm::asset::base_handle_of(asset);
+						transaction_id = algorithm::asset::handle_of(algorithm::asset::base_id_of(asset));
 					if (value.is_nan())
 						value = decimal::zero();
 				}
@@ -1477,10 +1477,6 @@ namespace tangent
 				return decimal::zero();
 
 			return value.to_decimal() / get_chainparams().divisibility;
-		}
-		uint64_t relay_backend::get_retirement_block_number() const
-		{
-			return std::numeric_limits<uint64_t>::max();
 		}
 
 		relay_backend_utxo::balance_query::balance_query(const decimal& new_min_native_value, const unordered_map<algorithm::asset_id, decimal>& new_min_token_values) : min_native_value(new_min_native_value), min_token_values(new_min_token_values)

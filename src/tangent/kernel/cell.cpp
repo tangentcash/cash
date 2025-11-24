@@ -2483,6 +2483,26 @@ namespace tangent
 			if (!payment)
 				return contract::throw_ptr(exception_repr(exception_repr::category::execution(), std::string_view(payment.error().message())));
 		}
+		void address_repr::mint(const string_repr& token, const decimal& supply, const decimal& reserve)
+		{
+			auto* p = program::fetch_mutable_or_throw();
+			if (!p || token.empty() || (!supply.is_positive() && !reserve.is_positive()))
+				return;
+
+			auto payment = p->context->apply_transfer(contract::coin_token(token), hash.data, supply.is_positive() ? supply : decimal::zero(), reserve.is_positive() ? reserve : decimal::zero());
+			if (!payment)
+				return contract::throw_ptr(exception_repr(exception_repr::category::execution(), std::string_view(payment.error().message())));
+		}
+		void address_repr::burn(const string_repr& token, const decimal& supply, const decimal& reserve)
+		{
+			auto* p = program::fetch_mutable_or_throw();
+			if (!p || token.empty() || (!supply.is_positive() && !reserve.is_positive()))
+				return;
+
+			auto payment = p->context->apply_transfer(contract::coin_token(token), hash.data, supply.is_positive() ? -supply : decimal::zero(), reserve.is_positive() ? -reserve : decimal::zero());
+			if (!payment)
+				return contract::throw_ptr(exception_repr(exception_repr::category::execution(), std::string_view(payment.error().message())));
+		}
 		decimal address_repr::balance_of(const uint256_t& asset) const
 		{
 			auto* p = program::fetch_immutable_or_throw();
@@ -3862,6 +3882,14 @@ namespace tangent
 		{
 			return algorithm::asset::native();
 		}
+		uint256_t contract::coin_token(const string_repr& token)
+		{
+			auto* p = program::fetch_immutable_or_throw();
+			if (!p || token.empty())
+				return algorithm::asset::native();
+
+			return algorithm::asset::id_of(protocol::now().policy.token, token.view(), algorithm::signing::encode_address(p->callable()));
+		}
 		uint256_t contract::coin_from_decimal(const decimal& value)
 		{
 			if (value.is_nan())
@@ -5230,6 +5258,8 @@ namespace tangent
 			address_type->set_method("uint256 u256() const", &address_repr::to_public_key_hash);
 			address_type->set_method("bool empty() const", &address_repr::empty);
 			address_type->set_method("void pay(const uint256&in, const real320&in) const", &address_repr::pay);
+			address_type->set_method("void mint(const string&in, const real320&in, const real320&in = real320::zero()) const", &address_repr::mint);
+			address_type->set_method("void burn(const string&in, const real320&in, const real320&in = real320::zero()) const", &address_repr::burn);
 			address_type->set_method("real320 balance_of(const uint256&in) const", &address_repr::balance_of);
 			address_type->set_method_extern("t call<t>(const string&in, const ?&in ...) const", &address_repr::free_call, convention::generic_call);
 			address_type->set_method_extern("t paid_call<t>(const string&in, const real320&in, const ?&in ...) const", &address_repr::paid_call, convention::generic_call);
@@ -5361,6 +5391,7 @@ namespace tangent
 
 			vm->begin_namespace("coin");
 			vm->set_function("uint256 native()", &contract::coin_native);
+			vm->set_function("uint256 token(const string&in)", &contract::coin_token);
 			vm->set_function("uint256 from(const real320&in)", &contract::coin_from_decimal);
 			vm->set_function("real320 r320(const uint256&in)", &contract::coin_to_decimal);
 			vm->set_function("uint256 id_of(const string&in, const string&in = string(), const string&in = string())", &contract::coin_id_of);
@@ -5434,7 +5465,7 @@ namespace tangent
 			vm->set_property(features::allow_unsafe_references, 0);
 			vm->set_property(features::optimize_bytecode, 1);
 			vm->set_property(features::copy_script_sections, 1);
-			vm->set_property(features::max_stack_size, 1024 * 64);
+			vm->set_property(features::max_stack_size, 1024 * 128);
 			vm->set_property(features::use_character_literals, 1);
 			vm->set_property(features::allow_multiline_strings, 0);
 			vm->set_property(features::allow_implicit_handle_types, 0);
@@ -5474,16 +5505,19 @@ namespace tangent
 			vm->set_string_factory_functions(this, to_string_constant, from_string_constant, free_string_constant);
 			vm->set_type_info_user_data_cleanup_callback(array_repr::cleanup_type_info_cache, array_repr::get_id());
 			vm->set_full_stack_tracing(false);
-			vm->set_cache(!protocol::now().user.storage.module_cache_path.empty());
 			vm->set_ts_imports(false);
+			vm->set_cache(!protocol::now().user.storage.module_cache_path.empty());
 			vm->set_keyword_restriction("auto", true);
 			vm->set_keyword_restriction("auto&", true);
 			vm->set_keyword_restriction("auto@", true);
+			vm->set_keyword_restriction("typedef", true);
+			vm->set_keyword_restriction("cast", true);
+			vm->set_keyword_restriction("shared", true);
 			vm->set_keyword_restriction("float", true);
 			vm->set_keyword_restriction("double", true);
 			vm->set_cache_callback([](byte_code_info* info)
 			{
-				auto path = stringify::text("%s%c%s.casm", protocol::now().user.storage.module_cache_path.c_str(), VI_SPLITTER, info->name.c_str());
+				auto path = stringify::text("%s%c%s.o", protocol::now().user.storage.module_cache_path.c_str(), VI_SPLITTER, info->name.c_str());
 				if (info->valid)
 					return !!os::file::write(path, info->data.data(), info->data.size());
 

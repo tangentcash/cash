@@ -394,8 +394,7 @@ namespace tangent
 
 			for (auto& witness : witnesses)
 			{
-				uint64_t expiry_number = algorithm::asset::expiry_of(witness.first);
-				if (!expiry_number || number > expiry_number)
+				if (!algorithm::asset::is_aux(witness.first) || !witness.second)
 					return layer_exception("invalid witness " + algorithm::asset::handle_of(witness.first));
 			}
 
