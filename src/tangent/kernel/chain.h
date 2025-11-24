@@ -96,6 +96,7 @@ namespace tangent
 		string target_path;
 
 	public:
+		~repository();
 		rocksdb::DB* pull_blob_ref(const std::string_view& location);
 		uref<sqlite::connection> pull_index(const std::string_view& location, std::function<void(sqlite::connection*)>&& initializer);
 		void push_index(uref<sqlite::connection>&& connection);

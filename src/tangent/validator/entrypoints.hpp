@@ -77,22 +77,13 @@ namespace tangent
 				transaction->nonce = std::max<size_t>(1, tracer.environment.validation.context.get_account_nonce(from).or_else(states::account_nonce(algorithm::pubkeyhash_t(), nullptr)).nonce);
 				transaction->program_call(to, value, function_decl, format::variables(args));
 				transaction->set_gas(decimal::zero(), ledger::block::get_transaction_gas_limit());
-
-				auto chain = storages::chainstate();
-				auto tip = chain.get_latest_block_header();
-				if (tip)
-					tracer.environment.tip = std::move(*tip);
+				tracer.contextual = std::move(transaction);
 
 				ledger::receipt receipt;
-				tracer.block.set_parent_block(tracer.environment.tip.address());
-				receipt.transaction_hash = transaction->as_hash();
-				receipt.block_number = tracer.block.number + 1;
 				receipt.from = from;
 
-				tracer.contextual = std::move(transaction);
-				tracer.environment.validation.context = ledger::transaction_context(&tracer.environment, &tracer.block, &tracer.environment.validation.changelog, *tracer.contextual, std::move(receipt));
-				memset(tracer.environment.validator.public_key_hash.data, 0xFF, sizeof(algorithm::pubkeyhash_t));
-				memset(tracer.environment.validator.secret_key.data, 0xFF, sizeof(algorithm::seckey_t));
+				ledger::evaluation_context temp_environment;
+				temp_environment.apply_temporary_state(&tracer.block, *tracer.contextual, std::move(receipt));
 				return expectation::met;
 			}
 			expects_lr<void> call_transaction(cell::ccall mutability, const function& entrypoint, const format::variables& args)

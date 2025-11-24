@@ -1643,39 +1643,27 @@ namespace tangent
 			for (size_t i = 5; i < args.size(); i++)
 				function_args.push_back(args[i]);
 
-			auto environment = ledger::evaluation_context();
-			auto index = environment.validation.context.get_account_program(to);
+			auto temp_environment = ledger::evaluation_context();
+			auto index = temp_environment.validation.context.get_account_program(to);
 			if (!index)
 				return server_response().error(error_codes::bad_params, "to account has no program hash");
 
-			auto transaction = transactions::call();
-			transaction.asset = algorithm::asset::id_of_handle(args[0].as_string());
-			transaction.program_call(to, decimal::zero(), args[4].as_string(), std::move(function_args));
-			transaction.set_gas(decimal::zero(), ledger::block::get_transaction_gas_limit());
+			auto temp_transaction = transactions::call();
+			temp_transaction.asset = algorithm::asset::id_of_handle(args[0].as_string());
+			temp_transaction.program_call(to, decimal::zero(), args[4].as_string(), std::move(function_args));
+			temp_transaction.set_gas(decimal::zero(), ledger::block::get_transaction_gas_limit());
 
-			auto chain = storages::chainstate();
-			auto tip = chain.get_latest_block_header();
-			if (tip)
-				environment.tip = std::move(*tip);
+			auto temp_receipt = ledger::receipt();
+			temp_receipt.from = from;
 
-			auto block = ledger::block();
-			block.set_parent_block(environment.tip.address());
-			block.number = environment.tip ? environment.tip->number + 1 : 1;
-
-			auto receipt = ledger::receipt();
-			receipt.transaction_hash = transaction.as_hash();
-			receipt.block_number = block.number;
-			receipt.from = from;
-
-			environment.validation.context = ledger::transaction_context(&environment, &block, &environment.validation.changelog, &transaction, std::move(receipt));
-			memset(environment.validator.public_key_hash.data, 0xFF, sizeof(algorithm::pubkeyhash_t));
-			memset(environment.validator.secret_key.data, 0xFF, sizeof(algorithm::seckey_t));
+			ledger::block temp_block;
+			temp_environment.apply_temporary_state(&temp_block, &temp_transaction, std::move(temp_receipt));
 
 			auto returning = uptr<schema>();
-			auto execution = transaction.subexecute(&environment.validation.context, [&](asIScriptModule* module_ptr)
+			auto execution = temp_transaction.subexecute(&temp_environment.validation.context, [&](asIScriptModule* module_ptr)
 			{
-				auto script = cell::program(&environment.validation.context, module_ptr);
-				return script.execute(cell::ccall::const_call, transaction.function, transaction.args, [&](void* address, int type_id) -> expects_lr<void>
+				auto script = cell::program(&temp_environment.validation.context, module_ptr);
+				return script.execute(cell::ccall::const_call, temp_transaction.function, temp_transaction.args, [&](void* address, int type_id) -> expects_lr<void>
 				{
 					returning = var::set::object();
 					auto serialization = cell::marshall::store(*returning, address, type_id);
@@ -1690,12 +1678,12 @@ namespace tangent
 			if (!execution)
 				return server_response().error(error_codes::bad_params, execution.error().message());
 
-			environment.validation.context.receipt.successful = !!execution;
-			environment.validation.context.receipt.block_time = protocol::now().time.now();
-			if (!environment.validation.context.receipt.successful)
-				environment.validation.context.emit_event(0, { format::variable(execution.what()) }, false);
+			temp_environment.validation.context.receipt.successful = !!execution;
+			temp_environment.validation.context.receipt.block_time = protocol::now().time.now();
+			if (!temp_environment.validation.context.receipt.successful)
+				temp_environment.validation.context.emit_event(0, { format::variable(execution.what()) }, false);
 
-			auto data = environment.validation.context.receipt.as_schema();
+			auto data = temp_environment.validation.context.receipt.as_schema();
 			data->set("to", algorithm::signing::serialize_address(to));
 			data->set("result", returning ? returning->copy() : var::set::null());
 			return server_response().success(std::move(data));

@@ -892,14 +892,11 @@ namespace tangent
 			if (event || validate_execution)
 			{
 				ledger::block temp_block;
-				temp_block.number = chain.get_latest_block_number().or_else(0) + 1;
-
-				ledger::evaluation_context temp_environment;
-				temp_environment.validator.public_key_hash = wallet.public_key_hash;
-
 				ledger::block_changelog temp_changelog;
-				size_t transaction_size = candidate_tx->as_message().data.size();
-				auto validation = ledger::transaction_context::execute_tx(&temp_environment, &temp_block, &temp_changelog, *candidate_tx, candidate_hash, owner, transaction_size, (uint8_t)ledger::transaction_context::execution_mode::pedantic);
+				ledger::evaluation_context temp_environment;
+				temp_environment.apply_temporary_state(&temp_block, *candidate_tx, { });
+
+				auto validation = ledger::transaction_context::execute_tx(&temp_environment, &temp_block, &temp_changelog, *candidate_tx, candidate_hash, owner, candidate_tx->as_message().data.size(), (uint8_t)ledger::transaction_context::execution_mode::pedantic);
 				if (!validation)
 				{
 					if (protocol::now().user.consensus.logging)

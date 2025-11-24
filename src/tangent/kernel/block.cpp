@@ -2754,12 +2754,9 @@ namespace tangent
 			reference->checksum = 0;
 			reference->gas_limit = transaction->is_commitment() ? block::get_commitment_gas_limit() : block::get_transaction_gas_limit();
 
-			auto chain = storages::chainstate();
 			ledger::block temp_block;
-			temp_block.number = chain.get_latest_block_number().or_else(0) + 1;
-
 			ledger::evaluation_context temp_environment;
-			memset(temp_environment.validator.public_key_hash.data, 1, sizeof(algorithm::pubkeyhash_t));
+			temp_environment.apply_temporary_state(&temp_block, transaction, { });
 
 			ledger::block_changelog temp_changelog;
 			size_t transaction_size = transaction->as_message().data.size();
@@ -3161,6 +3158,20 @@ namespace tangent
 			oracle::server_node::get()->store_cache(context->transaction->asset, oracle::cache_policy::lifetime_cache, location, var::set::string(message.data));
 		}
 
+		void evaluation_context::apply_temporary_state(ledger::block* abstract_block, const ledger::transaction* abstract_transaction, ledger::receipt&& abstract_receipt)
+		{
+			VI_ASSERT(abstract_block != nullptr, "abstract block should be set");
+			VI_ASSERT(abstract_transaction != nullptr, "abstract transaction should be set");
+			auto chain = storages::chainstate();
+			abstract_block->number = chain.get_latest_block_number().or_else(0) + 1;
+			abstract_receipt.transaction_hash = abstract_transaction->as_hash();
+			abstract_receipt.block_number = abstract_block->number;
+
+			validation.tip = true;
+			validation.context = ledger::transaction_context(this, abstract_block, &validation.changelog, abstract_transaction, std::move(abstract_receipt));
+			memset(validator.public_key_hash.data, 0xFF, sizeof(algorithm::pubkeyhash_t));
+			memset(validator.secret_key.data, 0xFF, sizeof(algorithm::seckey_t));
+		}
 		option<uint64_t> evaluation_context::configure_priority_from_validator(const algorithm::pubkeyhash_t& public_key_hash, const algorithm::seckey_t& secret_key, option<const block_header*>&& parent_block)
 		{
 			if (!parent_block)

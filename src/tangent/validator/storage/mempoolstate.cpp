@@ -364,6 +364,7 @@ namespace tangent
 		{
 			schema_list map;
 			map.push_back(var::set::integer(services));
+			map.push_back(var::set::integer(services));
 			map.push_back(var::set::integer(count));
 
 			auto cursor = get_storage().emplace_query(__func__, "SELECT account, address FROM nodes WHERE quality IS NOT NULL AND (services & ?) == ? ORDER BY random() LIMIT ?", &map);

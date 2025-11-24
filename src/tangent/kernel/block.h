@@ -508,6 +508,7 @@ namespace tangent
 			vector<uint256_t> outgoing;
 			size_t precomputed = 0;
 
+			void apply_temporary_state(ledger::block* abstract_block, const ledger::transaction* abstract_transaction, ledger::receipt&& abstract_receipt);
 			option<uint64_t> configure_priority_from_validator(const algorithm::pubkeyhash_t& public_key_hash, const algorithm::seckey_t& secret_key, option<const block_header*>&& parent_block = optional::none);
 			size_t try_include_transactions(vector<uptr<transaction>>&& candidates);
 			transaction_info& force_include_transaction(uptr<transaction>&& candidate);

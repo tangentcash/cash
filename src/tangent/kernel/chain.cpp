@@ -113,6 +113,15 @@ namespace tangent
 		return remote_exception(-1);
 	}
 
+	repository::~repository()
+	{
+		for (auto& handle : blobs)
+		{
+			if (handle.second)
+				handle.second->Close();
+		}
+		blobs.clear();
+	}
 	rocksdb::DB* repository::pull_blob_ref(const std::string_view& location)
 	{
 #ifdef TAN_ROCKSDB
