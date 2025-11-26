@@ -41,7 +41,7 @@
         "server": false,
         "logging": true
     },
-    "oracle": {
+    "superchain": {
         "block_replay_multiplier": 4,
         "relaying_timeout": 30000,
         "relaying_retry_timeout": 300,

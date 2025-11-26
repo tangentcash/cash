@@ -343,7 +343,6 @@ void sha3_Final(SHA3_CTX *ctx, unsigned char* result)
 	memzero(ctx, sizeof(SHA3_CTX));
 }
 
-#if USE_KECCAK
 /**
 * Store calculated hash into the given array.
 *
@@ -387,7 +386,6 @@ void keccak_512(const unsigned char* data, size_t len, unsigned char* digest)
 	keccak_Update(&ctx, data, len);
 	keccak_Final(&ctx, digest);
 }
-#endif /* USE_KECCAK */
 
 void sha3_256(const unsigned char* data, size_t len, unsigned char* digest)
 {

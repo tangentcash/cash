@@ -184,7 +184,7 @@ namespace tangent
 				uint32_t cache2_size = 131072;
 				bool server = false;
 				bool logging = true;
-			} oracle;
+			} superchain;
 			struct
 			{
 				string address = "0.0.0.0";

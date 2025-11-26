@@ -1,7 +1,7 @@
 #include "transactions.h"
 #include "../kernel/block.h"
 #include "../kernel/cell.h"
-#include "../validator/service/oracle.h"
+#include "../service/superchain.h"
 
 namespace tangent
 {
@@ -1242,7 +1242,7 @@ namespace tangent
 			if (!proof.block_id)
 				return layer_exception("transaction has no block reference");
 
-			auto chain = oracle::server_node::get()->get_chainparams(asset);
+			auto chain = superchain::server_node::get()->get_chainparams(asset);
 			if (!chain)
 				return layer_exception("invalid operation");
 
@@ -1288,7 +1288,7 @@ namespace tangent
 			if (!validation)
 				return validation.error();
 
-			auto* chain = oracle::server_node::get()->get_chainparams(asset);
+			auto* chain = superchain::server_node::get()->get_chainparams(asset);
 			if (!chain)
 				return layer_exception("invalid chain");
 
@@ -1306,7 +1306,7 @@ namespace tangent
 
 			transition operations;
 			ordered_set<algorithm::pubkeyhash_t> bridges, routers;
-			auto rebalance_weights = [&](const oracle::coin_utxo& inout, bool accountable, int8_t sign)
+			auto rebalance_weights = [&](const superchain::coin_utxo& inout, bool accountable, int8_t sign)
 			{
 				if (inout.value.is_positive())
 				{
@@ -1638,25 +1638,25 @@ namespace tangent
 			}
 			return true;
 		}
-		void bridge_attestation::set_finalized_proof(uint64_t block_id, const std::string_view& transaction_id, const vector<oracle::value_transfer>& inputs, const vector<oracle::value_transfer>& outputs)
+		void bridge_attestation::set_finalized_proof(uint64_t block_id, const std::string_view& transaction_id, const vector<superchain::value_transfer>& inputs, const vector<superchain::value_transfer>& outputs)
 		{
-			auto* chain = oracle::server_node::get()->get_chainparams(asset);
-			oracle::computed_transaction witness;
+			auto* chain = superchain::server_node::get()->get_chainparams(asset);
+			superchain::computed_transaction witness;
 			witness.transaction_id = transaction_id;
 			witness.block_id = block_id;
 			for (auto& input : inputs)
 			{
-				auto utxo = oracle::coin_utxo(oracle::wallet_link::from_address(input.address), { { input.asset, input.value } });
+				auto utxo = superchain::coin_utxo(superchain::wallet_link::from_address(input.address), { { input.asset, input.value } });
 				witness.inputs[utxo.as_hash()] = std::move(utxo);
 			}
 			for (auto& output : outputs)
 			{
-				auto utxo = oracle::coin_utxo(oracle::wallet_link::from_address(output.address), { { output.asset, output.value } });
+				auto utxo = superchain::coin_utxo(superchain::wallet_link::from_address(output.address), { { output.asset, output.value } });
 				witness.outputs[utxo.as_hash()] = std::move(utxo);
 			}
 			set_computed_proof(std::move(witness), { });
 		}
-		void bridge_attestation::set_computed_proof(oracle::computed_transaction&& new_proof, ordered_map<uint256_t, ordered_set<algorithm::hashsig_t>>&& new_commitments)
+		void bridge_attestation::set_computed_proof(superchain::computed_transaction&& new_proof, ordered_map<uint256_t, ordered_set<algorithm::hashsig_t>>&& new_commitments)
 		{
 			proof = std::move(new_proof);
 			commitments = std::move(new_commitments);
@@ -1771,7 +1771,7 @@ namespace tangent
 
 			return expectation::met;
 		}
-		bool bridge_attestation::commit_to_proof(const oracle::computed_transaction& new_proof, const algorithm::seckey_t& secret_key, uint256_t& commitment_hash, algorithm::hashsig_t& signature)
+		bool bridge_attestation::commit_to_proof(const superchain::computed_transaction& new_proof, const algorithm::seckey_t& secret_key, uint256_t& commitment_hash, algorithm::hashsig_t& signature)
 		{
 			commitment_hash = new_proof.as_hash();
 			return algorithm::signing::sign(commitment_hash, secret_key, signature);
@@ -1801,7 +1801,7 @@ namespace tangent
 			if (!delegation)
 				return delegation.error();
 
-			auto* params = oracle::server_node::get()->get_chainparams(asset);
+			auto* params = superchain::server_node::get()->get_chainparams(asset);
 			if (!params)
 				return layer_exception("invalid operation");
 
@@ -1839,7 +1839,7 @@ namespace tangent
 
 			switch (params->routing)
 			{
-				case oracle::routing_policy::account:
+				case superchain::routing_policy::account:
 				{
 					if (!policy->accounts_under_management)
 					{
@@ -1852,7 +1852,7 @@ namespace tangent
 
 					return expectation::met;
 				}
-				case oracle::routing_policy::memo:
+				case superchain::routing_policy::memo:
 				{
 					if (!policy->accounts_under_management)
 					{
@@ -1865,7 +1865,7 @@ namespace tangent
 					if (!manager_account || manager_account->public_key.empty() || manager_account->group.empty() || manager_account->owner != manager || manager_account->manager != manager)
 						return layer_exception("bridge account for manager required");
 
-					auto* chain = oracle::server_node::get()->get_chain(asset);
+					auto* chain = superchain::server_node::get()->get_chain(asset);
 					if (!chain)
 						return layer_exception("invalid operation");
 
@@ -1878,7 +1878,7 @@ namespace tangent
 						return addresses.error();
 
 					for (auto& address : *addresses)
-						address.second = oracle::address_util::encode_tag_address(address.second, to_string(policy->accounts_under_management));
+						address.second = superchain::address_util::encode_tag_address(address.second, to_string(policy->accounts_under_management));
 					
 					auto policy_status = context->apply_validator_attestation_account(asset, manager, 1);
 					if (!policy_status)
@@ -1890,7 +1890,7 @@ namespace tangent
 
 					return expectation::met;
 				}
-				case oracle::routing_policy::utxo:
+				case superchain::routing_policy::utxo:
 					break;
 				default:
 					return layer_exception("invalid operation");
@@ -1921,7 +1921,7 @@ namespace tangent
 
 			return coasync<expects_rt<void>>([this, context, dispatcher]() -> expects_promise_rt<void>
 			{
-				auto* chain = oracle::server_node::get()->get_chainparams(asset);
+				auto* chain = superchain::server_node::get()->get_chainparams(asset);
 				if (!chain)
 					coreturn remote_exception("invalid operation");
 
@@ -2073,7 +2073,7 @@ namespace tangent
 				return setup.error();
 
 			auto* setup_transaction = (bridge_account*)*setup->transaction;
-			auto* server = oracle::server_node::get();
+			auto* server = superchain::server_node::get();
 			auto* chain = server->get_chain(asset);
 			auto* params = server->get_chainparams(asset);
 			if (!chain || !params)
@@ -2097,17 +2097,17 @@ namespace tangent
 
 			switch (params->routing)
 			{
-				case oracle::routing_policy::account:
-				case oracle::routing_policy::memo:
+				case superchain::routing_policy::account:
+				case superchain::routing_policy::memo:
 				{
 					if (policy->accounts_under_management > 0)
 						return layer_exception("too many accounts for a bridge");
 
-					if (params->routing == oracle::routing_policy::account)
+					if (params->routing == superchain::routing_policy::account)
 						break;
 
 					for (auto& address : *addresses)
-						address.second = oracle::address_util::encode_tag_address(address.second, to_string(policy->accounts_under_management));
+						address.second = superchain::address_util::encode_tag_address(address.second, to_string(policy->accounts_under_management));
 					break;
 				}
 				default:
@@ -2151,7 +2151,7 @@ namespace tangent
 			if (addresses.empty())
 				return expects_promise_rt<void>(expectation::met);
 
-			auto* server = oracle::server_node::get();
+			auto* server = superchain::server_node::get();
 			auto* chain = server->get_chain(asset);
 			auto* params = server->get_chainparams(asset);
 			if (!chain || !params)
@@ -2164,15 +2164,15 @@ namespace tangent
 			auto* setup_transaction = (bridge_account*)*setup->transaction;
 			for (auto& address : addresses)
 			{
-				auto [base_address, tag] = oracle::address_util::decode_tag_address(address);
+				auto [base_address, tag] = superchain::address_util::decode_tag_address(address);
 				if (base_address != address)
 				{
-					auto status = server->enable_link(asset, oracle::wallet_link(setup_transaction->manager, *encoded_public_key, base_address));
+					auto status = server->enable_link(asset, superchain::wallet_link(setup_transaction->manager, *encoded_public_key, base_address));
 					if (!status)
 						return expects_promise_rt<void>(remote_exception(std::move(status.error().message())));
 				}
 
-				auto status = server->enable_link(asset, oracle::wallet_link(setup_transaction->manager, *encoded_public_key, address));
+				auto status = server->enable_link(asset, superchain::wallet_link(setup_transaction->manager, *encoded_public_key, address));
 				if (!status)
 					return expects_promise_rt<void>(remote_exception(std::move(status.error().message())));
 			}
@@ -2249,7 +2249,7 @@ namespace tangent
 			if (manager.empty())
 				return layer_exception("invalid manager");
 
-			auto* chain = oracle::server_node::get()->get_chainparams(asset);
+			auto* chain = superchain::server_node::get()->get_chainparams(asset);
 			if (!chain)
 				return layer_exception("invalid operation");
 
@@ -2397,7 +2397,7 @@ namespace tangent
 
 			return coasync<expects_rt<void>>([this, context, dispatcher]() mutable -> expects_promise_rt<void>
 			{
-				auto* server = oracle::server_node::get();
+				auto* server = superchain::server_node::get();
 				auto* chain = server->get_chainparams(asset);
 				auto cancel = [this, context, dispatcher](remote_exception&& error) -> expects_rt<void>
 				{
@@ -2408,7 +2408,7 @@ namespace tangent
 					return expects_rt<void>(std::move(error));
 				};
 
-				vector<oracle::value_transfer> transfers;
+				vector<superchain::value_transfer> transfers;
 				auto new_manager = get_new_manager(context->receipt);
 				if (!new_manager.empty())
 				{
@@ -2419,7 +2419,7 @@ namespace tangent
 					if (!account)
 						coreturn cancel(remote_exception(std::move(account.error().message())));
 
-					transfers.push_back(oracle::value_transfer(asset, account->addresses.begin()->second, get_token_value(context)));
+					transfers.push_back(superchain::value_transfer(asset, account->addresses.begin()->second, get_token_value(context)));
 				}
 				else
 				{
@@ -2427,20 +2427,20 @@ namespace tangent
 						coreturn cancel(remote_exception(remote_exception("invalid withdrawal destination(s)")));
 
 					for (auto& item : to)
-						transfers.push_back(oracle::value_transfer(asset, item.first, decimal(item.second)));
+						transfers.push_back(superchain::value_transfer(asset, item.first, decimal(item.second)));
 				}
 
 				auto cache = dispatcher->pull_cache(context);
 				auto state = ledger::dispatch_context::signature_state();
 				if (chain->requires_transaction_expiration || !state.load_message_if_preferred(cache))
 				{
-					auto message = coawait(resolver::prepare_transaction(algorithm::asset::base_id_of(asset), oracle::wallet_link::from_owner(manager), transfers, get_fee_value(context)));
+					auto message = coawait(resolver::prepare_transaction(algorithm::asset::base_id_of(asset), superchain::wallet_link::from_owner(manager), transfers, get_fee_value(context)));
 					if (!message)
 						coreturn message.error().is_retry() || message.error().is_shutdown() ? expects_rt<void>(std::move(message.error())) : cancel(std::move(message.error()));
 					else if (message->inputs.size() > std::numeric_limits<uint8_t>::max())
 						coreturn cancel(remote_exception("too many prepared inputs"));
 
-					state.message = memory::init<oracle::prepared_transaction>(std::move(*message));
+					state.message = memory::init<superchain::prepared_transaction>(std::move(*message));
 				}
 
 				auto* input = state.message->next_input_for_aggregation();
@@ -2519,7 +2519,7 @@ namespace tangent
 				if (!finalization)
 					coreturn cancel(remote_exception(std::move(finalization.error().message())));
 
-				auto broadcast = coawait(resolver::broadcast_transaction(algorithm::asset::base_id_of(asset), context->receipt.transaction_hash, oracle::finalized_transaction(*finalization), dispatcher));
+				auto broadcast = coawait(resolver::broadcast_transaction(algorithm::asset::base_id_of(asset), context->receipt.transaction_hash, superchain::finalized_transaction(*finalization), dispatcher));
 				if (!broadcast && (broadcast.error().is_retry() || broadcast.error().is_shutdown()))
 					coreturn remote_exception::retry();
 				else if (!broadcast)
@@ -2788,7 +2788,7 @@ namespace tangent
 
 			if (has_proof)
 			{
-				proof = expects_lr<oracle::finalized_transaction>(oracle::finalized_transaction());
+				proof = expects_lr<superchain::finalized_transaction>(superchain::finalized_transaction());
 				if (!proof->load_payload(stream))
 					return false;
 			}
@@ -2812,7 +2812,7 @@ namespace tangent
 			parties.insert(algorithm::pubkeyhash_t(parent->receipt.from));
 			return true;
 		}
-		void bridge_withdrawal_finalization::set_proof(const uint256_t& new_bridge_withdrawal_hash, expects_lr<oracle::finalized_transaction>&& new_proof)
+		void bridge_withdrawal_finalization::set_proof(const uint256_t& new_bridge_withdrawal_hash, expects_lr<superchain::finalized_transaction>&& new_proof)
 		{
 			bridge_withdrawal_hash = new_bridge_withdrawal_hash;
 			proof = std::move(new_proof);
@@ -2849,12 +2849,12 @@ namespace tangent
 		{
 			return "bridge_withdrawal_finalization";
 		}
-		expects_lr<void> bridge_withdrawal_finalization::validate_possible_proof(const ledger::transaction_context* context, const bridge_withdrawal* transaction, const ledger::receipt& receipt, const oracle::prepared_transaction& prepared)
+		expects_lr<void> bridge_withdrawal_finalization::validate_possible_proof(const ledger::transaction_context* context, const bridge_withdrawal* transaction, const ledger::receipt& receipt, const superchain::prepared_transaction& prepared)
 		{
-			if (prepared.as_status() == oracle::prepared_transaction::status::invalid)
+			if (prepared.as_status() == superchain::prepared_transaction::status::invalid)
 				return layer_exception("invalid prepared transaction");
 
-			auto server = oracle::server_node::get();
+			auto server = superchain::server_node::get();
 			auto base_asset = algorithm::asset::base_id_of(transaction->asset);
 			auto required_output_witness = ordered_map<string, states::witness_account>();
 			auto required_output_value = ordered_map<algorithm::asset_id, decimal>();
@@ -3013,7 +3013,7 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<void> bridge_withdrawal_finalization::validate_finalized_proof(const ledger::transaction_context* context, const bridge_withdrawal* transaction, const ledger::receipt& receipt, const oracle::finalized_transaction& finalized)
+		expects_lr<void> bridge_withdrawal_finalization::validate_finalized_proof(const ledger::transaction_context* context, const bridge_withdrawal* transaction, const ledger::receipt& receipt, const superchain::finalized_transaction& finalized)
 		{
 			auto validation = validate_possible_proof(context, transaction, receipt, finalized.prepared);
 			if (!validation)
@@ -3024,7 +3024,7 @@ namespace tangent
 			else if (finalized.hashdata.empty())
 				return layer_exception("invalid finalized hashdata");
 
-			auto finalization = resolver::finalize_transaction(transaction->asset, oracle::prepared_transaction(finalized.prepared));
+			auto finalization = resolver::finalize_transaction(transaction->asset, superchain::prepared_transaction(finalized.prepared));
 			if (!finalization)
 				return finalization.error();
 
@@ -3104,7 +3104,7 @@ namespace tangent
 
 			return coasync<expects_rt<void>>([this, context, dispatcher, old_manager, new_manager]() -> expects_promise_rt<void>
 			{
-				auto* chain = oracle::server_node::get()->get_chainparams(asset);
+				auto* chain = superchain::server_node::get()->get_chainparams(asset);
 				if (!chain)
 					coreturn remote_exception("invalid operation");
 
@@ -3423,27 +3423,27 @@ namespace tangent
 				return memory::init<bridge_migration_finalization>(*(const bridge_migration_finalization*)base);
 			return nullptr;
 		}
-		expects_promise_rt<oracle::prepared_transaction> resolver::prepare_transaction(const algorithm::asset_id& asset, const oracle::wallet_link& from_link, const vector<oracle::value_transfer>& to, const decimal& max_fee)
+		expects_promise_rt<superchain::prepared_transaction> resolver::prepare_transaction(const algorithm::asset_id& asset, const superchain::wallet_link& from_link, const vector<superchain::value_transfer>& to, const decimal& max_fee)
 		{
-			auto* server = oracle::server_node::get();
+			auto* server = superchain::server_node::get();
 			if (!protocol::now().is(network_type::regtest) || server->has_support(asset))
 				return server->prepare_transaction(asset, from_link, to, max_fee);
 
 			auto chain = server->get_chainparams(asset);
 			if (!chain)
-				return expects_promise_rt<oracle::prepared_transaction>(remote_exception("invalid operation"));
+				return expects_promise_rt<superchain::prepared_transaction>(remote_exception("invalid operation"));
 
 			auto from = server->normalize_link(asset, from_link);
 			if (!from)
-				return expects_promise_rt<oracle::prepared_transaction>(remote_exception(std::move(from.error().message())));
+				return expects_promise_rt<superchain::prepared_transaction>(remote_exception(std::move(from.error().message())));
 
 			auto message = format::wo_stream();
 			if (!from->store_payload(&message))
-				return expects_promise_rt<oracle::prepared_transaction>(remote_exception("serialization error"));
+				return expects_promise_rt<superchain::prepared_transaction>(remote_exception("serialization error"));
 
 			auto public_key = server->to_composite_public_key(asset, from->public_key);
 			if (!public_key)
-				return expects_promise_rt<oracle::prepared_transaction>(remote_exception(std::move(public_key.error().message())));
+				return expects_promise_rt<superchain::prepared_transaction>(remote_exception(std::move(public_key.error().message())));
 
 			auto transfers = unordered_map<algorithm::asset_id, decimal>();
 			for (auto& transfer : to)
@@ -3458,31 +3458,31 @@ namespace tangent
 			uint8_t message_hash[32];
 			message.hash().encode(message_hash);
 
-			oracle::prepared_transaction regtest_prepared;
+			superchain::prepared_transaction regtest_prepared;
 			regtest_prepared.requires_account_input(chain->composition, std::move(*from), *public_key, message_hash, sizeof(message_hash), std::move(transfers));
 			for (auto& transfer : to)
 				regtest_prepared.requires_account_output(transfer.address, { { transfer.asset, transfer.value } });
 
-			return expects_promise_rt<oracle::prepared_transaction>(std::move(regtest_prepared));
+			return expects_promise_rt<superchain::prepared_transaction>(std::move(regtest_prepared));
 		}
-		expects_lr<oracle::finalized_transaction> resolver::finalize_transaction(const algorithm::asset_id& asset, oracle::prepared_transaction&& prepared)
+		expects_lr<superchain::finalized_transaction> resolver::finalize_transaction(const algorithm::asset_id& asset, superchain::prepared_transaction&& prepared)
 		{
-			auto* server = oracle::server_node::get();
+			auto* server = superchain::server_node::get();
 			if (!protocol::now().is(network_type::regtest) || server->has_support(asset))
 				return server->finalize_transaction(asset, std::move(prepared));
 
 			auto transaction_id = algorithm::encoding::encode_0xhex256(prepared.as_hash());
 			auto block_id = algorithm::hashing::hash256i(transaction_id) % std::numeric_limits<uint32_t>::max();
-			auto regtest_finalized = oracle::finalized_transaction(std::move(prepared), string(), std::move(transaction_id), block_id);
+			auto regtest_finalized = superchain::finalized_transaction(std::move(prepared), string(), std::move(transaction_id), block_id);
 			regtest_finalized.calldata = regtest_finalized.as_message().encode();
-			return expects_lr<oracle::finalized_transaction>(std::move(regtest_finalized));
+			return expects_lr<superchain::finalized_transaction>(std::move(regtest_finalized));
 		}
-		expects_promise_rt<void> resolver::broadcast_transaction(const algorithm::asset_id& asset, const uint256_t& external_id, oracle::finalized_transaction&& finalized, ledger::dispatch_context* dispatcher)
+		expects_promise_rt<void> resolver::broadcast_transaction(const algorithm::asset_id& asset, const uint256_t& external_id, superchain::finalized_transaction&& finalized, ledger::dispatch_context* dispatcher)
 		{
-			auto* server = oracle::server_node::get();
+			auto* server = superchain::server_node::get();
 			if (!protocol::now().is(network_type::regtest) || server->has_support(asset))
 			{
-				auto preserved = memory::init<oracle::finalized_transaction>(std::move(finalized));
+				auto preserved = memory::init<superchain::finalized_transaction>(std::move(finalized));
 				return server->broadcast_transaction(asset, external_id, *preserved).then<expects_rt<void>>([preserved](expects_rt<void>&& status) mutable -> expects_rt<void>
 				{
 					memory::deinit(preserved);

@@ -32,37 +32,25 @@ foreach(ITEM IN ITEMS ${SOURCE})
     source_group("${ITEM_GROUP}" FILES "${ITEM}")
 endforeach()
 
-set(TAN_BUILD "main" CACHE STRING "Build target: \"lib\" | \"main\" | \"test\"")
-if (${TAN_BUILD} STREQUAL "main" OR ${TAN_BUILD} STREQUAL "test")
-    if (${TAN_BUILD} STREQUAL "test")
-        list(FILTER SOURCE EXCLUDE REGEX "src/main")
-    else()
-        list(FILTER SOURCE EXCLUDE REGEX "src/test")
-    endif()
-    add_executable(tangentcash ${SOURCE})
-    set_target_properties(tangentcash PROPERTIES
-        OUTPUT_NAME "tangentcash"
-        CXX_STANDARD ${VI_CXX}
-        CXX_STANDARD_REQUIRED ON
-        CXX_EXTENSIONS OFF
-        VERSION ${PROJECT_VERSION}
-        SOVERSION ${PROJECT_VERSION})
-    if (MSVC)
-        set(CMAKE_EXE_LINKER_FLAGS "/ENTRY:mainCRTStartup /SUBSYSTEM:CONSOLE")
-    endif()
-elseif (${TAN_BUILD} STREQUAL "lib")
-    list(FILTER SOURCE EXCLUDE REGEX "src/(main|test)")
-    add_library(tangentcash ${SOURCE})
-    set_target_properties(tangentcash PROPERTIES
-        CXX_STANDARD ${VI_CXX}
-        CXX_STANDARD_REQUIRED ON
-        CXX_EXTENSIONS OFF
-        VERSION ${PROJECT_VERSION}
-        SOVERSION ${PROJECT_VERSION})
+set(TAN_TEST OFF CACHE BOOL "Build in testing mode")
+if (TAN_TEST)
+    list(FILTER SOURCE EXCLUDE REGEX "src/main")
 else()
-  message(FATAL_ERROR "Invalid build target. Expected type: \"lib\", \"main\" or \"test\"")
+    list(FILTER SOURCE EXCLUDE REGEX "src/test")
+endif()
+add_executable(tangentcash ${SOURCE})
+set_target_properties(tangentcash PROPERTIES
+    OUTPUT_NAME "tangentcash"
+    CXX_STANDARD ${VI_CXX}
+    CXX_STANDARD_REQUIRED ON
+    CXX_EXTENSIONS OFF
+    VERSION ${PROJECT_VERSION}
+    SOVERSION ${PROJECT_VERSION})
+if (MSVC)
+    set(CMAKE_EXE_LINKER_FLAGS "/ENTRY:mainCRTStartup /SUBSYSTEM:CONSOLE")
 endif()
 
+target_compile_definitions(tangentcash PRIVATE -DTAN_ROCKSDB)
 target_precompile_headers(tangentcash PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${CMAKE_CURRENT_LIST_DIR}/src/tangent/kernel/chain.h>)
 if (MSVC)
     target_compile_definitions(tangentcash PRIVATE -D_CRT_SECURE_NO_WARNINGS)

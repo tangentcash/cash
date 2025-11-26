@@ -21,23 +21,81 @@
  * OTHER DEALINGS IN THE SOFTWARE.
  */
 
-#ifndef __SECP256K1_H__
-#define __SECP256K1_H__
+#ifndef __ECDSA_H__
+#define __ECDSA_H__
 
 #include <stdint.h>
+#include "bignum.h"
 
-#include "bip32.h"
-#include "ecdsa.h"
-
-#ifdef __cplusplus
-extern "C" {
+#if defined(__cplusplus)
+extern "C"
+{
 #endif
 
+// curve point x and y
+typedef struct {
+  bignum256 x, y;
+} curve_point;
+
+typedef struct {
+  bignum256 prime;       // prime order of the finite field
+  curve_point G;         // initial curve point
+  bignum256 order;       // order of G
+  bignum256 order_half;  // order of G divided by 2
+  int a;                 // coefficient 'a' of the elliptic curve
+  bignum256 b;           // coefficient 'b' of the elliptic curve
+  const curve_point cp[64][8];
+} ecdsa_curve;
+
 extern const ecdsa_curve secp256k1;
-extern const curve_info secp256k1_info;
-extern const curve_info secp256k1_decred_info;
-extern const curve_info secp256k1_groestl_info;
-extern const curve_info secp256k1_smart_info;
+
+// 4 byte prefix + 40 byte data (segwit)
+// 1 byte prefix + 64 byte data (cashaddr)
+#define MAX_ADDR_RAW_SIZE 65
+// bottle neck is cashaddr
+// segwit is at most 90 characters plus NUL separator
+// cashaddr: human readable prefix + 1 separator + 104 data + 8 checksum + 1 NUL
+// we choose 130 as maximum (including NUL character)
+#define MAX_ADDR_SIZE 130
+// 4 byte prefix + 32 byte privkey + 1 byte compressed marker
+#define MAX_WIF_RAW_SIZE (4 + 32 + 1)
+// (4 + 32 + 1 + 4 [checksum]) * 8 / log2(58) plus NUL.
+#define MAX_WIF_SIZE (57)
+
+void point_copy(const curve_point *cp1, curve_point *cp2);
+void point_add(const ecdsa_curve *curve, const curve_point *cp1,
+               curve_point *cp2);
+void point_double(const ecdsa_curve *curve, curve_point *cp);
+int point_multiply(const ecdsa_curve *curve, const bignum256 *k,
+                   const curve_point *p, curve_point *res);
+void point_set_infinity(curve_point *p);
+int point_is_infinity(const curve_point *p);
+int point_is_equal(const curve_point *p, const curve_point *q);
+int point_is_negative_of(const curve_point *p, const curve_point *q);
+int scalar_multiply(const ecdsa_curve *curve, const bignum256 *k,
+                    curve_point *res);
+int ecdh_multiply(const ecdsa_curve *curve, const uint8_t *priv_key,
+                  const uint8_t *pub_key, uint8_t *session_key);
+void compress_coords(const curve_point *cp, uint8_t *compressed);
+void uncompress_coords(const ecdsa_curve *curve, uint8_t odd,
+                       const bignum256 *x, bignum256 *y);
+int ecdsa_uncompress_pubkey(const ecdsa_curve *curve, const uint8_t *pub_key,
+                            uint8_t *uncompressed);
+
+int ecdsa_get_public_key33(const ecdsa_curve *curve, const uint8_t *priv_key,
+                           uint8_t *pub_key);
+int ecdsa_get_public_key65(const ecdsa_curve *curve, const uint8_t *priv_key,
+                           uint8_t *pub_key);
+int ecdsa_read_pubkey(const ecdsa_curve *curve, const uint8_t *pub_key,
+                      curve_point *pub);
+int ecdsa_validate_pubkey(const ecdsa_curve *curve, const curve_point *pub);
+int ecdsa_verify_digest(const ecdsa_curve *curve, const uint8_t *pub_key,
+                        const uint8_t *sig, const uint8_t *digest);
+int ecdsa_recover_pub_from_sig(const ecdsa_curve *curve, uint8_t *pub_key,
+                               const uint8_t *sig, const uint8_t *digest,
+                               int recid);
+int ecdsa_sig_to_der(const uint8_t *sig, uint8_t *der);
+int ecdsa_sig_from_der(const uint8_t *der, size_t der_len, uint8_t sig[64]);
 
 #ifdef __cplusplus
 } /* extern "C" */

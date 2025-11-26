@@ -1,7 +1,7 @@
 #ifndef TAN_POLICY_TRANSACTIONS_H
 #define TAN_POLICY_TRANSACTIONS_H
 #include "states.h"
-#include "../kernel/oracle.h"
+#include "../kernel/superchain.h"
 
 namespace tangent
 {
@@ -180,15 +180,15 @@ namespace tangent
 			};
 
 			ordered_map<uint256_t, ordered_set<algorithm::hashsig_t>> commitments;
-			oracle::computed_transaction proof;
+			superchain::computed_transaction proof;
 
 			expects_lr<void> validate(uint64_t block_number) const override;
 			expects_lr<void> execute(ledger::transaction_context* context) const override;
 			bool store_body(format::wo_stream* stream) const override;
 			bool load_body(format::ro_stream& stream) override;
 			bool recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const override;
-			void set_finalized_proof(uint64_t block_id, const std::string_view& transaction_id, const vector<oracle::value_transfer>& inputs, const vector<oracle::value_transfer>& outputs);
-			void set_computed_proof(oracle::computed_transaction&& new_proof, ordered_map<uint256_t, ordered_set<algorithm::hashsig_t>>&& new_commitments);
+			void set_finalized_proof(uint64_t block_id, const std::string_view& transaction_id, const vector<superchain::value_transfer>& inputs, const vector<superchain::value_transfer>& outputs);
+			void set_computed_proof(superchain::computed_transaction&& new_proof, ordered_map<uint256_t, ordered_set<algorithm::hashsig_t>>&& new_commitments);
 			bool add_commitment(const algorithm::seckey_t& secret_key);
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
@@ -196,7 +196,7 @@ namespace tangent
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
 			static expects_lr<void> verify_proof_commitment(ledger::transaction_context* context, const algorithm::asset_id& asset, const ordered_map<uint256_t, ordered_set<algorithm::hashsig_t>>& commitments, uint256_t& best_commitment_hash, ordered_map<uint256_t, ordered_set<algorithm::pubkeyhash_t>>& attesters);
-			static bool commit_to_proof(const oracle::computed_transaction& new_proof, const algorithm::seckey_t& secret_key, uint256_t& commitment_hash, algorithm::hashsig_t& commitment_signature);
+			static bool commit_to_proof(const superchain::computed_transaction& new_proof, const algorithm::seckey_t& secret_key, uint256_t& commitment_hash, algorithm::hashsig_t& commitment_signature);
 		};
 
 		struct bridge_account final : ledger::commitment
@@ -270,21 +270,21 @@ namespace tangent
 		struct bridge_withdrawal_finalization final : ledger::commitment
 		{
 			uint256_t bridge_withdrawal_hash = 0;
-			expects_lr<oracle::finalized_transaction> proof = layer_exception();
+			expects_lr<superchain::finalized_transaction> proof = layer_exception();
 
 			expects_lr<void> validate(uint64_t block_number) const override;
 			expects_lr<void> execute(ledger::transaction_context* context) const override;
 			bool store_body(format::wo_stream* stream) const override;
 			bool load_body(format::ro_stream& stream) override;
 			bool recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const override;
-			void set_proof(const uint256_t& new_bridge_withdrawal_hash, expects_lr<oracle::finalized_transaction>&& new_proof);
+			void set_proof(const uint256_t& new_bridge_withdrawal_hash, expects_lr<superchain::finalized_transaction>&& new_proof);
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
-			static expects_lr<void> validate_possible_proof(const ledger::transaction_context* context, const bridge_withdrawal* transaction, const ledger::receipt& receipt, const oracle::prepared_transaction& prepared);
-			static expects_lr<void> validate_finalized_proof(const ledger::transaction_context* context, const bridge_withdrawal* transaction, const ledger::receipt& receipt, const oracle::finalized_transaction& finalized);
+			static expects_lr<void> validate_possible_proof(const ledger::transaction_context* context, const bridge_withdrawal* transaction, const ledger::receipt& receipt, const superchain::prepared_transaction& prepared);
+			static expects_lr<void> validate_finalized_proof(const ledger::transaction_context* context, const bridge_withdrawal* transaction, const ledger::receipt& receipt, const superchain::finalized_transaction& finalized);
 		};
 
 		struct bridge_migration final : ledger::transaction
@@ -350,9 +350,9 @@ namespace tangent
 			static ledger::transaction* from_stream(format::ro_stream& stream);
 			static ledger::transaction* from_type(uint32_t hash);
 			static ledger::transaction* from_copy(const ledger::transaction* base);
-			static expects_promise_rt<oracle::prepared_transaction> prepare_transaction(const algorithm::asset_id& asset, const oracle::wallet_link& from_link, const vector<oracle::value_transfer>& to, const decimal& max_fee);
-			static expects_lr<oracle::finalized_transaction> finalize_transaction(const algorithm::asset_id& asset, oracle::prepared_transaction&& prepared);
-			static expects_promise_rt<void> broadcast_transaction(const algorithm::asset_id& asset, const uint256_t& external_id, oracle::finalized_transaction&& finalized, ledger::dispatch_context* dispatcher);
+			static expects_promise_rt<superchain::prepared_transaction> prepare_transaction(const algorithm::asset_id& asset, const superchain::wallet_link& from_link, const vector<superchain::value_transfer>& to, const decimal& max_fee);
+			static expects_lr<superchain::finalized_transaction> finalize_transaction(const algorithm::asset_id& asset, superchain::prepared_transaction&& prepared);
+			static expects_promise_rt<void> broadcast_transaction(const algorithm::asset_id& asset, const uint256_t& external_id, superchain::finalized_transaction&& finalized, ledger::dispatch_context* dispatcher);
 		};
 	}
 }

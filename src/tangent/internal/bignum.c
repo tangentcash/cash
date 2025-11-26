@@ -31,7 +31,6 @@
 #include <string.h>
 
 #include "memzero.h"
-#include "script.h"
 
 #if defined(_WIN32) || defined(_WIN64)
 #ifndef __clang__
@@ -1829,12 +1828,6 @@ void bn_print_raw(const bignum256 *x) {
 }
 #endif
 
-#if USE_INVERSE_FAST
 void bn_inverse(bignum256 *x, const bignum256 *prime) {
   bn_inverse_fast(x, prime);
 }
-#else
-void bn_inverse(bignum256 *x, const bignum256 *prime) {
-  bn_inverse_slow(x, prime);
-}
-#endif

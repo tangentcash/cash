@@ -1,6 +1,6 @@
 #ifndef TAN_KERNEL_ALGORITHM_H
 #define TAN_KERNEL_ALGORITHM_H
-#include "../layer/format.h"
+#include "format.h"
 #include <array>
 
 typedef struct secp256k1_context_struct secp256k1_context;

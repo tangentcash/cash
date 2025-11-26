@@ -1,6 +1,6 @@
 #include "cell.h"
 #include "../policy/transactions.h"
-#include "../validator/storage/chainstate.h"
+#include "../storage/chainstate.h"
 #include <gmp.h>
 #include <iostream>
 extern "C"

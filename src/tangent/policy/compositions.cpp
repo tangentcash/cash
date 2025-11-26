@@ -7,6 +7,8 @@ extern "C"
 #include <secp256k1_recovery.h>
 #include <sodium.h>
 #include "../internal/secp256k1.h"
+#include "../internal/ed25519.h"
+#include "../internal/sha2.h"
 }
 
 namespace tangent

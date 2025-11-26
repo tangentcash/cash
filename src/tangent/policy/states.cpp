@@ -1,7 +1,7 @@
 #include "states.h"
 #include "../kernel/block.h"
 #include "../kernel/cell.h"
-#include "../validator/service/oracle.h"
+#include "../service/superchain.h"
 
 namespace tangent
 {
@@ -1352,7 +1352,7 @@ namespace tangent
 		}
 		uptr<schema> bridge_account::as_schema() const
 		{
-			auto* chain = oracle::server_node::get()->get_chainparams(asset);
+			auto* chain = superchain::server_node::get()->get_chainparams(asset);
 			schema* data = ledger::multiform::as_schema().reset();
 			data->set("owner", algorithm::signing::serialize_address(owner));
 			data->set("manager", algorithm::signing::serialize_address(manager));
@@ -1612,7 +1612,7 @@ namespace tangent
 		bool witness_account::store_row(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
-			auto location = addresses.empty() ? string() : oracle::server_node::get()->decode_address(asset, addresses.begin()->second).or_else(string(addresses.begin()->second));
+			auto location = addresses.empty() ? string() : superchain::server_node::get()->decode_address(asset, addresses.begin()->second).or_else(string(addresses.begin()->second));
 			stream->write_integer(asset);
 			stream->write_string(location);
 			return true;
@@ -1631,7 +1631,7 @@ namespace tangent
 		bool witness_account::store_data(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
-			auto* server = oracle::server_node::get();
+			auto* server = superchain::server_node::get();
 			stream->write_boolean(active);
 			stream->write_string(manager.optimized_view());
 			stream->write_integer((uint8_t)addresses.size());
@@ -1656,7 +1656,7 @@ namespace tangent
 			if (!stream.read_integer(stream.read_type(), &addresses_size))
 				return false;
 
-			auto* server = oracle::server_node::get();
+			auto* server = superchain::server_node::get();
 			addresses.clear();
 			for (uint8_t i = 0; i < addresses_size; i++)
 			{

@@ -32,6 +32,9 @@ extern "C" {
 #endif
 
 extern const char *BASE32_ALPHABET_RFC4648;
+extern const char* XBASE32_ALPHABET_RFC4648;
+
+uint8_t* xbase32_decode(const char* in, size_t inlen, uint8_t* out, size_t outlen, const char* alphabet);
 
 char *base32_encode(const uint8_t *in, size_t inlen, char *out, size_t outlen,
                     const char *alphabet);

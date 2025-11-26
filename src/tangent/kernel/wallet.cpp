@@ -1,7 +1,7 @@
 #include "wallet.h"
-#include "../validator/storage/mempoolstate.h"
-#include "../validator/storage/chainstate.h"
-#include "../validator/service/consensus.h"
+#include "../storage/mempoolstate.h"
+#include "../storage/chainstate.h"
+#include "../service/consensus.h"
 
 namespace tangent
 {
@@ -280,7 +280,7 @@ namespace tangent
 			stream->write_integer(ports.rpc);
 			stream->write_boolean(services.has_consensus);
 			stream->write_boolean(services.has_discovery);
-			stream->write_boolean(services.has_oracle);
+			stream->write_boolean(services.has_superchain);
 			stream->write_boolean(services.has_rpc);
 			stream->write_boolean(services.has_rpc_web_sockets);
 			stream->write_boolean(services.has_production);
@@ -345,7 +345,7 @@ namespace tangent
 			if (!stream.read_boolean(stream.read_type(), &services.has_discovery))
 				return false;
 
-			if (!stream.read_boolean(stream.read_type(), &services.has_oracle))
+			if (!stream.read_boolean(stream.read_type(), &services.has_superchain))
 				return false;
 
 			if (!stream.read_boolean(stream.read_type(), &services.has_rpc))
@@ -407,7 +407,7 @@ namespace tangent
 			auto* services_data = data->set("services");
 			services_data->set("consensus", var::boolean(services.has_consensus));
 			services_data->set("discovery", var::boolean(services.has_discovery));
-			services_data->set("oracle", var::boolean(services.has_oracle));
+			services_data->set("superchain", var::boolean(services.has_superchain));
 			services_data->set("rpc", var::boolean(services.has_rpc));
 			services_data->set("rpc_web_sockets", var::boolean(services.has_rpc_web_sockets));
 			services_data->set("production", var::boolean(services.has_production));

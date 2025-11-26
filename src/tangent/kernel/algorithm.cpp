@@ -1,6 +1,6 @@
 #include "algorithm.h"
-#include "../validator/service/oracle.h"
 #include "../policy/compositions.h"
+#include "../service/superchain.h"
 #include <gmp.h>
 extern "C"
 {
@@ -9,14 +9,14 @@ extern "C"
 #include <secp256k1_recovery.h>
 #include <secp256k1_schnorrsig.h>
 #include <sodium.h>
-#include "../internal/segwit_addr.h"
-#include "../internal/ecdsa.h"
-#include "../internal/ed25519.h"
 #include "../internal/ripemd160.h"
-#include "../internal/bip39.h"
 #include "../internal/sha2.h"
-#include "../internal/secp256k1.h"
-#include "../internal/monero/crypto.h"
+#include "../internal/sha3.h"
+#include "../internal/blake2b.h"
+#include "../internal/bech32.h"
+#include "../internal/bip39.h"
+#include "../internal/pbkdf2.h"
+#include "../internal/memzero.h"
 }
 
 namespace tangent
@@ -67,7 +67,7 @@ namespace tangent
 			{
 				size_t size = 0;
 				char* data = (char*)mpz_export(nullptr, &size, 1, 1, 1, 0, value);
-				memset(buffer, 0, sizeof(uint256_t));
+				memzero(buffer, sizeof(uint256_t));
 				memcpy((char*)buffer + (sizeof(uint256_t) - size), data, size);
 				free(data, size);
 			}
@@ -488,8 +488,35 @@ namespace tangent
 		}
 		string signing::mnemonicgen(uint16_t strength)
 		{
+			VI_ASSERT(strength % 32 == 0 && strength >= 128 && strength <= 256, "invalid mnemonic strength");
+			uint8_t data[32] = { 0 };
+			crypto::fill_random_bytes(data, 32);
+
+			size_t length = strength / 8;
+			uint8_t bits[32 + 1] = { 0 };
+			sha256_Raw(data, length, bits);
+			bits[length] = bits[0];
+			memcpy(bits, data, length);
+			memzero(data, sizeof(data));
+
 			char buffer[256] = { 0 };
-			mnemonic_generate((int)strength, buffer, (int)sizeof(buffer));
+			char* p = buffer;
+			size_t mlen = length * 3 / 4;
+			size_t i = 0, j = 0, idx = 0;
+			for (i = 0; i < mlen; i++)
+			{
+				idx = 0;
+				for (j = 0; j < 11; j++)
+				{
+					idx <<= 1;
+					idx += (bits[(i * 11 + j) / 8] & (1 << (7 - ((i * 11 + j) % 8)))) > 0;
+				}
+				strcpy(p, mnemonic_words[idx]);
+				p += strlen(mnemonic_words[idx]);
+				*p = (i < mlen - 1) ? ' ' : 0;
+				p++;
+			}
+			memzero(bits, sizeof(bits));
 			return string(buffer, strnlen(buffer, sizeof(buffer)));
 		}
 		void signing::keygen(seckey_t& secret_key)
@@ -539,7 +566,7 @@ namespace tangent
 		{
 			uint8_t data[32];
 			hash.encode(data);
-			memset(signature.data, 0, sizeof(hashsig_t));
+			memzero(signature.data, sizeof(hashsig_t));
 
 			secp256k1_context* context = get_context();
 			secp256k1_ecdsa_recoverable_signature recoverable_signature;
@@ -572,8 +599,71 @@ namespace tangent
 		}
 		bool signing::verify_mnemonic(const std::string_view& mnemonic)
 		{
-			string data = string(mnemonic);
-			return mnemonic_check(data.c_str()) == 1;
+			uint32_t i = 0, n = 0;
+			while (i < mnemonic.size())
+			{
+				if (mnemonic[i] == ' ')
+					n++;
+				i++;
+			}
+
+			n++;
+			if (n != 12 && n != 15 && n != 18 && n != 21 && n != 24)
+				return false;
+
+			char current_word[10] = { 0 };
+			uint32_t j = 0, k = 0, ki = 0, bi = 0;
+			uint8_t result[32 + 1] = { 0 };
+			memzero(result, sizeof(result));
+			i = 0;
+
+			while (i < mnemonic.size())
+			{
+				j = 0;
+				while (i < mnemonic.size() && mnemonic[i] != ' ')
+				{
+					if (j >= sizeof(current_word) - 1)
+						return false;
+
+					current_word[j] = mnemonic[i];
+					i++;
+					j++;
+				}
+
+				current_word[j] = 0;
+				if (i < mnemonic.size() != 0)
+					i++;
+
+				k = 0;
+				for (;;)
+				{
+					if (!mnemonic_words[k])
+						return false;
+
+					if (strcmp(current_word, mnemonic_words[k]) == 0)
+					{ 
+						for (ki = 0; ki < 11; ki++)
+						{
+							if (k & (1 << (10 - ki)))
+							{
+								result[bi / 8] |= 1 << (7 - (bi % 8));
+							}
+							bi++;
+						}
+						break;
+					}
+					k++;
+				}
+			}
+
+			if (bi != n * 11)
+				return false;
+
+			memzero(result, sizeof(result));
+			if (n != 12 && n != 18 && n != 24 && n != 15 && n != 21)
+				return false;
+
+			return true;
 		}
 		bool signing::verify_secret_key(const seckey_t& secret_key)
 		{
@@ -605,7 +695,12 @@ namespace tangent
 		{
 			VI_ASSERT(stringify::is_cstring(mnemonic), "mnemonic should be set");
 			uint8_t seed[64] = { 0 };
-			mnemonic_to_seed(mnemonic.data(), "", seed, nullptr);
+			const uint8_t salt[] = "mnemonic";
+			PBKDF2_HMAC_SHA512_CTX pctx;
+			pbkdf2_hmac_sha512_Init(&pctx, (const uint8_t*)mnemonic.data(), (int)mnemonic.size(), salt, sizeof(salt) - 1, 1);
+			for (int i = 0; i < 16; i++)
+				pbkdf2_hmac_sha512_Update(&pctx, 2048 / 16);
+			pbkdf2_hmac_sha512_Final(&pctx, seed);
 			derive_secret_key(algorithm::hashing::hash256i(seed, sizeof(seed)), secret_key);
 		}
 		void signing::derive_secret_key_from_parent(const seckey_t& secret_key, const uint256_t& entropy, seckey_t& child_secret_key)
@@ -631,7 +726,7 @@ namespace tangent
 		{
 			secp256k1_pubkey derived_public_key;
 			secp256k1_context* context = get_context();
-			memset(public_key.data, 0, sizeof(pubkey_t));
+			memzero(public_key.data, sizeof(pubkey_t));
 			if (secp256k1_ec_pubkey_create(context, &derived_public_key, secret_key.data) != 1)
 				return false;
 
@@ -915,7 +1010,7 @@ namespace tangent
 		{
 			VI_ASSERT(data != nullptr, "data should be set");
 			if (value.size() < data_size)
-				memset(data, 0, data_size);
+				memzero(data, data_size);
 			else if (value.size() > data_size)
 				return false;
 
@@ -1017,7 +1112,7 @@ namespace tangent
 		}
 		string hashing::hash256(const uint8_t* buffer, size_t size)
 		{
-			uint8_t hash[BLAKE256_DIGEST_LENGTH];
+			uint8_t hash[32];
 			hash256(buffer, size, hash);
 			return string((char*)hash, sizeof(hash));
 		}
@@ -1207,7 +1302,7 @@ namespace tangent
 				return false;
 
 			bool onchain = auxiliary_only ? false : blockchain == protocol::now().policy.token;
-			auto* chain = onchain ? nullptr : oracle::server_node::get()->get_chain(value);
+			auto* chain = onchain ? nullptr : superchain::server_node::get()->get_chain(value);
 			if (!onchain && !chain)
 				return false;
 
@@ -1218,7 +1313,7 @@ namespace tangent
 			if (is_token_empty != is_checksum_empty || (require_no_token && !is_token_empty))
 				return false;
 
-			return is_token_empty || (onchain ? true : chain->get_chainparams().tokenization != oracle::token_policy::none);
+			return is_token_empty || (onchain ? true : chain->get_chainparams().tokenization != superchain::token_policy::none);
 		}
 		bool asset::is_aux(const asset_id& value, bool require_no_token)
 		{

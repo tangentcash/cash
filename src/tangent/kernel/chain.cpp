@@ -1,19 +1,16 @@
 #include "chain.h"
 #include "cell.h"
-#include "../validator/storage/chainstate.h"
-#include "../validator/storage/mempoolstate.h"
-#include "../validator/service/oracle.h"
-#ifdef TAN_ROCKSDB
-#include "rocksdb/db.h"
-#include "rocksdb/table.h"
-#endif
+#include "../storage/chainstate.h"
+#include "../storage/mempoolstate.h"
+#include "../service/superchain.h"
+#include <rocksdb/db.h>
+#include <rocksdb/table.h>
 #define KEY_FRONT 32
 #define KEY_BACK 32
 #define KEY_SIZE 2048
 
 namespace tangent
 {
-#ifdef TAN_ROCKSDB
 	static rocksdb::Options blob_storage_configuration(storage_optimization type, uint64_t blob_cache_size)
 	{
 		rocksdb::BlockBasedTableOptions table_options;
@@ -34,7 +31,6 @@ namespace tangent
 		}
 		return options;
 	}
-#endif
 	static string index_storage_configuration(storage_optimization type, uint64_t index_page_size, int64_t index_cache_size)
 	{
 		switch (type)
@@ -124,7 +120,6 @@ namespace tangent
 	}
 	rocksdb::DB* repository::pull_blob_ref(const std::string_view& location)
 	{
-#ifdef TAN_ROCKSDB
 		umutex<std::mutex> unique(mutex);
 		if (target_path.empty())
 			resolve(protocol::now().user.network, protocol::now().user.storage.path);
@@ -156,9 +151,6 @@ namespace tangent
 
 		blobs[address] = result;
 		return result;
-#else
-		return nullptr;
-#endif
 	}
 	uref<sqlite::connection> repository::pull_index(const std::string_view& location, std::function<void(sqlite::connection*)>&& initializer)
 	{
@@ -210,17 +202,18 @@ namespace tangent
 	void repository::reset()
 	{
 		umutex<std::mutex> unique(mutex);
-#ifdef TAN_ROCKSDB
 		for (auto& handle : blobs)
+		{
+			if (handle.second)
+				handle.second->Close();
 			delete handle.second;
-#endif
+		}
 		blobs.clear();
 		indices.clear();
 		target_path.clear();
 	}
 	void repository::checkpoint()
 	{
-#ifdef TAN_ROCKSDB
 		umutex<std::mutex> unique(mutex);
 		for (auto& handle : blobs)
 		{
@@ -240,7 +233,7 @@ namespace tangent
 					VI_ERR("blob storage checkpoint error on: %s (location: %s)", status.ToString().c_str(), handle.first.c_str());
 			}
 		}
-#endif
+
 		for (auto& queue : indices)
 		{
 			if (queue.second.empty())
@@ -575,33 +568,33 @@ namespace tangent
 			if (value != nullptr && value->value.is(var_type::boolean))
 				user.discovery.logging = value->value.get_boolean();
 
-			value = config->fetch("oracle.block_replay_multiplier");
+			value = config->fetch("superchain.block_replay_multiplier");
 			if (value != nullptr && value->value.is(var_type::integer))
-				user.oracle.block_replay_multiplier = value->value.get_integer();
+				user.superchain.block_replay_multiplier = value->value.get_integer();
 
-			value = config->fetch("oracle.relaying_timeout");
+			value = config->fetch("superchain.relaying_timeout");
 			if (value != nullptr && value->value.is(var_type::integer))
-				user.oracle.relaying_timeout = value->value.get_integer();
+				user.superchain.relaying_timeout = value->value.get_integer();
 
-			value = config->fetch("oracle.relaying_retry_timeout");
+			value = config->fetch("superchain.relaying_retry_timeout");
 			if (value != nullptr && value->value.is(var_type::integer))
-				user.oracle.relaying_retry_timeout = value->value.get_integer();
+				user.superchain.relaying_retry_timeout = value->value.get_integer();
 
-			value = config->fetch("oracle.cache1_size");
+			value = config->fetch("superchain.cache1_size");
 			if (value != nullptr && value->value.is(var_type::integer))
-				user.oracle.cache1_size = (uint32_t)value->value.get_integer();
+				user.superchain.cache1_size = (uint32_t)value->value.get_integer();
 
-			value = config->fetch("oracle.cache2_size");
+			value = config->fetch("superchain.cache2_size");
 			if (value != nullptr && value->value.is(var_type::integer))
-				user.oracle.cache2_size = (uint32_t)value->value.get_integer();
+				user.superchain.cache2_size = (uint32_t)value->value.get_integer();
 
-			value = config->fetch("oracle.server");
+			value = config->fetch("superchain.server");
 			if (value != nullptr && value->value.is(var_type::boolean))
-				user.oracle.server = value->value.get_boolean();
+				user.superchain.server = value->value.get_boolean();
 
-			value = config->fetch("oracle.logging");
+			value = config->fetch("superchain.logging");
 			if (value != nullptr && value->value.is(var_type::boolean))
-				user.oracle.logging = value->value.get_boolean();
+				user.superchain.logging = value->value.get_boolean();
 
 			value = config->fetch("rpc.address");
 			if (value != nullptr && value->value.is(var_type::string))
@@ -757,9 +750,9 @@ namespace tangent
 			if (value != nullptr && value->value.is(var_type::boolean))
 				user.logs.control_logging = value->value.get_boolean();
 
-			user.oracle.options = config->get("oracle");
-			if (user.oracle.options)
-				user.oracle.options->unlink();
+			user.superchain.options = config->get("superchain");
+			if (user.superchain.options)
+				user.superchain.options->unlink();
 		}
 		else
 			path.clear();
@@ -918,7 +911,7 @@ namespace tangent
 		storages::account_cache::cleanup_instance();
 		storages::uniform_cache::cleanup_instance();
 		storages::multiform_cache::cleanup_instance();
-		oracle::server_node::cleanup_instance();
+		superchain::server_node::cleanup_instance();
 		cell::factory::cleanup_instance();
 		algorithm::signing::deinitialize();
 		error_handling::set_callback(nullptr);

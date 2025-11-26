@@ -6,7 +6,7 @@
 </div>
 
 ## Project information
-Tangent Protocol is an software implementation designed as both a library and a validator, essential for maintaining a trustless peer-to-peer network. This network processes, stores, and distributes transactions in the form of a blockchain, offering reliable and fast superchain capabilties.
+Tangent Protocol is an software implementation designed as a validator node, essential for maintaining a trustless peer-to-peer network. This network processes, stores, and distributes transactions in the form of a blockchain, offering reliable and fast superchain capabilties.
 
 ### Asset Bridging
 Tangent's primary utility lies in its asset bridging capabilities, allowing users to deposit and withdraw (lock and unlock) cryptocurrencies into the Tangent network. This feature significantly enhances the speed and efficiency of unbounded DeFi operations.

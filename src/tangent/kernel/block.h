@@ -5,7 +5,7 @@
 
 namespace tangent
 {
-	namespace oracle
+	namespace superchain
 	{
 		struct prepared_transaction;
 	}
@@ -426,7 +426,7 @@ namespace tangent
 			{
 				uptr<algorithm::composition::signature_state> aggregator;
 				ordered_set<algorithm::pubkeyhash_t> participants;
-				uptr<oracle::prepared_transaction> message;
+				uptr<superchain::prepared_transaction> message;
 				algorithm::composition::type alg;
 
 				bool load_message_if_preferred(format::ro_stream& stream);

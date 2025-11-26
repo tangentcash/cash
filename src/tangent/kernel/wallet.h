@@ -70,7 +70,7 @@ namespace tangent
 			{
 				bool has_consensus = false;
 				bool has_discovery = false;
-				bool has_oracle = false;
+				bool has_superchain = false;
 				bool has_rpc = false;
 				bool has_rpc_web_sockets = false;
 				bool has_production = false;

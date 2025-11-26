@@ -1,4 +1,4 @@
-#include "tangent/validator/entrypoints.hpp"
+#include "tangent/entrypoints.hpp"
 
 using namespace tangent;
 

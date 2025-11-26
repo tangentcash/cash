@@ -28,7 +28,6 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include "options.h"
 
 #ifdef __cplusplus
 extern "C" {
