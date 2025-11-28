@@ -20,7 +20,7 @@
 #include "bitcoin.h"
 #include "memzero.h"
 
-static const int8_t b58digits_map[] = {
+static const int8_t xb58digits_map[] = {
 	-1,-1,-1,-1,-1,-1,-1,-1, -1,-1,-1,-1,-1,-1,-1,-1,
 	-1,-1,-1,-1,-1,-1,-1,-1, -1,-1,-1,-1,-1,-1,-1,-1,
 	-1,-1,-1,-1,-1,-1,-1,-1, -1,-1,-1,-1,-1,-1,-1,-1,
@@ -70,10 +70,10 @@ bool xb58tobin(void* bin, size_t* binszp, const char* b58)
 		if (b58u[i] & 0x80)
 			// High-bit set on invalid digit
 			return false;
-		if (b58digits_map[b58u[i]] == -1)
+		if (xb58digits_map[b58u[i]] == -1)
 			// Invalid base58 digit
 			return false;
-		c = (unsigned)b58digits_map[b58u[i]];
+		c = (unsigned)xb58digits_map[b58u[i]];
 		for (j = outisz; j--;)
 		{
 			t = ((b58_maxint_t)outi[j]) * 58 + c;
