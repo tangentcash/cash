@@ -385,6 +385,9 @@ namespace tangent
 			if (!parent_block && number > 1)
 				return expectation::met;
 
+			if (parent_block && parent_block->evaluation_time > generation_time + protocol::now().policy.pow.adjustment_time)
+				return layer_exception("block is too far into the past");
+
 			if (absolute_work != (parent_block ? parent_block->absolute_work + gas_work : gas_work))
 				return layer_exception("invalid absolute gas work");
 

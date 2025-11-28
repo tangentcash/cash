@@ -989,20 +989,19 @@ namespace tangent
 		}
 		expects_rt<void> server_node::broadcast_block_hash(uref<relay>&& state, const exchange& event)
 		{
-			if (event.args.size() != 2)
+			if (event.args.size() != 1)
 				return remote_exception("invalid arguments");
 
 			uint256_t block_hash = event.args[0].as_uint256();
-			uint256_t block_number = event.args[1].as_uint64();
-			if (!block_hash && !block_number)
+			if (!block_hash)
 				return expectation::met;
 
 			auto chain = storages::chainstate();
-			auto target = block_number > 0 ? chain.get_block_header_by_number(block_number) : chain.get_block_header_by_hash(block_hash);
-			if (target && (!block_number || block_number == target->number) && (!block_hash || block_hash == target->as_hash()))
+			auto target = chain.get_block_header_by_hash(block_hash);
+			if (target && block_hash == target->as_hash())
 				return expectation::met;
 
-			query(uref(state), descriptors::fetch_block(), { format::variable(block_hash), format::variable(block_number) }, protocol::now().user.tcp.timeout).then([this, state](expects_rt<exchange>&& event) mutable
+			query(uref(state), descriptors::fetch_block(), { format::variable(block_hash) }, protocol::now().user.tcp.timeout).then([this, state](expects_rt<exchange>&& event) mutable
 			{
 				if (event && !event->args.empty())
 				{
@@ -1205,7 +1204,7 @@ namespace tangent
 		}
 		expects_rt<format::variables> server_node::perform_discovery(uref<relay>&& state, const exchange& event, bool is_acknowledgement)
 		{
-			if (event.args.size() < 3)
+			if (event.args.size() < 2)
 				return remote_exception("invalid arguments");
 
 			auto mempool = storages::mempoolstate();
@@ -1217,16 +1216,15 @@ namespace tangent
 			}
 
 			auto block_handle = exchange();
-			block_handle.args.reserve(2);
+			block_handle.args.reserve(1);
 			block_handle.args.push_back(event.args[1]);
-			block_handle.args.push_back(event.args[2]);
 
 			auto status = broadcast_block_hash(uref(state), std::move(block_handle));
 			if (!status)
 				return status.error();
 
 			size_t new_nodes = 0;
-			for (size_t i = 3; i < event.args.size(); i++)
+			for (size_t i = 2; i < event.args.size(); i++)
 			{
 				auto address = text_address_to_socket_address(event.args[i].as_string());
 				if (address && !routing_util::is_address_reserved(*address))
@@ -1268,30 +1266,18 @@ namespace tangent
 		}
 		expects_rt<format::variables> server_node::fetch_block(uref<relay>&& state, const exchange& event)
 		{
-			if (event.args.size() != 2)
+			if (event.args.size() != 1)
 				return remote_exception("invalid arguments");
 
 			uint256_t block_hash = event.args[0].as_uint256();
-			uint256_t block_number = event.args[1].as_uint64();
-			if (!block_hash && !block_number)
+			if (!block_hash)
 				return remote_exception("invalid arguments");
 
-			if (block_hash > 0)
-			{
-				auto chain = storages::chainstate();
-				auto block = chain.get_block_by_hash(block_hash, BLOCK_RATE_NORMAL, BLOCK_DATA_CONSENSUS);
-				if (block)
-					return format::variables({ format::variable(block->as_message().data) });
-			}
-
-			if (block_number > 0)
-			{
-				auto chain = storages::chainstate();
-				auto block = chain.get_block_by_number(block_number, BLOCK_RATE_NORMAL, BLOCK_DATA_CONSENSUS);
-				if (block)
-					return format::variables({ format::variable(block->as_message().data) });
-			}
-
+			auto chain = storages::chainstate();
+			auto block = chain.get_block_by_hash(block_hash, BLOCK_RATE_NORMAL, BLOCK_DATA_CONSENSUS);
+			if (block)
+				return format::variables({ format::variable(block->as_message().data) });
+			
 			return format::variables();
 		}
 		expects_rt<format::variables> server_node::fetch_blocks(uref<relay>&& state, const exchange& event)
@@ -2226,8 +2212,7 @@ namespace tangent
 			format::variables args =
 			{
 				format::variable(address),
-				format::variable(tip ? tip->as_hash() : uint256_t(0)),
-				format::variable(tip ? tip->number : 0)
+				format::variable(tip ? tip->as_hash() : uint256_t(0))
 			};
 
 			auto mempool = storages::mempoolstate();
@@ -3068,25 +3053,12 @@ namespace tangent
 				return true;
 			}
 
-			if (from)
+			auto validation = from ? candidate.block.validate(parent_block.address(), &candidate) : environment.verify_solved_block(candidate.block, &candidate.state);
+			if (!validation)
 			{
-				auto validation = candidate.block.validate(parent_block.address(), &candidate);
-				if (!validation)
-				{
-					if (protocol::now().user.consensus.logging)
-						VI_WARN("block %s rejected: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), validation.error().what());
-					return false;
-				}
-			}
-			else
-			{
-				auto integrity = environment.verify_solved_block(candidate.block, &candidate.state);
-				if (!integrity)
-				{
-					if (protocol::now().user.consensus.logging)
-						VI_WARN("block %s rejected: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), integrity.error().what());
-					return false;
-				}
+				if (protocol::now().user.consensus.logging)
+					VI_WARN("block %s rejected: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), validation.error().what());
+				return false;
 			}
 
 			/*
@@ -3094,35 +3066,35 @@ namespace tangent
 											\
 											<+> - <+> = possible reorganization
 			*/
-			umutex<std::recursive_mutex> unique(sync.block);
 			if (!accept_block_candidate(candidate, candidate_hash, fork_tip))
 				return false;
+
+			size_t notifications = notify_all_except(uref(from), descriptors::broadcast_block_hash(), { format::variable(candidate_hash) });
+			if (notifications > 0 && protocol::now().user.consensus.logging)
+				VI_INFO("block %s broadcasted to %i nodes (height: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)notifications, candidate.block.number);
 
 			if (fork_tip != candidate_hash)
 				accept_pending_fork(uref(from), fork_head::replace, fork_tip, std::move(fork_tip_block));
 			else
 				clear_pending_fork(nullptr);
 
-			size_t notifications = notify_all_except(uref(from), descriptors::broadcast_block_hash(), { format::variable(candidate_hash), format::variable(candidate.block.number) });
-			if (notifications > 0 && protocol::now().user.consensus.logging)
-				VI_INFO("block %s broadcasted to %i nodes (height: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)notifications, candidate.block.number);
-
-			if (is_syncing())
-				return true;
-
-			auto header = ledger::block_header(candidate.block);
-			auto timeout = std::min(header.evaluation_time - header.generation_time, protocol::now().policy.pow.time);
-			schedule::get()->set_timeout(timeout, [this, header = std::move(header)]() mutable { run_block_dispatcher(std::move(header)); });
-			if (from && mempool.dirty)
+			if (!is_syncing())
 			{
-				mempool.dirty = false;
-				synchronize_mempool_with(uref(from));
+				auto header = ledger::block_header(candidate.block);
+				auto timeout = std::min(header.evaluation_time - header.generation_time, protocol::now().policy.pow.time);
+				schedule::get()->set_timeout(timeout, [this, header = std::move(header)]() mutable { run_block_dispatcher(std::move(header)); });
+				if (from && mempool.dirty)
+				{
+					mempool.dirty = false;
+					synchronize_mempool_with(uref(from));
+				}
 			}
 
 			return true;
 		}
 		bool server_node::accept_block_candidate(const ledger::block_evaluation& candidate, const uint256_t& candidate_hash, const uint256_t& fork_tip)
 		{
+			umutex<std::recursive_mutex> unique(sync.block);
 			auto mutation = candidate.checkpoint();
 			if (!mutation)
 			{
@@ -3484,15 +3456,11 @@ namespace tangent
 		}
 		algorithm::pubkey_t dispatch_context::get_public_key(const algorithm::pubkeyhash_t& validator) const
 		{
-			auto target = server->find_by_account(validator);
+			auto target = server->find_public_key(validator);
 			if (!target)
 				return algorithm::pubkey_t();
 
-			auto* descriptor = target->as_descriptor();
-			if (!descriptor)
-				return algorithm::pubkey_t();
-
-			return descriptor->second.public_key;
+			return *target;
 		}
 		const ledger::wallet& dispatch_context::get_runner_wallet() const
 		{
