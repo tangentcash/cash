@@ -71,6 +71,9 @@ namespace tangent
 			~cell_context() = default;
 			expects_lr<void> assign_transaction(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& from, const algorithm::pubkeyhash_t& to, const decimal& value, const std::string_view& function_decl, const format::variables& args)
 			{
+				ledger::receipt receipt;
+				receipt.from = from;
+
 				uptr<transactions::call> transaction = memory::init<transactions::call>();
 				transaction->asset = asset;
 				transaction->signature.data[0] = 0xFF;
@@ -78,12 +81,7 @@ namespace tangent
 				transaction->program_call(to, value, function_decl, format::variables(args));
 				transaction->set_gas(decimal::zero(), ledger::block::get_transaction_gas_limit());
 				tracer.contextual = std::move(transaction);
-
-				ledger::receipt receipt;
-				receipt.from = from;
-
-				ledger::evaluation_context temp_environment;
-				temp_environment.apply_temporary_state(&tracer.block, *tracer.contextual, std::move(receipt));
+				tracer.environment.apply_temporary_state(&tracer.block, *tracer.contextual, std::move(receipt));
 				return expectation::met;
 			}
 			expects_lr<void> call_transaction(cell::ccall mutability, const function& entrypoint, const format::variables& args)
