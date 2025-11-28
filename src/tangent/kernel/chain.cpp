@@ -757,9 +757,6 @@ namespace tangent
 		else
 			path.clear();
 
-		if (user.keystate.empty())
-			user.keystate = "./keystate.sk";
-
 		if (user.storage.path.empty())
 		{
 #ifdef VI_MICROSOFT
@@ -828,23 +825,25 @@ namespace tangent
 			});
 		}
 
-		instance = this;
-		if (config)
+		auto default_keystate_path = std::string_view("./keystate.sk");
+		auto keystate_base = user.keystate.empty() ? string(default_keystate_path) : user.keystate;
+		auto keystate_url = location(keystate_base);
+		auto keystate_host = keystate_url.protocol == "file";
+		auto keystate_path = keystate_host ? os::path::resolve(keystate_base, user.storage.path, true).or_else(keystate_base) : keystate_base;
+		auto keystate_file = os::file::read_as_string(keystate_path);
+		if (!keystate_file)
 		{
-			auto keystate_path = os::path::resolve(user.keystate, user.storage.path, true).or_else(user.keystate);
-			auto keystate_file = os::file::read_as_string(keystate_path);
-			if (!keystate_file)
-			{
-				keystate_file = box.init();
-				VI_PANIC(location(keystate_path).protocol == "file", "cannot save keystate into %s", keystate_path.c_str());
-				os::directory::patch(os::path::get_directory(keystate_path)).expect("cannot save keystate into " + keystate_path);
-				os::file::write(keystate_path, (uint8_t*)keystate_file->data(), keystate_file->size()).expect("cannot save keystate into " + keystate_path);
-			}
-			box.use(user.network, *keystate_file);
-		}
-		else
-			box.use(user.network, box.init());
+			if (!keystate_host)
+				keystate_path = os::path::resolve(default_keystate_path, user.storage.path, true).or_else(string(default_keystate_path));
 
+			keystate_file = box.init();
+			VI_PANIC(location(keystate_path).protocol == "file", "cannot save keystate into %s", keystate_path.c_str());
+			os::directory::patch(os::path::get_directory(keystate_path)).expect("cannot save keystate into " + keystate_path);
+			os::file::write(keystate_path, (uint8_t*)keystate_file->data(), keystate_file->size()).expect("cannot save keystate into " + keystate_path);
+		}
+
+		instance = this;
+		box.use(user.network, *keystate_file);
 		switch (user.network)
 		{
 			case tangent::network_type::regtest:
@@ -858,8 +857,6 @@ namespace tangent
 				policy.pow.genesis_length = 0;
 				policy.attestation.min_stake_value = decimal::zero();
 				policy.participation.min_stake_value = decimal::zero();
-				policy.participation.min_per_account = 1;
-				policy.participation.std_per_account = 2;
 				policy.production.min_stake_value = decimal::zero();
 				policy.delegations_max_per_account = std::numeric_limits<uint32_t>::max();
 				policy.pow.time = 120;

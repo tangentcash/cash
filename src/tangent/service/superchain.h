@@ -20,9 +20,9 @@ namespace tangent
 
 		struct computed_wallet
 		{
-			uint256_t seed = 0;
 			algorithm::composition::cseckey_t secret_key;
 			algorithm::composition::cpubkey_t public_key;
+			vector<uint8_t> seed;
 			address_map addresses;
 			address_map encoded_addresses;
 			secret_box encoded_seed;
@@ -67,7 +67,7 @@ namespace tangent
 			expects_promise_rt<prepared_transaction> prepare_transaction(const algorithm::asset_id& asset, const wallet_link& from_link, const vector<value_transfer>& to, const decimal& max_fee);
 			expects_lr<finalized_transaction> finalize_transaction(const algorithm::asset_id& asset, prepared_transaction&& prepared);
 			expects_lr<computed_transaction> get_computed_transaction(const algorithm::asset_id& asset, const std::string_view& transaction_id, const uint256_t& external_id, const uint256_t& optimized_id);
-			expects_lr<computed_wallet> compute_wallet(const algorithm::asset_id& asset, const uint256_t& seed);
+			expects_lr<computed_wallet> compute_wallet(const algorithm::asset_id& asset, const uint8_t* seed, size_t seed_size);
 			expects_lr<secret_box> encode_secret_key(const algorithm::asset_id& asset, const secret_box& secret_key);
 			expects_lr<secret_box> decode_secret_key(const algorithm::asset_id& asset, const secret_box& secret_key);
 			expects_lr<string> encode_public_key(const algorithm::asset_id& asset, const std::string_view& public_key);

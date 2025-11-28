@@ -329,7 +329,7 @@ namespace tangent
 			expects_lr<states::account_balance> apply_fee_transfer(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const decimal& value);
 			expects_lr<states::account_balance> apply_payment(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& from, const algorithm::pubkeyhash_t& to, const decimal& value);
 			expects_lr<states::validator_production> apply_validator_production(const algorithm::pubkeyhash_t& owner, stake_type type, ordered_map<algorithm::asset_id, decimal>&& rewards);
-			expects_lr<states::validator_participation> apply_validator_participation(const algorithm::pubkeyhash_t& owner, stake_type type, int64_t participations, ordered_map<algorithm::asset_id, decimal>&& rewards);
+			expects_lr<states::validator_participation> apply_validator_participation(const algorithm::pubkeyhash_t& owner, stake_type type, ordered_map<algorithm::asset_id, std::pair<bool, states::validator_participation::participation_ref>>&& participations, ordered_map<algorithm::asset_id, decimal>&& rewards);
 			expects_lr<states::validator_attestation> apply_validator_attestation(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, stake_type type, ordered_map<algorithm::asset_id, decimal>&& rewards);
 			expects_lr<states::validator_attestation> apply_validator_attestation_policy(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, uint8_t security_level, const decimal& participation_threshold, const decimal& incoming_fee, const decimal& outgoing_fee, bool accepts_account_requests, bool accepts_withdrawal_requests);
 			expects_lr<states::validator_attestation> apply_validator_attestation_queue(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const uint256_t& transaction_hash);
@@ -368,7 +368,7 @@ namespace tangent
 			expects_lr<states::witness_account> get_witness_account(const algorithm::asset_id& asset, const std::string_view& address, size_t offset) const;
 			expects_lr<states::witness_account> get_witness_account_tagged(const algorithm::asset_id& asset, const std::string_view& address, size_t offset) const;
 			expects_lr<states::witness_transaction> get_witness_transaction(const algorithm::asset_id& asset, const std::string_view& transaction_id) const;
-			expects_lr<ledger::block_transaction> get_block_transaction_instance(const uint256_t& transaction_hash) const;
+			expects_lr<ledger::block_transaction> get_block_transaction_instance(const uint256_t& transaction_hash, bool may_have_distinct_asset = false) const;
 			uint64_t get_validation_nonce() const;
 			uint256_t get_gas_use() const;
 			uint256_t get_gas_left() const;
@@ -381,9 +381,9 @@ namespace tangent
 				return emit_event(t::as_instance_type(), std::move(values), paid);
 			}
 			template <typename t>
-			expects_lr<ledger::block_transaction> get_block_transaction(const uint256_t& transaction_hash) const
+			expects_lr<ledger::block_transaction> get_block_transaction(const uint256_t& transaction_hash, bool may_have_distinct_asset = false) const
 			{
-				auto transaction = get_block_transaction_instance(transaction_hash);
+				auto transaction = get_block_transaction_instance(transaction_hash, may_have_distinct_asset);
 				if (!transaction)
 					return transaction.error();
 
@@ -402,21 +402,66 @@ namespace tangent
 
 		struct dispatch_context
 		{
-			struct secret_share_state
+			struct secret_entropy : messages::uniform
 			{
-				ordered_map<uint256_t, string> encrypted_shares;
-				algorithm::hashsig_t confirmation_signature;
+				struct share_pair
+				{
+					algorithm::share_t input;
+					algorithm::share_t output;
+				};
+
+				algorithm::asset_id asset;
+				algorithm::pubkeyhash_t manager;
+				algorithm::pubkeyhash_t owner;
+				algorithm::storage_type<uint8_t, 64> entropy;
+				ordered_map<algorithm::pubkeyhash_t, share_pair> shares;
+
+				bool store_payload(format::wo_stream* stream) const override;
+				bool load_payload(format::ro_stream& stream) override;
+				uptr<schema> as_schema() const override;
+				uint32_t as_type() const override;
+				std::string_view as_typename() const override;
+				uint256_t as_ref_hash() const;
+				static uint32_t as_instance_type();
+				static std::string_view as_instance_typename();
+				static uint256_t ref_hash(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner);
+			};
+
+			struct entropy_distribution_state
+			{
+				ordered_map<algorithm::pubkeyhash_t, string> encrypted_shares;
 
 				bool load_message(format::ro_stream& stream);
 				format::wo_stream as_message() const;
-				uint256_t as_confirmation_hash() const;
+			};
+
+			struct entropy_aggregation_state
+			{
+				ordered_map<uint256_t, ordered_map<algorithm::pubkeyhash_t, string>> encrypted_shares;
+				ordered_set<algorithm::pubkeyhash_t> participants;
+				algorithm::pubkey_t public_key;
+
+				bool load_message(format::ro_stream& stream);
+				format::wo_stream as_message() const;
+			};
+
+			struct entropy_recovery_state
+			{
+				ordered_map<uint256_t, ordered_map<algorithm::pubkeyhash_t, string>> encrypted_shares;
+				ordered_map<uint256_t, string> encrypted_entropies;
+				algorithm::hashsig_t proof;
+
+				bool load_message(format::ro_stream& stream);
+				format::wo_stream as_message() const;
 			};
 
 			struct public_state
 			{
 				uptr<algorithm::composition::public_state> aggregator;
+				ordered_map<algorithm::pubkey_t, ordered_map<algorithm::pubkeyhash_t, string>> encrypted_shares;
 				ordered_set<algorithm::pubkeyhash_t> participants;
 				algorithm::composition::type alg;
+				bool distribution;
 
 				bool load_message(format::ro_stream& stream);
 				format::wo_stream as_message() const;
@@ -443,12 +488,14 @@ namespace tangent
 			dispatch_context(dispatch_context&&) noexcept = default;
 			dispatch_context& operator=(const dispatch_context& other) noexcept;
 			dispatch_context& operator=(dispatch_context&&) noexcept = default;
-			virtual expects_lr<void> apply_secret_share(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner, const uint256_t& scalar);
-			virtual expects_lr<void> recover_secret_share(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner, uint256_t& scalar) const;
+			virtual expects_lr<secret_entropy> apply_secret_entropy(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner, const algorithm::storage_type<uint8_t, 64>& entropy, ordered_map<algorithm::pubkeyhash_t, secret_entropy::share_pair>&& shares);
+			virtual expects_lr<secret_entropy> recover_secret_entropy(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner) const;
 			virtual expects_promise_rt<void> aggregate_validators(const ordered_set<algorithm::pubkeyhash_t>& validators) = 0;
-			virtual expects_promise_rt<void> aggregate_secret_share_state(const transaction_context* context, secret_share_state& state, const algorithm::pubkeyhash_t& validator) = 0;
-			virtual expects_promise_rt<void> aggregate_public_state(const transaction_context* context, public_state& state, const algorithm::pubkeyhash_t& validator) = 0;
-			virtual expects_promise_rt<void> aggregate_signature_state(const transaction_context* context, signature_state& state, const algorithm::pubkeyhash_t& validator) = 0;
+			virtual expects_promise_rt<void> distribute_entropy_shares(const transaction_context* context, entropy_distribution_state& state, const algorithm::pubkeyhash_t& validator) = 0;
+			virtual expects_promise_rt<void> aggregate_entropy_shares(const transaction_context* context, entropy_aggregation_state& state, const algorithm::pubkeyhash_t& validator) = 0;
+			virtual expects_promise_rt<void> recover_entropy(const transaction_context* context, entropy_recovery_state& state, const algorithm::pubkeyhash_t& validator) = 0;
+			virtual expects_promise_rt<void> aggregate_public_key(const transaction_context* context, public_state& state, const algorithm::pubkeyhash_t& validator) = 0;
+			virtual expects_promise_rt<void> aggregate_signature(const transaction_context* context, signature_state& state, const algorithm::pubkeyhash_t& validator) = 0;
 			virtual expects_lr<void> checkpoint();
 			virtual promise<void> dispatch_async(const block_header& target);
 			virtual void dispatch_sync(const block_header& target);

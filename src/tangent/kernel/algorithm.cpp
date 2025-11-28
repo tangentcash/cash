@@ -17,6 +17,7 @@ extern "C"
 #include "../internal/bip39.h"
 #include "../internal/pbkdf2.h"
 #include "../internal/memzero.h"
+#include "../internal/shamir.h"
 }
 
 namespace tangent
@@ -737,6 +738,33 @@ namespace tangent
 		{
 			hashing::hash160(public_key.data, sizeof(pubkey_t), public_key_hash.data);
 		}
+		bool signing::split_secret_into_shares(const uint8_t message[64], uint8_t threshold, uint8_t count, ordered_set<share_t>& shares)
+		{
+			VI_ASSERT(message != nullptr, "message must be set");
+			VI_ASSERT(threshold <= count, "threshold must be less than or equal to count");
+			VI_ASSERT(count <= 64, "count must be less than or equal to 64");
+			std::array<sss_Share, 64> sss_shares;
+			sss_create_shares(sss_shares.data(), message, count, threshold);
+
+			shares.clear();
+			for (size_t i = 0; i < count; i++)
+				shares.insert(share_t(sss_shares[i], sizeof(sss_Share)));
+
+			return true;
+		}
+		bool signing::combine_shares_into_secret(const ordered_set<share_t>& shares, uint8_t message[64])
+		{
+			VI_ASSERT(shares.size() <= 64, "shares count must be less than or equal to 64");
+			std::array<sss_Share, 64> sss_shares; size_t index = 0;
+			for (auto& share : shares)
+				memcpy(sss_shares[index++], share.data, sizeof(sss_Share));
+
+			return sss_combine_shares(message, sss_shares.data(), shares.size()) == 0;
+		}
+		uint8_t signing::recovery_threshold(size_t shares)
+		{
+			return (uint8_t)std::min<size_t>(1 + shares / 2, 64);
+		}
 		bool signing::scalar_add_secret_key(seckey_t& secret_key, const seckey_t& scalar)
 		{
 			secp256k1_context* context = algorithm::signing::get_context();
@@ -1335,8 +1363,9 @@ namespace tangent
 			return data;
 		}
 
-		expects_lr<composition::keypair> composition::derive_keypair(type alg, const uint256_t& seed)
+		expects_lr<composition::keypair> composition::derive_keypair(type alg, const uint8_t* seed, size_t seed_size)
 		{
+			VI_ASSERT(seed != nullptr, "seed should be set");
 			auto keypair_secret_state = make_secret_state(alg);
 			if (!keypair_secret_state)
 				return keypair_secret_state.error();
@@ -1347,7 +1376,7 @@ namespace tangent
 
 			auto& keypair_secret_state_ptr = *keypair_secret_state;
 			auto& keypair_public_state_ptr = *keypair_public_state;
-			auto configuration = keypair_secret_state_ptr->derive_from_seed(seed);
+			auto configuration = keypair_secret_state_ptr->derive_from_seed(seed, seed_size);
 			if (!configuration)
 				return configuration.error();
 

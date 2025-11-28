@@ -171,10 +171,16 @@ namespace tangent
 
 		struct validator_participation final : ledger::multiform
 		{
+			struct participation_ref
+			{
+				algorithm::pubkeyhash_t manager;
+				algorithm::pubkeyhash_t owner;
+			};
+
 			algorithm::pubkeyhash_t owner;
+			ordered_map<algorithm::asset_id, vector<participation_ref>> participations;
 			ordered_map<algorithm::asset_id, decimal> rewards;
 			decimal stake = decimal::nan();
-			uint64_t participations = 0;
 
 			validator_participation(const algorithm::pubkeyhash_t& new_owner, uint64_t new_block_number, uint64_t new_block_nonce);
 			validator_participation(const algorithm::pubkeyhash_t& new_owner, const ledger::block_header* new_block_header);
@@ -207,7 +213,7 @@ namespace tangent
 			decimal outgoing_fee = decimal::zero();
 			uint256_t queue_transaction_hash = 0;
 			uint64_t accounts_under_management = 0;
-			uint8_t security_level = (uint8_t)protocol::now().policy.participation.std_per_account;
+			uint8_t security_level = (uint8_t)protocol::now().policy.participation.min_per_account;
 			bool accepts_account_requests = false;
 			bool accepts_withdrawal_requests = false;
 

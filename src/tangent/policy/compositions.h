@@ -11,7 +11,7 @@ namespace tangent
 			typedef algorithm::storage_type<uint8_t, 32> scalar_t;
 			scalar_t cumulative_key;
 
-			expects_lr<void> derive_from_seed(const uint256_t& seed) override;
+			expects_lr<void> derive_from_seed(const uint8_t* seed, size_t seed_size) override;
 			expects_lr<void> derive_from_key(const algorithm::composition::cseckey_t& secret_key) override;
 			expects_lr<void> finalize(algorithm::composition::cseckey_t* output) const override;
 			bool store(format::wo_stream* stream) const override;
@@ -65,7 +65,7 @@ namespace tangent
 			typedef algorithm::storage_type<uint8_t, 32> scalar_t;
 			scalar_t cumulative_key;
 
-			expects_lr<void> derive_from_seed(const uint256_t& seed) override;
+			expects_lr<void> derive_from_seed(const uint8_t* seed, size_t seed_size) override;
 			expects_lr<void> derive_from_key(const algorithm::composition::cseckey_t& secret_key) override;
 			expects_lr<void> finalize(algorithm::composition::cseckey_t* output) const override;
 			bool store(format::wo_stream* stream) const override;

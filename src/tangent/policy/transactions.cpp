@@ -893,8 +893,17 @@ namespace tangent
 
 		expects_lr<void> validator_adjustment::validate(uint64_t block_number) const
 		{
-			if (attestations.empty() && !participation && !production)
+			if (migrations.empty() && attestations.empty() && !participation && !production)
 				return layer_exception("invalid validator change");
+
+			for (auto& [bridge_withdrawal_finalization_hash, participant] : migrations)
+			{
+				if (!bridge_withdrawal_finalization_hash)
+					return layer_exception("invalid bridge withdrawal finalization hash");
+
+				if (participant.empty())
+					return layer_exception("invalid participant");
+			}
 
 			attestation_setup default_setup;
 			for (auto& [asset, setup] : attestations)
@@ -931,6 +940,58 @@ namespace tangent
 			auto validation = transaction::execute(context);
 			if (!validation)
 				return validation.error();
+
+			decimal threshold = decimal::zero();
+			ordered_set<uint256_t> accounts;
+			ordered_set<algorithm::pubkeyhash_t> exclusion;
+			for (auto& [bridge_withdrawal_finalization_hash, participant] : migrations)
+			{
+				auto parent = context->get_block_transaction<bridge_withdrawal_finalization>(bridge_withdrawal_finalization_hash, true);
+				if (!parent)
+					return layer_exception("bridge withdrawal finalization transaction not found");
+
+				auto* parent_transaction = (bridge_withdrawal_finalization*)*parent->transaction;
+				if (parent_transaction->proof || parent->receipt.from != context->receipt.from)
+					return layer_exception("bridge withdrawal finalization transaction not applicable");
+
+				auto info = context->get_validator_participation(participant);
+				if (!info)
+					return layer_exception("participant for a migration not found");
+
+				bool may_perform_migration = false;
+				auto base_asset = algorithm::asset::base_id_of(parent_transaction->asset);
+				auto refs = info->participations.find(base_asset);
+				if (refs != info->participations.end())
+				{
+					for (auto& ref : refs->second)
+					{
+						if (ref.manager != context->receipt.from)
+							continue;
+
+						auto attestation = context->get_verified_validator_attestation(base_asset, ref.manager);
+						if (!attestation)
+							return attestation.error();
+
+						auto account = context->get_bridge_account(base_asset, ref.manager, ref.owner);
+						if (!account)
+							return account.error();
+
+						may_perform_migration = true;
+						exclusion.insert(account->group.begin(), account->group.end());
+						if (threshold < attestation->participation_threshold)
+							threshold = attestation->participation_threshold;
+
+						auto ref_hash = ledger::dispatch_context::secret_entropy::ref_hash(base_asset, ref.manager, ref.owner);
+						if (accounts.find(ref_hash) != accounts.end())
+							return layer_exception("migration requires migration to multiple new participants");
+
+						accounts.insert(ref_hash);
+					}
+				}
+
+				if (!may_perform_migration)
+					return layer_exception("migrations for a participant not found");
+			}
 
 			for (auto& [asset, setup] : attestations)
 			{
@@ -973,11 +1034,53 @@ namespace tangent
 					return status.error();
 			}
 
+			bool requires_self_migration = false;
 			if (participation)
 			{
-				auto status = context->apply_validator_participation(context->receipt.from, participation->is_nan() ? ledger::transaction_context::stake_type::unlock : ledger::transaction_context::stake_type::lock, 0, { { algorithm::asset::native(), *participation } });
-				if (!status)
-					return status.error();
+				auto type = participation->is_nan() ? ledger::transaction_context::stake_type::unlock : ledger::transaction_context::stake_type::lock;
+				if (type == ledger::transaction_context::stake_type::unlock)
+				{
+					auto info = context->get_validator_participation(context->receipt.from);
+					if (!info)
+						return info.error();
+					else if (info->participations.empty())
+						goto modify_participation;
+
+					for (auto& [asset, refs] : info->participations)
+					{
+						for (auto& ref : refs)
+						{
+							auto attestation = context->get_verified_validator_attestation(asset, ref.manager);
+							if (!attestation)
+								return attestation.error();
+
+							auto account = context->get_bridge_account(asset, ref.manager, ref.owner);
+							if (!account)
+								return account.error();
+
+							requires_self_migration = true;
+							exclusion.insert(account->group.begin(), account->group.end());
+							if (threshold < attestation->participation_threshold)
+								threshold = attestation->participation_threshold;
+
+							auto ref_hash = ledger::dispatch_context::secret_entropy::ref_hash(asset, ref.manager, ref.owner);
+							if (accounts.find(ref_hash) != accounts.end())
+								return layer_exception("migration requires migration to multiple new participants");
+
+							accounts.insert(ref_hash);
+						}
+					}
+
+					if (!requires_self_migration)
+						return layer_exception("participant migration(s) required but not found");
+				}
+				else
+				{
+				modify_participation:
+					auto status = context->apply_validator_participation(context->receipt.from, type, { }, { { algorithm::asset::native(), *participation } });
+					if (!status)
+						return status.error();
+				}
 			}
 
 			if (production)
@@ -987,11 +1090,151 @@ namespace tangent
 					return status.error();
 			}
 
+			if (exclusion.empty())
+				return expectation::met;
+
+			auto committee = context->calculate_participants(exclusion, 1, threshold);
+			if (!committee)
+				return committee.error();
+
+			auto& new_manager = committee->front();
+			auto event = context->emit_event<validator_adjustment>({ format::variable(requires_self_migration), format::variable(new_manager.owner.view()) });
+			if (!event)
+				return event;
+
 			return expectation::met;
+		}
+		expects_promise_rt<void> validator_adjustment::dispatch(const ledger::transaction_context* context, ledger::dispatch_context* dispatcher) const
+		{
+			if (!dispatcher->is_running_on(context->receipt.from))
+				return expects_promise_rt<void>(expectation::met);
+
+			bool requires_new_participant = false;
+			auto new_participant = get_new_participant(context->receipt, &requires_new_participant);
+			if (!requires_new_participant)
+				return expects_promise_rt<void>(expectation::met);
+			else if (new_participant.empty() || context->get_witness_event(context->receipt.transaction_hash))
+				return expects_promise_rt<void>(remote_exception("invalid new participant"));
+
+			return coasync<expects_rt<void>>([this, context, dispatcher, new_participant]() -> expects_promise_rt<void>
+			{
+				auto migrations = expects_lr<vector<migration_ref>>(layer_exception());
+				auto cache = dispatcher->pull_cache(context);
+				auto aggregation_state = ledger::dispatch_context::entropy_aggregation_state();
+				if (!aggregation_state.load_message(cache))
+				{
+					migrations = get_migration_refs(context, context->receipt);
+					if (!migrations)
+						coreturn remote_exception(std::move(migrations.error().message()));
+					else if (migrations->empty())
+						coreturn remote_exception("must have participations to migrate");
+
+					for (auto& migration : *migrations)
+					{
+						if (migration.must_have_locally)
+							continue;
+
+						auto ref_hash = ledger::dispatch_context::secret_entropy::ref_hash(migration.account.asset, migration.account.manager, migration.account.owner);
+						migration.account.group.erase(migration.old_participant);
+						aggregation_state.participants.insert(migration.account.group.begin(), migration.account.group.end());
+						aggregation_state.encrypted_shares[ref_hash] = ordered_map<algorithm::pubkeyhash_t, string>();
+					}
+
+					if (aggregation_state.participants.find(new_participant) != aggregation_state.participants.end())
+						coreturn remote_exception("new participant must not be present in account groups that are being migrated");
+				}
+
+				auto required_participants = aggregation_state.participants;
+				required_participants.insert(new_participant);
+
+				auto session = coawait(dispatcher->aggregate_validators(required_participants));
+				if (!session)
+					coreturn session.error();
+
+				aggregation_state.public_key = dispatcher->get_public_key(new_participant);
+				if (aggregation_state.public_key.empty())
+				{
+					dispatcher->push_cache(context, aggregation_state.as_message());
+					coreturn remote_exception::retry();
+				}
+
+				ordered_set<algorithm::pubkeyhash_t> deferred_participants;
+				while (!aggregation_state.participants.empty())
+				{
+					auto result = coawait(dispatcher->aggregate_entropy_shares(context, aggregation_state, *aggregation_state.participants.begin()));
+					if (!result && (result.error().is_retry() || result.error().is_shutdown()))
+						deferred_participants.insert(*aggregation_state.participants.begin());
+					else if (!result)
+						coreturn result.error();
+
+					aggregation_state.participants.erase(aggregation_state.participants.begin());
+				}
+
+				if (!deferred_participants.empty())
+				{
+					aggregation_state.participants = std::move(deferred_participants);
+					dispatcher->push_cache(context, aggregation_state.as_message());
+					coreturn remote_exception::retry();
+				}
+
+				auto tweaked_public_key = aggregation_state.public_key;
+				algorithm::seckey_t tweak;
+				algorithm::signing::derive_secret_key(context->receipt.transaction_hash, tweak);
+				if (!algorithm::signing::scalar_add_public_key(tweaked_public_key, tweak))
+					coreturn remote_exception("invalid tweaked public key");
+
+				if (!migrations)
+				{
+					migrations = get_migration_refs(context, context->receipt);
+					if (!migrations)
+						coreturn remote_exception(std::move(migrations.error().message()));
+				}
+
+				auto recovery_state = ledger::dispatch_context::entropy_recovery_state();
+				recovery_state.encrypted_shares = aggregation_state.encrypted_shares;
+				for (auto& migration : *migrations)
+				{
+					if (!migration.must_have_locally)
+						continue;
+
+					auto secret = dispatcher->recover_secret_entropy(migration.account.asset, migration.account.manager, migration.account.owner);
+					if (!secret)
+						coreturn remote_exception(std::move(secret.error().message()));
+
+					uint256_t entropy = algorithm::hashing::hash256i(*crypto::random_bytes(64));
+					auto encrypted_entropy = algorithm::signing::public_encrypt(tweaked_public_key, secret->as_message().data, entropy);
+					if (!encrypted_entropy)
+						coreturn remote_exception("participant entropy encryption failed");
+
+					recovery_state.encrypted_entropies[secret->as_ref_hash()] = std::move(*encrypted_entropy);
+				}
+
+				auto result = coawait(dispatcher->recover_entropy(context, recovery_state, new_participant));
+				if (!result && (result.error().is_retry() || result.error().is_shutdown()))
+				{
+					dispatcher->push_cache(context, aggregation_state.as_message());
+					coreturn remote_exception::retry();
+				}
+				else if (!result)
+					coreturn result.error();
+
+				auto* transaction = memory::init<validator_adjustment_finalization>();
+				transaction->asset = asset;
+				transaction->validator_adjustment_hash = context->receipt.transaction_hash;
+				transaction->proof = recovery_state.proof;
+				dispatcher->emit_transaction(transaction);
+				coreturn expects_promise_rt<void>(expectation::met);
+			});
 		}
 		bool validator_adjustment::store_body(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
+			stream->write_integer((uint8_t)migrations.size());
+			for (auto& [bridge_withdrawal_finalization_hash, participant] : migrations)
+			{
+				stream->write_integer(bridge_withdrawal_finalization_hash);
+				stream->write_string(participant.optimized_view());
+			}
 			stream->write_integer((uint8_t)attestations.size());
 			for (auto& [asset, setup] : attestations)
 			{
@@ -1026,6 +1269,24 @@ namespace tangent
 		}
 		bool validator_adjustment::load_body(format::ro_stream& stream)
 		{
+			uint8_t migrations_size = 0;
+			if (!stream.read_integer(stream.read_type(), &migrations_size))
+				return false;
+
+			migrations.clear();
+			for (uint16_t i = 0; i < migrations_size; i++)
+			{
+				uint256_t bridge_withdrawal_finalization_hash;
+				if (!stream.read_integer(stream.read_type(), &bridge_withdrawal_finalization_hash))
+					return false;
+
+				algorithm::pubkeyhash_t participant; string participant_assembly;
+				if (!stream.read_string(stream.read_type(), &participant_assembly) || !algorithm::encoding::decode_bytes(participant_assembly, participant.data, sizeof(participant.data)))
+					return false;
+
+				migrations[bridge_withdrawal_finalization_hash] = participant;
+			}
+
 			uint8_t attestations_size = 0;
 			if (!stream.read_integer(stream.read_type(), &attestations_size))
 				return false;
@@ -1081,7 +1342,7 @@ namespace tangent
 
 				if (has_security_level)
 				{
-					setup.security_level = protocol::now().policy.participation.std_per_account;
+					setup.security_level = protocol::now().policy.participation.min_per_account;
 					if (!stream.read_integer(stream.read_type(), setup.security_level.address()))
 						return false;
 				}
@@ -1138,6 +1399,17 @@ namespace tangent
 
 			return true;
 		}
+		bool validator_adjustment::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
+		{
+			for (auto& [bridge_withdrawal_finalization_hash, participant] : migrations)
+				parties.insert(participant);
+
+			auto participant = get_new_participant(receipt);
+			if (!participant.empty())
+				parties.insert(participant);
+
+			return true;
+		}
 		void validator_adjustment::allocate_production_stake(const decimal& value)
 		{
 			production = value;
@@ -1188,9 +1460,105 @@ namespace tangent
 		{
 			attestations.erase(asset);
 		}
+		void validator_adjustment::migrate_participant(const uint256_t& bridge_withdrawal_finalization_hash, const algorithm::pubkeyhash_t& participant)
+		{
+			migrations[bridge_withdrawal_finalization_hash] = participant;
+		}
+		void validator_adjustment::clear_migration(const uint256_t& bridge_withdrawal_finalization_hash)
+		{
+			migrations.erase(bridge_withdrawal_finalization_hash);
+		}
+		bool validator_adjustment::is_dispatchable() const
+		{
+			return true;
+		}
+		expects_lr<vector<validator_adjustment::migration_ref>> validator_adjustment::get_migration_refs(const ledger::transaction_context* context, const ledger::receipt& receipt) const
+		{
+			vector<migration_ref> results;
+			auto* event = receipt.find_event<validator_adjustment>();
+			if (!event || event->size() != 2)
+				return expects_lr<vector<migration_ref>>(std::move(results));
+			
+			bool requires_self_migration = event->front().as_boolean();
+			if (requires_self_migration)
+			{
+				auto participation = context->get_validator_participation(receipt.from);
+				if (!participation)
+					return participation.error();
+
+				for (auto& [asset, refs] : participation->participations)
+				{
+					for (auto& ref : refs)
+					{
+						auto account = context->get_bridge_account(asset, ref.manager, ref.owner);
+						if (!account)
+							return account.error();
+
+						migration_ref migration;
+						migration.account = std::move(*account);
+						migration.old_participant = receipt.from;
+						migration.must_have_locally = true;
+						results.push_back(std::move(migration));
+					}
+				}
+			}
+
+			for (auto& [bridge_withdrawal_finalization_hash, participant] : migrations)
+			{
+				auto parent = context->get_block_transaction<bridge_withdrawal_finalization>(bridge_withdrawal_finalization_hash, true);
+				if (!parent)
+					return layer_exception("invalid migration reasoning transaction");
+
+				auto participation = context->get_validator_participation(participant);
+				if (!participation)
+					return participation.error();
+
+				auto refs = participation->participations.find(algorithm::asset::base_id_of(parent->transaction->asset));
+				if (refs == participation->participations.end())
+					return layer_exception("invalid migration participant");
+
+				for (auto& ref : refs->second)
+				{
+					if (ref.manager != receipt.from)
+						continue;
+
+					auto account = context->get_bridge_account(refs->first, ref.manager, ref.owner);
+					if (!account)
+						return account.error();
+
+					migration_ref migration;
+					migration.account = std::move(*account);
+					migration.old_participant = participant;
+					migration.must_have_locally = false;
+					results.push_back(std::move(migration));
+				}
+			}
+
+			return expects_lr<vector<migration_ref>>(std::move(results));
+		}
+		algorithm::pubkeyhash_t validator_adjustment::get_new_participant(const ledger::receipt& receipt, bool* requires_new_participant) const
+		{
+			auto new_participant = algorithm::pubkeyhash_t();
+			auto* event = receipt.find_event<validator_adjustment>();
+			if (event && event->size() == 2 && event->back().as_string().size() == sizeof(algorithm::pubkeyhash_t))
+				new_participant = algorithm::pubkeyhash_t(event->back().as_blob());
+			if (requires_new_participant != nullptr)
+				*requires_new_participant = event != nullptr;
+			return new_participant;
+		}
 		uptr<schema> validator_adjustment::as_schema() const
 		{
 			schema* data = ledger::transaction::as_schema().reset();
+			if (!migrations.empty())
+			{
+				auto* migrations_data = data->set("bridge_migrations", var::set::array());
+				for (auto& [bridge_withdrawal_finalization_hash, participant] : migrations)
+				{
+					auto* migration_data = migrations_data->push(var::set::object());
+					migration_data->set("bridge_withdrawal_finalization_hash", var::string(algorithm::encoding::encode_0xhex256(bridge_withdrawal_finalization_hash)));
+					migration_data->set("participant", algorithm::signing::serialize_address(participant));
+				}
+			}
 			if (!attestations.empty())
 			{
 				auto* attestations_data = data->set("bridge_attestations", var::set::array());
@@ -1229,6 +1597,121 @@ namespace tangent
 		std::string_view validator_adjustment::as_instance_typename()
 		{
 			return "validator_adjustment";
+		}
+
+		expects_lr<void> validator_adjustment_finalization::validate(uint64_t block_number) const
+		{
+			if (!validator_adjustment_hash)
+				return layer_exception("invalid validator adjustment transaction");
+
+			if (proof.empty())
+				return layer_exception("invalid proof");
+
+			return ledger::commitment::validate(block_number);
+		}
+		expects_lr<void> validator_adjustment_finalization::execute(ledger::transaction_context* context) const
+		{
+			auto validation = commitment::execute(context);
+			if (!validation)
+				return validation.error();
+
+			auto event = context->apply_witness_event(validator_adjustment_hash, context->receipt.transaction_hash);
+			if (!event)
+				return event.error();
+
+			auto parent = context->get_block_transaction<validator_adjustment>(validator_adjustment_hash);
+			if (!parent)
+				return layer_exception("validator adjustment transaction not found");
+
+			auto* parent_transaction = (validator_adjustment*)*parent->transaction;
+			if (parent->receipt.from != context->receipt.from)
+				return layer_exception("validator adjustment transaction not applicable");
+
+			uint8_t transaction_hash_data[32];
+			parent->receipt.transaction_hash.encode(transaction_hash_data);
+
+			auto proof_hash = algorithm::hashing::hash256i(transaction_hash_data, sizeof(transaction_hash_data));
+			algorithm::pubkeyhash_t new_participant_check;
+			algorithm::pubkeyhash_t new_participant = parent_transaction->get_new_participant(parent->receipt);
+			if (!algorithm::signing::recover_hash(proof_hash, new_participant_check, proof) || new_participant != new_participant_check)
+				return layer_exception("new participant proof not valid");
+
+			auto migrations = parent_transaction->get_migration_refs(context, parent->receipt);
+			if (!migrations)
+				return migrations.error();
+
+			for (auto& migration : *migrations)
+			{
+				auto account = context->get_bridge_account(migration.account.asset, migration.account.manager, migration.account.owner);
+				if (!account)
+					return account.error();
+
+				size_t prev_size = account->group.size();
+				account->group.erase(migration.old_participant);
+				account->group.insert(new_participant);
+				if (prev_size != account->group.size())
+					return layer_exception("conflicting group migration (size changed)");
+
+				account = context->apply_bridge_account(account->asset, account->manager, account->owner, account->public_key, std::move(account->group));
+				if (!account)
+					return account.error();
+
+				auto ref = states::validator_participation::participation_ref();
+				ref.manager = account->manager;
+				ref.owner = account->owner;
+				
+				auto status = context->apply_validator_participation(migration.old_participant, ledger::transaction_context::stake_type::lock, { { account->asset, { false, ref } } }, { });
+				if (!status)
+					return status.error();
+
+				status = context->apply_validator_participation(new_participant, ledger::transaction_context::stake_type::lock, { { account->asset, { true, ref } } }, { });
+				if (!status)
+					return status.error();
+			}
+
+			return expectation::met;
+		}
+		bool validator_adjustment_finalization::store_body(format::wo_stream* stream) const
+		{
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			stream->write_integer(validator_adjustment_hash);
+			stream->write_string(proof.optimized_view());
+			return true;
+		}
+		bool validator_adjustment_finalization::load_body(format::ro_stream& stream)
+		{
+			if (!stream.read_integer(stream.read_type(), &validator_adjustment_hash))
+				return false;
+
+			string proof_assembly;
+			if (!stream.read_string(stream.read_type(), &proof_assembly) || !algorithm::encoding::decode_bytes(proof_assembly, proof.data, sizeof(proof.data)))
+				return false;
+
+			return true;
+		}
+		uptr<schema> validator_adjustment_finalization::as_schema() const
+		{
+			schema* data = ledger::commitment::as_schema().reset();
+			data->set("validator_adjustment_hash", var::string(algorithm::encoding::encode_0xhex256(validator_adjustment_hash)));
+			data->set("proof", proof.empty() ? var::null() : var::string(format::util::encode_0xhex(proof.view())));
+			return data;
+		}
+		uint32_t validator_adjustment_finalization::as_type() const
+		{
+			return as_instance_type();
+		}
+		std::string_view validator_adjustment_finalization::as_typename() const
+		{
+			return as_instance_typename();
+		}
+		uint32_t validator_adjustment_finalization::as_instance_type()
+		{
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
+		}
+		std::string_view validator_adjustment_finalization::as_instance_typename()
+		{
+			return "validator_adjustment_finalization";
 		}
 
 		expects_lr<void> bridge_attestation::validate(uint64_t block_number) const
@@ -1555,7 +2038,7 @@ namespace tangent
 						auto individual_penalty = -algorithm::arithmetic::divide(penalty, batch.participants.size());
 						for (auto& participant : batch.participants)
 						{
-							auto participation = context->apply_validator_participation(participant.data, ledger::transaction_context::stake_type::reward_or_penalty, 0, { { transfer_asset, individual_penalty.is_negative() ? individual_penalty : participation_fee } });
+							auto participation = context->apply_validator_participation(participant.data, ledger::transaction_context::stake_type::reward_or_penalty, { }, { { transfer_asset, individual_penalty.is_negative() ? individual_penalty : participation_fee } });
 							if (!participation)
 								return participation.error();
 						}
@@ -1925,7 +2408,9 @@ namespace tangent
 				if (!chain)
 					coreturn remote_exception("invalid operation");
 
+				size_t required_public_keys = 0;
 				auto cache = dispatcher->pull_cache(context);
+				auto group = get_group(context->receipt);
 				auto state = ledger::dispatch_context::public_state();
 				if (!state.load_message(cache))
 				{
@@ -1933,19 +2418,84 @@ namespace tangent
 					if (!aggregator)
 						coreturn remote_exception(std::move(aggregator.error().message()));
 
+					state.distribution = false;
 					state.aggregator = std::move(*aggregator);
-					state.participants = get_group(context->receipt);
+					state.participants = group;
 					state.alg = chain->composition;
+					required_public_keys = state.participants.size();
 				}
 
 				auto session = coawait(dispatcher->aggregate_validators(state.participants));
 				if (!session)
 					coreturn session.error();
 
+				if (required_public_keys > 0)
+				{
+					if (state.participants.size() != required_public_keys)
+					{
+					retry:
+						dispatcher->push_cache(context, state.as_message());
+						coreturn remote_exception::retry();
+					}
+
+					for (auto& participant : state.participants)
+					{
+						auto public_key = dispatcher->get_public_key(participant);
+						if (public_key.empty())
+							goto retry;
+						
+						if (state.encrypted_shares.find(public_key) == state.encrypted_shares.end())
+							state.encrypted_shares[public_key] = ordered_map<algorithm::pubkeyhash_t, string>();
+					}
+				}
+
 				ordered_set<algorithm::pubkeyhash_t> deferred_participants;
+				while (!state.distribution && !state.participants.empty())
+				{
+					auto result = coawait(dispatcher->aggregate_public_key(context, state, *state.participants.begin()));
+					if (!result && (result.error().is_retry() || result.error().is_shutdown()))
+						deferred_participants.insert(*state.participants.begin());
+					else if (!result)
+						coreturn result.error();
+
+					state.participants.erase(state.participants.begin());
+					if (state.participants.empty() && deferred_participants.empty())
+					{
+						state.participants = std::move(group);
+						state.distribution = true;
+					}
+				}
+
+				if (!deferred_participants.empty())
+				{
+					state.participants = std::move(deferred_participants);
+					dispatcher->push_cache(context, state.as_message());
+					coreturn remote_exception::retry();
+				}
+
+				algorithm::composition::cpubkey_t aggregated_public_key;
+				auto status = state.aggregator->finalize(&aggregated_public_key);
+				if (!status)
+					coreturn remote_exception(std::move(status.error().message()));
+
+				auto distribution_state = ledger::dispatch_context::entropy_distribution_state();
 				while (!state.participants.empty())
 				{
-					auto result = coawait(dispatcher->aggregate_public_state(context, state, *state.participants.begin()));
+					distribution_state.encrypted_shares.clear();
+					for (auto it = state.encrypted_shares.begin(); it != state.encrypted_shares.end(); it++)
+					{
+						algorithm::pubkeyhash_t participant;
+						algorithm::signing::derive_public_key_hash(it->first, participant);
+						if (participant == *state.participants.begin())
+						{
+							distribution_state.encrypted_shares = it->second;
+							break;
+						}
+					}
+					if (distribution_state.encrypted_shares.empty())
+						coreturn remote_exception("participant requires group shares but none were found");
+
+					auto result = coawait(dispatcher->distribute_entropy_shares(context, distribution_state, *state.participants.begin()));
 					if (!result && (result.error().is_retry() || result.error().is_shutdown()))
 						deferred_participants.insert(*state.participants.begin());
 					else if (!result)
@@ -1960,11 +2510,6 @@ namespace tangent
 					dispatcher->push_cache(context, state.as_message());
 					coreturn remote_exception::retry();
 				}
-
-				algorithm::composition::cpubkey_t aggregated_public_key;
-				auto status = state.aggregator->finalize(&aggregated_public_key);
-				if (!status)
-					coreturn remote_exception(std::move(status.error().message()));
 
 				auto* transaction = memory::init<bridge_account_finalization>();
 				transaction->asset = asset;
@@ -2118,19 +2663,23 @@ namespace tangent
 			if (!policy_status)
 				return policy_status.error();
 
+			auto ref = states::validator_participation::participation_ref();
+			ref.manager = setup_transaction->manager;
+			ref.owner = setup->receipt.from;
+
 			auto group = setup_transaction->get_group(setup->receipt);
 			for (auto& participant : group)
 			{
-				auto status = context->apply_validator_participation(participant.data, ledger::transaction_context::stake_type::lock, 1, { });
+				auto status = context->apply_validator_participation(participant.data, ledger::transaction_context::stake_type::lock, { { asset, { true, ref } } }, { });
 				if (!status)
 					return status.error();
 			}
 
-			auto bridge_account_status = context->apply_bridge_account(asset, setup->receipt.from, setup_transaction->manager, public_key, std::move(group));
+			auto bridge_account_status = context->apply_bridge_account(asset, ref.owner, ref.manager, public_key, std::move(group));
 			if (!bridge_account_status)
 				return bridge_account_status.error();
 
-			auto witness_account_status = context->apply_witness_bridge_account(asset, setup->receipt.from, setup_transaction->manager, *addresses);
+			auto witness_account_status = context->apply_witness_bridge_account(asset, ref.owner, ref.manager, *addresses);
 			if (!witness_account_status)
 				return witness_account_status.error();
 
@@ -2484,7 +3033,7 @@ namespace tangent
 						if (it == state.participants.end())
 							break;
 
-						auto result = coawait(dispatcher->aggregate_signature_state(context, state, *it));
+						auto result = coawait(dispatcher->aggregate_signature(context, state, *it));
 						if (!result && (result.error().is_retry() || result.error().is_shutdown()))
 						{
 							unavailable.insert(*it);
@@ -3031,332 +3580,6 @@ namespace tangent
 			return expectation::met;
 		}
 
-		expects_lr<void> bridge_migration::validate(uint64_t block_number) const
-		{
-			if (shares.empty())
-				return layer_exception("no shares found");
-
-			for (auto& [hash, share] : shares)
-			{
-				if (!algorithm::asset::is_aux(share.asset, true))
-					return layer_exception("invalid share asset");
-
-				if (share.manager.empty())
-					return layer_exception("invalid share manager");
-
-				if (share.owner.empty())
-					return layer_exception("invalid share owner");
-
-				if (hash != share.as_hash())
-					return layer_exception("invalid share hash");
-			}
-
-			return ledger::transaction::validate(block_number);
-		}
-		expects_lr<void> bridge_migration::execute(ledger::transaction_context* context) const
-		{
-			auto validation = transaction::execute(context);
-			if (!validation)
-				return validation.error();
-
-			ordered_set<algorithm::pubkeyhash_t> exclusion;
-			auto old_manager = algorithm::pubkeyhash_t(context->receipt.from);
-			auto new_threshold = decimal::zero();
-			for (auto& [hash, share] : shares)
-			{
-				auto target = context->get_bridge_account(share.asset, share.manager, share.owner);
-				if (!target)
-					return target.error();
-				else if (target->group.find(old_manager) == target->group.end())
-					return layer_exception("migration of other group member is forbidden");
-
-				auto attestation = context->get_verified_validator_attestation(asset, share.manager);
-				if (!attestation)
-					return attestation.error();
-
-				new_threshold = math0::max(new_threshold, attestation->participation_threshold);
-				exclusion.insert(target->group.begin(), target->group.end());
-			}
-
-			auto committee = context->calculate_participants(exclusion, 1, new_threshold);
-			if (!committee)
-				return committee.error();
-
-			auto& new_manager = committee->front();
-			auto event = context->emit_event<bridge_migration>({ format::variable(new_manager.owner.view()) });
-			if (!event)
-				return event;
-
-			return expectation::met;
-		}
-		expects_promise_rt<void> bridge_migration::dispatch(const ledger::transaction_context* context, ledger::dispatch_context* dispatcher) const
-		{
-			if (context->get_witness_event(context->receipt.transaction_hash))
-				return expects_promise_rt<void>(expectation::met);
-
-			auto old_manager = context->receipt.from;
-			if (!dispatcher->is_running_on(old_manager.data))
-				return expects_promise_rt<void>(expectation::met);
-
-			auto new_manager = get_new_manager(context->receipt);
-			if (new_manager.empty())
-				return expects_promise_rt<void>(expectation::met);
-
-			return coasync<expects_rt<void>>([this, context, dispatcher, old_manager, new_manager]() -> expects_promise_rt<void>
-			{
-				auto* chain = superchain::server_node::get()->get_chainparams(asset);
-				if (!chain)
-					coreturn remote_exception("invalid operation");
-
-				auto session = coawait(dispatcher->aggregate_validators({ new_manager }));
-				if (!session)
-					coreturn session.error();
-
-				auto tweaked_public_key = dispatcher->get_public_key(new_manager);
-				if (tweaked_public_key.empty())
-					coreturn remote_exception::retry();
-
-				algorithm::seckey_t tweak;
-				algorithm::signing::derive_secret_key(context->receipt.transaction_hash, tweak);
-				if (!algorithm::signing::scalar_add_public_key(tweaked_public_key, tweak))
-					coreturn remote_exception("invalid tweaked public key");
-
-				auto state = ledger::dispatch_context::secret_share_state();
-				for (auto& [hash, share] : shares)
-				{
-					uint256_t scalar;
-					auto status = dispatcher->recover_secret_share(share.asset, share.manager, share.owner, scalar);
-					if (!status)
-						coreturn remote_exception(std::move(status.error().message()));
-
-					format::wo_stream entropy;
-					entropy.write_integer(context->receipt.transaction_hash);
-					entropy.write_integer(hash);
-
-					uint8_t scalar_data[32];
-					scalar.encode(scalar_data);
-
-					auto encrypted_share = algorithm::signing::public_encrypt(tweaked_public_key, std::string_view((char*)scalar_data, sizeof(scalar_data)), entropy.hash());
-					if (!encrypted_share)
-						coreturn remote_exception("share encryption error");
-
-					state.encrypted_shares[hash] = std::move(*encrypted_share);
-				}
-
-				auto result = coawait(dispatcher->aggregate_secret_share_state(context, state, new_manager));
-				if (!result && (result.error().is_retry() || result.error().is_shutdown()))
-					coreturn remote_exception::retry();
-				else if (!result)
-					coreturn result.error();
-
-				auto confirmation_public_key_hash = algorithm::pubkeyhash_t();
-				auto confirmation_hash = state.as_confirmation_hash();
-				if (!algorithm::signing::recover_hash(confirmation_hash, confirmation_public_key_hash, state.confirmation_signature) || !confirmation_public_key_hash.equals(new_manager))
-					coreturn remote_exception("invalid confirmation signature");
-
-				auto* transaction = memory::init<bridge_migration_finalization>();
-				transaction->asset = asset;
-				transaction->bridge_migration_hash = context->receipt.transaction_hash;
-				transaction->confirmation_signature = state.confirmation_signature;
-				dispatcher->emit_transaction(transaction);
-				coreturn expects_promise_rt<void>(expectation::met);
-			});
-		}
-		bool bridge_migration::store_body(format::wo_stream* stream) const
-		{
-			VI_ASSERT(stream != nullptr, "stream should be set");
-			stream->write_integer((uint16_t)shares.size());
-			for (auto& [hash, share] : shares)
-			{
-				stream->write_integer(share.asset);
-				stream->write_string(share.manager.optimized_view());
-				stream->write_string(share.owner.optimized_view());
-			}
-			return true;
-		}
-		bool bridge_migration::load_body(format::ro_stream& stream)
-		{
-			uint16_t shares_size;
-			if (!stream.read_integer(stream.read_type(), &shares_size))
-				return false;
-
-			string intermediate;
-			for (uint16_t i = 0; i < shares_size; i++)
-			{
-				secret_share share;
-				if (!stream.read_integer(stream.read_type(), &share.asset))
-					return false;
-
-				if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, share.manager.data, sizeof(share.manager.data)))
-					return false;
-
-				if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, share.owner.data, sizeof(share.owner.data)))
-					return false;
-
-				auto hash = share.as_hash();
-				shares[hash] = std::move(share);
-			}
-
-			return true;
-		}
-		void bridge_migration::add_share(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner)
-		{
-			auto share = secret_share(asset, manager, owner);
-			auto hash = share.as_hash();
-			shares[hash] = std::move(share);
-		}
-		bool bridge_migration::is_dispatchable() const
-		{
-			return true;
-		}
-		algorithm::pubkeyhash_t bridge_migration::get_new_manager(const ledger::receipt& receipt) const
-		{
-			algorithm::pubkeyhash_t result;
-			auto* event = receipt.find_event<bridge_migration>();
-			if (event != nullptr)
-			{
-				if (!event->empty() && event->front().as_string().size() == sizeof(algorithm::pubkeyhash_t))
-					result = algorithm::pubkeyhash_t(event->front().as_blob());
-			}
-			return result;
-		}
-		uptr<schema> bridge_migration::as_schema() const
-		{
-			schema* data = ledger::transaction::as_schema().reset();
-			auto* shares_data = data->set("shares", var::set::array());
-			for (auto& [hash, share] : shares)
-			{
-				auto* share_data = shares_data->push(var::set::object());
-				share_data->set("asset", algorithm::asset::serialize(share.asset));
-				share_data->set("manager", algorithm::signing::serialize_address(share.manager));
-				share_data->set("owner", algorithm::signing::serialize_address(share.owner));
-			}
-			return data;
-		}
-		uint32_t bridge_migration::as_type() const
-		{
-			return as_instance_type();
-		}
-		std::string_view bridge_migration::as_typename() const
-		{
-			return as_instance_typename();
-		}
-		uint32_t bridge_migration::as_instance_type()
-		{
-			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
-			return hash;
-		}
-		std::string_view bridge_migration::as_instance_typename()
-		{
-			return "bridge_migration";
-		}
-
-		expects_lr<void> bridge_migration_finalization::validate(uint64_t block_number) const
-		{
-			if (!bridge_migration_hash)
-				return layer_exception("invalid bridge migration transaction");
-
-			if (confirmation_signature.empty())
-				return layer_exception("invalid confirmation signature");
-
-			return ledger::commitment::validate(block_number);
-		}
-		expects_lr<void> bridge_migration_finalization::execute(ledger::transaction_context* context) const
-		{
-			auto validation = commitment::execute(context);
-			if (!validation)
-				return validation.error();
-
-			auto event = context->apply_witness_event(bridge_migration_hash, context->receipt.transaction_hash);
-			if (!event)
-				return event.error();
-
-			auto migration = context->get_block_transaction<bridge_migration>(bridge_migration_hash);
-			if (!migration)
-				return migration.error();
-
-			auto* migration_transaction = (bridge_migration*)*migration->transaction;
-			if (migration->receipt.from != context->receipt.from)
-				return layer_exception("invalid migration transaction");
-
-			auto state = ledger::dispatch_context::secret_share_state();
-			state.confirmation_signature = confirmation_signature;
-			for (auto& [hash, share] : migration_transaction->shares)
-				state.encrypted_shares[hash] = string();
-
-			auto new_manager = migration_transaction->get_new_manager(migration->receipt);
-			auto confirmation_public_key_hash = algorithm::pubkeyhash_t();
-			auto confirmation_hash = state.as_confirmation_hash();
-			if (!algorithm::signing::recover_hash(confirmation_hash, confirmation_public_key_hash, state.confirmation_signature) || !confirmation_public_key_hash.equals(new_manager))
-				return layer_exception("invalid confirmation signature");
-
-			auto old_manager = algorithm::pubkeyhash_t(migration->receipt.from);
-			for (auto& [hash, share] : migration_transaction->shares)
-			{
-				auto target = context->get_bridge_account(share.asset, share.manager, share.owner);
-				if (!target)
-					return target.error();
-
-				target->group.erase(old_manager);
-				target->group.insert(new_manager);
-				target = context->apply_bridge_account(share.asset, share.manager, share.owner, target->public_key, std::move(target->group));
-				if (!target)
-					return target.error();
-			}
-
-			auto status = context->apply_validator_participation(old_manager.data, ledger::transaction_context::stake_type::lock, -((int64_t)migration_transaction->shares.size()), { });
-			if (!status)
-				return status.error();
-
-			status = context->apply_validator_participation(new_manager.data, ledger::transaction_context::stake_type::lock, (int64_t)migration_transaction->shares.size(), { });
-			if (!status)
-				return status.error();
-
-			return expectation::met;
-		}
-		bool bridge_migration_finalization::store_body(format::wo_stream* stream) const
-		{
-			VI_ASSERT(stream != nullptr, "stream should be set");
-			stream->write_integer(bridge_migration_hash);
-			stream->write_string(confirmation_signature.optimized_view());
-			return true;
-		}
-		bool bridge_migration_finalization::load_body(format::ro_stream& stream)
-		{
-			if (!stream.read_integer(stream.read_type(), &bridge_migration_hash))
-				return false;
-
-			string intermediate;
-			if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, confirmation_signature.data, sizeof(confirmation_signature.data)))
-				return false;
-
-			return true;
-		}
-		uptr<schema> bridge_migration_finalization::as_schema() const
-		{
-			schema* data = ledger::commitment::as_schema().reset();
-			data->set("bridge_migration_hash", var::string(algorithm::encoding::encode_0xhex256(bridge_migration_hash)));
-			data->set("confirmation_signature", confirmation_signature.empty() ? var::null() : var::string(format::util::encode_0xhex(confirmation_signature.view())));
-			return data;
-		}
-		uint32_t bridge_migration_finalization::as_type() const
-		{
-			return as_instance_type();
-		}
-		std::string_view bridge_migration_finalization::as_typename() const
-		{
-			return as_instance_typename();
-		}
-		uint32_t bridge_migration_finalization::as_instance_type()
-		{
-			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
-			return hash;
-		}
-		std::string_view bridge_migration_finalization::as_instance_typename()
-		{
-			return "bridge_migration_finalization";
-		}
-
 		ledger::transaction* resolver::from_stream(format::ro_stream& stream)
 		{
 			uint32_t type; size_t seek = stream.seek;
@@ -3378,6 +3601,8 @@ namespace tangent
 				return memory::init<rollup>();
 			else if (hash == validator_adjustment::as_instance_type())
 				return memory::init<validator_adjustment>();
+			else if (hash == validator_adjustment_finalization::as_instance_type())
+				return memory::init<validator_adjustment_finalization>();
 			else if (hash == bridge_attestation::as_instance_type())
 				return memory::init<bridge_attestation>();
 			else if (hash == bridge_account::as_instance_type())
@@ -3388,10 +3613,6 @@ namespace tangent
 				return memory::init<bridge_withdrawal>();
 			else if (hash == bridge_withdrawal_finalization::as_instance_type())
 				return memory::init<bridge_withdrawal_finalization>();
-			else if (hash == bridge_migration::as_instance_type())
-				return memory::init<bridge_migration>();
-			else if (hash == bridge_migration_finalization::as_instance_type())
-				return memory::init<bridge_migration_finalization>();
 			return nullptr;
 		}
 		ledger::transaction* resolver::from_copy(const ledger::transaction* base)
@@ -3407,6 +3628,8 @@ namespace tangent
 				return memory::init<rollup>(*(const rollup*)base);
 			else if (hash == validator_adjustment::as_instance_type())
 				return memory::init<validator_adjustment>(*(const validator_adjustment*)base);
+			else if (hash == validator_adjustment_finalization::as_instance_type())
+				return memory::init<validator_adjustment_finalization>(*(const validator_adjustment_finalization*)base);
 			else if (hash == bridge_attestation::as_instance_type())
 				return memory::init<bridge_attestation>(*(const bridge_attestation*)base);
 			else if (hash == bridge_account::as_instance_type())
@@ -3417,16 +3640,13 @@ namespace tangent
 				return memory::init<bridge_withdrawal>(*(const bridge_withdrawal*)base);
 			else if (hash == bridge_withdrawal_finalization::as_instance_type())
 				return memory::init<bridge_withdrawal_finalization>(*(const bridge_withdrawal_finalization*)base);
-			else if (hash == bridge_migration::as_instance_type())
-				return memory::init<bridge_migration>(*(const bridge_migration*)base);
-			else if (hash == bridge_migration_finalization::as_instance_type())
-				return memory::init<bridge_migration_finalization>(*(const bridge_migration_finalization*)base);
 			return nullptr;
 		}
 		expects_promise_rt<superchain::prepared_transaction> resolver::prepare_transaction(const algorithm::asset_id& asset, const superchain::wallet_link& from_link, const vector<superchain::value_transfer>& to, const decimal& max_fee)
 		{
 			auto* server = superchain::server_node::get();
-			if (!protocol::now().is(network_type::regtest) || server->has_support(asset))
+			bool may_mock_up = protocol::now().is(network_type::regtest);
+			if (!may_mock_up || server->has_support(asset))
 				return server->prepare_transaction(asset, from_link, to, max_fee);
 
 			auto chain = server->get_chainparams(asset);
@@ -3448,6 +3668,9 @@ namespace tangent
 			auto transfers = unordered_map<algorithm::asset_id, decimal>();
 			for (auto& transfer : to)
 			{
+				if (transfer.address == "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+					return expects_promise_rt<superchain::prepared_transaction>(remote_exception("synthetic error"));
+
 				auto& value = transfers[transfer.asset];
 				value = value.is_nan() ? transfer.value : (value + transfer.value);
 				message.write_integer(transfer.asset);
@@ -3468,7 +3691,8 @@ namespace tangent
 		expects_lr<superchain::finalized_transaction> resolver::finalize_transaction(const algorithm::asset_id& asset, superchain::prepared_transaction&& prepared)
 		{
 			auto* server = superchain::server_node::get();
-			if (!protocol::now().is(network_type::regtest) || server->has_support(asset))
+			bool may_mock_up = protocol::now().is(network_type::regtest);
+			if (!may_mock_up || server->has_support(asset))
 				return server->finalize_transaction(asset, std::move(prepared));
 
 			auto transaction_id = algorithm::encoding::encode_0xhex256(prepared.as_hash());
@@ -3480,7 +3704,8 @@ namespace tangent
 		expects_promise_rt<void> resolver::broadcast_transaction(const algorithm::asset_id& asset, const uint256_t& external_id, superchain::finalized_transaction&& finalized, ledger::dispatch_context* dispatcher)
 		{
 			auto* server = superchain::server_node::get();
-			if (!protocol::now().is(network_type::regtest) || server->has_support(asset))
+			bool may_mock_up = protocol::now().is(network_type::regtest);
+			if (!may_mock_up || server->has_support(asset))
 			{
 				auto preserved = memory::init<superchain::finalized_transaction>(std::move(finalized));
 				return server->broadcast_transaction(asset, external_id, *preserved).then<expects_rt<void>>([preserved](expects_rt<void>&& status) mutable -> expects_rt<void>

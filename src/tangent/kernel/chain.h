@@ -289,9 +289,8 @@ namespace tangent
 			} attestation;
 			struct
 			{
-				uint64_t min_per_account = 3;
-				uint64_t std_per_account = 4;
-				uint64_t max_per_account = 16;
+				uint64_t min_per_account = 5;
+				uint64_t max_per_account = 21;
 				decimal min_stake_value = std::string_view("240");
 				decimal stake_threshold = std::string_view("0.20");
 				decimal fee_rate = std::string_view("0.30");

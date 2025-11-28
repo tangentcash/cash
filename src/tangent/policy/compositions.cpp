@@ -58,13 +58,10 @@ namespace tangent
 			return result;
 		}
 
-		expects_lr<void> ed25519_secret_state::derive_from_seed(const uint256_t& seed)
+		expects_lr<void> ed25519_secret_state::derive_from_seed(const uint8_t* seed, size_t seed_size)
 		{
-			uint8_t seed_buffer[32];
-			seed.encode(seed_buffer);
-
 			uint8_t key_buffer[64];
-			algorithm::hashing::hash512(seed_buffer, sizeof(seed_buffer), key_buffer);
+			algorithm::hashing::hash512(seed, seed_size, key_buffer);
 			algorithm::keypair_utils::convert_to_scalar_ed25519(key_buffer, key_buffer);
 			memcpy(cumulative_key.data, key_buffer, sizeof(cumulative_key.data));
 			return expectation::met;
@@ -351,13 +348,10 @@ namespace tangent
 			return true;
 		}
 
-		expects_lr<void> secp256k1_secret_state::derive_from_seed(const uint256_t& seed)
+		expects_lr<void> secp256k1_secret_state::derive_from_seed(const uint8_t* seed, size_t seed_size)
 		{
-			uint8_t seed_buffer[32];
-			seed.encode(seed_buffer);
-
 			uint8_t key_buffer[64];
-			algorithm::hashing::hash512(seed_buffer, sizeof(seed_buffer), key_buffer);
+			algorithm::hashing::hash512(seed, seed_size, key_buffer);
 			memcpy(cumulative_key.data, key_buffer, std::min(sizeof(cumulative_key.data), sizeof(key_buffer)));
 
 			secp256k1_pubkey extended_public_key;
@@ -479,9 +473,6 @@ namespace tangent
 
 			uint16_t key_bits = (uint16_t)(std::ceil((double)std::max<uint16_t>(min_bits, std::min<uint16_t>(max_bits, 1 + additions + step_bits + step_bits * (multiplications - 1))) / 8.0) * 8.0);
 			VI_ASSERT(multiplications == additions, "nonce randomness reduction caused by too many participants (security risk)");
-			if (additions > 1 || multiplications > 1)
-				key_bits = 1024;
-
 			if (new_public_key.size() != sizeof(secp256k1_public_state::point_t))
 			{
 				auto* context = algorithm::signing::get_context();

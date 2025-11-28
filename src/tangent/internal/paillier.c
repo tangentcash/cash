@@ -57,17 +57,13 @@ void mpz_derive_prime(mpz_t prime, mp_bitcnt_t len, gmp_randstate_t random)
 {
 	mpz_t random_num;
 	mpz_init(random_num);
-	size_t seed_size = BIT2BYTE(len);
-	char* seed = (char*)malloc(sizeof(char) * seed_size);
 	do
 	{
-		random_buffer((uint8_t*)seed, seed_size);
 		mpz_urandomb(random_num, random, len);
 		mpz_setbit(random_num, len - 1);
 		mpz_nextprime(prime, random_num);
 	} while (len != (mp_bitcnt_t)mpz_sizeinbase(prime, 2));
 	mpz_clear(random_num);
-	free(seed);
 }
 
 /**
@@ -352,11 +348,16 @@ void paillier_encrypt(mpz_t ciphertext, mpz_t plaintext, paillier_pubkey* pub)
 	mpz_mul(n2, pub->n, pub->n);
 
 	//generate random r and reduce modulo n
+	size_t seed_size = BIT2BYTE(pub->len);
+	uint8_t* seed = malloc(seed_size);
 retry:
-	mpz_random_prime(r, pub->len);
+	random_buffer(seed, seed_size);
+	mpz_import(r, seed_size, 1, sizeof(seed[0]), 0, 0, seed);
 	mpz_mod(r, r, pub->n);
 	if (mpz_cmp_ui(r, 0) == 0)
 		goto retry;
+
+	free(seed);
 
 	//compute r^n mod n2
 	mpz_powm(ciphertext, r, pub->n, n2);

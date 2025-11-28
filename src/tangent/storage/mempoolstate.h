@@ -93,9 +93,9 @@ namespace tangent
 			expects_lr<void> remove_transactions(const vector<uint256_t>& transaction_hashes);
 			expects_lr<void> remove_transactions(const unordered_set<uint256_t>& transaction_hashes);
 			expects_lr<size_t> expire_transactions();
-			expects_lr<void> apply_group_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner, const uint256_t& scalar);
-			expects_lr<uint256_t> get_or_apply_group_account_share(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner, const uint256_t& entropy);
-			expects_lr<vector<states::bridge_account>> get_group_accounts(const algorithm::pubkeyhash_t& manager, size_t offset, size_t count);
+			expects_lr<void> apply_secret_entropy(const algorithm::pubkeyhash_t& participant, const ledger::dispatch_context::secret_entropy& entropy);
+			expects_lr<ledger::dispatch_context::secret_entropy> get_secret_entropy(const algorithm::pubkeyhash_t& participant, const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner);
+			expects_lr<vector<states::bridge_account>> get_secret_entropies_by_manager(const algorithm::pubkeyhash_t& manager, size_t offset, size_t count);
 			expects_lr<bool> has_transaction(const uint256_t& transaction_hash);
 			expects_lr<uint64_t> get_lowest_transaction_nonce(const algorithm::pubkeyhash_t& owner);
 			expects_lr<uint64_t> get_highest_transaction_nonce(const algorithm::pubkeyhash_t& owner);

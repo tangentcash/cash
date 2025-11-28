@@ -686,47 +686,33 @@ namespace tangent
 
 			return cursor->affected_rows();
 		}
-		expects_lr<void> mempoolstate::apply_group_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner, const uint256_t& scalar)
+		expects_lr<void> mempoolstate::apply_secret_entropy(const algorithm::pubkeyhash_t& participant, const ledger::dispatch_context::secret_entropy& entropy)
 		{
+			format::wo_stream entropy_message;
+			if (!entropy.store(&entropy_message))
+				return expects_lr<void>(layer_exception("entropy serialization error"));
+
+			auto encrypted_entropy_message = protocol::now().box.encrypt(entropy_message.data);
+			if (!encrypted_entropy_message)
+				return encrypted_entropy_message.error();
+
 			uint8_t asset_data[32];
-			asset.encode(asset_data);
+			entropy.asset.encode(asset_data);
 
 			schema_list map;
 			map.push_back(var::set::binary(asset_data, sizeof(asset_data)));
-			map.push_back(var::set::binary(owner.view()));
-			map.push_back(var::set::binary(manager.view()));
+			map.push_back(var::set::binary(entropy.owner.view()));
+			map.push_back(var::set::binary(entropy.manager.view()));
+			map.push_back(var::set::binary(participant.view()));
+			map.push_back(var::set::binary(*encrypted_entropy_message));
 
-			auto cursor = get_storage().emplace_query(__func__, "SELECT scalar FROM groups WHERE asset = ? AND owner = ? AND manager = ?", &map);
-			if (cursor && !cursor->error_or_empty())
-			{
-				auto encrypted_scalar = (*cursor)["scalar"].get().get_blob();
-				auto decrypted_scalar = protocol::now().box.decrypt(encrypted_scalar);
-				if (decrypted_scalar && decrypted_scalar->size() == sizeof(uint256_t))
-				{
-					uint256_t duplicate_scalar = 0;
-					duplicate_scalar.decode((uint8_t*)decrypted_scalar->data());
-					if (duplicate_scalar != scalar)
-						return layer_exception("scalar must be zeroed before replacement with different scalar");
-
-					return expectation::met;
-				}
-			}
-
-			uint8_t scalar_data[32];
-			scalar.encode(scalar_data);
-
-			auto encrypted_scalar = protocol::now().box.encrypt(std::string_view((char*)scalar_data, sizeof(scalar_data)));
-			if (!encrypted_scalar)
-				return encrypted_scalar.error();
-
-			map.push_back(var::set::binary(*encrypted_scalar));
-			cursor = get_storage().emplace_query(__func__, "INSERT OR REPLACE INTO groups (asset, owner, manager, scalar) VALUES (?, ?, ?, ?)", &map);
+			auto cursor = get_storage().emplace_query(__func__, "INSERT OR REPLACE INTO secrets (asset, owner, manager, participant, entropy_message) VALUES (?, ?, ?, ?, ?)", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 			
 			return expectation::met;
 		}
-		expects_lr<uint256_t> mempoolstate::get_or_apply_group_account_share(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner, const uint256_t& entropy)
+		expects_lr<ledger::dispatch_context::secret_entropy> mempoolstate::get_secret_entropy(const algorithm::pubkeyhash_t& participant, const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner)
 		{
 			uint8_t asset_data[32];
 			asset.encode(asset_data);
@@ -735,36 +721,26 @@ namespace tangent
 			map.push_back(var::set::binary(asset_data, sizeof(asset_data)));
 			map.push_back(var::set::binary(owner.view()));
 			map.push_back(var::set::binary(manager.view()));
+			map.push_back(var::set::binary(participant.view()));
 
-			auto cursor = get_storage().emplace_query(__func__, "SELECT scalar FROM groups WHERE asset = ? AND owner = ? AND manager = ?", &map);
-			if (cursor && !cursor->error_or_empty())
-			{
-				auto encrypted_scalar = (*cursor)["scalar"].get().get_blob();
-				auto decrypted_scalar = protocol::now().box.decrypt(encrypted_scalar);
-				if (!decrypted_scalar)
-					return decrypted_scalar.error();
-				else if (decrypted_scalar->size() != sizeof(uint256_t))
-					return expects_lr<uint256_t>(layer_exception("bad scalar"));
+			auto cursor = get_storage().emplace_query(__func__, "SELECT entropy_message FROM secrets WHERE asset = ? AND owner = ? AND manager = ? AND participant = ?", &map);
+			if (!cursor || cursor->error())
+				return expects_lr<ledger::dispatch_context::secret_entropy>(layer_exception(ledger::storage_util::error_of(cursor)));
+			else if (cursor->empty())
+				return layer_exception("entropy not found");
 
-				uint256_t scalar = 0;
-				scalar.decode((uint8_t*)decrypted_scalar->data());
-				return scalar;
-			}
-			else
-			{
-				format::wo_stream scalar;
-				scalar.write_integer(asset);
-				scalar.write_string(algorithm::pubkeyhash_t(owner).optimized_view());
-				scalar.write_string(algorithm::pubkeyhash_t(manager).optimized_view());
-				scalar.write_integer(entropy);
-				auto result = apply_group_account(asset, manager, owner, scalar.hash());
-				if (!result)
-					return result.error();
+			auto decrypted_entropy_message = protocol::now().box.decrypt((*cursor)["entropy_message"].get().get_blob());
+			if (!decrypted_entropy_message)
+				return decrypted_entropy_message.error();
 
-				return scalar.hash();
-			}
+			ledger::dispatch_context::secret_entropy entropy;
+			format::ro_stream entropy_message = format::ro_stream(*decrypted_entropy_message);
+			if (!entropy.load(entropy_message))
+				return expects_lr<ledger::dispatch_context::secret_entropy>(layer_exception("entropy deserialization error"));
+
+			return expects_lr<ledger::dispatch_context::secret_entropy>(std::move(entropy));
 		}
-		expects_lr<vector<states::bridge_account>> mempoolstate::get_group_accounts(const algorithm::pubkeyhash_t& manager, size_t offset, size_t count)
+		expects_lr<vector<states::bridge_account>> mempoolstate::get_secret_entropies_by_manager(const algorithm::pubkeyhash_t& manager, size_t offset, size_t count)
 		{
 			schema_list map;
 			if (!manager.empty())
@@ -772,7 +748,7 @@ namespace tangent
 			map.push_back(var::set::integer(count));
 			map.push_back(var::set::integer(offset));
 
-			auto cursor = get_storage().emplace_query(__func__, !manager.empty() ? "SELECT asset, owner FROM groups WHERE manager = ? LIMIT ? OFFSET ?" : "SELECT asset, manager, owner FROM groups LIMIT ? OFFSET ?", &map);
+			auto cursor = get_storage().emplace_query(__func__, !manager.empty() ? "SELECT asset, owner FROM secrets WHERE manager = ? LIMIT ? OFFSET ?" : "SELECT asset, manager, owner FROM secrets LIMIT ? OFFSET ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<vector<states::bridge_account>>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -789,7 +765,7 @@ namespace tangent
 
 				auto owner = algorithm::pubkeyhash_t(row["owner"].get().get_blob());
 				auto submanager = algorithm::pubkeyhash_t(row["manager"].get().get_blob());
-				auto account = context.get_bridge_account(asset, !manager.empty()  ? manager : submanager.data, owner.data);
+				auto account = context.get_bridge_account(asset, !manager.empty() ? manager : submanager.data, owner.data);
 				if (account)
 					result.push_back(std::move(*account));
 			}
@@ -1031,15 +1007,16 @@ namespace tangent
 				expiration INTEGER NOT NULL,
 				PRIMARY KEY (address)
 			) WITHOUT ROWID;
-			CREATE TABLE IF NOT EXISTS groups
+			CREATE TABLE IF NOT EXISTS secrets
 			(
 				asset BLOB(32) NOT NULL,
 				owner BLOB(20) NOT NULL,
 				manager BLOB(20) NOT NULL,
-				scalar BLOB NOT NULL,
-				PRIMARY KEY (asset, owner, manager)
+				participant BLOB(20) NOT NULL,
+				entropy_message BLOB NOT NULL,
+				PRIMARY KEY (asset, owner, manager, participant)
 			) WITHOUT ROWID;
-			CREATE INDEX IF NOT EXISTS groups_manager ON groups (manager);
+			CREATE INDEX IF NOT EXISTS secrets_manager ON secrets (manager);
 			CREATE TABLE IF NOT EXISTS proofs
 			(
 				hash BLOB(32) NOT NULL,

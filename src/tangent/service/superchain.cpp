@@ -49,7 +49,7 @@ namespace tangent
 		uptr<schema> computed_wallet::as_schema() const
 		{
 			auto data = var::set::object();
-			data->set("seed", algorithm::encoding::serialize_uint256(seed));
+			data->set("seed", var::string(format::util::encode_0xhex(std::string_view((char*)seed.data(), seed.size()))));
 			data->set("secret_key", var::string(format::util::encode_0xhex(std::string_view((char*)secret_key.data(), secret_key.size()))));
 			data->set("public_key", var::string(format::util::encode_0xhex(std::string_view((char*)public_key.data(), public_key.size()))));
 			data->set("encoded_secret_key", var::string(encoded_secret_key.heap()));
@@ -534,7 +534,7 @@ namespace tangent
 			storages::superchainstate state = storages::superchainstate(asset);
 			return state.get_computed_transaction(transaction_id, external_id, optimized_id);
 		}
-		expects_lr<computed_wallet> server_node::compute_wallet(const algorithm::asset_id& asset, const uint256_t& seed)
+		expects_lr<computed_wallet> server_node::compute_wallet(const algorithm::asset_id& asset, const uint8_t* seed, size_t seed_size)
 		{
 			if (!algorithm::asset::is_aux(asset))
 				return expects_lr<computed_wallet>(layer_exception("asset not found"));
@@ -544,15 +544,16 @@ namespace tangent
 				return expects_lr<computed_wallet>(layer_exception("chain not found"));
 
 			auto& chain = implementation->get_chainparams();
-			auto keypair = algorithm::composition::derive_keypair(chain.composition, seed);
+			auto keypair = algorithm::composition::derive_keypair(chain.composition, seed, seed_size);
 			if (!keypair)
 				return keypair.error();
 
 			computed_wallet wallet;
-			wallet.seed = seed;
+			wallet.seed.resize(seed_size);
+			memcpy(wallet.seed.data(), seed, seed_size);
 			wallet.secret_key = std::move(keypair->secret_key);
 			wallet.public_key = std::move(keypair->public_key);
-			wallet.encoded_seed = secret_box::secure(algorithm::encoding::encode_0xhex256(seed));
+			wallet.encoded_seed = secret_box::secure(algorithm::encoding::encode_0xhex256(std::string_view((char*)wallet.seed.data(), wallet.seed.size())));
 
 			auto encoded_secret_key = implementation->encode_secret_key(secret_box::view(std::string_view((char*)wallet.secret_key.data(), wallet.secret_key.size())));
 			if (!encoded_secret_key)

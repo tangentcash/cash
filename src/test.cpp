@@ -4,6 +4,7 @@
 #include "tangent/policy/compositions.h"
 #include <sstream>
 #define TEST_BLOCK(x, y, z) new_block_from_generator(*data, users, x, #x, y, z)
+#define TEST_BLOCK_FAULT(x, y, z) new_block_from_generator(*data, users, x, #x, y, z, true)
 
 using namespace tangent;
 
@@ -48,7 +49,7 @@ public:
 	struct participant
 	{
 		algorithm::composition::keypair keypair;
-		uint256_t seed = 0;
+		algorithm::storage_type<uint8_t, 64> seed;
 	};
 
 	class generators
@@ -334,9 +335,8 @@ public:
 			auto& [user1, user1_nonce] = users[0];
 			auto& [user2, user2_nonce] = users[1];
 			auto* validator_adjustment_user1 = memory::init<transactions::validator_adjustment>();
-			validator_adjustment_user1->allocate_production_stake(decimal::zero());
 			validator_adjustment_user1->allocate_attestation_stake(algorithm::asset::id_of("XRP"), decimal::zero());
-			validator_adjustment_user1->configure_attestation_security(algorithm::asset::id_of("XRP"), 2, decimal::zero(), true, true);
+			validator_adjustment_user1->configure_attestation_security(algorithm::asset::id_of("XRP"), protocol::now().policy.participation.min_per_account, decimal::zero(), true, true);
 			validator_adjustment_user1->allocate_participation_stake(decimal::zero());
 			validator_adjustment_user1->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 			transactions.push_back(validator_adjustment_user1);
@@ -345,16 +345,25 @@ public:
 			validator_adjustment_user2->allocate_production_stake(decimal::zero());
 			validator_adjustment_user2->allocate_attestation_stake(algorithm::asset::id_of("ETH"), decimal::zero());
 			validator_adjustment_user2->configure_attestation_reward(algorithm::asset::id_of("ETH"), 0.0012, 0.0012);
-			validator_adjustment_user2->configure_attestation_security(algorithm::asset::id_of("ETH"), 2, decimal::zero(), true, true);
+			validator_adjustment_user2->configure_attestation_security(algorithm::asset::id_of("ETH"), protocol::now().policy.participation.min_per_account, decimal::zero(), true, true);
 			validator_adjustment_user2->allocate_attestation_stake(algorithm::asset::id_of("XRP"), decimal::zero());
 			validator_adjustment_user2->configure_attestation_reward(algorithm::asset::id_of("XRP"), 1.0, 1.0);
-			validator_adjustment_user2->configure_attestation_security(algorithm::asset::id_of("XRP"), 2, decimal::zero(), true, true);
+			validator_adjustment_user2->configure_attestation_security(algorithm::asset::id_of("XRP"), protocol::now().policy.participation.min_per_account, decimal::zero(), true, true);
 			validator_adjustment_user2->allocate_attestation_stake(algorithm::asset::id_of("BTC"), decimal::zero());
 			validator_adjustment_user2->configure_attestation_reward(algorithm::asset::id_of("BTC"), 0.000025, 0.000025);
-			validator_adjustment_user2->configure_attestation_security(algorithm::asset::id_of("BTC"), 2, decimal::zero(), true, true);
+			validator_adjustment_user2->configure_attestation_security(algorithm::asset::id_of("BTC"), protocol::now().policy.participation.min_per_account, decimal::zero(), true, true);
 			validator_adjustment_user2->allocate_participation_stake(decimal::zero());
 			validator_adjustment_user2->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
 			transactions.push_back(validator_adjustment_user2);
+
+			for (size_t i = 3; i < users.size(); i++)
+			{
+				auto& [user_n, user_n_nonce] = users[i];
+				auto* validator_adjustment_user_n = memory::init<transactions::validator_adjustment>();
+				validator_adjustment_user_n->allocate_participation_stake(decimal::zero());
+				validator_adjustment_user_n->sign(user_n.secret_key, user_n_nonce++, decimal::zero()).expect("pre-validation failed");
+				transactions.push_back(validator_adjustment_user_n);
+			}
 		}
 		static void validator_registration_partial(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
 		{
@@ -362,21 +371,28 @@ public:
 			auto* validator_adjustment_user1 = memory::init<transactions::validator_adjustment>();
 			validator_adjustment_user1->allocate_production_stake(decimal::zero());
 			validator_adjustment_user1->allocate_attestation_stake(algorithm::asset::id_of("ETH"), decimal::zero());
-			validator_adjustment_user1->configure_attestation_security(algorithm::asset::id_of("ETH"), 1, decimal::zero(), true, true);
+			validator_adjustment_user1->configure_attestation_security(algorithm::asset::id_of("ETH"), protocol::now().policy.participation.min_per_account, decimal::zero(), true, true);
 			validator_adjustment_user1->configure_attestation_reward(algorithm::asset::id_of("ETH"), 0.0012, 0.0012);
 			validator_adjustment_user1->allocate_attestation_stake(algorithm::asset::id_of("BTC"), decimal::zero());
-			validator_adjustment_user1->configure_attestation_security(algorithm::asset::id_of("BTC"), 1, decimal::zero(), true, true);
+			validator_adjustment_user1->configure_attestation_security(algorithm::asset::id_of("BTC"), protocol::now().policy.participation.min_per_account, decimal::zero(), true, true);
 			validator_adjustment_user1->configure_attestation_reward(algorithm::asset::id_of("BTC"), 0.00001, 0.000025);
 			validator_adjustment_user1->allocate_participation_stake(decimal::zero());
 			validator_adjustment_user1->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 			transactions.push_back(validator_adjustment_user1);
+
+			for (size_t i = 1; i < users.size(); i++)
+			{
+				auto& [user_n, user_n_nonce] = users[i];
+				auto* validator_adjustment_user_n = memory::init<transactions::validator_adjustment>();
+				validator_adjustment_user_n->allocate_participation_stake(decimal::zero());
+				validator_adjustment_user_n->sign(user_n.secret_key, user_n_nonce++, decimal::zero()).expect("pre-validation failed");
+				transactions.push_back(validator_adjustment_user_n);
+			}
 		}
-		static void validator_enable_validator(vector<uptr<ledger::transaction>>& transactions, vector<account>& users, size_t user_id, bool block_production, bool tx_attestation, bool mpc_participation)
+		static void validator_enable_poa_validator(vector<uptr<ledger::transaction>>& transactions, vector<account>& users, size_t user_id, bool tx_attestation, bool mpc_participation)
 		{
 			auto& [user1, user1_nonce] = users[user_id];
 			auto* validator_adjustment_user1 = memory::init<transactions::validator_adjustment>();
-			if (block_production)
-				validator_adjustment_user1->allocate_production_stake(decimal::zero());
 			if (tx_attestation)
 			{
 				validator_adjustment_user1->allocate_attestation_stake(algorithm::asset::id_of("ETH"), decimal::zero());
@@ -388,12 +404,10 @@ public:
 			validator_adjustment_user1->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 			transactions.push_back(validator_adjustment_user1);
 		}
-		static void validator_disable_validator(vector<uptr<ledger::transaction>>& transactions, vector<account>& users, size_t user_id, bool block_production, bool tx_attestation, bool mpc_participation)
+		static void validator_disable_poa_validator(vector<uptr<ledger::transaction>>& transactions, vector<account>& users, size_t user_id, bool tx_attestation, bool mpc_participation)
 		{
 			auto& [user1, user1_nonce] = users[user_id];
 			auto* validator_adjustment_user1 = memory::init<transactions::validator_adjustment>();
-			if (block_production)
-				validator_adjustment_user1->disable_production();
 			if (tx_attestation)
 			{
 				validator_adjustment_user1->disable_attestation(algorithm::asset::id_of("ETH"));
@@ -543,26 +557,61 @@ public:
 				{ superchain::value_transfer(token_asset, address_ethereum->addresses.begin()->second, 1000000) });
 			transactions.push_back(bridge_attestation_ethereum);
 		}
-		static void bridge_migration(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
+		static void bridge_migration_stage_1(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
+		{
+			auto& [user1, user1_nonce] = users[0];
+			auto& [user2, user2_nonce] = users[1];
+			auto* withdrawal_ethereum_token = memory::init<transactions::bridge_withdrawal>();
+			withdrawal_ethereum_token->set_asset("ETH", "USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7");
+			withdrawal_ethereum_token->set_manager(user2.public_key_hash);
+			withdrawal_ethereum_token->set_to("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef", 1);
+			withdrawal_ethereum_token->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
+			transactions.push_back(withdrawal_ethereum_token);
+		}
+		static void bridge_migration_stage_2(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
+		{
+			for (size_t i = protocol::now().policy.participation.min_per_account + 1; i < protocol::now().policy.participation.max_per_account; i++)
+			{
+				users.push_back(account(ledger::wallet::from_seed(stringify::text("00000%i", (int)i)), 0));
+				auto& [user_n, user_n_nonce] = users[i];
+				auto* validator_adjustment_user_n = memory::init<transactions::validator_adjustment>();
+				validator_adjustment_user_n->allocate_participation_stake(decimal::zero());
+				validator_adjustment_user_n->sign(user_n.secret_key, user_n_nonce++, decimal::zero()).expect("pre-validation failed");
+				transactions.push_back(validator_adjustment_user_n);
+			}
+
+			auto chain = storages::chainstate();
+			auto block_number = chain.get_latest_block_number().expect("must have parent block");
+			auto targets = chain.get_transactions_by_number(block_number, 0, 1).expect("must have last transaction");
+			VI_PANIC(!targets.empty(), "must have last transaction");
+
+			auto& transaction = targets.front();
+			VI_PANIC(transaction->as_type() == transactions::bridge_withdrawal_finalization::as_instance_type(), "must have withdrawal finalization as last transaction");
+
+			auto* withdrawal_finalization = (transactions::bridge_withdrawal_finalization*)*transaction;
+			VI_PANIC(!withdrawal_finalization->proof, "withdrawal finalized must be failed (synthetic error)");
+
+			auto& [user2, user2_nonce] = users[1];
+			auto context = ledger::transaction_context();
+			auto accounts = context.get_bridge_accounts(user2.public_key_hash, 0, 128).expect("user 2 must have bridge accounts");
+			auto it = std::find_if(accounts.begin(), accounts.end(), [&](const states::bridge_account& item) { return item.asset == algorithm::asset::base_id_of(withdrawal_finalization->asset) && !item.group.empty(); });
+			VI_PANIC(it != accounts.end(), "user 2 must have at least one bridge account under management corresponding to failed withdrawal");
+			auto old_participant = it->group.begin();
+			if (*old_participant == user2.public_key_hash)
+				++old_participant;
+
+			auto* validator_adjustment_user2 = memory::init<transactions::validator_adjustment>();
+			validator_adjustment_user2->migrate_participant(withdrawal_finalization->as_hash(), *old_participant);
+			validator_adjustment_user2->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
+			transactions.push_back(validator_adjustment_user2);
+		}
+		static void bridge_migration_stage_3(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
 		{
 			auto& [user2, user2_nonce] = users[1];
-			auto mempool = storages::mempoolstate();
-			auto accounts = mempool.get_group_accounts(algorithm::pubkeyhash_t(), 0, 128);
-			if (accounts && !accounts->empty())
-			{
-				auto user2_address = algorithm::pubkeyhash_t(user2.public_key_hash);
-				for (auto& account : *accounts)
-				{
-					if (account.group.find(user2_address) != account.group.end())
-					{
-						auto* bridge_migration_ethereum = memory::init<transactions::bridge_migration>();
-						bridge_migration_ethereum->asset = account.asset;
-						bridge_migration_ethereum->add_share(account.asset, account.manager, account.owner);
-						bridge_migration_ethereum->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
-						transactions.push_back(bridge_migration_ethereum);
-					}
-				}
-			}
+			auto* validator_adjustment_user2 = memory::init<transactions::validator_adjustment>();
+			validator_adjustment_user2->disable_participation();
+			validator_adjustment_user2->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
+			transactions.push_back(validator_adjustment_user2);
 		}
 		static void bridge_withdrawal_stage_1(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
 		{
@@ -752,13 +801,12 @@ public:
 		new_serialization_comparison<transactions::call>(*data);
 		new_serialization_comparison<transactions::rollup>(*data);
 		new_serialization_comparison<transactions::validator_adjustment>(*data);
+		new_serialization_comparison<transactions::validator_adjustment_finalization>(*data);
 		new_serialization_comparison<transactions::bridge_account>(*data);
 		new_serialization_comparison<transactions::bridge_account_finalization>(*data);
 		new_serialization_comparison<transactions::bridge_withdrawal>(*data);
 		new_serialization_comparison<transactions::bridge_withdrawal_finalization>(*data);
 		new_serialization_comparison<transactions::bridge_attestation>(*data);
-		new_serialization_comparison<transactions::bridge_migration>(*data);
-		new_serialization_comparison<transactions::bridge_migration_finalization>(*data);
 
 		auto* term = console::get();
 		term->jwrite_line(*data);
@@ -978,7 +1026,8 @@ public:
 		auto user = ledger::wallet::from_seed("0000000");
 		for (auto& asset : server->get_assets())
 		{
-			auto wallet = *server->compute_wallet(asset, 123456);
+			uint8_t seed[] = "123456";
+			auto wallet = *server->compute_wallet(asset, seed, sizeof(seed) - 1);
 			auto info = wallet.as_schema();
 			info->set("asset", algorithm::asset::serialize(asset));
 			term->jwrite_line(*info);
@@ -989,15 +1038,16 @@ public:
 	{
 		auto* term = console::get();
 		vector<participant> participants;
-		participants.resize(protocol::now().policy.participation.std_per_account);
+		participants.resize(protocol::now().policy.participation.min_per_account);
 
-		for (auto& [alg, alg_name] :
-			{
-				std::make_pair(algorithm::composition::type::ed25519, std::string_view("ed25519")),
-				std::make_pair(algorithm::composition::type::ed25519_clsag, std::string_view("ed25519_clsag")),
-				std::make_pair(algorithm::composition::type::secp256k1, std::string_view("secp256k1")),
-				std::make_pair(algorithm::composition::type::secp256k1_schnorr, std::string_view("secp256k1_schnorr"))
-			})
+		auto algorithms =
+		{
+			std::make_pair(algorithm::composition::type::ed25519, std::string_view("ed25519")),
+			std::make_pair(algorithm::composition::type::ed25519_clsag, std::string_view("ed25519_clsag")),
+			std::make_pair(algorithm::composition::type::secp256k1, std::string_view("secp256k1")),
+			std::make_pair(algorithm::composition::type::secp256k1_schnorr, std::string_view("secp256k1_schnorr"))
+		};
+		for (auto& [alg, alg_name] : algorithms)
 		{
 			uint64_t mpc_secret_state_time = 0;
 			uint64_t mpc_public_state_time = 0;
@@ -1009,8 +1059,10 @@ public:
 			for (size_t i = 0; i < participants.size(); i++)
 			{
 				auto& share = participants[i];
-				share.seed = algorithm::hashing::hash256i("seed" + to_string(i));
-				share.keypair = algorithm::composition::derive_keypair(alg, share.seed).expect("failed to derive a keypair share");
+				auto entropy = "seed" + to_string(i);
+				algorithm::hashing::hash512((uint8_t*)entropy.data(), entropy.size(), share.seed.data);
+
+				share.keypair = algorithm::composition::derive_keypair(alg, share.seed.data, share.seed.size()).expect("failed to derive a keypair share");
 				{
 					auto time = date_time();
 					format::wo_stream message;
@@ -1041,7 +1093,7 @@ public:
 				}
 
 				auto participant_data = mpc_data->set("participant" + to_string(i + 1), var::set::object());
-				participant_data->set("seed", var::string(algorithm::encoding::encode_0xhex256(share.seed)));
+				participant_data->set("seed", var::string(format::util::encode_0xhex(share.seed.view())));
 				participant_data->set("secret_key", var::string(format::util::encode_0xhex(std::string_view((char*)share.keypair.secret_key.data(), share.keypair.secret_key.size()))));
 				participant_data->set("public_key", var::string(format::util::encode_0xhex(std::string_view((char*)share.keypair.public_key.data(), share.keypair.public_key.size()))));
 			}
@@ -1157,7 +1209,10 @@ public:
 		auto user = ledger::wallet::from_seed(seed.to_string());
 		auto create_wallet = [&](const algorithm::asset_id& asset) -> superchain::computed_wallet
 		{
-			auto wallet = *server->compute_wallet(asset, seed);
+			uint8_t seed_buffer[32];
+			seed.encode(seed_buffer);
+
+			auto wallet = *server->compute_wallet(asset, seed_buffer, sizeof(seed_buffer));
 			for (auto& encoded_address : wallet.encoded_addresses)
 				server->enable_link(asset, superchain::wallet_link(user.public_key_hash, wallet.encoded_public_key, encoded_address.second)).expect("link activation error");
 			return wallet;
@@ -1533,33 +1588,32 @@ public:
 	{
 		use_clean_state([&]()
 		{
+			vector<account> users; vector<algorithm::pubkeyhash_t> contracts;
+			for (size_t i = 0; i < protocol::now().policy.participation.min_per_account + 1; i++)
+				users.push_back(account(ledger::wallet::from_seed(stringify::text("00000%i", (int)i)), 0));
+
 			uptr<schema> data = userdata ? nullptr : var::set::array();
-			vector<algorithm::pubkeyhash_t> contracts;
-			vector<account> users =
-			{
-				account(ledger::wallet::from_seed("000001"), 0),
-				account(ledger::wallet::from_seed("000000"), 0),
-				account(ledger::wallet::from_seed("000002"), 0)
-			};
-			TEST_BLOCK(&generators::validator_registration_full, "0xaeb2a40130412edf1384ab5f0fb2b5f222d10179477b4738a1bf586e29b2e1b8", 1);
-			TEST_BLOCK(std::bind(&generators::validator_enable_validator, std::placeholders::_1, std::placeholders::_2, 2, false, true, false), "0xb93f3a4e0cfc5c3ac5dd1aaebcdf210dc5d7098268cb3f9ed3879c182f9be799", 2);
-			TEST_BLOCK(&generators::bridge_account_registration_full_stage_1, "0x2a18c1aca513fc44d102f7da290f288956145c106eff57c7d4e14f1169fa2512", 3);
-			TEST_BLOCK(&generators::bridge_account_registration_full_stage_2, "0x8069b443e1933b54d6eb44690afd8f915c3587d829fc73a83456638c9a679ee8", 5);
-			TEST_BLOCK(&generators::bridge_attestation_registration_full, "0x010b4898ad0f921b5a924b8f04fbe649148df9bcc03382dead6a7689811cacae", 7);
-			TEST_BLOCK(&generators::account_transfer_stage_1, "0x2adfd906fdea6ea15f4ab10388d742f98ae94145611ec7b94543141e39a8909a", 8);
-			TEST_BLOCK(&generators::account_transfer_stage_2, "0x1b3e4f4e976e5686cd754a6d434140a35c9e638cfc7ca76c44d240d85e1ac132", 9);
-			TEST_BLOCK(std::bind(&generators::account_transfer_to_account, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), users[2].wallet.get_address(), 0.05), "0x9a4370d299d4833df1c3cd4a6b5ffc924a703f8f255756865e5a533e9f551f28", 10);
-			TEST_BLOCK(std::bind(&generators::account_upgrade_stage_1, std::placeholders::_1, std::placeholders::_2, &contracts), "0x7819ecc6429c6ea83b44feef5dbd8ab9fd3a0b243aa59b4370869b9c376766f7", 11);
-			TEST_BLOCK(std::bind(&generators::account_upgrade_stage_2, std::placeholders::_1, std::placeholders::_2, &contracts), "0x2965f256fac7b6ed63fcec8c088c50b779c424218d9ff06ff610521a95aedcf5", 12);
-			TEST_BLOCK(std::bind(&generators::account_call, std::placeholders::_1, std::placeholders::_2, &contracts), "0xfa404d5990d831ddb876bbcd387eceb0f19ffd9b0309fa3e8c3c6c04126c77ca", 13);
-			TEST_BLOCK(&generators::account_transaction_rollup, "0xc251e9341d17bb61d1fee414a7d6323392fc921c25dfa42c674b4d57de224566", 14);
-			TEST_BLOCK(std::bind(&generators::validator_enable_validator, std::placeholders::_1, std::placeholders::_2, 2, false, false, true), "0x122567f9e340ba4fb0b48ea1ffe744ab41de45d381606ebaba1f4af1b0d45173", 15);
-			TEST_BLOCK(&generators::bridge_migration, "0x354c5e263ddbc66f92c8077aca3135e1e7cc2e31238ac28de6cafcf00b533881", 16);
-			TEST_BLOCK(&generators::bridge_withdrawal_stage_1, "0x63c0a07bc1cab2c09611819915a9665d19970d4db9b4ae62ea50416fe8feeeec", 18);
-			TEST_BLOCK(&generators::bridge_withdrawal_stage_2, "0xac0127b9f1cd6380568a00fca69f739e24b7cc4e92242b4c265b183b8b1d062c", 20);
-			TEST_BLOCK(&generators::bridge_withdrawal_stage_3, "0x64b9c45b87fefceaac7efb3cde9731a81b3ed8ac20c5a2f2a7dbed82996b5368", 22);
-			TEST_BLOCK(&generators::bridge_withdrawal_stage_4, "0x54106e68df6605defc2b4fcfcf4f3d5fe7516de1fe5470666b0d16b0985caf4d", 24);
-			TEST_BLOCK(std::bind(&generators::validator_disable_validator, std::placeholders::_1, std::placeholders::_2, 2, false, true, false), "0x6c92de60e5cea48f50b5c98a2f4cb738bb62dce8dff27394ac15d16d57816b6a", 26);
+			TEST_BLOCK(&generators::validator_registration_full, "0x4b22e1cf4e865c5ddd13172391c7a104176db00e31ba6685af7a013663a97521", 1);
+			TEST_BLOCK(std::bind(&generators::validator_enable_poa_validator, std::placeholders::_1, std::placeholders::_2, 2, true, false), "0xdda6a6624d4d087cb4146a3beb8aabbedccaebaf85f91d973a829c26eb48ac54", 2);
+			TEST_BLOCK(&generators::bridge_account_registration_full_stage_1, "0x9a15658f182ccfdf8b67e5315d1f28b90a46ac755bf0197da3ce606ca436d052", 3);
+			TEST_BLOCK(&generators::bridge_account_registration_full_stage_2, "0x48ea7f5c12ac36dd24e4f1e140671914f6727a9d34d777fb5165724eb7cce4d7", 5);
+			TEST_BLOCK(&generators::bridge_attestation_registration_full, "0xc9a26b9b86daf555c9087b939f4aebafda4e237bb72fdff0cd05fe8c59d62475", 7);
+			TEST_BLOCK(&generators::account_transfer_stage_1, "0xad573bd75d82895e19fc5c2b0e465afc3bb27120dc9414e3cfbc6335bbbbebe0", 8);
+			TEST_BLOCK(&generators::account_transfer_stage_2, "0x53c2419044cd9ce15de5a757b4779ab5db8bde15729c979633015e69287e9258", 9);
+			TEST_BLOCK(std::bind(&generators::account_transfer_to_account, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), users[2].wallet.get_address(), 0.05), "0xbb83f2fb681f9be2b331571410b22ce8d13ec19ca49d1ba57aab79e2e8d8d1cf", 10);
+			TEST_BLOCK(std::bind(&generators::account_upgrade_stage_1, std::placeholders::_1, std::placeholders::_2, &contracts), "0x652279fe82a4b459011c8c577613ec927cdef6eaa7bda72abd75cc5d62af1d3d", 11);
+			TEST_BLOCK(std::bind(&generators::account_upgrade_stage_2, std::placeholders::_1, std::placeholders::_2, &contracts), "0xe73a0fa65b6ec08784fd5342b319a1b21e35bb8110e54d1c6bd27475a6a0f2e2", 12);
+			TEST_BLOCK(std::bind(&generators::account_call, std::placeholders::_1, std::placeholders::_2, &contracts), "0xe1e1a1d3efb8215e614bc5eb95bbc9911356938096ceae1a0336f92ec9e42ff9", 13);
+			TEST_BLOCK(&generators::account_transaction_rollup, "0x3bb0fd56575b90979376fbce61e32755b9143f85d902cfe35f36762e0b7feb79", 14);
+			TEST_BLOCK(std::bind(&generators::validator_enable_poa_validator, std::placeholders::_1, std::placeholders::_2, 2, false, true), "0xe38ef04000aca6c4449c5c73831e8dfa3e12b16b86969d1041db8db0990f1acf", 15);
+			TEST_BLOCK_FAULT(&generators::bridge_migration_stage_1, "0x336a5cfa13128deed5ff93b49c455b395385f0d5c46dbbe6e0b12713a9636113", 16);
+			TEST_BLOCK(&generators::bridge_migration_stage_2, "0xe6eecc235625079c2a306d09424aaf570069261f6294ff03ba50d9c7ac892343", 18);
+			TEST_BLOCK(&generators::bridge_migration_stage_3, "0x8ea463bbfba307b762ca97f14c1106ad3a649ba8de24c2bc93d8fd02aedcbff4", 20);
+			TEST_BLOCK(&generators::bridge_withdrawal_stage_1, "0xf6fc8d51c430030c59056971932b7b960efcb360eb105e9f329c1530cded8f75", 22);
+			TEST_BLOCK(&generators::bridge_withdrawal_stage_2, "0xf9cce83aecd400fe6b6552ee3da9fc80627b72fbf8de596bd4150b8d08f6b4e2", 24);
+			TEST_BLOCK(&generators::bridge_withdrawal_stage_3, "0x087c4030cabed8e4fd8eff2495714122a159d17df87661565aed972dc0f2bbdb", 26);
+			TEST_BLOCK(&generators::bridge_withdrawal_stage_4, "0x5975a2c17e12c4d056032a92d44a8a31f58f59321357cc5b7b0734dd5e5e24ac", 28);
+			TEST_BLOCK(std::bind(&generators::validator_disable_poa_validator, std::placeholders::_1, std::placeholders::_2, 2, true, false), "0x6bf80bb5b4217d39b31103204a55bf8d71dd2e79006041d31a9d90b900da47ce", 30);
 			if (userdata != nullptr)
 				*userdata = std::move(users);
 			else
@@ -1571,16 +1625,16 @@ public:
 	{
 		use_clean_state([&]()
 		{
+			vector<account> users;
+			for (size_t i = 0; i < protocol::now().policy.participation.min_per_account; i++)
+				users.push_back(account(ledger::wallet::from_seed(stringify::text("00000%i", (int)i)), 0));
+
 			uptr<schema> data = userdata ? nullptr : var::set::array();
-			vector<account> users =
-			{
-				account(ledger::wallet::from_seed("000000"), 0)
-			};
-			TEST_BLOCK(&generators::validator_registration_partial, "0xffa03e597d0fbe0db3953b2de27508b92f89c7ac418e1fc41858cd45a581bc3f", 1);
-			TEST_BLOCK(&generators::bridge_account_registration_partial, "0x0c59fcfa8858272bbde2721fe0640a31066dc865a9df069255f4912ee9b545c8", 2);
-			TEST_BLOCK(&generators::bridge_attestation_registration_partial, "0x579da4645e938608e1eccf7bdb733940fe5bff01a40b2353273969467663f3c4", 4);
-			TEST_BLOCK(std::bind(&generators::account_transfer_to_account, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), "tcrt1x00g22stp0qcprrxra7x2pz2au33armtfc50460", 0.1), "0x83b798c8233044f0d6639f34496dc472a234c39d5bc3b5cd8727ba347bb8f617", 5);
-			TEST_BLOCK(std::bind(&generators::account_transfer_to_account, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("ETH", "USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7"), "tcrt1x00g22stp0qcprrxra7x2pz2au33armtfc50460", 5000), "0xea33dbaf037babe37734f52c6d56e9dc2a10f7c7fc854d994303d0ef8a692235", 6);
+			TEST_BLOCK(&generators::validator_registration_partial, "0x18b302caa37b6326715bdb41cac8101681893dc311b77b90b610f2310af984d8", 1);
+			TEST_BLOCK(&generators::bridge_account_registration_partial, "0xccd0a4bd5e6fa5165682748feca117ca6b85d966b24f92361236af2f4264d8ba", 2);
+			TEST_BLOCK(&generators::bridge_attestation_registration_partial, "0x1de8acd57964ba5bdb92fa0ed5a776596563620577775ada45e12b2cd3eaa282", 4);
+			TEST_BLOCK(std::bind(&generators::account_transfer_to_account, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), "tcrt1x00g22stp0qcprrxra7x2pz2au33armtfc50460", 0.1), "0xed2a09f2712e3a35d0e8e63d61e6e114f455c6b3eb9cc655ba1db09d3bc24529", 5);
+			TEST_BLOCK(std::bind(&generators::account_transfer_to_account, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("ETH", "USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7"), "tcrt1x00g22stp0qcprrxra7x2pz2au33armtfc50460", 5000), "0x89db24dc27c89f05951d7430154d9082f4629b2ba620aa9808f4167af8c8937a", 6);
 			if (userdata != nullptr)
 				*userdata = std::move(users);
 			else
@@ -1592,8 +1646,11 @@ public:
 	{
 		use_clean_state([&]()
 		{
+			vector<account> producers;
+			for (size_t i = 0; i < protocol::now().policy.participation.min_per_account; i++)
+				producers.push_back(account(ledger::wallet::from_seed(stringify::text("00000%i", (int)i)), 0));
+
 			auto* term = console::get();
-			auto producers = vector<account>({ account(ledger::wallet::from_seed("000001"), 0), account(ledger::wallet::from_seed("000002"), 0) });
 			auto& [user1, user1_nonce] = producers[0];
 			auto& [user2, user2_nonce] = producers[1];
 			auto [user3, user3_nonce] = account(ledger::wallet::from_seed("000003"), 0);
@@ -1601,17 +1658,21 @@ public:
 			validator_adjustment->asset = asset;
 			validator_adjustment->allocate_production_stake(decimal::zero());
 			validator_adjustment->allocate_attestation_stake(asset, decimal::zero());
-			validator_adjustment->configure_attestation_security(asset, 2, decimal::zero(), true, true);
+			validator_adjustment->configure_attestation_security(asset, protocol::now().policy.participation.min_per_account, decimal::zero(), true, true);
 			validator_adjustment->allocate_participation_stake(decimal::zero());
 			validator_adjustment->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 			new_block_from_one(nullptr, producers, validator_adjustment);
 
-			validator_adjustment = memory::init<transactions::validator_adjustment>();
-			validator_adjustment->asset = asset;
-			validator_adjustment->allocate_attestation_stake(asset, decimal::zero());
-			validator_adjustment->allocate_participation_stake(decimal::zero());
-			validator_adjustment->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
-			new_block_from_one(nullptr, producers, validator_adjustment);
+			for (size_t i = 1; i < producers.size(); i++)
+			{
+				auto& [user, user_nonce] = producers[i];
+				validator_adjustment = memory::init<transactions::validator_adjustment>();
+				validator_adjustment->asset = asset;
+				validator_adjustment->allocate_attestation_stake(asset, decimal::zero());
+				validator_adjustment->allocate_participation_stake(decimal::zero());
+				validator_adjustment->sign(user.secret_key, user_nonce++, decimal::zero()).expect("pre-validation failed");
+				new_block_from_one(nullptr, producers, validator_adjustment);
+			}
 
 			auto* bridge_account = memory::init<transactions::bridge_account>();
 			bridge_account->asset = asset;
@@ -1875,7 +1936,7 @@ public:
 
 		data->set(t::as_instance_typename(), var::string(algorithm::encoding::encode_0xhex256(message.hash())));
 	}
-	static ledger::block new_block_from_generator(schema* results, vector<account>& users, std::function<void(vector<uptr<ledger::transaction>>&, vector<account>&)>&& test_case, const std::string_view& test_case_call, const std::string_view& state_root_hash, uint64_t block_number)
+	static ledger::block new_block_from_generator(schema* results, vector<account>& users, std::function<void(vector<uptr<ledger::transaction>>&, vector<account>&)>&& test_case, const std::string_view& test_case_call, const std::string_view& state_root_hash, uint64_t block_number, bool causes_fault = false)
 	{
 		for (auto& user : users)
 			user.nonce = user.wallet.get_latest_nonce().or_else(0);
@@ -1883,22 +1944,22 @@ public:
 		vector<uptr<ledger::transaction>> transactions;
 		test_case(transactions, users);
 
-		auto block = new_block_from_list(results, users, std::move(transactions));
+		auto block = new_block_from_list(results, users, std::move(transactions), causes_fault);
 		auto hash = algorithm::encoding::encode_0xhex256(block.state_root);
 		if (results != nullptr)
-			console::get()->fwrite_line("TEST_BLOCK(%s, \"%s\", %" PRIu64 ");", test_case_call.data(), hash.c_str(), block.number);
+			console::get()->fwrite_line("TEST_BLOCK%s(%s, \"%s\", %" PRIu64 ");", causes_fault ? "_FAULT" : "", test_case_call.data(), hash.c_str(), block.number);
 
 		VI_PANIC(state_root_hash.empty() || state_root_hash == hash, "block state root deviation");
 		VI_PANIC(!block_number || block_number == block.number, "block number deviation");
 		return block;
 	}
-	static ledger::block new_block_from_one(schema* results, vector<account>& users, uptr<ledger::transaction>&& transaction)
+	static ledger::block new_block_from_one(schema* results, vector<account>& users, uptr<ledger::transaction>&& transaction, bool causes_fault = false)
 	{
 		auto transactions = vector<uptr<ledger::transaction>>();
 		transactions.push_back(std::move(transaction));
-		return new_block_from_list(results, users, std::move(transactions));
+		return new_block_from_list(results, users, std::move(transactions), causes_fault);
 	}
-	static ledger::block new_block_from_list(schema* results, vector<account>& users, vector<uptr<ledger::transaction>>&& transactions)
+	static ledger::block new_block_from_list(schema* results, vector<account>& users, vector<uptr<ledger::transaction>>&& transactions, bool causes_fault = false)
 	{
 		ledger::evaluation_context environment;
 		for (size_t i = 0; i < transactions.size(); i++)
@@ -1956,12 +2017,12 @@ public:
 				for (auto& transaction : dispatcher.outputs)
 				{
 					if (transaction->as_type() != transactions::bridge_attestation::as_instance_type())
-						transaction->sign(user.secret_key, user_nonce++, decimal::zero()).expect("pre-validation failed");
+						transaction->sign(user.secret_key, user_nonce++, decimal::zero(), 100000).expect("pre-validation failed");
 				}
 				transactions.insert(transactions.end(), std::make_move_iterator(dispatcher.outputs.begin()), std::make_move_iterator(dispatcher.outputs.end()));
 				dispatcher.outputs.clear();
 			}
-			if (!dispatcher.errors.empty())
+			if (!causes_fault && !dispatcher.errors.empty())
 			{
 				for (auto& transaction : dispatcher.errors)
 					VI_PANIC(false, "%s", transaction.second.c_str());
@@ -2844,7 +2905,7 @@ public:
 			{ "cryptography / multichain transaction", &tests::cryptography_multichain_transaction },
 			{ "blockchain / full coverage", std::bind(&tests::blockchain_full_coverage, (vector<tests::account>*)nullptr) },
 			{ "blockchain / verification", &tests::blockchain_verification },
-			//{ "blockchain / partial coverage", std::bind(&tests::blockchain_partial_coverage, (vector<tests::account>*)nullptr) },
+			{ "blockchain / partial coverage", std::bind(&tests::blockchain_partial_coverage, (vector<tests::account>*)nullptr) },
 			{ "blockchain / verification", &tests::blockchain_verification },
 			{ "blockchain / gas estimation", &tests::blockchain_gas_estimation },
 		};

@@ -38,6 +38,10 @@ namespace tangent
 			storage_type(storage_type&&) noexcept = default;
 			storage_type& operator=(const storage_type&) = default;
 			storage_type& operator=(storage_type&&) noexcept = default;
+			constexpr size_t size() const
+			{
+				return s;
+			}
 			void clear()
 			{
 				memset(data, 0, sizeof(data));
@@ -93,6 +97,7 @@ namespace tangent
 		using seckey_t = storage_type<uint8_t, 32>;
 		using pubkey_t = storage_type<uint8_t, 33>;
 		using pubkeyhash_t = storage_type<uint8_t, 20>;
+		using share_t = storage_type<uint8_t, 113>;
 		typedef uint256_t(*hash_function)(const uint256_t&, const uint256_t&);
 
 		class wesolowski
@@ -163,6 +168,9 @@ namespace tangent
 			static void derive_secret_key(const uint256_t& entropy, seckey_t& secret_key);
 			static bool derive_public_key(const seckey_t& secret_key, pubkey_t& public_key);
 			static void derive_public_key_hash(const pubkey_t& public_key, pubkeyhash_t& public_key_hash);
+			static bool split_secret_into_shares(const uint8_t message[64], uint8_t threshold, uint8_t count, ordered_set<share_t>& shares);
+			static bool combine_shares_into_secret(const ordered_set<share_t>& shares, uint8_t message[64]);
+			static uint8_t recovery_threshold(size_t shares);
 			static bool scalar_add_secret_key(seckey_t& secret_key, const seckey_t& scalar);
 			static bool scalar_mul_secret_key(seckey_t& secret_key, const seckey_t& scalar);
 			static bool scalar_add_public_key(pubkey_t& public_key, const seckey_t& scalar);
@@ -302,7 +310,7 @@ namespace tangent
 			struct secret_state
 			{
 				virtual ~secret_state() = default;
-				virtual expects_lr<void> derive_from_seed(const uint256_t& seed) = 0;
+				virtual expects_lr<void> derive_from_seed(const uint8_t* seed, size_t seed_size) = 0;
 				virtual expects_lr<void> derive_from_key(const cseckey_t& secret_key) = 0;
 				virtual expects_lr<void> finalize(cseckey_t* output) const = 0;
 				virtual bool store(format::wo_stream* stream) const = 0;
@@ -337,7 +345,7 @@ namespace tangent
 			};
 
 		public:
-			static expects_lr<keypair> derive_keypair(type alg, const uint256_t& seed);
+			static expects_lr<keypair> derive_keypair(type alg, const uint8_t* seed, size_t seed_size);
 			static expects_lr<uptr<secret_state>> make_secret_state(type alg);
 			static expects_lr<uptr<secret_state>> load_secret_state(format::ro_stream& stream, type* alg = nullptr);
 			static expects_lr<void> store_secret_state(type alg, const secret_state* state, format::wo_stream* stream);
@@ -441,6 +449,19 @@ namespace vitex
 			using is_transparent = void;
 
 			inline result_type operator()(const tangent::algorithm::pubkeyhash_t& value) const noexcept
+			{
+				return key_hasher<std::string_view>()(std::string_view((char*)value.data, sizeof(value.data)));
+			}
+		};
+
+		template <>
+		struct key_hasher<tangent::algorithm::share_t>
+		{
+			typedef int argument_type;
+			typedef size_t result_type;
+			using is_transparent = void;
+
+			inline result_type operator()(const tangent::algorithm::share_t& value) const noexcept
 			{
 				return key_hasher<std::string_view>()(std::string_view((char*)value.data, sizeof(value.data)));
 			}

@@ -707,17 +707,25 @@ namespace tangent
 		{
 			return callable::descriptor(__func__, 14);
 		}
-		callable::descriptor descriptors::aggregate_secret_share_state()
+		callable::descriptor descriptors::distribute_entropy_shares()
 		{
 			return callable::descriptor(__func__, 15);
 		}
-		callable::descriptor descriptors::aggregate_public_state()
+		callable::descriptor descriptors::aggregate_entropy_shares()
 		{
 			return callable::descriptor(__func__, 16);
 		}
-		callable::descriptor descriptors::aggregate_signature_state()
+		callable::descriptor descriptors::recover_entropy()
 		{
 			return callable::descriptor(__func__, 17);
+		}
+		callable::descriptor descriptors::aggregate_public_key()
+		{
+			return callable::descriptor(__func__, 18);
+		}
+		callable::descriptor descriptors::aggregate_signature()
+		{
+			return callable::descriptor(__func__, 19);
 		}
 
 		server_node::server_node() noexcept : socket_server(), control_sys("consensus-node")
@@ -835,6 +843,7 @@ namespace tangent
 		{
 			auto& [node, wallet] = descriptor;
 			candidate_tx->set_optimal_gas(decimal::zero());
+			candidate_tx->gas_limit += 21000;
 
 			auto status = candidate_tx->sign(wallet.secret_key, account_nonce ? *account_nonce : 0, decimal::zero());
 			if (!status)
@@ -1381,7 +1390,7 @@ namespace tangent
 			}
 			return expects_rt<format::variables>(std::move(result));
 		}
-		expects_rt<format::variables> server_node::aggregate_secret_share_state(uref<relay>&& state, const exchange& event)
+		expects_rt<format::variables> server_node::distribute_entropy_shares(uref<relay>&& state, const exchange& event)
 		{
 			auto packed = unpack_private_result(event.args, descriptor.second.secret_key);
 			if (!packed)
@@ -1396,7 +1405,123 @@ namespace tangent
 				return remote_exception::retry();
 
 			auto context = ledger::transaction_context();
-			auto proof_transaction = context.get_block_transaction<transactions::bridge_migration>(proof_hash);
+			auto proof_transaction = context.get_block_transaction<transactions::bridge_account>(proof_hash);
+			if (!proof_transaction)
+				return remote_exception("state proof not found");
+
+			auto public_key = find_public_key(((transactions::bridge_account*)*proof_transaction->transaction)->manager);
+			if (!public_key)
+				return remote_exception("manager public key not found");
+
+			uint8_t encrypted_shares_size;
+			auto reader = format::ro_stream(packed->at(2).as_string());
+			if (!reader.read_integer(reader.read_type(), &encrypted_shares_size))
+				return remote_exception("encrypted shares list size not valid");
+
+			auto encrypted_shares = ordered_map<algorithm::pubkeyhash_t, string>();
+			for (uint8_t i = 0; i < encrypted_shares_size; i++)
+			{
+				algorithm::pubkeyhash_t participant; string intermediate;
+				if (!reader.read_string(reader.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, participant.data, sizeof(participant.data)))
+					return remote_exception("encrypted share not valid");
+
+				string encrypted_share;
+				if (!reader.read_string(reader.read_type(), &encrypted_share))
+					return remote_exception("encrypted share not valid");
+
+				encrypted_shares[participant] = std::move(encrypted_share);
+			}
+
+			auto dispatcher = dispatch_context(this);
+			context.transaction = *proof_transaction->transaction;
+			context.receipt = std::move(proof_transaction->receipt);
+
+			auto aggregation = local_dispatch_context::distribute_entropy_shares(&dispatcher, &context, encrypted_shares);
+			if (!aggregation)
+				return remote_exception(std::move(aggregation.error().message()));
+
+			return pack_private_result({ format::variable(encrypted_shares.size()) }, *public_key);
+		}
+		expects_rt<format::variables> server_node::aggregate_entropy_shares(uref<relay>&& state, const exchange& event)
+		{
+			auto packed = unpack_private_result(event.args, descriptor.second.secret_key);
+			if (!packed)
+				return packed;
+			else if (packed->size() != 3)
+				return remote_exception("invalid arguments");
+
+			auto block_number = packed->at(0).as_uint64();
+			auto proof_hash = packed->at(1).as_uint256();
+			auto chainstate = storages::chainstate();
+			if (chainstate.get_latest_block_number().or_else(1) < block_number)
+				return remote_exception::retry();
+
+			auto context = ledger::transaction_context();
+			auto proof_transaction = context.get_block_transaction<transactions::validator_adjustment>(proof_hash);
+			if (!proof_transaction)
+				return remote_exception("state proof not found");
+
+			auto public_key = find_public_key(proof_transaction->receipt.from);
+			if (!public_key)
+				return remote_exception("old participant/manager public key not found");
+
+			auto intermediate = string();
+			auto reader = format::ro_stream(packed->at(2).as_string());
+			auto aggregator = ledger::dispatch_context::entropy_aggregation_state();
+			if (!reader.read_string(reader.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, aggregator.public_key.data, sizeof(aggregator.public_key.data)))
+				return remote_exception("invalid public key of new participant");
+
+			uint16_t encrypted_shares_size;
+			if (!reader.read_integer(reader.read_type(), &encrypted_shares_size))
+				return remote_exception("invalid encrypted shares size");
+
+			for (uint16_t i = 0; i < encrypted_shares_size; i++)
+			{
+				uint256_t ref_hash;
+				if (!reader.read_integer(reader.read_type(), &ref_hash))
+					return remote_exception("invalid ref hash of encrypted share");
+
+				aggregator.encrypted_shares[ref_hash] = ordered_map<algorithm::pubkeyhash_t, string>();
+			}
+
+			auto dispatcher = dispatch_context(this);
+			context.transaction = *proof_transaction->transaction;
+			context.receipt = std::move(proof_transaction->receipt);
+
+			auto aggregation = local_dispatch_context::aggregate_entropy_shares(&dispatcher, &context, aggregator.public_key, aggregator.encrypted_shares);
+			if (!aggregation)
+				return remote_exception(std::move(aggregation.error().message()));
+
+			auto writer = format::wo_stream();
+			for (auto& [ref_hash, encrypted_shares] : aggregator.encrypted_shares)
+			{
+				writer.write_integer(ref_hash);
+				writer.write_integer((uint16_t)encrypted_shares.size());
+				for (auto& [participant, encrypted_share] : encrypted_shares)
+				{
+					writer.write_string(participant.optimized_view());
+					writer.write_string(encrypted_share);
+				}
+			}
+
+			return pack_private_result({ format::variable(writer.data) }, *public_key);
+		}
+		expects_rt<format::variables> server_node::recover_entropy(uref<relay>&& state, const exchange& event)
+		{
+			auto packed = unpack_private_result(event.args, descriptor.second.secret_key);
+			if (!packed)
+				return packed;
+			else if (packed->size() != 3)
+				return remote_exception("invalid arguments");
+
+			auto block_number = packed->at(0).as_uint64();
+			auto proof_hash = packed->at(1).as_uint256();
+			auto chainstate = storages::chainstate();
+			if (chainstate.get_latest_block_number().or_else(1) < block_number)
+				return remote_exception::retry();
+
+			auto context = ledger::transaction_context();
+			auto proof_transaction = context.get_block_transaction<transactions::validator_adjustment>(proof_hash);
 			if (!proof_transaction)
 				return remote_exception("state proof not found");
 
@@ -1405,7 +1530,7 @@ namespace tangent
 				return remote_exception("manager public key not found");
 
 			auto reader = format::ro_stream(packed->at(2).as_string());
-			auto aggregator = ledger::dispatch_context::secret_share_state();
+			auto aggregator = ledger::dispatch_context::entropy_recovery_state();
 			if (!aggregator.load_message(reader))
 				return remote_exception("state machine not valid");
 
@@ -1413,13 +1538,13 @@ namespace tangent
 			context.transaction = *proof_transaction->transaction;
 			context.receipt = std::move(proof_transaction->receipt);
 
-			auto aggregation = local_dispatch_context::aggregate_secret_share_state(&dispatcher, &context, aggregator);
+			auto aggregation = local_dispatch_context::recover_entropy(&dispatcher, &context, aggregator.proof, aggregator.encrypted_shares, aggregator.encrypted_entropies);
 			if (!aggregation)
 				return remote_exception(std::move(aggregation.error().message()));
 
-			return pack_private_result({ format::variable(aggregator.confirmation_signature.optimized_view()) }, *public_key);
+			return pack_private_result({ format::variable(aggregator.proof.optimized_view()) }, *public_key);
 		}
-		expects_rt<format::variables> server_node::aggregate_public_state(uref<relay>&& state, const exchange& event)
+		expects_rt<format::variables> server_node::aggregate_public_key(uref<relay>&& state, const exchange& event)
 		{
 			auto packed = unpack_private_result(event.args, descriptor.second.secret_key);
 			if (!packed)
@@ -1447,11 +1572,25 @@ namespace tangent
 			if (!aggregator)
 				return remote_exception("in state machine not valid");
 
+			uint8_t list_size;
+			if (!reader.read_integer(reader.read_type(), &list_size))
+				return remote_exception("encrypted shares list size not valid");
+
+			auto list = ordered_map<algorithm::pubkey_t, string>();
+			for (uint8_t i = 0; i < list_size; i++)
+			{
+				algorithm::pubkey_t item; string intermediate;
+				if (!reader.read_string(reader.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, item.data, sizeof(item.data)))
+					return remote_exception("encrypted share public key not valid");
+
+				list.insert(std::make_pair(item, string()));
+			}
+
 			auto dispatcher = dispatch_context(this);
 			context.transaction = *proof_transaction->transaction;
 			context.receipt = std::move(proof_transaction->receipt);
 
-			auto aggregation = local_dispatch_context::aggregate_public_state(&dispatcher, &context, **aggregator);
+			auto aggregation = local_dispatch_context::aggregate_public_key(&dispatcher, &context, list, **aggregator);
 			if (!aggregation)
 				return remote_exception(std::move(aggregation.error().message()));
 
@@ -1459,9 +1598,12 @@ namespace tangent
 			if (!(*aggregator)->store(&writer))
 				return remote_exception("out state machine not valid");
 
+			for (auto& [public_key, encrypted_share] : list)
+				writer.write_string(encrypted_share);
+
 			return pack_private_result({ format::variable(writer.data) }, *public_key);
 		}
-		expects_rt<format::variables> server_node::aggregate_signature_state(uref<relay>&& state, const exchange& event)
+		expects_rt<format::variables> server_node::aggregate_signature(uref<relay>&& state, const exchange& event)
 		{
 			auto packed = unpack_private_result(event.args, descriptor.second.secret_key);
 			if (!packed)
@@ -1498,7 +1640,7 @@ namespace tangent
 			context.transaction = *proof_transaction->transaction;
 			context.receipt = std::move(proof_transaction->receipt);
 
-			auto aggregation = local_dispatch_context::aggregate_signature_state(&dispatcher, &context, message, **aggregator);
+			auto aggregation = local_dispatch_context::aggregate_signature(&dispatcher, &context, message, **aggregator);
 			if (!aggregation)
 				return remote_exception(std::move(aggregation.error().message()));
 
@@ -2763,9 +2905,11 @@ namespace tangent
 			bind_query(descriptors::fetch_mempool(), std::bind(&server_node::fetch_mempool, this, std::placeholders::_2, std::placeholders::_3));
 			bind_query(descriptors::fetch_transaction(), std::bind(&server_node::fetch_transaction, this, std::placeholders::_2, std::placeholders::_3));
 			bind_query(descriptors::fetch_transactions(), std::bind(&server_node::fetch_transactions, this, std::placeholders::_2, std::placeholders::_3));
-			bind_query(descriptors::aggregate_secret_share_state(), std::bind(&server_node::aggregate_secret_share_state, this, std::placeholders::_2, std::placeholders::_3));
-			bind_query(descriptors::aggregate_public_state(), std::bind(&server_node::aggregate_public_state, this, std::placeholders::_2, std::placeholders::_3));
-			bind_query(descriptors::aggregate_signature_state(), std::bind(&server_node::aggregate_signature_state, this, std::placeholders::_2, std::placeholders::_3));
+			bind_query(descriptors::distribute_entropy_shares(), std::bind(&server_node::distribute_entropy_shares, this, std::placeholders::_2, std::placeholders::_3));
+			bind_query(descriptors::aggregate_entropy_shares(), std::bind(&server_node::aggregate_entropy_shares, this, std::placeholders::_2, std::placeholders::_3));
+			bind_query(descriptors::recover_entropy(), std::bind(&server_node::recover_entropy, this, std::placeholders::_2, std::placeholders::_3));
+			bind_query(descriptors::aggregate_public_key(), std::bind(&server_node::aggregate_public_key, this, std::placeholders::_2, std::placeholders::_3));
+			bind_query(descriptors::aggregate_signature(), std::bind(&server_node::aggregate_signature, this, std::placeholders::_2, std::placeholders::_3));
 
 			control_sys.interval_if_none(TASK_MEMPOOL_VACUUM "_runner", protocol::now().user.storage.transaction_timeout, std::bind(&server_node::run_mempool_vacuum, this));
 			control_sys.interval_if_none(TASK_TOPOLOGY_OPTIMIZATION "_runner", protocol::now().user.consensus.topology_timeout, std::bind(&server_node::run_topology_optimization, this));
@@ -3380,74 +3524,31 @@ namespace tangent
 				coreturn expectation::met;
 			});
 		}
-		expects_promise_rt<void> dispatch_context::aggregate_secret_share_state(const ledger::transaction_context* context, secret_share_state& state, const algorithm::pubkeyhash_t& validator)
+		expects_promise_rt<void> dispatch_context::distribute_entropy_shares(const ledger::transaction_context* context, entropy_distribution_state& state, const algorithm::pubkeyhash_t& validator)
 		{
 			if (protocol::now().user.consensus.logging)
-				VI_INFO("secret share state aggregation: inquiry to %s", algorithm::signing::encode_address(validator).c_str());
+				VI_INFO("mpc entropy shares distribution: inquiry to %s", algorithm::signing::encode_address(validator).c_str());
 
 			return coasync<expects_rt<void>>([this, context, &state, &validator]() mutable -> expects_promise_rt<void>
 			{
-				auto result = coawait(aggregate_secret_share_state_internal(context, state, validator));
+				auto result = coawait(distribute_entropy_shares_internal(context, state, validator));
 				if (!result)
 				{
 					if (protocol::now().user.consensus.logging)
-						VI_INFO("secret share state aggregation failed: %s (participant: %s)", result.what().c_str(), algorithm::signing::encode_address(validator).c_str());
+						VI_INFO("mpc entropy shares distribution failed: %s (participant: %s)", result.what().c_str(), algorithm::signing::encode_address(validator).c_str());
 
 					coreturn result.error();
 				}
 				else if (protocol::now().user.consensus.logging)
-					VI_INFO("secret share state aggregation: OK (participant: %s)", algorithm::signing::encode_address(validator).c_str());
+					VI_INFO("mpc entropy shares distribution: OK (participant: %s)", algorithm::signing::encode_address(validator).c_str());
 
 				coreturn expectation::met;
 			});
 		}
-		expects_promise_rt<void> dispatch_context::aggregate_public_state(const ledger::transaction_context* context, public_state& state, const algorithm::pubkeyhash_t& validator)
+		expects_promise_rt<void> dispatch_context::distribute_entropy_shares_internal(const ledger::transaction_context* context, entropy_distribution_state& state, const algorithm::pubkeyhash_t& validator)
 		{
-			if (protocol::now().user.consensus.logging)
-				VI_INFO("public state aggregation: inquiry to %s", algorithm::signing::encode_address(validator).c_str());
-
-			return coasync<expects_rt<void>>([this, context, &state, &validator]() mutable -> expects_promise_rt<void>
-			{
-				auto result = coawait(aggregate_public_state_internal(context, state, validator));
-				if (!result)
-				{
-					if (protocol::now().user.consensus.logging)
-						VI_INFO("public state aggregation failed: %s (participant: %s)", result.what().c_str(), algorithm::signing::encode_address(validator).c_str());
-
-					coreturn result.error();
-				}
-				else if (protocol::now().user.consensus.logging)
-					VI_INFO("public state aggregation: OK (participant: %s)", algorithm::signing::encode_address(validator).c_str());
-
-				coreturn expectation::met;
-			});
-		}
-		expects_promise_rt<void> dispatch_context::aggregate_signature_state(const ledger::transaction_context* context, signature_state& state, const algorithm::pubkeyhash_t& validator)
-		{
-			if (protocol::now().user.consensus.logging)
-				VI_INFO("signature state aggregation: inquiry to %s", algorithm::signing::encode_address(validator).c_str());
-
-			return coasync<expects_rt<void>>([this, context, &state, &validator]() mutable -> expects_promise_rt<void>
-			{
-				auto result = coawait(aggregate_signature_state_internal(context, state, validator));
-				if (!result)
-				{
-					if (protocol::now().user.consensus.logging)
-						VI_INFO("signature state aggregation failed: %s (participant: %s)", result.what().c_str(), algorithm::signing::encode_address(validator).c_str());
-
-					coreturn result.error();
-				}
-				else if (protocol::now().user.consensus.logging)
-					VI_INFO("signature state aggregation: OK (participant: %s)", algorithm::signing::encode_address(validator).c_str());
-
-				coreturn expectation::met;
-			});
-		}
-		expects_promise_rt<void> dispatch_context::aggregate_secret_share_state_internal(const ledger::transaction_context* context, secret_share_state& state, const algorithm::pubkeyhash_t& validator)
-		{
-			auto* bridge_account = (transactions::bridge_account*)context->transaction;
 			if (is_running_on(validator.data))
-				coreturn local_dispatch_context::aggregate_secret_share_state(this, context, state);
+				coreturn local_dispatch_context::distribute_entropy_shares(this, context, state.encrypted_shares);
 
 			auto public_key = server->find_public_key(validator);
 			if (!public_key)
@@ -3456,9 +3557,9 @@ namespace tangent
 			uint64_t attempt = 0;
 			auto args = pack_private_result({ format::variable(context->receipt.block_number), format::variable(context->receipt.transaction_hash), format::variable(state.as_message().data) }, *public_key);
 			if (!args)
-				coreturn remote_exception(std::move(args.error().message()));
+				coreturn args.error();
 		retry:
-			auto event = coawait(server->indirect_query(validator, descriptors::aggregate_secret_share_state(), format::variables(*args), protocol::now().user.consensus.response_timeout));
+			auto event = coawait(server->indirect_query(validator, descriptors::distribute_entropy_shares(), format::variables(*args), protocol::now().user.consensus.response_timeout));
 			if (!event)
 			{
 				bool is_retry = server->is_active() && (event.error().is_retry() || event.error().is_shutdown());
@@ -3470,18 +3571,190 @@ namespace tangent
 
 			args = unpack_private_result(event->args, server->descriptor.second.secret_key);
 			if (!args)
-				coreturn remote_exception(std::move(args.error().message()));
+				coreturn args.error();
 
-			state.confirmation_signature = algorithm::hashsig_t(args->front().as_string());
-			if (state.confirmation_signature.empty())
-				coreturn remote_exception("group secret share confirmation failed");
+			if (args->size() != 1 || args->front().as_uint8() != (uint8_t)state.encrypted_shares.size())
+				coreturn remote_exception("encrypted shares distribution confirmation not received");
 
 			coreturn expectation::met;
 		}
-		expects_promise_rt<void> dispatch_context::aggregate_public_state_internal(const ledger::transaction_context* context, public_state& state, const algorithm::pubkeyhash_t& validator)
+		expects_promise_rt<void> dispatch_context::aggregate_entropy_shares(const ledger::transaction_context* context, entropy_aggregation_state& state, const algorithm::pubkeyhash_t& validator)
+		{
+			if (protocol::now().user.consensus.logging)
+				VI_INFO("mpc entropy shares aggregation: inquiry to %s", algorithm::signing::encode_address(validator).c_str());
+
+			return coasync<expects_rt<void>>([this, context, &state, &validator]() mutable -> expects_promise_rt<void>
+			{
+				auto result = coawait(aggregate_entropy_shares_internal(context, state, validator));
+				if (!result)
+				{
+					if (protocol::now().user.consensus.logging)
+						VI_INFO("mpc entropy shares aggregation failed: %s (participant: %s)", result.what().c_str(), algorithm::signing::encode_address(validator).c_str());
+
+					coreturn result.error();
+				}
+				else if (protocol::now().user.consensus.logging)
+					VI_INFO("mpc entropy shares aggregation: OK (participant: %s)", algorithm::signing::encode_address(validator).c_str());
+
+				coreturn expectation::met;
+			});
+		}
+		expects_promise_rt<void> dispatch_context::aggregate_entropy_shares_internal(const ledger::transaction_context* context, entropy_aggregation_state& state, const algorithm::pubkeyhash_t& validator)
+		{
+			auto* bridge_account = (transactions::bridge_account*)context->transaction;
+			if (is_running_on(validator.data))
+				coreturn local_dispatch_context::aggregate_entropy_shares(this, context, state.public_key, state.encrypted_shares);
+
+			auto public_key = server->find_public_key(validator);
+			if (!public_key)
+				coreturn remote_exception::retry();
+
+			format::wo_stream writer;
+			writer.write_string(state.public_key.optimized_view());
+			writer.write_integer((uint16_t)state.encrypted_shares.size());
+			for (auto& [ref_hash, encrypted_shares] : state.encrypted_shares)
+				writer.write_integer(ref_hash);
+
+			uint64_t attempt = 0;
+			auto args = pack_private_result({ format::variable(context->receipt.block_number), format::variable(context->receipt.transaction_hash), format::variable(state.as_message().data) }, *public_key);
+			if (!args)
+				coreturn args.error();
+		retry:
+			auto event = coawait(server->indirect_query(validator, descriptors::aggregate_entropy_shares(), format::variables(*args), protocol::now().user.consensus.response_timeout));
+			if (!event)
+			{
+				bool is_retry = server->is_active() && (event.error().is_retry() || event.error().is_shutdown());
+				if (is_retry && coawait(aggregative_sleep(attempt)))
+					goto retry;
+
+				coreturn is_retry || !server->is_active() ? remote_exception::retry() : event.error();
+			}
+
+			args = unpack_private_result(event->args, server->descriptor.second.secret_key);
+			if (!args)
+				coreturn args.error();
+
+			auto message = format::ro_stream(args->front().as_string());
+			for (uint16_t i = 0; i < state.encrypted_shares.size(); i++)
+			{
+				uint256_t ref_hash;
+				if (!message.read_integer(message.read_type(), &ref_hash))
+					coreturn remote_exception("invalid encrypted share ref hash");
+
+				uint16_t encrypted_values_size;
+				if (!message.read_integer(message.read_type(), &encrypted_values_size))
+					coreturn remote_exception("invalid encrypted share values size");
+
+				auto encrypted_values = state.encrypted_shares.find(ref_hash);
+				if (encrypted_values == state.encrypted_shares.end())
+					coreturn remote_exception("ref hash not found in provided encrypted shares");
+
+				for (uint16_t i = 0; i < encrypted_values_size; i++)
+				{
+					algorithm::pubkeyhash_t item; string intermediate;
+					if (!message.read_string(message.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, item.data, sizeof(item.data)))
+						coreturn remote_exception("invalid encrypted share value participant");
+
+					string encrypted_value;
+					if (!message.read_string(message.read_type(), &encrypted_value))
+						coreturn remote_exception("invalid encrypted share value data");
+
+					encrypted_values->second[item] = std::move(encrypted_value);
+				}
+			}
+
+			coreturn expectation::met;
+		}
+		expects_promise_rt<void> dispatch_context::recover_entropy(const ledger::transaction_context* context, entropy_recovery_state& state, const algorithm::pubkeyhash_t& validator)
+		{
+			if (protocol::now().user.consensus.logging)
+				VI_INFO("mpc entropy recovery: inquiry to %s", algorithm::signing::encode_address(validator).c_str());
+
+			return coasync<expects_rt<void>>([this, context, &state, &validator]() mutable -> expects_promise_rt<void>
+			{
+				auto result = coawait(recover_entropy_internal(context, state, validator));
+				if (!result)
+				{
+					if (protocol::now().user.consensus.logging)
+						VI_INFO("mpc entropy recovery failed: %s (participant: %s)", result.what().c_str(), algorithm::signing::encode_address(validator).c_str());
+
+					coreturn result.error();
+				}
+				else if (protocol::now().user.consensus.logging)
+					VI_INFO("mpc entropy recovery: OK (participant: %s)", algorithm::signing::encode_address(validator).c_str());
+
+				coreturn expectation::met;
+			});
+		}
+		expects_promise_rt<void> dispatch_context::recover_entropy_internal(const ledger::transaction_context* context, entropy_recovery_state& state, const algorithm::pubkeyhash_t& validator)
 		{
 			if (is_running_on(validator.data))
-				coreturn local_dispatch_context::aggregate_public_state(this, context, *state.aggregator);
+				coreturn local_dispatch_context::recover_entropy(this, context, state.proof, state.encrypted_shares, state.encrypted_entropies);
+
+			auto public_key = server->find_public_key(validator);
+			if (!public_key)
+				coreturn remote_exception::retry();
+
+			uint64_t attempt = 0;
+			auto args = pack_private_result({ format::variable(context->receipt.block_number), format::variable(context->receipt.transaction_hash), format::variable(state.as_message().data) }, *public_key);
+			if (!args)
+				coreturn args.error();
+		retry:
+			auto event = coawait(server->indirect_query(validator, descriptors::aggregate_signature(), format::variables(*args), protocol::now().user.consensus.response_timeout));
+			if (!event)
+			{
+				bool is_retry = server->is_active() && (event.error().is_retry() || event.error().is_shutdown());
+				if (is_retry && coawait(aggregative_sleep(attempt)))
+					goto retry;
+
+				coreturn is_retry || !server->is_active() ? remote_exception::retry() : event.error();
+			}
+
+			args = unpack_private_result(event->args, server->descriptor.second.secret_key);
+			if (!args)
+				coreturn args.error();
+
+			if (args->size() != 1 )
+				coreturn remote_exception("encrypted shares recovery confirmation not received");
+
+			state.proof = algorithm::hashsig_t(args->front().as_string());
+			if (state.proof.empty())
+				coreturn remote_exception("group secret recovery confirmation failed");
+
+			coreturn expectation::met;
+		}
+		expects_promise_rt<void> dispatch_context::aggregate_public_key(const ledger::transaction_context* context, public_state& state, const algorithm::pubkeyhash_t& validator)
+		{
+			if (protocol::now().user.consensus.logging)
+				VI_INFO("mpc public key aggregation: inquiry to %s", algorithm::signing::encode_address(validator).c_str());
+
+			return coasync<expects_rt<void>>([this, context, &state, &validator]() mutable -> expects_promise_rt<void>
+			{
+				auto result = coawait(aggregate_public_key_internal(context, state, validator));
+				if (!result)
+				{
+					if (protocol::now().user.consensus.logging)
+						VI_INFO("mpc public key aggregation failed: %s (participant: %s)", result.what().c_str(), algorithm::signing::encode_address(validator).c_str());
+
+					coreturn result.error();
+				}
+				else if (protocol::now().user.consensus.logging)
+					VI_INFO("mpc public key aggregation: OK (participant: %s)", algorithm::signing::encode_address(validator).c_str());
+
+				coreturn expectation::met;
+			});
+		}
+		expects_promise_rt<void> dispatch_context::aggregate_public_key_internal(const ledger::transaction_context* context, public_state& state, const algorithm::pubkeyhash_t& validator)
+		{
+			if (is_running_on(validator.data))
+			{
+				auto runner_wallet = get_runner_wallet();
+				auto list = local_dispatch_context::new_encrypted_distribution_shares(runner_wallet.public_key, state);
+				auto status = local_dispatch_context::aggregate_public_key(this, context, list, *state.aggregator);
+				if (status && !local_dispatch_context::apply_encrypted_distribution_shares(state, validator, list))
+					status = remote_exception("encrypted shares are not valid");
+				coreturn status;
+			}
 
 			auto public_key = server->find_public_key(validator);
 			if (!public_key)
@@ -3491,12 +3764,17 @@ namespace tangent
 			if (!algorithm::composition::store_public_state(state.alg, *state.aggregator, &writer))
 				coreturn remote_exception("out state machine not valid");
 
+			auto list = local_dispatch_context::new_encrypted_distribution_shares(*public_key, state);
+			writer.write_integer((uint8_t)list.size());
+			for (auto& [public_key, encrypted_share] : list)
+				writer.write_string(public_key.optimized_view());
+
 			uint64_t attempt = 0;
 			auto args = pack_private_result({ format::variable(context->receipt.block_number), format::variable(context->receipt.transaction_hash), format::variable(writer.data) }, *public_key);
 			if (!args)
-				coreturn remote_exception(std::move(args.error().message()));
+				coreturn args.error();
 		retry:
-			auto event = coawait(server->indirect_query(validator, descriptors::aggregate_public_state(), format::variables(*args), protocol::now().user.consensus.response_timeout));
+			auto event = coawait(server->indirect_query(validator, descriptors::aggregate_public_key(), format::variables(*args), protocol::now().user.consensus.response_timeout));
 			if (!event)
 			{
 				bool is_retry = server->is_active() && (event.error().is_retry() || event.error().is_shutdown());
@@ -3508,18 +3786,53 @@ namespace tangent
 
 			args = unpack_private_result(event->args, server->descriptor.second.secret_key);
 			if (!args)
-				coreturn remote_exception(std::move(args.error().message()));
+				coreturn args.error();
 
 			auto message = format::ro_stream(args->front().as_string());
 			if (!state.aggregator->load(message))
 				coreturn remote_exception("group public key remote computation failed");
 
+			auto encrypted_share_public_key = list.begin();
+			for (size_t i = 0; i < list.size(); i++)
+			{
+				string encrypted_share;
+				if (!message.read_string(message.read_type(), &encrypted_share))
+					coreturn remote_exception("group encrypted share remote computation failed");
+
+				encrypted_share_public_key->second = std::move(encrypted_share);
+				++encrypted_share_public_key;
+			}
+
+			if (!local_dispatch_context::apply_encrypted_distribution_shares(state, validator, list))
+				coreturn remote_exception("encrypted shares are not valid");
+
 			coreturn expectation::met;
 		}
-		expects_promise_rt<void> dispatch_context::aggregate_signature_state_internal(const ledger::transaction_context* context, signature_state& state, const algorithm::pubkeyhash_t& validator)
+		expects_promise_rt<void> dispatch_context::aggregate_signature(const ledger::transaction_context* context, signature_state& state, const algorithm::pubkeyhash_t& validator)
+		{
+			if (protocol::now().user.consensus.logging)
+				VI_INFO("mpc signature aggregation: inquiry to %s", algorithm::signing::encode_address(validator).c_str());
+
+			return coasync<expects_rt<void>>([this, context, &state, &validator]() mutable -> expects_promise_rt<void>
+			{
+				auto result = coawait(aggregate_signature_internal(context, state, validator));
+				if (!result)
+				{
+					if (protocol::now().user.consensus.logging)
+						VI_INFO("mpc signature aggregation failed: %s (participant: %s)", result.what().c_str(), algorithm::signing::encode_address(validator).c_str());
+
+					coreturn result.error();
+				}
+				else if (protocol::now().user.consensus.logging)
+					VI_INFO("mpc signature aggregation: OK (participant: %s)", algorithm::signing::encode_address(validator).c_str());
+
+				coreturn expectation::met;
+			});
+		}
+		expects_promise_rt<void> dispatch_context::aggregate_signature_internal(const ledger::transaction_context* context, signature_state& state, const algorithm::pubkeyhash_t& validator)
 		{
 			if (is_running_on(validator.data))
-				coreturn local_dispatch_context::aggregate_signature_state(this, context, **state.message, *state.aggregator);
+				coreturn local_dispatch_context::aggregate_signature(this, context, **state.message, *state.aggregator);
 
 			auto public_key = server->find_public_key(validator);
 			if (!public_key)
@@ -3532,9 +3845,9 @@ namespace tangent
 			uint64_t attempt = 0;
 			auto args = pack_private_result({ format::variable(context->receipt.block_number), format::variable(context->receipt.transaction_hash), format::variable(state.message->as_message().data), format::variable(writer.data) }, *public_key);
 			if (!args)
-				coreturn remote_exception(std::move(args.error().message()));
+				coreturn args.error();
 		retry:
-			auto event = coawait(server->indirect_query(validator, descriptors::aggregate_signature_state(), format::variables(*args), protocol::now().user.consensus.response_timeout));
+			auto event = coawait(server->indirect_query(validator, descriptors::aggregate_signature(), format::variables(*args), protocol::now().user.consensus.response_timeout));
 			if (!event)
 			{
 				bool is_retry = server->is_active() && (event.error().is_retry() || event.error().is_shutdown());
@@ -3546,7 +3859,7 @@ namespace tangent
 
 			args = unpack_private_result(event->args, server->descriptor.second.secret_key);
 			if (!args)
-				coreturn remote_exception(std::move(args.error().message()));
+				coreturn args.error();
 
 			auto message = format::ro_stream(args->front().as_string());
 			if (!state.load_message_if_preferred(message))
@@ -3596,7 +3909,7 @@ namespace tangent
 		{
 			return expects_promise_rt<void>(expectation::met);
 		}
-		expects_promise_rt<void> local_dispatch_context::aggregate_secret_share_state(const ledger::transaction_context* context, secret_share_state& state, const algorithm::pubkeyhash_t& validator)
+		expects_promise_rt<void> local_dispatch_context::distribute_entropy_shares(const ledger::transaction_context* context, entropy_distribution_state& state, const algorithm::pubkeyhash_t& validator)
 		{
 			auto next = validators.find(validator);
 			if (next == validators.end())
@@ -3604,66 +3917,258 @@ namespace tangent
 
 			auto prev = this->validator;
 			this->validator = next;
-			auto result = aggregate_secret_share_state(this, context, state);
+			auto result = distribute_entropy_shares(this, context, state.encrypted_shares);
 			this->validator = prev;
 			return expects_promise_rt<void>(std::move(result));
 		}
-		expects_rt<void> local_dispatch_context::aggregate_secret_share_state(ledger::dispatch_context* dispatcher, const ledger::transaction_context* context, secret_share_state& state)
+		expects_rt<void> local_dispatch_context::distribute_entropy_shares(ledger::dispatch_context* dispatcher, const ledger::transaction_context* context, const ordered_map<algorithm::pubkeyhash_t, string>& encrypted_shares)
 		{
-			auto* bridge_migration = (transactions::bridge_migration*)context->transaction;
-			if (!bridge_migration)
+			auto* bridge_account = (transactions::bridge_account*)context->transaction;
+			if (!bridge_account)
 				return remote_exception("invalid transaction");
 
-			if (state.encrypted_shares.size() != bridge_migration->shares.size())
-				return remote_exception("invalid encrypted shares count");
+			auto secret = dispatcher->recover_secret_entropy(bridge_account->asset, bridge_account->manager, context->receipt.from);
+			if (!secret)
+				return remote_exception(std::move(secret.error().message()));
 
 			auto& runner_wallet = dispatcher->get_runner_wallet();
+			for (auto& [participant, encrypted_share] : encrypted_shares)
+			{
+				algorithm::seckey_t tweak, tweaked_secret_key = runner_wallet.secret_key;
+				algorithm::signing::derive_secret_key(context->receipt.transaction_hash, tweak);
+				if (!algorithm::signing::scalar_add_secret_key(tweaked_secret_key, tweak))
+					return remote_exception("invalid tweaked secret key");
+
+				auto decrypted_share = algorithm::signing::private_decrypt(tweaked_secret_key, encrypted_share);
+				if (!decrypted_share || decrypted_share->size() > sizeof(algorithm::share_t))
+					return remote_exception("group share decryption failed");
+
+				secret->shares[participant].input = algorithm::share_t(*decrypted_share);
+			}
+
+			secret = dispatcher->apply_secret_entropy(secret->asset, secret->manager, secret->owner, secret->entropy, std::move(secret->shares));
+			if (!secret)
+				return remote_exception(std::move(secret.error().message()));
+
+			return expectation::met;
+		}
+		expects_promise_rt<void> local_dispatch_context::aggregate_entropy_shares(const ledger::transaction_context* context, entropy_aggregation_state& state, const algorithm::pubkeyhash_t& validator)
+		{
+			auto next = validators.find(validator);
+			if (next == validators.end())
+				return expects_promise_rt<void>(remote_exception::retry());
+
+			auto prev = this->validator;
+			this->validator = next;
+			auto result = aggregate_entropy_shares(this, context, state.public_key, state.encrypted_shares);
+			this->validator = prev;
+			return expects_promise_rt<void>(std::move(result));
+		}
+		expects_rt<void> local_dispatch_context::aggregate_entropy_shares(ledger::dispatch_context* dispatcher, const ledger::transaction_context* context, const algorithm::pubkey_t& public_key, ordered_map<uint256_t, ordered_map<algorithm::pubkeyhash_t, string>>& encrypted_shares)
+		{
+			auto* validator_adjustment = (transactions::validator_adjustment*)context->transaction;
+			if (!validator_adjustment)
+				return remote_exception("invalid transaction");
+
+			auto new_participant = validator_adjustment->get_new_participant(context->receipt);
+			if (new_participant.empty())
+				return remote_exception("new participant not found");
+
+			algorithm::pubkeyhash_t public_key_check;
+			algorithm::signing::derive_public_key_hash(public_key, public_key_check);
+			if (new_participant != public_key_check)
+				return remote_exception("public key does not match new participant");
+
+			auto& runner_wallet = dispatcher->get_runner_wallet();
+			if (runner_wallet.public_key_hash == new_participant)
+				return remote_exception("participant operation mismatch");
+
+			auto tweaked_public_key = public_key;
+			algorithm::seckey_t tweak;
+			algorithm::signing::derive_secret_key(context->receipt.transaction_hash, tweak);
+			if (!algorithm::signing::scalar_add_public_key(tweaked_public_key, tweak))
+				return remote_exception("invalid tweaked public key");
+
+			auto migrations = validator_adjustment->get_migration_refs(context, context->receipt);
+			if (!migrations)
+				return remote_exception(std::move(migrations.error().message()));
+
+			for (auto& migration : *migrations)
+			{
+				if (migration.must_have_locally)
+					continue;
+
+				auto secret = dispatcher->recover_secret_entropy(migration.account.asset, migration.account.manager, migration.account.owner);
+				if (!secret)
+					return remote_exception(std::move(secret.error().message()));
+				
+				auto ref_hash = secret->as_ref_hash(); bool must_update = false;
+				for (auto& [bridge_withdrawal_finalization_hash, participant] : validator_adjustment->migrations)
+				{
+					if (migration.account.group.find(participant) == migration.account.group.end())
+						continue;
+
+					auto share = secret->shares.find(participant);
+					if (share == secret->shares.end())
+						return remote_exception("participant share not found");
+
+					auto input_result = algorithm::signing::public_encrypt(tweaked_public_key, share->second.input.view(), algorithm::hashing::hash256i(*crypto::random_bytes(64)));
+					auto output_result = algorithm::signing::public_encrypt(tweaked_public_key, share->second.output.view(), algorithm::hashing::hash256i(*crypto::random_bytes(64)));
+					if (!input_result || !output_result)
+						return remote_exception("participant share encryption failed");
+
+					format::wo_stream message;
+					message.write_string(*input_result);
+					message.write_string(*output_result);
+					encrypted_shares[ref_hash][runner_wallet.public_key_hash] = std::move(message.data);
+					secret->shares[new_participant] = share->second;
+					must_update = true;
+				}
+
+				if (must_update)
+					secret = dispatcher->apply_secret_entropy(secret->asset, secret->manager, secret->owner, secret->entropy, std::move(secret->shares));
+
+				if (!secret)
+					return remote_exception(std::move(secret.error().message()));
+			}
+
+			return expectation::met;
+		}
+		expects_promise_rt<void> local_dispatch_context::recover_entropy(const ledger::transaction_context* context, entropy_recovery_state& state, const algorithm::pubkeyhash_t& validator)
+		{
+			auto next = validators.find(validator);
+			if (next == validators.end())
+				return expects_promise_rt<void>(remote_exception::retry());
+
+			auto prev = this->validator;
+			this->validator = next;
+			auto result = recover_entropy(this, context, state.proof, state.encrypted_shares, state.encrypted_entropies);
+			this->validator = prev;
+			return expects_promise_rt<void>(std::move(result));
+		}
+		expects_rt<void> local_dispatch_context::recover_entropy(ledger::dispatch_context* dispatcher, const ledger::transaction_context* context, algorithm::hashsig_t& proof, const ordered_map<uint256_t, ordered_map<algorithm::pubkeyhash_t, string>>& encrypted_shares, const ordered_map<uint256_t, string>& encrypted_entropies)
+		{
+			auto* validator_adjustment = (transactions::validator_adjustment*)context->transaction;
+			if (!validator_adjustment)
+				return remote_exception("invalid transaction");
+
+			auto new_participant = validator_adjustment->get_new_participant(context->receipt);
+			if (new_participant.empty())
+				return remote_exception("new participant not found");
+
+			auto& runner_wallet = dispatcher->get_runner_wallet();
+			if (runner_wallet.public_key_hash != new_participant)
+				return remote_exception("participant operation mismatch");
+
 			algorithm::seckey_t tweak, tweaked_secret_key = runner_wallet.secret_key;
 			algorithm::signing::derive_secret_key(context->receipt.transaction_hash, tweak);
 			if (!algorithm::signing::scalar_add_secret_key(tweaked_secret_key, tweak))
 				return remote_exception("invalid tweaked secret key");
 
-			for (auto& [hash, encrypted_share] : state.encrypted_shares)
+			auto migrations = validator_adjustment->get_migration_refs(context, context->receipt);
+			if (!migrations)
+				return remote_exception(std::move(migrations.error().message()));
+
+			ordered_map<uint256_t, states::bridge_account*> share_refs, entropy_refs;
+			for (auto& migration : *migrations)
 			{
-				auto share_target = bridge_migration->shares.find(hash);
-				if (encrypted_share.empty() || share_target == bridge_migration->shares.end())
-					return remote_exception("invalid encrypted share");
+				auto ref_hash = secret_entropy::ref_hash(migration.account.asset, migration.account.manager, migration.account.owner);
+				if (migration.must_have_locally)
+					entropy_refs[ref_hash] = &migration.account;
+				else
+					share_refs[ref_hash] = &migration.account;
+			}
 
-				auto decrypted_share = algorithm::signing::private_decrypt(tweaked_secret_key, encrypted_share);
-				if (!decrypted_share || decrypted_share->size() != sizeof(uint256_t))
-					return remote_exception("invalid decrypted share");
+			for (auto& [ref_hash, mapped_encrypted_shares] : encrypted_shares)
+			{
+				auto ref = share_refs.find(ref_hash);
+				if (ref == share_refs.end())
+					return remote_exception("share migration not permitted");
 
-				uint256_t scalar;
-				scalar.decode((uint8_t*)decrypted_share->data());
-				encrypted_share.clear();
-				if (!scalar)
-					return remote_exception("invalid share");
+				ordered_map<algorithm::pubkeyhash_t, secret_entropy::share_pair> mapped_shares;
+				for (auto& [participant, encrypted_share] : mapped_encrypted_shares)
+				{
+					string encrypted_input_share, encrypted_output_share;
+					format::ro_stream message = format::ro_stream(encrypted_share);
+					if (!message.read_string(message.read_type(), &encrypted_input_share) || encrypted_input_share.empty())
+						return remote_exception("encrypted input share not found");
 
-				auto& share = share_target->second;
-				auto status = dispatcher->apply_secret_share(share.asset, share.manager, share.owner, scalar);
+					if (!message.read_string(message.read_type(), &encrypted_output_share) || encrypted_output_share.empty())
+						return remote_exception("encrypted output share not found");
+
+					auto decrypted_input_share = algorithm::signing::private_decrypt(tweaked_secret_key, encrypted_input_share);
+					auto decrypted_output_share = algorithm::signing::private_decrypt(tweaked_secret_key, encrypted_output_share);
+					if (!decrypted_input_share || !decrypted_output_share || decrypted_input_share->empty() || decrypted_input_share->size() > sizeof(algorithm::share_t) || decrypted_input_share->empty() || decrypted_input_share->size() > sizeof(algorithm::share_t))
+						return remote_exception("input/output share decryption failed");
+
+					auto& pair = mapped_shares[participant];
+					pair.input = algorithm::share_t(*decrypted_input_share);
+					pair.output = algorithm::share_t(*decrypted_output_share);
+				}
+
+				if (mapped_shares.size() < algorithm::signing::recovery_threshold(ref->second->group.size() - 1))
+					return remote_exception("entropy recovery threshold not met");
+
+				ordered_set<algorithm::share_t> shares;
+				for (auto& [participant, pair] : mapped_shares)
+					shares.insert(pair.input);
+
+				algorithm::storage_type<uint8_t, 64> entropy;
+				if (!algorithm::signing::combine_shares_into_secret(shares, entropy.data))
+					return remote_exception("entropy recovery failed");
+
+				auto status = dispatcher->apply_secret_entropy(ref->second->asset, ref->second->manager, ref->second->owner, entropy, std::move(mapped_shares));
 				if (!status)
 					return remote_exception(std::move(status.error().message()));
 			}
 
-			auto confirmation_hash = state.as_confirmation_hash();
-			if (!algorithm::signing::sign(confirmation_hash, dispatcher->get_runner_wallet().secret_key, state.confirmation_signature))
+			for (auto& [ref_hash, encrypted_entropy] : encrypted_entropies)
+			{
+				auto ref = entropy_refs.find(ref_hash);
+				if (ref == entropy_refs.end())
+					return remote_exception("entropy migration not permitted");
+
+				auto decrypted_entropy = algorithm::signing::private_decrypt(tweaked_secret_key, encrypted_entropy);
+				if (!decrypted_entropy)
+					return remote_exception("entropy decryption failed");
+
+				auto message = format::ro_stream(*decrypted_entropy);
+				secret_entropy secret;
+				if (!secret.load(message))
+					return remote_exception("entropy deserialization failed");
+
+				if (secret.asset != ref->second->asset || secret.manager != ref->second->manager || secret.owner != ref->second->owner || secret.shares.size() < ref->second->group.size() - 1)
+					return remote_exception("invalid entropy metadata");
+
+				auto status = dispatcher->apply_secret_entropy(secret.asset, secret.manager, secret.owner, secret.entropy, std::move(secret.shares));
+				if (!status)
+					return remote_exception(std::move(status.error().message()));
+			}
+
+			uint8_t transaction_hash_data[32];
+			context->receipt.transaction_hash.encode(transaction_hash_data);
+
+			auto proof_hash = algorithm::hashing::hash256i(transaction_hash_data, sizeof(transaction_hash_data));
+			if (!algorithm::signing::sign(proof_hash, runner_wallet.secret_key, proof))
 				return remote_exception("confirmation proving error");
 
 			return expectation::met;
 		}
-		expects_promise_rt<void> local_dispatch_context::aggregate_public_state(const ledger::transaction_context* context, public_state& state, const algorithm::pubkeyhash_t& validator)
+		expects_promise_rt<void> local_dispatch_context::aggregate_public_key(const ledger::transaction_context* context, public_state& state, const algorithm::pubkeyhash_t& validator)
 		{
 			auto next = validators.find(validator);
 			if (next == validators.end())
 				return expects_promise_rt<void>(remote_exception::retry());
 
+			auto list = new_encrypted_distribution_shares(next->second.public_key, state);
 			auto prev = this->validator;
 			this->validator = next;
-			auto result = aggregate_public_state(this, context, *state.aggregator);
+			auto result = aggregate_public_key(this, context, list, *state.aggregator);
 			this->validator = prev;
+			apply_encrypted_distribution_shares(state, next->second.public_key_hash, list);
 			return expects_promise_rt<void>(std::move(result));
 		}
-		expects_rt<void> local_dispatch_context::aggregate_public_state(ledger::dispatch_context* dispatcher, const ledger::transaction_context* context, algorithm::composition::public_state* aggregator)
+		expects_rt<void> local_dispatch_context::aggregate_public_key(ledger::dispatch_context* dispatcher, const ledger::transaction_context* context, ordered_map<algorithm::pubkey_t, string>& encrypted_shares, algorithm::composition::public_state* aggregator)
 		{
 			auto* bridge_account = (transactions::bridge_account*)context->transaction;
 			if (!bridge_account)
@@ -3673,12 +4178,24 @@ namespace tangent
 			if (!chain)
 				return remote_exception("invalid operation");
 
-			uint256_t scalar;
-			auto status = dispatcher->recover_secret_share(bridge_account->asset, bridge_account->manager, context->receipt.from, scalar);
-			if (!status)
-				return remote_exception(std::move(status.error().message()));
+			auto secret = dispatcher->recover_secret_entropy(bridge_account->asset, bridge_account->manager, context->receipt.from);
+			if (!secret)
+			{
+				auto& runner_wallet = dispatcher->get_runner_wallet();
+				format::wo_stream scalar;
+				scalar.write_integer(algorithm::hashing::hash256i(runner_wallet.secret_key.view()));
+				scalar.write_integer(algorithm::hashing::hash256i(bridge_account->manager.view()));
+				scalar.write_integer(algorithm::hashing::hash256i(context->receipt.from.view()));
+				scalar.write_integer(bridge_account->asset);
 
-			auto keypair = algorithm::composition::derive_keypair(chain->composition, scalar);
+				algorithm::storage_type<uint8_t, 64> entropy;
+				algorithm::hashing::hash512((uint8_t*)scalar.data.data(), scalar.data.size(), entropy.data);
+				secret = dispatcher->apply_secret_entropy(bridge_account->asset, bridge_account->manager, context->receipt.from, entropy, { });
+				if (!secret)
+					return remote_exception(std::move(secret.error().message()));
+			}
+
+			auto keypair = algorithm::composition::derive_keypair(chain->composition, secret->entropy.data, secret->entropy.size());
 			if (!keypair)
 				return remote_exception(std::move(keypair.error().message()));
 
@@ -3686,9 +4203,55 @@ namespace tangent
 			if (!derivation)
 				return remote_exception(std::move(derivation.error().message()));
 
+			auto group = bridge_account->get_group(context->receipt);
+			if (group.size() < protocol::now().policy.participation.min_per_account)
+				return remote_exception("group is too small");
+
+			size_t recovery_group = group.size() - 1;
+			if (encrypted_shares.size() != recovery_group)
+				return remote_exception("encrypted group shares count mismatch");
+
+			ordered_set<algorithm::share_t> shares;
+			if (!algorithm::signing::split_secret_into_shares(secret->entropy.data, algorithm::signing::recovery_threshold(recovery_group), (uint8_t)recovery_group, shares))
+				return remote_exception("group share derivation failed");
+
+			auto entropy_check = secret->entropy;
+			memset(entropy_check.data, 0, entropy_check.size());
+			if (!algorithm::signing::combine_shares_into_secret(shares, entropy_check.data) || secret->entropy != entropy_check)
+				return remote_exception("group share recovery check failed");
+
+			auto share = shares.begin();
+			auto& runner_wallet = dispatcher->get_runner_wallet();
+			for (auto& [public_key, encrypted_share] : encrypted_shares)
+			{
+				algorithm::pubkeyhash_t participant;
+				algorithm::signing::derive_public_key_hash(public_key, participant);
+				if (group.find(participant) == group.end() || participant == runner_wallet.public_key_hash)
+					return remote_exception("unauthorized participant included");
+
+				auto tweaked_public_key = public_key;
+				algorithm::seckey_t tweak;
+				algorithm::signing::derive_secret_key(context->receipt.transaction_hash, tweak);
+				if (!algorithm::signing::scalar_add_public_key(tweaked_public_key, tweak))
+					return remote_exception("invalid tweaked public key");
+
+				uint256_t entropy = algorithm::hashing::hash256i(*crypto::random_bytes(64));
+				auto result = algorithm::signing::public_encrypt(tweaked_public_key, share->view(), entropy);
+				if (!result)
+					return remote_exception("group share encryption failed");
+
+				secret->shares[participant].output = *share;
+				encrypted_share = std::move(*result);
+				++share;
+			}
+
+			secret = dispatcher->apply_secret_entropy(secret->asset, secret->manager, secret->owner, secret->entropy, std::move(secret->shares));
+			if (!secret)
+				return remote_exception(std::move(secret.error().message()));
+
 			return expectation::met;
 		}
-		expects_promise_rt<void> local_dispatch_context::aggregate_signature_state(const ledger::transaction_context* context, signature_state& state, const algorithm::pubkeyhash_t& validator)
+		expects_promise_rt<void> local_dispatch_context::aggregate_signature(const ledger::transaction_context* context, signature_state& state, const algorithm::pubkeyhash_t& validator)
 		{
 			auto next = validators.find(validator);
 			if (next == validators.end())
@@ -3696,11 +4259,11 @@ namespace tangent
 
 			auto prev = this->validator;
 			this->validator = next;
-			auto result = aggregate_signature_state(this, context, **state.message, *state.aggregator);
+			auto result = aggregate_signature(this, context, **state.message, *state.aggregator);
 			this->validator = prev;
 			return expects_promise_rt<void>(std::move(result));
 		}
-		expects_rt<void> local_dispatch_context::aggregate_signature_state(ledger::dispatch_context* dispatcher, const ledger::transaction_context* context, superchain::prepared_transaction& message, algorithm::composition::signature_state* aggregator)
+		expects_rt<void> local_dispatch_context::aggregate_signature(ledger::dispatch_context* dispatcher, const ledger::transaction_context* context, superchain::prepared_transaction& message, algorithm::composition::signature_state* aggregator)
 		{
 			auto* bridge_withdrawal = (transactions::bridge_withdrawal*)context->transaction;
 			if (!bridge_withdrawal)
@@ -3722,12 +4285,11 @@ namespace tangent
 			if (!account)
 				return expectation::met;
 
-			uint256_t scalar;
-			auto status = dispatcher->recover_secret_share(account->asset, account->manager, account->owner, scalar);
-			if (!status)
-				return remote_exception(std::move(status.error().message()));
+			auto secret = dispatcher->recover_secret_entropy(account->asset, account->manager, account->owner);
+			if (!secret)
+				return remote_exception(std::move(secret.error().message()));
 
-			auto keypair = algorithm::composition::derive_keypair(input->alg, scalar);
+			auto keypair = algorithm::composition::derive_keypair(input->alg, secret->entropy.data, secret->entropy.size());
 			if (!keypair)
 				return remote_exception(std::move(keypair.error().message()));
 
@@ -3736,6 +4298,27 @@ namespace tangent
 				return remote_exception(std::move(accumulation.error().message()));
 
 			return expectation::met;
+		}
+		ordered_map<algorithm::pubkey_t, string> local_dispatch_context::new_encrypted_distribution_shares(const algorithm::pubkey_t& validator_public_key, const public_state& state)
+		{
+			ordered_map<algorithm::pubkey_t, string> list;
+			for (auto& [public_key, encrypted_share_values] : state.encrypted_shares)
+			{
+				if (public_key != validator_public_key)
+					list.insert(std::make_pair(public_key, string()));
+			}
+			return list;
+		}
+		bool local_dispatch_context::apply_encrypted_distribution_shares(public_state& state, const algorithm::pubkeyhash_t& validator, const ordered_map<algorithm::pubkey_t, string>& list)
+		{
+			for (auto& [public_key, encrypted_share] : list)
+			{
+				if (encrypted_share.empty())
+					return false;
+
+				state.encrypted_shares[public_key][validator] = encrypted_share;
+			}
+			return true;
 		}
 	}
 }

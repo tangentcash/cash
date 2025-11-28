@@ -397,7 +397,6 @@ namespace tangent
 			bind(access_type::w | access_type::a, "mempoolstate", "clearnode", 1, 1, "string uri_address", "void", "remove associated node info by ip address", std::bind(&server_node::mempoolstate_clear_node, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::r | access_type::a, "validatorstate", "setwallet", 2, 2, "string type = 'mnemonic' | 'seed' | 'key', string entropy", "wallet", "set validator wallet from mnemonic phrase, seed value or secret key", std::bind(&server_node::validatorstate_set_wallet, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::r | access_type::a, "validatorstate", "getwallet", 0, 0, "", "wallet", "get validator wallet", std::bind(&server_node::validatorstate_get_wallet, this, std::placeholders::_1, std::placeholders::_2));
-			bind(access_type::r | access_type::a, "validatorstate", "getparticipations", 0, 0, "", "multiform[]", "get validator participations (for regrouping transaction)", std::bind(&server_node::validatorstate_get_participations, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::r | access_type::a, "validatorstate", "verify", 2, 3, "uint64 number, uint64 count, bool? validate", "uint256[]", "verify chain and possibly re-execute each block", std::bind(&server_node::validatorstate_verify, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "validatorstate", "prune", 2, 2, "string types = 'state' | 'blocktrie' | 'transactiontrie', uint64 number", "void", "prune chainstate data using pruning level (types is '|' separated list)", std::bind(&server_node::validatorstate_prune, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "validatorstate", "revert", 1, 2, "uint64 number, bool? keep_reverted_transactions", "{ new_tip_block_number: uint64, old_tip_block_number: uint64, mempool_transactions: uint64, block_delta: int64, transaction_delta: int64, state_delta: int64, is_fork: bool }", "revert chainstate to block number and possibly send removed transactions to mempool", std::bind(&server_node::validatorstate_revert, this, std::placeholders::_1, std::placeholders::_2));
@@ -2976,26 +2975,6 @@ namespace tangent
 				}
 			}
 			return server_response().success(std::move(data));
-		}
-		server_response server_node::validatorstate_get_participations(http::connection* base, format::variables&& args)
-		{
-			auto result = uptr<schema>(var::set::array());
-			auto mempool = storages::mempoolstate();
-			size_t offset = 0, count = 64;
-			while (true)
-			{
-				auto accounts = mempool.get_group_accounts(algorithm::pubkeyhash_t(), offset, count);
-				if (!accounts)
-					return server_response().error(error_codes::bad_request, accounts.error().message());
-
-				offset += accounts->size();
-				for (auto& account : *accounts)
-					result->push(account.as_schema().reset());
-				if (accounts->empty())
-					break;
-			}
-
-			return server_response().success(std::move(result));
 		}
 		server_response server_node::validatorstate_get_wallet(http::connection* base, format::variables&& args)
 		{

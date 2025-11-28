@@ -1671,6 +1671,10 @@ namespace tangent
 		}
 		expects_lr<vector<states::validator_production>> transaction_context::calculate_producers(size_t target_size)
 		{
+			auto payment = burn_gas((uint64_t)gas_cost::query_result * 2048);
+			if (!payment)
+				return payment.error();
+
 			auto random = calculate_random(0);
 			if (!random)
 				return random.error();
@@ -1725,6 +1729,10 @@ namespace tangent
 		}
 		expects_lr<vector<states::validator_attestation>> transaction_context::calculate_attesters(const algorithm::asset_id& asset, size_t target_size)
 		{
+			auto payment = burn_gas((uint64_t)gas_cost::query_result * 2048);
+			if (!payment)
+				return payment.error();
+
 			auto nonce = get_validation_nonce();
 			auto chain = storages::chainstate();
 			auto filter = storages::result_filter::greater(0, -1);
@@ -1749,6 +1757,10 @@ namespace tangent
 		}
 		expects_lr<states::validator_attestation> transaction_context::calculate_attester_for_migration(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& exclusion)
 		{
+			auto payment = burn_gas((uint64_t)gas_cost::query_result * 2048);
+			if (!payment)
+				return payment.error();
+
 			auto random = calculate_random(1);
 			if (!random)
 				return random.error();
@@ -1775,18 +1787,22 @@ namespace tangent
 				return layer_exception("committee threshold not met");
 
 			auto& result = results->front();
-			auto status = load(result.ptr(), !result.cached);
-			if (!status)
-				return status.error();
-
 			auto& target = *(states::validator_attestation*)result.ptr();
 			if (target.owner == exclusion || !target.accepts_account_requests || !target.accepts_withdrawal_requests)
 				goto retry;
+
+			auto status = load(result.ptr(), !result.cached);
+			if (!status)
+				return status.error();
 
 			return expects_lr<states::validator_attestation>(std::move(target));
 		}
 		expects_lr<vector<states::validator_participation>> transaction_context::calculate_participants(ordered_set<algorithm::pubkeyhash_t>& exclusion, size_t target_size, const decimal& threshold)
 		{
+			auto payment = burn_gas((uint64_t)gas_cost::query_result * 2048);
+			if (!payment)
+				return payment.error();
+
 			auto random = calculate_random(2);
 			if (!random)
 				return random.error();
@@ -1837,17 +1853,17 @@ namespace tangent
 				{
 					auto& target = *(states::validator_participation*)result.ptr();
 					auto hash = algorithm::pubkeyhash_t(target.owner);
-					if (exclusion.find(hash) == exclusion.end())
-					{
-						exclusion.insert(std::move(hash));
-						committee.push_back(std::move(target));
-						if (committee.size() >= target_size)
-							break;
-					}
+					if (exclusion.find(hash) != exclusion.end())
+						continue;
 
-					auto status = query(result.ptr(), !result.cached);
+					auto status = load(result.ptr(), !result.cached);
 					if (!status)
 						return status.error();
+
+					exclusion.insert(std::move(hash));
+					committee.push_back(std::move(target));
+					if (committee.size() >= target_size)
+						break;
 				}
 
 				if (committee.size() >= target_size)
@@ -2026,10 +2042,42 @@ namespace tangent
 
 			return new_state;
 		}
-		expects_lr<states::validator_participation> transaction_context::apply_validator_participation(const algorithm::pubkeyhash_t& owner, stake_type type, int64_t participations, ordered_map<algorithm::asset_id, decimal>&& rewards)
+		expects_lr<states::validator_participation> transaction_context::apply_validator_participation(const algorithm::pubkeyhash_t& owner, stake_type type, ordered_map<algorithm::asset_id, std::pair<bool, states::validator_participation::participation_ref>>&& participations, ordered_map<algorithm::asset_id, decimal>&& rewards)
 		{
 			states::validator_participation new_state = get_validator_participation(owner).or_else(states::validator_participation(owner, block));
-			new_state.participations = participations >= 0 || new_state.participations >= (uint64_t)-participations ? (int64_t)new_state.participations + participations : 0;
+			for (auto& [asset, change] : participations)
+			{
+				auto& [inclusion, ref] = change;
+				if (inclusion)
+				{
+					auto refs = new_state.participations.find(asset);
+					if (refs != new_state.participations.end())
+					{
+						auto it = std::find_if(refs->second.begin(), refs->second.end(), [&](const states::validator_participation::participation_ref& item)
+						{
+							return item.manager == ref.manager && item.owner == ref.owner;
+						});
+						if (it == refs->second.end())
+							refs->second.push_back(ref);
+					}
+					else
+						new_state.participations[asset].push_back(ref);
+				}
+				else
+				{
+					auto refs = new_state.participations.find(asset);
+					if (refs != new_state.participations.end())
+					{
+						refs->second.erase(std::remove_if(refs->second.begin(), refs->second.end(), [&](const states::validator_participation::participation_ref& item)
+						{
+							return item.manager == ref.manager && item.owner == ref.owner;
+						}), refs->second.end());
+						if (refs->second.empty())
+							new_state.participations.erase(refs);
+					}
+				}
+			}
+
 			if (type == stake_type::unlock)
 			{
 				rewards[algorithm::asset::native()] = -new_state.stake;
@@ -2692,7 +2740,7 @@ namespace tangent
 
 			return states::witness_transaction(std::move(*state->as<states::witness_transaction>()));
 		}
-		expects_lr<ledger::block_transaction> transaction_context::get_block_transaction_instance(const uint256_t& transaction_hash) const
+		expects_lr<ledger::block_transaction> transaction_context::get_block_transaction_instance(const uint256_t& transaction_hash, bool may_have_distinct_asset) const
 		{
 			if (!transaction_hash)
 				return layer_exception("block transaction not found");
@@ -2702,7 +2750,7 @@ namespace tangent
 			if (!candidate || !candidate->transaction || !candidate->receipt.successful)
 				return layer_exception("block transaction not found");
 
-			if (transaction && transaction->asset != candidate->transaction->asset)
+			if (!may_have_distinct_asset && transaction && transaction->asset != candidate->transaction->asset)
 				return layer_exception("block transaction asset is distinct");
 
 			if (candidate->receipt.transaction_hash != transaction_hash && candidate->transaction->as_type() == transactions::rollup::as_instance_type())
@@ -2847,6 +2895,9 @@ namespace tangent
 		{
 			VI_ASSERT(transaction != nullptr, "transaction should be set");
 			VI_ASSERT(dispatcher != nullptr, "dispatcher should be set");
+			if (!transaction->receipt.successful)
+				return expects_promise_rt<void>(expectation::met);
+
 			auto gas_limit = transaction->transaction->gas_limit;
 			transaction->transaction->gas_limit = block::get_total_gas_limit();
 
@@ -2879,49 +2930,291 @@ namespace tangent
 			return *this;
 		}
 
-		bool dispatch_context::secret_share_state::load_message(format::ro_stream& stream)
+		bool dispatch_context::secret_entropy::store_payload(format::wo_stream* stream) const
 		{
-			string intermediate;
-			if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, confirmation_signature.data, sizeof(confirmation_signature.data)))
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			stream->write_integer(asset);
+			stream->write_string(manager.optimized_view());
+			stream->write_string(owner.optimized_view());
+			stream->write_string(entropy.optimized_view());
+			stream->write_integer((uint8_t)shares.size());
+			for (auto& [participant, share] : shares)
+			{
+				stream->write_string(participant.optimized_view());
+				stream->write_string(share.input.optimized_view());
+				stream->write_string(share.output.optimized_view());
+			}
+			return true;
+		}
+		bool dispatch_context::secret_entropy::load_payload(format::ro_stream& stream)
+		{
+			if (!stream.read_integer(stream.read_type(), &asset))
 				return false;
 
+			string manager_assembly;
+			if (!stream.read_string(stream.read_type(), &manager_assembly) || !algorithm::encoding::decode_bytes(manager_assembly, manager.data, sizeof(manager.data)))
+				return false;
+
+			string owner_assembly;
+			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_bytes(owner_assembly, owner.data, sizeof(owner.data)))
+				return false;
+
+			string entropy_assembly;
+			if (!stream.read_string(stream.read_type(), &entropy_assembly) || !algorithm::encoding::decode_bytes(entropy_assembly, entropy.data, sizeof(entropy.data)))
+				return false;
+
+			uint8_t shares_size;
+			if (!stream.read_integer(stream.read_type(), &shares_size))
+				return false;
+
+			shares.clear();
+			for (uint8_t i = 0; i < shares_size; i++)
+			{
+				string participant_assembly; algorithm::pubkeyhash_t participant;
+				if (!stream.read_string(stream.read_type(), &participant_assembly) || !algorithm::encoding::decode_bytes(participant_assembly, participant.data, sizeof(participant.data)))
+					return false;
+
+				auto& pair = shares[participant]; string share_assembly;
+				if (!stream.read_string(stream.read_type(), &share_assembly) || !algorithm::encoding::decode_bytes(share_assembly, pair.input.data, sizeof(pair.input.data)))
+					return false;
+
+				if (!stream.read_string(stream.read_type(), &share_assembly) || !algorithm::encoding::decode_bytes(share_assembly, pair.output.data, sizeof(pair.output.data)))
+					return false;
+			}
+			return true;
+		}
+		uptr<schema> dispatch_context::secret_entropy::as_schema() const
+		{
+			schema* data = var::set::object();
+			data->set("asset", algorithm::asset::serialize(asset));
+			data->set("manager", algorithm::signing::serialize_address(manager));
+			data->set("owner", algorithm::signing::serialize_address(owner));
+			data->set("entropy", var::string(algorithm::encoding::encode_0xhex256(entropy.view())));
+			auto* shares_data = data->set("shares", var::set::array());
+			for (auto& [participant, share] : shares)
+			{
+				auto* share_data = shares_data->push(var::set::object());
+				share_data->set("participant", algorithm::signing::serialize_address(participant));
+				share_data->set("input", var::string(format::util::encode_0xhex(share.input.optimized_view())));
+				share_data->set("output", var::string(format::util::encode_0xhex(share.output.optimized_view())));
+			}
+			return data;
+		}
+		uint32_t dispatch_context::secret_entropy::as_type() const
+		{
+			return as_instance_type();
+		}
+		std::string_view dispatch_context::secret_entropy::as_typename() const
+		{
+			return as_instance_typename();
+		}
+		uint256_t dispatch_context::secret_entropy::as_ref_hash() const
+		{
+			return ref_hash(asset, manager, owner);
+		}
+		uint32_t dispatch_context::secret_entropy::as_instance_type()
+		{
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
+		}
+		std::string_view dispatch_context::secret_entropy::as_instance_typename()
+		{
+			return "secret_entropy";
+		}
+		uint256_t dispatch_context::secret_entropy::ref_hash(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner)
+		{
+			format::wo_stream message;
+			message.write_integer(asset);
+			message.write_string(owner.optimized_view());
+			message.write_string(manager.optimized_view());
+			return message.hash();
+		}
+
+		bool dispatch_context::entropy_distribution_state::load_message(format::ro_stream& stream)
+		{
 			uint16_t encrypted_shares_size;
 			if (!stream.read_integer(stream.read_type(), &encrypted_shares_size))
 				return false;
 
+			encrypted_shares.clear();
 			for (uint16_t i = 0; i < encrypted_shares_size; i++)
 			{
-				uint256_t hash;
-				if (!stream.read_integer(stream.read_type(), &hash))
+				algorithm::pubkeyhash_t item; string intermediate;
+				if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, item.data, sizeof(item.data)))
 					return false;
 
 				string encrypted_share;
 				if (!stream.read_string(stream.read_type(), &encrypted_share))
 					return false;
 
-				encrypted_shares[hash] = std::move(encrypted_share);
+				encrypted_shares[item] = std::move(encrypted_share);
 			}
 
 			return true;
 		}
-		format::wo_stream dispatch_context::secret_share_state::as_message() const
+		format::wo_stream dispatch_context::entropy_distribution_state::as_message() const
 		{
 			format::wo_stream message;
-			message.write_string(confirmation_signature.optimized_view());
 			message.write_integer((uint16_t)encrypted_shares.size());
-			for (auto& [hash, encrypted_share] : encrypted_shares)
+			for (auto& [participant, encrypted_share] : encrypted_shares)
 			{
-				message.write_integer(hash);
+				message.write_string(participant.optimized_view());
 				message.write_string(encrypted_share);
 			}
 			return message;
 		}
-		uint256_t dispatch_context::secret_share_state::as_confirmation_hash() const
+
+		bool dispatch_context::entropy_aggregation_state::load_message(format::ro_stream& stream)
+		{
+			string public_key_assembly;
+			if (!stream.read_string(stream.read_type(), &public_key_assembly) || !algorithm::encoding::decode_bytes(public_key_assembly, public_key.data, sizeof(public_key.data)))
+				return false;
+
+			uint16_t encrypted_shares_size;
+			if (!stream.read_integer(stream.read_type(), &encrypted_shares_size))
+				return false;
+
+			encrypted_shares.clear();
+			for (uint16_t i = 0; i < encrypted_shares_size; i++)
+			{
+				uint256_t hash;
+				if (!stream.read_integer(stream.read_type(), &hash))
+					return false;
+
+				uint16_t encrypted_values_size;
+				if (!stream.read_integer(stream.read_type(), &encrypted_values_size))
+					return false;
+
+				auto& encrypted_values = encrypted_shares[hash];
+				for (uint16_t i = 0; i < encrypted_values_size; i++)
+				{
+					algorithm::pubkeyhash_t item; string intermediate;
+					if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, item.data, sizeof(item.data)))
+						return false;
+
+					string encrypted_value;
+					if (!stream.read_string(stream.read_type(), &encrypted_value))
+						return false;
+
+					encrypted_values[item] = std::move(encrypted_value);
+				}
+			}
+
+			uint8_t participants_size;
+			if (!stream.read_integer(stream.read_type(), &participants_size))
+				return false;
+
+			participants.clear();
+			for (uint16_t i = 0; i < participants_size; i++)
+			{
+				algorithm::pubkeyhash_t item; string intermediate;
+				if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, item.data, sizeof(item.data)))
+					return false;
+
+				participants.insert(item);
+			}
+
+			return true;
+		}
+		format::wo_stream dispatch_context::entropy_aggregation_state::as_message() const
 		{
 			format::wo_stream message;
-			for (auto& [hash, encrypted_share] : encrypted_shares)
+			message.write_string(public_key.optimized_view());
+			message.write_integer((uint16_t)encrypted_shares.size());
+			for (auto& [hash, encrypted_values] : encrypted_shares)
+			{
 				message.write_integer(hash);
-			return message.hash();
+				message.write_integer((uint16_t)encrypted_values.size());
+				for (auto& [participant, encrypted_value] : encrypted_values)
+				{
+					message.write_string(participant.optimized_view());
+					message.write_string(encrypted_value);
+				}
+			}
+			message.write_integer((uint8_t)participants.size());
+			for (auto& participant : participants)
+				message.write_string(participant.optimized_view());
+			return message;
+		}
+
+		bool dispatch_context::entropy_recovery_state::load_message(format::ro_stream& stream)
+		{
+			string proof_assembly;
+			if (!stream.read_string(stream.read_type(), &proof_assembly) || !algorithm::encoding::decode_bytes(proof_assembly, proof.data, sizeof(proof.data)))
+				return false;
+
+			uint16_t encrypted_shares_size;
+			if (!stream.read_integer(stream.read_type(), &encrypted_shares_size))
+				return false;
+
+			encrypted_shares.clear();
+			for (uint16_t i = 0; i < encrypted_shares_size; i++)
+			{
+				uint256_t hash;
+				if (!stream.read_integer(stream.read_type(), &hash))
+					return false;
+
+				uint16_t encrypted_values_size;
+				if (!stream.read_integer(stream.read_type(), &encrypted_values_size))
+					return false;
+
+				auto& encrypted_values = encrypted_shares[hash];
+				for (uint16_t i = 0; i < encrypted_values_size; i++)
+				{
+					algorithm::pubkeyhash_t item; string intermediate;
+					if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, item.data, sizeof(item.data)))
+						return false;
+
+					string encrypted_value;
+					if (!stream.read_string(stream.read_type(), &encrypted_value))
+						return false;
+
+					encrypted_values[item] = std::move(encrypted_value);
+				}
+			}
+
+			uint16_t encrypted_entropies_size;
+			if (!stream.read_integer(stream.read_type(), &encrypted_entropies_size))
+				return false;
+
+			encrypted_entropies.clear();
+			for (uint16_t i = 0; i < encrypted_entropies_size; i++)
+			{
+				uint256_t hash;
+				if (!stream.read_integer(stream.read_type(), &hash))
+					return false;
+
+				string encrypted_secret;
+				if (!stream.read_string(stream.read_type(), &encrypted_secret))
+					return false;
+
+				encrypted_entropies[hash] = std::move(encrypted_secret);
+			}
+
+			return true;
+		}
+		format::wo_stream dispatch_context::entropy_recovery_state::as_message() const
+		{
+			format::wo_stream message;
+			message.write_string(proof.optimized_view());
+			message.write_integer((uint16_t)encrypted_shares.size());
+			for (auto& [hash, encrypted_values] : encrypted_shares)
+			{
+				message.write_integer(hash);
+				message.write_integer((uint16_t)encrypted_values.size());
+				for (auto& [participant, encrypted_value] : encrypted_values)
+				{
+					message.write_string(participant.optimized_view());
+					message.write_string(encrypted_value);
+				}
+			}
+			message.write_integer((uint16_t)encrypted_entropies.size());
+			for (auto& [hash, encrypted_entropy] : encrypted_entropies)
+			{
+				message.write_integer(hash);
+				message.write_string(encrypted_entropy);
+			}
+			return message;
 		}
 
 		bool dispatch_context::public_state::load_message(format::ro_stream& stream)
@@ -2930,7 +3223,10 @@ namespace tangent
 			if (!state)
 				return false;
 
-			uint16_t participants_size;
+			if (!stream.read_boolean(stream.read_type(), &distribution))
+				return false;
+
+			uint8_t participants_size;
 			if (!stream.read_integer(stream.read_type(), &participants_size))
 				return false;
 
@@ -2944,15 +3240,58 @@ namespace tangent
 				possible_participants.insert(item);
 			}
 
+			uint8_t shares_size;
+			if (!stream.read_integer(stream.read_type(), &shares_size))
+				return false;
+
+			ordered_map<algorithm::pubkey_t, ordered_map<algorithm::pubkeyhash_t, string>> possible_shares;
+			for (uint16_t i = 0; i < shares_size; i++)
+			{
+				algorithm::pubkey_t public_key; string intermediate;
+				if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, public_key.data, sizeof(public_key.data)))
+					return false;
+
+				uint8_t values_size;
+				if (!stream.read_integer(stream.read_type(), &values_size))
+					return false;
+
+				auto& values = possible_shares[public_key];
+				for (uint16_t j = 0; j < values_size; j++)
+				{
+					algorithm::pubkeyhash_t participant;
+					if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, participant.data, sizeof(participant.data)))
+						return false;
+
+					string encrypted_share;
+					if (!stream.read_string(stream.read_type(), &encrypted_share))
+						return false;
+
+					values[participant] = std::move(encrypted_share);
+				}
+			}
+
 			aggregator = std::move(*state);
 			participants = std::move(possible_participants);
+			encrypted_shares = std::move(possible_shares);
 			return true;
 		}
 		format::wo_stream dispatch_context::public_state::as_message() const
 		{
 			format::wo_stream result;
 			algorithm::composition::store_public_state(alg, *aggregator, &result);
-			result.write_integer((uint16_t)participants.size());
+			result.write_boolean(distribution);
+			result.write_integer((uint8_t)encrypted_shares.size());
+			for (auto& [public_key, values] : encrypted_shares)
+			{
+				result.write_string(public_key.optimized_view());
+				result.write_integer((uint8_t)values.size());
+				for (auto& [participant, value] : values)
+				{
+					result.write_string(participant.optimized_view());
+					result.write_string(value);
+				}
+			}
+			result.write_integer((uint8_t)participants.size());
 			for (auto& participant : participants)
 				result.write_string(participant.optimized_view());
 			return result;
@@ -3025,25 +3364,26 @@ namespace tangent
 			}
 			return *this;
 		}
-		expects_lr<void> dispatch_context::apply_secret_share(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner, const uint256_t& scalar)
+		expects_lr<dispatch_context::secret_entropy> dispatch_context::apply_secret_entropy(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner, const algorithm::storage_type<uint8_t, 64>& entropy, ordered_map<algorithm::pubkeyhash_t, secret_entropy::share_pair>&& shares)
 		{
+			secret_entropy result;
+			result.asset = asset;
+			result.manager = manager;
+			result.owner = owner;
+			result.entropy = entropy;
+			result.shares = std::move(shares);
+
 			auto mempool = storages::mempoolstate();
-			auto status = mempool.apply_group_account(asset, manager, owner, scalar);
+			auto status = mempool.apply_secret_entropy(get_runner_wallet().public_key_hash, result);
 			if (!status)
 				return status.error();
 
-			return expectation::met;
+			return expects_lr<dispatch_context::secret_entropy>(std::move(result));
 		}
-		expects_lr<void> dispatch_context::recover_secret_share(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner, uint256_t& scalar) const
+		expects_lr<dispatch_context::secret_entropy> dispatch_context::recover_secret_entropy(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner) const
 		{
-			auto& runner_wallet = get_runner_wallet();
 			auto mempool = storages::mempoolstate();
-			auto result = mempool.get_or_apply_group_account_share(asset, manager, owner, algorithm::hashing::hash256i(runner_wallet.secret_key.view()));
-			if (!result)
-				return result.error();
-
-			scalar = *result;
-			return expectation::met;
+			return mempool.get_secret_entropy(get_runner_wallet().public_key_hash, asset, manager, owner);
 		}
 		expects_lr<void> dispatch_context::checkpoint()
 		{

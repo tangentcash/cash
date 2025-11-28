@@ -1028,7 +1028,7 @@ namespace tangent
 					item.receipt_message.data.reserve(1024);
 					item.context->transaction->store(&item.transaction_message);
 					item.context->receipt.store(&item.receipt_message);
-					item.dispatchable = item.context->transaction->is_dispatchable();
+					item.dispatchable = item.context->transaction->is_dispatchable() && item.context->receipt.successful;
 					item.context->receipt.transaction_hash.encode(item.transaction_hash);
 					if (transaction_to_account_index)
 					{

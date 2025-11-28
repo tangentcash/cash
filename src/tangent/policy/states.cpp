@@ -748,15 +748,38 @@ namespace tangent
 			else if (!stake.is_nan() && stake < protocol::now().policy.participation.min_stake_value)
 				return layer_exception(stringify::text("minimum stake requirement not met (%s %s)", protocol::now().policy.participation.min_stake_value.to_string().c_str(), protocol::now().policy.token.c_str()));
 
-			auto native_asset = algorithm::asset::native();
+			for (auto& [token_asset, refs] : participations)
+			{
+				if (!algorithm::asset::is_aux(token_asset, true))
+					return layer_exception("invalid participation asset");
+
+				if (refs.empty())
+					return layer_exception("participation must have refs");
+				
+				ordered_set<string> duplicates;
+				for (auto& ref : refs)
+				{
+					if (ref.manager.empty() || ref.owner.empty())
+						return layer_exception("invalid participation ref");
+
+					string id;
+					id.append(ref.manager.optimized_view());
+					id.append(ref.owner.optimized_view());
+					if (duplicates.find(id) != duplicates.end())
+						return layer_exception("duplicate participation ref");
+
+					duplicates.insert(std::move(id));
+				}
+			}
+
 			for (auto& [token_asset, reward] : rewards)
 			{
 				if (!algorithm::asset::is_aux(token_asset) || !reward.is_positive())
 					return layer_exception("invalid reward value");
 			}
 
-			if (!is_active() && participations > 0)
-				return layer_exception("migration is required");
+			if (!is_active() && !participations.empty())
+				return layer_exception("participation migration is required (using unlock)");
 
 			return expectation::met;
 		}
@@ -786,7 +809,17 @@ namespace tangent
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_decimal(stake);
-			stream->write_integer(participations);
+			stream->write_integer((uint16_t)participations.size());
+			for (auto& [asset, refs] : participations)
+			{
+				stream->write_integer(asset);
+				stream->write_integer((uint16_t)refs.size());
+				for (auto& ref : refs)
+				{
+					stream->write_string(ref.manager.optimized_view());
+					stream->write_string(ref.owner.optimized_view());
+				}
+			}
 			stream->write_integer((uint16_t)rewards.size());
 			for (auto& [asset, reward] : rewards)
 			{
@@ -800,8 +833,33 @@ namespace tangent
 			if (!stream.read_decimal(stream.read_type(), &stake))
 				return false;
 
-			if (!stream.read_integer(stream.read_type(), &participations))
+			uint16_t participations_size;
+			if (!stream.read_integer(stream.read_type(), &participations_size))
 				return false;
+
+			for (uint16_t i = 0; i < participations_size; i++)
+			{
+				algorithm::asset_id asset;
+				if (!stream.read_integer(stream.read_type(), &asset))
+					return false;
+
+				uint16_t refs_size;
+				if (!stream.read_integer(stream.read_type(), &refs_size))
+					return false;
+
+				auto& refs = participations[asset];
+				for (uint16_t j = 0; j < refs_size; j++)
+				{
+					participation_ref ref; string assembly;
+					if (!stream.read_string(stream.read_type(), &assembly) || !algorithm::encoding::decode_bytes(assembly, ref.manager.data, sizeof(ref.manager)))
+						return false;
+
+					if (!stream.read_string(stream.read_type(), &assembly) || !algorithm::encoding::decode_bytes(assembly, ref.owner.data, sizeof(ref.owner)))
+						return false;
+
+					refs.push_back(ref);
+				}
+			}
 
 			uint16_t rewards_size;
 			if (!stream.read_integer(stream.read_type(), &rewards_size))
@@ -831,7 +889,19 @@ namespace tangent
 			schema* data = ledger::multiform::as_schema().reset();
 			data->set("owner", algorithm::signing::serialize_address(owner));
 			data->set("stake", var::decimal(stake));
-			data->set("participations", var::integer(participations));
+			schema* participations_data = data->set("participations", var::set::array());
+			for (auto& [asset, refs] : participations)
+			{
+				schema* participation_data = participations_data->push(var::set::object());
+				participation_data->set("asset", algorithm::asset::serialize(asset));
+				schema* refs_data = participation_data->set("refs", var::set::array());
+				for (auto& ref : refs)
+				{
+					schema* ref_data = refs_data->push(var::set::object());
+					ref_data->set("manager", algorithm::signing::serialize_address(ref.manager));
+					ref_data->set("owner", algorithm::signing::serialize_address(ref.owner));
+				}
+			}
 			schema* rewards_data = data->set("rewards", var::set::array());
 			for (auto& [asset, reward] : rewards)
 			{
