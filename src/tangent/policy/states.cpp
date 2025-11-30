@@ -1,6 +1,5 @@
 #include "states.h"
 #include "../kernel/block.h"
-#include "../kernel/cell.h"
 #include "../service/superchain.h"
 
 namespace tangent
@@ -1533,7 +1532,7 @@ namespace tangent
 		}
 		expects_lr<string> witness_program::as_code() const
 		{
-			return cell::factory::get()->unpack(storage);
+			return algorithm::encoding::unpack_program(storage);
 		}
 		uint32_t witness_program::as_instance_type()
 		{
@@ -1552,7 +1551,7 @@ namespace tangent
 		}
 		string witness_program::as_instance_packed_hashcode(const std::string_view& storage)
 		{
-			auto code = cell::factory::get()->unpack(storage);
+			auto code = algorithm::encoding::unpack_program(storage);
 			if (!code)
 				return string();
 
@@ -1560,7 +1559,7 @@ namespace tangent
 		}
 		string witness_program::as_instance_unpacked_hashcode(const std::string_view& storage)
 		{
-			return cell::factory::get()->hashcode(storage);
+			return algorithm::hashing::ppc512(storage);
 		}
 
 		witness_event::witness_event(const uint256_t& new_parent_transaction_hash, uint64_t new_block_number, uint64_t new_block_nonce) : ledger::uniform(new_block_number, new_block_nonce), parent_transaction_hash(new_parent_transaction_hash)

@@ -1,5 +1,6 @@
 #ifndef TAN_SERVICE_SUPERCHAIN_H
 #define TAN_SERVICE_SUPERCHAIN_H
+#include <vitex/network/http.h>
 #include "../kernel/superchain.h"
 
 namespace tangent

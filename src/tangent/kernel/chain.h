@@ -1,11 +1,7 @@
 #ifndef TAN_KERNEL_CHAIN_H
 #define TAN_KERNEL_CHAIN_H
-#include <vitex/compute.h>
 #include <vitex/layer.h>
-#include <vitex/scripting.h>
-#include <vitex/network/http.h>
 #include <vitex/network/sqlite.h>
-#include <vitex/vitex.h>
 #include <set>
 
 namespace rocksdb
@@ -17,8 +13,8 @@ namespace tangent
 {
 	using namespace vitex::core;
 	using namespace vitex::compute;
-	using namespace vitex::layer;
 	using namespace vitex::network;
+	using namespace vitex::layer;
 
 	template <typename k, typename comparator = typename std::set<k>::key_compare>
 	using ordered_set = std::set<k, comparator, typename allocation_type<typename std::set<k>::value_type>::type>;

@@ -1,4 +1,4 @@
-#include "cell.h"
+#include "script.h"
 #include "../policy/transactions.h"
 #include "../storage/chainstate.h"
 #include <gmp.h>
@@ -24,11 +24,11 @@ extern "C"
 #define SCRIPT_TYPE_PMUT "pmut"
 #define SCRIPT_TYPE_PCONST "pconst"
 #define SCRIPT_FUNCTION_CONSTRUCT "construct"
-#define SCRIPT_VM "cell"
+#define SCRIPT_VM "script"
 
 namespace tangent
 {
-	namespace cell
+	namespace script
 	{
 		typedef unordered_map<string_repr, std::atomic<int32_t>> string_repr_cache_type;
 
@@ -2053,9 +2053,25 @@ namespace tangent
 			new(base) decimal(value ? "1" : "0");
 			truncate_or_throw(*base, true);
 		}
-		void real320_repr::custom_constructor_string(decimal* base, const string_repr& value)
+		void real320_repr::custom_constructor_string(decimal* base, const string_repr& other)
 		{
-			new(base) decimal(value.view());
+			auto view = other.view();
+			if (view.size() > 2 && view[0] == '0' && view[1] == 'x')
+			{
+				uint8_t data[sizeof(uint256_t)] = { 0 };
+				auto raw = format::util::decode_0xhex(view);
+				if (raw.size() > sizeof(data))
+					return contract::throw_ptr(exception_repr(exception_repr::category::memory(), "hexadecimal constant overflow with number larger than 256 bits"));
+
+				size_t raw_size = std::min(sizeof(data), raw.size());
+				memcpy(data + (sizeof(data) - raw_size), raw.data(), raw_size);
+
+				uint256_t value;
+				value.decode(data);
+				new(base) decimal(value.to_decimal());
+			}
+			else
+				new(base) decimal(view);
 			truncate_or_throw(*base, true);
 		}
 		void real320_repr::custom_constructor_copy(decimal* base, const decimal& value)
@@ -2221,7 +2237,19 @@ namespace tangent
 		}
 		void uint128_repr::construct_string(uint128_t* base, const string_repr& other)
 		{
-			new(base) uint128_t(other.view());
+			auto view = other.view();
+			if (view.size() > 2 && view[0] == '0' && view[1] == 'x')
+			{
+				auto raw = format::util::decode_0xhex(view);
+				uint8_t data[sizeof(uint128_t)] = { 0 };
+				size_t raw_size = std::min(sizeof(data), raw.size());
+				memcpy(data + (sizeof(data) - raw_size), raw.data(), raw_size);
+
+				auto value = new(base) uint128_t();
+				value->decode(data);
+			}
+			else
+				new(base) uint128_t(view);
 		}
 		bool uint128_repr::to_bool(uint128_t& value)
 		{
@@ -2344,7 +2372,19 @@ namespace tangent
 		}
 		void uint256_repr::construct_string(uint256_t* base, const string_repr& other)
 		{
-			new(base) uint256_t(other.view());
+			auto view = other.view();
+			if (view.size() > 2 && view[0] == '0' && view[1] == 'x')
+			{
+				auto raw = format::util::decode_0xhex(view);
+				uint8_t data[sizeof(uint256_t)] = { 0 };
+				size_t raw_size = std::min(sizeof(data), raw.size());
+				memcpy(data + (sizeof(data) - raw_size), raw.data(), raw_size);
+
+				auto value = new(base) uint256_t();
+				value->decode(data);
+			}
+			else
+				new(base) uint256_t(view);
 		}
 		bool uint256_repr::to_bool(uint256_t& value)
 		{
@@ -2465,13 +2505,14 @@ namespace tangent
 		}
 		address_repr::address_repr(const string_repr& address)
 		{
-			algorithm::signing::decode_address(address.view(), hash);
+			if (!algorithm::signing::decode_address(address.view(), hash))
+				contract::throw_ptr(exception_repr(exception_repr::category::argument(), "failed to decode account address"));
 		}
 		address_repr::address_repr(const uint256_t& owner_data)
 		{
-			uint8_t owner_raw_data[32];
-			owner_data.encode(owner_raw_data);
-			memcpy(hash.data, owner_raw_data, sizeof(hash.data));
+			uint8_t owner_raw_data[32]; size_t owner_raw_data_size;
+			owner_data.encode_compact(owner_raw_data, &owner_raw_data_size);
+			memcpy(hash.data, owner_raw_data, std::min(owner_raw_data_size, sizeof(hash.data)));
 		}
 		void address_repr::pay(const uint256_t& asset, const decimal& value)
 		{
@@ -3010,16 +3051,16 @@ namespace tangent
 				expects_lr<vector<uptr<states::account_multiform>>> results = layer_exception();
 				switch (mode)
 				{
-					case tangent::cell::cquery::column:
+					case cquery::column:
 						results = p->context->get_account_multiforms_by_column(p->callable().data, subject.data, (size_t)offset, count);
 						break;
-					case tangent::cell::cquery::column_filter:
+					case cquery::column_filter:
 						results = p->context->get_account_multiforms_by_column_filter(p->callable().data, subject.data, comparator, value, order, (size_t)offset, count);
 						break;
-					case tangent::cell::cquery::row:
+					case cquery::row:
 						results = p->context->get_account_multiforms_by_row(p->callable().data, subject.data, (size_t)offset, count);
 						break;
-					case tangent::cell::cquery::row_filter:
+					case cquery::row_filter:
 						results = p->context->get_account_multiforms_by_row_filter(p->callable().data, subject.data, comparator, value, order, (size_t)offset, count);
 						break;
 					default:
@@ -5011,7 +5052,6 @@ namespace tangent
 			strings = memory::init<string_repr_cache_type>();
 			vm = new virtual_machine();
 			vm->set_type_def("usize", "uint32");
-			initialize_opcode_table();
 
 			auto pmut = vm->set_interface_class<program>("pmut");
 			auto pconst = vm->set_interface_class<program>("pconst");
@@ -5507,14 +5547,6 @@ namespace tangent
 			vm->set_full_stack_tracing(false);
 			vm->set_ts_imports(false);
 			vm->set_cache(!protocol::now().user.storage.module_cache_path.empty());
-			vm->set_keyword_restriction("auto", true);
-			vm->set_keyword_restriction("auto&", true);
-			vm->set_keyword_restriction("auto@", true);
-			vm->set_keyword_restriction("typedef", true);
-			vm->set_keyword_restriction("cast", true);
-			vm->set_keyword_restriction("shared", true);
-			vm->set_keyword_restriction("float", true);
-			vm->set_keyword_restriction("double", true);
 			vm->set_cache_callback([](byte_code_info* info)
 			{
 				auto path = stringify::text("%s%c%s.o", protocol::now().user.storage.module_cache_path.c_str(), VI_SPLITTER, info->name.c_str());
@@ -5538,34 +5570,6 @@ namespace tangent
 				library(link.reset()).discard();
 			modules.clear();
 			memory::deinit((string_repr_cache_type*)strings);
-		}
-		void factory::initialize_opcode_table()
-		{
-			unordered_set<std::string_view> illegal_opcodes =
-			{
-				"NEGf", "NEGd", "INCf", "DECf", "INCd", "DECd", "CMPd",
-				"CMPf", "CMPIf", "iTOf", "fTOi", "uTOf", "fTOu", "dTOi",
-				"dTOu", "dTOf", "iTOd", "uTOd", "fTOd", "ADDf", "SUBf",
-				"MULf", "DIVf", "MODf", "ADDd", "SUBd", "MULd", "DIVd",
-				"MODd", "ADDIf", "SUBIf", "MULIf", "fTOi64", "dTOi64",
-				"fTOu64", "dTOu64", "i64TOf", "u64TOf", "i64TOd",
-				"u64TOd", "POWf", "POWd", "POWdi"
-			};
-			unordered_set<std::string_view> internal_opcodes =
-			{
-				"SUSPEND"
-			};
-			unordered_map<std::string_view, uint8_t> name_to_opcode;
-			name_to_opcode.reserve(opcodes.size());
-			for (size_t i = 0; i < opcodes.size(); i++)
-			{
-				auto opcode = (uint8_t)i;
-				auto type = virtual_machine::get_byte_code_info(opcode);
-				bool illegal = illegal_opcodes.find(type.name) != illegal_opcodes.end();
-				bool internal = internal_opcodes.find(type.name) != internal_opcodes.end();
-				opcodes[opcode] = illegal ? -1 : (internal ? 0 : 1);
-				name_to_opcode[type.name] = opcode;
-			}
 		}
 		void factory::return_module(cmodule&& value)
 		{
@@ -5661,28 +5665,6 @@ namespace tangent
 					goto error;
 				}
 			}
-			for (size_t i = 0; i < module->get_objects_count(); i++)
-			{
-				auto object = module->get_object_by_index(i);
-				for (size_t j = 0; j < object.get_methods_count(); j++)
-				{
-					auto validation = validate_bytecode(object.get_method_by_index(j));
-					if (!validation)
-					{
-						compiler_log.append(SCRIPT_VM " method validation: " + validation.error().message() + "\r\n");
-						goto error;
-					}
-				}
-			}
-			for (size_t i = 0; i < module->get_function_count(); i++)
-			{
-				auto validation = validate_bytecode(module->get_function_by_index(i));
-				if (!validation)
-				{
-					compiler_log.append(SCRIPT_VM " function validation: " + validation.error().message() + "\r\n");
-					goto error;
-				}
-			}
 
 			return expects_lr<cmodule>(std::move(module));
 		}
@@ -5712,59 +5694,9 @@ namespace tangent
 
 			return expectation::met;
 		}
-		string factory::hashcode(const std::string_view& unpacked_code)
-		{
-			static std::string_view lines = "\r\n";
-			static std::string_view erasable = " \r\n\t\'\"()<>=%&^*/+-,.!?:;@~";
-			static std::string_view quotes = "\"'`";
-			string hashable = string(unpacked_code);
-			stringify::replace_in_between(stringify::trim(hashable), "/*", "*/", "", false);
-			stringify::replace_starts_with_ends_of(stringify::trim(hashable), "//", lines, "");
-			stringify::compress(stringify::trim(hashable), erasable, quotes);
-			return algorithm::hashing::hash512((uint8_t*)hashable.data(), hashable.size());
-		}
-		expects_lr<string> factory::pack(const std::string_view& unpacked_code)
-		{
-			auto packed_code = codec::compress(unpacked_code, compression::best_compression);
-			if (!packed_code)
-				return layer_exception(std::move(packed_code.error().message()));
-
-			return *packed_code;
-		}
-		expects_lr<string> factory::unpack(const std::string_view& packed_code)
-		{
-			auto unpacked_code = codec::decompress(packed_code);
-			if (!unpacked_code)
-				return layer_exception(std::move(unpacked_code.error().message()));
-
-			return *unpacked_code;
-		}
-		int8_t factory::opcode_type(uint8_t opcode)
-		{
-			return opcodes[opcode];
-		}
 		virtual_machine* factory::get_vm()
 		{
 			return *vm;
-		}
-		expects_lr<void> factory::validate_bytecode(const function& compiled_function)
-		{
-			size_t byte_code_size = 0;
-			uint32_t* byte_code = compiled_function.get_byte_code(&byte_code_size);
-			for (size_t i = 0; i < byte_code_size;)
-			{
-				uint8_t code = *(uint8_t*)(&byte_code[i]);
-				auto type = virtual_machine::get_byte_code_info(code);
-				auto cost = opcodes[code];
-				if (cost < 0)
-				{
-					auto name = string(type.name);
-					auto decl = compiled_function.get_decl(true, true, true);
-					return layer_exception(stringify::text("declaration \"%.*s\" contains illegal instruction \"%s\"", (int)decl.size(), decl.data(), stringify::to_lower(name).c_str()));
-				}
-				i += type.size;
-			}
-			return expectation::met;
 		}
 		const void* factory::to_string_constant(void* context, const char* buffer, size_t buffer_size)
 		{
@@ -5835,7 +5767,7 @@ namespace tangent
 		{
 			if (!entrypoint.is_valid())
 			{
-				if (mutability == ccall::upgrade_call)
+				if (mutability == ccall::deploy_call)
 					return expectation::met;
 
 				return layer_exception("illegal call to function: null function");
@@ -5850,7 +5782,7 @@ namespace tangent
 			auto* coroutine = caller ? caller : vm->request_context();
 			auto* prev_mutable_program = coroutine->get_user_data(SCRIPT_TAG_MUTABLE_PROGRAM);
 			auto* prev_immutable_program = coroutine->get_user_data(SCRIPT_TAG_IMMUTABLE_PROGRAM);
-			coroutine->set_user_data(mutability == ccall::upgrade_call || mutability == ccall::paying_call ? (caller ? prev_mutable_program : this) : nullptr, SCRIPT_TAG_MUTABLE_PROGRAM);
+			coroutine->set_user_data(mutability == ccall::deploy_call || mutability == ccall::paying_call ? (caller ? prev_mutable_program : this) : nullptr, SCRIPT_TAG_MUTABLE_PROGRAM);
 			coroutine->set_user_data(this, SCRIPT_TAG_IMMUTABLE_PROGRAM);
 
 			auto execution = expects_vm<vitex::scripting::execution>(vitex::scripting::execution::error);
@@ -5952,9 +5884,9 @@ namespace tangent
 			receipt.from = callable();
 
 			auto subcontext = ledger::transaction_context(context->environment, context->block, context->changelog, &transaction, std::move(receipt));
-			auto subexecution = transaction.subexecute(&subcontext, [&](asIScriptModule* module_ptr)
+			auto subexecution = transaction.subexecute(&subcontext, [&](void* module_ptr)
 			{
-				auto script = cell::program(&subcontext, module_ptr);
+				auto script = program(&subcontext, (asIScriptModule*)module_ptr);
 				return script.execute(mutability, entrypoint, transaction.args, [&](void* result_value, int return_type_id) -> expects_lr<void>
 				{
 					format::wo_stream stream;
@@ -5981,7 +5913,7 @@ namespace tangent
 			if (!entrypoint.get_namespace().empty())
 				return layer_exception(stringify::text("illegal call to function \"%.*s\": illegal operation", (int)function_name.size(), function_name.data()));
 
-			if (function_name == SCRIPT_FUNCTION_CONSTRUCT && *mutability != ccall::upgrade_call)
+			if (function_name == SCRIPT_FUNCTION_CONSTRUCT && *mutability != ccall::deploy_call)
 				return layer_exception(stringify::text("illegal call to function \"%.*s\": illegal operation", (int)function_name.size(), function_name.data()));
 
 			auto* vm = entrypoint.get_vm();
@@ -6063,7 +5995,7 @@ namespace tangent
 
 					if (type.get_name() == SCRIPT_TYPE_PMUT)
 					{
-						if (*mutability != ccall::upgrade_call && *mutability != ccall::paying_call)
+						if (*mutability != ccall::deploy_call && *mutability != ccall::paying_call)
 							return layer_exception(stringify::text("illegal call to function \"%s\": argument #%i not bound to required instruction set (" SCRIPT_TYPE_PMUT ")", entrypoint.get_decl().data(), (int)i));
 
 						*mutability = ccall::paying_call;
@@ -6110,8 +6042,8 @@ namespace tangent
 			uint32_t type = context->transaction->as_type();
 			if (type == transactions::call::as_instance_type())
 				return ((transactions::call*)context->transaction)->callable;
-			else if (type == transactions::upgrade::as_instance_type())
-				return ((transactions::upgrade*)context->transaction)->get_account();
+			else if (type == transactions::deploy::as_instance_type())
+				return ((transactions::deploy*)context->transaction)->get_account();
 
 			return context->receipt.from;
 		}
@@ -6120,12 +6052,12 @@ namespace tangent
 			uint32_t type = context->transaction->as_type();
 			if (type == transactions::call::as_instance_type())
 				return ((transactions::call*)context->transaction)->value;
-			else if (type == transactions::upgrade::as_instance_type())
+			else if (type == transactions::deploy::as_instance_type())
 				return decimal::zero();
 
 			return decimal::nan();
 		}
-		function program::upgrade_function() const
+		function program::deploy_function() const
 		{
 			return module.get_function_by_name(SCRIPT_FUNCTION_CONSTRUCT);
 		}
@@ -6134,7 +6066,7 @@ namespace tangent
 			uint32_t type = context->transaction->as_type();
 			if (type == transactions::call::as_instance_type())
 				return ((transactions::call*)context->transaction)->function;
-			else if (type == transactions::upgrade::as_instance_type())
+			else if (type == transactions::deploy::as_instance_type())
 				return string(SCRIPT_FUNCTION_CONSTRUCT);
 
 			return string();
@@ -6142,9 +6074,9 @@ namespace tangent
 		const format::variables* program::function_arguments() const
 		{
 			uint32_t type = context->transaction->as_type();
-			if (type == transactions::upgrade::as_instance_type())
+			if (type == transactions::deploy::as_instance_type())
 			{
-				auto& args = ((transactions::upgrade*)context->transaction)->args;
+				auto& args = ((transactions::deploy*)context->transaction)->args;
 				return &args;
 			}
 			else if (type == transactions::call::as_instance_type())

@@ -1,10 +1,11 @@
-#ifndef TAN_KERNEL_CELL_H
-#define TAN_KERNEL_CELL_H
+#ifndef TAN_KERNEL_SCRIPT_H
+#define TAN_KERNEL_SCRIPT_H
+#include <vitex/scripting.h>
 #include "block.h"
 
 namespace tangent
 {
-	namespace cell
+	namespace script
 	{
 		using namespace vitex::scripting;
 
@@ -14,7 +15,7 @@ namespace tangent
 
 		enum class ccall
 		{
-			upgrade_call,
+			deploy_call,
 			paying_call,
 			const_call
 		};
@@ -746,7 +747,6 @@ namespace tangent
 		class factory : public singleton<factory>
 		{
 		private:
-			std::array<int8_t, std::numeric_limits<uint8_t>::max() + 1> opcodes;
 			unordered_map<string, cmodule> modules;
 			uptr<compiler> compiler;
 			uptr<virtual_machine> vm;
@@ -763,15 +763,9 @@ namespace tangent
 			void return_module(cmodule&& value);
 			expects_lr<cmodule> compile_module(const std::string_view& hashcode, const std::function<expects_lr<string>()>& unpacked_code_callback);
 			expects_lr<void> reset_properties(library& module, immediate_context* context);
-			string hashcode(const std::string_view& unpacked_code);
-			expects_lr<string> pack(const std::string_view& unpacked_code);
-			expects_lr<string> unpack(const std::string_view& packed_code);
-			int8_t opcode_type(uint8_t opcode);
 			virtual_machine* get_vm();
 
 		private:
-			void initialize_opcode_table();
-			expects_lr<void> validate_bytecode(const function& compiled_function);
 			static const void* to_string_constant(void* context, const char* buffer, size_t buffer_size);
 			static int from_string_constant(void* context, const void* object, char* buffer, size_t* buffer_size);
 			static int free_string_constant(void* context, const void* object);
@@ -798,7 +792,7 @@ namespace tangent
             virtual ccall mutability_of(const function& entrypoint) const;
 			virtual algorithm::pubkeyhash_t callable() const;
 			virtual decimal payable() const;
-			virtual function upgrade_function() const;
+			virtual function deploy_function() const;
 			virtual string function_declaration() const;
 			virtual const format::variables* function_arguments() const;
 			static program* fetch_mutable(immediate_context* coroutine = immediate_context::get());
@@ -831,13 +825,13 @@ namespace vitex
 	namespace core
 	{
 		template <>
-		struct key_hasher<tangent::cell::string_repr>
+		struct key_hasher<tangent::script::string_repr>
 		{
 			typedef int argument_type;
 			typedef size_t result_type;
 			using is_transparent = void;
 
-			inline result_type operator()(const tangent::cell::string_repr& value) const noexcept
+			inline result_type operator()(const tangent::script::string_repr& value) const noexcept
 			{
 				return key_hasher<std::string_view>()(value.view());
 			}

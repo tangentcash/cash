@@ -6,6 +6,19 @@ namespace tangent
 {
 	namespace superchain
 	{
+		static string generate_error_message(const expects_system<http::response_frame>& response, const server_relay::error_reporter& reporter, const std::string_view& error_code, const std::string_view& error_message)
+		{
+			string_stream message;
+			string method = reporter.method;
+			message << "superchain::" << reporter.type << "::" << stringify::to_lower(method) << " error: ";
+			if (error_message.empty())
+				message << "no response";
+			else
+				message << error_message;
+			message << " (netc: " << (response ? response->status_code : 500) << ", " << reporter.type << "c: " << error_code << ")";
+			return message.str();
+		}
+
 		wallet_link::wallet_link(const algorithm::pubkeyhash_t& new_owner, const std::string_view& new_public_key, const std::string_view& new_address) : owner(new_owner), address(new_address), public_key(new_public_key)
 		{
 		}
@@ -1310,18 +1323,6 @@ namespace tangent
 				default:
 					return "unset";
 			}
-		}
-		string server_relay::generate_error_message(const expects_system<http::response_frame>& response, const error_reporter& reporter, const std::string_view& error_code, const std::string_view& error_message)
-		{
-			string_stream message;
-			string method = reporter.method;
-			message << "superchain::" << reporter.type << "::" << stringify::to_lower(method) << " error: ";
-			if (error_message.empty())
-				message << "no response";
-			else
-				message << error_message;
-			message << " (netc: " << (response ? response->status_code : 500) << ", " << reporter.type << "c: " << error_code << ")";
-			return message.str();
 		}
 
 		relay_backend::relay_backend(const algorithm::asset_id& new_asset) noexcept : native_asset(algorithm::asset::base_id_of(new_asset)), allow_any_token(true), interact(nullptr)

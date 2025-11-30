@@ -2,6 +2,7 @@
 #include "tangent/storage/superchainstate.h"
 #include "tangent/storage/mempoolstate.h"
 #include "tangent/policy/compositions.h"
+#include <vitex/vitex.h>
 #include <sstream>
 #define TEST_BLOCK(x, y, z) new_block_from_generator(*data, users, x, #x, y, z)
 #define TEST_BLOCK_FAULT(x, y, z) new_block_from_generator(*data, users, x, #x, y, z, true)
@@ -55,7 +56,7 @@ public:
 	class generators
 	{
 	public:
-		static void account_transfer_stage_1(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
+		static void transfer_stage_1(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
 		{
 			auto& [user1, user1_nonce] = users[0];
 			auto& [user2, user2_nonce] = users[1];
@@ -86,7 +87,7 @@ public:
 			transfer_bitcoin->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 			transactions.push_back(transfer_bitcoin);
 		}
-		static void account_transfer_stage_2(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
+		static void transfer_stage_2(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
 		{
 			auto& [user1, user1_nonce] = users[0];
 			auto& [user2, user2_nonce] = users[1];
@@ -107,7 +108,7 @@ public:
 			transfer_ripple->sign(user_test.secret_key, 0, decimal::zero()).expect("pre-validation failed");
 			transactions.push_back(transfer_ripple);
 		}
-		static void account_transfer_to_account(vector<uptr<ledger::transaction>>& transactions, vector<account>& users, size_t user_id, const algorithm::asset_id& asset, const std::string_view& address, const decimal& value)
+		static void transfer_custom(vector<uptr<ledger::transaction>>& transactions, vector<account>& users, size_t user_id, const algorithm::asset_id& asset, const std::string_view& address, const decimal& value)
 		{
 			auto& [user1, user1_nonce] = users[user_id];
 			algorithm::pubkeyhash_t public_key_hash;
@@ -119,7 +120,7 @@ public:
 			transfer_asset->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 			transactions.push_back(transfer_asset);
 		}
-		static void account_transaction_rollup(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
+		static void rollup_stage_1(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
 		{
 			auto& [user1, user1_nonce] = users[0];
 			auto& [user2, user2_nonce] = users[1];
@@ -171,7 +172,7 @@ public:
 			multi_asset_rollup->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 			transactions.push_back(multi_asset_rollup);
 		}
-		static void account_upgrade_stage_1(vector<uptr<ledger::transaction>>& transactions, vector<account>& users, vector<algorithm::pubkeyhash_t>* contracts)
+		static void deploy_stage_1(vector<uptr<ledger::transaction>>& transactions, vector<account>& users, vector<algorithm::pubkeyhash_t>* contracts)
 		{
 			auto& [user1, user1_nonce] = users[0];
 			std::string_view token_program = VI_STRINGIFY((
@@ -268,35 +269,35 @@ public:
 				return token_account.ref.call<real320>("real320 balance_of(pconst@, const address&in)", tx::from());
 			}));
 
-			auto* upgrade1 = memory::init<transactions::upgrade>();
-			upgrade1->from_program(token_program.substr(1, token_program.size() - 2), { format::variable("CAP10"), format::variable("Test Token 0"), format::variable(user1.get_address()), format::variable(decimal(10000u)) });
-			upgrade1->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
-			transactions.push_back(upgrade1);
-			contracts->push_back(upgrade1->get_account());
+			auto* deploy1 = memory::init<transactions::deploy>();
+			deploy1->from_program(token_program.substr(1, token_program.size() - 2), { format::variable("CAP10"), format::variable("Test Token 0"), format::variable(user1.get_address()), format::variable(decimal(10000u)) });
+			deploy1->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
+			transactions.push_back(deploy1);
+			contracts->push_back(deploy1->get_account());
 
-			auto* upgrade2 = memory::init<transactions::upgrade>();
-			upgrade2->from_program(bridge_program.substr(1, bridge_program.size() - 2), { format::variable(contracts->back().view()) });
-			upgrade2->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
-			transactions.push_back(upgrade2);
-			contracts->push_back(upgrade2->get_account());
+			auto* deploy2 = memory::init<transactions::deploy>();
+			deploy2->from_program(bridge_program.substr(1, bridge_program.size() - 2), { format::variable(contracts->back().view()) });
+			deploy2->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
+			transactions.push_back(deploy2);
+			contracts->push_back(deploy2->get_account());
 		}
-		static void account_upgrade_stage_2(vector<uptr<ledger::transaction>>& transactions, vector<account>& users, vector<algorithm::pubkeyhash_t>* contracts)
+		static void deploy_stage_2(vector<uptr<ledger::transaction>>& transactions, vector<account>& users, vector<algorithm::pubkeyhash_t>* contracts)
 		{
 			auto context = ledger::transaction_context();
 			auto& [user2, user2_nonce] = users[1];
-			auto* upgrade1 = memory::init<transactions::upgrade>();
-			upgrade1->from_hashcode(context.get_account_program(contracts->at(0))->hashcode, { format::variable("CAP20"), format::variable("Test Token 1"), format::variable(user2.get_address()), format::variable(decimal(20000u)) });
-			upgrade1->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
-			transactions.push_back(upgrade1);
-			contracts->push_back(upgrade1->get_account());
+			auto* deploy1 = memory::init<transactions::deploy>();
+			deploy1->from_hashcode(context.get_account_program(contracts->at(0))->hashcode, { format::variable("CAP20"), format::variable("Test Token 1"), format::variable(user2.get_address()), format::variable(decimal(20000u)) });
+			deploy1->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
+			transactions.push_back(deploy1);
+			contracts->push_back(deploy1->get_account());
 
-			auto* upgrade2 = memory::init<transactions::upgrade>();
-			upgrade2->from_hashcode(context.get_account_program(contracts->at(1))->hashcode, { format::variable(contracts->back().view()) });
-			upgrade2->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
-			transactions.push_back(upgrade2);
-			contracts->push_back(upgrade2->get_account());
+			auto* deploy2 = memory::init<transactions::deploy>();
+			deploy2->from_hashcode(context.get_account_program(contracts->at(1))->hashcode, { format::variable(contracts->back().view()) });
+			deploy2->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
+			transactions.push_back(deploy2);
+			contracts->push_back(deploy2->get_account());
 		}
-		static void account_call(vector<uptr<ledger::transaction>>& transactions, vector<account>& users, vector<algorithm::pubkeyhash_t>* contracts)
+		static void call_stage_1(vector<uptr<ledger::transaction>>& transactions, vector<account>& users, vector<algorithm::pubkeyhash_t>* contracts)
 		{
 			auto& [user1, user1_nonce] = users[0];
 			auto& [user2, user2_nonce] = users[1];
@@ -330,160 +331,186 @@ public:
 			call6->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
 			transactions.push_back(call6);
 		}
-		static void validator_registration_full(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
+		static void setup_stage_0(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
 		{
 			auto& [user1, user1_nonce] = users[0];
-			auto& [user2, user2_nonce] = users[1];
-			auto* validator_adjustment_user1 = memory::init<transactions::validator_adjustment>();
-			validator_adjustment_user1->allocate_attestation_stake(algorithm::asset::id_of("XRP"), decimal::zero());
-			validator_adjustment_user1->configure_attestation_security(algorithm::asset::id_of("XRP"), protocol::now().policy.participation.min_per_account, decimal::zero(), true, true);
-			validator_adjustment_user1->allocate_participation_stake(decimal::zero());
-			validator_adjustment_user1->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
-			transactions.push_back(validator_adjustment_user1);
-
-			auto* validator_adjustment_user2 = memory::init<transactions::validator_adjustment>();
-			validator_adjustment_user2->allocate_production_stake(decimal::zero());
-			validator_adjustment_user2->allocate_attestation_stake(algorithm::asset::id_of("ETH"), decimal::zero());
-			validator_adjustment_user2->configure_attestation_reward(algorithm::asset::id_of("ETH"), 0.0012, 0.0012);
-			validator_adjustment_user2->configure_attestation_security(algorithm::asset::id_of("ETH"), protocol::now().policy.participation.min_per_account, decimal::zero(), true, true);
-			validator_adjustment_user2->allocate_attestation_stake(algorithm::asset::id_of("XRP"), decimal::zero());
-			validator_adjustment_user2->configure_attestation_reward(algorithm::asset::id_of("XRP"), 1.0, 1.0);
-			validator_adjustment_user2->configure_attestation_security(algorithm::asset::id_of("XRP"), protocol::now().policy.participation.min_per_account, decimal::zero(), true, true);
-			validator_adjustment_user2->allocate_attestation_stake(algorithm::asset::id_of("BTC"), decimal::zero());
-			validator_adjustment_user2->configure_attestation_reward(algorithm::asset::id_of("BTC"), 0.000025, 0.000025);
-			validator_adjustment_user2->configure_attestation_security(algorithm::asset::id_of("BTC"), protocol::now().policy.participation.min_per_account, decimal::zero(), true, true);
-			validator_adjustment_user2->allocate_participation_stake(decimal::zero());
-			validator_adjustment_user2->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
-			transactions.push_back(validator_adjustment_user2);
-
-			for (size_t i = 3; i < users.size(); i++)
-			{
-				auto& [user_n, user_n_nonce] = users[i];
-				auto* validator_adjustment_user_n = memory::init<transactions::validator_adjustment>();
-				validator_adjustment_user_n->allocate_participation_stake(decimal::zero());
-				validator_adjustment_user_n->sign(user_n.secret_key, user_n_nonce++, decimal::zero()).expect("pre-validation failed");
-				transactions.push_back(validator_adjustment_user_n);
-			}
-		}
-		static void validator_registration_partial(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
-		{
-			auto& [user1, user1_nonce] = users[0];
-			auto* validator_adjustment_user1 = memory::init<transactions::validator_adjustment>();
-			validator_adjustment_user1->allocate_production_stake(decimal::zero());
-			validator_adjustment_user1->allocate_attestation_stake(algorithm::asset::id_of("ETH"), decimal::zero());
-			validator_adjustment_user1->configure_attestation_security(algorithm::asset::id_of("ETH"), protocol::now().policy.participation.min_per_account, decimal::zero(), true, true);
-			validator_adjustment_user1->configure_attestation_reward(algorithm::asset::id_of("ETH"), 0.0012, 0.0012);
-			validator_adjustment_user1->allocate_attestation_stake(algorithm::asset::id_of("BTC"), decimal::zero());
-			validator_adjustment_user1->configure_attestation_security(algorithm::asset::id_of("BTC"), protocol::now().policy.participation.min_per_account, decimal::zero(), true, true);
-			validator_adjustment_user1->configure_attestation_reward(algorithm::asset::id_of("BTC"), 0.00001, 0.000025);
-			validator_adjustment_user1->allocate_participation_stake(decimal::zero());
-			validator_adjustment_user1->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
-			transactions.push_back(validator_adjustment_user1);
+			auto* setup_user1 = memory::init<transactions::setup>();
+			setup_user1->allocate_production_stake(decimal::zero());
+			setup_user1->allocate_attestation_stake(algorithm::asset::id_of("ETH"), decimal::zero());
+			setup_user1->configure_attestation_security(algorithm::asset::id_of("ETH"), protocol::now().policy.participation.min_per_account, decimal::zero(), true, true);
+			setup_user1->configure_attestation_reward(algorithm::asset::id_of("ETH"), 0.0012, 0.0012);
+			setup_user1->allocate_attestation_stake(algorithm::asset::id_of("BTC"), decimal::zero());
+			setup_user1->configure_attestation_security(algorithm::asset::id_of("BTC"), protocol::now().policy.participation.min_per_account, decimal::zero(), true, true);
+			setup_user1->configure_attestation_reward(algorithm::asset::id_of("BTC"), 0.00001, 0.000025);
+			setup_user1->allocate_participation_stake(decimal::zero());
+			setup_user1->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
+			transactions.push_back(setup_user1);
 
 			for (size_t i = 1; i < users.size(); i++)
 			{
 				auto& [user_n, user_n_nonce] = users[i];
-				auto* validator_adjustment_user_n = memory::init<transactions::validator_adjustment>();
-				validator_adjustment_user_n->allocate_participation_stake(decimal::zero());
-				validator_adjustment_user_n->sign(user_n.secret_key, user_n_nonce++, decimal::zero()).expect("pre-validation failed");
-				transactions.push_back(validator_adjustment_user_n);
+				auto* setup_user_n = memory::init<transactions::setup>();
+				setup_user_n->allocate_participation_stake(decimal::zero());
+				setup_user_n->sign(user_n.secret_key, user_n_nonce++, decimal::zero()).expect("pre-validation failed");
+				transactions.push_back(setup_user_n);
 			}
 		}
-		static void validator_enable_poa_validator(vector<uptr<ledger::transaction>>& transactions, vector<account>& users, size_t user_id, bool tx_attestation, bool mpc_participation)
-		{
-			auto& [user1, user1_nonce] = users[user_id];
-			auto* validator_adjustment_user1 = memory::init<transactions::validator_adjustment>();
-			if (tx_attestation)
-			{
-				validator_adjustment_user1->allocate_attestation_stake(algorithm::asset::id_of("ETH"), decimal::zero());
-				validator_adjustment_user1->allocate_attestation_stake(algorithm::asset::id_of("XRP"), decimal::zero());
-				validator_adjustment_user1->allocate_attestation_stake(algorithm::asset::id_of("BTC"), decimal::zero());
-			}
-			if (mpc_participation)
-				validator_adjustment_user1->allocate_participation_stake(decimal::zero());
-			validator_adjustment_user1->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
-			transactions.push_back(validator_adjustment_user1);
-		}
-		static void validator_disable_poa_validator(vector<uptr<ledger::transaction>>& transactions, vector<account>& users, size_t user_id, bool tx_attestation, bool mpc_participation)
-		{
-			auto& [user1, user1_nonce] = users[user_id];
-			auto* validator_adjustment_user1 = memory::init<transactions::validator_adjustment>();
-			if (tx_attestation)
-			{
-				validator_adjustment_user1->disable_attestation(algorithm::asset::id_of("ETH"));
-				validator_adjustment_user1->disable_attestation(algorithm::asset::id_of("XRP"));
-				validator_adjustment_user1->disable_attestation(algorithm::asset::id_of("BTC"));
-			}
-			if (mpc_participation)
-				validator_adjustment_user1->disable_participation();
-			validator_adjustment_user1->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
-			transactions.push_back(validator_adjustment_user1);
-		}
-		static void bridge_account_registration_full_stage_1(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
+		static void setup_stage_1(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
 		{
 			auto& [user1, user1_nonce] = users[0];
 			auto& [user2, user2_nonce] = users[1];
-			auto* bridge_account_ethereum = memory::init<transactions::bridge_account>();
-			bridge_account_ethereum->set_asset("ETH");
-			bridge_account_ethereum->set_manager(user2.public_key_hash);
-			bridge_account_ethereum->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
-			transactions.push_back(bridge_account_ethereum);
+			auto* setup_user1 = memory::init<transactions::setup>();
+			setup_user1->allocate_attestation_stake(algorithm::asset::id_of("XRP"), decimal::zero());
+			setup_user1->configure_attestation_security(algorithm::asset::id_of("XRP"), protocol::now().policy.participation.min_per_account, decimal::zero(), true, true);
+			setup_user1->allocate_participation_stake(decimal::zero());
+			setup_user1->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
+			transactions.push_back(setup_user1);
 
-			auto* bridge_account_ripple1 = memory::init<transactions::bridge_account>();
-			bridge_account_ripple1->set_asset("XRP");
-			bridge_account_ripple1->set_routing_address("rUBqz2JiRCT3gYZBnm28y5ME7e5UpSm2ok");
-			bridge_account_ripple1->set_manager(user1.public_key_hash);
-			bridge_account_ripple1->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
-			transactions.push_back(bridge_account_ripple1);
+			auto* setup_user2 = memory::init<transactions::setup>();
+			setup_user2->allocate_production_stake(decimal::zero());
+			setup_user2->allocate_attestation_stake(algorithm::asset::id_of("ETH"), decimal::zero());
+			setup_user2->configure_attestation_reward(algorithm::asset::id_of("ETH"), 0.0012, 0.0012);
+			setup_user2->configure_attestation_security(algorithm::asset::id_of("ETH"), protocol::now().policy.participation.min_per_account, decimal::zero(), true, true);
+			setup_user2->allocate_attestation_stake(algorithm::asset::id_of("XRP"), decimal::zero());
+			setup_user2->configure_attestation_reward(algorithm::asset::id_of("XRP"), 1.0, 1.0);
+			setup_user2->configure_attestation_security(algorithm::asset::id_of("XRP"), protocol::now().policy.participation.min_per_account, decimal::zero(), true, true);
+			setup_user2->allocate_attestation_stake(algorithm::asset::id_of("BTC"), decimal::zero());
+			setup_user2->configure_attestation_reward(algorithm::asset::id_of("BTC"), 0.000025, 0.000025);
+			setup_user2->configure_attestation_security(algorithm::asset::id_of("BTC"), protocol::now().policy.participation.min_per_account, decimal::zero(), true, true);
+			setup_user2->allocate_participation_stake(decimal::zero());
+			setup_user2->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
+			transactions.push_back(setup_user2);
 
-			auto* bridge_account_ripple2 = memory::init<transactions::bridge_account>();
-			bridge_account_ripple2->set_asset("XRP");
-			bridge_account_ripple2->set_manager(user2.public_key_hash);
-			bridge_account_ripple2->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
-			transactions.push_back(bridge_account_ripple2);
+			for (size_t i = 3; i < users.size(); i++)
+			{
+				auto& [user_n, user_n_nonce] = users[i];
+				auto* setup_user_n = memory::init<transactions::setup>();
+				setup_user_n->allocate_participation_stake(decimal::zero());
+				setup_user_n->sign(user_n.secret_key, user_n_nonce++, decimal::zero()).expect("pre-validation failed");
+				transactions.push_back(setup_user_n);
+			}
 		}
-		static void bridge_account_registration_full_stage_2(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
+		static void setup_custom(vector<uptr<ledger::transaction>>& transactions, vector<account>& users, size_t user_id, int8_t tx_attestation, int8_t mpc_participation)
+		{
+			auto& [user1, user1_nonce] = users[user_id];
+			auto* setup_user1 = memory::init<transactions::setup>();
+			if (tx_attestation != 0)
+			{
+				if (tx_attestation > 0)
+				{
+					setup_user1->allocate_attestation_stake(algorithm::asset::id_of("ETH"), decimal::zero());
+					setup_user1->allocate_attestation_stake(algorithm::asset::id_of("XRP"), decimal::zero());
+					setup_user1->allocate_attestation_stake(algorithm::asset::id_of("BTC"), decimal::zero());
+				}
+				else
+				{
+					setup_user1->disable_attestation(algorithm::asset::id_of("ETH"));
+					setup_user1->disable_attestation(algorithm::asset::id_of("XRP"));
+					setup_user1->disable_attestation(algorithm::asset::id_of("BTC"));
+				}
+			}
+			if (mpc_participation != 0)
+			{
+				if (mpc_participation > 0)
+					setup_user1->allocate_participation_stake(decimal::zero());
+				else
+					setup_user1->disable_participation();
+			}
+			setup_user1->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
+			transactions.push_back(setup_user1);
+		}
+		static void route_stage_0(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
+		{
+			auto& [user1, user1_nonce] = users[0];
+			auto* route_bitcoin = memory::init<transactions::route>();
+			route_bitcoin->set_asset("BTC");
+			route_bitcoin->set_routing_address("mmtubFoJvXrBuBUQFf1RrowXUbsiPDYnYS");
+			route_bitcoin->set_manager(user1.public_key_hash);
+			route_bitcoin->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
+			transactions.push_back(route_bitcoin);
+
+			auto* route_ethereum = memory::init<transactions::route>();
+			route_ethereum->set_asset("ETH");
+			route_ethereum->set_routing_address("0xCa0dfDdBb1cBD7B5A08E9173D9bbE5722138d4d5");
+			route_ethereum->set_manager(user1.public_key_hash);
+			route_ethereum->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
+			transactions.push_back(route_ethereum);
+		}
+		static void route_stage_1(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
 		{
 			auto& [user1, user1_nonce] = users[0];
 			auto& [user2, user2_nonce] = users[1];
-			auto* bridge_account_ethereum = memory::init<transactions::bridge_account>();
-			bridge_account_ethereum->set_asset("ETH");
-			bridge_account_ethereum->set_routing_address("0xCa0dfDdBb1cBD7B5A08E9173D9bbE5722138d4d5");
-			bridge_account_ethereum->set_manager(user2.public_key_hash);
-			bridge_account_ethereum->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
-			transactions.push_back(bridge_account_ethereum);
+			auto* route_ethereum = memory::init<transactions::route>();
+			route_ethereum->set_asset("ETH");
+			route_ethereum->set_manager(user2.public_key_hash);
+			route_ethereum->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
+			transactions.push_back(route_ethereum);
 
-			auto* bridge_account_ripple = memory::init<transactions::bridge_account>();
-			bridge_account_ripple->set_asset("XRP");
-			bridge_account_ripple->set_manager(user2.public_key_hash);
-			bridge_account_ripple->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
-			transactions.push_back(bridge_account_ripple);
+			auto* route_ripple1 = memory::init<transactions::route>();
+			route_ripple1->set_asset("XRP");
+			route_ripple1->set_routing_address("rUBqz2JiRCT3gYZBnm28y5ME7e5UpSm2ok");
+			route_ripple1->set_manager(user1.public_key_hash);
+			route_ripple1->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
+			transactions.push_back(route_ripple1);
 
-			auto* bridge_account_bitcoin = memory::init<transactions::bridge_account>();
-			bridge_account_bitcoin->set_asset("BTC");
-			bridge_account_bitcoin->set_routing_address("mmtubFoJvXrBuBUQFf1RrowXUbsiPDYnYS");
-			bridge_account_bitcoin->set_manager(user2.public_key_hash);
-			bridge_account_bitcoin->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
-			transactions.push_back(bridge_account_bitcoin);
+			auto* route_ripple2 = memory::init<transactions::route>();
+			route_ripple2->set_asset("XRP");
+			route_ripple2->set_manager(user2.public_key_hash);
+			route_ripple2->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
+			transactions.push_back(route_ripple2);
 		}
-		static void bridge_account_registration_partial(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
+		static void route_stage_2(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
 		{
 			auto& [user1, user1_nonce] = users[0];
-			auto* bridge_account_bitcoin = memory::init<transactions::bridge_account>();
-			bridge_account_bitcoin->set_asset("BTC");
-			bridge_account_bitcoin->set_routing_address("mmtubFoJvXrBuBUQFf1RrowXUbsiPDYnYS");
-			bridge_account_bitcoin->set_manager(user1.public_key_hash);
-			bridge_account_bitcoin->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
-			transactions.push_back(bridge_account_bitcoin);
+			auto& [user2, user2_nonce] = users[1];
+			auto* route_ethereum = memory::init<transactions::route>();
+			route_ethereum->set_asset("ETH");
+			route_ethereum->set_routing_address("0xCa0dfDdBb1cBD7B5A08E9173D9bbE5722138d4d5");
+			route_ethereum->set_manager(user2.public_key_hash);
+			route_ethereum->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
+			transactions.push_back(route_ethereum);
 
-			auto* bridge_account_ethereum = memory::init<transactions::bridge_account>();
-			bridge_account_ethereum->set_asset("ETH");
-			bridge_account_ethereum->set_routing_address("0xCa0dfDdBb1cBD7B5A08E9173D9bbE5722138d4d5");
-			bridge_account_ethereum->set_manager(user1.public_key_hash);
-			bridge_account_ethereum->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
-			transactions.push_back(bridge_account_ethereum);
+			auto* route_ripple = memory::init<transactions::route>();
+			route_ripple->set_asset("XRP");
+			route_ripple->set_manager(user2.public_key_hash);
+			route_ripple->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
+			transactions.push_back(route_ripple);
+
+			auto* route_bitcoin = memory::init<transactions::route>();
+			route_bitcoin->set_asset("BTC");
+			route_bitcoin->set_routing_address("mmtubFoJvXrBuBUQFf1RrowXUbsiPDYnYS");
+			route_bitcoin->set_manager(user2.public_key_hash);
+			route_bitcoin->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
+			transactions.push_back(route_bitcoin);
 		}
-		static void bridge_attestation_registration_full(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
+		static void attestate_stage_0(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
+		{
+			auto& [user1, user1_nonce] = users[0];
+			auto context = ledger::transaction_context();
+			auto owner_addresses = *context.get_witness_accounts_by_purpose(user1.public_key_hash, states::witness_account::account_type::bridge, 0, 128);
+			auto address_bitcoin = std::find_if(owner_addresses.begin(), owner_addresses.end(), [](states::witness_account& item) { return item.asset == algorithm::asset::id_of("BTC"); });
+			auto address_ethereum = std::find_if(owner_addresses.begin(), owner_addresses.end(), [](states::witness_account& item) { return item.asset == algorithm::asset::id_of("ETH"); });
+			VI_PANIC(address_bitcoin != owner_addresses.end(), "bitcoin bridge address not found");
+			VI_PANIC(address_ethereum != owner_addresses.end(), "ethereum bridge address not found");
+
+			auto* attestate_bitcoin = memory::init<transactions::attestate>();
+			attestate_bitcoin->set_asset("BTC");
+			attestate_bitcoin->set_finalized_proof(846982,
+				"57638131d9af3033a5e20b753af254e1e8321b2039f16dfd222f6b1117b5c69d",
+				{ superchain::value_transfer(attestate_bitcoin->asset, "mmtubFoJvXrBuBUQFf1RrowXUbsiPDYnYS", 12.0) },
+				{ superchain::value_transfer(attestate_bitcoin->asset, address_bitcoin->addresses.begin()->second, 12.0) });
+			transactions.push_back(attestate_bitcoin);
+
+			auto token_asset = algorithm::asset::id_of("ETH", "USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7");
+			auto* attestate_ethereum = memory::init<transactions::attestate>();
+			attestate_ethereum->set_asset("ETH");
+			attestate_ethereum->set_finalized_proof(14977180,
+				"0x2bc2c98682f1b8fea2031e8f3f56494cd778da9d042da8439fb698d41bf061ea",
+				{ superchain::value_transfer(token_asset, "0xCa0dfDdBb1cBD7B5A08E9173D9bbE5722138d4d5", 1000000) },
+				{ superchain::value_transfer(token_asset, address_ethereum->addresses.begin()->second, 1000000) });
+			transactions.push_back(attestate_ethereum);
+		}
+		static void attestate_stage_1(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
 		{
 			auto& [user1, user1_nonce] = users[0];
 			auto& [user2, user2_nonce] = users[1];
@@ -498,86 +525,59 @@ public:
 			VI_PANIC(address_bitcoin != owner_addresses.end(), "bitcoin bridge address not found");
 
 			auto token_asset = algorithm::asset::id_of("ETH", "USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7");
-			auto* bridge_attestation_ethereum_token = memory::init<transactions::bridge_attestation>();
-			bridge_attestation_ethereum_token->set_asset("ETH");
-			bridge_attestation_ethereum_token->set_finalized_proof(22946911,
+			auto* attestate_ethereum_token = memory::init<transactions::attestate>();
+			attestate_ethereum_token->set_asset("ETH");
+			attestate_ethereum_token->set_finalized_proof(22946911,
 				"0xce2d48c20305ee332c071a671142953af58ca5226fcbcc219cd0b2cc4c6fe34f",
 				{ superchain::value_transfer(token_asset, "0xCa0dfDdBb1cBD7B5A08E9173D9bbE5722138d4d5", 100000) },
 				{ superchain::value_transfer(token_asset, address_ethereum->addresses.begin()->second, 100000) });
-			transactions.push_back(bridge_attestation_ethereum_token);
+			transactions.push_back(attestate_ethereum_token);
 
-			auto* bridge_attestation_ethereum = memory::init<transactions::bridge_attestation>();
-			bridge_attestation_ethereum->set_asset("ETH");
-			bridge_attestation_ethereum->set_finalized_proof(14977180,
+			auto* attestate_ethereum = memory::init<transactions::attestate>();
+			attestate_ethereum->set_asset("ETH");
+			attestate_ethereum->set_finalized_proof(14977180,
 				"0x2bc2c98682f1b8fea2031e8f3f56494cd778da9d042da8439fb698d41bf061ea",
-				{ superchain::value_transfer(bridge_attestation_ethereum->asset, "0xCa0dfDdBb1cBD7B5A08E9173D9bbE5722138d4d5", 100) },
-				{ superchain::value_transfer(bridge_attestation_ethereum->asset, address_ethereum->addresses.begin()->second, 100) });
-			transactions.push_back(bridge_attestation_ethereum);
+				{ superchain::value_transfer(attestate_ethereum->asset, "0xCa0dfDdBb1cBD7B5A08E9173D9bbE5722138d4d5", 100) },
+				{ superchain::value_transfer(attestate_ethereum->asset, address_ethereum->addresses.begin()->second, 100) });
+			transactions.push_back(attestate_ethereum);
 
-			auto* bridge_attestation_ripple = memory::init<transactions::bridge_attestation>();
-			bridge_attestation_ripple->set_asset("XRP");
-			bridge_attestation_ripple->set_finalized_proof(88546830,
+			auto* attestate_ripple = memory::init<transactions::attestate>();
+			attestate_ripple->set_asset("XRP");
+			attestate_ripple->set_finalized_proof(88546830,
 				"2618D20B801AF96DD060B34228E2594E30AFB7B33E335A8C60199B6CF8B0A69F",
-				{ superchain::value_transfer(bridge_attestation_ripple->asset, "rUBqz2JiRCT3gYZBnm28y5ME7e5UpSm2ok", 1000) },
-				{ superchain::value_transfer(bridge_attestation_ripple->asset, address_ripple->addresses.begin()->second, 1000) });
-			transactions.push_back(bridge_attestation_ripple);
+				{ superchain::value_transfer(attestate_ripple->asset, "rUBqz2JiRCT3gYZBnm28y5ME7e5UpSm2ok", 1000) },
+				{ superchain::value_transfer(attestate_ripple->asset, address_ripple->addresses.begin()->second, 1000) });
+			transactions.push_back(attestate_ripple);
 
-			auto* bridge_attestation_bitcoin = memory::init<transactions::bridge_attestation>();
-			bridge_attestation_bitcoin->set_asset("BTC");
-			bridge_attestation_bitcoin->set_finalized_proof(846982,
+			auto* attestate_bitcoin = memory::init<transactions::attestate>();
+			attestate_bitcoin->set_asset("BTC");
+			attestate_bitcoin->set_finalized_proof(846982,
 				"57638131d9af3033a5e20b753af254e1e8321b2039f16dfd222f6b1117b5c69d",
-				{ superchain::value_transfer(bridge_attestation_bitcoin->asset, "mmtubFoJvXrBuBUQFf1RrowXUbsiPDYnYS", 1.0) },
-				{ superchain::value_transfer(bridge_attestation_bitcoin->asset, address_bitcoin->addresses.begin()->second, 1.0) });
-			transactions.push_back(bridge_attestation_bitcoin);
+				{ superchain::value_transfer(attestate_bitcoin->asset, "mmtubFoJvXrBuBUQFf1RrowXUbsiPDYnYS", 1.0) },
+				{ superchain::value_transfer(attestate_bitcoin->asset, address_bitcoin->addresses.begin()->second, 1.0) });
+			transactions.push_back(attestate_bitcoin);
 		}
-		static void bridge_attestation_registration_partial(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
-		{
-			auto& [user1, user1_nonce] = users[0];
-			auto context = ledger::transaction_context();
-			auto owner_addresses = *context.get_witness_accounts_by_purpose(user1.public_key_hash, states::witness_account::account_type::bridge, 0, 128);
-			auto address_bitcoin = std::find_if(owner_addresses.begin(), owner_addresses.end(), [](states::witness_account& item) { return item.asset == algorithm::asset::id_of("BTC"); });
-			auto address_ethereum = std::find_if(owner_addresses.begin(), owner_addresses.end(), [](states::witness_account& item) { return item.asset == algorithm::asset::id_of("ETH"); });
-			VI_PANIC(address_bitcoin != owner_addresses.end(), "bitcoin bridge address not found");
-			VI_PANIC(address_ethereum != owner_addresses.end(), "ethereum bridge address not found");
-
-			auto* bridge_attestation_bitcoin = memory::init<transactions::bridge_attestation>();
-			bridge_attestation_bitcoin->set_asset("BTC");
-			bridge_attestation_bitcoin->set_finalized_proof(846982,
-				"57638131d9af3033a5e20b753af254e1e8321b2039f16dfd222f6b1117b5c69d",
-				{ superchain::value_transfer(bridge_attestation_bitcoin->asset, "mmtubFoJvXrBuBUQFf1RrowXUbsiPDYnYS", 12.0) },
-				{ superchain::value_transfer(bridge_attestation_bitcoin->asset, address_bitcoin->addresses.begin()->second, 12.0) });
-			transactions.push_back(bridge_attestation_bitcoin);
-
-			auto token_asset = algorithm::asset::id_of("ETH", "USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7");
-			auto* bridge_attestation_ethereum = memory::init<transactions::bridge_attestation>();
-			bridge_attestation_ethereum->set_asset("ETH");
-			bridge_attestation_ethereum->set_finalized_proof(14977180,
-				"0x2bc2c98682f1b8fea2031e8f3f56494cd778da9d042da8439fb698d41bf061ea",
-				{ superchain::value_transfer(token_asset, "0xCa0dfDdBb1cBD7B5A08E9173D9bbE5722138d4d5", 1000000) },
-				{ superchain::value_transfer(token_asset, address_ethereum->addresses.begin()->second, 1000000) });
-			transactions.push_back(bridge_attestation_ethereum);
-		}
-		static void bridge_migration_stage_1(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
+		static void migrate_stage_1(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
 		{
 			auto& [user1, user1_nonce] = users[0];
 			auto& [user2, user2_nonce] = users[1];
-			auto* withdrawal_ethereum_token = memory::init<transactions::bridge_withdrawal>();
+			auto* withdrawal_ethereum_token = memory::init<transactions::withdraw>();
 			withdrawal_ethereum_token->set_asset("ETH", "USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7");
 			withdrawal_ethereum_token->set_manager(user2.public_key_hash);
 			withdrawal_ethereum_token->set_to("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef", 1);
 			withdrawal_ethereum_token->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 			transactions.push_back(withdrawal_ethereum_token);
 		}
-		static void bridge_migration_stage_2(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
+		static void migrate_stage_2(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
 		{
 			for (size_t i = protocol::now().policy.participation.min_per_account + 1; i < protocol::now().policy.participation.max_per_account; i++)
 			{
 				users.push_back(account(ledger::wallet::from_seed(stringify::text("00000%i", (int)i)), 0));
 				auto& [user_n, user_n_nonce] = users[i];
-				auto* validator_adjustment_user_n = memory::init<transactions::validator_adjustment>();
-				validator_adjustment_user_n->allocate_participation_stake(decimal::zero());
-				validator_adjustment_user_n->sign(user_n.secret_key, user_n_nonce++, decimal::zero()).expect("pre-validation failed");
-				transactions.push_back(validator_adjustment_user_n);
+				auto* setup_user_n = memory::init<transactions::setup>();
+				setup_user_n->allocate_participation_stake(decimal::zero());
+				setup_user_n->sign(user_n.secret_key, user_n_nonce++, decimal::zero()).expect("pre-validation failed");
+				transactions.push_back(setup_user_n);
 			}
 
 			auto chain = storages::chainstate();
@@ -586,9 +586,9 @@ public:
 			VI_PANIC(!targets.empty(), "must have last transaction");
 
 			auto& transaction = targets.front();
-			VI_PANIC(transaction->as_type() == transactions::bridge_withdrawal_finalization::as_instance_type(), "must have withdrawal finalization as last transaction");
+			VI_PANIC(transaction->as_type() == transactions::broadcast::as_instance_type(), "must have withdrawal finalization as last transaction");
 
-			auto* withdrawal_finalization = (transactions::bridge_withdrawal_finalization*)*transaction;
+			auto* withdrawal_finalization = (transactions::broadcast*)*transaction;
 			VI_PANIC(!withdrawal_finalization->proof, "withdrawal finalized must be failed (synthetic error)");
 
 			auto& [user2, user2_nonce] = users[1];
@@ -600,48 +600,48 @@ public:
 			if (*old_participant == user2.public_key_hash)
 				++old_participant;
 
-			auto* validator_adjustment_user2 = memory::init<transactions::validator_adjustment>();
-			validator_adjustment_user2->migrate_participant(withdrawal_finalization->as_hash(), *old_participant);
-			validator_adjustment_user2->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
-			transactions.push_back(validator_adjustment_user2);
+			auto* setup_user2 = memory::init<transactions::setup>();
+			setup_user2->migrate_participant(withdrawal_finalization->as_hash(), *old_participant);
+			setup_user2->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
+			transactions.push_back(setup_user2);
 		}
-		static void bridge_migration_stage_3(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
+		static void migrate_stage_3(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
 		{
 			auto& [user2, user2_nonce] = users[1];
-			auto* validator_adjustment_user2 = memory::init<transactions::validator_adjustment>();
-			validator_adjustment_user2->disable_participation();
-			validator_adjustment_user2->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
-			transactions.push_back(validator_adjustment_user2);
+			auto* setup_user2 = memory::init<transactions::setup>();
+			setup_user2->disable_participation();
+			setup_user2->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
+			transactions.push_back(setup_user2);
 		}
-		static void bridge_withdrawal_stage_1(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
+		static void withdraw_stage_1(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
 		{
 			auto& [user1, user1_nonce] = users[0];
 			auto& [user2, user2_nonce] = users[1];
-			auto* bridge_withdrawal_ripple = memory::init<transactions::bridge_withdrawal>();
-			bridge_withdrawal_ripple->set_asset("XRP");
-			bridge_withdrawal_ripple->set_manager(user2.public_key_hash);
-			bridge_withdrawal_ripple->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
-			transactions.push_back(bridge_withdrawal_ripple);
+			auto* withdraw_ripple = memory::init<transactions::withdraw>();
+			withdraw_ripple->set_asset("XRP");
+			withdraw_ripple->set_manager(user2.public_key_hash);
+			withdraw_ripple->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
+			transactions.push_back(withdraw_ripple);
 		}
-		static void bridge_withdrawal_stage_2(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
+		static void withdraw_stage_2(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
 		{
 			auto& [user1, user1_nonce] = users[0];
 			auto& [user2, user2_nonce] = users[1];
 			auto context = ledger::transaction_context();
-			auto* withdrawal_ethereum_token = memory::init<transactions::bridge_withdrawal>();
+			auto* withdrawal_ethereum_token = memory::init<transactions::withdraw>();
 			withdrawal_ethereum_token->set_asset("ETH", "USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7");
 			withdrawal_ethereum_token->set_manager(user2.public_key_hash);
 			withdrawal_ethereum_token->set_to("0xCa0dfDdBb1cBD7B5A08E9173D9bbE5722138d4d5", context.get_account_balance(algorithm::asset::id_of("ETH", "USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7"), user1.public_key_hash).expect("user balance not valid").get_balance());
 			withdrawal_ethereum_token->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 			transactions.push_back(withdrawal_ethereum_token);
 		}
-		static void bridge_withdrawal_stage_3(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
+		static void withdraw_stage_3(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
 		{
 			auto& [user1, user1_nonce] = users[0];
 			auto& [user2, user2_nonce] = users[1];
 			auto context = ledger::transaction_context();
 			auto validator_attestation_ethereum = context.get_validator_attestation(algorithm::asset::id_of("ETH"), user2.public_key_hash).or_else(states::validator_attestation(algorithm::pubkeyhash_t(), 0, nullptr));
-			auto* withdrawal_ethereum = memory::init<transactions::bridge_withdrawal>();
+			auto* withdrawal_ethereum = memory::init<transactions::withdraw>();
 			withdrawal_ethereum->set_asset("ETH");
 			withdrawal_ethereum->set_manager(user2.public_key_hash);
 			withdrawal_ethereum->set_to("0xCa0dfDdBb1cBD7B5A08E9173D9bbE5722138d4d5", context.get_account_balance(algorithm::asset::id_of("ETH"), user1.public_key_hash).expect("user balance not valid").get_balance() - validator_attestation_ethereum.outgoing_fee);
@@ -649,7 +649,7 @@ public:
 			transactions.push_back(withdrawal_ethereum);
 
 			auto validator_attestation_ripple = context.get_validator_attestation(algorithm::asset::id_of("XRP"), user1.public_key_hash).or_else(states::validator_attestation(algorithm::pubkeyhash_t(), 0, nullptr));
-			auto* withdrawal_ripple = memory::init<transactions::bridge_withdrawal>();
+			auto* withdrawal_ripple = memory::init<transactions::withdraw>();
 			withdrawal_ripple->set_asset("XRP");
 			withdrawal_ripple->set_manager(user1.public_key_hash);
 			withdrawal_ripple->set_to("rUBqz2JiRCT3gYZBnm28y5ME7e5UpSm2ok", context.get_account_balance(algorithm::asset::id_of("XRP"), user1.public_key_hash).expect("user balance not valid").get_balance() - validator_attestation_ripple.outgoing_fee);
@@ -657,20 +657,20 @@ public:
 			transactions.push_back(withdrawal_ripple);
 
 			auto validator_attestation_bitcoin = context.get_validator_attestation(algorithm::asset::id_of("BTC"), user2.public_key_hash).or_else(states::validator_attestation(algorithm::pubkeyhash_t(), 0, nullptr));
-			auto* withdrawal_bitcoin = memory::init<transactions::bridge_withdrawal>();
+			auto* withdrawal_bitcoin = memory::init<transactions::withdraw>();
 			withdrawal_bitcoin->set_asset("BTC");
 			withdrawal_bitcoin->set_manager(user2.public_key_hash);
 			withdrawal_bitcoin->set_to("mmtubFoJvXrBuBUQFf1RrowXUbsiPDYnYS", context.get_account_balance(algorithm::asset::id_of("BTC"), user1.public_key_hash).expect("user balance not valid").get_balance() - validator_attestation_bitcoin.outgoing_fee);
 			withdrawal_bitcoin->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 			transactions.push_back(withdrawal_bitcoin);
 		}
-		static void bridge_withdrawal_stage_4(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
+		static void withdraw_stage_4(vector<uptr<ledger::transaction>>& transactions, vector<account>& users)
 		{
 			auto& [user1, user1_nonce] = users[0];
 			auto& [user2, user2_nonce] = users[1];
 			auto context = ledger::transaction_context();
 			auto validator_attestation_ethereum = context.get_validator_attestation(algorithm::asset::id_of("ETH"), user2.public_key_hash).or_else(states::validator_attestation(algorithm::pubkeyhash_t(), 0, nullptr));
-			auto* withdrawal_ethereum = memory::init<transactions::bridge_withdrawal>();
+			auto* withdrawal_ethereum = memory::init<transactions::withdraw>();
 			withdrawal_ethereum->set_asset("ETH");
 			withdrawal_ethereum->set_manager(user2.public_key_hash);
 			withdrawal_ethereum->set_to("0x89a0181659bd280836A2d33F57e3B5Dfa1a823CE", context.get_account_balance(algorithm::asset::id_of("ETH"), user2.public_key_hash).expect("user balance not valid").get_balance() - validator_attestation_ethereum.outgoing_fee);
@@ -678,7 +678,7 @@ public:
 			transactions.push_back(withdrawal_ethereum);
 
 			auto validator_attestation_ripple = context.get_validator_attestation(algorithm::asset::id_of("XRP"), user1.public_key_hash).or_else(states::validator_attestation(algorithm::pubkeyhash_t(), 0, nullptr));
-			auto* withdrawal_ripple = memory::init<transactions::bridge_withdrawal>();
+			auto* withdrawal_ripple = memory::init<transactions::withdraw>();
 			withdrawal_ripple->set_asset("XRP");
 			withdrawal_ripple->set_manager(user1.public_key_hash);
 			withdrawal_ripple->set_to("rJGb4etn9GSwNHYVu7dNMbdiVgzqxaTSUG", context.get_account_balance(algorithm::asset::id_of("XRP"), user2.public_key_hash).expect("user balance not valid").get_balance() - validator_attestation_ripple.outgoing_fee);
@@ -686,7 +686,7 @@ public:
 			transactions.push_back(withdrawal_ripple);
 
 			auto validator_attestation_bitcoin = context.get_validator_attestation(algorithm::asset::id_of("BTC"), user2.public_key_hash).or_else(states::validator_attestation(algorithm::pubkeyhash_t(), 0, nullptr));
-			auto* withdrawal_bitcoin = memory::init<transactions::bridge_withdrawal>();
+			auto* withdrawal_bitcoin = memory::init<transactions::withdraw>();
 			withdrawal_bitcoin->set_asset("BTC");
 			withdrawal_bitcoin->set_manager(user2.public_key_hash);
 			withdrawal_bitcoin->set_to("bcrt1p2w7gkghj7arrjy4c45kh7450458hr8dv9pu9576lx08uuh4je7eqgskm9v", context.get_account_balance(algorithm::asset::id_of("BTC"), user2.public_key_hash).expect("user balance not valid").get_balance() - validator_attestation_bitcoin.outgoing_fee);
@@ -797,16 +797,16 @@ public:
 		new_serialization_comparison<states::witness_account>(*data, owner, asset, address_map(), block_number++, block_nonce++);
 		new_serialization_comparison<states::witness_transaction>(*data, asset, std::string_view(), block_number++, block_nonce++);
 		new_serialization_comparison<transactions::transfer>(*data);
-		new_serialization_comparison<transactions::upgrade>(*data);
+		new_serialization_comparison<transactions::deploy>(*data);
 		new_serialization_comparison<transactions::call>(*data);
 		new_serialization_comparison<transactions::rollup>(*data);
-		new_serialization_comparison<transactions::validator_adjustment>(*data);
-		new_serialization_comparison<transactions::validator_adjustment_finalization>(*data);
-		new_serialization_comparison<transactions::bridge_account>(*data);
-		new_serialization_comparison<transactions::bridge_account_finalization>(*data);
-		new_serialization_comparison<transactions::bridge_withdrawal>(*data);
-		new_serialization_comparison<transactions::bridge_withdrawal_finalization>(*data);
-		new_serialization_comparison<transactions::bridge_attestation>(*data);
+		new_serialization_comparison<transactions::setup>(*data);
+		new_serialization_comparison<transactions::migrate>(*data);
+		new_serialization_comparison<transactions::route>(*data);
+		new_serialization_comparison<transactions::bind>(*data);
+		new_serialization_comparison<transactions::withdraw>(*data);
+		new_serialization_comparison<transactions::broadcast>(*data);
+		new_serialization_comparison<transactions::attestate>(*data);
 
 		auto* term = console::get();
 		term->jwrite_line(*data);
@@ -1593,27 +1593,27 @@ public:
 				users.push_back(account(ledger::wallet::from_seed(stringify::text("00000%i", (int)i)), 0));
 
 			uptr<schema> data = userdata ? nullptr : var::set::array();
-			TEST_BLOCK(&generators::validator_registration_full, "0x4b22e1cf4e865c5ddd13172391c7a104176db00e31ba6685af7a013663a97521", 1);
-			TEST_BLOCK(std::bind(&generators::validator_enable_poa_validator, std::placeholders::_1, std::placeholders::_2, 2, true, false), "0xdda6a6624d4d087cb4146a3beb8aabbedccaebaf85f91d973a829c26eb48ac54", 2);
-			TEST_BLOCK(&generators::bridge_account_registration_full_stage_1, "0x9a15658f182ccfdf8b67e5315d1f28b90a46ac755bf0197da3ce606ca436d052", 3);
-			TEST_BLOCK(&generators::bridge_account_registration_full_stage_2, "0x48ea7f5c12ac36dd24e4f1e140671914f6727a9d34d777fb5165724eb7cce4d7", 5);
-			TEST_BLOCK(&generators::bridge_attestation_registration_full, "0xc9a26b9b86daf555c9087b939f4aebafda4e237bb72fdff0cd05fe8c59d62475", 7);
-			TEST_BLOCK(&generators::account_transfer_stage_1, "0xad573bd75d82895e19fc5c2b0e465afc3bb27120dc9414e3cfbc6335bbbbebe0", 8);
-			TEST_BLOCK(&generators::account_transfer_stage_2, "0x53c2419044cd9ce15de5a757b4779ab5db8bde15729c979633015e69287e9258", 9);
-			TEST_BLOCK(std::bind(&generators::account_transfer_to_account, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), users[2].wallet.get_address(), 0.05), "0xbb83f2fb681f9be2b331571410b22ce8d13ec19ca49d1ba57aab79e2e8d8d1cf", 10);
-			TEST_BLOCK(std::bind(&generators::account_upgrade_stage_1, std::placeholders::_1, std::placeholders::_2, &contracts), "0x652279fe82a4b459011c8c577613ec927cdef6eaa7bda72abd75cc5d62af1d3d", 11);
-			TEST_BLOCK(std::bind(&generators::account_upgrade_stage_2, std::placeholders::_1, std::placeholders::_2, &contracts), "0xe73a0fa65b6ec08784fd5342b319a1b21e35bb8110e54d1c6bd27475a6a0f2e2", 12);
-			TEST_BLOCK(std::bind(&generators::account_call, std::placeholders::_1, std::placeholders::_2, &contracts), "0xe1e1a1d3efb8215e614bc5eb95bbc9911356938096ceae1a0336f92ec9e42ff9", 13);
-			TEST_BLOCK(&generators::account_transaction_rollup, "0x3bb0fd56575b90979376fbce61e32755b9143f85d902cfe35f36762e0b7feb79", 14);
-			TEST_BLOCK(std::bind(&generators::validator_enable_poa_validator, std::placeholders::_1, std::placeholders::_2, 2, false, true), "0xe38ef04000aca6c4449c5c73831e8dfa3e12b16b86969d1041db8db0990f1acf", 15);
-			TEST_BLOCK_FAULT(&generators::bridge_migration_stage_1, "0x336a5cfa13128deed5ff93b49c455b395385f0d5c46dbbe6e0b12713a9636113", 16);
-			TEST_BLOCK(&generators::bridge_migration_stage_2, "0xe6eecc235625079c2a306d09424aaf570069261f6294ff03ba50d9c7ac892343", 18);
-			TEST_BLOCK(&generators::bridge_migration_stage_3, "0x8ea463bbfba307b762ca97f14c1106ad3a649ba8de24c2bc93d8fd02aedcbff4", 20);
-			TEST_BLOCK(&generators::bridge_withdrawal_stage_1, "0xf6fc8d51c430030c59056971932b7b960efcb360eb105e9f329c1530cded8f75", 22);
-			TEST_BLOCK(&generators::bridge_withdrawal_stage_2, "0xf9cce83aecd400fe6b6552ee3da9fc80627b72fbf8de596bd4150b8d08f6b4e2", 24);
-			TEST_BLOCK(&generators::bridge_withdrawal_stage_3, "0x087c4030cabed8e4fd8eff2495714122a159d17df87661565aed972dc0f2bbdb", 26);
-			TEST_BLOCK(&generators::bridge_withdrawal_stage_4, "0x5975a2c17e12c4d056032a92d44a8a31f58f59321357cc5b7b0734dd5e5e24ac", 28);
-			TEST_BLOCK(std::bind(&generators::validator_disable_poa_validator, std::placeholders::_1, std::placeholders::_2, 2, true, false), "0x6bf80bb5b4217d39b31103204a55bf8d71dd2e79006041d31a9d90b900da47ce", 30);
+			TEST_BLOCK(&generators::setup_stage_1, "0x4b22e1cf4e865c5ddd13172391c7a104176db00e31ba6685af7a013663a97521", 1);
+			TEST_BLOCK(std::bind(&generators::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 1, 0), "0xdda6a6624d4d087cb4146a3beb8aabbedccaebaf85f91d973a829c26eb48ac54", 2);
+			TEST_BLOCK(&generators::route_stage_1, "0x9a15658f182ccfdf8b67e5315d1f28b90a46ac755bf0197da3ce606ca436d052", 3);
+			TEST_BLOCK(&generators::route_stage_2, "0x2b4e1651379b6387cf0318da871b2b7351165e32feba57f10ba8ba177e0eb36f", 5);
+			TEST_BLOCK(&generators::attestate_stage_1, "0x1534e8a03cd8c47c8cb8e7e4490e1c77d9bf030223e86ce51da7584e720579cc", 7);
+			TEST_BLOCK(&generators::transfer_stage_1, "0x882d64da9cd10803e9ff02b1cc1d2a7679eb5de3054095ed3951796a000ff191", 8);
+			TEST_BLOCK(&generators::transfer_stage_2, "0xed2348b0b7cfbae7cfd20ad7f58394f4a21822a0ece1f75417bcbed34abdb771", 9);
+			TEST_BLOCK(std::bind(&generators::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), users[2].wallet.get_address(), 0.05), "0xf3cf9948759a7064d28da10ebb8df3b705ed5295e718d4db11f8f1d05c0c40d2", 10);
+			TEST_BLOCK(std::bind(&generators::deploy_stage_1, std::placeholders::_1, std::placeholders::_2, &contracts), "0x8e37beaefdafe3df2bad4e235df59517cd9466b95f2dcdfc887eb3d4c4cdd02d", 11);
+			TEST_BLOCK(std::bind(&generators::deploy_stage_2, std::placeholders::_1, std::placeholders::_2, &contracts), "0x0c0acb6a22df394830e9958539196f6fb7004bd3f7cd6b8c68f4a64794c5baf1", 12);
+			TEST_BLOCK(std::bind(&generators::call_stage_1, std::placeholders::_1, std::placeholders::_2, &contracts), "0xd042eae21827b7a593bce863fe624c9c8ee09bbe6f179ac4bf7960f78dddc785", 13);
+			TEST_BLOCK(&generators::rollup_stage_1, "0xcb696f2151545c7144c6f2f291bf7753e3a98bd2815f8fad4962442b09504c82", 14);
+			TEST_BLOCK(std::bind(&generators::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 0, 1), "0xf18efb39a0520b4784c04b85961aa4c5ae45a639b6f468487640a84a6e1bd9e0", 15);
+			TEST_BLOCK_FAULT(&generators::migrate_stage_1, "0x7abba7732ee69ecda94cdaca371967c733e4023ed892b73c6cc20b811eb2070d", 16);
+			TEST_BLOCK(&generators::migrate_stage_2, "0x8126b8c387c0ac81393cfb7d06ee94b6f902513c1ea23d1cffb7c27c3606476d", 18);
+			TEST_BLOCK(&generators::migrate_stage_3, "0x8cc2f0f858aa8f4268ccb7fe9fbfe99c8b0a33a49cecd3b778a96b0d7c48c4c5", 20);
+			TEST_BLOCK(&generators::withdraw_stage_1, "0x67780fcd770072f9784486456cd13b9027e3639bf8c3b0e95cde094aca79e263", 22);
+			TEST_BLOCK(&generators::withdraw_stage_2, "0x022db8239c48a458b2658d5bafdc8eadc8f342303b3c5543b30a306ea0a0c001", 24);
+			TEST_BLOCK(&generators::withdraw_stage_3, "0xafb5aac3abb060ae63a465dd56490ab14b32ac36962138ab422c16f7b2fcbe56", 26);
+			TEST_BLOCK(&generators::withdraw_stage_4, "0x023bf73aab99c332570a3d879c6ec181b726d4e55a45009d62c3f44f59a93816", 28);
+			TEST_BLOCK(std::bind(&generators::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 1, 0), "0x0cc227a3742d7961ced65636bc789952f3a2d30a5f329271803957d81f4827b4", 30);
 			if (userdata != nullptr)
 				*userdata = std::move(users);
 			else
@@ -1630,11 +1630,11 @@ public:
 				users.push_back(account(ledger::wallet::from_seed(stringify::text("00000%i", (int)i)), 0));
 
 			uptr<schema> data = userdata ? nullptr : var::set::array();
-			TEST_BLOCK(&generators::validator_registration_partial, "0x18b302caa37b6326715bdb41cac8101681893dc311b77b90b610f2310af984d8", 1);
-			TEST_BLOCK(&generators::bridge_account_registration_partial, "0xccd0a4bd5e6fa5165682748feca117ca6b85d966b24f92361236af2f4264d8ba", 2);
-			TEST_BLOCK(&generators::bridge_attestation_registration_partial, "0x1de8acd57964ba5bdb92fa0ed5a776596563620577775ada45e12b2cd3eaa282", 4);
-			TEST_BLOCK(std::bind(&generators::account_transfer_to_account, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), "tcrt1x00g22stp0qcprrxra7x2pz2au33armtfc50460", 0.1), "0xed2a09f2712e3a35d0e8e63d61e6e114f455c6b3eb9cc655ba1db09d3bc24529", 5);
-			TEST_BLOCK(std::bind(&generators::account_transfer_to_account, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("ETH", "USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7"), "tcrt1x00g22stp0qcprrxra7x2pz2au33armtfc50460", 5000), "0x89db24dc27c89f05951d7430154d9082f4629b2ba620aa9808f4167af8c8937a", 6);
+			TEST_BLOCK(&generators::setup_stage_0, "0x18b302caa37b6326715bdb41cac8101681893dc311b77b90b610f2310af984d8", 1);
+			TEST_BLOCK(&generators::route_stage_0, "0xccd0a4bd5e6fa5165682748feca117ca6b85d966b24f92361236af2f4264d8ba", 2);
+			TEST_BLOCK(&generators::attestate_stage_0, "0x60d4e15529fbf325a09586efa12faf956eaca9d6de485431239e771e6e63a754", 4);
+			TEST_BLOCK(std::bind(&generators::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), "tcrt1x00g22stp0qcprrxra7x2pz2au33armtfc50460", 0.1), "0xdcb6824fcec72aa422104647fe4c7e90394609ad65dbab32f36e787c4eb43960", 5);
+			TEST_BLOCK(std::bind(&generators::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("ETH", "USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7"), "tcrt1x00g22stp0qcprrxra7x2pz2au33armtfc50460", 5000), "0xcefaceb72d9c88977d01411bb59b919a0a5b17960d66bdc6bb7a3647135b7980", 6);
 			if (userdata != nullptr)
 				*userdata = std::move(users);
 			else
@@ -1654,27 +1654,27 @@ public:
 			auto& [user1, user1_nonce] = producers[0];
 			auto& [user2, user2_nonce] = producers[1];
 			auto [user3, user3_nonce] = account(ledger::wallet::from_seed("000003"), 0);
-			auto* validator_adjustment = memory::init<transactions::validator_adjustment>();
-			validator_adjustment->asset = asset;
-			validator_adjustment->allocate_production_stake(decimal::zero());
-			validator_adjustment->allocate_attestation_stake(asset, decimal::zero());
-			validator_adjustment->configure_attestation_security(asset, protocol::now().policy.participation.min_per_account, decimal::zero(), true, true);
-			validator_adjustment->allocate_participation_stake(decimal::zero());
-			validator_adjustment->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
-			new_block_from_one(nullptr, producers, validator_adjustment);
+			auto* setup = memory::init<transactions::setup>();
+			setup->asset = asset;
+			setup->allocate_production_stake(decimal::zero());
+			setup->allocate_attestation_stake(asset, decimal::zero());
+			setup->configure_attestation_security(asset, protocol::now().policy.participation.min_per_account, decimal::zero(), true, true);
+			setup->allocate_participation_stake(decimal::zero());
+			setup->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
+			new_block_from_one(nullptr, producers, setup);
 
 			for (size_t i = 1; i < producers.size(); i++)
 			{
 				auto& [user, user_nonce] = producers[i];
-				validator_adjustment = memory::init<transactions::validator_adjustment>();
-				validator_adjustment->asset = asset;
-				validator_adjustment->allocate_attestation_stake(asset, decimal::zero());
-				validator_adjustment->allocate_participation_stake(decimal::zero());
-				validator_adjustment->sign(user.secret_key, user_nonce++, decimal::zero()).expect("pre-validation failed");
-				new_block_from_one(nullptr, producers, validator_adjustment);
+				setup = memory::init<transactions::setup>();
+				setup->asset = asset;
+				setup->allocate_attestation_stake(asset, decimal::zero());
+				setup->allocate_participation_stake(decimal::zero());
+				setup->sign(user.secret_key, user_nonce++, decimal::zero()).expect("pre-validation failed");
+				new_block_from_one(nullptr, producers, setup);
 			}
 
-			auto* bridge_account = memory::init<transactions::bridge_account>();
+			auto* bridge_account = memory::init<transactions::route>();
 			bridge_account->asset = asset;
 			bridge_account->set_manager(user1.public_key_hash);
 			bridge_account->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
@@ -1716,7 +1716,7 @@ public:
 				auto transactions = vector<uptr<ledger::transaction>>();
 				for (auto& receipt : logs.finalized)
 				{
-					auto* transaction = memory::init<transactions::bridge_attestation>();
+					auto* transaction = memory::init<transactions::attestate>();
 					transaction->asset = asset;
 					transaction->set_computed_proof(std::move(receipt), { });
 					transactions.push_back(transaction);
@@ -1736,7 +1736,7 @@ public:
 			term->fwrite_line(" - account required");
 
 			auto from_account = new_account();
-			bridge_account = memory::init<transactions::bridge_account>();
+			bridge_account = memory::init<transactions::route>();
 			bridge_account->asset = asset;
 			bridge_account->set_routing_address(from_account);
 			bridge_account->set_manager(user1.public_key_hash);
@@ -1772,22 +1772,22 @@ public:
 			term->write_line("outgoing transaction integration:");
 			term->fwrite_line(" - withdraw %s into %.*s", withdrawal_value.to_string().c_str(), (int)from_account.size(), from_account.data());
 
-			auto* bridge_withdrawal = memory::init<transactions::bridge_withdrawal>();
-			bridge_withdrawal->asset = asset;
-			bridge_withdrawal->set_manager(user1.public_key_hash);
-			bridge_withdrawal->set_to(from_account, withdrawal_value);
-			bridge_withdrawal->sign(user3.secret_key, user3_nonce++, decimal::zero()).expect("pre-validation failed");
-			new_block_from_one(nullptr, producers, bridge_withdrawal);
+			auto* withdraw = memory::init<transactions::withdraw>();
+			withdraw->asset = asset;
+			withdraw->set_manager(user1.public_key_hash);
+			withdraw->set_to(from_account, withdrawal_value);
+			withdraw->sign(user3.secret_key, user3_nonce++, decimal::zero()).expect("pre-validation failed");
+			new_block_from_one(nullptr, producers, withdraw);
 
 			auto chain = storages::chainstate();
 			auto confirmation_block = chain.get_latest_block();
 			VI_PANIC(confirmation_block && !confirmation_block->transactions.empty(), "blocks with withdrawal confirmation were not found");
 
 			auto& confirmation = confirmation_block->transactions.front();
-			VI_PANIC(confirmation.transaction->as_type() == transactions::bridge_withdrawal_finalization::as_instance_type(), "no withdrawal confirmation");
+			VI_PANIC(confirmation.transaction->as_type() == transactions::broadcast::as_instance_type(), "no withdrawal confirmation");
 
-			auto* confirmation_event = confirmation.receipt.find_event<transactions::bridge_withdrawal_finalization>();
-			auto* confirmation_transaction = (transactions::bridge_withdrawal_finalization*)*confirmation.transaction;
+			auto* confirmation_event = confirmation.receipt.find_event<transactions::broadcast>();
+			auto* confirmation_transaction = (transactions::broadcast*)*confirmation.transaction;
 			VI_PANIC(confirmation_transaction->proof && !confirmation_event, "withdrawal confirmation failed: %s", confirmation_event ? (confirmation_event->empty() ? "unknown error" : confirmation_event->front().as_blob().c_str()) : confirmation_transaction->proof.what().c_str());
 			term->fwrite_line(" - block required for transaction %s", confirmation_transaction->proof->hashdata.c_str());
 			new_block(from_account, true);
@@ -1901,16 +1901,16 @@ public:
 		algorithm::pubkeyhash_t to;
 		crypto::fill_random_bytes(to.data, sizeof(to));
 
-		auto transaction = transactions::validator_adjustment();
+		auto transaction = transactions::setup();
 		transaction.allocate_production_stake(decimal::zero());
 		transaction.allocate_attestation_stake(algorithm::asset::id_of("ETH"), decimal::zero());
 		transaction.allocate_attestation_stake(algorithm::asset::id_of("XRP"), decimal::zero());
 		transaction.allocate_attestation_stake(algorithm::asset::id_of("BTC"), decimal::zero());
 		transaction.allocate_participation_stake(decimal::zero());
-		VI_PANIC(transaction.sign(from, 1, decimal::zero()), "validator_adjustment not signed");
+		VI_PANIC(transaction.sign(from, 1, decimal::zero()), "setup not signed");
 
 		uptr<schema> data = var::set::object();
-		data->set("validator_adjustment_transaction_gas_limit", algorithm::encoding::serialize_uint256(transaction.gas_limit));
+		data->set("setup_transaction_gas_limit", algorithm::encoding::serialize_uint256(transaction.gas_limit));
 		data->set("block_commitment_limit", algorithm::encoding::serialize_uint256(ledger::block::get_commitment_limit()));
 		data->set("block_transaction_limit", algorithm::encoding::serialize_uint256(ledger::block::get_transaction_limit()));
 		data->set("block_commitment_gas_limit", algorithm::encoding::serialize_uint256(ledger::block::get_commitment_gas_limit()));
@@ -1965,10 +1965,10 @@ public:
 		for (size_t i = 0; i < transactions.size(); i++)
 		{
 			auto& transaction = transactions[i];
-			if (transaction->as_type() != transactions::bridge_attestation::as_instance_type())
+			if (transaction->as_type() != transactions::attestate::as_instance_type())
 				continue;
 
-			auto* attestation = (transactions::bridge_attestation*)*transaction;
+			auto* attestation = (transactions::attestate*)*transaction;
 			for (auto& user : users)
 			{
 				auto validator = environment.validation.context.get_validator_attestation(attestation->asset, user.wallet.public_key_hash);
@@ -2016,7 +2016,7 @@ public:
 			{
 				for (auto& transaction : dispatcher.outputs)
 				{
-					if (transaction->as_type() != transactions::bridge_attestation::as_instance_type())
+					if (transaction->as_type() != transactions::attestate::as_instance_type())
 						transaction->sign(user.secret_key, user_nonce++, decimal::zero(), 100000).expect("pre-validation failed");
 				}
 				transactions.insert(transactions.end(), std::make_move_iterator(dispatcher.outputs.begin()), std::make_move_iterator(dispatcher.outputs.end()));
@@ -2702,16 +2702,16 @@ public:
 		{
 			const decimal outgoing_account_balance = starting_account_balance / decimal(block_count * (transaction_count + 64));
 			const decimal incoming_quantity = starting_account_balance;
-			auto* bridge_attestation = memory::init<transactions::bridge_attestation>();
-			bridge_attestation->set_asset("BTC");
-			bridge_attestation->set_finalized_proof(883669,
+			auto* attestation = memory::init<transactions::attestate>();
+			attestation->set_asset("BTC");
+			attestation->set_finalized_proof(883669,
 				"222fc360affb804ad2c34bba2269b36a64a86f017d05a9a60b237e8587bfc52b",
-				{ superchain::value_transfer(bridge_attestation->asset, "mmtubFoJvXrBuBUQFf1RrowXUbsiPDYnYS", decimal(incoming_quantity)) },
-				{ superchain::value_transfer(bridge_attestation->asset, user1_bridge_address->addresses.begin()->second, decimal(incoming_quantity)) });
-			bridge_attestation->sign(user1.secret_key, 0, decimal::zero()).expect("pre-validation failed");
+				{ superchain::value_transfer(attestation->asset, "mmtubFoJvXrBuBUQFf1RrowXUbsiPDYnYS", decimal(incoming_quantity)) },
+				{ superchain::value_transfer(attestation->asset, user1_bridge_address->addresses.begin()->second, decimal(incoming_quantity)) });
+			attestation->sign(user1.secret_key, 0, decimal::zero()).expect("pre-validation failed");
 
 			auto genesis = vector<uptr<ledger::transaction>>();
-			genesis.push_back(bridge_attestation);
+			genesis.push_back(attestation);
 			checkpoint(std::move(genesis), users);
 
 			auto receiver = ledger::wallet::from_seed("000002");
@@ -2748,16 +2748,16 @@ public:
 			const size_t receiver_count = 32;
 			const decimal outgoing_account_balance = starting_account_balance / decimal(block_count * (transaction_count + 64) * sender_count);
 			const decimal incoming_quantity = starting_account_balance * sender_count;
-			auto* bridge_attestation = memory::init<transactions::bridge_attestation>();
-			bridge_attestation->set_asset("BTC");
-			bridge_attestation->set_finalized_proof(883669,
+			auto* attestation = memory::init<transactions::attestate>();
+			attestation->set_asset("BTC");
+			attestation->set_finalized_proof(883669,
 				"222fc360affb804ad2c34bba2269b36a64a86f017d05a9a60b237e8587bfc52b",
-				{ superchain::value_transfer(bridge_attestation->asset, "mmtubFoJvXrBuBUQFf1RrowXUbsiPDYnYS", decimal(incoming_quantity)) },
-				{ superchain::value_transfer(bridge_attestation->asset, user1_bridge_address->addresses.begin()->second, decimal(incoming_quantity)) });
-			bridge_attestation->sign(user1.secret_key, 0, decimal::zero()).expect("pre-validation failed");
+				{ superchain::value_transfer(attestation->asset, "mmtubFoJvXrBuBUQFf1RrowXUbsiPDYnYS", decimal(incoming_quantity)) },
+				{ superchain::value_transfer(attestation->asset, user1_bridge_address->addresses.begin()->second, decimal(incoming_quantity)) });
+			attestation->sign(user1.secret_key, 0, decimal::zero()).expect("pre-validation failed");
 
 			auto genesis = vector<uptr<ledger::transaction>>();
-			genesis.push_back(bridge_attestation);
+			genesis.push_back(attestation);
 			checkpoint(std::move(genesis), users);
 
 			vector<tests::account> senders;
@@ -2815,16 +2815,16 @@ public:
 			const size_t sender_count = transaction_count;
 			const decimal outgoing_account_balance = starting_account_balance / decimal(block_count * (transaction_count + 64) * sender_count);
 			const decimal incoming_quantity = starting_account_balance * sender_count * 2;
-			auto* bridge_attestation = memory::init<transactions::bridge_attestation>();
-			bridge_attestation->set_asset("BTC");
-			bridge_attestation->set_finalized_proof(883669,
+			auto* attestation = memory::init<transactions::attestate>();
+			attestation->set_asset("BTC");
+			attestation->set_finalized_proof(883669,
 				"222fc360affb804ad2c34bba2269b36a64a86f017d05a9a60b237e8587bfc52b",
-				{ superchain::value_transfer(bridge_attestation->asset, "mmtubFoJvXrBuBUQFf1RrowXUbsiPDYnYS", decimal(incoming_quantity)) },
-				{ superchain::value_transfer(bridge_attestation->asset, user1_bridge_address->addresses.begin()->second, decimal(incoming_quantity)) });
-			bridge_attestation->sign(user1.secret_key, 0, decimal::zero()).expect("pre-validation failed");
+				{ superchain::value_transfer(attestation->asset, "mmtubFoJvXrBuBUQFf1RrowXUbsiPDYnYS", decimal(incoming_quantity)) },
+				{ superchain::value_transfer(attestation->asset, user1_bridge_address->addresses.begin()->second, decimal(incoming_quantity)) });
+			attestation->sign(user1.secret_key, 0, decimal::zero()).expect("pre-validation failed");
 
 			auto genesis = vector<uptr<ledger::transaction>>();
-			genesis.push_back(bridge_attestation);
+			genesis.push_back(attestation);
 			checkpoint(std::move(genesis), users);
 
 			vector<tests::account> senders;
@@ -3087,12 +3087,12 @@ int main(int argc, char* argv[])
 		exit_code = runners::regression(args);
 	else if (test == "integration")
 		exit_code = runners::integration(args);
-	else if (test == "cell")
-		exit_code = entrypoints::cell(args);
+	else if (test == "script")
+		exit_code = entrypoints::script(args);
 	else if (test == "node")
 		exit_code = entrypoints::node(args);
 
-	VI_PANIC(exit_code != bad_entrypoint_exit_code, "must provide a \"test\" flag (string in [consensus, explorer, benchmark, regression, integration] or in [cell, node])");
+	VI_PANIC(exit_code != bad_entrypoint_exit_code, "must provide a \"test\" flag (string in [consensus, explorer, benchmark, regression, integration] or in [script, node])");
 	if (os::process::has_debugger())
 	{
 		auto* term = console::get();

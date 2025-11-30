@@ -8,35 +8,6 @@ namespace tangent
 {
 	namespace ledger
 	{
-		template<typename t>
-		static t integer_sqrt(t n)
-		{
-			if (n == 0)
-				return 0;
-
-			uint16_t count = 0; t temp = n;
-			const uint16_t bits = sizeof(t) * 8;
-			for (int i = 0; i < bits; ++i)
-			{
-				if ((temp & (static_cast<t>(1) << (bits - 1))) != 0)
-					break;
-				temp <<= 1;
-				count++;
-			}
-
-			t x = t(1) << (sizeof(t) * 8 - 1 - count) / 2;
-			while (true)
-			{
-				t x_new = (x + n / x) / 2;
-				if (x_new >= x)
-					break;
-				x = x_new;
-			}
-
-			while (x * x > n) x--;
-			while ((x + 1) * (x + 1) <= n) x++;
-			return x;
-		}
 		static storages::position_condition to_position_condition(const filter_comparator comparator)
 		{
 			return (storages::position_condition)comparator;
@@ -2634,7 +2605,7 @@ namespace tangent
 
 			if (!state->cached)
 			{
-				uint64_t optimized_program_size = integer_sqrt<uint64_t>((uint64_t)state->ptr()->as_message().data.size());
+				uint64_t optimized_program_size = algorithm::arithmetic::integer_sqrt<uint64_t>((uint64_t)state->ptr()->as_message().data.size());
 				auto status = ((transaction_context*)this)->burn_gas(optimized_program_size * (size_t)gas_cost::program_byte);
 				if (!status)
 					return status.error();

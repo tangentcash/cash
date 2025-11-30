@@ -1,5 +1,6 @@
 #ifndef TAN_SERVICE_RPC_H
 #define TAN_SERVICE_RPC_H
+#include <vitex/network/http.h>
 #include "../kernel/block.h"
 #include "../kernel/control.h"
 

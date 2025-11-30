@@ -1,5 +1,5 @@
 #include "chain.h"
-#include "cell.h"
+#include "script.h"
 #include "../storage/chainstate.h"
 #include "../storage/mempoolstate.h"
 #include "../service/superchain.h"
@@ -909,7 +909,7 @@ namespace tangent
 		storages::uniform_cache::cleanup_instance();
 		storages::multiform_cache::cleanup_instance();
 		superchain::server_node::cleanup_instance();
-		cell::factory::cleanup_instance();
+		script::factory::cleanup_instance();
 		algorithm::signing::deinitialize();
 		error_handling::set_callback(nullptr);
 		if (instance == this)

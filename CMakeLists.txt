@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.10)
 
 set(VI_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/deps/vitex CACHE STRING "Directory: vitex")
+set(VI_ANGELSCRIPT ON CACHE BOOL "-")
 set(VI_BINDINGS OFF CACHE BOOL "-")
 set(VI_MONGOC OFF CACHE BOOL "-")
 set(VI_POSTGRESQL OFF CACHE BOOL "-")
@@ -50,7 +51,6 @@ if (MSVC)
     set(CMAKE_EXE_LINKER_FLAGS "/ENTRY:mainCRTStartup /SUBSYSTEM:CONSOLE")
 endif()
 
-target_compile_definitions(tangentcash PRIVATE -DTAN_ROCKSDB)
 target_precompile_headers(tangentcash PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${CMAKE_CURRENT_LIST_DIR}/src/tangent/kernel/chain.h>)
 if (MSVC)
     target_compile_definitions(tangentcash PRIVATE -D_CRT_SECURE_NO_WARNINGS)
@@ -61,6 +61,10 @@ if (MSVC)
         $<$<COMPILE_LANGUAGE:CXX>:/wd4275>)
 endif()
 
+set(VI_SOURCE_EXCLUDE "as_compiler.cpp|as_tokenizer.cpp")
 add_subdirectory(${VI_DIRECTORY} vitex)
 target_link_libraries(tangentcash PRIVATE vitex)
+target_include_directories(tangentcash PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/deps/vitex/deps/angelscript/sdk/angelscript/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/deps/vitex/deps/angelscript/sdk/angelscript/source)
 include(deps/externals.cmake)

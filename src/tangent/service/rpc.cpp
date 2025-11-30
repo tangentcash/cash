@@ -1,7 +1,7 @@
 #include "rpc.h"
 #include "consensus.h"
 #include "superchain.h"
-#include "../kernel/cell.h"
+#include "../kernel/script.h"
 #include "../policy/transactions.h"
 #include "../storage/mempoolstate.h"
 #include "../storage/chainstate.h"
@@ -1659,13 +1659,13 @@ namespace tangent
 			temp_environment.apply_temporary_state(&temp_block, &temp_transaction, std::move(temp_receipt));
 
 			auto returning = uptr<schema>();
-			auto execution = temp_transaction.subexecute(&temp_environment.validation.context, [&](asIScriptModule* module_ptr)
+			auto execution = temp_transaction.subexecute(&temp_environment.validation.context, [&](void* module_ptr)
 			{
-				auto script = cell::program(&temp_environment.validation.context, module_ptr);
-				return script.execute(cell::ccall::const_call, temp_transaction.function, temp_transaction.args, [&](void* address, int type_id) -> expects_lr<void>
+				auto script = script::program(&temp_environment.validation.context, (asIScriptModule*)module_ptr);
+				return script.execute(script::ccall::const_call, temp_transaction.function, temp_transaction.args, [&](void* address, int type_id) -> expects_lr<void>
 				{
 					returning = var::set::object();
-					auto serialization = cell::marshall::store(*returning, address, type_id);
+					auto serialization = script::marshall::store(*returning, address, type_id);
 					if (!serialization)
 					{
 						returning.destroy();

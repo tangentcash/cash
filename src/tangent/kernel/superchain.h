@@ -333,9 +333,6 @@ namespace tangent
 
 		public:
 			static std::string_view get_cache_type(cache_policy cache);
-
-		private:
-			static string generate_error_message(const expects_system<http::response_frame>& response, const error_reporter& reporter, const std::string_view& error_code, const std::string_view& error_message);
 		};
 
 		class relay_backend : public reference<relay_backend>

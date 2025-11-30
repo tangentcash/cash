@@ -29,7 +29,7 @@ namespace tangent
 			static std::string_view as_instance_typename();
 		};
 
-		struct upgrade final : ledger::transaction
+		struct deploy final : ledger::transaction
 		{
 			enum class data_type : uint8_t
 			{
@@ -64,7 +64,7 @@ namespace tangent
 
 			expects_lr<void> validate(uint64_t block_number) const override;
 			expects_lr<void> execute(ledger::transaction_context* context) const override;
-			expects_lr<void> subexecute(ledger::transaction_context* context, std::function<expects_lr<void>(asIScriptModule*)>&& executor) const;
+			expects_lr<void> subexecute(ledger::transaction_context* context, std::function<expects_lr<void>(void*)>&& executor) const;
 			bool store_body(format::wo_stream* stream) const override;
 			bool load_body(format::ro_stream& stream) override;
 			bool recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const override;
@@ -106,7 +106,7 @@ namespace tangent
 			static void normalize_transaction(ledger::transaction& transaction, const algorithm::asset_id& asset);
 		};
 
-		struct validator_adjustment final : ledger::transaction
+		struct setup final : ledger::transaction
 		{
 			struct migration_ref
 			{
@@ -148,8 +148,8 @@ namespace tangent
 			void configure_attestation_reward(const algorithm::asset_id& asset, const decimal& new_incoming_fee, const decimal& new_outgoing_fee);
 			void disable_attestation(const algorithm::asset_id& asset);
 			void standby_on_attestation(const algorithm::asset_id& asset);
-			void migrate_participant(const uint256_t& bridge_withdrawal_finalization_hash, const algorithm::pubkeyhash_t& participant);
-			void clear_migration(const uint256_t& bridge_withdrawal_finalization_hash);
+			void migrate_participant(const uint256_t& broadcast_hash, const algorithm::pubkeyhash_t& participant);
+			void clear_migration(const uint256_t& broadcast_hash);
 			bool is_dispatchable() const override;
 			expects_lr<vector<migration_ref>> get_migration_refs(const ledger::transaction_context* context, const ledger::receipt& receipt) const;
 			algorithm::pubkeyhash_t get_new_participant(const ledger::receipt& receipt, bool* requires_new_participant = nullptr) const;
@@ -160,9 +160,9 @@ namespace tangent
 			static std::string_view as_instance_typename();
 		};
 
-		struct validator_adjustment_finalization final : ledger::commitment
+		struct migrate final : ledger::commitment
 		{
-			uint256_t validator_adjustment_hash = 0;
+			uint256_t setup_hash = 0;
 			algorithm::hashsig_t proof;
 
 			expects_lr<void> validate(uint64_t block_number) const override;
@@ -176,7 +176,7 @@ namespace tangent
 			static std::string_view as_instance_typename();
 		};
 
-		struct bridge_attestation final : ledger::commitment
+		struct attestate final : ledger::commitment
 		{
 			struct bridge_transfer
 			{
@@ -230,7 +230,7 @@ namespace tangent
 			static bool commit_to_proof(const superchain::computed_transaction& new_proof, const algorithm::seckey_t& secret_key, uint256_t& commitment_hash, algorithm::hashsig_t& commitment_signature);
 		};
 
-		struct bridge_account final : ledger::commitment
+		struct route final : ledger::commitment
 		{
 			algorithm::pubkeyhash_t manager;
 			string routing_address;
@@ -252,15 +252,15 @@ namespace tangent
 			static std::string_view as_instance_typename();
 		};
 
-		struct bridge_account_finalization final : ledger::commitment
+		struct bind final : ledger::commitment
 		{
 			algorithm::composition::cpubkey_t public_key;
-			uint256_t bridge_account_hash = 0;
+			uint256_t route_hash = 0;
 
 			expects_lr<void> validate(uint64_t block_number) const override;
 			expects_lr<void> execute(ledger::transaction_context* context) const override;
 			expects_promise_rt<void> dispatch(const ledger::transaction_context* context, ledger::dispatch_context* dispatcher) const override;
-			void set_witness(const uint256_t& new_bridge_account_hash, const algorithm::composition::cpubkey_t& new_public_key);
+			void set_witness(const uint256_t& new_route_hash, const algorithm::composition::cpubkey_t& new_public_key);
 			bool store_body(format::wo_stream* stream) const override;
 			bool load_body(format::ro_stream& stream) override;
 			bool recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const override;
@@ -272,7 +272,7 @@ namespace tangent
 			static std::string_view as_instance_typename();
 		};
 
-		struct bridge_withdrawal final : ledger::transaction
+		struct withdraw final : ledger::transaction
 		{
 			vector<std::pair<string, decimal>> to;
 			algorithm::pubkeyhash_t manager;
@@ -298,9 +298,9 @@ namespace tangent
 			static expects_lr<states::witness_account> find_receiving_account(const ledger::transaction_context* context, const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& from_manager, const algorithm::pubkeyhash_t& to_manager);
 		};
 
-		struct bridge_withdrawal_finalization final : ledger::commitment
+		struct broadcast final : ledger::commitment
 		{
-			uint256_t bridge_withdrawal_hash = 0;
+			uint256_t withdraw_hash = 0;
 			expects_lr<superchain::finalized_transaction> proof = layer_exception();
 
 			expects_lr<void> validate(uint64_t block_number) const override;
@@ -308,14 +308,14 @@ namespace tangent
 			bool store_body(format::wo_stream* stream) const override;
 			bool load_body(format::ro_stream& stream) override;
 			bool recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const override;
-			void set_proof(const uint256_t& new_bridge_withdrawal_hash, expects_lr<superchain::finalized_transaction>&& new_proof);
+			void set_proof(const uint256_t& new_withdraw_hash, expects_lr<superchain::finalized_transaction>&& new_proof);
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
-			static expects_lr<void> validate_possible_proof(const ledger::transaction_context* context, const bridge_withdrawal* transaction, const ledger::receipt& receipt, const superchain::prepared_transaction& prepared);
-			static expects_lr<void> validate_finalized_proof(const ledger::transaction_context* context, const bridge_withdrawal* transaction, const ledger::receipt& receipt, const superchain::finalized_transaction& finalized);
+			static expects_lr<void> validate_possible_proof(const ledger::transaction_context* context, const withdraw* transaction, const ledger::receipt& receipt, const superchain::prepared_transaction& prepared);
+			static expects_lr<void> validate_finalized_proof(const ledger::transaction_context* context, const withdraw* transaction, const ledger::receipt& receipt, const superchain::finalized_transaction& finalized);
 		};
 
 		class resolver

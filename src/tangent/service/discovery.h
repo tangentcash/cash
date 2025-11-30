@@ -1,5 +1,6 @@
 #ifndef TAN_SERVICE_DISCOVERY_H
 #define TAN_SERVICE_DISCOVERY_H
+#include <vitex/network/http.h>
 #include "../kernel/control.h"
 
 namespace tangent

@@ -3,6 +3,7 @@
 #include "../storage/mempoolstate.h"
 #include "../storage/chainstate.h"
 #include "../policy/transactions.h"
+#include <random>
 #include <array>
 #define BLOCK_RATE_NORMAL ELEMENTS_MANY
 #define BLOCK_DATA_CONSENSUS (uint32_t)storages::block_details::transactions | (uint32_t)storages::block_details::block_transactions
@@ -936,7 +937,7 @@ namespace tangent
 
 			uint256_t best_commitment_hash = 0;
 			ordered_map<uint256_t, ordered_set<algorithm::pubkeyhash_t>> attesters;
-			auto verification = transactions::bridge_attestation::verify_proof_commitment(&context, batch->asset, batch->commitments, best_commitment_hash, attesters);
+			auto verification = transactions::attestate::verify_proof_commitment(&context, batch->asset, batch->commitments, best_commitment_hash, attesters);
 			if (!verification)
 				return verification;
 
@@ -944,7 +945,7 @@ namespace tangent
 			if (it == batch->proofs.end())
 				return layer_exception("proof required");
 
-			auto* transaction = memory::init<transactions::bridge_attestation>();
+			auto* transaction = memory::init<transactions::attestate>();
 			transaction->asset = batch->asset;
 			transaction->set_computed_proof(std::move(it->second), std::move(batch->commitments));
 			accept_unsigned_transaction(nullptr, transaction, nullptr);
@@ -1391,11 +1392,11 @@ namespace tangent
 				return remote_exception::retry();
 
 			auto context = ledger::transaction_context();
-			auto proof_transaction = context.get_block_transaction<transactions::bridge_account>(proof_hash);
+			auto proof_transaction = context.get_block_transaction<transactions::route>(proof_hash);
 			if (!proof_transaction)
 				return remote_exception("state proof not found");
 
-			auto public_key = find_public_key(((transactions::bridge_account*)*proof_transaction->transaction)->manager);
+			auto public_key = find_public_key(((transactions::route*)*proof_transaction->transaction)->manager);
 			if (!public_key)
 				return remote_exception("manager public key not found");
 
@@ -1443,7 +1444,7 @@ namespace tangent
 				return remote_exception::retry();
 
 			auto context = ledger::transaction_context();
-			auto proof_transaction = context.get_block_transaction<transactions::validator_adjustment>(proof_hash);
+			auto proof_transaction = context.get_block_transaction<transactions::setup>(proof_hash);
 			if (!proof_transaction)
 				return remote_exception("state proof not found");
 
@@ -1507,7 +1508,7 @@ namespace tangent
 				return remote_exception::retry();
 
 			auto context = ledger::transaction_context();
-			auto proof_transaction = context.get_block_transaction<transactions::validator_adjustment>(proof_hash);
+			auto proof_transaction = context.get_block_transaction<transactions::setup>(proof_hash);
 			if (!proof_transaction)
 				return remote_exception("state proof not found");
 
@@ -1545,11 +1546,11 @@ namespace tangent
 				return remote_exception::retry();
 
 			auto context = ledger::transaction_context();
-			auto proof_transaction = context.get_block_transaction<transactions::bridge_account>(proof_hash);
+			auto proof_transaction = context.get_block_transaction<transactions::route>(proof_hash);
 			if (!proof_transaction)
 				return remote_exception("state proof not found");
 
-			auto public_key = find_public_key(((transactions::bridge_account*)*proof_transaction->transaction)->manager);
+			auto public_key = find_public_key(((transactions::route*)*proof_transaction->transaction)->manager);
 			if (!public_key)
 				return remote_exception("manager public key not found");
 
@@ -1604,11 +1605,11 @@ namespace tangent
 				return remote_exception::retry();
 
 			auto context = ledger::transaction_context();
-			auto proof_transaction = context.get_block_transaction<transactions::bridge_withdrawal>(proof_hash);
+			auto proof_transaction = context.get_block_transaction<transactions::withdraw>(proof_hash);
 			if (!proof_transaction)
 				return remote_exception("state proof not found");
 
-			auto public_key = find_public_key(((transactions::bridge_withdrawal*)*proof_transaction->transaction)->manager);
+			auto public_key = find_public_key(((transactions::withdraw*)*proof_transaction->transaction)->manager);
 			if (!public_key)
 				return remote_exception("manager public key not found");
 
@@ -1642,7 +1643,7 @@ namespace tangent
 			for (auto& receipt : logs.finalized)
 			{
 				algorithm::hashsig_t commitment_signature; uint256_t commitment_hash;
-				if (!transactions::bridge_attestation::commit_to_proof(receipt, wallet.secret_key, commitment_hash, commitment_signature))
+				if (!transactions::attestate::commit_to_proof(receipt, wallet.secret_key, commitment_hash, commitment_signature))
 					continue;
 
 				auto finalization = accept_committed_attestation(nullptr, asset, receipt, commitment_signature);
@@ -3127,7 +3128,7 @@ namespace tangent
 		{
 			uint32_t type = transaction.transaction->as_type();
 			auto purpose = transaction.transaction->as_typename();
-			if (type == transactions::validator_adjustment::as_instance_type())
+			if (type == transactions::setup::as_instance_type())
 			{
 				if (transaction.receipt.successful)
 				{
@@ -3569,7 +3570,6 @@ namespace tangent
 		}
 		expects_promise_rt<void> dispatch_context::aggregate_entropy_shares_internal(const ledger::transaction_context* context, entropy_aggregation_state& state, const algorithm::pubkeyhash_t& validator)
 		{
-			auto* bridge_account = (transactions::bridge_account*)context->transaction;
 			if (is_running_on(validator.data))
 				coreturn local_dispatch_context::aggregate_entropy_shares(this, context, state.public_key, state.encrypted_shares);
 
@@ -3891,11 +3891,11 @@ namespace tangent
 		}
 		expects_rt<void> local_dispatch_context::distribute_entropy_shares(ledger::dispatch_context* dispatcher, const ledger::transaction_context* context, const ordered_map<algorithm::pubkeyhash_t, string>& encrypted_shares)
 		{
-			auto* bridge_account = (transactions::bridge_account*)context->transaction;
-			if (!bridge_account)
+			auto* route = (transactions::route*)context->transaction;
+			if (!route)
 				return remote_exception("invalid transaction");
 
-			auto secret = dispatcher->recover_secret_entropy(bridge_account->asset, bridge_account->manager, context->receipt.from);
+			auto secret = dispatcher->recover_secret_entropy(route->asset, route->manager, context->receipt.from);
 			if (!secret)
 				return remote_exception(std::move(secret.error().message()));
 
@@ -3934,11 +3934,11 @@ namespace tangent
 		}
 		expects_rt<void> local_dispatch_context::aggregate_entropy_shares(ledger::dispatch_context* dispatcher, const ledger::transaction_context* context, const algorithm::pubkey_t& public_key, ordered_map<uint256_t, ordered_map<algorithm::pubkeyhash_t, string>>& encrypted_shares)
 		{
-			auto* validator_adjustment = (transactions::validator_adjustment*)context->transaction;
-			if (!validator_adjustment)
+			auto* setup = (transactions::setup*)context->transaction;
+			if (!setup)
 				return remote_exception("invalid transaction");
 
-			auto new_participant = validator_adjustment->get_new_participant(context->receipt);
+			auto new_participant = setup->get_new_participant(context->receipt);
 			if (new_participant.empty())
 				return remote_exception("new participant not found");
 
@@ -3957,7 +3957,7 @@ namespace tangent
 			if (!algorithm::signing::scalar_add_public_key(tweaked_public_key, tweak))
 				return remote_exception("invalid tweaked public key");
 
-			auto migrations = validator_adjustment->get_migration_refs(context, context->receipt);
+			auto migrations = setup->get_migration_refs(context, context->receipt);
 			if (!migrations)
 				return remote_exception(std::move(migrations.error().message()));
 
@@ -3971,7 +3971,7 @@ namespace tangent
 					return remote_exception(std::move(secret.error().message()));
 				
 				auto ref_hash = secret->as_ref_hash(); bool must_update = false;
-				for (auto& [bridge_withdrawal_finalization_hash, participant] : validator_adjustment->migrations)
+				for (auto& [broadcast_hash, participant] : setup->migrations)
 				{
 					if (migration.account.group.find(participant) == migration.account.group.end())
 						continue;
@@ -4016,11 +4016,11 @@ namespace tangent
 		}
 		expects_rt<void> local_dispatch_context::recover_entropy(ledger::dispatch_context* dispatcher, const ledger::transaction_context* context, algorithm::hashsig_t& proof, const ordered_map<uint256_t, ordered_map<algorithm::pubkeyhash_t, string>>& encrypted_shares, const ordered_map<uint256_t, string>& encrypted_entropies)
 		{
-			auto* validator_adjustment = (transactions::validator_adjustment*)context->transaction;
-			if (!validator_adjustment)
+			auto* setup = (transactions::setup*)context->transaction;
+			if (!setup)
 				return remote_exception("invalid transaction");
 
-			auto new_participant = validator_adjustment->get_new_participant(context->receipt);
+			auto new_participant = setup->get_new_participant(context->receipt);
 			if (new_participant.empty())
 				return remote_exception("new participant not found");
 
@@ -4033,7 +4033,7 @@ namespace tangent
 			if (!algorithm::signing::scalar_add_secret_key(tweaked_secret_key, tweak))
 				return remote_exception("invalid tweaked secret key");
 
-			auto migrations = validator_adjustment->get_migration_refs(context, context->receipt);
+			auto migrations = setup->get_migration_refs(context, context->receipt);
 			if (!migrations)
 				return remote_exception(std::move(migrations.error().message()));
 
@@ -4138,27 +4138,27 @@ namespace tangent
 		}
 		expects_rt<void> local_dispatch_context::aggregate_public_key(ledger::dispatch_context* dispatcher, const ledger::transaction_context* context, ordered_map<algorithm::pubkey_t, string>& encrypted_shares, algorithm::composition::public_state* aggregator)
 		{
-			auto* bridge_account = (transactions::bridge_account*)context->transaction;
-			if (!bridge_account)
+			auto* route = (transactions::route*)context->transaction;
+			if (!route)
 				return remote_exception("invalid transaction");
 
-			auto* chain = superchain::server_node::get()->get_chainparams(bridge_account->asset);
+			auto* chain = superchain::server_node::get()->get_chainparams(route->asset);
 			if (!chain)
 				return remote_exception("invalid operation");
 
-			auto secret = dispatcher->recover_secret_entropy(bridge_account->asset, bridge_account->manager, context->receipt.from);
+			auto secret = dispatcher->recover_secret_entropy(route->asset, route->manager, context->receipt.from);
 			if (!secret)
 			{
 				auto& runner_wallet = dispatcher->get_runner_wallet();
 				format::wo_stream scalar;
 				scalar.write_integer(algorithm::hashing::hash256i(runner_wallet.secret_key.view()));
-				scalar.write_integer(algorithm::hashing::hash256i(bridge_account->manager.view()));
+				scalar.write_integer(algorithm::hashing::hash256i(route->manager.view()));
 				scalar.write_integer(algorithm::hashing::hash256i(context->receipt.from.view()));
-				scalar.write_integer(bridge_account->asset);
+				scalar.write_integer(route->asset);
 
 				algorithm::storage_type<uint8_t, 64> entropy;
 				algorithm::hashing::hash512((uint8_t*)scalar.data.data(), scalar.data.size(), entropy.data);
-				secret = dispatcher->apply_secret_entropy(bridge_account->asset, bridge_account->manager, context->receipt.from, entropy, { });
+				secret = dispatcher->apply_secret_entropy(route->asset, route->manager, context->receipt.from, entropy, { });
 				if (!secret)
 					return remote_exception(std::move(secret.error().message()));
 			}
@@ -4171,7 +4171,7 @@ namespace tangent
 			if (!derivation)
 				return remote_exception(std::move(derivation.error().message()));
 
-			auto group = bridge_account->get_group(context->receipt);
+			auto group = route->get_group(context->receipt);
 			if (group.size() < protocol::now().policy.participation.min_per_account)
 				return remote_exception("group is too small");
 
@@ -4233,11 +4233,11 @@ namespace tangent
 		}
 		expects_rt<void> local_dispatch_context::aggregate_signature(ledger::dispatch_context* dispatcher, const ledger::transaction_context* context, superchain::prepared_transaction& message, algorithm::composition::signature_state* aggregator)
 		{
-			auto* bridge_withdrawal = (transactions::bridge_withdrawal*)context->transaction;
-			if (!bridge_withdrawal)
+			auto* withdraw = (transactions::withdraw*)context->transaction;
+			if (!withdraw)
 				return remote_exception("invalid transaction");
 
-			auto validation = transactions::bridge_withdrawal_finalization::validate_possible_proof(context, bridge_withdrawal, context->receipt, message);
+			auto validation = transactions::broadcast::validate_possible_proof(context, withdraw, context->receipt, message);
 			if (!validation)
 				return remote_exception(std::move(validation.error().message()));
 
@@ -4245,11 +4245,11 @@ namespace tangent
 			if (!input)
 				return remote_exception("invalid operation");
 
-			auto witness = context->get_witness_account_tagged(bridge_withdrawal->asset, input->utxo.link.address, 0);
+			auto witness = context->get_witness_account_tagged(withdraw->asset, input->utxo.link.address, 0);
 			if (!witness)
 				return remote_exception(std::move(witness.error().message()));
 
-			auto account = context->get_bridge_account(bridge_withdrawal->asset, witness->manager, witness->owner);
+			auto account = context->get_bridge_account(withdraw->asset, witness->manager, witness->owner);
 			if (!account)
 				return expectation::met;
 

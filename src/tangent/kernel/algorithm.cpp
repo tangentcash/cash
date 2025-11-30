@@ -1086,6 +1086,22 @@ namespace tangent
 			size_t size = value.bytes();
 			return var::set::string(format::util::encode_0xhex(std::string_view((char*)data + (sizeof(data) - size), size)));
 		}
+		expects_lr<string> encoding::pack_program(const std::string_view& unpacked_code)
+		{
+			auto packed_code = codec::compress(unpacked_code, compression::best_compression);
+			if (!packed_code)
+				return layer_exception(std::move(packed_code.error().message()));
+
+			return *packed_code;
+		}
+		expects_lr<string> encoding::unpack_program(const std::string_view& packed_code)
+		{
+			auto unpacked_code = codec::decompress(packed_code);
+			if (!unpacked_code)
+				return layer_exception(std::move(unpacked_code.error().message()));
+
+			return *unpacked_code;
+		}
 
 		uint256_t hashing::sha256ci(const uint256_t& a, const uint256_t& b)
 		{
@@ -1205,6 +1221,17 @@ namespace tangent
 				result = upper;
 
 			return static_cast<uint64_t>(result);
+		}
+		string hashing::ppc512(const std::string_view& unpacked_code)
+		{
+			static std::string_view lines = "\r\n";
+			static std::string_view erasable = " \r\n\t\'\"()<>=%&^*/+-,.!?:;@~";
+			static std::string_view quotes = "\"'`";
+			string hashable = string(unpacked_code);
+			stringify::replace_in_between(stringify::trim(hashable), "/*", "*/", "", false);
+			stringify::replace_starts_with_ends_of(stringify::trim(hashable), "//", lines, "");
+			stringify::compress(stringify::trim(hashable), erasable, quotes);
+			return hash512((uint8_t*)hashable.data(), hashable.size());
 		}
 
 		asset_id asset::native()

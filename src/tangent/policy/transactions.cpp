@@ -1,6 +1,5 @@
 #include "transactions.h"
-#include "../kernel/block.h"
-#include "../kernel/cell.h"
+#include "../kernel/script.h"
 #include "../service/superchain.h"
 
 namespace tangent
@@ -141,7 +140,7 @@ namespace tangent
 			return "transfer";
 		}
 
-		expects_lr<void> upgrade::validate(uint64_t block_number) const
+		expects_lr<void> deploy::validate(uint64_t block_number) const
 		{
 			auto type = get_data_type();
 			if (!type)
@@ -151,7 +150,7 @@ namespace tangent
 
 			return ledger::transaction::validate(block_number);
 		}
-		expects_lr<void> upgrade::execute(ledger::transaction_context* context) const
+		expects_lr<void> deploy::execute(ledger::transaction_context* context) const
 		{
 			auto validation = transaction::execute(context);
 			if (!validation)
@@ -160,17 +159,17 @@ namespace tangent
 			auto account = get_account();
 			auto storage = std::string_view(data).substr(1);
 			auto type = get_data_type().or_else(data_type::hashcode);
-			auto* factory = cell::factory::get();
-			auto pmodule = cell::cmodule(nullptr);
+			auto* factory = script::factory::get();
+			auto pmodule = script::cmodule(nullptr);
 			switch (type)
 			{
 				case data_type::program:
 				{
-					auto code = factory->unpack(storage);
+					auto code = algorithm::encoding::unpack_program(storage);
 					if (!code)
 						return code.error();
 
-					auto hashcode = factory->hashcode(*code);
+					auto hashcode = algorithm::hashing::ppc512(*code);
 					auto result = factory->compile_module(format::util::encode_0xhex(hashcode), [&]() mutable { return std::move(code); });
 					if (!result)
 						return result.error();
@@ -213,16 +212,16 @@ namespace tangent
 					return layer_exception("invalid data type");
 			}
 
-			auto script = cell::program(context, pmodule->get_module());
-			return script.execute(cell::ccall::upgrade_call, script.upgrade_function(), args, nullptr);
+			auto script = script::program(context, pmodule->get_module());
+			return script.execute(script::ccall::deploy_call, script.deploy_function(), args, nullptr);
 		}
-		bool upgrade::store_body(format::wo_stream* stream) const
+		bool deploy::store_body(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_string(data);
 			return format::variables_util::serialize_merge_into(args, stream);
 		}
-		bool upgrade::load_body(format::ro_stream& stream)
+		bool deploy::load_body(format::ro_stream& stream)
 		{
 			if (!stream.read_string(stream.read_type(), &data))
 				return false;
@@ -230,7 +229,7 @@ namespace tangent
 			args.clear();
 			return format::variables_util::deserialize_merge_from(stream, &args);
 		}
-		bool upgrade::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
+		bool deploy::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
 		{
 			size_t offset = 0;
 			parties.insert(get_account());
@@ -250,21 +249,21 @@ namespace tangent
 			}
 			return true;
 		}
-		void upgrade::from_program(const std::string_view& new_data, format::variables&& new_args)
+		void deploy::from_program(const std::string_view& new_data, format::variables&& new_args)
 		{
 			args = std::move(new_args);
 			data.clear();
 			data.assign(1, (char)data_type::program);
-			data.append(cell::factory::get()->pack(new_data).or_else(string()));
+			data.append(algorithm::encoding::pack_program(new_data).or_else(string()));
 		}
-		void upgrade::from_hashcode(const std::string_view& new_data, format::variables&& new_args)
+		void deploy::from_hashcode(const std::string_view& new_data, format::variables&& new_args)
 		{
 			args = std::move(new_args);
 			data.clear();
 			data.assign(1, (char)data_type::hashcode);
 			data.append(new_data.substr(0, 64));
 		}
-		algorithm::pubkeyhash_t upgrade::get_account() const
+		algorithm::pubkeyhash_t deploy::get_account() const
 		{
 			auto message = as_message();
 			message.write_integer(0xFFFFFFFF);
@@ -273,7 +272,7 @@ namespace tangent
 			algorithm::hashing::hash160((uint8_t*)message.data.data(), message.data.size(), account.data);
 			return account;
 		}
-		option<upgrade::data_type> upgrade::get_data_type() const
+		option<deploy::data_type> deploy::get_data_type() const
 		{
 			if (data.empty())
 				return optional::none;
@@ -288,7 +287,7 @@ namespace tangent
 					return optional::none;
 			}
 		}
-		uptr<schema> upgrade::as_schema() const
+		uptr<schema> deploy::as_schema() const
 		{
 			std::string_view name;
 			switch (get_data_type().or_else((data_type)(uint8_t)0))
@@ -310,22 +309,22 @@ namespace tangent
 			data->set("args", format::variables_util::serialize(args));
 			return data;
 		}
-		uint32_t upgrade::as_type() const
+		uint32_t deploy::as_type() const
 		{
 			return as_instance_type();
 		}
-		std::string_view upgrade::as_typename() const
+		std::string_view deploy::as_typename() const
 		{
 			return as_instance_typename();
 		}
-		uint32_t upgrade::as_instance_type()
+		uint32_t deploy::as_instance_type()
 		{
 			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
 			return hash;
 		}
-		std::string_view upgrade::as_instance_typename()
+		std::string_view deploy::as_instance_typename()
 		{
-			return "upgrade";
+			return "deploy";
 		}
 
 		expects_lr<void> call::validate(uint64_t block_number) const
@@ -344,13 +343,13 @@ namespace tangent
 			if (!validation)
 				return validation.error();
 
-			return subexecute(context, [this, context](asIScriptModule* module_ptr)
+			return subexecute(context, [this, context](void* module_ptr)
 			{
-				auto script = cell::program(context, module_ptr);
-				return script.execute(cell::ccall::paying_call, function, args, nullptr);
+				auto script = script::program(context, (asIScriptModule*)module_ptr);
+				return script.execute(script::ccall::paying_call, function, args, nullptr);
 			});
 		}
-		expects_lr<void> call::subexecute(ledger::transaction_context* context, std::function<expects_lr<void>(asIScriptModule*)>&& executor) const
+		expects_lr<void> call::subexecute(ledger::transaction_context* context, std::function<expects_lr<void>(void*)>&& executor) const
 		{
 			VI_ASSERT(executor, "executor should be set");
 			auto index = context->get_account_program(callable);
@@ -362,7 +361,7 @@ namespace tangent
 			if (!program)
 				return layer_exception("program is not stored");
 
-			auto pmodule = cell::factory::get()->compile_module(format::util::encode_0xhex(hashcode), [&]() { return program->as_code(); });
+			auto pmodule = script::factory::get()->compile_module(format::util::encode_0xhex(hashcode), [&]() { return program->as_code(); });
 			if (!pmodule)
 				return pmodule.error();
 
@@ -891,15 +890,15 @@ namespace tangent
 				transaction.asset = asset;
 		}
 
-		expects_lr<void> validator_adjustment::validate(uint64_t block_number) const
+		expects_lr<void> setup::validate(uint64_t block_number) const
 		{
 			if (migrations.empty() && attestations.empty() && !participation && !production)
 				return layer_exception("invalid validator change");
 
-			for (auto& [bridge_withdrawal_finalization_hash, participant] : migrations)
+			for (auto& [broadcast_hash, participant] : migrations)
 			{
-				if (!bridge_withdrawal_finalization_hash)
-					return layer_exception("invalid bridge withdrawal finalization hash");
+				if (!broadcast_hash)
+					return layer_exception("invalid broadcast hash");
 
 				if (participant.empty())
 					return layer_exception("invalid participant");
@@ -935,7 +934,7 @@ namespace tangent
 
 			return ledger::transaction::validate(block_number);
 		}
-		expects_lr<void> validator_adjustment::execute(ledger::transaction_context* context) const
+		expects_lr<void> setup::execute(ledger::transaction_context* context) const
 		{
 			auto validation = transaction::execute(context);
 			if (!validation)
@@ -944,15 +943,15 @@ namespace tangent
 			decimal threshold = decimal::zero();
 			ordered_set<uint256_t> accounts;
 			ordered_set<algorithm::pubkeyhash_t> exclusion;
-			for (auto& [bridge_withdrawal_finalization_hash, participant] : migrations)
+			for (auto& [broadcast_hash, participant] : migrations)
 			{
-				auto parent = context->get_block_transaction<bridge_withdrawal_finalization>(bridge_withdrawal_finalization_hash, true);
+				auto parent = context->get_block_transaction<broadcast>(broadcast_hash, true);
 				if (!parent)
-					return layer_exception("bridge withdrawal finalization transaction not found");
+					return layer_exception("broadcast transaction not found");
 
-				auto* parent_transaction = (bridge_withdrawal_finalization*)*parent->transaction;
+				auto* parent_transaction = (broadcast*)*parent->transaction;
 				if (parent_transaction->proof || parent->receipt.from != context->receipt.from)
-					return layer_exception("bridge withdrawal finalization transaction not applicable");
+					return layer_exception("broadcast transaction not applicable");
 
 				auto info = context->get_validator_participation(participant);
 				if (!info)
@@ -1098,13 +1097,13 @@ namespace tangent
 				return committee.error();
 
 			auto& new_manager = committee->front();
-			auto event = context->emit_event<validator_adjustment>({ format::variable(requires_self_migration), format::variable(new_manager.owner.view()) });
+			auto event = context->emit_event<setup>({ format::variable(requires_self_migration), format::variable(new_manager.owner.view()) });
 			if (!event)
 				return event;
 
 			return expectation::met;
 		}
-		expects_promise_rt<void> validator_adjustment::dispatch(const ledger::transaction_context* context, ledger::dispatch_context* dispatcher) const
+		expects_promise_rt<void> setup::dispatch(const ledger::transaction_context* context, ledger::dispatch_context* dispatcher) const
 		{
 			if (!dispatcher->is_running_on(context->receipt.from))
 				return expects_promise_rt<void>(expectation::met);
@@ -1218,21 +1217,21 @@ namespace tangent
 				else if (!result)
 					coreturn result.error();
 
-				auto* transaction = memory::init<validator_adjustment_finalization>();
+				auto* transaction = memory::init<migrate>();
 				transaction->asset = asset;
-				transaction->validator_adjustment_hash = context->receipt.transaction_hash;
+				transaction->setup_hash = context->receipt.transaction_hash;
 				transaction->proof = recovery_state.proof;
 				dispatcher->emit_transaction(transaction);
 				coreturn expects_promise_rt<void>(expectation::met);
 			});
 		}
-		bool validator_adjustment::store_body(format::wo_stream* stream) const
+		bool setup::store_body(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_integer((uint8_t)migrations.size());
-			for (auto& [bridge_withdrawal_finalization_hash, participant] : migrations)
+			for (auto& [broadcast_hash, participant] : migrations)
 			{
-				stream->write_integer(bridge_withdrawal_finalization_hash);
+				stream->write_integer(broadcast_hash);
 				stream->write_string(participant.optimized_view());
 			}
 			stream->write_integer((uint8_t)attestations.size());
@@ -1267,7 +1266,7 @@ namespace tangent
 				stream->write_decimal(*production);
 			return true;
 		}
-		bool validator_adjustment::load_body(format::ro_stream& stream)
+		bool setup::load_body(format::ro_stream& stream)
 		{
 			uint8_t migrations_size = 0;
 			if (!stream.read_integer(stream.read_type(), &migrations_size))
@@ -1276,15 +1275,15 @@ namespace tangent
 			migrations.clear();
 			for (uint16_t i = 0; i < migrations_size; i++)
 			{
-				uint256_t bridge_withdrawal_finalization_hash;
-				if (!stream.read_integer(stream.read_type(), &bridge_withdrawal_finalization_hash))
+				uint256_t broadcast_hash;
+				if (!stream.read_integer(stream.read_type(), &broadcast_hash))
 					return false;
 
 				algorithm::pubkeyhash_t participant; string participant_assembly;
 				if (!stream.read_string(stream.read_type(), &participant_assembly) || !algorithm::encoding::decode_bytes(participant_assembly, participant.data, sizeof(participant.data)))
 					return false;
 
-				migrations[bridge_withdrawal_finalization_hash] = participant;
+				migrations[broadcast_hash] = participant;
 			}
 
 			uint8_t attestations_size = 0;
@@ -1399,9 +1398,9 @@ namespace tangent
 
 			return true;
 		}
-		bool validator_adjustment::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
+		bool setup::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
 		{
-			for (auto& [bridge_withdrawal_finalization_hash, participant] : migrations)
+			for (auto& [broadcast_hash, participant] : migrations)
 				parties.insert(participant);
 
 			auto participant = get_new_participant(receipt);
@@ -1410,35 +1409,35 @@ namespace tangent
 
 			return true;
 		}
-		void validator_adjustment::allocate_production_stake(const decimal& value)
+		void setup::allocate_production_stake(const decimal& value)
 		{
 			production = value;
 		}
-		void validator_adjustment::disable_production()
+		void setup::disable_production()
 		{
 			production = decimal::nan();
 		}
-		void validator_adjustment::standby_on_production()
+		void setup::standby_on_production()
 		{
 			production = optional::none;
 		}
-		void validator_adjustment::allocate_participation_stake(const decimal& value)
+		void setup::allocate_participation_stake(const decimal& value)
 		{
 			participation = value;
 		}
-		void validator_adjustment::disable_participation()
+		void setup::disable_participation()
 		{
 			participation = decimal::nan();
 		}
-		void validator_adjustment::standby_on_participation()
+		void setup::standby_on_participation()
 		{
 			participation = optional::none;
 		}
-		void validator_adjustment::allocate_attestation_stake(const algorithm::asset_id& asset, const decimal& value)
+		void setup::allocate_attestation_stake(const algorithm::asset_id& asset, const decimal& value)
 		{
 			attestations[asset].stake = value;
 		}
-		void validator_adjustment::configure_attestation_security(const algorithm::asset_id& asset, uint8_t new_security_level, const decimal& new_participation_threshold, bool new_accepts_account_requests, bool new_accepts_withdrawal_requests)
+		void setup::configure_attestation_security(const algorithm::asset_id& asset, uint8_t new_security_level, const decimal& new_participation_threshold, bool new_accepts_account_requests, bool new_accepts_withdrawal_requests)
 		{
 			auto& setup = attestations[asset];
 			setup.security_level = new_security_level;
@@ -1446,36 +1445,36 @@ namespace tangent
 			setup.accepts_account_requests = new_accepts_account_requests;
 			setup.accepts_withdrawal_requests = new_accepts_withdrawal_requests;
 		}
-		void validator_adjustment::configure_attestation_reward(const algorithm::asset_id& asset, const decimal& new_incoming_fee, const decimal& new_outgoing_fee)
+		void setup::configure_attestation_reward(const algorithm::asset_id& asset, const decimal& new_incoming_fee, const decimal& new_outgoing_fee)
 		{
 			auto& setup = attestations[asset];
 			setup.incoming_fee = new_incoming_fee;
 			setup.outgoing_fee = new_outgoing_fee;
 		}
-		void validator_adjustment::disable_attestation(const algorithm::asset_id& asset)
+		void setup::disable_attestation(const algorithm::asset_id& asset)
 		{
 			attestations[asset].stake = decimal::nan();
 		}
-		void validator_adjustment::standby_on_attestation(const algorithm::asset_id& asset)
+		void setup::standby_on_attestation(const algorithm::asset_id& asset)
 		{
 			attestations.erase(asset);
 		}
-		void validator_adjustment::migrate_participant(const uint256_t& bridge_withdrawal_finalization_hash, const algorithm::pubkeyhash_t& participant)
+		void setup::migrate_participant(const uint256_t& broadcast_hash, const algorithm::pubkeyhash_t& participant)
 		{
-			migrations[bridge_withdrawal_finalization_hash] = participant;
+			migrations[broadcast_hash] = participant;
 		}
-		void validator_adjustment::clear_migration(const uint256_t& bridge_withdrawal_finalization_hash)
+		void setup::clear_migration(const uint256_t& broadcast_hash)
 		{
-			migrations.erase(bridge_withdrawal_finalization_hash);
+			migrations.erase(broadcast_hash);
 		}
-		bool validator_adjustment::is_dispatchable() const
+		bool setup::is_dispatchable() const
 		{
 			return true;
 		}
-		expects_lr<vector<validator_adjustment::migration_ref>> validator_adjustment::get_migration_refs(const ledger::transaction_context* context, const ledger::receipt& receipt) const
+		expects_lr<vector<setup::migration_ref>> setup::get_migration_refs(const ledger::transaction_context* context, const ledger::receipt& receipt) const
 		{
 			vector<migration_ref> results;
-			auto* event = receipt.find_event<validator_adjustment>();
+			auto* event = receipt.find_event<setup>();
 			if (!event || event->size() != 2)
 				return expects_lr<vector<migration_ref>>(std::move(results));
 			
@@ -1503,9 +1502,9 @@ namespace tangent
 				}
 			}
 
-			for (auto& [bridge_withdrawal_finalization_hash, participant] : migrations)
+			for (auto& [broadcast_hash, participant] : migrations)
 			{
-				auto parent = context->get_block_transaction<bridge_withdrawal_finalization>(bridge_withdrawal_finalization_hash, true);
+				auto parent = context->get_block_transaction<broadcast>(broadcast_hash, true);
 				if (!parent)
 					return layer_exception("invalid migration reasoning transaction");
 
@@ -1536,32 +1535,32 @@ namespace tangent
 
 			return expects_lr<vector<migration_ref>>(std::move(results));
 		}
-		algorithm::pubkeyhash_t validator_adjustment::get_new_participant(const ledger::receipt& receipt, bool* requires_new_participant) const
+		algorithm::pubkeyhash_t setup::get_new_participant(const ledger::receipt& receipt, bool* requires_new_participant) const
 		{
 			auto new_participant = algorithm::pubkeyhash_t();
-			auto* event = receipt.find_event<validator_adjustment>();
+			auto* event = receipt.find_event<setup>();
 			if (event && event->size() == 2 && event->back().as_string().size() == sizeof(algorithm::pubkeyhash_t))
 				new_participant = algorithm::pubkeyhash_t(event->back().as_blob());
 			if (requires_new_participant != nullptr)
 				*requires_new_participant = event != nullptr;
 			return new_participant;
 		}
-		uptr<schema> validator_adjustment::as_schema() const
+		uptr<schema> setup::as_schema() const
 		{
 			schema* data = ledger::transaction::as_schema().reset();
 			if (!migrations.empty())
 			{
 				auto* migrations_data = data->set("bridge_migrations", var::set::array());
-				for (auto& [bridge_withdrawal_finalization_hash, participant] : migrations)
+				for (auto& [broadcast_hash, participant] : migrations)
 				{
 					auto* migration_data = migrations_data->push(var::set::object());
-					migration_data->set("bridge_withdrawal_finalization_hash", var::string(algorithm::encoding::encode_0xhex256(bridge_withdrawal_finalization_hash)));
+					migration_data->set("broadcast_hash", var::string(algorithm::encoding::encode_0xhex256(broadcast_hash)));
 					migration_data->set("participant", algorithm::signing::serialize_address(participant));
 				}
 			}
 			if (!attestations.empty())
 			{
-				auto* attestations_data = data->set("bridge_attestations", var::set::array());
+				auto* attestations_data = data->set("attestations", var::set::array());
 				for (auto& [asset, setup] : attestations)
 				{
 					auto* attestation_data = attestations_data->push(var::set::object());
@@ -1581,51 +1580,51 @@ namespace tangent
 				data->set("block_production", production->is_zero() || production->is_positive() ? var::decimal(*production) : var::boolean(false));
 			return data;
 		}
-		uint32_t validator_adjustment::as_type() const
+		uint32_t setup::as_type() const
 		{
 			return as_instance_type();
 		}
-		std::string_view validator_adjustment::as_typename() const
+		std::string_view setup::as_typename() const
 		{
 			return as_instance_typename();
 		}
-		uint32_t validator_adjustment::as_instance_type()
+		uint32_t setup::as_instance_type()
 		{
 			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
 			return hash;
 		}
-		std::string_view validator_adjustment::as_instance_typename()
+		std::string_view setup::as_instance_typename()
 		{
-			return "validator_adjustment";
+			return "setup";
 		}
 
-		expects_lr<void> validator_adjustment_finalization::validate(uint64_t block_number) const
+		expects_lr<void> migrate::validate(uint64_t block_number) const
 		{
-			if (!validator_adjustment_hash)
-				return layer_exception("invalid validator adjustment transaction");
+			if (!setup_hash)
+				return layer_exception("invalid setup transaction");
 
 			if (proof.empty())
 				return layer_exception("invalid proof");
 
 			return ledger::commitment::validate(block_number);
 		}
-		expects_lr<void> validator_adjustment_finalization::execute(ledger::transaction_context* context) const
+		expects_lr<void> migrate::execute(ledger::transaction_context* context) const
 		{
 			auto validation = commitment::execute(context);
 			if (!validation)
 				return validation.error();
 
-			auto event = context->apply_witness_event(validator_adjustment_hash, context->receipt.transaction_hash);
+			auto event = context->apply_witness_event(setup_hash, context->receipt.transaction_hash);
 			if (!event)
 				return event.error();
 
-			auto parent = context->get_block_transaction<validator_adjustment>(validator_adjustment_hash);
+			auto parent = context->get_block_transaction<setup>(setup_hash);
 			if (!parent)
-				return layer_exception("validator adjustment transaction not found");
+				return layer_exception("setup transaction not found");
 
-			auto* parent_transaction = (validator_adjustment*)*parent->transaction;
+			auto* parent_transaction = (setup*)*parent->transaction;
 			if (parent->receipt.from != context->receipt.from)
-				return layer_exception("validator adjustment transaction not applicable");
+				return layer_exception("setup transaction not applicable");
 
 			uint8_t transaction_hash_data[32];
 			parent->receipt.transaction_hash.encode(transaction_hash_data);
@@ -1671,16 +1670,16 @@ namespace tangent
 
 			return expectation::met;
 		}
-		bool validator_adjustment_finalization::store_body(format::wo_stream* stream) const
+		bool migrate::store_body(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
-			stream->write_integer(validator_adjustment_hash);
+			stream->write_integer(setup_hash);
 			stream->write_string(proof.optimized_view());
 			return true;
 		}
-		bool validator_adjustment_finalization::load_body(format::ro_stream& stream)
+		bool migrate::load_body(format::ro_stream& stream)
 		{
-			if (!stream.read_integer(stream.read_type(), &validator_adjustment_hash))
+			if (!stream.read_integer(stream.read_type(), &setup_hash))
 				return false;
 
 			string proof_assembly;
@@ -1689,32 +1688,32 @@ namespace tangent
 
 			return true;
 		}
-		uptr<schema> validator_adjustment_finalization::as_schema() const
+		uptr<schema> migrate::as_schema() const
 		{
 			schema* data = ledger::commitment::as_schema().reset();
-			data->set("validator_adjustment_hash", var::string(algorithm::encoding::encode_0xhex256(validator_adjustment_hash)));
+			data->set("setup_hash", var::string(algorithm::encoding::encode_0xhex256(setup_hash)));
 			data->set("proof", proof.empty() ? var::null() : var::string(format::util::encode_0xhex(proof.view())));
 			return data;
 		}
-		uint32_t validator_adjustment_finalization::as_type() const
+		uint32_t migrate::as_type() const
 		{
 			return as_instance_type();
 		}
-		std::string_view validator_adjustment_finalization::as_typename() const
+		std::string_view migrate::as_typename() const
 		{
 			return as_instance_typename();
 		}
-		uint32_t validator_adjustment_finalization::as_instance_type()
+		uint32_t migrate::as_instance_type()
 		{
 			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
 			return hash;
 		}
-		std::string_view validator_adjustment_finalization::as_instance_typename()
+		std::string_view migrate::as_instance_typename()
 		{
-			return "validator_adjustment_finalization";
+			return "migrate";
 		}
 
-		expects_lr<void> bridge_attestation::validate(uint64_t block_number) const
+		expects_lr<void> attestate::validate(uint64_t block_number) const
 		{
 			if (!algorithm::asset::token_of(asset).empty())
 				return layer_exception("invalid asset");
@@ -1765,7 +1764,7 @@ namespace tangent
 
 			return ledger::commitment::validate(block_number);
 		}
-		expects_lr<void> bridge_attestation::execute(ledger::transaction_context* context) const
+		expects_lr<void> attestate::execute(ledger::transaction_context* context) const
 		{
 			auto validation = commitment::execute(context);
 			if (!validation)
@@ -2059,7 +2058,7 @@ namespace tangent
 
 			return context->emit_witness(asset, proof.block_id);
 		}
-		bool bridge_attestation::store_body(format::wo_stream* stream) const
+		bool attestate::store_body(format::wo_stream* stream) const
 		{
 			if (!proof.store_payload(stream))
 				return false;
@@ -2074,7 +2073,7 @@ namespace tangent
 			}
 			return true;
 		}
-		bool bridge_attestation::load_body(format::ro_stream& stream)
+		bool attestate::load_body(format::ro_stream& stream)
 		{
 			if (!proof.load_payload(stream))
 				return false;
@@ -2107,7 +2106,7 @@ namespace tangent
 
 			return true;
 		}
-		bool bridge_attestation::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
+		bool attestate::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
 		{
 			for (auto& event : receipt.find_events<states::account_balance>())
 			{
@@ -2121,7 +2120,7 @@ namespace tangent
 			}
 			return true;
 		}
-		void bridge_attestation::set_finalized_proof(uint64_t block_id, const std::string_view& transaction_id, const vector<superchain::value_transfer>& inputs, const vector<superchain::value_transfer>& outputs)
+		void attestate::set_finalized_proof(uint64_t block_id, const std::string_view& transaction_id, const vector<superchain::value_transfer>& inputs, const vector<superchain::value_transfer>& outputs)
 		{
 			auto* chain = superchain::server_node::get()->get_chainparams(asset);
 			superchain::computed_transaction witness;
@@ -2139,12 +2138,12 @@ namespace tangent
 			}
 			set_computed_proof(std::move(witness), { });
 		}
-		void bridge_attestation::set_computed_proof(superchain::computed_transaction&& new_proof, ordered_map<uint256_t, ordered_set<algorithm::hashsig_t>>&& new_commitments)
+		void attestate::set_computed_proof(superchain::computed_transaction&& new_proof, ordered_map<uint256_t, ordered_set<algorithm::hashsig_t>>&& new_commitments)
 		{
 			proof = std::move(new_proof);
 			commitments = std::move(new_commitments);
 		}
-		bool bridge_attestation::add_commitment(const algorithm::seckey_t& secret_key)
+		bool attestate::add_commitment(const algorithm::seckey_t& secret_key)
 		{
 			uint256_t commitment_hash;
 			algorithm::hashsig_t commitment_signature;
@@ -2154,7 +2153,7 @@ namespace tangent
 			commitments[commitment_hash].insert(commitment_signature);
 			return true;
 		}
-		uptr<schema> bridge_attestation::as_schema() const
+		uptr<schema> attestate::as_schema() const
 		{
 			schema* data = ledger::commitment::as_schema().reset();
 			schema* commitments_data = data->set("commitments", var::set::object());
@@ -2167,24 +2166,24 @@ namespace tangent
 			data->set("proof", proof.as_schema().reset());
 			return data;
 		}
-		uint32_t bridge_attestation::as_type() const
+		uint32_t attestate::as_type() const
 		{
 			return as_instance_type();
 		}
-		std::string_view bridge_attestation::as_typename() const
+		std::string_view attestate::as_typename() const
 		{
 			return as_instance_typename();
 		}
-		uint32_t bridge_attestation::as_instance_type()
+		uint32_t attestate::as_instance_type()
 		{
 			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
 			return hash;
 		}
-		std::string_view bridge_attestation::as_instance_typename()
+		std::string_view attestate::as_instance_typename()
 		{
-			return "bridge_attestation";
+			return "attestate";
 		}
-		expects_lr<void> bridge_attestation::verify_proof_commitment(ledger::transaction_context* context, const algorithm::asset_id& asset, const ordered_map<uint256_t, ordered_set<algorithm::hashsig_t>>& commitments, uint256_t& best_commitment_hash, ordered_map<uint256_t, ordered_set<algorithm::pubkeyhash_t>>& attesters)
+		expects_lr<void> attestate::verify_proof_commitment(ledger::transaction_context* context, const algorithm::asset_id& asset, const ordered_map<uint256_t, ordered_set<algorithm::hashsig_t>>& commitments, uint256_t& best_commitment_hash, ordered_map<uint256_t, ordered_set<algorithm::pubkeyhash_t>>& attesters)
 		{
 			ordered_set<algorithm::pubkeyhash_t> duplicates;
 			best_commitment_hash = 0;
@@ -2254,13 +2253,13 @@ namespace tangent
 
 			return expectation::met;
 		}
-		bool bridge_attestation::commit_to_proof(const superchain::computed_transaction& new_proof, const algorithm::seckey_t& secret_key, uint256_t& commitment_hash, algorithm::hashsig_t& signature)
+		bool attestate::commit_to_proof(const superchain::computed_transaction& new_proof, const algorithm::seckey_t& secret_key, uint256_t& commitment_hash, algorithm::hashsig_t& signature)
 		{
 			commitment_hash = new_proof.as_hash();
 			return algorithm::signing::sign(commitment_hash, secret_key, signature);
 		}
 
-		expects_lr<void> bridge_account::validate(uint64_t block_number) const
+		expects_lr<void> route::validate(uint64_t block_number) const
 		{
 			if (!algorithm::asset::token_of(asset).empty())
 				return layer_exception("invalid asset");
@@ -2270,7 +2269,7 @@ namespace tangent
 
 			return ledger::commitment::validate(block_number);
 		}
-		expects_lr<void> bridge_account::execute(ledger::transaction_context* context) const
+		expects_lr<void> route::execute(ledger::transaction_context* context) const
 		{
 			auto validation = commitment::execute(context);
 			if (!validation)
@@ -2386,19 +2385,19 @@ namespace tangent
 
 			for (auto& work : *committee)
 			{
-				auto event = context->emit_event<bridge_account>({ format::variable(work.owner.view()) });
+				auto event = context->emit_event<route>({ format::variable(work.owner.view()) });
 				if (!event)
 					return event;
 			}
 
 			return expectation::met;
 		}
-		expects_promise_rt<void> bridge_account::dispatch(const ledger::transaction_context* context, ledger::dispatch_context* dispatcher) const
+		expects_promise_rt<void> route::dispatch(const ledger::transaction_context* context, ledger::dispatch_context* dispatcher) const
 		{
 			if (!dispatcher->is_running_on(manager))
 				return expects_promise_rt<void>(expectation::met);
 
-			auto* event = context->receipt.find_event<bridge_account>();
+			auto* event = context->receipt.find_event<route>();
 			if (!event || context->get_witness_event(context->receipt.transaction_hash))
 				return expects_promise_rt<void>(expectation::met);
 
@@ -2511,21 +2510,21 @@ namespace tangent
 					coreturn remote_exception::retry();
 				}
 
-				auto* transaction = memory::init<bridge_account_finalization>();
+				auto* transaction = memory::init<bind>();
 				transaction->asset = asset;
 				transaction->set_witness(context->receipt.transaction_hash, aggregated_public_key);
 				dispatcher->emit_transaction(transaction);
 				coreturn expectation::met;
 			});
 		}
-		bool bridge_account::store_body(format::wo_stream* stream) const
+		bool route::store_body(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_string(manager.optimized_view());
 			stream->write_string(routing_address);
 			return true;
 		}
-		bool bridge_account::load_body(format::ro_stream& stream)
+		bool route::load_body(format::ro_stream& stream)
 		{
 			string manager_assembly;
 			if (!stream.read_string(stream.read_type(), &manager_assembly) || !algorithm::encoding::decode_bytes(manager_assembly, manager.data, sizeof(manager.data)))
@@ -2536,95 +2535,95 @@ namespace tangent
 
 			return true;
 		}
-		bool bridge_account::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
+		bool route::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
 		{
 			auto group = get_group(receipt);
 			parties.insert(algorithm::pubkeyhash_t(manager));
 			parties.insert(group.begin(), group.end());
 			return true;
 		}
-		bool bridge_account::is_dispatchable() const
+		bool route::is_dispatchable() const
 		{
 			return true;
 		}
-		void bridge_account::set_routing_address(const std::string_view& new_address)
+		void route::set_routing_address(const std::string_view& new_address)
 		{
 			routing_address = new_address;
 		}
-		void bridge_account::set_manager(const algorithm::pubkeyhash_t& new_manager)
+		void route::set_manager(const algorithm::pubkeyhash_t& new_manager)
 		{
 			manager = new_manager;
 		}
-		ordered_set<algorithm::pubkeyhash_t> bridge_account::get_group(const ledger::receipt& receipt) const
+		ordered_set<algorithm::pubkeyhash_t> route::get_group(const ledger::receipt& receipt) const
 		{
 			ordered_set<algorithm::pubkeyhash_t> result;
-			for (auto& event : receipt.find_events<bridge_account>())
+			for (auto& event : receipt.find_events<route>())
 			{
 				if (!event->empty() && event->front().as_string().size() == sizeof(algorithm::pubkeyhash_t))
 					result.insert(algorithm::pubkeyhash_t(event->front().as_blob()));
 			}
 			return result;
 		}
-		uptr<schema> bridge_account::as_schema() const
+		uptr<schema> route::as_schema() const
 		{
 			schema* data = ledger::commitment::as_schema().reset();
 			data->set("manager", algorithm::signing::serialize_address(manager));
 			data->set("routing_address", var::string(routing_address));
 			return data;
 		}
-		uint32_t bridge_account::as_type() const
+		uint32_t route::as_type() const
 		{
 			return as_instance_type();
 		}
-		std::string_view bridge_account::as_typename() const
+		std::string_view route::as_typename() const
 		{
 			return as_instance_typename();
 		}
-		uint32_t bridge_account::as_instance_type()
+		uint32_t route::as_instance_type()
 		{
 			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
 			return hash;
 		}
-		std::string_view bridge_account::as_instance_typename()
+		std::string_view route::as_instance_typename()
 		{
-			return "bridge_account";
+			return "route";
 		}
 
-		expects_lr<void> bridge_account_finalization::validate(uint64_t block_number) const
+		expects_lr<void> bind::validate(uint64_t block_number) const
 		{
 			if (!algorithm::asset::token_of(asset).empty())
 				return layer_exception("invalid asset");
 
-			if (!bridge_account_hash)
-				return layer_exception("invalid bridge account hash");
+			if (!route_hash)
+				return layer_exception("invalid route hash");
 
 			if (public_key.empty())
 				return layer_exception("invalid public key");
 
 			return ledger::commitment::validate(block_number);
 		}
-		expects_lr<void> bridge_account_finalization::execute(ledger::transaction_context* context) const
+		expects_lr<void> bind::execute(ledger::transaction_context* context) const
 		{
 			auto validation = commitment::execute(context);
 			if (!validation)
 				return validation.error();
 
-			auto event = context->apply_witness_event(bridge_account_hash, context->receipt.transaction_hash);
+			auto event = context->apply_witness_event(route_hash, context->receipt.transaction_hash);
 			if (!event)
 				return event.error();
 
-			auto setup = context->get_block_transaction<bridge_account>(bridge_account_hash);
-			if (!setup)
-				return setup.error();
+			auto parent = context->get_block_transaction<route>(route_hash);
+			if (!parent)
+				return parent.error();
 
-			auto* setup_transaction = (bridge_account*)*setup->transaction;
+			auto* parent_transaction = (route*)*parent->transaction;
 			auto* server = superchain::server_node::get();
 			auto* chain = server->get_chain(asset);
 			auto* params = server->get_chainparams(asset);
 			if (!chain || !params)
 				return layer_exception("invalid operation");
 
-			auto duplicate = context->get_bridge_account(asset, setup_transaction->manager, setup->receipt.from);
+			auto duplicate = context->get_bridge_account(asset, parent_transaction->manager, parent->receipt.from);
 			if (duplicate)
 				return layer_exception("bridge account already exists");
 
@@ -2636,7 +2635,7 @@ namespace tangent
 			if (!addresses)
 				return addresses.error();
 
-			auto policy = context->get_verified_validator_attestation(asset, setup_transaction->manager);
+			auto policy = context->get_verified_validator_attestation(asset, parent_transaction->manager);
 			if (!policy)
 				return policy.error();
 
@@ -2659,15 +2658,15 @@ namespace tangent
 					break;
 			}
 
-			auto policy_status = context->apply_validator_attestation_account(asset, setup_transaction->manager, 1);
+			auto policy_status = context->apply_validator_attestation_account(asset, parent_transaction->manager, 1);
 			if (!policy_status)
 				return policy_status.error();
 
 			auto ref = states::validator_participation::participation_ref();
-			ref.manager = setup_transaction->manager;
-			ref.owner = setup->receipt.from;
+			ref.manager = parent_transaction->manager;
+			ref.owner = parent->receipt.from;
 
-			auto group = setup_transaction->get_group(setup->receipt);
+			auto group = parent_transaction->get_group(parent->receipt);
 			for (auto& participant : group)
 			{
 				auto status = context->apply_validator_participation(participant.data, ledger::transaction_context::stake_type::lock, { { asset, { true, ref } } }, { });
@@ -2685,11 +2684,11 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_promise_rt<void> bridge_account_finalization::dispatch(const ledger::transaction_context* context, ledger::dispatch_context* dispatcher) const
+		expects_promise_rt<void> bind::dispatch(const ledger::transaction_context* context, ledger::dispatch_context* dispatcher) const
 		{
-			auto setup = context->get_block_transaction<bridge_account>(bridge_account_hash);
-			if (!setup)
-				return expects_promise_rt<void>(remote_exception(std::move(setup.error().message())));
+			auto parent = context->get_block_transaction<route>(route_hash);
+			if (!parent)
+				return expects_promise_rt<void>(remote_exception(std::move(parent.error().message())));
 
 			ordered_set<string> addresses;
 			for (auto& event : context->receipt.find_events<states::witness_account>())
@@ -2710,90 +2709,90 @@ namespace tangent
 			if (!encoded_public_key)
 				return expects_promise_rt<void>(remote_exception(std::move(encoded_public_key.error().message())));
 
-			auto* setup_transaction = (bridge_account*)*setup->transaction;
+			auto* parent_transaction = (route*)*parent->transaction;
 			for (auto& address : addresses)
 			{
 				auto [base_address, tag] = superchain::address_util::decode_tag_address(address);
 				if (base_address != address)
 				{
-					auto status = server->enable_link(asset, superchain::wallet_link(setup_transaction->manager, *encoded_public_key, base_address));
+					auto status = server->enable_link(asset, superchain::wallet_link(parent_transaction->manager, *encoded_public_key, base_address));
 					if (!status)
 						return expects_promise_rt<void>(remote_exception(std::move(status.error().message())));
 				}
 
-				auto status = server->enable_link(asset, superchain::wallet_link(setup_transaction->manager, *encoded_public_key, address));
+				auto status = server->enable_link(asset, superchain::wallet_link(parent_transaction->manager, *encoded_public_key, address));
 				if (!status)
 					return expects_promise_rt<void>(remote_exception(std::move(status.error().message())));
 			}
 
 			return expects_promise_rt<void>(expectation::met);
 		}
-		void bridge_account_finalization::set_witness(const uint256_t& new_bridge_account_hash, const algorithm::composition::cpubkey_t& new_public_key)
+		void bind::set_witness(const uint256_t& new_route_hash, const algorithm::composition::cpubkey_t& new_public_key)
 		{
-			bridge_account_hash = new_bridge_account_hash;
+			route_hash = new_route_hash;
 			public_key = new_public_key;
 		}
-		bool bridge_account_finalization::store_body(format::wo_stream* stream) const
+		bool bind::store_body(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_string(std::string_view((char*)public_key.data(), public_key.size()));
-			stream->write_integer(bridge_account_hash);
+			stream->write_integer(route_hash);
 			return true;
 		}
-		bool bridge_account_finalization::load_body(format::ro_stream& stream)
+		bool bind::load_body(format::ro_stream& stream)
 		{
 			string public_key_assembly;
 			if (!stream.read_string(stream.read_type(), &public_key_assembly))
 				return false;
 
-			if (!stream.read_integer(stream.read_type(), &bridge_account_hash))
+			if (!stream.read_integer(stream.read_type(), &route_hash))
 				return false;
 
 			public_key.resize(public_key_assembly.size());
 			memcpy(public_key.data(), public_key_assembly.data(), public_key_assembly.size());
 			return true;
 		}
-		bool bridge_account_finalization::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
+		bool bind::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
 		{
-			auto setup = context->get_block_transaction<bridge_account>(bridge_account_hash);
-			if (!setup)
+			auto parent = context->get_block_transaction<route>(route_hash);
+			if (!parent)
 				return false;
 
-			auto* setup_transaction = (bridge_account*)*setup->transaction;
-			parties.insert(algorithm::pubkeyhash_t(setup_transaction->manager));
-			parties.insert(algorithm::pubkeyhash_t(setup->receipt.from));
+			auto* parent_transaction = (route*)*parent->transaction;
+			parties.insert(algorithm::pubkeyhash_t(parent_transaction->manager));
+			parties.insert(algorithm::pubkeyhash_t(parent->receipt.from));
 			return true;
 		}
-		bool bridge_account_finalization::is_dispatchable() const
+		bool bind::is_dispatchable() const
 		{
 			return true;
 		}
-		uptr<schema> bridge_account_finalization::as_schema() const
+		uptr<schema> bind::as_schema() const
 		{
 			schema* data = ledger::commitment::as_schema().reset();
-			data->set("bridge_account_hash", bridge_account_hash > 0 ? var::string(algorithm::encoding::encode_0xhex256(bridge_account_hash)) : var::null());
+			data->set("route_hash", route_hash > 0 ? var::string(algorithm::encoding::encode_0xhex256(route_hash)) : var::null());
 			data->set("public_key", var::string(format::util::encode_0xhex(std::string_view((char*)public_key.data(), public_key.size()))));
 			return data;
 		}
-		uint32_t bridge_account_finalization::as_type() const
+		uint32_t bind::as_type() const
 		{
 			return as_instance_type();
 		}
-		std::string_view bridge_account_finalization::as_typename() const
+		std::string_view bind::as_typename() const
 		{
 			return as_instance_typename();
 		}
-		uint32_t bridge_account_finalization::as_instance_type()
+		uint32_t bind::as_instance_type()
 		{
 			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
 			return hash;
 		}
-		std::string_view bridge_account_finalization::as_instance_typename()
+		std::string_view bind::as_instance_typename()
 		{
-			return "bridge_account_finalization";
+			return "bind";
 		}
 
-		expects_lr<void> bridge_withdrawal::validate(uint64_t block_number) const
+		expects_lr<void> withdraw::validate(uint64_t block_number) const
 		{
 			if (manager.empty())
 				return layer_exception("invalid manager");
@@ -2825,7 +2824,7 @@ namespace tangent
 
 			return ledger::transaction::validate(block_number);
 		}
-		expects_lr<void> bridge_withdrawal::execute(ledger::transaction_context* context) const
+		expects_lr<void> withdraw::execute(ledger::transaction_context* context) const
 		{
 			auto validation = transaction::execute(context);
 			if (!validation)
@@ -2875,7 +2874,7 @@ namespace tangent
 				if (!registration)
 					return registration.error();
 
-				auto event = context->emit_event<bridge_withdrawal>({ format::variable(next_policy->owner.view()) });
+				auto event = context->emit_event<withdraw>({ format::variable(next_policy->owner.view()) });
 				if (!event)
 					return event;
 
@@ -2932,7 +2931,7 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_promise_rt<void> bridge_withdrawal::dispatch(const ledger::transaction_context* context, ledger::dispatch_context* dispatcher) const
+		expects_promise_rt<void> withdraw::dispatch(const ledger::transaction_context* context, ledger::dispatch_context* dispatcher) const
 		{
 			if (!dispatcher->is_running_on(manager))
 				return expects_promise_rt<void>(expectation::met);
@@ -2950,7 +2949,7 @@ namespace tangent
 				auto* chain = server->get_chainparams(asset);
 				auto cancel = [this, context, dispatcher](remote_exception&& error) -> expects_rt<void>
 				{
-					auto* transaction = memory::init<bridge_withdrawal_finalization>();
+					auto* transaction = memory::init<broadcast>();
 					transaction->asset = asset;
 					transaction->set_proof(context->receipt.transaction_hash, layer_exception(std::move(remote_exception(error).message())));
 					dispatcher->emit_transaction(transaction);
@@ -3068,20 +3067,20 @@ namespace tangent
 				if (!finalization)
 					coreturn cancel(remote_exception(std::move(finalization.error().message())));
 
-				auto broadcast = coawait(resolver::broadcast_transaction(algorithm::asset::base_id_of(asset), context->receipt.transaction_hash, superchain::finalized_transaction(*finalization), dispatcher));
-				if (!broadcast && (broadcast.error().is_retry() || broadcast.error().is_shutdown()))
+				auto result = coawait(resolver::broadcast_transaction(algorithm::asset::base_id_of(asset), context->receipt.transaction_hash, superchain::finalized_transaction(*finalization), dispatcher));
+				if (!result && (result.error().is_retry() || result.error().is_shutdown()))
 					coreturn remote_exception::retry();
-				else if (!broadcast)
-					coreturn cancel(std::move(broadcast.error()));
+				else if (!result)
+					coreturn cancel(std::move(result.error()));
 
-				auto* transaction = memory::init<bridge_withdrawal_finalization>();
+				auto* transaction = memory::init<broadcast>();
 				transaction->asset = asset;
 				transaction->set_proof(context->receipt.transaction_hash, std::move(*finalization));
 				dispatcher->emit_transaction(transaction);
 				coreturn expectation::met;
 			});
 		}
-		bool bridge_withdrawal::store_body(format::wo_stream* stream) const
+		bool withdraw::store_body(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_boolean(only_if_not_in_queue);
@@ -3094,7 +3093,7 @@ namespace tangent
 			}
 			return true;
 		}
-		bool bridge_withdrawal::load_body(format::ro_stream& stream)
+		bool withdraw::load_body(format::ro_stream& stream)
 		{
 			if (!stream.read_boolean(stream.read_type(), &only_if_not_in_queue))
 				return false;
@@ -3122,7 +3121,7 @@ namespace tangent
 
 			return true;
 		}
-		bool bridge_withdrawal::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
+		bool withdraw::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
 		{
 			auto new_manager = get_new_manager(receipt);
 			parties.insert(algorithm::pubkeyhash_t(manager));
@@ -3130,7 +3129,7 @@ namespace tangent
 				parties.insert(algorithm::pubkeyhash_t(new_manager));
 			return true;
 		}
-		void bridge_withdrawal::set_to(const std::string_view& address, const decimal& value)
+		void withdraw::set_to(const std::string_view& address, const decimal& value)
 		{
 			for (auto& item : to)
 			{
@@ -3142,18 +3141,18 @@ namespace tangent
 			}
 			to.push_back(std::make_pair(string(address), decimal(value)));
 		}
-		void bridge_withdrawal::set_manager(const algorithm::pubkeyhash_t& new_manager)
+		void withdraw::set_manager(const algorithm::pubkeyhash_t& new_manager)
 		{
 			manager = new_manager;
 		}
-		bool bridge_withdrawal::is_dispatchable() const
+		bool withdraw::is_dispatchable() const
 		{
 			return true;
 		}
-		algorithm::pubkeyhash_t bridge_withdrawal::get_new_manager(const ledger::receipt& receipt) const
+		algorithm::pubkeyhash_t withdraw::get_new_manager(const ledger::receipt& receipt) const
 		{
 			algorithm::pubkeyhash_t result;
-			auto* event = receipt.find_event<bridge_withdrawal>();
+			auto* event = receipt.find_event<withdraw>();
 			if (event != nullptr)
 			{
 				if (!event->empty() && event->front().as_string().size() == sizeof(algorithm::pubkeyhash_t))
@@ -3163,7 +3162,7 @@ namespace tangent
 				result = algorithm::pubkeyhash_t();
 			return result;
 		}
-		decimal bridge_withdrawal::get_token_value(const ledger::transaction_context* context) const
+		decimal withdraw::get_token_value(const ledger::transaction_context* context) const
 		{
 			decimal value = 0.0;
 			if (to.empty() && context->receipt.from == manager)
@@ -3179,7 +3178,7 @@ namespace tangent
 			}
 			return value;
 		}
-		decimal bridge_withdrawal::get_fee_value(const ledger::transaction_context* context) const
+		decimal withdraw::get_fee_value(const ledger::transaction_context* context) const
 		{
 			auto reward = context->get_verified_validator_attestation(algorithm::asset::base_id_of(asset), manager);
 			if (!reward)
@@ -3187,7 +3186,7 @@ namespace tangent
 
 			return reward->outgoing_fee * to.size();
 		}
-		uptr<schema> bridge_withdrawal::as_schema() const
+		uptr<schema> withdraw::as_schema() const
 		{
 			schema* data = ledger::transaction::as_schema().reset();
 			data->set("manager", algorithm::signing::serialize_address(manager));
@@ -3204,24 +3203,24 @@ namespace tangent
 			}
 			return data;
 		}
-		uint32_t bridge_withdrawal::as_type() const
+		uint32_t withdraw::as_type() const
 		{
 			return as_instance_type();
 		}
-		std::string_view bridge_withdrawal::as_typename() const
+		std::string_view withdraw::as_typename() const
 		{
 			return as_instance_typename();
 		}
-		uint32_t bridge_withdrawal::as_instance_type()
+		uint32_t withdraw::as_instance_type()
 		{
 			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
 			return hash;
 		}
-		std::string_view bridge_withdrawal::as_instance_typename()
+		std::string_view withdraw::as_instance_typename()
 		{
-			return "bridge_withdrawal";
+			return "withdraw";
 		}
-		expects_lr<states::witness_account> bridge_withdrawal::find_receiving_account(const ledger::transaction_context* context, const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& from_manager, const algorithm::pubkeyhash_t& to_manager)
+		expects_lr<states::witness_account> withdraw::find_receiving_account(const ledger::transaction_context* context, const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& from_manager, const algorithm::pubkeyhash_t& to_manager)
 		{
 			auto base_asset = algorithm::asset::base_id_of(asset);
 			size_t offset = 0, count = 8;
@@ -3259,28 +3258,28 @@ namespace tangent
 			return layer_exception("receiving bridge account (to) not found");
 		}
 
-		expects_lr<void> bridge_withdrawal_finalization::validate(uint64_t block_number) const
+		expects_lr<void> broadcast::validate(uint64_t block_number) const
 		{
-			if (!bridge_withdrawal_hash)
-				return layer_exception("bridge withdrawal hash not valid");
+			if (!withdraw_hash)
+				return layer_exception("withdraw hash not valid");
 
 			return ledger::commitment::validate(block_number);
 		}
-		expects_lr<void> bridge_withdrawal_finalization::execute(ledger::transaction_context* context) const
+		expects_lr<void> broadcast::execute(ledger::transaction_context* context) const
 		{
 			auto validation = commitment::execute(context);
 			if (!validation)
 				return validation.error();
 
-			auto parent = context->get_block_transaction<bridge_withdrawal>(bridge_withdrawal_hash);
+			auto parent = context->get_block_transaction<withdraw>(withdraw_hash);
 			if (!parent)
 				return layer_exception("parent transaction not found");
 
-			auto* parent_transaction = (bridge_withdrawal*)*parent->transaction;
+			auto* parent_transaction = (withdraw*)*parent->transaction;
 			if (parent_transaction->manager != context->receipt.from)
 				return layer_exception("parent transaction not valid");
 
-			auto event = context->apply_witness_event(bridge_withdrawal_hash, context->receipt.transaction_hash);
+			auto event = context->apply_witness_event(withdraw_hash, context->receipt.transaction_hash);
 			if (!event)
 				return event.error();
 
@@ -3315,10 +3314,10 @@ namespace tangent
 
 			return expectation::met;
 		}
-		bool bridge_withdrawal_finalization::store_body(format::wo_stream* stream) const
+		bool broadcast::store_body(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
-			stream->write_integer(bridge_withdrawal_hash);
+			stream->write_integer(withdraw_hash);
 			stream->write_boolean(!!proof);
 			if (proof)
 				proof->store_payload(stream);
@@ -3326,9 +3325,9 @@ namespace tangent
 				stream->write_string(proof.what());
 			return true;
 		}
-		bool bridge_withdrawal_finalization::load_body(format::ro_stream& stream)
+		bool broadcast::load_body(format::ro_stream& stream)
 		{
-			if (!stream.read_integer(stream.read_type(), &bridge_withdrawal_hash))
+			if (!stream.read_integer(stream.read_type(), &withdraw_hash))
 				return false;
 
 			bool has_proof;
@@ -3352,24 +3351,24 @@ namespace tangent
 
 			return true;
 		}
-		bool bridge_withdrawal_finalization::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
+		bool broadcast::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
 		{
-			auto parent = context->get_block_transaction_instance(bridge_withdrawal_hash);
+			auto parent = context->get_block_transaction_instance(withdraw_hash);
 			if (!parent)
 				return false;
 
 			parties.insert(algorithm::pubkeyhash_t(parent->receipt.from));
 			return true;
 		}
-		void bridge_withdrawal_finalization::set_proof(const uint256_t& new_bridge_withdrawal_hash, expects_lr<superchain::finalized_transaction>&& new_proof)
+		void broadcast::set_proof(const uint256_t& new_withdraw_hash, expects_lr<superchain::finalized_transaction>&& new_proof)
 		{
-			bridge_withdrawal_hash = new_bridge_withdrawal_hash;
+			withdraw_hash = new_withdraw_hash;
 			proof = std::move(new_proof);
 		}
-		uptr<schema> bridge_withdrawal_finalization::as_schema() const
+		uptr<schema> broadcast::as_schema() const
 		{
 			schema* data = ledger::commitment::as_schema().reset();
-			data->set("bridge_withdrawal_hash", var::string(algorithm::encoding::encode_0xhex256(bridge_withdrawal_hash)));
+			data->set("withdraw_hash", var::string(algorithm::encoding::encode_0xhex256(withdraw_hash)));
 			if (proof)
 			{
 				data->set("prepared", proof->prepared.as_schema().reset());
@@ -3381,24 +3380,24 @@ namespace tangent
 				data->set("error", var::string(proof.what()));
 			return data;
 		}
-		uint32_t bridge_withdrawal_finalization::as_type() const
+		uint32_t broadcast::as_type() const
 		{
 			return as_instance_type();
 		}
-		std::string_view bridge_withdrawal_finalization::as_typename() const
+		std::string_view broadcast::as_typename() const
 		{
 			return as_instance_typename();
 		}
-		uint32_t bridge_withdrawal_finalization::as_instance_type()
+		uint32_t broadcast::as_instance_type()
 		{
 			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
 			return hash;
 		}
-		std::string_view bridge_withdrawal_finalization::as_instance_typename()
+		std::string_view broadcast::as_instance_typename()
 		{
-			return "bridge_withdrawal_finalization";
+			return "broadcast";
 		}
-		expects_lr<void> bridge_withdrawal_finalization::validate_possible_proof(const ledger::transaction_context* context, const bridge_withdrawal* transaction, const ledger::receipt& receipt, const superchain::prepared_transaction& prepared)
+		expects_lr<void> broadcast::validate_possible_proof(const ledger::transaction_context* context, const withdraw* transaction, const ledger::receipt& receipt, const superchain::prepared_transaction& prepared)
 		{
 			if (prepared.as_status() == superchain::prepared_transaction::status::invalid)
 				return layer_exception("invalid prepared transaction");
@@ -3433,7 +3432,7 @@ namespace tangent
 				if (!transaction->to.empty())
 					return layer_exception("migration/withdrawal confusion");
 
-				auto witness = bridge_withdrawal::find_receiving_account(context, transaction->asset, transaction->manager, new_manager);
+				auto witness = withdraw::find_receiving_account(context, transaction->asset, transaction->manager, new_manager);
 				if (!witness)
 					return layer_exception("prepared transaction not possible");
 
@@ -3562,7 +3561,7 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<void> bridge_withdrawal_finalization::validate_finalized_proof(const ledger::transaction_context* context, const bridge_withdrawal* transaction, const ledger::receipt& receipt, const superchain::finalized_transaction& finalized)
+		expects_lr<void> broadcast::validate_finalized_proof(const ledger::transaction_context* context, const withdraw* transaction, const ledger::receipt& receipt, const superchain::finalized_transaction& finalized)
 		{
 			auto validation = validate_possible_proof(context, transaction, receipt, finalized.prepared);
 			if (!validation)
@@ -3593,26 +3592,26 @@ namespace tangent
 		{
 			if (hash == transfer::as_instance_type())
 				return memory::init<transfer>();
-			else if (hash == upgrade::as_instance_type())
-				return memory::init<upgrade>();
+			else if (hash == deploy::as_instance_type())
+				return memory::init<deploy>();
 			else if (hash == call::as_instance_type())
 				return memory::init<call>();
 			else if (hash == rollup::as_instance_type())
 				return memory::init<rollup>();
-			else if (hash == validator_adjustment::as_instance_type())
-				return memory::init<validator_adjustment>();
-			else if (hash == validator_adjustment_finalization::as_instance_type())
-				return memory::init<validator_adjustment_finalization>();
-			else if (hash == bridge_attestation::as_instance_type())
-				return memory::init<bridge_attestation>();
-			else if (hash == bridge_account::as_instance_type())
-				return memory::init<bridge_account>();
-			else if (hash == bridge_account_finalization::as_instance_type())
-				return memory::init<bridge_account_finalization>();
-			else if (hash == bridge_withdrawal::as_instance_type())
-				return memory::init<bridge_withdrawal>();
-			else if (hash == bridge_withdrawal_finalization::as_instance_type())
-				return memory::init<bridge_withdrawal_finalization>();
+			else if (hash == setup::as_instance_type())
+				return memory::init<setup>();
+			else if (hash == migrate::as_instance_type())
+				return memory::init<migrate>();
+			else if (hash == attestate::as_instance_type())
+				return memory::init<attestate>();
+			else if (hash == route::as_instance_type())
+				return memory::init<route>();
+			else if (hash == bind::as_instance_type())
+				return memory::init<bind>();
+			else if (hash == withdraw::as_instance_type())
+				return memory::init<withdraw>();
+			else if (hash == broadcast::as_instance_type())
+				return memory::init<broadcast>();
 			return nullptr;
 		}
 		ledger::transaction* resolver::from_copy(const ledger::transaction* base)
@@ -3620,26 +3619,26 @@ namespace tangent
 			uint32_t hash = base->as_type();
 			if (hash == transfer::as_instance_type())
 				return memory::init<transfer>(*(const transfer*)base);
-			else if (hash == upgrade::as_instance_type())
-				return memory::init<upgrade>(*(const upgrade*)base);
+			else if (hash == deploy::as_instance_type())
+				return memory::init<deploy>(*(const deploy*)base);
 			else if (hash == call::as_instance_type())
 				return memory::init<call>(*(const call*)base);
 			else if (hash == rollup::as_instance_type())
 				return memory::init<rollup>(*(const rollup*)base);
-			else if (hash == validator_adjustment::as_instance_type())
-				return memory::init<validator_adjustment>(*(const validator_adjustment*)base);
-			else if (hash == validator_adjustment_finalization::as_instance_type())
-				return memory::init<validator_adjustment_finalization>(*(const validator_adjustment_finalization*)base);
-			else if (hash == bridge_attestation::as_instance_type())
-				return memory::init<bridge_attestation>(*(const bridge_attestation*)base);
-			else if (hash == bridge_account::as_instance_type())
-				return memory::init<bridge_account>(*(const bridge_account*)base);
-			else if (hash == bridge_account_finalization::as_instance_type())
-				return memory::init<bridge_account_finalization>(*(const bridge_account_finalization*)base);
-			else if (hash == bridge_withdrawal::as_instance_type())
-				return memory::init<bridge_withdrawal>(*(const bridge_withdrawal*)base);
-			else if (hash == bridge_withdrawal_finalization::as_instance_type())
-				return memory::init<bridge_withdrawal_finalization>(*(const bridge_withdrawal_finalization*)base);
+			else if (hash == setup::as_instance_type())
+				return memory::init<setup>(*(const setup*)base);
+			else if (hash == migrate::as_instance_type())
+				return memory::init<migrate>(*(const migrate*)base);
+			else if (hash == attestate::as_instance_type())
+				return memory::init<attestate>(*(const attestate*)base);
+			else if (hash == route::as_instance_type())
+				return memory::init<route>(*(const route*)base);
+			else if (hash == bind::as_instance_type())
+				return memory::init<bind>(*(const bind*)base);
+			else if (hash == withdraw::as_instance_type())
+				return memory::init<withdraw>(*(const withdraw*)base);
+			else if (hash == broadcast::as_instance_type())
+				return memory::init<broadcast>(*(const broadcast*)base);
 			return nullptr;
 		}
 		expects_promise_rt<superchain::prepared_transaction> resolver::prepare_transaction(const algorithm::asset_id& asset, const superchain::wallet_link& from_link, const vector<superchain::value_transfer>& to, const decimal& max_fee)
@@ -3720,7 +3719,7 @@ namespace tangent
 
 			if (dispatcher != nullptr)
 			{
-				auto* transaction = memory::init<bridge_attestation>();
+				auto* transaction = memory::init<attestate>();
 				transaction->asset = asset;
 				transaction->set_gas(decimal::zero(), 0);
 				transaction->set_computed_proof(finalized.as_computed(), { });

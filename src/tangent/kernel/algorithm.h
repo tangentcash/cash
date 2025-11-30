@@ -201,6 +201,9 @@ namespace tangent
 			static uint128_t decode_0xhex128(const std::string_view& data);
 			static uint32_t type_of(const std::string_view& name);
 			static schema* serialize_uint256(const uint256_t& data, bool always16 = false);
+			static expects_lr<string> pack_program(const std::string_view& unpacked_code);
+			static expects_lr<string> unpack_program(const std::string_view& packed_code);
+
 		};
 
 		class hashing
@@ -220,6 +223,7 @@ namespace tangent
 			static uint256_t hash256i(const uint8_t* buffer, size_t size);
 			static uint256_t hash256i(const std::string_view& data);
 			static uint64_t erd64(const uint256_t& seed, uint64_t order);
+			static string ppc512(const std::string_view& unpacked_code);
 		};
 
 		class arithmetic
@@ -260,6 +264,35 @@ namespace tangent
 				if (!copy.is_nan() && copy != value)
 					++copy;
 				return copy;
+			}
+			template<typename t>
+			static t integer_sqrt(t n)
+			{
+				if (n == 0)
+					return 0;
+
+				uint16_t count = 0; t temp = n;
+				const uint16_t bits = sizeof(t) * 8;
+				for (int i = 0; i < bits; ++i)
+				{
+					if ((temp & (static_cast<t>(1) << (bits - 1))) != 0)
+						break;
+					temp <<= 1;
+					count++;
+				}
+
+				t x = t(1) << (sizeof(t) * 8 - 1 - count) / 2;
+				while (true)
+				{
+					t x_new = (x + n / x) / 2;
+					if (x_new >= x)
+						break;
+					x = x_new;
+				}
+
+				while (x * x > n) x--;
+				while ((x + 1) * (x + 1) <= n) x++;
+				return x;
 			}
 		};
 

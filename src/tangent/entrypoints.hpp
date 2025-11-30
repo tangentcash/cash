@@ -5,7 +5,7 @@
 #include "service/superchain.h"
 #include "service/rpc.h"
 #include "storage/chainstate.h"
-#include "kernel/cell.h"
+#include "kernel/script.h"
 #include "policy/transactions.h"
 #include <vitex/bindings.h>
 #include <sstream>
@@ -15,17 +15,15 @@ namespace tangent
 {
 	namespace entrypoints
 	{
-		using namespace vitex::scripting;
-
-		enum class cell_asm
+		enum class script_asm
 		{
 			code,
 			abi,
-			tx_upgrade,
+			tx_deploy,
 			tx_call
 		};
 
-		struct cell_context : cell::program
+		struct script_context : script::program
 		{
 			struct
 			{
@@ -49,11 +47,11 @@ namespace tangent
 				uptr<schema> returning;
 				uptr<schema> log;
 				unordered_map<size_t, uptr<schema>> events;
-				cell::cmodule pmodule;
+				script::cmodule pmodule;
 				ledger::block block;
 			} tracer;
 
-			cell_context() : cell::program(nullptr, nullptr)
+			script_context() : script::program(nullptr, nullptr)
 			{
 				preprocessor::desc compiler_features;
 				compiler_features.conditions = true;
@@ -61,14 +59,14 @@ namespace tangent
 				compiler_features.includes = true;
 				compiler_features.pragmas = false;
 
-				auto* vm = cell::factory::get()->get_vm();
+				auto* vm = script::factory::get()->get_vm();
 				vm->set_ts_imports(true);
 				vm->set_ts_imports_concat_mode(true);
 				vm->set_preserve_source_code(true);
 				vm->set_compiler_features(compiler_features);
 				context = &tracer.environment.validation.context;
 			}
-			~cell_context() = default;
+			~script_context() = default;
 			expects_lr<void> assign_transaction(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& from, const algorithm::pubkeyhash_t& to, const decimal& value, const std::string_view& function_decl, const format::variables& args)
 			{
 				ledger::receipt receipt;
@@ -84,7 +82,7 @@ namespace tangent
 				tracer.environment.apply_temporary_state(&tracer.block, *tracer.contextual, std::move(receipt));
 				return expectation::met;
 			}
-			expects_lr<void> call_transaction(cell::ccall mutability, const function& entrypoint, const format::variables& args)
+			expects_lr<void> call_transaction(script::ccall mutability, const script::function& entrypoint, const format::variables& args)
 			{
 				VI_ASSERT(tracer.contextual, "transaction should be assigned");
 				tracer.returning.destroy();
@@ -92,7 +90,7 @@ namespace tangent
 				auto execution = execute(mutability, entrypoint, args, [this](void* address, int type_id) -> expects_lr<void>
 				{
 					tracer.returning = var::set::object();
-					auto serialization = cell::marshall::store(*tracer.returning, address, type_id);
+					auto serialization = script::marshall::store(*tracer.returning, address, type_id);
 					if (!serialization)
 					{
 						tracer.returning.destroy();
@@ -132,7 +130,7 @@ namespace tangent
 				if (!file)
 					return layer_exception(file.what());
 
-				auto* factory = cell::factory::get();
+				auto* factory = script::factory::get();
 				auto* vm = factory->get_vm();
 				vm->set_compiler_error_callback([this](const std::string_view& message) { program.log.append(message).append("\r\n"); });
 				vm->clear_cache();
@@ -151,10 +149,9 @@ namespace tangent
 				module = tracer.pmodule->get_module();
 				return expectation::met;
 			}
-			expects_lr<void> assemble(cell_asm type, const std::string_view& new_path, format::variables&& function_args)
+			expects_lr<void> assemble(script_asm type, const std::string_view& new_path, format::variables&& function_args)
 			{
-				auto* factory = cell::factory::get();
-				auto* vm = factory->get_vm();
+				auto* vm = script::factory::get()->get_vm();
 				if (vm->get_script_sections().empty())
 					return layer_exception("source code not found");
 
@@ -169,15 +166,15 @@ namespace tangent
 				if (!data.empty())
 					data.erase(data.size() - 2, 2);
 
-				if (type == cell_asm::tx_upgrade)
+				if (type == script_asm::tx_deploy)
 				{
-					auto transaction = transactions::upgrade();
+					auto transaction = transactions::deploy();
 					transaction.from_program(data, std::move(function_args));
 
 					auto message = transaction.as_message();
 					data = std::move(message.data);
 				}
-				else if (type == cell_asm::tx_call)
+				else if (type == script_asm::tx_call)
 				{
 					if (function_args.empty())
 						return layer_exception("first argument of argument pack must be a function decl/name");
@@ -191,9 +188,9 @@ namespace tangent
 					auto message = transaction.as_message();
 					data = std::move(message.data);
 				}
-				else if (type == cell_asm::abi)
+				else if (type == script_asm::abi)
 				{
-					auto result = factory->pack(data);
+					auto result = algorithm::encoding::pack_program(data);
 					if (!result)
 						return result.error();
 
@@ -230,7 +227,7 @@ namespace tangent
 				if (!assignment)
 					return assignment.error();
 
-				auto read_only = mutability_of(entrypoint) == cell::ccall::const_call;
+				auto read_only = mutability_of(entrypoint) == script::ccall::const_call;
 				if (!read_only)
 				{
 					for (auto& [account, balances] : state.balances)
@@ -262,7 +259,7 @@ namespace tangent
 				if (attach_debugger_context)
 				{
 					static bool has_any = false;
-					debugger_context* debugger = new debugger_context();
+					script::debugger_context* debugger = new script::debugger_context();
 					debugger->add_to_string_callback("string", [](string& indent, int depth, void* object, int type_id)
 					{
 						string& source = *(string*)object;
@@ -291,7 +288,7 @@ namespace tangent
 					});
 					debugger->add_to_string_callback("array", [debugger](string& indent, int depth, void* object, int type_id)
 					{
-						auto* source = (cell::array_repr*)object;
+						auto* source = (script::array_repr*)object;
 						int base_type_id = source->get_element_type_id();
 						uint32_t size = source->size();
 						string_stream stream;
@@ -328,22 +325,22 @@ namespace tangent
 					});
 					debugger->add_to_string_callback("address", [](string& indent, int depth, void* object, int type_id)
 					{
-						auto& source = *(cell::address_repr*)object;
+						auto& source = *(script::address_repr*)object;
 						return string(source.to_string().view()) + " (address)";
 					});
 					debugger->add_to_string_callback("abi", [](string& indent, int depth, void* object, int type_id)
 					{
-						auto& source = *(cell::abi_repr*)object;
+						auto& source = *(script::abi_repr*)object;
 						return source.output.encode() + " (abi)";
 					});
 					debugger->add_to_string_callback("any", [debugger](string& indent, int depth, void* object, int type_id)
 					{
-						bindings::any* source = (bindings::any*)object;
+						script::bindings::any* source = (script::bindings::any*)object;
 						return debugger->to_string(indent, depth - 1, source->get_address_of_object(), source->get_type_id());
 					});
 					if (!has_any)
 					{
-						bindings::registry::import_any(vm);
+						script::bindings::registry::import_any(vm);
 						has_any = true;
 					}
 					debugger->set_interrupt_callback([](bool is_interrupted) { console::get()->write_line(is_interrupted ? "program execution interrupted" : "resuming program execution"); });
@@ -351,7 +348,7 @@ namespace tangent
 					interrupter(true);
 				}
 
-				auto execution = call_transaction(cell::ccall::upgrade_call, entrypoint, args);
+				auto execution = call_transaction(script::ccall::deploy_call, entrypoint, args);
 				if (attach_debugger_context)
 				{
 					interrupter(false);
@@ -370,13 +367,13 @@ namespace tangent
 				if (!context->receipt.events.empty())
 				{
 					auto data = uptr<schema>(var::set::object());
-					auto type = cell::factory::get()->get_vm()->get_type_info_by_id(event_type_id);
+					auto type = script::factory::get()->get_vm()->get_type_info_by_id(event_type_id);
 					data->key = type.is_valid() ? type.get_name() : std::string_view("__pod__");
-					if (cell::marshall::store(*data, object_value, object_type_id))
+					if (script::marshall::store(*data, object_value, object_type_id))
 						tracer.events[context->receipt.events.size() - 1] = std::move(data);
 				}
 			}
-			void dispatch_exception(immediate_context* coroutine) override
+			void dispatch_exception(script::immediate_context* coroutine) override
 			{
 				auto* vm = coroutine->get_vm();
 				if (vm->has_debugger())
@@ -384,7 +381,7 @@ namespace tangent
 			}
 			void reset()
 			{
-				auto* container = cell::factory::get();
+				auto* container = script::factory::get();
 				state.balances.clear();
 				state.from = algorithm::pubkeyhash_t();
 				state.to = algorithm::pubkeyhash_t();
@@ -422,7 +419,7 @@ namespace tangent
 			{
 				os::process::bind_signal(signal_code::SIG_INT, bind ? [](int)
 				{
-					auto* vm = cell::factory::get()->get_vm();
+					auto* vm = script::factory::get()->get_vm();
 					if (vm->get_debugger() && vm->get_debugger()->interrupt())
 						interrupter(true);
 					else
@@ -431,10 +428,10 @@ namespace tangent
 			}
 		};
 
-		int cell(const inline_args& environment)
+		int script(const inline_args& environment)
 		{
 			auto params = protocol(environment);
-			auto context = cell_context();
+			auto context = script_context();
 			auto* terminal = console::get();
 			auto directory = *os::directory::get_working();
 			error_handling::set_flag(log_option::dated, false);
@@ -574,22 +571,22 @@ namespace tangent
 						return err("no program bound");
 
 					auto type = args[1];
-					if (type != "upgrade" && type != "call" && type != "abi" && type != "code")
+					if (type != "deploy" && type != "call" && type != "abi" && type != "code")
 						return err("not a valid type");
 
 					auto path = os::path::resolve(args[2], directory, true);
 					if (!path)
 						return err(path.what());
 
-					cell_asm asm_type;
-					if (type == "upgrade")
-						asm_type = cell_asm::tx_upgrade;
+					script_asm asm_type;
+					if (type == "deploy")
+						asm_type = script_asm::tx_deploy;
 					else if (type == "call")
-						asm_type = cell_asm::tx_call;
+						asm_type = script_asm::tx_call;
 					else if (type == "abi")
-						asm_type = cell_asm::abi;
+						asm_type = script_asm::abi;
 					else if (true || type == "code")
-						asm_type = cell_asm::code;
+						asm_type = script_asm::code;
 
 					format::variables function_args;
 					function_args.reserve(args.size() - 3);
@@ -913,12 +910,12 @@ namespace tangent
 				else if (method == "help")
 				{
 					ok(
-						"---------- Contract Execution Logic Layer (CELL) -----------\n"
+						"------------- VM for smart contract scripts --------------\n"
 						"This tool may be used to debug the smart contracts before\n"
-						"deployment. CELL here does not require non-zero balance\n"
+						"deployment. VM here does not require non-zero balance\n"
 						"to send assets to smart contracts. Everything is virtual\n"
 						"and will not be written to current chain state. However,\n"
-						"CELL will use current chain state (if any) as a base to\n"
+						"VM will use current chain state (if any) as a base to\n"
 						"execute smart contracts on top of. You may fund one or\n"
 						"more accounts before running smart contract code as well\n"
 						"as pay to smart contract without funding before hand. The\n"
@@ -934,7 +931,7 @@ namespace tangent
 						"until all of them are successfully finalized. Because state\n"
 						"is built upon current chain state, it is possible to test\n"
 						"the smart contracts virtually on the mainnet blockchain\n"
-						"--------- CELL compiler and debugger functionality ---------\n"
+						"--------- VM compiler and debugger functionality ---------\n"
 						"from [address?|?]                                        -- get/set caller address (if ? then random)\n"
 						"to [address?|?]                                          -- get/set contract address (if ? then random)\n"
 						"payable [blockchain?] [token?] [contract_address?]       -- get/set caller address paying asset\n"
@@ -942,7 +939,7 @@ namespace tangent
 						"pay [value?]                                             -- get/set caller address paying value\n"
 						"pay_funded [value?]                                      -- combination of fund then pay\n"
 						"compile [path]                                           -- compile and use program\n"
-						"assemble [type:upgrade|call|abi|code] [path] [args?]     -- assemble current program (type=upgrade_tx/call_tx: assemble upgrade tx data with packed args)\n"
+						"assemble [type:deploy|call|abi|code] [path] [args?]      -- assemble current program (type=deploy/call: assemble deploy tx data with packed args)\n"
 						"pack [args?]...                                          -- pack many args into one (for non-trivial function args)\n"
 						"pack256 [integer]...                                     -- pack a decimal uint256 into a hex number\n"
 						"unpack [stream]                                          -- unpack stream to many args\n"
