@@ -2523,20 +2523,15 @@ namespace tangent
 			if (!state)
 			{
 				auto duplicate = find_by_address(node->address);
-				if (!duplicate)
-				{
-					state = new relay(node_type::inbound, node);
-					append_node(uref(state));
+				if (duplicate)
+					abort_node(std::move(duplicate));
+					
+				state = new relay(node_type::inbound, node);
+				append_node(uref(state));
 
-					auto* socket = state->as_socket();
-					if (socket != nullptr)
-						socket->set_io_timeout(15000);
-				}
-				else
-				{
-					node->abort();
-					finalize(node);
-				}
+				auto* socket = state->as_socket();
+				if (socket != nullptr)
+					socket->set_io_timeout(15000);
 			}
 			if (state)
 				pull_messages(std::move(state));
