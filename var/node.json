@@ -81,6 +81,7 @@
     "tcp": {
         "tls_trusted_peers": 100,
         "mbps_per_socket": 24,
+        "keep_alive": 5000,
         "timeout": 60000
     },
     "storage": {

@@ -271,7 +271,7 @@ namespace tangent
 			bytes_used_in_window += bytes;
 		}
 
-		relay::relay(node_type new_type, void* new_instance) : aborted(false), type(new_type), instance(new_instance), counter(0), bandwidth(1000 * 1000 * protocol::now().user.tcp.mbps_per_socket), deferred_pull(INVALID_TASK_ID)
+		relay::relay(node_type new_type, void* new_instance) : aborted(false), type(new_type), instance(new_instance), counter(0), bandwidth(1000 * 1000 * protocol::now().user.tcp.mbps_per_socket), deferred_pull(INVALID_TASK_ID), handshake_time(protocol::now().time.now())
 		{
 			VI_ASSERT(instance != nullptr, "instance should be set");
 			switch (type)
@@ -459,7 +459,11 @@ namespace tangent
 
 			auto* socket = as_socket();
 			if (socket != nullptr)
+			{
 				socket->set_io_timeout(0);
+				socket->set_keep_alive(true);
+				socket->set_keep_alive_params(protocol::now().user.tcp.keep_alive, protocol::now().user.tcp.keep_alive, 5);
+			}
 		}
 		void relay::invalidate()
 		{
@@ -672,61 +676,57 @@ namespace tangent
 		{
 			return callable::descriptor(__func__, 5);
 		}
-		callable::descriptor descriptors::check_socket()
+		callable::descriptor descriptors::perform_handshake()
 		{
 			return callable::descriptor(__func__, 6);
 		}
-		callable::descriptor descriptors::perform_handshake()
+		callable::descriptor descriptors::perform_discovery()
 		{
 			return callable::descriptor(__func__, 7);
 		}
-		callable::descriptor descriptors::perform_discovery()
+		callable::descriptor descriptors::fetch_headers()
 		{
 			return callable::descriptor(__func__, 8);
 		}
-		callable::descriptor descriptors::fetch_headers()
+		callable::descriptor descriptors::fetch_block()
 		{
 			return callable::descriptor(__func__, 9);
 		}
-		callable::descriptor descriptors::fetch_block()
+		callable::descriptor descriptors::fetch_blocks()
 		{
 			return callable::descriptor(__func__, 10);
 		}
-		callable::descriptor descriptors::fetch_blocks()
+		callable::descriptor descriptors::fetch_mempool()
 		{
 			return callable::descriptor(__func__, 11);
 		}
-		callable::descriptor descriptors::fetch_mempool()
+		callable::descriptor descriptors::fetch_transaction()
 		{
 			return callable::descriptor(__func__, 12);
 		}
-		callable::descriptor descriptors::fetch_transaction()
+		callable::descriptor descriptors::fetch_transactions()
 		{
 			return callable::descriptor(__func__, 13);
 		}
-		callable::descriptor descriptors::fetch_transactions()
+		callable::descriptor descriptors::distribute_entropy_shares()
 		{
 			return callable::descriptor(__func__, 14);
 		}
-		callable::descriptor descriptors::distribute_entropy_shares()
+		callable::descriptor descriptors::aggregate_entropy_shares()
 		{
 			return callable::descriptor(__func__, 15);
 		}
-		callable::descriptor descriptors::aggregate_entropy_shares()
+		callable::descriptor descriptors::recover_entropy()
 		{
 			return callable::descriptor(__func__, 16);
 		}
-		callable::descriptor descriptors::recover_entropy()
+		callable::descriptor descriptors::aggregate_public_key()
 		{
 			return callable::descriptor(__func__, 17);
 		}
-		callable::descriptor descriptors::aggregate_public_key()
-		{
-			return callable::descriptor(__func__, 18);
-		}
 		callable::descriptor descriptors::aggregate_signature()
 		{
-			return callable::descriptor(__func__, 19);
+			return callable::descriptor(__func__, 18);
 		}
 
 		server_node::server_node() noexcept : socket_server(), control_sys("consensus-node")
@@ -1195,10 +1195,6 @@ namespace tangent
 			auto& [node, wallet] = descriptor;
 			if (!algorithm::signing::sign(handshake_proof(node, system_time), wallet.secret_key, peer_signature))
 				return remote_exception("proof generation error");
-
-			auto* socket = state->as_socket();
-			if (socket != nullptr)
-				socket->set_io_timeout(0);
 
 			fill_node_neighbors();
 			return format::variables({ format::variable(node.as_message().data), format::variable(system_time), format::variable(peer_signature.optimized_view()), format::variable(peer_latency) });
@@ -2476,10 +2472,6 @@ namespace tangent
 			if (it != nodes.end() && *it->second == *state)
 				return;
 
-			auto* socket = state->as_socket();
-			if (socket != nullptr)
-				socket->set_io_timeout(protocol::now().user.tcp.timeout);
-
 			auto& node = nodes[state->as_instance()];
 			VI_ASSERT(!node || *node == *state, "invalid state");
 			node = std::move(state);
@@ -2520,39 +2512,36 @@ namespace tangent
 				return;
 
 			auto state = find_node_by_instance(node);
-			if (!state)
+			if (state)
+				return pull_messages(std::move(state));
+
+			auto duplicate = find_by_address(node->address);
+			if (duplicate)
 			{
-				auto duplicate = find_by_address(node->address);
-				if (duplicate)
+				if (protocol::now().time.now() - duplicate->handshake_time > protocol::now().user.tcp.keep_alive * 3)
+				{
 					abort_node(std::move(duplicate));
-					
+					goto handshake;
+				}
+				else
+				{
+					node->abort();
+					finalize(node);
+				}
+			}
+			else
+			{
+			handshake:
+				node->stream->set_io_timeout(protocol::now().user.tcp.timeout);
 				state = new relay(node_type::inbound, node);
 				append_node(uref(state));
-
-				auto* socket = state->as_socket();
-				if (socket != nullptr)
-					socket->set_io_timeout(15000);
-			}
-			if (state)
 				pull_messages(std::move(state));
+			}
 		}
 		bool server_node::run_topology_optimization()
 		{
 			return control_sys.async_task_if_none(TASK_TOPOLOGY_OPTIMIZATION, [this]() -> promise<void>
 			{
-				auto receivers = vector<uref<relay>>();
-				{
-					umutex<std::recursive_mutex> unique(exclusive);
-					receivers.reserve(nodes.size());
-					for (auto& node : nodes)
-					{
-						if (node.second->type_of() == node_type::inbound)
-							receivers.push_back(node.second);
-					}
-				}
-				for (auto& node : receivers)
-					notify(uref(node), descriptors::check_socket(), { });
-
 				algorithm::pubkeyhash_t worst_account;
 				unordered_set<algorithm::pubkeyhash_t> current_nodes;
 				{
@@ -2872,7 +2861,6 @@ namespace tangent
 				}
 			}
 
-			bind_event(descriptors::check_socket(), std::bind(&server_node::check_socket, this, std::placeholders::_2, std::placeholders::_3));
 			bind_event(descriptors::broadcast_block_hash(), std::bind(&server_node::broadcast_block_hash, this, std::placeholders::_2, std::placeholders::_3), true);
 			bind_event(descriptors::broadcast_transaction_hash(), std::bind(&server_node::broadcast_transaction_hash, this, std::placeholders::_2, std::placeholders::_3), true);
 			bind_event(descriptors::broadcast_attestation(), std::bind(&server_node::broadcast_attestation, this, std::placeholders::_2, std::placeholders::_3), true);

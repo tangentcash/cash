@@ -102,7 +102,6 @@ namespace tangent
 			static callable::descriptor broadcast_attestation();
 			static callable::descriptor broadcast_intermediary();
 			static callable::descriptor announce_neighbor();
-			static callable::descriptor check_socket();
 			static callable::descriptor perform_handshake();
 			static callable::descriptor perform_discovery();
 			static callable::descriptor fetch_headers();
@@ -144,6 +143,7 @@ namespace tangent
 		public:
 			std::recursive_mutex mutex;
 			pacemaker bandwidth;
+			uint64_t handshake_time;
 			task_id deferred_pull;
 
 		public:

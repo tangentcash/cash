@@ -656,6 +656,10 @@ namespace tangent
 			if (value != nullptr && value->value.is(var_type::integer))
 				user.tcp.timeout = value->value.get_integer();
 
+			value = config->fetch("tcp.keep_alive");
+			if (value != nullptr && value->value.is(var_type::integer))
+				user.tcp.keep_alive = value->value.get_integer();
+
 			value = config->fetch("storage.path");
 			if (value != nullptr && value->value.is(var_type::string))
 				user.storage.path = value->value.get_blob();
