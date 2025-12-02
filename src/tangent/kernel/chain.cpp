@@ -536,6 +536,22 @@ namespace tangent
 			if (value != nullptr && value->value.is(var_type::integer))
 				user.consensus.aggregation_cooldown = value->value.get_integer();
 
+			value = config->fetch("consensus.coordination_attempts");
+			if (value != nullptr && value->value.is(var_type::integer))
+				user.consensus.coordination_attempts = (uint8_t)value->value.get_integer();
+
+			value = config->fetch("consensus.dispatch_retry_interval");
+			if (value != nullptr && value->value.is(var_type::integer))
+				user.consensus.dispatch_retry_interval = value->value.get_integer();
+
+			value = config->fetch("consensus.commitment_timeout");
+			if (value != nullptr && value->value.is(var_type::integer))
+				user.consensus.commitment_timeout = value->value.get_integer();
+
+			value = config->fetch("consensus.transaction_timeout");
+			if (value != nullptr && value->value.is(var_type::integer))
+				user.consensus.transaction_timeout = value->value.get_integer();
+
 			value = config->fetch("consensus.may_propose");
 			if (value != nullptr && value->value.is(var_type::boolean))
 				user.consensus.may_propose = value->value.get_boolean();
@@ -661,18 +677,6 @@ namespace tangent
 			value = config->fetch("storage.checkpoint_size");
 			if (value != nullptr && value->value.is(var_type::integer))
 				user.storage.checkpoint_size = value->value.get_integer();
-
-			value = config->fetch("storage.transaction_dispatch_repeat_interval");
-			if (value != nullptr && value->value.is(var_type::integer))
-				user.storage.transaction_dispatch_repeat_interval = value->value.get_integer();
-
-			value = config->fetch("storage.commitment_timeout");
-			if (value != nullptr && value->value.is(var_type::integer))
-				user.storage.commitment_timeout = value->value.get_integer();
-
-			value = config->fetch("storage.transaction_timeout");
-			if (value != nullptr && value->value.is(var_type::integer))
-				user.storage.transaction_timeout = value->value.get_integer();
 
 			value = config->fetch("storage.location_cache_size");
 			if (value != nullptr && value->value.is(var_type::integer))

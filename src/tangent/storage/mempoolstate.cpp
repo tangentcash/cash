@@ -616,7 +616,7 @@ namespace tangent
 			map.push_back(var::set::binary(asset, sizeof(asset)));
 			map.push_back(var::set::integer(value.nonce));
 			map.push_back(quality.is_nan() ? var::set::null() : var::set::integer(quality.to_uint64()));
-			map.push_back(var::set::integer(time(nullptr) + (value.is_commitment() ? protocol::now().user.storage.commitment_timeout : protocol::now().user.storage.transaction_timeout)));
+			map.push_back(var::set::integer(time(nullptr) + (value.is_commitment() ? protocol::now().user.consensus.commitment_timeout : protocol::now().user.consensus.transaction_timeout)));
 			map.push_back(var::set::string(value.gas_price.to_string()));
 			map.push_back(var::set::binary(message.data));
 			map.push_back(var::set::binary(owner.view()));
@@ -978,8 +978,8 @@ namespace tangent
 		uint64_t mempoolstate::transaction_limit()
 		{
 			auto& params = protocol::now();
-			auto transactions = ledger::block_header::get_transaction_limit() * (params.user.storage.transaction_timeout / params.policy.pow.time);
-			auto commitments = ledger::block_header::get_commitment_limit() * (params.user.storage.commitment_timeout / params.policy.pow.time);
+			auto transactions = ledger::block_header::get_transaction_limit() * (params.user.consensus.transaction_timeout / params.policy.pow.time);
+			auto commitments = ledger::block_header::get_commitment_limit() * (params.user.consensus.commitment_timeout / params.policy.pow.time);
 			return transactions + commitments;
 		}
 		bool mempoolstate::make_schema(sqlite::connection* connection)

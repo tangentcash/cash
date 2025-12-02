@@ -440,6 +440,7 @@ namespace tangent
 				ordered_map<uint256_t, ordered_map<algorithm::pubkeyhash_t, string>> encrypted_shares;
 				ordered_set<algorithm::pubkeyhash_t> participants;
 				algorithm::pubkey_t public_key;
+				uint8_t attempt = 0;
 
 				bool load_message(format::ro_stream& stream);
 				format::wo_stream as_message() const;
@@ -461,7 +462,8 @@ namespace tangent
 				ordered_map<algorithm::pubkey_t, ordered_map<algorithm::pubkeyhash_t, string>> encrypted_shares;
 				ordered_set<algorithm::pubkeyhash_t> participants;
 				algorithm::composition::type alg;
-				bool distribution;
+				uint8_t attempt = 0;
+				bool distribution = false;
 
 				bool load_message(format::ro_stream& stream);
 				format::wo_stream as_message() const;
@@ -473,6 +475,7 @@ namespace tangent
 				ordered_set<algorithm::pubkeyhash_t> participants;
 				uptr<superchain::prepared_transaction> message;
 				algorithm::composition::type alg;
+				uint8_t attempt = 0;
 
 				bool load_message_if_preferred(format::ro_stream& stream);
 				format::wo_stream as_message() const;

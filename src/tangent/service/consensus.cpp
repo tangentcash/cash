@@ -2780,7 +2780,7 @@ namespace tangent
 		}
 		bool server_node::run_delayed_block_dispatcher()
 		{
-			if (protocol::now().time.now_cpu() - mempool.dispatcher_time <= protocol::now().user.storage.transaction_dispatch_repeat_interval)
+			if (protocol::now().time.now_cpu() - mempool.dispatcher_time <= protocol::now().user.consensus.dispatch_retry_interval)
 				return false;
 
 			auto tip = storages::chainstate().get_latest_block_header().or_else(ledger::block_header());
@@ -2892,10 +2892,10 @@ namespace tangent
 			bind_query(descriptors::aggregate_public_key(), std::bind(&server_node::aggregate_public_key, this, std::placeholders::_2, std::placeholders::_3));
 			bind_query(descriptors::aggregate_signature(), std::bind(&server_node::aggregate_signature, this, std::placeholders::_2, std::placeholders::_3));
 
-			control_sys.interval_if_none(TASK_MEMPOOL_VACUUM "_runner", protocol::now().user.storage.transaction_timeout, std::bind(&server_node::run_mempool_vacuum, this));
+			control_sys.interval_if_none(TASK_MEMPOOL_VACUUM "_runner", protocol::now().user.consensus.transaction_timeout, std::bind(&server_node::run_mempool_vacuum, this));
 			control_sys.interval_if_none(TASK_TOPOLOGY_OPTIMIZATION "_runner", protocol::now().user.consensus.topology_timeout, std::bind(&server_node::run_topology_optimization, this));
 			control_sys.interval_if_none(TASK_ATTESTATION_RESOLUTION "_runner", protocol::now().user.consensus.attestation_timeout, std::bind(&server_node::run_attestation_resolution, this));
-			control_sys.interval_if_none(TASK_BLOCK_DISPATCH_RETRIAL "_runner", protocol::now().user.storage.transaction_dispatch_repeat_interval, std::bind(&server_node::run_delayed_block_dispatcher, this));
+			control_sys.interval_if_none(TASK_BLOCK_DISPATCH_RETRIAL "_runner", protocol::now().user.consensus.dispatch_retry_interval, std::bind(&server_node::run_delayed_block_dispatcher, this));
 			run_topology_optimization();
 			run_mempool_vacuum();
 		}

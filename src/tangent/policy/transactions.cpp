@@ -1153,6 +1153,10 @@ namespace tangent
 				aggregation_state.public_key = dispatcher->get_public_key(new_participant);
 				if (aggregation_state.public_key.empty())
 				{
+				postpone:
+					if (++aggregation_state.attempt >= protocol::now().user.consensus.coordination_attempts)
+						coreturn remote_exception("failed to coordinate participants after several retries");
+
 					dispatcher->push_cache(context, aggregation_state.as_message());
 					coreturn remote_exception::retry();
 				}
@@ -1172,8 +1176,7 @@ namespace tangent
 				if (!deferred_participants.empty())
 				{
 					aggregation_state.participants = std::move(deferred_participants);
-					dispatcher->push_cache(context, aggregation_state.as_message());
-					coreturn remote_exception::retry();
+					goto postpone;
 				}
 
 				auto tweaked_public_key = aggregation_state.public_key;
@@ -1210,10 +1213,7 @@ namespace tangent
 
 				auto result = coawait(dispatcher->recover_entropy(context, recovery_state, new_participant));
 				if (!result && (result.error().is_retry() || result.error().is_shutdown()))
-				{
-					dispatcher->push_cache(context, aggregation_state.as_message());
-					coreturn remote_exception::retry();
-				}
+					goto postpone;
 				else if (!result)
 					coreturn result.error();
 
@@ -2417,7 +2417,6 @@ namespace tangent
 					if (!aggregator)
 						coreturn remote_exception(std::move(aggregator.error().message()));
 
-					state.distribution = false;
 					state.aggregator = std::move(*aggregator);
 					state.participants = group;
 					state.alg = chain->composition;
@@ -2432,7 +2431,10 @@ namespace tangent
 				{
 					if (state.participants.size() != required_public_keys)
 					{
-					retry:
+					postpone:
+						if (++state.attempt >= protocol::now().user.consensus.coordination_attempts)
+							coreturn remote_exception("failed to coordinate participants after several retries");
+
 						dispatcher->push_cache(context, state.as_message());
 						coreturn remote_exception::retry();
 					}
@@ -2441,7 +2443,7 @@ namespace tangent
 					{
 						auto public_key = dispatcher->get_public_key(participant);
 						if (public_key.empty())
-							goto retry;
+							goto postpone;
 						
 						if (state.encrypted_shares.find(public_key) == state.encrypted_shares.end())
 							state.encrypted_shares[public_key] = ordered_map<algorithm::pubkeyhash_t, string>();
@@ -2468,8 +2470,7 @@ namespace tangent
 				if (!deferred_participants.empty())
 				{
 					state.participants = std::move(deferred_participants);
-					dispatcher->push_cache(context, state.as_message());
-					coreturn remote_exception::retry();
+					goto postpone;
 				}
 
 				algorithm::composition::cpubkey_t aggregated_public_key;
@@ -2506,8 +2507,7 @@ namespace tangent
 				if (!deferred_participants.empty())
 				{
 					state.participants = std::move(deferred_participants);
-					dispatcher->push_cache(context, state.as_message());
-					coreturn remote_exception::retry();
+					goto postpone;
 				}
 
 				auto* transaction = memory::init<bind>();
@@ -2991,6 +2991,8 @@ namespace tangent
 					state.message = memory::init<superchain::prepared_transaction>(std::move(*message));
 				}
 
+				auto finalization = expects_lr<superchain::finalized_transaction>(layer_exception());
+				auto result = expects_rt<void>(remote_exception::shutdown());
 				auto* input = state.message->next_input_for_aggregation();
 				while (input != nullptr)
 				{
@@ -3037,10 +3039,7 @@ namespace tangent
 						{
 							unavailable.insert(*it);
 							if (chosen_input)
-							{
-								dispatcher->push_cache(context, state.as_message());
-								coreturn remote_exception::retry();
-							}
+								goto postpone;
 						}
 						else if (!result)
 							coreturn cancel(std::move(result.error()));
@@ -3051,8 +3050,7 @@ namespace tangent
 					if (!unavailable.empty())
 					{
 						state.participants = std::move(unavailable);
-						dispatcher->push_cache(context, state.as_message());
-						coreturn remote_exception::retry();
+						goto postpone;
 					}
 
 					auto finalization = state.aggregator->finalize(&input->signature);
@@ -3063,13 +3061,20 @@ namespace tangent
 					state.aggregator.destroy();
 				}
 
-				auto finalization = resolver::finalize_transaction(algorithm::asset::base_id_of(asset), std::move(**state.message));
+				finalization = resolver::finalize_transaction(algorithm::asset::base_id_of(asset), std::move(**state.message));
 				if (!finalization)
 					coreturn cancel(remote_exception(std::move(finalization.error().message())));
 
-				auto result = coawait(resolver::broadcast_transaction(algorithm::asset::base_id_of(asset), context->receipt.transaction_hash, superchain::finalized_transaction(*finalization), dispatcher));
+				result = coawait(resolver::broadcast_transaction(algorithm::asset::base_id_of(asset), context->receipt.transaction_hash, superchain::finalized_transaction(*finalization), dispatcher));
 				if (!result && (result.error().is_retry() || result.error().is_shutdown()))
+				{
+				postpone:
+					if (++state.attempt >= protocol::now().user.consensus.coordination_attempts)
+						coreturn remote_exception("failed to coordinate participants after several retries");
+
+					dispatcher->push_cache(context, state.as_message());
 					coreturn remote_exception::retry();
+				}
 				else if (!result)
 					coreturn cancel(std::move(result.error()));
 

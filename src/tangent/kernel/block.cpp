@@ -3040,6 +3040,9 @@ namespace tangent
 
 		bool dispatch_context::entropy_aggregation_state::load_message(format::ro_stream& stream)
 		{
+			if (!stream.read_integer(stream.read_type(), &attempt))
+				return false;
+
 			string public_key_assembly;
 			if (!stream.read_string(stream.read_type(), &public_key_assembly) || !algorithm::encoding::decode_bytes(public_key_assembly, public_key.data, sizeof(public_key.data)))
 				return false;
@@ -3093,6 +3096,7 @@ namespace tangent
 		format::wo_stream dispatch_context::entropy_aggregation_state::as_message() const
 		{
 			format::wo_stream message;
+			message.write_integer(attempt);
 			message.write_string(public_key.optimized_view());
 			message.write_integer((uint16_t)encrypted_shares.size());
 			for (auto& [hash, encrypted_values] : encrypted_shares)
@@ -3200,6 +3204,9 @@ namespace tangent
 			if (!stream.read_boolean(stream.read_type(), &distribution))
 				return false;
 
+			if (!stream.read_integer(stream.read_type(), &attempt))
+				return false;
+
 			uint8_t participants_size;
 			if (!stream.read_integer(stream.read_type(), &participants_size))
 				return false;
@@ -3254,6 +3261,7 @@ namespace tangent
 			format::wo_stream result;
 			algorithm::composition::store_public_state(alg, *aggregator, &result);
 			result.write_boolean(distribution);
+			result.write_integer(attempt);
 			result.write_integer((uint8_t)encrypted_shares.size());
 			for (auto& [public_key, values] : encrypted_shares)
 			{
@@ -3281,6 +3289,9 @@ namespace tangent
 			if (!possible_message.load(stream))
 				return false;
 
+			if (!stream.read_integer(stream.read_type(), &attempt))
+				return false;
+
 			uint16_t participants_size;
 			if (!stream.read_integer(stream.read_type(), &participants_size))
 				return false;
@@ -3306,6 +3317,7 @@ namespace tangent
 			format::wo_stream result;
 			algorithm::composition::store_signature_state(alg, *aggregator, &result);
 			message->store(&result);
+			result.write_integer(attempt);
 			result.write_integer((uint16_t)participants.size());
 			for (auto& participant : participants)
 				result.write_string(participant.optimized_view());
