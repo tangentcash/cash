@@ -1248,14 +1248,15 @@ namespace tangent
 		}
 		expects_rt<format::variables> server_node::fetch_headers(uref<relay>&& state, const exchange& event)
 		{
-			if (event.args.size() != 1)
+			if (event.args.size() != 2)
 				return remote_exception("invalid arguments");
 
 			uint64_t branch_number = event.args.front().as_uint64();
-			if (!branch_number)
+			uint64_t branch_length = event.args.back().as_uint64();
+			if (!branch_number || !branch_length)
 				return remote_exception("invalid branch");
 
-			const uint64_t blocks_count = protocol::now().message.headers_per_query;
+			const uint64_t blocks_count = std::min(protocol::now().message.headers_per_query, branch_length);
 			const uint64_t pivot_number = branch_number > blocks_count ? branch_number - blocks_count : 1;
 			auto chain = storages::chainstate();
 			auto headers = chain.get_block_headers(pivot_number, blocks_count);
@@ -2041,7 +2042,7 @@ namespace tangent
 				std::mutex batch_mutex;
 				while (is_active() && old_tip_number > 0 && new_tip_number > 0)
 				{
-					auto result = coawait(query(uref(new_tip.state), descriptors::fetch_headers(), { format::variable(new_tip_number) }, protocol::now().user.tcp.timeout));
+					auto result = coawait(query(uref(new_tip.state), descriptors::fetch_headers(), { format::variable(new_tip_number), format::variable(new_tip_number > old_tip_number ? 1 + new_tip_number - old_tip_number : protocol::now().message.headers_per_query) }, protocol::now().user.tcp.timeout));
 					if (!result)
 						coreturn result.error();
 					else if (result->args.empty())
