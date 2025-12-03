@@ -25,7 +25,7 @@ Tangent Protocol supports interoperability with other blockchains, focusing on e
 Nodes download and validate data from seeder nodes, gradually forming a list of neighboring nodes. They can also publish new network data, including transactions and blocks.
 
 - **Producer**: Acts as block producer that can create, solve and broadcast blocks to network of nodes.
-- **Attestator**: Acts as an asset bridge and an oracle publishing off-chain transaction into Tangent blockchain.
+- **Attester**: Acts as an asset bridge and an oracle publishing off-chain transaction into Tangent blockchain.
 - **Participant**: Holds a private key share, allowing it to create deposit addresses on other blockchains and sign transactions for withdrawals. Participants are randomly selected into bridges to ensure unpredictability and fairness.
 
 ### Security
@@ -38,7 +38,7 @@ Users can deposit native cryptocurrency using any bridging node of their choice.
 
 ### Consensus
 - **Verifiable Delay Function**: Proof of work in form of Wesolowki's verifiable delay function, requiring sequential operations to be computed, unlike classic algorithms that can utilize multithreading.
-- **Block Time**: Target block time is 6 seconds, with each block containing at least one transaction. Empty blocks can only be created during the genesis round (first 14,400 blocks).
+- **Block Time**: Target block time is 6 seconds. Genesis round (first 14,400 blocks) will produce 200x rewards to ensure network security at initial stage.
 - **Validator Committee**: Each block is created by a randomly selected committee of up to 12 validators. Validators are ranked by priority within their epoch, preventing lower-priority blocks from replacing higher-priority valid candidate blocks. Lower-priority also requires higher difficulty.
 - **Epoch Management**: Epochs cannot be skipped, which may impact availability in favor of security.
 - **Rewards and Penalties**: Each accepted block emits 1.25 TAN for the winning validator and applies penalties to validators with higher priority who did not commit their work.
@@ -52,7 +52,7 @@ There are several ways to build this project that are explained here:
 * [Build with Docker](var/documents/BUILD-DOCKER.md)
 
 ### Configuration
-+ **TAN_BUILD** is a build type (lib, main, test), defaults to "main"
++ **TAN_TEST** builds a test target with multiple cases covered
 + **VI_LOGGING** is a logging level (errors, warnings, default, debug, verbose), defaults to "default"
 
 ## Dependencies
