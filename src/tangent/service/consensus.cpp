@@ -983,7 +983,7 @@ namespace tangent
 
 			size_t notifications = notify_all_except(uref(from), descriptors::broadcast_transaction_hash(), { format::variable(candidate_hash) });
 			if (notifications > 0 && protocol::now().user.consensus.logging)
-				VI_INFO("transaction %s %.*s broadcasted to %i nodes", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data(), (int)notifications);
+				VI_DEBUG("transaction %s %.*s broadcasted to %i nodes", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data(), (int)notifications);
 
 			run_block_production();
 			return expectation::met;
@@ -1071,7 +1071,7 @@ namespace tangent
 
 			size_t notifications = notify_all_except(std::move(state), descriptors::broadcast_attestation(), format::variables(event.args));
 			if (notifications > 0 && protocol::now().user.consensus.logging)
-				VI_INFO("attestation %s broadcasted to %i nodes", algorithm::encoding::encode_0xhex256(commitment_hash).c_str(), (int)notifications);
+				VI_DEBUG("attestation %s broadcasted to %i nodes", algorithm::encoding::encode_0xhex256(commitment_hash).c_str(), (int)notifications);
 
 			return expectation::met;
 		}
@@ -1108,7 +1108,7 @@ namespace tangent
 
 			size_t notifications = notify_all_except(std::move(state), descriptors::broadcast_intermediary(), format::variables(event.args));
 			if (notifications > 0 && protocol::now().user.consensus.logging)
-				VI_INFO("representative for %s broadcasted to %i nodes", algorithm::signing::encode_address(account).c_str(), (int)notifications);
+				VI_DEBUG("representative for %s broadcasted to %i nodes", algorithm::signing::encode_address(account).c_str(), (int)notifications);
 
 			if (accounts.find(descriptor.second.public_key_hash) != accounts.end())
 				connect_to_physical_node(*address);
@@ -1649,7 +1649,7 @@ namespace tangent
 				auto proof_message = receipt.as_message();
 				size_t notifications = notify_all(descriptors::broadcast_attestation(), { format::variable(proof_message.data), format::variable(commitment_signature.view()) });
 				if (notifications > 0 && protocol::now().user.consensus.logging)
-					VI_INFO("attestation %s broadcasted to %i nodes", algorithm::encoding::encode_0xhex256(commitment_hash).c_str(), (int)notifications);
+					VI_DEBUG("attestation %s broadcasted to %i nodes", algorithm::encoding::encode_0xhex256(commitment_hash).c_str(), (int)notifications);
 			}
 			return expectation::met;
 		}
@@ -2740,7 +2740,7 @@ namespace tangent
 					accepting[0] = count == (transactions ? transactions->size() : 0);
 					accepting[1] = count == (commitments ? commitments->size() : 0);
 				}
-				if (!is_active() || (environment.incoming.empty() && !ledger::block_header::is_genesis_round(tip ? tip->number + 1 : 1)))
+				if (!is_active() || (environment.incoming.empty() && protocol::now().is(network_type::regtest)))
 					return environment.cleanup().report("mempool cleanup failed");
 
 				auto evaluation = environment.evaluate_block([&](bool commitment) -> uptr<ledger::transaction>
@@ -2756,7 +2756,7 @@ namespace tangent
 					return solution.report("block solution failed");
 
 				tip = chain.get_latest_block_header();
-				if (is_active() && (!tip || evaluation->block.number > tip->number || (evaluation->block.number == tip->number && evaluation->block.priority < tip->priority) || (evaluation->block.transactions.empty() && !ledger::block_header::is_genesis_round(evaluation->block.number))))
+				if (is_active() && (!tip || evaluation->block.number > tip->number || (evaluation->block.number == tip->number && evaluation->block.priority < tip->priority)))
 				{
 					if (protocol::now().user.consensus.logging)
 						VI_INFO("block %s proposed (number: %" PRIu64", txns: %" PRIu64 ", leader: %" PRIu64 ", work: < ~%" PRIu64 " sec.)", algorithm::encoding::encode_0xhex256(evaluation->block.as_hash()).c_str(), evaluation->block.number, (uint64_t)environment.incoming.size(), position + 1, current_node_solution_time / 1000 + 1);
@@ -3055,7 +3055,7 @@ namespace tangent
 
 			size_t notifications = notify_all_except(uref(from), descriptors::broadcast_block_hash(), { format::variable(candidate_hash) });
 			if (notifications > 0 && protocol::now().user.consensus.logging)
-				VI_INFO("block %s broadcasted to %i nodes (height: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)notifications, candidate.block.number);
+				VI_DEBUG("block %s broadcasted to %i nodes (height: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)notifications, candidate.block.number);
 
 			if (fork_tip != candidate_hash)
 				accept_pending_fork(uref(from), fork_head::replace, fork_tip, std::move(fork_tip_block));
@@ -3116,7 +3116,7 @@ namespace tangent
 				if (transaction.receipt.successful)
 				{
 					if (protocol::now().user.consensus.logging)
-						VI_INFO("transaction %s %.*s finalized", algorithm::encoding::encode_0xhex256(transaction.transaction->as_hash()).c_str(), (int)purpose.size(), purpose.data());
+						VI_DEBUG("transaction %s %.*s finalized", algorithm::encoding::encode_0xhex256(transaction.transaction->as_hash()).c_str(), (int)purpose.size(), purpose.data());
 					fill_node_services();
 					run_block_production();
 				}
@@ -3126,7 +3126,7 @@ namespace tangent
 			else if (protocol::now().user.consensus.logging)
 			{
 				if (transaction.receipt.successful)
-					VI_INFO("transaction %s %.*s finalized", algorithm::encoding::encode_0xhex256(transaction.transaction->as_hash()).c_str(), (int)purpose.size(), purpose.data());
+					VI_DEBUG("transaction %s %.*s finalized", algorithm::encoding::encode_0xhex256(transaction.transaction->as_hash()).c_str(), (int)purpose.size(), purpose.data());
 				else
 					VI_ERR("transaction %s %.*s error: %s", algorithm::encoding::encode_0xhex256(transaction.transaction->as_hash()).c_str(), (int)purpose.size(), purpose.data(), transaction.receipt.get_error_messages().or_else(string("execution error")).c_str());
 			}
@@ -3479,7 +3479,7 @@ namespace tangent
 		expects_promise_rt<void> dispatch_context::distribute_entropy_shares(const ledger::transaction_context* context, entropy_distribution_state& state, const algorithm::pubkeyhash_t& validator)
 		{
 			if (protocol::now().user.consensus.logging)
-				VI_INFO("mpc entropy shares distribution: inquiry to %s", algorithm::signing::encode_address(validator).c_str());
+				VI_DEBUG("mpc entropy shares distribution: inquiry to %s", algorithm::signing::encode_address(validator).c_str());
 
 			return coasync<expects_rt<void>>([this, context, &state, &validator]() mutable -> expects_promise_rt<void>
 			{
@@ -3533,7 +3533,7 @@ namespace tangent
 		expects_promise_rt<void> dispatch_context::aggregate_entropy_shares(const ledger::transaction_context* context, entropy_aggregation_state& state, const algorithm::pubkeyhash_t& validator)
 		{
 			if (protocol::now().user.consensus.logging)
-				VI_INFO("mpc entropy shares aggregation: inquiry to %s", algorithm::signing::encode_address(validator).c_str());
+				VI_DEBUG("mpc entropy shares aggregation: inquiry to %s", algorithm::signing::encode_address(validator).c_str());
 
 			return coasync<expects_rt<void>>([this, context, &state, &validator]() mutable -> expects_promise_rt<void>
 			{
@@ -3619,7 +3619,7 @@ namespace tangent
 		expects_promise_rt<void> dispatch_context::recover_entropy(const ledger::transaction_context* context, entropy_recovery_state& state, const algorithm::pubkeyhash_t& validator)
 		{
 			if (protocol::now().user.consensus.logging)
-				VI_INFO("mpc entropy recovery: inquiry to %s", algorithm::signing::encode_address(validator).c_str());
+				VI_DEBUG("mpc entropy recovery: inquiry to %s", algorithm::signing::encode_address(validator).c_str());
 
 			return coasync<expects_rt<void>>([this, context, &state, &validator]() mutable -> expects_promise_rt<void>
 			{
@@ -3677,7 +3677,7 @@ namespace tangent
 		expects_promise_rt<void> dispatch_context::aggregate_public_key(const ledger::transaction_context* context, public_state& state, const algorithm::pubkeyhash_t& validator)
 		{
 			if (protocol::now().user.consensus.logging)
-				VI_INFO("mpc public key aggregation: inquiry to %s", algorithm::signing::encode_address(validator).c_str());
+				VI_DEBUG("mpc public key aggregation: inquiry to %s", algorithm::signing::encode_address(validator).c_str());
 
 			return coasync<expects_rt<void>>([this, context, &state, &validator]() mutable -> expects_promise_rt<void>
 			{
@@ -3762,7 +3762,7 @@ namespace tangent
 		expects_promise_rt<void> dispatch_context::aggregate_signature(const ledger::transaction_context* context, signature_state& state, const algorithm::pubkeyhash_t& validator)
 		{
 			if (protocol::now().user.consensus.logging)
-				VI_INFO("mpc signature aggregation: inquiry to %s", algorithm::signing::encode_address(validator).c_str());
+				VI_DEBUG("mpc signature aggregation: inquiry to %s", algorithm::signing::encode_address(validator).c_str());
 
 			return coasync<expects_rt<void>>([this, context, &state, &validator]() mutable -> expects_promise_rt<void>
 			{

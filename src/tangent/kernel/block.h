@@ -187,6 +187,7 @@ namespace tangent
 			virtual uint64_t get_slot_length() const;
 			virtual uint64_t get_proof_duration() const;
 			virtual uint64_t get_proof_accounted_duration() const;
+			virtual decimal get_reward_value() const;
 			virtual decimal get_proof_difficulty_multiplier() const;
 			virtual uint64_t get_proof_slot_target(const block_header* parent_block) const;
 			virtual uint256_t as_hash(bool renew = false) const override;

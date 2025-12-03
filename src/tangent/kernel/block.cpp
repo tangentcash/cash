@@ -335,9 +335,6 @@ namespace tangent
 			if (priority > protocol::now().policy.production.max_per_block)
 				return layer_exception("invalid priority");
 
-			if (!transaction_count && !is_genesis_round(number))
-				return layer_exception("non genesis round block must have transactions");
-
 			auto required_difficulty = number <= 1 || parent_block ? algorithm::wesolowski::scale(get_proof_slot_target(parent_block), get_proof_difficulty_multiplier()) : difficulty;
 			if (proof.empty() || difficulty != required_difficulty)
 				return layer_exception("invalid wesolowski target");
@@ -598,6 +595,10 @@ namespace tangent
 		{
 			return priority > 0 ? (decimal(get_proof_duration()) / get_proof_difficulty_multiplier()).to_uint64() : get_proof_duration();
 		}
+		decimal block_header::get_reward_value() const
+		{
+			return is_genesis_round(number) ? protocol::now().policy.production.genesis_reward_value : protocol::now().policy.production.reward_value;
+		}
 		decimal block_header::get_proof_difficulty_multiplier() const
 		{
 			return algorithm::wesolowski::adjustment_scaling(priority);
@@ -625,6 +626,7 @@ namespace tangent
 			data->set("receipt_root", var::string(algorithm::encoding::encode_0xhex256(receipt_root)));
 			data->set("state_root", var::string(algorithm::encoding::encode_0xhex256(state_root)));
 			data->set("absolute_work", algorithm::encoding::serialize_uint256(absolute_work));
+			data->set("coinbase", var::decimal(get_reward_value()));
 			data->set("gas_use", algorithm::encoding::serialize_uint256(gas_use));
 			data->set("gas_limit", algorithm::encoding::serialize_uint256(gas_limit));
 			data->set("slot_duration", algorithm::encoding::serialize_uint256(slot_duration));
@@ -746,13 +748,9 @@ namespace tangent
 		{
 			VI_ASSERT(environment != nullptr, "evaluation context should be set");
 			block_header::set_parent_block(parent_block);
-			auto& policy = protocol::now().policy;
 			auto position = std::find_if(environment->producers.begin(), environment->producers.end(), [&environment](const states::validator_production& a) { return a.owner == environment->validator.public_key_hash; });
-			bool genesis = is_genesis_round(number);
-			priority = (uint64_t)(position == environment->producers.end() ? policy.production.max_per_block : std::distance(environment->producers.begin(), position));
+			priority = (uint64_t)(position == environment->producers.end() ? protocol::now().policy.production.max_per_block : std::distance(environment->producers.begin(), position));
 			difficulty = algorithm::wesolowski::scale(get_proof_slot_target(parent_block), get_proof_difficulty_multiplier());
-			if (!genesis && environment->incoming.empty())
-				return layer_exception("block must include transactions");
 
 			auto commitment_gas_limit = uint256_t(0);
 			auto transaction_gas_limit = uint256_t(0);
@@ -762,7 +760,7 @@ namespace tangent
 				current_gas_limit += item.candidate->gas_limit;
 			}
 
-			auto fees = ordered_map<algorithm::asset_id, decimal>({ { algorithm::asset::native(), genesis ? policy.production.genesis_reward_value : policy.production.reward_value } });
+			auto fees = ordered_map<algorithm::asset_id, decimal>({ { algorithm::asset::native(), get_reward_value() } });
 			auto executionlog = string();
 			auto changelog = block_changelog();
 			auto context = transaction_context(environment, this, &changelog, nullptr, { });
@@ -806,12 +804,6 @@ namespace tangent
 				changelog.clear_temporary_state();
 				if (item.candidate && candidate_transaction != *item.candidate)
 					goto retry_replacement_transaction;
-			}
-
-			if (!genesis && transactions.empty())
-			{
-				executionlog.append("\n  block must include transactions");
-				return layer_exception(std::move(stringify::trim(executionlog)));
 			}
 
 			auto penalty = -fees[algorithm::asset::native()];
