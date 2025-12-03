@@ -352,7 +352,7 @@ namespace tangent
 		void relay::push_outgoing(exchange&& message)
 		{
 			if (protocol::now().user.consensus.logging)
-				VI_TRACE("node %s message out: %s", peer_address().c_str(), schema::to_json(*message.as_schema()).substr(0, 2048).c_str());
+				VI_DEBUG("node %s message out: %s", peer_address().c_str(), schema::to_json(*message.as_schema()).substr(0, 2048).c_str());
 
 			umutex<std::recursive_mutex> unique(mutex);
 			outgoing_messages.push(std::move(message));
@@ -2256,7 +2256,7 @@ namespace tangent
 			VI_ASSERT(state, "state should be set");
 			auto* stream = state->as_socket();
 			if (!stream)
-				return;
+				return abort_node(std::move(state));
 
 			uint8_t buffer[CHUNK_SIZE];
 			size_t max_buffer_size = sizeof(buffer);
@@ -2268,7 +2268,7 @@ namespace tangent
 				{
 					if (size.error() != std::errc::operation_would_block)
 						return abort_node(std::move(state));
-
+					
 					multiplexer::get()->when_readable(stream, [this, state](socket_poll event) mutable
 					{
 						if (packet::is_done(event))
@@ -2289,9 +2289,6 @@ namespace tangent
 					header.magic = os::hw::to_endianness(os::hw::endian::little, header.magic);
 					header.length = os::hw::to_endianness(os::hw::endian::little, header.length);
 					header.checksum = os::hw::to_endianness(os::hw::endian::little, header.checksum);
-					if (state->incoming_size() > sizeof(message_header) + header.length)
-						header.checksum = header.checksum;
-
 					if (header.magic != protocol::now().message.packet_magic || header.length > protocol::now().message.max_body_size)
 					{
 					abort:
@@ -2312,7 +2309,7 @@ namespace tangent
 
 					message_latency = message.calculate_latency();
 					if (protocol::now().user.consensus.logging)
-						VI_TRACE("node %s message in: %s", state->peer_address().c_str(), schema::to_json(*message.as_schema()).substr(0, 2048).c_str());
+						VI_DEBUG("node %s message in: %s", state->peer_address().c_str(), schema::to_json(*message.as_schema()).substr(0, 2048).c_str());
 
 					switch (message.type)
 					{
@@ -2423,7 +2420,9 @@ namespace tangent
 		{
 			VI_ASSERT(state, "state and abort callback should be set");
 			auto* stream = state->as_socket();
-			if (!stream || !state->prepare_outgoing())
+			if (!stream)
+				return abort_node(std::move(state));
+			else if (!state->prepare_outgoing())
 				return;
 
 			stream->write_queued(state->outgoing_buffer(), state->outgoing_size(), [this, stream, state](socket_poll event) mutable
