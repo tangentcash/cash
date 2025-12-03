@@ -2042,7 +2042,7 @@ namespace tangent
 				std::mutex batch_mutex;
 				while (is_active() && old_tip_number > 0 && new_tip_number > 0)
 				{
-					auto result = coawait(query(uref(new_tip.state), descriptors::fetch_headers(), { format::variable(new_tip_number), format::variable(new_tip_number > old_tip_number ? 1 + new_tip_number - old_tip_number : protocol::now().message.headers_per_query) }, protocol::now().user.tcp.timeout));
+					auto result = coawait(query(uref(new_tip.state), descriptors::fetch_headers(), { format::variable(new_tip_number), format::variable(new_tip_number > old_tip_number ? 1 + new_tip_number - (old_tip_number - 1) : protocol::now().message.headers_per_query) }, protocol::now().user.tcp.timeout));
 					if (!result)
 						coreturn result.error();
 					else if (result->args.empty())
@@ -2066,11 +2066,15 @@ namespace tangent
 					size_t batch_groups = std::max<size_t>(1, block_count / batch_size);
 					for (auto& task : parallel::for_loop(batch_groups, 1, [&](size_t batch_index)
 					{
-						ledger::block_header parent_header, child_header;
 						size_t begin = batch_offset + batch_index * batch_size;
 						size_t end = batch_offset + (batch_index + 1) * batch_size + (batch_index == batch_groups - 1 ? block_count % batch_size : 0);
+						if (!end)
+							return;
+
 						auto chain = storages::chainstate();
-						for (size_t i = begin; i < end; i++)
+						auto parent_header = ledger::block_header();
+						auto child_header = ledger::block_header();
+						for (size_t i = end - 1; i >= begin && i < end; --i)
 						{
 							auto message = format::ro_stream(result->args[i].as_string());
 							auto verification = child_header.load(message) ? child_header.verify_validity(parent_header.number > 0 ? &parent_header : nullptr) : expects_lr<void>(layer_exception("bad message"));
@@ -2098,6 +2102,9 @@ namespace tangent
 						}
 					}))
 						coawait(std::move(task));
+
+					if (error)
+						coreturn remote_exception(std::move(*error));
 
 					new_tip_number = new_tip_number > block_count ? new_tip_number - block_count : 0;
 					if (best_new_tip_number > 0 && best_new_tip_hash > 0)
