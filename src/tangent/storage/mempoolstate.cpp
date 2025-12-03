@@ -36,6 +36,70 @@ namespace tangent
 			return address;
 		}
 
+		bool routing_util::is_address_reserved(const socket_address& address)
+		{
+			auto value = address.get_ip_value();
+			if (!value)
+				return false;
+
+			static std::array<socket_cidr, 20> reserved_ips =
+			{
+				*vitex::network::utils::parse_address_mask("0.0.0.0/8"),
+				*vitex::network::utils::parse_address_mask("100.64.0.0/10"),
+				*vitex::network::utils::parse_address_mask("169.254.0.0/16"),
+				*vitex::network::utils::parse_address_mask("192.0.0.0/24"),
+				*vitex::network::utils::parse_address_mask("192.0.2.0/24"),
+				*vitex::network::utils::parse_address_mask("198.18.0.0/15"),
+				*vitex::network::utils::parse_address_mask("198.51.100.0/24"),
+				*vitex::network::utils::parse_address_mask("233.252.0.0/24"),
+				*vitex::network::utils::parse_address_mask("255.255.255.255/32"),
+				*vitex::network::utils::parse_address_mask("::/128"),
+				*vitex::network::utils::parse_address_mask("::ffff:0:0/96"),
+				*vitex::network::utils::parse_address_mask("::ffff:0:0:0/96"),
+				*vitex::network::utils::parse_address_mask("2001:20::/28"),
+				*vitex::network::utils::parse_address_mask("2001:db8::/32"),
+				*vitex::network::utils::parse_address_mask("5f00::/16")
+			};
+
+			for (auto& mask : reserved_ips)
+			{
+				if (mask.is_matching(*value))
+					return true;
+			}
+
+			return false;
+		}
+		bool routing_util::is_address_private(const socket_address& address)
+		{
+			auto value = address.get_ip_value();
+			if (!value)
+				return false;
+
+			static std::array<socket_cidr, 20> reserved_ips =
+			{
+				*vitex::network::utils::parse_address_mask("10.0.0.0/8"),
+				*vitex::network::utils::parse_address_mask("127.0.0.0/8"),
+				*vitex::network::utils::parse_address_mask("172.16.0.0/12"),
+				*vitex::network::utils::parse_address_mask("192.168.0.0/16"),
+				*vitex::network::utils::parse_address_mask("::1/128"),
+				*vitex::network::utils::parse_address_mask("fc00::/7"),
+				*vitex::network::utils::parse_address_mask("fe80::/10"),
+				*vitex::network::utils::parse_address_mask("fd00::/8")
+			};
+
+			for (auto& mask : reserved_ips)
+			{
+				if (mask.is_matching(*value))
+					return true;
+			}
+
+			return false;
+		}
+		bool routing_util::is_address_reserved_or_private(const socket_address& address)
+		{
+			return is_address_reserved(address) || is_address_private(address);
+		}
+
 		static thread_local mempoolstate* parent_mempoolstate = nullptr;
 		mempoolstate::mempoolstate() noexcept
 		{
@@ -53,22 +117,28 @@ namespace tangent
 			if (parent_mempoolstate == this)
 				parent_mempoolstate = nullptr;
 		}
-		expects_lr<void> mempoolstate::apply_cooldown_node(const socket_address& node_address, uint64_t timeout)
+		expects_lr<void> mempoolstate::apply_cooldown_node(const socket_address& node_address, bool cooldown)
 		{
 			if (!node_address.is_valid())
 				return expects_lr<void>(layer_exception("invalid ip address"));
 
 			schema_list map;
 			map.push_back(var::set::binary(address_to_message(node_address)));
-			map.push_back(var::set::integer(protocol::now().time.now_cpu() + timeout));
+			map.push_back(var::set::integer(protocol::now().time.now_cpu() + protocol::now().user.consensus.topology_timeout));
 
-			auto cursor = get_storage().emplace_query(__func__, "INSERT OR REPLACE INTO cooldowns (address, expiration) VALUES (?, ?)", &map);
+			auto cursor = get_storage().emplace_query(__func__, cooldown ? "INSERT INTO cooldowns (address, expiration, attempt) VALUES (?, ?, 0) ON CONFLICT DO UPDATE SET expiration = EXCLUDED.expiration + CAST(POWER(4, attempt + 1) AS INTEGER), attempt = attempt + 1 RETURNING attempt" : "DELETE FROM cooldown WHERE address = ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
+			else if (!cooldown)
+				return expectation::met;
+
+			uint64_t attempt = (*cursor)["attempt"].get().get_integer();
+			if (attempt > 9)
+				return clear_node(node_address);
 
 			return expectation::met;
 		}
-		expects_lr<void> mempoolstate::apply_unknown_node(const socket_address& node_address)
+		expects_lr<void> mempoolstate::apply_unknown_node(const socket_address& node_address, bool allow_reserved)
 		{
 			if (!node_address.is_valid())
 				return expects_lr<void>(layer_exception("invalid ip address"));
@@ -78,8 +148,9 @@ namespace tangent
 
 			schema_list map;
 			map.push_back(var::set::binary(address_to_message(node_address)));
+			map.push_back(var::set::boolean(!allow_reserved && routing_util::is_address_reserved_or_private(node_address)));
 
-			auto cursor = get_storage().emplace_query(__func__, "INSERT OR IGNORE INTO addresses (address) VALUES (?)", &map);
+			auto cursor = get_storage().emplace_query(__func__, "INSERT OR IGNORE INTO addresses (address, reserved) VALUES (?, ?)", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -113,17 +184,14 @@ namespace tangent
 			map.push_back(var::set::binary(*encrypted_wallet_message));
 
 			auto cursor = get_storage().emplace_query(__func__,
-				stringify::text(
-				"%s;"
 				"DELETE FROM nodes WHERE address = ? OR account = ?;"
-				"INSERT OR REPLACE INTO nodes (address, account, quality, services, node_message, wallet_message) VALUES (?, ?, ?, ?, ?, ?)",
-				node.availability.reachable ? "DELETE FROM cooldowns WHERE address = ?" : "INSERT OR REPLACE INTO cooldowns (address, expiration) VALUES (?, 0x7FFFFFFFFFFFFFFF)"), &map);
+				"INSERT OR REPLACE INTO nodes (address, account, quality, services, node_message, wallet_message) VALUES (?, ?, ?, ?, ?, ?)", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 
-			return expectation::met;
+			return apply_cooldown_node(node.address, !wallet.has_secret_key() && !node.availability.reachable);
 		}
-		expects_lr<void> mempoolstate::apply_node_quality(const socket_address& node_address, int8_t call_result, uint64_t call_latency, uint64_t cooldown_timeout)
+		expects_lr<void> mempoolstate::apply_node_quality(const socket_address& node_address, int8_t call_result, uint64_t call_latency)
 		{
 			schema_list map;
 			map.push_back(var::set::binary(address_to_message(node_address)));
@@ -149,17 +217,12 @@ namespace tangent
 					++node.availability.errors;
 			}
 
-			auto address_message = address_to_message(node.address);
 			map.clear();
 			map.push_back(var::set::integer(node.get_preference()));
 			map.push_back(var::set::binary(node.as_message().data));
-			map.push_back(var::set::binary(address_message));
-			map.push_back(var::set::binary(address_message));
-			map.push_back(var::set::integer(protocol::now().time.now_cpu() + cooldown_timeout));
+			map.push_back(var::set::binary(address_to_message(node.address)));
 
-			string command = "UPDATE nodes SET quality = ?, node_message = ? WHERE address = ?;";
-			command.append(call_result <= 0 ? "INSERT OR REPLACE INTO cooldowns (address, expiration) VALUES (?, ?)" : "DELETE FROM cooldowns WHERE address = ?");
-			cursor = storage.emplace_query(__func__, command, &map);
+			cursor = storage.emplace_query(__func__, "UPDATE nodes SET quality = ?, node_message = ? WHERE address = ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -397,13 +460,13 @@ namespace tangent
 			}
 			return expects_lr<vector<node_location_pair>>(std::move(results));
 		}
-		expects_lr<socket_address> mempoolstate::sample_unknown_node()
+		expects_lr<socket_address> mempoolstate::sample_connectable_unknown_node()
 		{
 			schema_list map;
 			map.push_back(var::set::integer(protocol::now().time.now_cpu()));
 
 			auto& storage = get_storage();
-			auto cursor = storage.emplace_query(__func__, "SELECT addresses.address FROM addresses LEFT JOIN cooldowns ON cooldowns.address = addresses.address WHERE cooldowns.expiration IS NULL OR cooldowns.expiration <= ? ORDER BY random() LIMIT 1", &map);
+			auto cursor = storage.emplace_query(__func__, "SELECT addresses.address FROM addresses LEFT JOIN cooldowns ON cooldowns.address = addresses.address WHERE reserved = FALSE AND expiration IS NULL OR expiration < ? ORDER BY random() LIMIT 1", &map);
 			if (!cursor || cursor->error_or_empty())
 				return expects_lr<socket_address>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -421,9 +484,12 @@ namespace tangent
 
 			return *address;
 		}
-		expects_lr<size_t> mempoolstate::get_unknown_nodes_count()
+		expects_lr<size_t> mempoolstate::get_connectable_unknown_nodes_count()
 		{
-			auto cursor = get_storage().query(__func__, "SELECT COUNT(1) AS counter FROM addresses");
+			schema_list map;
+			map.push_back(var::set::integer(protocol::now().time.now_cpu()));
+
+			auto cursor = get_storage().emplace_query(__func__, "SELECT COUNT(1) AS counter FROM addresses LEFT JOIN cooldowns ON cooldowns.address = addresses.address WHERE reserved = FALSE AND expiration IS NULL OR expiration < ?", &map);
 			if (!cursor || cursor->error_or_empty())
 				return expects_lr<size_t>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -443,7 +509,7 @@ namespace tangent
 			map.push_back(var::set::binary(address_to_message(address)));
 			map.push_back(var::set::integer(protocol::now().time.now_cpu()));
 
-			auto cursor = get_storage().emplace_query(__func__, "SELECT TRUE AS cooldown FROM cooldowns WHERE address = ? AND expiration > ? LIMIT 1", &map);
+			auto cursor = get_storage().emplace_query(__func__, "SELECT TRUE AS cooldown FROM cooldowns WHERE address = ? AND expiration >= ? LIMIT 1", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<bool>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -999,12 +1065,14 @@ namespace tangent
 			CREATE TABLE IF NOT EXISTS addresses
 			(
 				address BLOB NOT NULL,
+				reserved BOOLEAN NOT NULL,
 				PRIMARY KEY (address)
 			) WITHOUT ROWID;
 			CREATE TABLE IF NOT EXISTS cooldowns
 			(
 				address BLOB NOT NULL,
-				expiration INTEGER NOT NULL,
+				timestamp INTEGER NOT NULL,
+				attempt INTEGER NOT NULL,
 				PRIMARY KEY (address)
 			) WITHOUT ROWID;
 			CREATE TABLE IF NOT EXISTS secrets

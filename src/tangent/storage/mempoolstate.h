@@ -44,6 +44,14 @@ namespace tangent
 			attestation = (1 << 7)
 		};
 
+		class routing_util
+		{
+		public:
+			static bool is_address_reserved(const socket_address& address);
+			static bool is_address_private(const socket_address& address);
+			static bool is_address_reserved_or_private(const socket_address& address);
+		};
+
 		struct attestation_tree
 		{
 			ordered_map<uint256_t, ordered_set<algorithm::hashsig_t>> commitments;
@@ -65,10 +73,10 @@ namespace tangent
 			mempoolstate& operator=(const mempoolstate&) = delete;
 			mempoolstate& operator=(mempoolstate&&) noexcept = delete;
 			~mempoolstate() noexcept;
-			expects_lr<void> apply_cooldown_node(const socket_address& address, uint64_t timeout);
-			expects_lr<void> apply_unknown_node(const socket_address& address);
+			expects_lr<void> apply_cooldown_node(const socket_address& address, bool cooldown);
+			expects_lr<void> apply_unknown_node(const socket_address& address, bool allow_reserved);
 			expects_lr<void> apply_node(const node_pair& node);
-			expects_lr<void> apply_node_quality(const socket_address& address, int8_t call_result, uint64_t call_latency, uint64_t cooldown_timeout);
+			expects_lr<void> apply_node_quality(const socket_address& address, int8_t call_result, uint64_t call_latency);
 			expects_lr<void> clear_node(const algorithm::pubkeyhash_t& account);
 			expects_lr<void> clear_node(const socket_address& address);
 			expects_lr<void> clear_cooldowns();
@@ -79,8 +87,8 @@ namespace tangent
 			expects_lr<node_pair> get_node(const algorithm::pubkeyhash_t& account);
 			expects_lr<vector<node_location_pair>> get_neighbor_nodes_with(size_t offset, size_t count, uint32_t services = 0);
 			expects_lr<vector<node_location_pair>> get_random_nodes_with(size_t count, uint32_t services = 0, node_ports port = node_ports::consensus);
-			expects_lr<socket_address> sample_unknown_node();
-			expects_lr<size_t> get_unknown_nodes_count();
+			expects_lr<socket_address> sample_connectable_unknown_node();
+			expects_lr<size_t> get_connectable_unknown_nodes_count();
 			expects_lr<size_t> get_nodes_count();
 			expects_lr<bool> has_cooldown_on_node(const socket_address& address);
 			expects_lr<decimal> get_gas_price(const algorithm::asset_id& asset, double priority_percentile);

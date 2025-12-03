@@ -399,7 +399,7 @@ namespace tangent
 			if (descriptor)
 			{
 				auto mempool = storages::mempoolstate();
-				mempool.apply_node_quality(descriptor->first.address, call_result, call_latency, protocol::now().user.consensus.topology_timeout);
+				mempool.apply_node_quality(descriptor->first.address, call_result, call_latency);
 			}
 		}
 		void relay::resolve_query(exchange&& packed_result)
@@ -455,7 +455,7 @@ namespace tangent
 		{
 			descriptor = memory::init<relay_descriptor>(std::move(new_descriptor));
 			if (protocol::now().user.consensus.logging)
-				VI_INFO("node %s channel accept (mode: %s, port: %s, version: %s)", peer_address().c_str(), routing_util::node_type_of(this).data(), peer_service().c_str(), descriptor->first.as_version().c_str());
+				VI_INFO("node %s channel accept (mode: %s, port: %s, version: %s)", peer_address().c_str(), connection_type().data(), peer_service().c_str(), descriptor->first.as_version().c_str());
 
 			auto* socket = as_socket();
 			if (socket != nullptr)
@@ -483,6 +483,10 @@ namespace tangent
 			memory::release(outbound);
 			instance = nullptr;
 			descriptor.destroy();
+		}
+		bool relay::private_network() const
+		{
+			return descriptor ? storages::routing_util::is_address_reserved_or_private(descriptor->first.address) : false;
 		}
 		bool relay::partially_valid() const
 		{
@@ -645,6 +649,18 @@ namespace tangent
 		{
 			return *descriptor;
 		}
+		std::string_view relay::connection_type() const
+		{
+			switch (type)
+			{
+				case node_type::inbound:
+					return "inbound";
+				case node_type::outbound:
+					return "outbound";
+				default:
+					return "unknown";
+			}
+		}
 
 		outbound_node::outbound_node() noexcept : socket_client(protocol::now().user.tcp.timeout)
 		{
@@ -800,9 +816,6 @@ namespace tangent
 				return layer_exception("bad node address");
 			else if (*ip_address == "0.0.0.0")
 				node.address = socket_address("127.0.0.1", *ip_port);
-
-			if (routing_util::is_address_reserved(node.address) && !routing_util::is_address_private(node.address))
-				return layer_exception("bad node address space");
 
 			return mempool.apply_node(descriptor);
 		}
@@ -1085,7 +1098,7 @@ namespace tangent
 				return remote_exception("invalid signature");
 
 			auto address = text_address_to_socket_address(event.args[1].as_string());
-			if (!address || routing_util::is_address_reserved(*address))
+			if (!address)
 				return remote_exception("invalid address");
 
 			auto context = ledger::transaction_context();
@@ -1133,11 +1146,7 @@ namespace tangent
 
 			auto address = event.args.size() > 1 ? text_address_to_socket_address(event.args[1].as_string()) : option<socket_address>(optional::none);
 			if (address)
-			{
-				auto mempool = storages::mempoolstate();
-				if (address && !routing_util::is_address_reserved(*address))
-					mempool.apply_unknown_node(*address);
-			}
+				storages::mempoolstate().apply_unknown_node(*address, state ? state->private_network() : true);
 
 			auto* peer_descriptor = state ? state->as_descriptor() : &descriptor;
 			if (peer_descriptor != nullptr)
@@ -1206,7 +1215,7 @@ namespace tangent
 
 			auto mempool = storages::mempoolstate();
 			auto address = text_address_to_socket_address(event.args[0].as_string());
-			if (address && !routing_util::is_address_reserved(*address))
+			if (address && !storages::routing_util::is_address_reserved(*address) && !storages::routing_util::is_address_private(*address))
 			{
 				descriptor.first.address = std::move(*address);
 				apply_node(mempool, descriptor).report("mempool local node save failed");
@@ -1221,11 +1230,11 @@ namespace tangent
 				return status.error();
 
 			size_t new_nodes = 0;
+			bool private_network = state->private_network();
 			for (size_t i = 2; i < event.args.size(); i++)
 			{
 				auto address = text_address_to_socket_address(event.args[i].as_string());
-				if (address && !routing_util::is_address_reserved(*address))
-					new_nodes += mempool.apply_unknown_node(*address) ? 1 : 0;
+				new_nodes += address && mempool.apply_unknown_node(*address, private_network) ? 1 : 0;
 			}
 
 			announce_peer(uref(state), true);	
@@ -1662,11 +1671,10 @@ namespace tangent
 			if (!known_node)
 			{
 			retry_unknown_node:
-				auto unknown_node = mempool.sample_unknown_node();
+				auto unknown_node = mempool.sample_connectable_unknown_node();
 				if (!unknown_node)
 					return layer_exception("no candidate found in mempool");
-
-				if (has_address(*unknown_node) || routing_util::is_address_reserved(*unknown_node) || mempool.has_cooldown_on_node(*unknown_node).or_else(false))
+				else if (has_address(*unknown_node))
 					goto retry_unknown_node;
 
 				if (protocol::now().user.consensus.logging)
@@ -1674,7 +1682,7 @@ namespace tangent
 
 				return expects_lr<socket_address>(std::move(*unknown_node));
 			}
-			else if (has_address(known_node->first.address) || routing_util::is_address_reserved(known_node->first.address) || mempool.has_cooldown_on_node(known_node->first.address).or_else(false))
+			else if (has_address(known_node->first.address) || mempool.has_cooldown_on_node(known_node->first.address).or_else(false))
 			{
 				++offset;
 				goto retry_known_node;
@@ -1718,7 +1726,7 @@ namespace tangent
 							for (auto* address : addresses->get_childs())
 							{
 								auto endpoint = system_endpoint(address->value.get_blob(), bootstrap_url);
-								if (endpoint.is_valid() && !routing_util::is_address_reserved(endpoint.address) && mempool.apply_unknown_node(endpoint.address))
+								if (endpoint.is_valid() && mempool.apply_unknown_node(endpoint.address, false))
 									++results;
 							}
 						}
@@ -1744,9 +1752,6 @@ namespace tangent
 		{
 			if (!is_active())
 				return expects_promise_rt<uref<relay>>(remote_exception::shutdown());
-
-			if (routing_util::is_address_reserved(address))
-				return expects_promise_rt<uref<relay>>(remote_exception("address is reserved"));
 
 			auto duplicate = find_by_address(address);
 			if (duplicate)
@@ -1816,7 +1821,7 @@ namespace tangent
 				if (!result)
 				{
 					auto mempool = storages::mempoolstate();
-					mempool.apply_node_quality(address, -1, protocol::now().user.tcp.timeout, protocol::now().user.consensus.topology_timeout);
+					mempool.apply_node_quality(address, -1, protocol::now().user.tcp.timeout);
 					if (protocol::now().user.consensus.logging)
 						VI_WARN("node %s:%i handshake: %s", address.get_ip_address().or_else("[bad_address]").c_str(), (int)address.get_ip_port().or_else(0), result.what().c_str());
 				}
@@ -2566,7 +2571,7 @@ namespace tangent
 						if (better_node && current_nodes.find(better_node->second.public_key_hash) == current_nodes.end())
 							replacement_nodes[account] = std::move(better_node->first.address);
 					}
-					try_unknown_nodes = replacement_nodes.empty() && !may_connect_to_node() && mempool.get_unknown_nodes_count().or_else(0) > 0;
+					try_unknown_nodes = replacement_nodes.empty() && !may_connect_to_node() && mempool.get_connectable_unknown_nodes_count().or_else(0) > 0;
 				}
 				for (auto& [account, address] : replacement_nodes)
 					abort_node_by_account(account);
@@ -2592,10 +2597,7 @@ namespace tangent
 					auto ip_address = uint256_t(ip_value, ip_port);
 					bool duplicate = passed_candidates.find(ip_address) != passed_candidates.end();
 					if (duplicate || !coawait(connect_to_physical_node(*candidate_address)))
-					{
-						auto mempool = storages::mempoolstate();
-						mempool.apply_cooldown_node(*candidate_address, 60000);
-					}
+						storages::mempoolstate().apply_cooldown_node(*candidate_address, true);
 					passed_candidates.insert(ip_address);
 				}
 
@@ -2839,16 +2841,13 @@ namespace tangent
 			for (auto& node : protocol::now().user.known_nodes)
 			{
 				auto endpoint = system_endpoint(node);
-				if (!endpoint.is_valid() || routing_util::is_address_reserved(endpoint.address))
-				{
-					if (protocol::now().user.consensus.logging)
-						VI_ERR("pre-configured node \"%s\" error: url not valid", node.c_str());
-				}
-				else
+				if (endpoint.is_valid())
 				{
 					mempool.clear_node(endpoint.address);
-					mempool.apply_unknown_node(endpoint.address);
+					mempool.apply_unknown_node(endpoint.address, true);
 				}
+				else if (protocol::now().user.consensus.logging)
+					VI_ERR("pre-configured node \"%s\" error: url not valid", node.c_str());
 			}
 
 			bind_event(descriptors::broadcast_block_hash(), std::bind(&server_node::broadcast_block_hash, this, std::placeholders::_2, std::placeholders::_3), true);
@@ -3336,78 +3335,6 @@ namespace tangent
 			umutex<std::recursive_mutex> unique(exclusive);
 			auto it = nodes.find(instance);
 			return it != nodes.end() ? it->second : nullptr;
-		}
-
-		bool routing_util::is_address_reserved(const socket_address& address)
-		{
-			auto value = address.get_ip_value();
-			if (!value)
-				return false;
-
-			static std::array<socket_cidr, 20> reserved_ips =
-			{
-				*vitex::network::utils::parse_address_mask("0.0.0.0/8"),
-				*vitex::network::utils::parse_address_mask("100.64.0.0/10"),
-				*vitex::network::utils::parse_address_mask("169.254.0.0/16"),
-				*vitex::network::utils::parse_address_mask("192.0.0.0/24"),
-				*vitex::network::utils::parse_address_mask("192.0.2.0/24"),
-				*vitex::network::utils::parse_address_mask("198.18.0.0/15"),
-				*vitex::network::utils::parse_address_mask("198.51.100.0/24"),
-				*vitex::network::utils::parse_address_mask("233.252.0.0/24"),
-				*vitex::network::utils::parse_address_mask("255.255.255.255/32"),
-				*vitex::network::utils::parse_address_mask("::/128"),
-				*vitex::network::utils::parse_address_mask("::ffff:0:0/96"),
-				*vitex::network::utils::parse_address_mask("::ffff:0:0:0/96"),
-				*vitex::network::utils::parse_address_mask("2001:20::/28"),
-				*vitex::network::utils::parse_address_mask("2001:db8::/32"),
-				*vitex::network::utils::parse_address_mask("5f00::/16")
-			};
-
-			for (auto& mask : reserved_ips)
-			{
-				if (mask.is_matching(*value))
-					return true;
-			}
-
-			return false;
-		}
-		bool routing_util::is_address_private(const socket_address& address)
-		{
-			auto value = address.get_ip_value();
-			if (!value)
-				return false;
-
-			static std::array<socket_cidr, 20> reserved_ips =
-			{
-				*vitex::network::utils::parse_address_mask("10.0.0.0/8"),
-				*vitex::network::utils::parse_address_mask("127.0.0.0/8"),
-				*vitex::network::utils::parse_address_mask("172.16.0.0/12"),
-				*vitex::network::utils::parse_address_mask("192.168.0.0/16"),
-				*vitex::network::utils::parse_address_mask("::1/128"),
-				*vitex::network::utils::parse_address_mask("fc00::/7"),
-				*vitex::network::utils::parse_address_mask("fe80::/10"),
-				*vitex::network::utils::parse_address_mask("fd00::/8")
-			};
-
-			for (auto& mask : reserved_ips)
-			{
-				if (mask.is_matching(*value))
-					return true;
-			}
-
-			return false;
-		}
-		std::string_view routing_util::node_type_of(relay* from)
-		{
-			switch (from->type_of())
-			{
-				case node_type::inbound:
-					return "inbound";
-				case node_type::outbound:
-					return "outbound";
-				default:
-					return "relay";
-			}
 		}
 
 		dispatch_context::dispatch_context(server_node* new_server) : server(new_server)

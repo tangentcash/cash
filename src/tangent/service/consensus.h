@@ -163,6 +163,7 @@ namespace tangent
 			void abort();
 			void initialize(relay_descriptor&& target);
 			void invalidate();
+			bool private_network() const;
 			bool partially_valid() const;
 			bool fully_valid() const;
 			const string& peer_address();
@@ -179,6 +180,7 @@ namespace tangent
 			void* as_instance();
 			uptr<schema> as_schema() const;
 			relay_descriptor* as_descriptor() const;
+			std::string_view connection_type() const;
 		};
 
 		class outbound_node final : public socket_client
@@ -337,14 +339,6 @@ namespace tangent
 			void append_pending_node(outbound_node* base);
 			void erase_pending_node(outbound_node* base);
 			void on_request_open(inbound_node* base) override;
-		};
-
-		class routing_util
-		{
-		public:
-			static bool is_address_reserved(const socket_address& address);
-			static bool is_address_private(const socket_address& address);
-			static std::string_view node_type_of(relay* from);
 		};
 
 		class dispatch_context final : public ledger::dispatch_context

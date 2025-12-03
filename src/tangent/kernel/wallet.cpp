@@ -1,7 +1,6 @@
 #include "wallet.h"
 #include "../storage/mempoolstate.h"
 #include "../storage/chainstate.h"
-#include "../service/consensus.h"
 
 namespace tangent
 {
@@ -368,10 +367,7 @@ namespace tangent
 		}
 		bool node::is_valid() const
 		{
-			if (!address.is_valid())
-				return false;
-
-			return !consensus::routing_util::is_address_reserved(address);
+			return address.is_valid();
 		}
 		uint64_t node::get_preference() const
 		{

@@ -2448,7 +2448,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "address not valid");
 
 			auto mempool = storages::mempoolstate();
-			auto status = mempool.apply_unknown_node(endpoint.address);
+			auto status = mempool.apply_unknown_node(endpoint.address, true);
 			if (!status)
 				return server_response().error(error_codes::bad_request, status.error().message());
 
