@@ -2836,8 +2836,6 @@ namespace tangent
 			auto node_id = codec::hex_encode(std::string_view((char*)this, sizeof(this)));
 			superchain::server_node::get()->add_transaction_callback(node_id, std::bind(&server_node::dispatch_transaction_logs, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
 			accept_local_wallet(optional::none).expect("failed to save local node");
-			mempool.clear_cooldowns().report("failed to clear node cooldowns");
-
 			for (auto& node : protocol::now().user.known_nodes)
 			{
 				auto endpoint = system_endpoint(node);

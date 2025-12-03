@@ -124,9 +124,9 @@ namespace tangent
 
 			schema_list map;
 			map.push_back(var::set::binary(address_to_message(node_address)));
-			map.push_back(var::set::integer(protocol::now().time.now_cpu() + protocol::now().user.consensus.topology_timeout));
+			map.push_back(var::set::integer(protocol::now().time.now_cpu() + protocol::now().user.tcp.timeout));
 
-			auto cursor = get_storage().emplace_query(__func__, cooldown ? "INSERT INTO cooldowns (address, expiration, attempt) VALUES (?, ?, 0) ON CONFLICT DO UPDATE SET expiration = EXCLUDED.expiration + CAST(POWER(4, attempt + 1) AS INTEGER), attempt = attempt + 1 RETURNING attempt" : "DELETE FROM cooldowns WHERE address = ?", &map);
+			auto cursor = get_storage().emplace_query(__func__, cooldown ? "INSERT INTO cooldowns (address, expiration, attempt) VALUES (?, ?, 0) ON CONFLICT DO UPDATE SET expiration = EXCLUDED.expiration, attempt = attempt + 1 RETURNING attempt" : "DELETE FROM cooldowns WHERE address = ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 			else if (!cooldown)
@@ -135,6 +135,13 @@ namespace tangent
 			uint64_t attempt = (*cursor)["attempt"].get().get_integer();
 			if (attempt > 9)
 				return clear_node(node_address);
+			else if (!attempt)
+				return expectation::met;
+
+			map[1] = var::set::integer(std::pow(4, attempt));
+			cursor = get_storage().emplace_query(__func__, "UPDATE cooldowns SET expiration = expiration + ? WHERE address = ?", &map);
+			if (!cursor || cursor->error())
+				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 			return expectation::met;
 		}
