@@ -2516,26 +2516,17 @@ namespace tangent
 				return pull_messages(std::move(state));
 
 			auto duplicate = find_by_address(node->address);
-			if (duplicate)
+			if (!duplicate)
 			{
-				if (protocol::now().time.now() - duplicate->handshake_time > protocol::now().user.tcp.keep_alive * 3)
-				{
-					abort_node(std::move(duplicate));
-					goto handshake;
-				}
-				else
-				{
-					node->abort();
-					finalize(node);
-				}
-			}
-			else
-			{
-			handshake:
 				node->stream->set_io_timeout(protocol::now().user.tcp.timeout);
 				state = new relay(node_type::inbound, node);
 				append_node(uref(state));
 				pull_messages(std::move(state));
+			}
+			else
+			{
+				node->abort();
+				finalize(node);
 			}
 		}
 		bool server_node::run_topology_optimization()
