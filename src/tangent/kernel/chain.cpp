@@ -714,10 +714,6 @@ namespace tangent
 			if (value != nullptr && value->value.is(var_type::number))
 				user.storage.computation_threads_ratio = value->value.get_number();
 
-			value = config->fetch("storage.prune_aggressively");
-			if (value != nullptr && value->value.is(var_type::boolean))
-				user.storage.prune_aggressively = value->value.get_boolean();
-
 			value = config->fetch("storage.transaction_to_account_index");
 			if (value != nullptr && value->value.is(var_type::boolean))
 				user.storage.transaction_to_account_index = value->value.get_boolean();
@@ -726,9 +722,17 @@ namespace tangent
 			if (value != nullptr && value->value.is(var_type::boolean))
 				user.storage.transaction_to_rollup_index = value->value.get_boolean();
 
-			value = config->fetch("storage.prevent_reorganization");
+			value = config->fetch("storage.checkpoint_reorganization_only");
 			if (value != nullptr && value->value.is(var_type::boolean))
-				user.storage.prevent_reorganization = value->value.get_boolean();
+				user.storage.checkpoint_reorganization_only = value->value.get_boolean();
+
+			value = config->fetch("storage.prune_transactions");
+			if (value != nullptr && value->value.is(var_type::boolean))
+				user.storage.prune_transactions = value->value.get_boolean();
+
+			value = config->fetch("storage.prune_blocks");
+			if (value != nullptr && value->value.is(var_type::boolean))
+				user.storage.prune_blocks = value->value.get_boolean();
 
 			value = config->fetch("storage.logging");
 			if (value != nullptr && value->value.is(var_type::boolean))

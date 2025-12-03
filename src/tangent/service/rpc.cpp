@@ -3067,7 +3067,8 @@ namespace tangent
 			storage->set("checkpoint_size", var::integer(protocol::now().user.storage.checkpoint_size));
 			storage->set("transaction_to_account_index", var::boolean(protocol::now().user.storage.transaction_to_account_index));
 			storage->set("transaction_to_rollup_index", var::boolean(protocol::now().user.storage.transaction_to_rollup_index));
-			storage->set("full_sync_available", var::boolean(!protocol::now().user.storage.prune_aggressively));
+			storage->set("transaction_pruning", var::boolean(!protocol::now().user.storage.prune_transactions));
+			storage->set("block_pruning", var::boolean(!protocol::now().user.storage.prune_blocks));
 
 			if (block_header)
 			{

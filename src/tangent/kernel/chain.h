@@ -217,10 +217,11 @@ namespace tangent
 				double flush_threads_ratio = 0.25;
 				double compaction_threads_ratio = 0.25;
 				double computation_threads_ratio = 0.00;
-				bool prune_aggressively = false;
 				bool transaction_to_account_index = true;
 				bool transaction_to_rollup_index = true;
-				bool prevent_reorganization = true;
+				bool checkpoint_reorganization_only = true;
+				bool prune_transactions = false;
+				bool prune_blocks = false;
 				bool logging = false;
 			} storage;
 			struct

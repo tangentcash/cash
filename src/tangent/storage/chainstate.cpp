@@ -1368,7 +1368,12 @@ namespace tangent
 			if (evaluation.block.number <= latest_checkpoint)
 				return expectation::met;
 
-			return prune(protocol::now().user.storage.prune_aggressively ? (uint32_t)pruning::block | (uint32_t)pruning::transaction | (uint32_t)pruning::state : (uint32_t)pruning::state, evaluation.block.number - checkpoint_size);
+			uint32_t flags = (uint32_t)pruning::state;
+			if (protocol::now().user.storage.prune_transactions)
+				flags |= (uint32_t)pruning::transaction;
+			if (protocol::now().user.storage.prune_blocks)
+				flags |= (uint32_t)pruning::block;
+			return prune(flags, evaluation.block.number - checkpoint_size);
 		}
 		expects_lr<void> chainstate::resolve_block_transactions(vector<ledger::block_transaction>& result, uint64_t block_number, bool fully, size_t chunk)
 		{

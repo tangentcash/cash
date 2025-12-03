@@ -97,10 +97,11 @@
         "flush_threads_ratio": 0.25,
         "compaction_threads_ratio": 0.25,
         "computation_threads_ratio": 0.00,
-        "prune_aggressively": false,
         "transaction_to_account_index": true,
         "transaction_to_rollup_index": true,
-        "prevent_reorganization": true,
+        "prune_transactions": false,
+        "prune_blocks": false,
+        "checkpoint_reorganization_only": true,
         "logging": false
     },
     "logs": {
