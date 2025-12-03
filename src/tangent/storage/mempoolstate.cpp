@@ -126,7 +126,7 @@ namespace tangent
 			map.push_back(var::set::binary(address_to_message(node_address)));
 			map.push_back(var::set::integer(protocol::now().time.now_cpu() + protocol::now().user.consensus.topology_timeout));
 
-			auto cursor = get_storage().emplace_query(__func__, cooldown ? "INSERT INTO cooldowns (address, expiration, attempt) VALUES (?, ?, 0) ON CONFLICT DO UPDATE SET expiration = EXCLUDED.expiration + CAST(POWER(4, attempt + 1) AS INTEGER), attempt = attempt + 1 RETURNING attempt" : "DELETE FROM cooldown WHERE address = ?", &map);
+			auto cursor = get_storage().emplace_query(__func__, cooldown ? "INSERT INTO cooldowns (address, expiration, attempt) VALUES (?, ?, 0) ON CONFLICT DO UPDATE SET expiration = EXCLUDED.expiration + CAST(POWER(4, attempt + 1) AS INTEGER), attempt = attempt + 1 RETURNING attempt" : "DELETE FROM cooldowns WHERE address = ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 			else if (!cooldown)
@@ -173,7 +173,6 @@ namespace tangent
 
 			auto address_message = address_to_message(node.address);
 			schema_list map;
-			map.push_back(var::set::binary(address_message));
 			map.push_back(var::set::binary(address_message));
 			map.push_back(var::set::binary(wallet.public_key_hash.view()));
 			map.push_back(var::set::binary(address_message));
@@ -1071,7 +1070,7 @@ namespace tangent
 			CREATE TABLE IF NOT EXISTS cooldowns
 			(
 				address BLOB NOT NULL,
-				timestamp INTEGER NOT NULL,
+				expiration INTEGER NOT NULL,
 				attempt INTEGER NOT NULL,
 				PRIMARY KEY (address)
 			) WITHOUT ROWID;
