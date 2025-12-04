@@ -455,7 +455,7 @@ namespace tangent
 		{
 			descriptor = memory::init<relay_descriptor>(std::move(new_descriptor));
 			if (protocol::now().user.consensus.logging)
-				VI_INFO("node %s channel accept (mode: %s, port: %s, version: %s)", peer_address().c_str(), connection_type().data(), peer_service().c_str(), descriptor->first.as_version().c_str());
+				VI_INFO("node %s channel accept (mode: %s, port: %s, version: %s, account: %s)", peer_address().c_str(), connection_type().data(), peer_service().c_str(), descriptor->first.as_version().c_str(), descriptor->second.get_address().c_str());
 
 			auto* socket = as_socket();
 			if (socket != nullptr)
