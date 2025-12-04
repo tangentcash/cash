@@ -232,7 +232,6 @@ namespace tangent
 				std::atomic<bool> prepared = false;
 				std::atomic<bool> waiting = false;
 				std::atomic<bool> dirty = false;
-				std::atomic<uint64_t> dispatcher_time = 0;
 			} mempool;
 
 		private:
@@ -295,8 +294,7 @@ namespace tangent
 			bool run_fork_resolution();
 			bool run_attestation_resolution();
 			bool run_block_production();
-			bool run_delayed_block_dispatcher();
-			bool run_block_dispatcher(ledger::block_header&& tip);
+			bool run_block_dispatcher();
 			void startup();
 			void shutdown();
 			void clear_pending_neighbors();

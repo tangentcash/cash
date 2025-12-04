@@ -2619,7 +2619,7 @@ namespace tangent
 				if ((inputs > 0 || outputs > 0) && protocol::now().user.consensus.logging)
 					VI_INFO("network topology optimization: OK (connections: +%i / -%i)", (int)inputs, (int)outputs);
 
-				run_delayed_block_dispatcher();
+				run_block_dispatcher();
 				coreturn_void;
 			});
 		}
@@ -2716,6 +2716,7 @@ namespace tangent
 
 			return control_sys.task_if_none(TASK_BLOCK_PRODUCTION, [this](system_task&& task)
 			{
+			next_block:
 				auto& [node, wallet] = descriptor;
 				auto chain = storages::chainstate();
 				auto tip = chain.get_latest_block_header();
@@ -2773,28 +2774,21 @@ namespace tangent
 				if (is_active() && (!tip || evaluation->block.number > tip->number || (evaluation->block.number == tip->number && evaluation->block.priority < tip->priority)))
 				{
 					if (protocol::now().user.consensus.logging)
-						VI_INFO("block %s proposed (number: %" PRIu64", txns: %" PRIu64 ", leader: %" PRIu64 ", work: < ~%" PRIu64 " sec.)", algorithm::encoding::encode_0xhex256(evaluation->block.as_hash()).c_str(), evaluation->block.number, (uint64_t)environment.incoming.size(), position + 1, current_node_solution_time / 1000 + 1);
+						VI_INFO("block %s solved (number: %" PRIu64", txns: %" PRIu64 ", leader: %" PRIu64 ", work: < ~%" PRIu64 " sec.)", algorithm::encoding::encode_0xhex256(evaluation->block.as_hash()).c_str(), evaluation->block.number, (uint64_t)environment.incoming.size(), position + 1, current_node_solution_time / 1000 + 1);
 
-					accept_block(nullptr, std::move(*evaluation), 0);
+					if (accept_block(nullptr, std::move(*evaluation), 0))
+						goto next_block;
 				}
 				else if (protocol::now().user.consensus.logging)
 					VI_WARN("block %s dismissed (number: %" PRIu64", txns: %" PRIu64 ", leader: %" PRIu64 ", work: < ~%" PRIu64 " sec. wasted)", algorithm::encoding::encode_0xhex256(evaluation->block.as_hash()).c_str(), evaluation->block.number, (uint64_t)environment.incoming.size(), position + 1, current_node_solution_time / 1000 + 1);
 			});
 		}
-		bool server_node::run_delayed_block_dispatcher()
-		{
-			if (protocol::now().time.now_cpu() - mempool.dispatcher_time <= protocol::now().user.consensus.dispatch_retry_interval)
-				return false;
-
-			auto tip = storages::chainstate().get_latest_block_header().or_else(ledger::block_header());
-			return run_block_dispatcher(std::move(tip));
-		}
-		bool server_node::run_block_dispatcher(ledger::block_header&& tip)
+		bool server_node::run_block_dispatcher()
 		{
 			if (is_syncing())
 				return false;
 
-			mempool.dispatcher_time = protocol::now().time.now_cpu();
+			auto tip = storages::chainstate().get_latest_block_header().or_else(ledger::block_header());
 			if (!tip.number)
 				return false;
 
@@ -2892,7 +2886,7 @@ namespace tangent
 			control_sys.interval_if_none(TASK_MEMPOOL_VACUUM "_runner", protocol::now().user.consensus.transaction_timeout, std::bind(&server_node::run_mempool_vacuum, this));
 			control_sys.interval_if_none(TASK_TOPOLOGY_OPTIMIZATION "_runner", protocol::now().user.consensus.topology_timeout, std::bind(&server_node::run_topology_optimization, this));
 			control_sys.interval_if_none(TASK_ATTESTATION_RESOLUTION "_runner", protocol::now().user.consensus.attestation_timeout, std::bind(&server_node::run_attestation_resolution, this));
-			control_sys.interval_if_none(TASK_BLOCK_DISPATCH_RETRIAL "_runner", protocol::now().user.consensus.dispatch_retry_interval, std::bind(&server_node::run_delayed_block_dispatcher, this));
+			control_sys.interval_if_none(TASK_BLOCK_DISPATCH_RETRIAL "_runner", protocol::now().user.consensus.dispatch_retry_interval, std::bind(&server_node::run_block_dispatcher, this));
 			run_topology_optimization();
 			run_mempool_vacuum();
 		}
@@ -3073,9 +3067,8 @@ namespace tangent
 
 			if (!is_syncing())
 			{
-				auto header = ledger::block_header(candidate.block);
-				auto timeout = std::min(header.evaluation_time - header.generation_time, protocol::now().policy.pow.time);
-				schedule::get()->set_timeout(timeout, [this, header = std::move(header)]() mutable { run_block_dispatcher(std::move(header)); });
+				auto timeout = std::min(candidate.block.get_proof_duration(), protocol::now().policy.pow.time);
+				schedule::get()->set_timeout(timeout, [this]() { run_block_dispatcher(); });
 				if (from && mempool.dirty)
 				{
 					mempool.dirty = false;
