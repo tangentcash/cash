@@ -2662,7 +2662,13 @@ namespace tangent
 			if (value != nullptr)
 			{
 				auto nonce = std::max(value->nonce, next.or_else(0));
-				next = next && nonce >= value->nonce ? nonce + 1 : value->nonce;
+				if (next && nonce >= value->nonce)
+				{
+					auto prev = mempool.get_lowest_transaction_nonce(owner);
+					next = !prev || *prev <= value->nonce ? nonce + 1 : value->nonce;
+				}
+				else
+					next = value->nonce;
 			}
 			else if (next)
 				*next += 1;
