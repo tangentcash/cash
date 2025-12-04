@@ -2334,6 +2334,20 @@ namespace tangent
 			values.erase(std::remove_if(values.begin(), values.end(), [](const ledger::block_transaction& a) { return !a.transaction; }), values.end());
 			return values;
 		}
+		expects_lr<bool> chainstate::has_non_aliased_transaction(const uint256_t& transaction_hash)
+		{
+			uint8_t hash[32];
+			transaction_hash.encode(hash);
+
+			schema_list map;
+			map.push_back(var::set::binary(hash, sizeof(hash)));
+
+			auto cursor = get_tx_storage().emplace_query(__func__, "SELECT TRUE FROM transactions WHERE transaction_hash = ? LIMIT 1", &map);
+			if (!cursor || cursor->error_or_empty())
+				return expects_lr<bool>(layer_exception(ledger::storage_util::error_of(cursor)));
+
+			return expects_lr<bool>(!cursor->first().empty());
+		}
 		expects_lr<uptr<ledger::transaction>> chainstate::get_transaction_by_hash(const uint256_t& transaction_hash)
 		{
 			uint8_t hash[32];

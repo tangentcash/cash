@@ -883,22 +883,29 @@ namespace tangent
 		}
 		expects_lr<void> server_node::accept_transaction(uref<relay>&& from, uptr<ledger::transaction>&& candidate_tx, bool validate_execution)
 		{
+			algorithm::pubkeyhash_t owner;
 			auto purpose = candidate_tx->as_typename();
 			auto candidate_hash = candidate_tx->as_hash();
-			auto chain = storages::chainstate();
-			if (chain.get_transaction_by_hash(candidate_hash))
-			{
-				if (protocol::now().user.consensus.logging)
-					VI_INFO("transaction %s %.*s accepted", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data());
-				return expectation::met;
-			}
-
-			algorithm::pubkeyhash_t owner;
 			if (!candidate_tx->recover_hash(owner))
 			{
 				if (protocol::now().user.consensus.logging)
 					VI_WARN("transaction %s %.*s validation failed: invalid signature", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data());
 				return layer_exception("signature key recovery failed");
+			}
+
+			auto chain = storages::chainstate();
+			auto mempool = storages::mempoolstate();
+			if (mempool.has_transaction(candidate_hash).or_else(false) || chain.has_non_aliased_transaction(candidate_hash).or_else(false))
+				return expectation::met;
+
+			auto state = chain.get_uniform(states::account_nonce::as_instance_type(), nullptr, states::account_nonce::as_instance_index(owner), 0);
+			auto* value = (states::account_nonce*)(state ? state->ptr() : nullptr);
+			auto nonce = value ? value->nonce : 0;
+			if (candidate_tx->nonce < nonce)
+			{
+				if (protocol::now().user.consensus.logging)
+					VI_WARN("transaction %s %.*s validation failed: invalid nonce (expired)", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data());
+				return layer_exception("nonce is too old");
 			}
 
 			algorithm::pubkeyhash_t validation_owner;
