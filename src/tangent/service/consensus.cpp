@@ -46,7 +46,7 @@ namespace tangent
 			message.write_integer(time);
 			return message.hash();
 		}
-		static uint256_t discovery_proof(const socket_address& address, const ordered_set<algorithm::pubkeyhash_t>& accounts)
+		static uint256_t discovery_proof(const socket_address& address, const btree_set<algorithm::pubkeyhash_t>& accounts)
 		{
 			format::wo_stream message;
 			message.write_string(address.get_ip_address().or_else(string()));
@@ -795,7 +795,7 @@ namespace tangent
 			umutex<std::recursive_mutex> unique(exclusive);
 		retry:
 			{
-				unordered_map<void*, uref<relay>> current_nodes;
+				hash_map<void*, uref<relay>> current_nodes;
 				current_nodes.swap(nodes);
 				unique.unlock();
 				for (auto& node : current_nodes)
@@ -949,7 +949,7 @@ namespace tangent
 			}
 
 			uint256_t best_commitment_hash = 0;
-			ordered_map<uint256_t, ordered_set<algorithm::pubkeyhash_t>> attesters;
+			btree_map<uint256_t, btree_set<algorithm::pubkeyhash_t>> attesters;
 			auto verification = transactions::attestate::verify_proof_commitment(&context, batch->asset, batch->commitments, best_commitment_hash, attesters);
 			if (!verification)
 				return verification;
@@ -1103,7 +1103,7 @@ namespace tangent
 
 			auto context = ledger::transaction_context();
 			size_t accounts_size = event.args.size() - 2;
-			ordered_set<algorithm::pubkeyhash_t> accounts;
+			btree_set<algorithm::pubkeyhash_t> accounts;
 			for (size_t i = 2; i < event.args.size(); i++)
 			{
 				auto account = algorithm::pubkeyhash_t(event.args[i].as_string());
@@ -1411,7 +1411,7 @@ namespace tangent
 			if (!reader.read_integer(reader.read_type(), &encrypted_shares_size))
 				return remote_exception("encrypted shares list size not valid");
 
-			auto encrypted_shares = ordered_map<algorithm::pubkeyhash_t, string>();
+			auto encrypted_shares = btree_map<algorithm::pubkeyhash_t, string>();
 			for (uint8_t i = 0; i < encrypted_shares_size; i++)
 			{
 				algorithm::pubkeyhash_t participant; string intermediate;
@@ -1474,7 +1474,7 @@ namespace tangent
 				if (!reader.read_integer(reader.read_type(), &ref_hash))
 					return remote_exception("invalid ref hash of encrypted share");
 
-				aggregator.encrypted_shares[ref_hash] = ordered_map<algorithm::pubkeyhash_t, string>();
+				aggregator.encrypted_shares[ref_hash] = btree_map<algorithm::pubkeyhash_t, string>();
 			}
 
 			auto dispatcher = dispatch_context(this);
@@ -1569,7 +1569,7 @@ namespace tangent
 			if (!reader.read_integer(reader.read_type(), &list_size))
 				return remote_exception("encrypted shares list size not valid");
 
-			auto list = ordered_map<algorithm::pubkey_t, string>();
+			auto list = btree_map<algorithm::pubkey_t, string>();
 			for (uint8_t i = 0; i < list_size; i++)
 			{
 				algorithm::pubkey_t item; string intermediate;
@@ -1829,24 +1829,24 @@ namespace tangent
 				return result;
 			});
 		}
-		expects_promise_rt<unordered_set<algorithm::pubkeyhash_t>> server_node::connect_to_logical_nodes(unordered_set<algorithm::pubkeyhash_t>&& accounts)
+		expects_promise_rt<hash_set<algorithm::pubkeyhash_t>> server_node::connect_to_logical_nodes(hash_set<algorithm::pubkeyhash_t>&& accounts)
 		{
 			if (accounts.empty())
-				return expects_promise_rt<unordered_set<algorithm::pubkeyhash_t>>(remote_exception("invalid arguments"));
+				return expects_promise_rt<hash_set<algorithm::pubkeyhash_t>>(remote_exception("invalid arguments"));
 
-			unordered_set<algorithm::pubkeyhash_t> early_results;
+			hash_set<algorithm::pubkeyhash_t> early_results;
 			for (auto& account : accounts)
 			{
 				if (account.equals(descriptor.second.public_key_hash) || find_by_account(account) || find_with_neighbor_account(account))
 					early_results.insert(account);
 			}
 			if (early_results.size() == accounts.size())
-				return expects_promise_rt<unordered_set<algorithm::pubkeyhash_t>>(std::move(early_results));
+				return expects_promise_rt<hash_set<algorithm::pubkeyhash_t>>(std::move(early_results));
 
-			return coasync<expects_rt<unordered_set<algorithm::pubkeyhash_t>>>([this, accounts = std::move(accounts), early_results = std::move(early_results)]() mutable -> expects_promise_rt<unordered_set<algorithm::pubkeyhash_t>>
+			return coasync<expects_rt<hash_set<algorithm::pubkeyhash_t>>>([this, accounts = std::move(accounts), early_results = std::move(early_results)]() mutable -> expects_promise_rt<hash_set<algorithm::pubkeyhash_t>>
 			{
-				unordered_map<algorithm::pubkeyhash_t, expects_promise_rt<void>> directly_connected_accounts;
-				ordered_set<algorithm::pubkeyhash_t> indirectly_connected_accounts;
+				hash_map<algorithm::pubkeyhash_t, expects_promise_rt<void>> directly_connected_accounts;
+				btree_set<algorithm::pubkeyhash_t> indirectly_connected_accounts;
 				{
 					auto mempool = storages::mempoolstate();
 					for (auto& account : accounts)
@@ -1873,7 +1873,7 @@ namespace tangent
 					}
 				}
 
-				unordered_set<algorithm::pubkeyhash_t> results;
+				hash_set<algorithm::pubkeyhash_t> results;
 				for (auto& [account, directly_connected_account] : directly_connected_accounts)
 				{
 					auto result = coawait(std::move(directly_connected_account));
@@ -1886,7 +1886,7 @@ namespace tangent
 				if (indirectly_connected_accounts.empty())
 				{
 				exit:
-					coreturn expects_promise_rt<unordered_set<algorithm::pubkeyhash_t>>(std::move(results));
+					coreturn expects_promise_rt<hash_set<algorithm::pubkeyhash_t>>(std::move(results));
 				}
 
 				auto& [node, wallet] = descriptor;
@@ -1987,7 +1987,7 @@ namespace tangent
 					else if (result->args.size() < 2)
 						break;
 
-					ordered_set<uint256_t> transaction_hashes;
+					btree_set<uint256_t> transaction_hashes;
 					{
 						auto mempool = storages::mempoolstate();
 						auto chain = storages::chainstate();
@@ -2546,7 +2546,7 @@ namespace tangent
 			return control_sys.async_task_if_none(TASK_TOPOLOGY_OPTIMIZATION, [this]() -> promise<void>
 			{
 				algorithm::pubkeyhash_t worst_account;
-				unordered_set<algorithm::pubkeyhash_t> current_nodes;
+				hash_set<algorithm::pubkeyhash_t> current_nodes;
 				{
 					uint64_t worst_preference = std::numeric_limits<uint64_t>::max();
 					umutex<std::recursive_mutex> unique(exclusive);
@@ -2569,7 +2569,7 @@ namespace tangent
 
 				bool try_unknown_nodes;
 				auto may_connect_to_node = [this]() { return is_active() && size_of(node_type::inbound) < protocol::now().user.consensus.max_outbound_connections; };
-				unordered_map<algorithm::pubkeyhash_t, socket_address> replacement_nodes;
+				hash_map<algorithm::pubkeyhash_t, socket_address> replacement_nodes;
 				replacement_nodes.reserve(current_nodes.size());
 				{
 					auto mempool = storages::mempoolstate();
@@ -2592,7 +2592,7 @@ namespace tangent
 						coawait(connect_to_physical_node(address));
 				}
 
-				unordered_set<uint256_t> passed_candidates;
+				hash_set<uint256_t> passed_candidates;
 				expects_rt<socket_address> candidate_address = socket_address();
 				while (candidate_address && may_connect_to_node())
 				{
@@ -3186,7 +3186,7 @@ namespace tangent
 			auto it = forks.find(fork_tip);
 			return it != forks.end() ? (current_number <= it->second.header.number ? (double)current_number / (double)it->second.header.number : 1.0) : 1.0;
 		}
-		const unordered_map<void*, uref<relay>>& server_node::get_nodes() const
+		const hash_map<void*, uref<relay>>& server_node::get_nodes() const
 		{
 			return nodes;
 		}
@@ -3374,14 +3374,14 @@ namespace tangent
 			auto& [node, wallet] = server->descriptor;
 			return wallet;
 		}
-		expects_promise_rt<void> dispatch_context::aggregate_validators(const ordered_set<algorithm::pubkeyhash_t>& validators)
+		expects_promise_rt<void> dispatch_context::aggregate_validators(const btree_set<algorithm::pubkeyhash_t>& validators)
 		{
 			if (protocol::now().user.consensus.logging)
 				VI_INFO("logical connection: connect to %i validators", (int)validators.size());
 
 			return coasync<expects_rt<void>>([this, &validators]() mutable -> expects_promise_rt<void>
 			{
-				unordered_set<algorithm::pubkeyhash_t> required_accounts;
+				hash_set<algorithm::pubkeyhash_t> required_accounts;
 				required_accounts.reserve(validators.size());
 				required_accounts.insert(validators.begin(), validators.end());
 
@@ -3779,7 +3779,7 @@ namespace tangent
 			if (it != validators.end())
 				validator = it;
 		}
-		expects_promise_rt<void> local_dispatch_context::aggregate_validators(const ordered_set<algorithm::pubkeyhash_t>& validators)
+		expects_promise_rt<void> local_dispatch_context::aggregate_validators(const btree_set<algorithm::pubkeyhash_t>& validators)
 		{
 			return expects_promise_rt<void>(expectation::met);
 		}
@@ -3795,7 +3795,7 @@ namespace tangent
 			this->validator = prev;
 			return expects_promise_rt<void>(std::move(result));
 		}
-		expects_rt<void> local_dispatch_context::distribute_entropy_shares(ledger::dispatch_context* dispatcher, const ledger::transaction_context* context, const ordered_map<algorithm::pubkeyhash_t, string>& encrypted_shares)
+		expects_rt<void> local_dispatch_context::distribute_entropy_shares(ledger::dispatch_context* dispatcher, const ledger::transaction_context* context, const btree_map<algorithm::pubkeyhash_t, string>& encrypted_shares)
 		{
 			auto* route = (transactions::route*)context->transaction;
 			if (!route)
@@ -3838,7 +3838,7 @@ namespace tangent
 			this->validator = prev;
 			return expects_promise_rt<void>(std::move(result));
 		}
-		expects_rt<void> local_dispatch_context::aggregate_entropy_shares(ledger::dispatch_context* dispatcher, const ledger::transaction_context* context, const algorithm::pubkey_t& public_key, ordered_map<uint256_t, ordered_map<algorithm::pubkeyhash_t, string>>& encrypted_shares)
+		expects_rt<void> local_dispatch_context::aggregate_entropy_shares(ledger::dispatch_context* dispatcher, const ledger::transaction_context* context, const algorithm::pubkey_t& public_key, btree_map<uint256_t, btree_map<algorithm::pubkeyhash_t, string>>& encrypted_shares)
 		{
 			auto* setup = (transactions::setup*)context->transaction;
 			if (!setup)
@@ -3920,7 +3920,7 @@ namespace tangent
 			this->validator = prev;
 			return expects_promise_rt<void>(std::move(result));
 		}
-		expects_rt<void> local_dispatch_context::recover_entropy(ledger::dispatch_context* dispatcher, const ledger::transaction_context* context, algorithm::hashsig_t& proof, const ordered_map<uint256_t, ordered_map<algorithm::pubkeyhash_t, string>>& encrypted_shares, const ordered_map<uint256_t, string>& encrypted_entropies)
+		expects_rt<void> local_dispatch_context::recover_entropy(ledger::dispatch_context* dispatcher, const ledger::transaction_context* context, algorithm::hashsig_t& proof, const btree_map<uint256_t, btree_map<algorithm::pubkeyhash_t, string>>& encrypted_shares, const btree_map<uint256_t, string>& encrypted_entropies)
 		{
 			auto* setup = (transactions::setup*)context->transaction;
 			if (!setup)
@@ -3943,7 +3943,7 @@ namespace tangent
 			if (!migrations)
 				return remote_exception(std::move(migrations.error().message()));
 
-			ordered_map<uint256_t, states::bridge_account*> share_refs, entropy_refs;
+			btree_map<uint256_t, states::bridge_account*> share_refs, entropy_refs;
 			for (auto& migration : *migrations)
 			{
 				auto ref_hash = secret_entropy::ref_hash(migration.account.asset, migration.account.manager, migration.account.owner);
@@ -3959,7 +3959,7 @@ namespace tangent
 				if (ref == share_refs.end())
 					return remote_exception("share migration not permitted");
 
-				ordered_map<algorithm::pubkeyhash_t, secret_entropy::share_pair> mapped_shares;
+				btree_map<algorithm::pubkeyhash_t, secret_entropy::share_pair> mapped_shares;
 				for (auto& [participant, encrypted_share] : mapped_encrypted_shares)
 				{
 					string encrypted_input_share, encrypted_output_share;
@@ -3983,7 +3983,7 @@ namespace tangent
 				if (mapped_shares.size() < algorithm::signing::recovery_threshold(ref->second->group.size() - 1))
 					return remote_exception("entropy recovery threshold not met");
 
-				ordered_set<algorithm::share_t> shares;
+				btree_set<algorithm::share_t> shares;
 				for (auto& [participant, pair] : mapped_shares)
 					shares.insert(pair.input);
 
@@ -4042,7 +4042,7 @@ namespace tangent
 			apply_encrypted_distribution_shares(state, next->second.public_key_hash, list);
 			return expects_promise_rt<void>(std::move(result));
 		}
-		expects_rt<void> local_dispatch_context::aggregate_public_key(ledger::dispatch_context* dispatcher, const ledger::transaction_context* context, ordered_map<algorithm::pubkey_t, string>& encrypted_shares, algorithm::composition::public_state* aggregator)
+		expects_rt<void> local_dispatch_context::aggregate_public_key(ledger::dispatch_context* dispatcher, const ledger::transaction_context* context, btree_map<algorithm::pubkey_t, string>& encrypted_shares, algorithm::composition::public_state* aggregator)
 		{
 			auto* route = (transactions::route*)context->transaction;
 			if (!route)
@@ -4085,7 +4085,7 @@ namespace tangent
 			if (encrypted_shares.size() != recovery_group)
 				return remote_exception("encrypted group shares count mismatch");
 
-			ordered_set<algorithm::share_t> shares;
+			btree_set<algorithm::share_t> shares;
 			if (!algorithm::signing::split_secret_into_shares(secret->entropy.data, algorithm::signing::recovery_threshold(recovery_group), (uint8_t)recovery_group, shares))
 				return remote_exception("group share derivation failed");
 
@@ -4173,9 +4173,9 @@ namespace tangent
 
 			return expectation::met;
 		}
-		ordered_map<algorithm::pubkey_t, string> local_dispatch_context::new_encrypted_distribution_shares(const algorithm::pubkey_t& validator_public_key, const public_state& state)
+		btree_map<algorithm::pubkey_t, string> local_dispatch_context::new_encrypted_distribution_shares(const algorithm::pubkey_t& validator_public_key, const public_state& state)
 		{
-			ordered_map<algorithm::pubkey_t, string> list;
+			btree_map<algorithm::pubkey_t, string> list;
 			for (auto& [public_key, encrypted_share_values] : state.encrypted_shares)
 			{
 				if (public_key != validator_public_key)
@@ -4183,7 +4183,7 @@ namespace tangent
 			}
 			return list;
 		}
-		bool local_dispatch_context::apply_encrypted_distribution_shares(public_state& state, const algorithm::pubkeyhash_t& validator, const ordered_map<algorithm::pubkey_t, string>& list)
+		bool local_dispatch_context::apply_encrypted_distribution_shares(public_state& state, const algorithm::pubkeyhash_t& validator, const btree_map<algorithm::pubkey_t, string>& list)
 		{
 			for (auto& [public_key, encrypted_share] : list)
 			{

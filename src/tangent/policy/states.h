@@ -145,7 +145,7 @@ namespace tangent
 		struct validator_production final : ledger::multiform
 		{
 			algorithm::pubkeyhash_t owner;
-			ordered_map<algorithm::asset_id, decimal> rewards;
+			btree_map<algorithm::asset_id, decimal> rewards;
 			decimal stake = decimal::nan();
 
 			validator_production(const algorithm::pubkeyhash_t& new_owner, uint64_t new_block_number, uint64_t new_block_nonce);
@@ -178,8 +178,8 @@ namespace tangent
 			};
 
 			algorithm::pubkeyhash_t owner;
-			ordered_map<algorithm::asset_id, vector<participation_ref>> participations;
-			ordered_map<algorithm::asset_id, decimal> rewards;
+			btree_map<algorithm::asset_id, vector<participation_ref>> participations;
+			btree_map<algorithm::asset_id, decimal> rewards;
 			decimal stake = decimal::nan();
 
 			validator_participation(const algorithm::pubkeyhash_t& new_owner, uint64_t new_block_number, uint64_t new_block_nonce);
@@ -206,7 +206,7 @@ namespace tangent
 		{
 			algorithm::pubkeyhash_t owner;
 			algorithm::asset_id asset;
-			ordered_map<algorithm::asset_id, decimal> rewards;
+			btree_map<algorithm::asset_id, decimal> rewards;
 			decimal participation_threshold = decimal::zero();
 			decimal stake = decimal::nan();
 			decimal incoming_fee = decimal::zero();
@@ -241,7 +241,7 @@ namespace tangent
 		{
 			algorithm::pubkeyhash_t owner;
 			algorithm::asset_id asset;
-			ordered_map<algorithm::asset_id, decimal> balances;
+			btree_map<algorithm::asset_id, decimal> balances;
 
 			bridge_balance(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, uint64_t new_block_number, uint64_t new_block_nonce);
 			bridge_balance(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, const ledger::block_header* new_block_header);
@@ -266,7 +266,7 @@ namespace tangent
 
 		struct bridge_account final : ledger::multiform
 		{
-			ordered_set<algorithm::pubkeyhash_t> group;
+			btree_set<algorithm::pubkeyhash_t> group;
 			algorithm::composition::cpubkey_t public_key;
 			algorithm::pubkeyhash_t owner;
 			algorithm::pubkeyhash_t manager;
@@ -281,7 +281,7 @@ namespace tangent
 			bool load_row(format::ro_stream& stream) override;
 			bool store_data(format::wo_stream* stream) const override;
 			bool load_data(format::ro_stream& stream) override;
-			void set_group(const algorithm::composition::cpubkey_t& new_public_key, ordered_set<algorithm::pubkeyhash_t>&& new_group);
+			void set_group(const algorithm::composition::cpubkey_t& new_public_key, btree_set<algorithm::pubkeyhash_t>&& new_group);
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;

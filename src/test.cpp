@@ -1642,7 +1642,7 @@ public:
 		});
 	}
 	/* blockchain exclusively for testing bridges of specific networks (possibly non-zero balance accounts, valid regtest chain) */
-	static void blockchain_integration_coverage(const algorithm::asset_id& asset, const unordered_map<string, string>& urls, uint64_t block_number, const decimal& deposit_value, const decimal& bridge_fee, std::function<string()>&& new_account, std::function<void(const std::string_view&, bool)>&& new_block, std::function<void(const std::string_view&, const std::string_view&, const decimal&)>&& new_transaction)
+	static void blockchain_integration_coverage(const algorithm::asset_id& asset, const hash_map<string, string>& urls, uint64_t block_number, const decimal& deposit_value, const decimal& bridge_fee, std::function<string()>&& new_account, std::function<void(const std::string_view&, bool)>&& new_block, std::function<void(const std::string_view&, const std::string_view&, const decimal&)>&& new_transaction)
 	{
 		use_clean_state([&]()
 		{
@@ -1710,7 +1710,7 @@ public:
 				}
 				transaction_status = 0;
 			};
-			server->add_multi_node(asset, unordered_map<string, string>(urls), 0);
+			server->add_multi_node(asset, hash_map<string, string>(urls), 0);
 			server->add_transaction_callback("logging", [&](const algorithm::asset_id& asset, const superchain::chain_supervisor_options& options, superchain::transaction_logs&& logs) -> expects_lr<void>
 			{
 				auto transactions = vector<uptr<ledger::transaction>>();
@@ -2999,7 +2999,7 @@ public:
 			if (!bridge_fee.is_positive())
 				bridge_fee = 0.5;
 
-			unordered_map<string, string> urls;
+			hash_map<string, string> urls;
 			auto url_bindings = node->get("url");
 			if (url_bindings != nullptr && !url_bindings->value.is(var_type::string))
 			{

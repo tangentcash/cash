@@ -738,7 +738,7 @@ namespace tangent
 		{
 			hashing::hash160(public_key.data, sizeof(pubkey_t), public_key_hash.data);
 		}
-		bool signing::split_secret_into_shares(const uint8_t message[64], uint8_t threshold, uint8_t count, ordered_set<share_t>& shares)
+		bool signing::split_secret_into_shares(const uint8_t message[64], uint8_t threshold, uint8_t count, btree_set<share_t>& shares)
 		{
 			VI_ASSERT(message != nullptr, "message must be set");
 			VI_ASSERT(threshold <= count, "threshold must be less than or equal to count");
@@ -752,14 +752,14 @@ namespace tangent
 
 			return true;
 		}
-		bool signing::combine_shares_into_secret(const ordered_set<share_t>& shares, uint8_t message[64])
+		bool signing::combine_shares_into_secret(const btree_set<share_t>& shares, uint8_t message[64])
 		{
 			VI_ASSERT(shares.size() <= 64, "shares count must be less than or equal to 64");
 			std::array<sss_Share, 64> sss_shares; size_t index = 0;
 			for (auto& share : shares)
 				memcpy(sss_shares[index++], share.data, sizeof(sss_Share));
 
-			return sss_combine_shares(message, sss_shares.data(), shares.size()) == 0;
+			return sss_combine_shares(message, sss_shares.data(), (uint8_t)shares.size()) == 0;
 		}
 		uint8_t signing::recovery_threshold(size_t shares)
 		{

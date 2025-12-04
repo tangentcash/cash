@@ -210,7 +210,7 @@ namespace vitex
 	namespace core
 	{
 		template <>
-		struct key_hasher<uint256_t>
+		struct key_hash<uint256_t>
 		{
 			typedef float argument_type;
 			typedef size_t result_type;
@@ -218,12 +218,12 @@ namespace vitex
 
 			inline result_type operator()(const uint256_t& value) const noexcept
 			{
-				return key_hasher<std::string_view>()(std::string_view((char*)&value, sizeof(value)));
+				return key_hash<std::string_view>()(std::string_view((char*)&value, sizeof(value)));
 			}
 		};
 
 		template <>
-		struct key_hasher<uint128_t>
+		struct key_hash<uint128_t>
 		{
 			typedef float argument_type;
 			typedef size_t result_type;
@@ -231,7 +231,7 @@ namespace vitex
 
 			inline result_type operator()(const uint128_t& value) const noexcept
 			{
-				return key_hasher<std::string_view>()(std::string_view((char*)&value, sizeof(value)));
+				return key_hash<std::string_view>()(std::string_view((char*)&value, sizeof(value)));
 			}
 		};
 
@@ -251,9 +251,9 @@ namespace vitex
 			}
 		};
 
-		using account_value_map = ordered_map<string, decimal>;
-		using address_value_map = ordered_map<string, decimal, insensitive_comparator>;
-		using address_map = ordered_map<uint8_t, string, inversion_comparator>;
+		using account_value_map = btree_map<string, decimal>;
+		using address_value_map = btree_map<string, decimal, insensitive_comparator>;
+		using address_map = btree_map<uint8_t, string, inversion_comparator>;
 	}
 }
 #endif

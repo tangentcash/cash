@@ -52,7 +52,7 @@ namespace tangent
 
 				struct account_info
 				{
-					unordered_map<algorithm::asset_id, asset_balance> balances;
+					hash_map<algorithm::asset_id, asset_balance> balances;
 					uint64_t sequence = 0;
 				};
 

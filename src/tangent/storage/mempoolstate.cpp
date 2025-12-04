@@ -724,7 +724,7 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<void> mempoolstate::remove_transactions(const unordered_set<uint256_t>& transaction_hashes)
+		expects_lr<void> mempoolstate::remove_transactions(const hash_set<uint256_t>& transaction_hashes)
 		{
 			if (transaction_hashes.empty())
 				return expectation::met;

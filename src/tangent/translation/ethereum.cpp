@@ -467,7 +467,7 @@ namespace tangent
 						auto* logs = logs_data->get("result");
 						if (logs != nullptr && !logs->empty())
 						{
-							unordered_map<string, schema*> indices;
+							hash_map<string, schema*> indices;
 							for (auto& item : transactions->get_childs())
 							{
 								string tx_hash = item->get_var("hash").get_blob();
@@ -508,8 +508,8 @@ namespace tangent
 				computed_transaction result;
 				result.transaction_id = tx_hash;
 
-				unordered_map<string, unordered_map<algorithm::asset_id, decimal>> inputs;
-				unordered_map<string, unordered_map<algorithm::asset_id, decimal>> outputs;
+				hash_map<string, hash_map<algorithm::asset_id, decimal>> inputs;
+				hash_map<string, hash_map<algorithm::asset_id, decimal>> outputs;
 				if (total_value.is_positive())
 				{
 					inputs[from][native_asset] = total_value;
@@ -568,7 +568,7 @@ namespace tangent
 					}
 				}
 
-				unordered_set<string> addresses;
+				hash_set<string> addresses;
 				addresses.reserve(inputs.size() + outputs.size());
 				for (auto& next : inputs)
 					addresses.insert(next.first);

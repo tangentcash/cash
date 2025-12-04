@@ -96,12 +96,12 @@ namespace tangent
 						auto* peers = root->get("peers");
 						if (peers && !peers->empty())
 						{
-							unordered_map<std::string_view, double> sources;
+							hash_map<std::string_view, double> sources;
 							for (auto& child : peers->get_childs())
 							{
 								if (child->value.is(var_type::object))
 								{
-									unordered_map<string, string> urls;
+									hash_map<string, string> urls;
 									for (auto& protocol : child->get_childs())
 										urls[protocol->key] = protocol->value.get_blob();
 									urls.erase("rps");
@@ -355,7 +355,7 @@ namespace tangent
 
 			auto* utxo_implementation = relay_backend_utxo::from_relay(implementation);
 			auto* server = server_node::get();
-			unordered_set<string> transaction_ids;
+			hash_set<string> transaction_ids;
 			for (auto& new_transaction : logs.pending)
 			{
 				new_transaction.block_id = logs.block_height;
@@ -815,7 +815,7 @@ namespace tangent
 			if (!value)
 				value = var::set::array();
 
-			unordered_set<string> addresses;
+			hash_set<string> addresses;
 			for (auto& item : value->get_childs())
 				addresses.insert(item->value.get_blob());
 
@@ -949,17 +949,17 @@ namespace tangent
 			storages::superchainstate state = storages::superchainstate(asset);
 			return state.get_link(address);
 		}
-		expects_lr<unordered_map<string, wallet_link>> server_node::get_links_by_owner(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, size_t offset, size_t count)
+		expects_lr<hash_map<string, wallet_link>> server_node::get_links_by_owner(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, size_t offset, size_t count)
 		{
 			storages::superchainstate state = storages::superchainstate(asset);
 			return state.get_links_by_owner(owner, offset, count);
 		}
-		expects_lr<unordered_map<string, wallet_link>> server_node::get_links_by_public_keys(const algorithm::asset_id& asset, const unordered_set<string>& public_keys)
+		expects_lr<hash_map<string, wallet_link>> server_node::get_links_by_public_keys(const algorithm::asset_id& asset, const hash_set<string>& public_keys)
 		{
 			storages::superchainstate state = storages::superchainstate(asset);
 			return state.get_links_by_public_keys(public_keys);
 		}
-		expects_lr<unordered_map<string, wallet_link>> server_node::get_links_by_addresses(const algorithm::asset_id& asset, const unordered_set<string>& addresses)
+		expects_lr<hash_map<string, wallet_link>> server_node::get_links_by_addresses(const algorithm::asset_id& asset, const hash_set<string>& addresses)
 		{
 			storages::superchainstate state = storages::superchainstate(asset);
 			return state.get_links_by_addresses(addresses);
@@ -1017,16 +1017,16 @@ namespace tangent
 
 			return value->get(0)->value.get_blob();
 		}
-		unordered_map<algorithm::asset_id, relay_backend::chainparams> server_node::get_chains()
+		hash_map<algorithm::asset_id, relay_backend::chainparams> server_node::get_chains()
 		{
 			umutex<std::recursive_mutex> unique(control_sys.sync);
-			unordered_map<algorithm::asset_id, relay_backend::chainparams> result;
+			hash_map<algorithm::asset_id, relay_backend::chainparams> result;
 			result.reserve(chains.size());
 			for (auto& next : chains)
 				result[algorithm::asset::id_of(next.first)] = next.second->get_chainparams();
 			return result;
 		}
-		unordered_map<string, invocation_callback>& server_node::get_registrations()
+		hash_map<string, invocation_callback>& server_node::get_registrations()
 		{
 			if (!registrations.empty())
 				return registrations;
@@ -1113,7 +1113,7 @@ namespace tangent
 			add_node_instance(asset, instance);
 			return instance;
 		}
-		server_relay* server_node::add_multi_node(const algorithm::asset_id& asset, unordered_map<string, string>&& urls, double rps)
+		server_relay* server_node::add_multi_node(const algorithm::asset_id& asset, hash_map<string, string>&& urls, double rps)
 		{
 			server_relay* instance = new server_relay(std::move(urls), rps);
 			add_node_instance(asset, instance);
@@ -1376,7 +1376,7 @@ namespace tangent
 			if (protocol::now().user.superchain.logging)
 				VI_INFO("superchain node startup");
 
-			unordered_set<string> blockchains;
+			hash_set<string> blockchains;
 			blockchains.reserve(nodes.size());
 			for (auto& implementation : nodes)
 			{

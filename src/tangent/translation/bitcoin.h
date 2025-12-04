@@ -99,7 +99,7 @@ namespace tangent
 				virtual expects_lr<void> finalize_transaction_input(btc_tx_context& context, const prepared_transaction::signable_coin_utxo& output, size_t index);
 				virtual expects_lr<void> add_transaction_input(btc_tx_context& context, const coin_utxo& output, const std::string_view& public_key);
 				virtual expects_lr<void> add_transaction_output(btc_tx_context& context, const std::string_view& address, const decimal& value);
-				virtual unordered_set<string> get_output_addresses(schema* tx_output, bool* is_allowed);
+				virtual hash_set<string> get_output_addresses(schema* tx_output, bool* is_allowed);
 				virtual string serialize_transaction_data(btc_tx_context& context);
 				virtual string serialize_transaction_id(btc_tx_context& context);
 				virtual address_format parse_address(const std::string_view& address, uint8_t* data_out = nullptr, size_t* data_size_out = nullptr);

@@ -106,7 +106,7 @@ namespace tangent
 				if (!operations_data || operations_data->empty())
 					coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
 
-				unordered_set<string> addresses;
+				hash_set<string> addresses;
 				for (auto& tx_operation : operations_data->get_childs())
 				{
 					string status = tx_operation->get_var("status").get_blob();
@@ -211,7 +211,7 @@ namespace tangent
 					}
 				}
 
-				unordered_map<algorithm::asset_id, decimal> balance;
+				hash_map<algorithm::asset_id, decimal> balance;
 				for (auto& [hash, input] : tx.inputs)
 				{
 					auto& value = balance[native_asset];
@@ -311,7 +311,7 @@ namespace tangent
 				prepared_transaction result;
 				result.requires_abi(format::variable(to_lovelace(fee_value)));
 
-				unordered_map<algorithm::asset_id, decimal> total_token_value;
+				hash_map<algorithm::asset_id, decimal> total_token_value;
 				decimal total_value = fee_value;
 				for (auto& item : to)
 				{
@@ -339,7 +339,7 @@ namespace tangent
 				if (!possible_inputs || possible_inputs->empty())
 					coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s (or not enough token funds)", total_value.to_string().c_str(), remaining_value.to_string().c_str())));
 
-				unordered_map<algorithm::asset_id, coin_utxo::token_utxo> change_tokens;
+				hash_map<algorithm::asset_id, coin_utxo::token_utxo> change_tokens;
 				for (auto& item : *possible_inputs)
 				{
 					for (auto& [token_hash, token] : item.tokens)

@@ -70,11 +70,11 @@ namespace tangent
 
 			return load_body(stream);
 		}
-		bool transaction::recover_many(const transaction_context* context, const receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
+		bool transaction::recover_many(const transaction_context* context, const receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const
 		{
 			return true;
 		}
-		bool transaction::recover_aliases(const transaction_context* context, const receipt& receipt, ordered_set<uint256_t>& aliases) const
+		bool transaction::recover_aliases(const transaction_context* context, const receipt& receipt, btree_set<uint256_t>& aliases) const
 		{
 			return true;
 		}

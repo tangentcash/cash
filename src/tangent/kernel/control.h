@@ -32,8 +32,8 @@ namespace tangent
 
 	struct system_control
 	{
-		unordered_map<string, task_id>* timers;
-		unordered_map<string, bool>* tasks;
+		hash_map<string, task_id>* timers;
+		hash_map<string, bool>* tasks;
 		std::atomic<bool> active;
 		std::recursive_mutex sync;
 		std::string_view service_name;

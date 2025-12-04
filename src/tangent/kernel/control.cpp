@@ -305,9 +305,9 @@ namespace tangent
 			return false;
 
 		if (!timers)
-			timers = memory::init<unordered_map<string, task_id>>();
+			timers = memory::init<hash_map<string, task_id>>();
 		if (!tasks)
-			tasks = memory::init<unordered_map<string, bool>>();
+			tasks = memory::init<hash_map<string, bool>>();
 
 		active = true;
 		return true;
@@ -334,7 +334,7 @@ namespace tangent
 		{
 			auto time = date_time().milliseconds();
 			auto finalized_tasks = tasks->size();
-			unordered_set<string> pending;
+			hash_set<string> pending;
 		retry:
 			for (auto& [id, active] : *tasks)
 			{

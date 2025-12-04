@@ -71,14 +71,14 @@ namespace tangent
 		private:
 			struct ws_listener
 			{
-				unordered_set<algorithm::pubkeyhash_t> addresses;
+				hash_set<algorithm::pubkeyhash_t> addresses;
 				bool transactions = false;
 				bool blocks = false;
 			};
 
 		private:
-			unordered_map<http::connection*, ws_listener> listeners;
-			unordered_map<string, server_request> methods;
+			hash_map<http::connection*, ws_listener> listeners;
+			hash_map<string, server_request> methods;
 			std::mutex mutex;
 
 		protected:

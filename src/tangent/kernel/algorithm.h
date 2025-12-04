@@ -168,8 +168,8 @@ namespace tangent
 			static void derive_secret_key(const uint256_t& entropy, seckey_t& secret_key);
 			static bool derive_public_key(const seckey_t& secret_key, pubkey_t& public_key);
 			static void derive_public_key_hash(const pubkey_t& public_key, pubkeyhash_t& public_key_hash);
-			static bool split_secret_into_shares(const uint8_t message[64], uint8_t threshold, uint8_t count, ordered_set<share_t>& shares);
-			static bool combine_shares_into_secret(const ordered_set<share_t>& shares, uint8_t message[64]);
+			static bool split_secret_into_shares(const uint8_t message[64], uint8_t threshold, uint8_t count, btree_set<share_t>& shares);
+			static bool combine_shares_into_secret(const btree_set<share_t>& shares, uint8_t message[64]);
 			static uint8_t recovery_threshold(size_t shares);
 			static bool scalar_add_secret_key(seckey_t& secret_key, const seckey_t& scalar);
 			static bool scalar_mul_secret_key(seckey_t& secret_key, const seckey_t& scalar);
@@ -436,7 +436,7 @@ namespace vitex
 	namespace core
 	{
 		template <>
-		struct key_hasher<tangent::algorithm::hashsig_t>
+		struct key_hash<tangent::algorithm::hashsig_t>
 		{
 			typedef int argument_type;
 			typedef size_t result_type;
@@ -444,12 +444,12 @@ namespace vitex
 
 			inline result_type operator()(const tangent::algorithm::hashsig_t& value) const noexcept
 			{
-				return key_hasher<std::string_view>()(std::string_view((char*)value.data, sizeof(value.data)));
+				return key_hash<std::string_view>()(std::string_view((char*)value.data, sizeof(value.data)));
 			}
 		};
 
 		template <>
-		struct key_hasher<tangent::algorithm::seckey_t>
+		struct key_hash<tangent::algorithm::seckey_t>
 		{
 			typedef int argument_type;
 			typedef size_t result_type;
@@ -457,12 +457,12 @@ namespace vitex
 
 			inline result_type operator()(const tangent::algorithm::seckey_t& value) const noexcept
 			{
-				return key_hasher<std::string_view>()(std::string_view((char*)value.data, sizeof(value.data)));
+				return key_hash<std::string_view>()(std::string_view((char*)value.data, sizeof(value.data)));
 			}
 		};
 
 		template <>
-		struct key_hasher<tangent::algorithm::pubkey_t>
+		struct key_hash<tangent::algorithm::pubkey_t>
 		{
 			typedef int argument_type;
 			typedef size_t result_type;
@@ -470,12 +470,12 @@ namespace vitex
 
 			inline result_type operator()(const tangent::algorithm::pubkey_t& value) const noexcept
 			{
-				return key_hasher<std::string_view>()(std::string_view((char*)value.data, sizeof(value.data)));
+				return key_hash<std::string_view>()(std::string_view((char*)value.data, sizeof(value.data)));
 			}
 		};
 
 		template <>
-		struct key_hasher<tangent::algorithm::pubkeyhash_t>
+		struct key_hash<tangent::algorithm::pubkeyhash_t>
 		{
 			typedef int argument_type;
 			typedef size_t result_type;
@@ -483,12 +483,12 @@ namespace vitex
 
 			inline result_type operator()(const tangent::algorithm::pubkeyhash_t& value) const noexcept
 			{
-				return key_hasher<std::string_view>()(std::string_view((char*)value.data, sizeof(value.data)));
+				return key_hash<std::string_view>()(std::string_view((char*)value.data, sizeof(value.data)));
 			}
 		};
 
 		template <>
-		struct key_hasher<tangent::algorithm::share_t>
+		struct key_hash<tangent::algorithm::share_t>
 		{
 			typedef int argument_type;
 			typedef size_t result_type;
@@ -496,7 +496,7 @@ namespace vitex
 
 			inline result_type operator()(const tangent::algorithm::share_t& value) const noexcept
 			{
-				return key_hasher<std::string_view>()(std::string_view((char*)value.data, sizeof(value.data)));
+				return key_hash<std::string_view>()(std::string_view((char*)value.data, sizeof(value.data)));
 			}
 		};
 	}

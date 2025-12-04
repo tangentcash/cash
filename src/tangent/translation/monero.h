@@ -45,7 +45,7 @@ namespace tangent
 
 				struct transaction_info
 				{
-					ordered_map<uint8_t, algorithm::storage_type<uint8_t, 64>> output_addresses;
+					btree_map<uint8_t, algorithm::storage_type<uint8_t, 64>> output_addresses;
 					vector<algorithm::storage_type<uint8_t, 32>> public_keys;
 					vector<size_t> key_offset_indices;
 					string encrypted_payment_id;

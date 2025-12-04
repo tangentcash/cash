@@ -188,7 +188,7 @@ namespace tangent
 			return message.hash();
 		}
 
-		coin_utxo::coin_utxo(wallet_link&& new_link, unordered_map<algorithm::asset_id, decimal>&& new_values) : link(std::move(new_link)), index(std::numeric_limits<uint32_t>::max())
+		coin_utxo::coin_utxo(wallet_link&& new_link, hash_map<algorithm::asset_id, decimal>&& new_values) : link(std::move(new_link)), index(std::numeric_limits<uint32_t>::max())
 		{
 			for (auto& [asset, asset_value] : new_values)
 			{
@@ -456,7 +456,7 @@ namespace tangent
 			if (inputs.empty() || outputs.empty() || stringify::is_empty_or_whitespace(transaction_id))
 				return false;
 
-			unordered_map<algorithm::asset_id, decimal> balance;
+			hash_map<algorithm::asset_id, decimal> balance;
 			for (auto& [hash, input] : inputs)
 			{
 				if (!input.is_valid_output())
@@ -550,7 +550,7 @@ namespace tangent
 			inputs[item.as_hash()] = std::move(item);
 			return *this;
 		}
-		prepared_transaction& prepared_transaction::requires_account_input(algorithm::composition::type new_alg, wallet_link&& signer, const algorithm::composition::cpubkey_t& new_public_key, uint8_t* new_message, size_t new_message_size, unordered_map<algorithm::asset_id, decimal>&& input)
+		prepared_transaction& prepared_transaction::requires_account_input(algorithm::composition::type new_alg, wallet_link&& signer, const algorithm::composition::cpubkey_t& new_public_key, uint8_t* new_message, size_t new_message_size, hash_map<algorithm::asset_id, decimal>&& input)
 		{
 			coin_utxo item = coin_utxo(std::move(signer), std::move(input));
 			return requires_input(new_alg, new_public_key, new_message, new_message_size, std::move(item));
@@ -563,7 +563,7 @@ namespace tangent
 				output.index = (output.index == std::numeric_limits<uint32_t>::max() ? std::numeric_limits<uint32_t>::max() : index++);
 			return *this;
 		}
-		prepared_transaction& prepared_transaction::requires_account_output(const std::string_view& to_address, unordered_map<algorithm::asset_id, decimal>&& output)
+		prepared_transaction& prepared_transaction::requires_account_output(const std::string_view& to_address, hash_map<algorithm::asset_id, decimal>&& output)
 		{
 			coin_utxo item = coin_utxo(wallet_link::from_address(to_address), std::move(output));
 			outputs[item.as_hash()] = std::move(item);
@@ -942,7 +942,7 @@ namespace tangent
 			double percentage = multiplier * current_value / target_value;
 			return std::floor(percentage * multiplier) / multiplier;
 		}
-		const unordered_set<server_relay*>& chain_supervisor_options::get_interacted_nodes() const
+		const hash_set<server_relay*>& chain_supervisor_options::get_interacted_nodes() const
 		{
 			return state.interactions;
 		}
@@ -969,7 +969,7 @@ namespace tangent
 			return options;
 		}
 
-		server_relay::server_relay(unordered_map<string, string>&& node_urls, double node_rps) noexcept : urls(std::move(node_urls)), latest(0), rps(node_rps), allowed(true), user_data(nullptr)
+		server_relay::server_relay(hash_map<string, string>&& node_urls, double node_rps) noexcept : urls(std::move(node_urls)), latest(0), rps(node_rps), allowed(true), user_data(nullptr)
 		{
 			for (auto& [type, path] : urls)
 				stringify::trim(path);
@@ -1420,36 +1420,36 @@ namespace tangent
 
 			return expects_lr<algorithm::composition::cpubkey_t>(algorithm::composition::to_cstorage<algorithm::composition::cpubkey_t>(*result));
 		}
-		expects_lr<ordered_map<string, wallet_link>> relay_backend::find_linked_addresses(const unordered_set<string>& addresses)
+		expects_lr<btree_map<string, wallet_link>> relay_backend::find_linked_addresses(const hash_set<string>& addresses)
 		{
 			if (addresses.empty())
-				return expects_lr<ordered_map<string, wallet_link>>(layer_exception("no addresses supplied"));
+				return expects_lr<btree_map<string, wallet_link>>(layer_exception("no addresses supplied"));
 
 			auto* server = superchain::server_node::get();
 			auto* implementation = server->get_chain(native_asset);
 			if (!implementation)
-				return expects_lr<ordered_map<string, wallet_link>>(layer_exception("chain not found"));
+				return expects_lr<btree_map<string, wallet_link>>(layer_exception("chain not found"));
 
 			auto results = server->get_links_by_addresses(native_asset, addresses);
 			if (!results || results->empty())
-				return expects_lr<ordered_map<string, wallet_link>>(layer_exception("no addresses found"));
+				return expects_lr<btree_map<string, wallet_link>>(layer_exception("no addresses found"));
 
-			auto result = ordered_map<string, wallet_link>(results->begin(), results->end());
-			return expects_lr<ordered_map<string, wallet_link>>(std::move(result));
+			auto result = btree_map<string, wallet_link>(results->begin(), results->end());
+			return expects_lr<btree_map<string, wallet_link>>(std::move(result));
 		}
-		expects_lr<ordered_map<string, wallet_link>> relay_backend::find_linked_addresses(const algorithm::pubkeyhash_t& owner, size_t offset, size_t count)
+		expects_lr<btree_map<string, wallet_link>> relay_backend::find_linked_addresses(const algorithm::pubkeyhash_t& owner, size_t offset, size_t count)
 		{
 			auto* server = superchain::server_node::get();
 			auto* implementation = server->get_chain(native_asset);
 			if (!implementation)
-				return expects_lr<ordered_map<string, wallet_link>>(layer_exception("chain not found"));
+				return expects_lr<btree_map<string, wallet_link>>(layer_exception("chain not found"));
 
 			auto results = server->get_links_by_owner(native_asset, owner, offset, count);
 			if (!results || results->empty())
-				return expects_lr<ordered_map<string, wallet_link>>(layer_exception("no addresses found"));
+				return expects_lr<btree_map<string, wallet_link>>(layer_exception("no addresses found"));
 
-			auto result = ordered_map<string, wallet_link>(results->begin(), results->end());
-			return expects_lr<ordered_map<string, wallet_link>>(std::move(result));
+			auto result = btree_map<string, wallet_link>(results->begin(), results->end());
+			return expects_lr<btree_map<string, wallet_link>>(std::move(result));
 		}
 		expects_lr<void> relay_backend::verify_node_compatibility(server_relay* node)
 		{
@@ -1480,7 +1480,7 @@ namespace tangent
 			return value.to_decimal() / get_chainparams().divisibility;
 		}
 
-		relay_backend_utxo::balance_query::balance_query(const decimal& new_min_native_value, const unordered_map<algorithm::asset_id, decimal>& new_min_token_values) : min_native_value(new_min_native_value), min_token_values(new_min_token_values)
+		relay_backend_utxo::balance_query::balance_query(const decimal& new_min_native_value, const hash_map<algorithm::asset_id, decimal>& new_min_token_values) : min_native_value(new_min_native_value), min_token_values(new_min_token_values)
 		{
 		}
 

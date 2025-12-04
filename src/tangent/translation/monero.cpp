@@ -217,7 +217,7 @@ namespace tangent
 				const size_t count = 64;
 				size_t offset = 0;
 
-				unordered_set<size_t> unresolved_outputs;
+				hash_set<size_t> unresolved_outputs;
 				unresolved_outputs.reserve(outputs.size());
 				for (size_t i = 0; i < outputs.size(); i++)
 					unresolved_outputs.insert(i);
@@ -701,7 +701,7 @@ namespace tangent
 				transaction_info result;
 				result.hash = transaction_data->get_var("hash").get_blob();
 
-				unordered_set<uint8_t> tags =
+				hash_set<uint8_t> tags =
 				{
 					TX_EXTRA_TAG_PUBKEY,
 					TX_EXTRA_TAG_ADDITIONAL_PUBKEYS,

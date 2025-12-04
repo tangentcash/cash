@@ -100,7 +100,7 @@ namespace tangent
 
 			return true;
 		}
-		bool transfer::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
+		bool transfer::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const
 		{
 			for (auto& [owner, value] : to)
 				parties.insert(algorithm::pubkeyhash_t(owner.data));
@@ -229,7 +229,7 @@ namespace tangent
 			args.clear();
 			return format::variables_util::deserialize_merge_from(stream, &args);
 		}
-		bool deploy::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
+		bool deploy::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const
 		{
 			size_t offset = 0;
 			parties.insert(get_account());
@@ -400,7 +400,7 @@ namespace tangent
 			args.clear();
 			return format::variables_util::deserialize_merge_from(stream, &args);
 		}
-		bool call::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
+		bool call::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const
 		{
 			size_t offset = 0;
 			const format::variables* event = receipt.find_event<states::account_balance>();
@@ -699,7 +699,7 @@ namespace tangent
 			}
 			return true;
 		}
-		bool rollup::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
+		bool rollup::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const
 		{
 			algorithm::pubkeyhash_t from;
 			for (auto& group : transactions)
@@ -714,7 +714,7 @@ namespace tangent
 			}
 			return true;
 		}
-		bool rollup::recover_aliases(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<uint256_t>& aliases) const
+		bool rollup::recover_aliases(const ledger::transaction_context* context, const ledger::receipt& receipt, btree_set<uint256_t>& aliases) const
 		{
 			for (auto& group : transactions)
 			{
@@ -941,8 +941,8 @@ namespace tangent
 				return validation.error();
 
 			decimal threshold = decimal::zero();
-			ordered_set<uint256_t> accounts;
-			ordered_set<algorithm::pubkeyhash_t> exclusion;
+			btree_set<uint256_t> accounts;
+			btree_set<algorithm::pubkeyhash_t> exclusion;
 			for (auto& [broadcast_hash, participant] : migrations)
 			{
 				auto parent = context->get_block_transaction<broadcast>(broadcast_hash, true);
@@ -1136,7 +1136,7 @@ namespace tangent
 						auto ref_hash = ledger::dispatch_context::secret_entropy::ref_hash(migration.account.asset, migration.account.manager, migration.account.owner);
 						migration.account.group.erase(migration.old_participant);
 						aggregation_state.participants.insert(migration.account.group.begin(), migration.account.group.end());
-						aggregation_state.encrypted_shares[ref_hash] = ordered_map<algorithm::pubkeyhash_t, string>();
+						aggregation_state.encrypted_shares[ref_hash] = btree_map<algorithm::pubkeyhash_t, string>();
 					}
 
 					if (aggregation_state.participants.find(new_participant) != aggregation_state.participants.end())
@@ -1161,7 +1161,7 @@ namespace tangent
 					coreturn remote_exception::retry();
 				}
 
-				ordered_set<algorithm::pubkeyhash_t> deferred_participants;
+				btree_set<algorithm::pubkeyhash_t> deferred_participants;
 				while (!aggregation_state.participants.empty())
 				{
 					auto result = coawait(dispatcher->aggregate_entropy_shares(context, aggregation_state, *aggregation_state.participants.begin()));
@@ -1398,7 +1398,7 @@ namespace tangent
 
 			return true;
 		}
-		bool setup::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
+		bool setup::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const
 		{
 			for (auto& [broadcast_hash, participant] : migrations)
 				parties.insert(participant);
@@ -1744,7 +1744,7 @@ namespace tangent
 					return layer_exception("proof output asset not valid");
 			}
 
-			ordered_set<algorithm::pubkeyhash_t> attesters;
+			btree_set<algorithm::pubkeyhash_t> attesters;
 			for (auto& [commitment_hash, signatures] : commitments)
 			{
 				if (!commitment_hash)
@@ -1779,7 +1779,7 @@ namespace tangent
 				return layer_exception("proof " + proof.transaction_id + " finalized");
 
 			uint256_t best_commitment_hash = 0;
-			ordered_map<uint256_t, ordered_set<algorithm::pubkeyhash_t>> attesters;
+			btree_map<uint256_t, btree_set<algorithm::pubkeyhash_t>> attesters;
 			auto verification = verify_proof_commitment(context, asset, commitments, best_commitment_hash, attesters);
 			if (!verification)
 				return verification;
@@ -1787,7 +1787,7 @@ namespace tangent
 				return layer_exception("provided proof is not the chosen one");
 
 			transition operations;
-			ordered_set<algorithm::pubkeyhash_t> bridges, routers;
+			btree_set<algorithm::pubkeyhash_t> bridges, routers;
 			auto rebalance_weights = [&](const superchain::coin_utxo& inout, bool accountable, int8_t sign)
 			{
 				if (inout.value.is_positive())
@@ -1847,7 +1847,7 @@ namespace tangent
 				{
 					auto to_bridge = algorithm::pubkeyhash_t(source->manager);
 					auto& bridge = operations.bridges[to_bridge];
-					auto amounts = ordered_map<algorithm::asset_id, decimal>();
+					auto amounts = btree_map<algorithm::asset_id, decimal>();
 					rebalance_weights(output, true, 1);
 					if (output.value.is_positive())
 						amounts[output.get_asset(asset)] = output.value;
@@ -1887,7 +1887,7 @@ namespace tangent
 
 					auto from_account = routers.empty() ? algorithm::pubkeyhash_t(source->owner) : *routers.begin();
 					auto& from_transfers = operations.transfers[from_account];
-					auto amounts = ordered_map<algorithm::asset_id, decimal>();
+					auto amounts = btree_map<algorithm::asset_id, decimal>();
 					if (output.value.is_positive())
 						amounts[output.get_asset(asset)] = output.value;
 					for (auto& [token_hash, token] : output.tokens)
@@ -1928,7 +1928,7 @@ namespace tangent
 			}
 
 			auto& succeeding_attesters = attesters[best_commitment_hash];
-			auto failing_attesters = ordered_set<algorithm::pubkeyhash_t>();
+			auto failing_attesters = btree_set<algorithm::pubkeyhash_t>();
 			for (auto& [commitment_hash, group] : attesters)
 			{
 				if (commitment_hash != best_commitment_hash)
@@ -2106,7 +2106,7 @@ namespace tangent
 
 			return true;
 		}
-		bool attestate::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
+		bool attestate::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const
 		{
 			for (auto& event : receipt.find_events<states::account_balance>())
 			{
@@ -2138,7 +2138,7 @@ namespace tangent
 			}
 			set_computed_proof(std::move(witness), { });
 		}
-		void attestate::set_computed_proof(superchain::computed_transaction&& new_proof, ordered_map<uint256_t, ordered_set<algorithm::hashsig_t>>&& new_commitments)
+		void attestate::set_computed_proof(superchain::computed_transaction&& new_proof, btree_map<uint256_t, btree_set<algorithm::hashsig_t>>&& new_commitments)
 		{
 			proof = std::move(new_proof);
 			commitments = std::move(new_commitments);
@@ -2183,9 +2183,9 @@ namespace tangent
 		{
 			return "attestate";
 		}
-		expects_lr<void> attestate::verify_proof_commitment(ledger::transaction_context* context, const algorithm::asset_id& asset, const ordered_map<uint256_t, ordered_set<algorithm::hashsig_t>>& commitments, uint256_t& best_commitment_hash, ordered_map<uint256_t, ordered_set<algorithm::pubkeyhash_t>>& attesters)
+		expects_lr<void> attestate::verify_proof_commitment(ledger::transaction_context* context, const algorithm::asset_id& asset, const btree_map<uint256_t, btree_set<algorithm::hashsig_t>>& commitments, uint256_t& best_commitment_hash, btree_map<uint256_t, btree_set<algorithm::pubkeyhash_t>>& attesters)
 		{
-			ordered_set<algorithm::pubkeyhash_t> duplicates;
+			btree_set<algorithm::pubkeyhash_t> duplicates;
 			best_commitment_hash = 0;
 			attesters.clear();
 
@@ -2378,7 +2378,7 @@ namespace tangent
 					return layer_exception("invalid operation");
 			}
 
-			ordered_set<algorithm::pubkeyhash_t> exclusion;
+			btree_set<algorithm::pubkeyhash_t> exclusion;
 			auto committee = context->calculate_participants(exclusion, policy->security_level, policy->participation_threshold);
 			if (!committee)
 				return committee.error();
@@ -2446,11 +2446,11 @@ namespace tangent
 							goto postpone;
 						
 						if (state.encrypted_shares.find(public_key) == state.encrypted_shares.end())
-							state.encrypted_shares[public_key] = ordered_map<algorithm::pubkeyhash_t, string>();
+							state.encrypted_shares[public_key] = btree_map<algorithm::pubkeyhash_t, string>();
 					}
 				}
 
-				ordered_set<algorithm::pubkeyhash_t> deferred_participants;
+				btree_set<algorithm::pubkeyhash_t> deferred_participants;
 				while (!state.distribution && !state.participants.empty())
 				{
 					auto result = coawait(dispatcher->aggregate_public_key(context, state, *state.participants.begin()));
@@ -2535,7 +2535,7 @@ namespace tangent
 
 			return true;
 		}
-		bool route::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
+		bool route::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const
 		{
 			auto group = get_group(receipt);
 			parties.insert(algorithm::pubkeyhash_t(manager));
@@ -2554,9 +2554,9 @@ namespace tangent
 		{
 			manager = new_manager;
 		}
-		ordered_set<algorithm::pubkeyhash_t> route::get_group(const ledger::receipt& receipt) const
+		btree_set<algorithm::pubkeyhash_t> route::get_group(const ledger::receipt& receipt) const
 		{
-			ordered_set<algorithm::pubkeyhash_t> result;
+			btree_set<algorithm::pubkeyhash_t> result;
 			for (auto& event : receipt.find_events<route>())
 			{
 				if (!event->empty() && event->front().as_string().size() == sizeof(algorithm::pubkeyhash_t))
@@ -2690,7 +2690,7 @@ namespace tangent
 			if (!parent)
 				return expects_promise_rt<void>(remote_exception(std::move(parent.error().message())));
 
-			ordered_set<string> addresses;
+			btree_set<string> addresses;
 			for (auto& event : context->receipt.find_events<states::witness_account>())
 			{
 				for (size_t i = 2; i < event->size(); i++)
@@ -2752,7 +2752,7 @@ namespace tangent
 			memcpy(public_key.data(), public_key_assembly.data(), public_key_assembly.size());
 			return true;
 		}
-		bool bind::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
+		bool bind::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const
 		{
 			auto parent = context->get_block_transaction<route>(route_hash);
 			if (!parent)
@@ -2809,7 +2809,7 @@ namespace tangent
 				if (!chain->supports_bulk_transfer && to.size() > 1)
 					return layer_exception("too many to addresses");
 
-				unordered_set<string> addresses;
+				hash_set<string> addresses;
 				for (auto& item : to)
 				{
 					if (addresses.find(item.first) != addresses.end())
@@ -3009,7 +3009,7 @@ namespace tangent
 						coreturn session.error().is_retry() || session.error().is_shutdown() ? expects_rt<void>(std::move(session.error())) : cancel(std::move(session.error()));
 
 					auto chosen = account->group.begin();
-					auto unavailable = ordered_set<algorithm::pubkeyhash_t>();
+					auto unavailable = btree_set<algorithm::pubkeyhash_t>();
 					std::advance(chosen, (size_t)(algorithm::hashing::hash256i(input->message.data(), input->message.size()) % uint256_t(account->group.size())));
 					if (!state.aggregator)
 					{
@@ -3126,7 +3126,7 @@ namespace tangent
 
 			return true;
 		}
-		bool withdraw::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
+		bool withdraw::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const
 		{
 			auto new_manager = get_new_manager(receipt);
 			parties.insert(algorithm::pubkeyhash_t(manager));
@@ -3356,7 +3356,7 @@ namespace tangent
 
 			return true;
 		}
-		bool broadcast::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const
+		bool broadcast::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const
 		{
 			auto parent = context->get_block_transaction_instance(withdraw_hash);
 			if (!parent)
@@ -3409,8 +3409,8 @@ namespace tangent
 
 			auto server = superchain::server_node::get();
 			auto base_asset = algorithm::asset::base_id_of(transaction->asset);
-			auto required_output_witness = ordered_map<string, states::witness_account>();
-			auto required_output_value = ordered_map<algorithm::asset_id, decimal>();
+			auto required_output_witness = btree_map<string, states::witness_account>();
+			auto required_output_value = btree_map<algorithm::asset_id, decimal>();
 			for (auto& [output_address, output_value] : transaction->to)
 			{
 				auto normalized_address = output_address;
@@ -3456,10 +3456,10 @@ namespace tangent
 				}
 			}
 
-			auto inout_witness = ordered_map<string, states::witness_account>();
-			auto input_value = ordered_map<algorithm::asset_id, decimal>();
-			auto output_value = ordered_map<algorithm::asset_id, decimal>();
-			auto change_value = ordered_map<algorithm::asset_id, decimal>();
+			auto inout_witness = btree_map<string, states::witness_account>();
+			auto input_value = btree_map<algorithm::asset_id, decimal>();
+			auto output_value = btree_map<algorithm::asset_id, decimal>();
+			auto change_value = btree_map<algorithm::asset_id, decimal>();
 			for (auto& [hash, input] : prepared.inputs)
 			{
 				auto normalized_address = input.utxo.link.address;
@@ -3669,7 +3669,7 @@ namespace tangent
 			if (!public_key)
 				return expects_promise_rt<superchain::prepared_transaction>(remote_exception(std::move(public_key.error().message())));
 
-			auto transfers = unordered_map<algorithm::asset_id, decimal>();
+			auto transfers = hash_map<algorithm::asset_id, decimal>();
 			for (auto& transfer : to)
 			{
 				if (transfer.address == "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")

@@ -419,7 +419,7 @@ namespace tangent
 			value.address = (*cursor)["address"].get().get_blob();
 			return value;
 		}
-		expects_lr<unordered_map<string, superchain::wallet_link>> superchainstate::get_links_by_public_keys(const unordered_set<string>& public_keys)
+		expects_lr<hash_map<string, superchain::wallet_link>> superchainstate::get_links_by_public_keys(const hash_set<string>& public_keys)
 		{
 			uptr<schema> public_key_list = var::set::array();
 			public_key_list->reserve(public_keys.size());
@@ -429,18 +429,18 @@ namespace tangent
 					public_key_list->push(var::binary(to_typeless(item)));
 			}
 			if (public_key_list->empty())
-				return expects_lr<unordered_map<string, superchain::wallet_link>>(layer_exception("no public keys"));
+				return expects_lr<hash_map<string, superchain::wallet_link>>(layer_exception("no public keys"));
 
 			schema_list map;
 			map.push_back(var::set::string(*sqlite::utils::inline_array(std::move(public_key_list))));
 
 			auto cursor = get_storage().emplace_query(__func__, "SELECT * FROM links WHERE typeless_public_key IN ($?)", &map);
 			if (!cursor || cursor->error())
-				return expects_lr<unordered_map<string, superchain::wallet_link>>(layer_exception(ledger::storage_util::error_of(cursor)));
+				return expects_lr<hash_map<string, superchain::wallet_link>>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 			auto& response = cursor->first();
 			size_t size = response.size();
-			unordered_map<string, superchain::wallet_link> values;
+			hash_map<string, superchain::wallet_link> values;
 			values.reserve(size);
 
 			for (size_t i = 0; i < size; i++)
@@ -456,7 +456,7 @@ namespace tangent
 
 			return values;
 		}
-		expects_lr<unordered_map<string, superchain::wallet_link>> superchainstate::get_links_by_addresses(const unordered_set<string>& addresses)
+		expects_lr<hash_map<string, superchain::wallet_link>> superchainstate::get_links_by_addresses(const hash_set<string>& addresses)
 		{
 			uptr<schema> address_list = var::set::array();
 			address_list->reserve(addresses.size());
@@ -466,18 +466,18 @@ namespace tangent
 					address_list->push(var::binary(to_typeless(item)));
 			}
 			if (address_list->empty())
-				return expects_lr<unordered_map<string, superchain::wallet_link>>(layer_exception("no addresses"));
+				return expects_lr<hash_map<string, superchain::wallet_link>>(layer_exception("no addresses"));
 
 			schema_list map;
 			map.push_back(var::set::string(*sqlite::utils::inline_array(std::move(address_list))));
 
 			auto cursor = get_storage().emplace_query(__func__, "SELECT * FROM links WHERE typeless_address IN ($?)", &map);
 			if (!cursor || cursor->error())
-				return expects_lr<unordered_map<string, superchain::wallet_link>>(layer_exception(ledger::storage_util::error_of(cursor)));
+				return expects_lr<hash_map<string, superchain::wallet_link>>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 			auto& response = cursor->first();
 			size_t size = response.size();
-			unordered_map<string, superchain::wallet_link> values;
+			hash_map<string, superchain::wallet_link> values;
 			values.reserve(size);
 
 			for (size_t i = 0; i < size; i++)
@@ -493,7 +493,7 @@ namespace tangent
 
 			return values;
 		}
-		expects_lr<unordered_map<string, superchain::wallet_link>> superchainstate::get_links_by_owner(const algorithm::pubkeyhash_t& owner, size_t offset, size_t count)
+		expects_lr<hash_map<string, superchain::wallet_link>> superchainstate::get_links_by_owner(const algorithm::pubkeyhash_t& owner, size_t offset, size_t count)
 		{
 			schema_list map;
 			if (!owner.empty())
@@ -503,11 +503,11 @@ namespace tangent
 
 			auto cursor = get_storage().emplace_query(__func__, !owner.empty() ? "SELECT * FROM links WHERE owner = ? LIMIT ? OFFSET ?" : "SELECT * FROM links LIMIT ? OFFSET ?", &map);
 			if (!cursor || cursor->error())
-				return expects_lr<unordered_map<string, superchain::wallet_link>>(layer_exception(ledger::storage_util::error_of(cursor)));
+				return expects_lr<hash_map<string, superchain::wallet_link>>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 			auto& response = cursor->first();
 			size_t size = response.size();
-			unordered_map<string, superchain::wallet_link> values;
+			hash_map<string, superchain::wallet_link> values;
 			values.reserve(size);
 
 			for (size_t i = 0; i < size; i++)

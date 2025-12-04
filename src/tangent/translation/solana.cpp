@@ -130,7 +130,7 @@ namespace tangent
 				if (non_transferring)
 					coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
 
-				unordered_set<string> addresses;
+				hash_set<string> addresses;
 				for (auto& account_key : account_keys->get_childs())
 					addresses.insert(account_key->get_var("pubkey").get_blob());
 
@@ -163,8 +163,8 @@ namespace tangent
 				computed_transaction tx;
 				tx.transaction_id = signature;
 
-				unordered_map<string, unordered_map<algorithm::asset_id, decimal>> inputs;
-				unordered_map<string, unordered_map<algorithm::asset_id, decimal>> outputs;
+				hash_map<string, hash_map<algorithm::asset_id, decimal>> inputs;
+				hash_map<string, hash_map<algorithm::asset_id, decimal>> outputs;
 				for (auto& instruction : instructions->get_childs())
 				{
 					auto* info = instruction->fetch("parsed.info");
@@ -254,7 +254,7 @@ namespace tangent
 					}
 				}
 
-				unordered_map<string, unordered_map<string, decimal>> prev_token_state;
+				hash_map<string, hash_map<string, decimal>> prev_token_state;
 				if (pre_token_balances != nullptr && !pre_token_balances->empty())
 				{
 					for (auto& balance : pre_token_balances->get_childs())
@@ -271,7 +271,7 @@ namespace tangent
 					}
 				}
 
-				unordered_map<string, unordered_map<string, decimal>> next_token_state;
+				hash_map<string, hash_map<string, decimal>> next_token_state;
 				if (post_token_balances != nullptr && !post_token_balances->empty())
 				{
 					for (auto& balance : post_token_balances->get_childs())

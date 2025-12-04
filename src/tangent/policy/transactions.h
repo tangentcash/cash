@@ -20,7 +20,7 @@ namespace tangent
 			expects_lr<void> execute(ledger::transaction_context* context) const override;
 			bool store_body(format::wo_stream* stream) const override;
 			bool load_body(format::ro_stream& stream) override;
-			bool recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const override;
+			bool recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const override;
 			void set_to(const algorithm::pubkeyhash_t& new_to, const decimal& new_value);
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
@@ -43,7 +43,7 @@ namespace tangent
 			expects_lr<void> execute(ledger::transaction_context* context) const override;
 			bool store_body(format::wo_stream* stream) const override;
 			bool load_body(format::ro_stream& stream) override;
-			bool recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const override;
+			bool recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const override;
 			void from_program(const std::string_view& new_data, format::variables&& new_args);
 			void from_hashcode(const std::string_view& new_data, format::variables&& new_args);
 			algorithm::pubkeyhash_t get_account() const;
@@ -67,7 +67,7 @@ namespace tangent
 			expects_lr<void> subexecute(ledger::transaction_context* context, std::function<expects_lr<void>(void*)>&& executor) const;
 			bool store_body(format::wo_stream* stream) const override;
 			bool load_body(format::ro_stream& stream) override;
-			bool recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const override;
+			bool recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const override;
 			void program_call(const algorithm::pubkeyhash_t& new_callable, const decimal& new_value, const std::string_view& new_function, format::variables&& new_args);
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
@@ -78,7 +78,7 @@ namespace tangent
 
 		struct rollup final : ledger::transaction
 		{
-			ordered_map<algorithm::asset_id, vector<uptr<ledger::transaction>>> transactions;
+			btree_map<algorithm::asset_id, vector<uptr<ledger::transaction>>> transactions;
 
 			rollup() = default;
 			rollup(const rollup& other);
@@ -90,8 +90,8 @@ namespace tangent
 			expects_promise_rt<void> dispatch(const ledger::transaction_context* context, ledger::dispatch_context* dispatcher) const override;
 			bool store_body(format::wo_stream* stream) const override;
 			bool load_body(format::ro_stream& stream) override;
-			bool recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const override;
-			bool recover_aliases(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<uint256_t>& aliases) const override;
+			bool recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const override;
+			bool recover_aliases(const ledger::transaction_context* context, const ledger::receipt& receipt, btree_set<uint256_t>& aliases) const override;
 			bool import_transaction(const ledger::transaction& transaction);
 			bool import_internal_transaction(ledger::transaction& transaction, const algorithm::seckey_t& secret_key);
 			bool import_external_transaction(ledger::transaction& transaction, const algorithm::seckey_t& secret_key, uint64_t nonce);
@@ -126,8 +126,8 @@ namespace tangent
 				decimal stake = decimal::nan();
 			};
 
-			ordered_map<uint256_t, algorithm::pubkeyhash_t> migrations;
-			ordered_map<algorithm::asset_id, attestation_setup> attestations;
+			btree_map<uint256_t, algorithm::pubkeyhash_t> migrations;
+			btree_map<algorithm::asset_id, attestation_setup> attestations;
 			option<decimal> participation = optional::none;
 			option<decimal> production = optional::none;
 
@@ -136,7 +136,7 @@ namespace tangent
 			expects_promise_rt<void> dispatch(const ledger::transaction_context* context, ledger::dispatch_context* dispatcher) const override;
 			bool store_body(format::wo_stream* stream) const override;
 			bool load_body(format::ro_stream& stream) override;
-			bool recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const override;
+			bool recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const override;
 			void allocate_production_stake(const decimal& value);
 			void disable_production();
 			void standby_on_production();
@@ -187,8 +187,8 @@ namespace tangent
 
 			struct bridge_transfer_batch
 			{
-				ordered_set<algorithm::pubkeyhash_t> participants;
-				ordered_map<algorithm::asset_id, bridge_transfer> transfers;
+				btree_set<algorithm::pubkeyhash_t> participants;
+				btree_map<algorithm::asset_id, bridge_transfer> transfers;
 			};
 
 			struct balance_transfer
@@ -205,28 +205,28 @@ namespace tangent
 
 			struct transition
 			{
-				ordered_map<algorithm::pubkeyhash_t, bridge_transfer_batch> bridges;
-				ordered_map<algorithm::pubkeyhash_t, ordered_map<algorithm::asset_id, balance_transfer>> transfers;
-				ordered_map<algorithm::asset_id, weight_transfer> weights;
+				btree_map<algorithm::pubkeyhash_t, bridge_transfer_batch> bridges;
+				btree_map<algorithm::pubkeyhash_t, btree_map<algorithm::asset_id, balance_transfer>> transfers;
+				btree_map<algorithm::asset_id, weight_transfer> weights;
 			};
 
-			ordered_map<uint256_t, ordered_set<algorithm::hashsig_t>> commitments;
+			btree_map<uint256_t, btree_set<algorithm::hashsig_t>> commitments;
 			superchain::computed_transaction proof;
 
 			expects_lr<void> validate(uint64_t block_number) const override;
 			expects_lr<void> execute(ledger::transaction_context* context) const override;
 			bool store_body(format::wo_stream* stream) const override;
 			bool load_body(format::ro_stream& stream) override;
-			bool recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const override;
+			bool recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const override;
 			void set_finalized_proof(uint64_t block_id, const std::string_view& transaction_id, const vector<superchain::value_transfer>& inputs, const vector<superchain::value_transfer>& outputs);
-			void set_computed_proof(superchain::computed_transaction&& new_proof, ordered_map<uint256_t, ordered_set<algorithm::hashsig_t>>&& new_commitments);
+			void set_computed_proof(superchain::computed_transaction&& new_proof, btree_map<uint256_t, btree_set<algorithm::hashsig_t>>&& new_commitments);
 			bool add_commitment(const algorithm::seckey_t& secret_key);
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
-			static expects_lr<void> verify_proof_commitment(ledger::transaction_context* context, const algorithm::asset_id& asset, const ordered_map<uint256_t, ordered_set<algorithm::hashsig_t>>& commitments, uint256_t& best_commitment_hash, ordered_map<uint256_t, ordered_set<algorithm::pubkeyhash_t>>& attesters);
+			static expects_lr<void> verify_proof_commitment(ledger::transaction_context* context, const algorithm::asset_id& asset, const btree_map<uint256_t, btree_set<algorithm::hashsig_t>>& commitments, uint256_t& best_commitment_hash, btree_map<uint256_t, btree_set<algorithm::pubkeyhash_t>>& attesters);
 			static bool commit_to_proof(const superchain::computed_transaction& new_proof, const algorithm::seckey_t& secret_key, uint256_t& commitment_hash, algorithm::hashsig_t& commitment_signature);
 		};
 
@@ -240,11 +240,11 @@ namespace tangent
 			expects_promise_rt<void> dispatch(const ledger::transaction_context* context, ledger::dispatch_context* dispatcher) const override;
 			bool store_body(format::wo_stream* stream) const override;
 			bool load_body(format::ro_stream& stream) override;
-			bool recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const override;
+			bool recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const override;
 			bool is_dispatchable() const override;
 			void set_routing_address(const std::string_view& new_address);
 			void set_manager(const algorithm::pubkeyhash_t& new_manager);
-			ordered_set<algorithm::pubkeyhash_t> get_group(const ledger::receipt& receipt) const;
+			btree_set<algorithm::pubkeyhash_t> get_group(const ledger::receipt& receipt) const;
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
@@ -263,7 +263,7 @@ namespace tangent
 			void set_witness(const uint256_t& new_route_hash, const algorithm::composition::cpubkey_t& new_public_key);
 			bool store_body(format::wo_stream* stream) const override;
 			bool load_body(format::ro_stream& stream) override;
-			bool recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const override;
+			bool recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const override;
 			bool is_dispatchable() const override;
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
@@ -283,7 +283,7 @@ namespace tangent
 			expects_promise_rt<void> dispatch(const ledger::transaction_context* context, ledger::dispatch_context* dispatcher) const override;
 			bool store_body(format::wo_stream* stream) const override;
 			bool load_body(format::ro_stream& stream) override;
-			bool recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const override;
+			bool recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const override;
 			void set_to(const std::string_view& address, const decimal& value);
 			void set_manager(const algorithm::pubkeyhash_t& new_manager);
 			bool is_dispatchable() const override;
@@ -307,7 +307,7 @@ namespace tangent
 			expects_lr<void> execute(ledger::transaction_context* context) const override;
 			bool store_body(format::wo_stream* stream) const override;
 			bool load_body(format::ro_stream& stream) override;
-			bool recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, ordered_set<algorithm::pubkeyhash_t>& parties) const override;
+			bool recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const override;
 			void set_proof(const uint256_t& new_withdraw_hash, expects_lr<superchain::finalized_transaction>&& new_proof);
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;

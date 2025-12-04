@@ -38,18 +38,18 @@ namespace tangent
 		protected:
 			struct
 			{
-				unordered_map<transaction_listener*, size_t> listeners;
-				unordered_set<http::client*> requests;
+				hash_map<transaction_listener*, size_t> listeners;
+				hash_set<http::client*> requests;
 				std::mutex mutex;
 			} activity;
 
 		protected:
-			unordered_set<string> connections;
-			unordered_map<string, invocation_callback> registrations;
-			unordered_map<string, transaction_callback> callbacks;
-			unordered_map<string, vector<uptr<server_relay>>> nodes;
-			unordered_map<string, uptr<relay_backend>> chains;
-			unordered_map<string, uptr<schema>> specifications;
+			hash_set<string> connections;
+			hash_map<string, invocation_callback> registrations;
+			hash_map<string, transaction_callback> callbacks;
+			hash_map<string, vector<uptr<server_relay>>> nodes;
+			hash_map<string, uptr<relay_backend>> chains;
+			hash_map<string, uptr<schema>> specifications;
 			vector<uptr<transaction_listener>> listeners;
 			multichain_supervisor_options options;
 			system_control control_sys;
@@ -91,9 +91,9 @@ namespace tangent
 			expects_lr<wallet_link> normalize_link(const algorithm::asset_id& asset, const wallet_link& link);
 			expects_lr<uint64_t> get_latest_known_block_height(const algorithm::asset_id& asset);
 			expects_lr<wallet_link> get_link(const algorithm::asset_id& asset, const std::string_view& address);
-			expects_lr<unordered_map<string, wallet_link>> get_links_by_public_keys(const algorithm::asset_id& asset, const unordered_set<string>& public_keys);
-			expects_lr<unordered_map<string, wallet_link>> get_links_by_addresses(const algorithm::asset_id& asset, const unordered_set<string>& addresses);
-			expects_lr<unordered_map<string, wallet_link>> get_links_by_owner(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, size_t offset, size_t count);
+			expects_lr<hash_map<string, wallet_link>> get_links_by_public_keys(const algorithm::asset_id& asset, const hash_set<string>& public_keys);
+			expects_lr<hash_map<string, wallet_link>> get_links_by_addresses(const algorithm::asset_id& asset, const hash_set<string>& addresses);
+			expects_lr<hash_map<string, wallet_link>> get_links_by_owner(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, size_t offset, size_t count);
 			expects_lr<void> add_utxo(const algorithm::asset_id& asset, const coin_utxo& value);
 			expects_lr<void> remove_utxo(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint64_t index);
 			expects_lr<coin_utxo> get_utxo(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint64_t index);
@@ -101,13 +101,13 @@ namespace tangent
 			expects_lr<schema*> load_cache(const algorithm::asset_id& asset, cache_policy policy, const std::string_view& key);
 			expects_lr<void> store_cache(const algorithm::asset_id& asset, cache_policy policy, const std::string_view& key, uptr<schema>&& value);
 			option<string> get_contract_address(const algorithm::asset_id& asset);
-			unordered_map<algorithm::asset_id, relay_backend::chainparams> get_chains();
-			unordered_map<string, invocation_callback>& get_registrations();
+			hash_map<algorithm::asset_id, relay_backend::chainparams> get_chains();
+			hash_map<string, invocation_callback>& get_registrations();
 			vector<algorithm::asset_id> get_assets(bool observing_only = false);
 			vector<uptr<server_relay>>* get_nodes(const algorithm::asset_id& asset);
 			const relay_backend::chainparams* get_chainparams(const algorithm::asset_id& asset);
 			server_relay* add_node(const algorithm::asset_id& asset, const std::string_view& url, double rps);
-			server_relay* add_multi_node(const algorithm::asset_id& asset, unordered_map<string, string>&& urls, double rps);
+			server_relay* add_multi_node(const algorithm::asset_id& asset, hash_map<string, string>&& urls, double rps);
 			server_relay* get_node(const algorithm::asset_id& asset);
 			relay_backend* get_chain(const algorithm::asset_id& asset);
 			schema* get_specifications(const algorithm::asset_id& asset);

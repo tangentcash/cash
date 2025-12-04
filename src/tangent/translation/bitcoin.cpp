@@ -47,7 +47,7 @@ namespace tangent
 			}
 			static bool legacy_hash_from_cash_address(const sc_chainparams_* chain, const std::string_view& address, uint8_t* out_address_hash, size_t* out_address_hash_size, size_t* out_prefix_size, bitcoin::address_format* out_type)
 			{
-				auto decoded_address = cashaddr::Decode(copy<std::string>(address), chain->bech32_cashaddr);
+				auto decoded_address = cashaddr::Decode(std::string(address), chain->bech32_cashaddr);
 				auto& prefix = decoded_address.first;
 				auto& hash = decoded_address.second;
 				if (hash.empty() || prefix != chain->bech32_cashaddr)
@@ -285,7 +285,7 @@ namespace tangent
 					transaction_data = *transaction_data_postload;
 				}
 
-				unordered_set<string> addresses;
+				hash_set<string> addresses;
 				schema* tx_inputs = transaction_data->get("vin");
 				if (tx_inputs != nullptr)
 				{
@@ -357,7 +357,7 @@ namespace tangent
 				if (tx_outputs != nullptr)
 				{
 					size_t output_index = 0;
-					unordered_set<size_t> resets;
+					hash_set<size_t> resets;
 					for (auto& output : tx_outputs->get_childs())
 					{
 						coin_utxo new_output;
@@ -1327,10 +1327,10 @@ namespace tangent
 				memory::release(*tx_data);
 				coreturn expects_rt<coin_utxo>(std::move(input));
 			}
-			unordered_set<string> bitcoin::get_output_addresses(schema* tx_output, bool* is_allowed)
+			hash_set<string> bitcoin::get_output_addresses(schema* tx_output, bool* is_allowed)
 			{
 				bool allowance = true;
-				unordered_set<string> addresses;
+				hash_set<string> addresses;
 				auto* script_pub_key = tx_output->get("scriptPubKey");
 				if (script_pub_key != nullptr)
 				{

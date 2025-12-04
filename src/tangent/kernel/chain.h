@@ -2,7 +2,6 @@
 #define TAN_KERNEL_CHAIN_H
 #include <vitex/layer.h>
 #include <vitex/network/sqlite.h>
-#include <set>
 
 namespace rocksdb
 {
@@ -15,9 +14,6 @@ namespace tangent
 	using namespace vitex::compute;
 	using namespace vitex::network;
 	using namespace vitex::layer;
-
-	template <typename k, typename comparator = typename std::set<k>::key_compare>
-	using ordered_set = std::set<k, comparator, typename allocation_type<typename std::set<k>::value_type>::type>;
 
 	enum
 	{
@@ -86,8 +82,8 @@ namespace tangent
 		friend class protocol;
 
 	private:
-		unordered_map<string, single_queue<uref<sqlite::connection>>> indices;
-		unordered_map<string, rocksdb::DB*> blobs;
+		hash_map<string, single_queue<uref<sqlite::connection>>> indices;
+		hash_map<string, rocksdb::DB*> blobs;
 		std::mutex mutex;
 		string target_path;
 
@@ -105,7 +101,7 @@ namespace tangent
 	class timepoint
 	{
 	private:
-		unordered_map<string, int64_t> offsets;
+		hash_map<string, int64_t> offsets;
 		int64_t milliseconds_offset = 0;
 		std::mutex mutex;
 
@@ -233,8 +229,8 @@ namespace tangent
 				uint64_t archive_repack_interval = 1800000;
 				bool control_logging = false;
 			} logs;
-			unordered_set<string> known_nodes;
-			unordered_set<string> bootstrap_nodes;
+			hash_set<string> known_nodes;
+			hash_set<string> bootstrap_nodes;
 			network_type network = network_type::mainnet;
 			string keystate;
 		} user;

@@ -359,8 +359,8 @@ namespace tangent
 				if (target_to_link != discovery->end())
 					to_link.address = address_util::encode_tag_address(to, destination_tag);
 
-				unordered_map<algorithm::asset_id, decimal> inputs;
-				unordered_map<algorithm::asset_id, decimal> outputs;
+				hash_map<algorithm::asset_id, decimal> inputs;
+				hash_map<algorithm::asset_id, decimal> outputs;
 				if (total_value.is_positive())
 				{
 					inputs[native_asset] = total_value;

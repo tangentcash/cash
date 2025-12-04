@@ -30,7 +30,7 @@ namespace tangent
 {
 	namespace script
 	{
-		typedef unordered_map<string_repr, std::atomic<int32_t>> string_repr_cache_type;
+		typedef hash_map<string_repr, std::atomic<int32_t>> string_repr_cache_type;
 
 		static std::string_view type_name_of(int type_id)
 		{
@@ -1933,7 +1933,7 @@ namespace tangent
 			asITypeInfo* array_type = vm->get_type_info_by_decl(SCRIPT_TYPE_ARRAY "<" SCRIPT_TYPE_STRING ">@").get_type_info();
 			array_repr* array = array_repr::create(array_type);
 			auto values = stringify::split(view(), delimiter.view());
-			array->resize(values.size());
+			array->resize((uint32_t)values.size());
 			for (size_t i = 0; i < values.size(); i++)
 				((string_repr*)array->at((uint32_t)i))->assign(std::string_view(values[i]));
 			return array;

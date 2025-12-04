@@ -11,7 +11,7 @@ namespace tangent
 		class storage_util
 		{
 		public:
-			typedef unordered_set<storage_index_ptr*> multi_storage_index_ptr;
+			typedef hash_set<storage_index_ptr*> multi_storage_index_ptr;
 
 		public:
 			static sqlite::expects_db<void> multi_tx_begin(const std::string_view& operation, sqlite::isolation type, multi_storage_index_ptr& ptr);

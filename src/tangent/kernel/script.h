@@ -544,7 +544,7 @@ namespace tangent
 
 		struct mapping_repr : container_repr
 		{
-			ordered_map<string, std::pair<storage_repr, storage_repr>> map;
+			btree_map<string, std::pair<storage_repr, storage_repr>> map;
 
 			mapping_repr(asITypeInfo* new_type);
 			~mapping_repr();
@@ -596,7 +596,7 @@ namespace tangent
 				storage_repr row;
 				storage_repr value;
 			};
-			ordered_map<string, range_item> map;
+			btree_map<string, range_item> map;
 
 			ranging_repr(asITypeInfo* new_type);
 			~ranging_repr();
@@ -747,7 +747,7 @@ namespace tangent
 		class factory : public singleton<factory>
 		{
 		private:
-			unordered_map<string, cmodule> modules;
+			hash_map<string, cmodule> modules;
 			uptr<compiler> compiler;
 			uptr<virtual_machine> vm;
 			string compiler_log;
@@ -775,7 +775,7 @@ namespace tangent
 		{
 			struct
 			{
-				unordered_map<string, unordered_map<size_t, uptr<states::account_multiform>>> index[2];
+				hash_map<string, hash_map<size_t, uptr<states::account_multiform>>> index[2];
 				option<algorithm::wesolowski::distribution> distribution = optional::none;
 			} cache;
 			ledger::transaction_context* context;
@@ -825,7 +825,7 @@ namespace vitex
 	namespace core
 	{
 		template <>
-		struct key_hasher<tangent::script::string_repr>
+		struct key_hash<tangent::script::string_repr>
 		{
 			typedef int argument_type;
 			typedef size_t result_type;
@@ -833,7 +833,7 @@ namespace vitex
 
 			inline result_type operator()(const tangent::script::string_repr& value) const noexcept
 			{
-				return key_hasher<std::string_view>()(value.view());
+				return key_hash<std::string_view>()(value.view());
 			}
 		};
 	}

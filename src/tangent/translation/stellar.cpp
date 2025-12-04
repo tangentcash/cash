@@ -435,8 +435,8 @@ namespace tangent
 						to_link.address = address_util::encode_tag_address(to, *memo);
 				}
 
-				unordered_map<algorithm::asset_id, decimal> inputs;
-				unordered_map<algorithm::asset_id, decimal> outputs;
+				hash_map<algorithm::asset_id, decimal> inputs;
+				hash_map<algorithm::asset_id, decimal> outputs;
 				if (total_value.is_positive())
 				{
 					inputs[native_asset] = total_value;
@@ -524,8 +524,8 @@ namespace tangent
 					coreturn expects_rt<prepared_transaction>(remote_exception("input memo invalid"));
 
 				size_t paid_outputs_size = 0;
-				unordered_set<string> new_accounts;
-				unordered_map<algorithm::asset_id, decimal> inputs;
+				hash_set<string> new_accounts;
+				hash_map<algorithm::asset_id, decimal> inputs;
 				vector<StellarCreateAccountOp> accounts;
 				vector<StellarPaymentOp> payments;
 				accounts.reserve(to.size());
@@ -617,7 +617,7 @@ namespace tangent
 				auto public_key = algorithm::composition::to_cstorage<algorithm::composition::cpubkey_t>(*signing_public_key);
 				vector<uint8_t> raw_data = tx_data_from_signature(transaction, accounts, payments);
 				prepared_transaction result;
-				result.requires_account_input(algorithm::composition::type::ed25519, wallet_link(from_link), public_key, raw_data.data(), raw_data.size(), unordered_map<algorithm::asset_id, decimal>(inputs));
+				result.requires_account_input(algorithm::composition::type::ed25519, wallet_link(from_link), public_key, raw_data.data(), raw_data.size(), hash_map<algorithm::asset_id, decimal>(inputs));
 				for (auto& item : to)
 					result.requires_account_output(item.address, { { item.asset, item.value - fee_value_per_output } });
 				result.requires_abi(format::variable(transaction.sequence_number));

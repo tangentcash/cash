@@ -681,7 +681,7 @@ namespace tangent
 			if (listeners.empty())
 				return;
 
-			ordered_set<algorithm::pubkeyhash_t> addresses;
+			btree_set<algorithm::pubkeyhash_t> addresses;
 			auto context = ledger::transaction_context();
 			for (auto& transaction : block.transactions)
 			{
@@ -689,7 +689,7 @@ namespace tangent
 				transaction.transaction->recover_many(&context, transaction.receipt, addresses);
 			}
 
-			unordered_set<http::web_socket_frame*> web_sockets;
+			hash_set<http::web_socket_frame*> web_sockets;
 			for (auto& listener : listeners)
 			{
 				if (!listener.first->web_socket)
@@ -737,7 +737,7 @@ namespace tangent
 				return;
 
 			auto address = algorithm::pubkeyhash_t(owner);
-			unordered_set<http::web_socket_frame*> web_sockets;
+			hash_set<http::web_socket_frame*> web_sockets;
 			for (auto& listener : listeners)
 			{
 				if (!listener.first->web_socket)
@@ -1292,8 +1292,8 @@ namespace tangent
 				if (!block_number)
 					return server_response().error(error_codes::not_found, "block not found");
 
-				auto parties = ordered_set<algorithm::pubkeyhash_t>();
-				auto aliases = ordered_set<uint256_t>();
+				auto parties = btree_set<algorithm::pubkeyhash_t>();
+				auto aliases = btree_set<uint256_t>();
 				auto context = ledger::transaction_context();
 				uptr<schema> data = var::set::array();
 				while (true)
@@ -1378,8 +1378,8 @@ namespace tangent
 			}
 			else
 			{
-				auto parties = ordered_set<algorithm::pubkeyhash_t>();
-				auto aliases = ordered_set<uint256_t>();
+				auto parties = btree_set<algorithm::pubkeyhash_t>();
+				auto aliases = btree_set<uint256_t>();
 				auto context = ledger::transaction_context();
 				uptr<schema> data = var::set::array();
 				while (true)

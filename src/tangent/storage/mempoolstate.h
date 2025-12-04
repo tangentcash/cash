@@ -54,8 +54,8 @@ namespace tangent
 
 		struct attestation_tree
 		{
-			ordered_map<uint256_t, ordered_set<algorithm::hashsig_t>> commitments;
-			ordered_map<uint256_t, superchain::computed_transaction> proofs;
+			btree_map<uint256_t, btree_set<algorithm::hashsig_t>> commitments;
+			btree_map<uint256_t, superchain::computed_transaction> proofs;
 			algorithm::asset_id asset;
 		};
 
@@ -99,7 +99,7 @@ namespace tangent
 			expects_lr<void> remove_attestation(const uint256_t& attestation_hash);
 			expects_lr<void> add_transaction(const ledger::transaction& value, bool resurrection);
 			expects_lr<void> remove_transactions(const vector<uint256_t>& transaction_hashes);
-			expects_lr<void> remove_transactions(const unordered_set<uint256_t>& transaction_hashes);
+			expects_lr<void> remove_transactions(const hash_set<uint256_t>& transaction_hashes);
 			expects_lr<size_t> expire_transactions();
 			expects_lr<void> apply_secret_entropy(const algorithm::pubkeyhash_t& participant, const ledger::dispatch_context::secret_entropy& entropy);
 			expects_lr<ledger::dispatch_context::secret_entropy> get_secret_entropy(const algorithm::pubkeyhash_t& participant, const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner);

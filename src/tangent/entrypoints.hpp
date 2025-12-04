@@ -27,7 +27,7 @@ namespace tangent
 		{
 			struct
 			{
-				ordered_map<algorithm::pubkeyhash_t, ordered_map<algorithm::asset_id, decimal>> balances;
+				btree_map<algorithm::pubkeyhash_t, btree_map<algorithm::asset_id, decimal>> balances;
 				algorithm::pubkeyhash_t from;
 				algorithm::pubkeyhash_t to;
 				algorithm::asset_id payable = 0;
@@ -46,7 +46,7 @@ namespace tangent
 				uptr<transactions::call> contextual;
 				uptr<schema> returning;
 				uptr<schema> log;
-				unordered_map<size_t, uptr<schema>> events;
+				hash_map<size_t, uptr<schema>> events;
 				script::cmodule pmodule;
 				ledger::block block;
 			} tracer;

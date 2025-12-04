@@ -86,8 +86,8 @@ namespace tangent
 				bool empty() const;
 			};
 
-			ordered_map<string, state_change> finalized;
-			ordered_map<string, state_change> pending;
+			btree_map<string, state_change> finalized;
+			btree_map<string, state_change> pending;
 
 			block_state() = default;
 			block_state(const block_state& other);
@@ -111,8 +111,8 @@ namespace tangent
 		{
 			struct
 			{
-				unordered_map<uint32_t, void*> topics;
-				unordered_map<string, string> effects;
+				hash_map<uint32_t, void*> topics;
+				hash_map<string, string> effects;
 			} temporary_state;
 			block_state outgoing;
 			block_state incoming;
@@ -143,7 +143,7 @@ namespace tangent
 		struct block_header : messages::authentic
 		{
 			algorithm::wesolowski::digest proof;
-			ordered_map<algorithm::asset_id, uint64_t> witnesses;
+			btree_map<algorithm::asset_id, uint64_t> witnesses;
 			uint256_t parent_hash = 0;
 			uint256_t transaction_root = 0;
 			uint256_t receipt_root = 0;
@@ -288,7 +288,7 @@ namespace tangent
 			uint8_t execution_flags;
 
 		public:
-			ordered_map<algorithm::asset_id, uint64_t> witnesses;
+			btree_map<algorithm::asset_id, uint64_t> witnesses;
 			const evaluation_context* environment;
 			const ledger::transaction* transaction;
 			ledger::block_changelog* changelog;
@@ -320,7 +320,7 @@ namespace tangent
 			expects_lr<vector<states::validator_production>> calculate_producers(size_t target_size);
 			expects_lr<vector<states::validator_attestation>> calculate_attesters(const algorithm::asset_id& asset, size_t target_size);
 			expects_lr<states::validator_attestation> calculate_attester_for_migration(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& exclusion);
-			expects_lr<vector<states::validator_participation>> calculate_participants(ordered_set<algorithm::pubkeyhash_t>& exclusion, size_t target_size, const decimal& threshold);
+			expects_lr<vector<states::validator_participation>> calculate_participants(btree_set<algorithm::pubkeyhash_t>& exclusion, size_t target_size, const decimal& threshold);
 			expects_lr<states::account_nonce> apply_account_nonce(const algorithm::pubkeyhash_t& owner, uint64_t nonce);
 			expects_lr<states::account_program> apply_account_program(const algorithm::pubkeyhash_t& owner, const std::string_view& program_hashcode);
 			expects_lr<states::account_uniform> apply_account_uniform(const algorithm::pubkeyhash_t& owner, const std::string_view& index, const std::string_view& data);
@@ -329,14 +329,14 @@ namespace tangent
 			expects_lr<states::account_balance> apply_transfer(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const decimal& supply, const decimal& reserve);
 			expects_lr<states::account_balance> apply_fee_transfer(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const decimal& value);
 			expects_lr<states::account_balance> apply_payment(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& from, const algorithm::pubkeyhash_t& to, const decimal& value);
-			expects_lr<states::validator_production> apply_validator_production(const algorithm::pubkeyhash_t& owner, stake_type type, ordered_map<algorithm::asset_id, decimal>&& rewards);
-			expects_lr<states::validator_participation> apply_validator_participation(const algorithm::pubkeyhash_t& owner, stake_type type, ordered_map<algorithm::asset_id, std::pair<bool, states::validator_participation::participation_ref>>&& participations, ordered_map<algorithm::asset_id, decimal>&& rewards);
-			expects_lr<states::validator_attestation> apply_validator_attestation(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, stake_type type, ordered_map<algorithm::asset_id, decimal>&& rewards);
+			expects_lr<states::validator_production> apply_validator_production(const algorithm::pubkeyhash_t& owner, stake_type type, btree_map<algorithm::asset_id, decimal>&& rewards);
+			expects_lr<states::validator_participation> apply_validator_participation(const algorithm::pubkeyhash_t& owner, stake_type type, btree_map<algorithm::asset_id, std::pair<bool, states::validator_participation::participation_ref>>&& participations, btree_map<algorithm::asset_id, decimal>&& rewards);
+			expects_lr<states::validator_attestation> apply_validator_attestation(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, stake_type type, btree_map<algorithm::asset_id, decimal>&& rewards);
 			expects_lr<states::validator_attestation> apply_validator_attestation_policy(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, uint8_t security_level, const decimal& participation_threshold, const decimal& incoming_fee, const decimal& outgoing_fee, bool accepts_account_requests, bool accepts_withdrawal_requests);
 			expects_lr<states::validator_attestation> apply_validator_attestation_queue(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const uint256_t& transaction_hash);
 			expects_lr<states::validator_attestation> apply_validator_attestation_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, uint64_t new_accounts);
-			expects_lr<states::bridge_balance> apply_bridge_balance(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const ordered_map<algorithm::asset_id, decimal>& balances);
-			expects_lr<states::bridge_account> apply_bridge_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const algorithm::pubkeyhash_t& manager, const algorithm::composition::cpubkey_t& public_key, ordered_set<algorithm::pubkeyhash_t>&& group);
+			expects_lr<states::bridge_balance> apply_bridge_balance(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const btree_map<algorithm::asset_id, decimal>& balances);
+			expects_lr<states::bridge_account> apply_bridge_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const algorithm::pubkeyhash_t& manager, const algorithm::composition::cpubkey_t& public_key, btree_set<algorithm::pubkeyhash_t>&& group);
 			expects_lr<states::witness_program> apply_witness_program(const std::string_view& packed_program_code);
 			expects_lr<states::witness_event> apply_witness_event(const uint256_t& parent_transaction_hash, const uint256_t& child_transaction_hash);
 			expects_lr<states::witness_account> apply_witness_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const address_map& addresses);
@@ -415,7 +415,7 @@ namespace tangent
 				algorithm::pubkeyhash_t manager;
 				algorithm::pubkeyhash_t owner;
 				algorithm::storage_type<uint8_t, 64> entropy;
-				ordered_map<algorithm::pubkeyhash_t, share_pair> shares;
+				btree_map<algorithm::pubkeyhash_t, share_pair> shares;
 
 				bool store_payload(format::wo_stream* stream) const override;
 				bool load_payload(format::ro_stream& stream) override;
@@ -430,7 +430,7 @@ namespace tangent
 
 			struct entropy_distribution_state
 			{
-				ordered_map<algorithm::pubkeyhash_t, string> encrypted_shares;
+				btree_map<algorithm::pubkeyhash_t, string> encrypted_shares;
 
 				bool load_message(format::ro_stream& stream);
 				format::wo_stream as_message() const;
@@ -438,8 +438,8 @@ namespace tangent
 
 			struct entropy_aggregation_state
 			{
-				ordered_map<uint256_t, ordered_map<algorithm::pubkeyhash_t, string>> encrypted_shares;
-				ordered_set<algorithm::pubkeyhash_t> participants;
+				btree_map<uint256_t, btree_map<algorithm::pubkeyhash_t, string>> encrypted_shares;
+				btree_set<algorithm::pubkeyhash_t> participants;
 				algorithm::pubkey_t public_key;
 				uint8_t attempt = 0;
 
@@ -449,8 +449,8 @@ namespace tangent
 
 			struct entropy_recovery_state
 			{
-				ordered_map<uint256_t, ordered_map<algorithm::pubkeyhash_t, string>> encrypted_shares;
-				ordered_map<uint256_t, string> encrypted_entropies;
+				btree_map<uint256_t, btree_map<algorithm::pubkeyhash_t, string>> encrypted_shares;
+				btree_map<uint256_t, string> encrypted_entropies;
 				algorithm::hashsig_t proof;
 
 				bool load_message(format::ro_stream& stream);
@@ -460,8 +460,8 @@ namespace tangent
 			struct public_state
 			{
 				uptr<algorithm::composition::public_state> aggregator;
-				ordered_map<algorithm::pubkey_t, ordered_map<algorithm::pubkeyhash_t, string>> encrypted_shares;
-				ordered_set<algorithm::pubkeyhash_t> participants;
+				btree_map<algorithm::pubkey_t, btree_map<algorithm::pubkeyhash_t, string>> encrypted_shares;
+				btree_set<algorithm::pubkeyhash_t> participants;
 				algorithm::composition::type alg;
 				uint8_t attempt = 0;
 				bool distribution = false;
@@ -473,7 +473,7 @@ namespace tangent
 			struct signature_state
 			{
 				uptr<algorithm::composition::signature_state> aggregator;
-				ordered_set<algorithm::pubkeyhash_t> participants;
+				btree_set<algorithm::pubkeyhash_t> participants;
 				uptr<superchain::prepared_transaction> message;
 				algorithm::composition::type alg;
 				uint8_t attempt = 0;
@@ -482,7 +482,7 @@ namespace tangent
 				format::wo_stream as_message() const;
 			};
 
-			ordered_map<uint256_t, string> errors;
+			btree_map<uint256_t, string> errors;
 			vector<uptr<transaction>> outputs;
 			vector<uint256_t> inputs;
 			vector<uint256_t> repeaters;
@@ -492,9 +492,9 @@ namespace tangent
 			dispatch_context(dispatch_context&&) noexcept = default;
 			dispatch_context& operator=(const dispatch_context& other) noexcept;
 			dispatch_context& operator=(dispatch_context&&) noexcept = default;
-			virtual expects_lr<secret_entropy> apply_secret_entropy(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner, const algorithm::storage_type<uint8_t, 64>& entropy, ordered_map<algorithm::pubkeyhash_t, secret_entropy::share_pair>&& shares);
+			virtual expects_lr<secret_entropy> apply_secret_entropy(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner, const algorithm::storage_type<uint8_t, 64>& entropy, btree_map<algorithm::pubkeyhash_t, secret_entropy::share_pair>&& shares);
 			virtual expects_lr<secret_entropy> recover_secret_entropy(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner) const;
-			virtual expects_promise_rt<void> aggregate_validators(const ordered_set<algorithm::pubkeyhash_t>& validators) = 0;
+			virtual expects_promise_rt<void> aggregate_validators(const btree_set<algorithm::pubkeyhash_t>& validators) = 0;
 			virtual expects_promise_rt<void> distribute_entropy_shares(const transaction_context* context, entropy_distribution_state& state, const algorithm::pubkeyhash_t& validator) = 0;
 			virtual expects_promise_rt<void> aggregate_entropy_shares(const transaction_context* context, entropy_aggregation_state& state, const algorithm::pubkeyhash_t& validator) = 0;
 			virtual expects_promise_rt<void> recover_entropy(const transaction_context* context, entropy_recovery_state& state, const algorithm::pubkeyhash_t& validator) = 0;
@@ -553,7 +553,7 @@ namespace tangent
 				algorithm::seckey_t secret_key;
 			} validator;
 			option<block_header> tip = optional::none;
-			ordered_map<algorithm::pubkeyhash_t, uint64_t> nonces;
+			btree_map<algorithm::pubkeyhash_t, uint64_t> nonces;
 			vector<states::validator_production> producers;
 			vector<transaction_info> incoming;
 			vector<uint256_t> outgoing;

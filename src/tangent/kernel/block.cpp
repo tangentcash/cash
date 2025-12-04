@@ -763,7 +763,7 @@ namespace tangent
 				current_gas_limit += item.candidate->gas_limit;
 			}
 
-			auto fees = ordered_map<algorithm::asset_id, decimal>({ { algorithm::asset::native(), get_reward_value() } });
+			auto fees = btree_map<algorithm::asset_id, decimal>({ { algorithm::asset::native(), get_reward_value() } });
 			auto executionlog = string();
 			auto changelog = block_changelog();
 			auto context = transaction_context(environment, this, &changelog, nullptr, { });
@@ -848,7 +848,7 @@ namespace tangent
 					return layer_exception("invalid producer priority");
 			}
 
-			unordered_map<uint256_t, std::pair<const block_transaction*, const evaluation_context::transaction_info*>> childs;
+			hash_map<uint256_t, std::pair<const block_transaction*, const evaluation_context::transaction_info*>> childs;
 			environment.incoming.reserve(transactions.size());
 			for (auto& transaction : transactions)
 			{
@@ -1249,7 +1249,7 @@ namespace tangent
 			if (!isolation)
 				return layer_exception(std::move(isolation.error().message()));
 
-			unordered_set<uint256_t> finalized_transactions;
+			hash_set<uint256_t> finalized_transactions;
 			finalized_transactions.reserve(block.transactions.size());
 			for (auto& transaction : block.transactions)
 				finalized_transactions.insert(transaction.receipt.transaction_hash);
@@ -1656,7 +1656,7 @@ namespace tangent
 			auto size = std::min(target_size, pool);
 			if (pool > target_size)
 			{
-				auto indices = ordered_set<uint64_t>();
+				auto indices = btree_set<uint64_t>();
 				while (indices.size() < size)
 				{
 					uint64_t index = algorithm::hashing::erd64(random->derive(), size);
@@ -1741,7 +1741,7 @@ namespace tangent
 			if (pool < 2)
 				return layer_exception("committee threshold not met");
 
-			auto indices = ordered_set<uint64_t>();
+			auto indices = btree_set<uint64_t>();
 		retry:
 			uint64_t index = algorithm::hashing::erd64(random->derive(), pool);
 			if (indices.find(index) != indices.end())
@@ -1766,7 +1766,7 @@ namespace tangent
 
 			return expects_lr<states::validator_attestation>(std::move(target));
 		}
-		expects_lr<vector<states::validator_participation>> transaction_context::calculate_participants(ordered_set<algorithm::pubkeyhash_t>& exclusion, size_t target_size, const decimal& threshold)
+		expects_lr<vector<states::validator_participation>> transaction_context::calculate_participants(btree_set<algorithm::pubkeyhash_t>& exclusion, size_t target_size, const decimal& threshold)
 		{
 			auto payment = burn_gas((uint64_t)gas_cost::query_result * 2048);
 			if (!payment)
@@ -1788,7 +1788,7 @@ namespace tangent
 				median_pool = pool;
 
 			vector<states::validator_participation> committee;
-			auto indices = ordered_set<uint64_t>();
+			auto indices = btree_set<uint64_t>();
 			while (indices.size() < median_pool)
 			{
 				auto window = storages::result_index_window();
@@ -1960,7 +1960,7 @@ namespace tangent
 
 			return new_state1;
 		}
-		expects_lr<states::validator_production> transaction_context::apply_validator_production(const algorithm::pubkeyhash_t& owner, stake_type type, ordered_map<algorithm::asset_id, decimal>&& rewards)
+		expects_lr<states::validator_production> transaction_context::apply_validator_production(const algorithm::pubkeyhash_t& owner, stake_type type, btree_map<algorithm::asset_id, decimal>&& rewards)
 		{
 			states::validator_production new_state = get_validator_production(owner).or_else(states::validator_production(owner, block));
 			if (type == stake_type::unlock)
@@ -2011,7 +2011,7 @@ namespace tangent
 
 			return new_state;
 		}
-		expects_lr<states::validator_participation> transaction_context::apply_validator_participation(const algorithm::pubkeyhash_t& owner, stake_type type, ordered_map<algorithm::asset_id, std::pair<bool, states::validator_participation::participation_ref>>&& participations, ordered_map<algorithm::asset_id, decimal>&& rewards)
+		expects_lr<states::validator_participation> transaction_context::apply_validator_participation(const algorithm::pubkeyhash_t& owner, stake_type type, btree_map<algorithm::asset_id, std::pair<bool, states::validator_participation::participation_ref>>&& participations, btree_map<algorithm::asset_id, decimal>&& rewards)
 		{
 			states::validator_participation new_state = get_validator_participation(owner).or_else(states::validator_participation(owner, block));
 			for (auto& [asset, change] : participations)
@@ -2095,7 +2095,7 @@ namespace tangent
 
 			return new_state;
 		}
-		expects_lr<states::validator_attestation> transaction_context::apply_validator_attestation(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, stake_type type, ordered_map<algorithm::asset_id, decimal>&& rewards)
+		expects_lr<states::validator_attestation> transaction_context::apply_validator_attestation(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, stake_type type, btree_map<algorithm::asset_id, decimal>&& rewards)
 		{
 			states::validator_attestation new_state = get_validator_attestation(asset, owner).or_else(states::validator_attestation(owner, asset, block));
 			if (type == stake_type::unlock)
@@ -2196,7 +2196,7 @@ namespace tangent
 
 			return new_state;
 		}
-		expects_lr<states::bridge_balance> transaction_context::apply_bridge_balance(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const ordered_map<algorithm::asset_id, decimal>& balances)
+		expects_lr<states::bridge_balance> transaction_context::apply_bridge_balance(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const btree_map<algorithm::asset_id, decimal>& balances)
 		{
 			states::bridge_balance new_state = states::bridge_balance(owner, asset, block);
 			new_state.balances = balances;
@@ -2214,7 +2214,7 @@ namespace tangent
 
 			return new_state;
 		}
-		expects_lr<states::bridge_account> transaction_context::apply_bridge_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const algorithm::pubkeyhash_t& manager, const algorithm::composition::cpubkey_t& public_key, ordered_set<algorithm::pubkeyhash_t>&& group)
+		expects_lr<states::bridge_account> transaction_context::apply_bridge_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const algorithm::pubkeyhash_t& manager, const algorithm::composition::cpubkey_t& public_key, btree_set<algorithm::pubkeyhash_t>&& group)
 		{
 			states::bridge_account new_state = states::bridge_account(manager, asset, owner, block);
 			new_state.set_group(public_key, std::move(group));
@@ -2265,7 +2265,7 @@ namespace tangent
 			if (!chain)
 				return layer_exception("invalid operation");
 
-			ordered_map<string, address_map> segments;
+			btree_map<string, address_map> segments;
 			for (auto& address : addresses)
 			{
 				auto hash = chain->decode_address(address.second);
@@ -3206,7 +3206,7 @@ namespace tangent
 			if (!stream.read_integer(stream.read_type(), &participants_size))
 				return false;
 
-			ordered_set<algorithm::pubkeyhash_t> possible_participants;
+			btree_set<algorithm::pubkeyhash_t> possible_participants;
 			for (uint16_t i = 0; i < participants_size; i++)
 			{
 				algorithm::pubkeyhash_t item; string intermediate;
@@ -3220,7 +3220,7 @@ namespace tangent
 			if (!stream.read_integer(stream.read_type(), &shares_size))
 				return false;
 
-			ordered_map<algorithm::pubkey_t, ordered_map<algorithm::pubkeyhash_t, string>> possible_shares;
+			btree_map<algorithm::pubkey_t, btree_map<algorithm::pubkeyhash_t, string>> possible_shares;
 			for (uint16_t i = 0; i < shares_size; i++)
 			{
 				algorithm::pubkey_t public_key; string intermediate;
@@ -3291,7 +3291,7 @@ namespace tangent
 			if (!stream.read_integer(stream.read_type(), &participants_size))
 				return false;
 
-			ordered_set<algorithm::pubkeyhash_t> possible_participants;
+			btree_set<algorithm::pubkeyhash_t> possible_participants;
 			for (uint16_t i = 0; i < participants_size; i++)
 			{
 				algorithm::pubkeyhash_t item; string intermediate;
@@ -3345,7 +3345,7 @@ namespace tangent
 			}
 			return *this;
 		}
-		expects_lr<dispatch_context::secret_entropy> dispatch_context::apply_secret_entropy(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner, const algorithm::storage_type<uint8_t, 64>& entropy, ordered_map<algorithm::pubkeyhash_t, secret_entropy::share_pair>&& shares)
+		expects_lr<dispatch_context::secret_entropy> dispatch_context::apply_secret_entropy(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner, const algorithm::storage_type<uint8_t, 64>& entropy, btree_map<algorithm::pubkeyhash_t, secret_entropy::share_pair>&& shares)
 		{
 			secret_entropy result;
 			result.asset = asset;

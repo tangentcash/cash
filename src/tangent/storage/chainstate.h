@@ -49,7 +49,7 @@ namespace tangent
 		class account_cache : public singleton<account_cache>
 		{
 		private:
-			unordered_map<algorithm::pubkeyhash_t, uint64_t> accounts;
+			hash_map<algorithm::pubkeyhash_t, uint64_t> accounts;
 			std::mutex mutex;
 
 		public:
@@ -64,8 +64,8 @@ namespace tangent
 		class uniform_cache : public singleton<uniform_cache>
 		{
 		private:
-			unordered_map<string, uint64_t> indices;
-			unordered_map<string, block_pair> blocks;
+			hash_map<string, uint64_t> indices;
+			hash_map<string, block_pair> blocks;
 			std::mutex mutex;
 
 		public:
@@ -87,9 +87,9 @@ namespace tangent
 		class multiform_cache : public singleton<multiform_cache>
 		{
 		private:
-			unordered_map<string, uint64_t> columns;
-			unordered_map<string, uint64_t> rows;
-			unordered_map<string, block_pair> blocks;
+			hash_map<string, uint64_t> columns;
+			hash_map<string, uint64_t> rows;
+			hash_map<string, block_pair> blocks;
 			std::mutex mutex;
 
 		public:
@@ -236,8 +236,8 @@ namespace tangent
 			};
 
 		private:
-			unordered_map<uint32_t, ledger::storage_index_ptr> uniform_local_storage;
-			unordered_map<uint32_t, ledger::storage_index_ptr> multiform_local_storage;
+			hash_map<uint32_t, ledger::storage_index_ptr> uniform_local_storage;
+			hash_map<uint32_t, ledger::storage_index_ptr> multiform_local_storage;
 			ledger::storage_index_ptr block_local_storage;
 			ledger::storage_index_ptr account_local_storage;
 			ledger::storage_index_ptr tx_local_storage;
@@ -311,8 +311,8 @@ namespace tangent
 			ledger::storage_index_ptr& get_party_storage();
 			ledger::storage_index_ptr& get_alias_storage();
 			ledger::storage_blob_ptr& get_blob_storage();
-			unordered_map<uint32_t, ledger::storage_index_ptr>& get_uniform_multi_storage();
-			unordered_map<uint32_t, ledger::storage_index_ptr>& get_multiform_multi_storage();
+			hash_map<uint32_t, ledger::storage_index_ptr>& get_uniform_multi_storage();
+			hash_map<uint32_t, ledger::storage_index_ptr>& get_multiform_multi_storage();
 			ledger::storage_util::multi_storage_index_ptr get_multi_storage();
 			void clear_indexer_cache();
 			uint32_t get_queries() const;

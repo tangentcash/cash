@@ -755,7 +755,7 @@ namespace tangent
 				if (refs.empty())
 					return layer_exception("participation must have refs");
 				
-				ordered_set<string> duplicates;
+				btree_set<string> duplicates;
 				for (auto& ref : refs)
 				{
 					if (ref.manager.empty() || ref.owner.empty())
@@ -1414,7 +1414,7 @@ namespace tangent
 			memcpy(public_key.data(), public_key_assembly.data(), public_key_assembly.size());
 			return true;
 		}
-		void bridge_account::set_group(const algorithm::composition::cpubkey_t& new_public_key, ordered_set<algorithm::pubkeyhash_t>&& new_group)
+		void bridge_account::set_group(const algorithm::composition::cpubkey_t& new_public_key, btree_set<algorithm::pubkeyhash_t>&& new_group)
 		{
 			group = std::move(new_group);
 			public_key = new_public_key;

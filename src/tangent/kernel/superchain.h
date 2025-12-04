@@ -110,14 +110,14 @@ namespace tangent
 				uint256_t as_hash() const;
 			};
 
-			ordered_map<uint256_t, token_utxo> tokens;
+			btree_map<uint256_t, token_utxo> tokens;
 			wallet_link link;
 			string transaction_id;
 			decimal value;
 			uint64_t index = 0;
 
 			coin_utxo() = default;
-			coin_utxo(wallet_link&& new_link, unordered_map<algorithm::asset_id, decimal>&& new_values);
+			coin_utxo(wallet_link&& new_link, hash_map<algorithm::asset_id, decimal>&& new_values);
 			coin_utxo(wallet_link&& new_link, const std::string_view& new_transaction_id, uint64_t new_index, decimal&& new_value);
 			void apply_token_value(const std::string_view& contract_address, const std::string_view& symbol, const decimal& value, uint8_t decimals);
 			option<decimal> get_token_value(const std::string_view& contract_address);
@@ -136,8 +136,8 @@ namespace tangent
 
 		struct computed_transaction : messages::uniform
 		{
-			ordered_map<uint256_t, coin_utxo> inputs;
-			ordered_map<uint256_t, coin_utxo> outputs;
+			btree_map<uint256_t, coin_utxo> inputs;
+			btree_map<uint256_t, coin_utxo> outputs;
 			string transaction_id;
 			uint64_t block_id;
 
@@ -173,15 +173,15 @@ namespace tangent
 				uint256_t as_hash() const;
 			};
 
-			ordered_map<uint256_t, signable_coin_utxo> inputs;
-			ordered_map<uint256_t, coin_utxo> outputs;
+			btree_map<uint256_t, signable_coin_utxo> inputs;
+			btree_map<uint256_t, coin_utxo> outputs;
 			format::variables abi;
 
 			prepared_transaction() = default;
 			prepared_transaction& requires_input(algorithm::composition::type new_alg, const algorithm::composition::cpubkey_t& new_public_key, uint8_t* new_message, size_t new_message_size, coin_utxo&& input);
-			prepared_transaction& requires_account_input(algorithm::composition::type new_alg, wallet_link&& new_link, const algorithm::composition::cpubkey_t& new_public_key, uint8_t* new_message, size_t new_message_size, unordered_map<algorithm::asset_id, decimal>&& input);
+			prepared_transaction& requires_account_input(algorithm::composition::type new_alg, wallet_link&& new_link, const algorithm::composition::cpubkey_t& new_public_key, uint8_t* new_message, size_t new_message_size, hash_map<algorithm::asset_id, decimal>&& input);
 			prepared_transaction& requires_output(coin_utxo&& output);
-			prepared_transaction& requires_account_output(const std::string_view& to_address, unordered_map<algorithm::asset_id, decimal>&& output);
+			prepared_transaction& requires_account_output(const std::string_view& to_address, hash_map<algorithm::asset_id, decimal>&& output);
 			prepared_transaction& requires_abi(format::variable&& value);
 			format::variable* load_abi(size_t* ptr);
 			bool store_payload(format::wo_stream* stream) const override;
@@ -263,7 +263,7 @@ namespace tangent
 		{
 			struct
 			{
-				unordered_set<server_relay*> interactions;
+				hash_set<server_relay*> interactions;
 				uint64_t current_block_height = 0;
 				uint64_t latest_block_height = 0;
 				uint64_t starting_block_height = 0;
@@ -279,13 +279,13 @@ namespace tangent
 			bool has_latest_block_height() const;
 			bool will_wait_for_transactions() const;
 			double get_checkpoint_percentage() const;
-			const unordered_set<server_relay*>& get_interacted_nodes() const;
+			const hash_set<server_relay*>& get_interacted_nodes() const;
 			bool is_cancelled(const algorithm::asset_id& asset);
 		};
 
 		struct multichain_supervisor_options : supervisor_options
 		{
-			unordered_map<string, chain_supervisor_options> specifics;
+			hash_map<string, chain_supervisor_options> specifics;
 			uint64_t retry_waiting_time_ms = 30000;
 
 			chain_supervisor_options& add_specific_options(const std::string_view& blockchain);
@@ -302,7 +302,7 @@ namespace tangent
 
 		private:
 			vector<std::pair<promise<bool>, task_id>> tasks;
-			unordered_map<string, string> urls;
+			hash_map<string, string> urls;
 			std::recursive_mutex mutex;
 			int64_t latest;
 			double rps;
@@ -312,7 +312,7 @@ namespace tangent
 			void* user_data;
 
 		public:
-			server_relay(unordered_map<string, string>&& node_urls, double node_rps) noexcept;
+			server_relay(hash_map<string, string>&& node_urls, double node_rps) noexcept;
 			~server_relay() noexcept;
 			expects_promise_rt<schema*> execute_rpc(const algorithm::asset_id& asset, error_reporter& reporter, const std::string_view& method, const schema_list& args, cache_policy cache, const std::string_view& path);
 			expects_promise_rt<schema*> execute_rpc3(const algorithm::asset_id& asset, error_reporter& reporter, const std::string_view& method, const schema_args& args, cache_policy cache, const std::string_view& path);
@@ -386,8 +386,8 @@ namespace tangent
 			virtual expects_lr<string> decode_transaction_id(const std::string_view& transaction_id) = 0;
 			virtual expects_lr<algorithm::composition::cpubkey_t> to_composite_public_key(const std::string_view& public_key);
 			virtual expects_lr<address_map> to_addresses(const std::string_view& public_key) = 0;
-			virtual expects_lr<ordered_map<string, wallet_link>> find_linked_addresses(const unordered_set<string>& addresses);
-			virtual expects_lr<ordered_map<string, wallet_link>> find_linked_addresses(const algorithm::pubkeyhash_t& owner, size_t offset, size_t count);
+			virtual expects_lr<btree_map<string, wallet_link>> find_linked_addresses(const hash_set<string>& addresses);
+			virtual expects_lr<btree_map<string, wallet_link>> find_linked_addresses(const algorithm::pubkeyhash_t& owner, size_t offset, size_t count);
 			virtual expects_lr<void> verify_node_compatibility(server_relay* node);
 			virtual decimal to_value(const decimal& value) const;
 			virtual uint256_t to_baseline_value(const decimal& value) const;
@@ -400,10 +400,10 @@ namespace tangent
 		public:
 			struct balance_query
 			{
-				unordered_map<algorithm::asset_id, decimal> min_token_values;
+				hash_map<algorithm::asset_id, decimal> min_token_values;
 				decimal min_native_value;
 
-				balance_query(const decimal& new_min_native_value, const unordered_map<algorithm::asset_id, decimal>& new_min_token_values);
+				balance_query(const decimal& new_min_native_value, const hash_map<algorithm::asset_id, decimal>& new_min_token_values);
 			};
 
 		public:

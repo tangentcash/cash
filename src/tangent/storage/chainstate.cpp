@@ -25,7 +25,7 @@ namespace tangent
 			uint64_t transaction_number;
 			uint64_t block_nonce;
 			bool dispatchable;
-			ordered_set<algorithm::pubkeyhash_t> parties;
+			btree_set<algorithm::pubkeyhash_t> parties;
 			vector<transaction_alias_blob> aliases;
 			const ledger::block_transaction* context;
 		};
@@ -69,7 +69,7 @@ namespace tangent
 			ledger::storage_index_ptr* storage;
 		};
 
-		static void fill_multiform_writer_from_block_state(vector<multiform_blob>* blobs, uint32_t type, const ordered_map<string, ledger::block_state::state_change>& state)
+		static void fill_multiform_writer_from_block_state(vector<multiform_blob>* blobs, uint32_t type, const btree_map<string, ledger::block_state::state_change>& state)
 		{
 			for (auto& [index, change] : state)
 			{
@@ -84,7 +84,7 @@ namespace tangent
 		}
 		static void fill_multiform_writer_from_block_changelog(vector<multiform_blob>* blobs, uint32_t type, const option<std::string_view>& column, const option<std::string_view>& row, const ledger::block_changelog* changelog)
 		{
-			auto fill_filter = [&](const ordered_map<string, ledger::block_state::state_change>& state)
+			auto fill_filter = [&](const btree_map<string, ledger::block_state::state_change>& state)
 			{
 				for (auto& [index, change] : state)
 				{
@@ -684,7 +684,7 @@ namespace tangent
 		}
 		expects_lr<void> chainstate::dispatch(const vector<uint256_t>& finalized_transaction_hashes, const vector<uint256_t>& repeated_transaction_hashes)
 		{
-			unordered_set<uint256_t> exclusion;
+			hash_set<uint256_t> exclusion;
 			exclusion.reserve(repeated_transaction_hashes.size());
 			for (auto& hash : repeated_transaction_hashes)
 				exclusion.insert(hash);
@@ -942,7 +942,7 @@ namespace tangent
 			if (!commit_alias_data)
 				return expects_lr<void>(layer_exception(std::move(commit_alias_data.error().message())));
 
-			unordered_map<uint32_t, uniform_writer> uniform_writers;
+			hash_map<uint32_t, uniform_writer> uniform_writers;
 			for (auto& [type, uniform_storage] : get_uniform_multi_storage())
 			{
 				vector<uniform_blob> blobs;
@@ -986,7 +986,7 @@ namespace tangent
 				writer.blobs = std::move(blobs);
 			}
 
-			unordered_map<uint32_t, multiform_writer> multiform_writers;
+			hash_map<uint32_t, multiform_writer> multiform_writers;
 			for (auto& [type, multiform_storage] : get_multiform_multi_storage())
 			{
 				vector<multiform_blob> blobs;
@@ -1038,7 +1038,7 @@ namespace tangent
 					}
 					if (transaction_to_rollup_index)
 					{
-						ordered_set<uint256_t> aliases;
+						btree_set<uint256_t> aliases;
 						auto context = ledger::transaction_context();
 						item.context->transaction->recover_aliases(&context, item.context->receipt, aliases);
 						item.aliases.reserve(aliases.size());
@@ -3180,13 +3180,13 @@ namespace tangent
 			}
 			return blob_local_storage;
 		}
-		unordered_map<uint32_t, ledger::storage_index_ptr>& chainstate::get_uniform_multi_storage()
+		hash_map<uint32_t, ledger::storage_index_ptr>& chainstate::get_uniform_multi_storage()
 		{
 			for (uint32_t type : states::resolver::get_uniform_types())
 				get_uniform_storage(type);
 			return uniform_local_storage;
 		}
-		unordered_map<uint32_t, ledger::storage_index_ptr>& chainstate::get_multiform_multi_storage()
+		hash_map<uint32_t, ledger::storage_index_ptr>& chainstate::get_multiform_multi_storage()
 		{
 			for (uint32_t type : states::resolver::get_multiform_types())
 				get_multiform_storage(type);
