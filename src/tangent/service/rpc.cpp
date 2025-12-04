@@ -385,7 +385,7 @@ namespace tangent
 			bind(0 | access_type::r, "mempoolstate", "simulatetransaction", 1, 1, "string message_hex", "uint256", "execute transaction with block gas limit and return the receipt", std::bind(&server_node::mempoolstate_simulate_transaction, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getmempooltransactionbyhash", 1, 1, "uint256 hash", "txn", "get mempool transaction by hash", std::bind(&server_node::mempoolstate_get_transaction_by_hash, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getrawmempooltransactionbyhash", 1, 1, "uint256 hash", "string", "get raw mempool transaction by hash", std::bind(&server_node::mempoolstate_get_raw_transaction_by_hash, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "mempoolstate", "getnextaccountnonce", 1, 1, "string owner_address", "{ min: uint64, max: uint64, next: uint64 }", "get account nonce for next transaction by owner", std::bind(&server_node::mempoolstate_get_next_account_nonce, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "mempoolstate", "getnextaccountnonce", 1, 1, "string owner_address", "uint64", "get account nonce for next transaction by owner", std::bind(&server_node::mempoolstate_get_next_account_nonce, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getmempooltransactions", 3, 4, "bool commitment, uint64 offset, uint64 count, uint8? unrolling", "uint256[] | txn[]", "get mempool transactions", std::bind(&server_node::mempoolstate_get_transactions, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getmempooltransactionsbyowner", 3, 5, "const string address, uint64 offset, uint64 count, uint8? direction = 1, uint8? unrolling", "uint256[] | txn[]", "get mempool transactions by signing address", std::bind(&server_node::mempoolstate_get_transactions_by_owner, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "validatorstate", "getnode", 1, 1, "string uri_address", "validator", "get a node by ip address", std::bind(&server_node::validatorstate_get_node, this, std::placeholders::_1, std::placeholders::_2));
@@ -2656,23 +2656,18 @@ namespace tangent
 
 			auto mempool = storages::mempoolstate();
 			auto chain = storages::chainstate();
-			auto lowest = mempool.get_lowest_transaction_nonce(owner);
-			auto highest = mempool.get_highest_transaction_nonce(owner);
+			auto next = mempool.get_highest_transaction_nonce(owner);
 			auto state = chain.get_uniform(states::account_nonce::as_instance_type(), nullptr, states::account_nonce::as_instance_index(owner), 0);
 			auto* value = (states::account_nonce*)(state ? state->ptr() : nullptr);
-			bool increase = !!highest;
 			if (value != nullptr)
 			{
-				increase = increase ? *highest >= value->nonce : false;
-				lowest = std::min(value->nonce, lowest.or_else(value->nonce));
-				highest = std::max(value->nonce, highest.or_else(value->nonce));
+				auto nonce = std::max(value->nonce, next.or_else(0));
+				next = next && nonce >= value->nonce ? nonce + 1 : value->nonce;
 			}
+			else if (next)
+				*next += 1;
 
-			uptr<schema> data = var::set::object();
-			data->set("min", algorithm::encoding::serialize_uint256(lowest.or_else(0)));
-			data->set("max", algorithm::encoding::serialize_uint256(highest.or_else(0)));
-			data->set("next", algorithm::encoding::serialize_uint256(highest.or_else(0) + (increase ? 1 : 0)));
-			return server_response().success(std::move(data));
+			return server_response().success(var::set::integer(next.or_else(0)));
 		}
 		server_response server_node::mempoolstate_get_transactions(http::connection* base, format::variables&& args)
 		{

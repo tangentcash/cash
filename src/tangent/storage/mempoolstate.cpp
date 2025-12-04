@@ -853,8 +853,11 @@ namespace tangent
 			if (!cursor || cursor->error_or_empty())
 				return expects_lr<uint64_t>(layer_exception(ledger::storage_util::error_of(cursor)));
 
-			uint64_t nonce = (*cursor)["nonce"].get().get_integer();
-			return nonce;
+			auto nonce = (*cursor)["nonce"].get();
+			if (!nonce.is(var_type::integer))
+				return expects_lr<uint64_t>(layer_exception("lowest nonce not found"));
+
+			return nonce.get_integer();
 		}
 		expects_lr<uint64_t> mempoolstate::get_highest_transaction_nonce(const algorithm::pubkeyhash_t& owner)
 		{
@@ -865,8 +868,11 @@ namespace tangent
 			if (!cursor || cursor->error_or_empty())
 				return expects_lr<uint64_t>(layer_exception(ledger::storage_util::error_of(cursor)));
 
-			uint64_t nonce = (*cursor)["nonce"].get().get_integer();
-			return nonce;
+			auto nonce = (*cursor)["nonce"].get();
+			if (!nonce.is(var_type::integer))
+				return expects_lr<uint64_t>(layer_exception("highest nonce not found"));
+
+			return nonce.get_integer();
 		}
 		expects_lr<uptr<ledger::transaction>> mempoolstate::get_transaction_by_hash(const uint256_t& transaction_hash)
 		{
