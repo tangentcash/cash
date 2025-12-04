@@ -2310,15 +2310,6 @@ namespace tangent
 				}
 			}
 
-			auto duplicate = context->get_bridge_account(asset, manager, context->receipt.from);
-			if (duplicate)
-			{
-				if (!routing_address_application)
-					return layer_exception("bridge account already exists");
-
-				return expectation::met;
-			}
-
 			switch (params->routing)
 			{
 				case superchain::routing_policy::account:
@@ -2330,7 +2321,7 @@ namespace tangent
 						break;
 					}
 					else if (!routing_address_application)
-						return layer_exception("routing address required");
+						return layer_exception("bridge account already exists (only one may exist)");
 
 					return expectation::met;
 				}
@@ -2346,6 +2337,33 @@ namespace tangent
 					auto manager_account = context->get_bridge_account(asset, manager, manager);
 					if (!manager_account || manager_account->public_key.empty() || manager_account->group.empty() || manager_account->owner != manager || manager_account->manager != manager)
 						return layer_exception("bridge account for manager required");
+
+					size_t offset = 0, count = 32;
+					bool duplicate = false;
+					while (true)
+					{
+						auto duplicates = context->get_witness_accounts_by_purpose(context->receipt.from, states::witness_account::account_type::bridge, 0, count);
+						if (!duplicates)
+							break;
+
+						auto it = std::find_if(duplicates->begin(), duplicates->end(), [&](const states::witness_account& account) { return account.asset == asset && account.manager == manager && account.active; });
+						if (it != duplicates->end())
+						{
+							duplicate = true;
+							break;
+						}
+
+						offset += duplicates->size();
+						if (duplicates->size() != count)
+							break;
+					}
+
+					if (duplicate)
+					{
+						if (!routing_address_application)
+							return layer_exception("bridge account already exists");
+						break;
+					}
 
 					auto* chain = superchain::server_node::get()->get_chain(asset);
 					if (!chain)
@@ -2373,7 +2391,16 @@ namespace tangent
 					return expectation::met;
 				}
 				case superchain::routing_policy::utxo:
-					break;
+				{
+					auto duplicate = context->get_bridge_account(asset, manager, context->receipt.from);
+					if (!duplicate)
+						break;
+
+					if (!routing_address_application)
+						return layer_exception("bridge account already exists");
+
+					return expectation::met;
+				}
 				default:
 					return layer_exception("invalid operation");
 			}
