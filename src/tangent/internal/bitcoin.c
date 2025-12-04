@@ -3859,7 +3859,7 @@ int deser_varlen_from_file(uint32_t* lo, FILE* file)
     uint32_t len;
     struct const_buffer buf;
     unsigned char c;
-    const unsigned char bufp[sizeof(uint64_t)];
+    unsigned char bufp[sizeof(uint64_t)];
 
     if (fread(&c, 1, 1, file) != 1)
         return false;
@@ -3906,7 +3906,7 @@ int deser_varlen_file(uint32_t* lo, FILE* file, uint8_t* rawdata, size_t* buflen
     uint32_t len;
     struct const_buffer buf;
     unsigned char c;
-    const unsigned char bufp[sizeof(uint64_t)];
+    unsigned char bufp[sizeof(uint64_t)];
 
     /* check min size of the buffer */
     if (*buflen_inout < sizeof(len))
