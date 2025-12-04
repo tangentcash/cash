@@ -3103,7 +3103,7 @@ namespace tangent
 
 			return true;
 		}
-		bool server_node::accept_block_candidate(const ledger::block_evaluation& candidate, const uint256_t& candidate_hash, const uint256_t& fork_tip)
+		bool server_node::accept_block_candidate(ledger::block_evaluation& candidate, const uint256_t& candidate_hash, const uint256_t& fork_tip)
 		{
 			umutex<std::recursive_mutex> unique(sync.block);
 			auto mutation = candidate.checkpoint();

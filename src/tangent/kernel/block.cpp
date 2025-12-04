@@ -1237,7 +1237,7 @@ namespace tangent
 			return "block_proof";
 		}
 
-		expects_lr<block_checkpoint> block_evaluation::checkpoint(bool keep_reverted_transactions) const
+		expects_lr<block_checkpoint> block_evaluation::checkpoint(bool keep_reverted_transactions)
 		{
 			auto chain = storages::chainstate();
 			auto mempool = storages::mempoolstate();
@@ -1269,95 +1269,68 @@ namespace tangent
 					return layer_exception(stringify::text("checkpoint requires chain reorganization (depth: %" PRIu64 " blocks)", mutation.old_tip_block_number - mutation.new_tip_block_number));
 				}
 
-				if (keep_reverted_transactions)
+				uint64_t revert_number = mutation.old_tip_block_number;
+				while (keep_reverted_transactions && revert_number >= mutation.new_tip_block_number)
 				{
-					uint64_t revert_number = mutation.old_tip_block_number;
-					while (revert_number >= mutation.new_tip_block_number)
+					size_t offset = 0, count = ELEMENTS_MANY;
+					while (true)
 					{
-						size_t offset = 0, count = ELEMENTS_MANY;
-						while (true)
+						auto transactions = chain.get_transactions_by_number(revert_number, offset, count);
+						if (!transactions || transactions->empty())
+							break;
+
+						for (auto& item : *transactions)
 						{
-							auto transactions = chain.get_transactions_by_number(revert_number, offset, count);
-							if (!transactions || transactions->empty())
-								break;
-
-							for (auto& item : *transactions)
+							if (finalized_transactions.find(item->as_hash()) == finalized_transactions.end())
 							{
-								if (finalized_transactions.find(item->as_hash()) == finalized_transactions.end())
-								{
-									auto status = mempool.add_transaction(**item, true);
-									status.report("transaction resurrection failed");
-									mutation.mempool_transactions += status ? 1 : 0;
-								}
+								auto status = mempool.add_transaction(**item, true);
+								status.report("transaction resurrection failed");
+								mutation.mempool_transactions += status ? 1 : 0;
 							}
-
-							offset += transactions->size();
-							if (transactions->size() < count)
-								break;
 						}
-						--revert_number;
+
+						offset += transactions->size();
+						if (transactions->size() < count)
+							break;
 					}
-
-					auto status = chain.revert(mutation.new_tip_block_number - 1, &mutation.block_delta, &mutation.transaction_delta, &mutation.state_delta);
-					if (!status)
-					{
-						storage_util::multi_tx_rollback(__func__, std::move(global_state)).report("global state rollback failed");
-						return status.error();
-					}
-
-					if (protocol::now().user.storage.logging)
-						VI_INFO("revert chain to block %s (height: %" PRIu64 ", mempool: +%" PRIu64 ", blocktrie: %" PRIi64 ", transactiontrie: %" PRIi64 ", statetrie: %" PRIi64 ")", algorithm::encoding::encode_0xhex256(block.as_hash()).c_str(), mutation.new_tip_block_number, mutation.mempool_transactions, mutation.block_delta, mutation.transaction_delta, mutation.state_delta);
-
-					status = chain.checkpoint(*this);
-					if (!status)
-					{
-						storage_util::multi_tx_rollback(__func__, std::move(global_state)).report("global state rollback failed");
-						return status.error();
-					}
-
-					mempool.remove_transactions(finalized_transactions).report("mempool cleanup failed");
-					auto result = storage_util::multi_tx_commit(__func__, std::move(global_state));
-					if (!result)
-						return layer_exception(std::move(result.error().message()));
+					--revert_number;
 				}
-				else
-				{
-					auto status = chain.revert(mutation.new_tip_block_number - 1, &mutation.block_delta, &mutation.transaction_delta, &mutation.state_delta);
-					if (!status)
-					{
-						storage_util::multi_tx_rollback(__func__, std::move(global_state)).report("global state rollback failed");
-						return status.error();
-					}
 
-					if (protocol::now().user.storage.logging)
-						VI_INFO("revert chain to block %s (height: %" PRIu64 ", blocktrie: %" PRIi64 ", transactiontrie: %" PRIi64 ", statetrie: %" PRIi64 ")", algorithm::encoding::encode_0xhex256(block.as_hash()).c_str(), mutation.new_tip_block_number, mutation.block_delta, mutation.transaction_delta, mutation.state_delta);
-
-					status = chain.checkpoint(*this);
-					if (!status)
-					{
-						storage_util::multi_tx_rollback(__func__, std::move(global_state)).report("global state rollback failed");
-						return status.error();
-					}
-
-					auto result = storage_util::multi_tx_commit(__func__, std::move(global_state));
-					if (!result)
-						return layer_exception(std::move(result.error().message()));
-				}
-			}
-			else
-			{
-				auto status = chain.checkpoint(*this);
+				auto fork_block_hash = chain.get_block_hash_by_number(block.number);
+				auto status = chain.revert(mutation.new_tip_block_number - 1, &mutation.block_delta, &mutation.transaction_delta, &mutation.state_delta);
 				if (!status)
 				{
 					storage_util::multi_tx_rollback(__func__, std::move(global_state)).report("global state rollback failed");
 					return status.error();
 				}
 
-				mempool.remove_transactions(finalized_transactions).report("mempool cleanup failed");
-				auto result = storage_util::multi_tx_commit(__func__, std::move(global_state));
-				if (!result)
-					return layer_exception(std::move(result.error().message()));
+				if (protocol::now().user.storage.logging)
+					VI_INFO("revert chain to block %s (height: %" PRIu64 ", mempool: +%" PRIu64 ", blocktrie: %" PRIi64 ", transactiontrie: %" PRIi64 ", statetrie: %" PRIi64 ")", algorithm::encoding::encode_0xhex256(block.as_hash()).c_str(), mutation.new_tip_block_number, mutation.mempool_transactions, mutation.block_delta, mutation.transaction_delta, mutation.state_delta);
+			
+				if (block.state_count != state.finalized.size() && fork_block_hash && *fork_block_hash == block.as_hash())
+				{
+					ledger::block_evaluation evaluation;
+					auto parent_block = chain.get_block_by_number(block.number - 1);
+					auto validation = block.validate(parent_block.address(), &evaluation);
+					if (!validation)
+						return layer_exception("block " + to_string(block.number) + " state restore failed: " + validation.error().message());
+
+					state = std::move(evaluation.state);
+				}
 			}
+
+			auto status = chain.checkpoint(*this);
+			if (!status)
+			{
+				storage_util::multi_tx_rollback(__func__, std::move(global_state)).report("global state rollback failed");
+				return status.error();
+			}
+
+			mempool.remove_transactions(finalized_transactions).report("mempool cleanup failed");
+			auto result = storage_util::multi_tx_commit(__func__, std::move(global_state));
+			if (!result)
+				return layer_exception(std::move(result.error().message()));
+
 			return mutation;
 		}
 		uptr<schema> block_evaluation::as_schema() const

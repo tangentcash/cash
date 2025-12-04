@@ -326,7 +326,7 @@ namespace tangent
 			void announce_peer(uref<relay>&& state, bool available);
 			void fill_node_services();
 			void fill_node_neighbors();
-			bool accept_block_candidate(const ledger::block_evaluation& candidate, const uint256_t& candidate_hash, const uint256_t& fork_tip);
+			bool accept_block_candidate(ledger::block_evaluation& candidate, const uint256_t& candidate_hash, const uint256_t& fork_tip);
 			bool accept_proposal_transaction(const ledger::block& checkpoint_block, const ledger::block_transaction& transaction);
 			void pull_messages(uref<relay>&& state);
 			void push_messages(uref<relay>&& state);
