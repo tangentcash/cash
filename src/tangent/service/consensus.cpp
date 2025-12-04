@@ -1210,7 +1210,7 @@ namespace tangent
 		}
 		expects_rt<format::variables> server_node::perform_discovery(uref<relay>&& state, const exchange& event, bool is_acknowledgement)
 		{
-			if (event.args.size() < 2)
+			if (event.args.size() < 3)
 				return remote_exception("invalid arguments");
 
 			auto mempool = storages::mempoolstate();
@@ -1231,13 +1231,17 @@ namespace tangent
 
 			size_t new_nodes = 0;
 			bool private_network = state->private_network();
-			for (size_t i = 2; i < event.args.size(); i++)
+			for (size_t i = 3; i < event.args.size(); i++)
 			{
 				auto address = text_address_to_socket_address(event.args[i].as_string());
 				new_nodes += address && mempool.apply_unknown_node(*address, private_network) ? 1 : 0;
 			}
 
-			announce_peer(uref(state), true);	
+			size_t self_transactions = mempool.get_transactions_count().or_else(0);
+			size_t other_transactions = (size_t)event.args[2].as_uint32();
+			announce_peer(uref(state), true);
+			if (self_transactions < other_transactions)
+				synchronize_mempool_with(uref(state));
 			if (new_nodes > 0)
 				run_topology_optimization();
 
@@ -2216,16 +2220,17 @@ namespace tangent
 		format::variables server_node::build_state_exchange(uref<relay>&& state)
 		{
 			auto chain = storages::chainstate();
+			auto mempool = storages::mempoolstate();
 			auto tip = chain.get_latest_block_header();
 			auto* descriptor = state->as_descriptor();
 			auto address = descriptor ? socket_address_to_text_address(descriptor->first.address).or_else(string()) : string();
 			format::variables args =
 			{
 				format::variable(address),
-				format::variable(tip ? tip->as_hash() : uint256_t(0))
+				format::variable(tip ? tip->as_hash() : uint256_t(0)),
+				format::variable(mempool.get_transactions_count().or_else(0))
 			};
 
-			auto mempool = storages::mempoolstate();
 			auto nodes = mempool.get_random_nodes_with(protocol::now().message.hashes_per_query).or_else(vector<storages::node_location_pair>());
 			args.reserve(args.size() + nodes.size());
 			for (auto& [account, address] : nodes)
@@ -2694,7 +2699,16 @@ namespace tangent
 			if (!node.services.has_production || is_syncing())
 				return false;
 
-			if (mempool.waiting)
+			if (!mempool.prepared)
+			{
+				return control_sys.upsert_timeout(TASK_BLOCK_PRODUCTION, protocol::now().policy.pow.time, [this]()
+				{
+					control_sys.clear_timeout(TASK_BLOCK_PRODUCTION);
+					mempool.prepared = true;
+					run_block_production();
+				});
+			}
+			else if (mempool.waiting)
 			{
 				control_sys.clear_timeout(TASK_BLOCK_PRODUCTION);
 				mempool.waiting = false;

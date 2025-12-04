@@ -701,29 +701,6 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<void> mempoolstate::remove_transactions(const vector<uint256_t>& transaction_hashes)
-		{
-			if (transaction_hashes.empty())
-				return expectation::met;
-
-			uptr<schema> hash_list = var::set::array();
-			hash_list->reserve(transaction_hashes.size());
-			for (auto& item : transaction_hashes)
-			{
-				uint8_t hash[32];
-				item.encode(hash);
-				hash_list->push(var::binary(hash, sizeof(hash)));
-			}
-
-			schema_list map;
-			map.push_back(var::set::string(*sqlite::utils::inline_array(std::move(hash_list))));
-
-			auto cursor = get_storage().emplace_query(__func__, "DELETE FROM transactions WHERE hash IN ($?)", &map);
-			if (!cursor || cursor->error())
-				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
-
-			return expectation::met;
-		}
 		expects_lr<void> mempoolstate::remove_transactions(const hash_set<uint256_t>& transaction_hashes)
 		{
 			if (transaction_hashes.empty())
@@ -741,7 +718,9 @@ namespace tangent
 			schema_list map;
 			map.push_back(var::set::string(*sqlite::utils::inline_array(std::move(hash_list))));
 
-			auto cursor = get_storage().emplace_query(__func__, "DELETE FROM transactions WHERE hash IN ($?)", &map);
+			auto cursor = get_storage().emplace_query(__func__,
+				"WITH hashes AS (SELECT c.hash FROM transactions p INNER JOIN transactions c ON c.owner = p.owner WHERE p.hash IN ($?) AND c.nonce <= p.nonce) "
+				"DELETE FROM transactions WHERE hash IN (SELECT hash FROM hashes)", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -757,6 +736,14 @@ namespace tangent
 				return expects_lr<size_t>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 			return cursor->affected_rows();
+		}
+		expects_lr<size_t> mempoolstate::get_transactions_count()
+		{
+			auto cursor = get_storage().query(__func__, "SELECT COUNT(1) AS counter FROM transactions");
+			if (!cursor || cursor->error_or_empty())
+				return expects_lr<size_t>(layer_exception(ledger::storage_util::error_of(cursor)));
+
+			return (size_t)(*cursor)["counter"].get().get_integer();
 		}
 		expects_lr<void> mempoolstate::apply_secret_entropy(const algorithm::pubkeyhash_t& participant, const ledger::dispatch_context::secret_entropy& entropy)
 		{

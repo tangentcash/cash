@@ -2622,7 +2622,7 @@ namespace tangent
 		{
 			uint256_t hash = args[0].as_uint256();
 			auto mempool = storages::mempoolstate();
-			auto status = mempool.remove_transactions(vector<uint256_t>({ hash }));
+			auto status = mempool.remove_transactions({ hash });
 			if (!status)
 				return server_response().error(error_codes::bad_request, status.error().message());
 
@@ -2656,22 +2656,19 @@ namespace tangent
 
 			auto mempool = storages::mempoolstate();
 			auto chain = storages::chainstate();
-			auto state = chain.get_uniform(states::account_nonce::as_instance_type(), nullptr, states::account_nonce::as_instance_index(owner), 0);
-			auto* value = (states::account_nonce*)(state ? state->ptr() : nullptr);
 			auto lowest = mempool.get_lowest_transaction_nonce(owner);
 			auto highest = mempool.get_highest_transaction_nonce(owner);
-			if (!lowest)
-				lowest = value ? value->nonce : 0;
-			if (!highest)
-				highest = value ? value->nonce : 0;
-			else if (value != nullptr && *highest < value->nonce)
-				highest = value->nonce;
-			else
-				highest = *highest + 0;
+			auto state = chain.get_uniform(states::account_nonce::as_instance_type(), nullptr, states::account_nonce::as_instance_index(owner), 0);
+			auto* value = (states::account_nonce*)(state ? state->ptr() : nullptr);
+			if (value != nullptr)
+			{
+				lowest = std::min(value->nonce, lowest.or_else(value->nonce));
+				highest = std::max(value->nonce, highest.or_else(value->nonce));
+			}
 
 			uptr<schema> data = var::set::object();
-			data->set("min", algorithm::encoding::serialize_uint256(*lowest));
-			data->set("max", algorithm::encoding::serialize_uint256(*highest));
+			data->set("min", algorithm::encoding::serialize_uint256(lowest.or_else(0)));
+			data->set("max", algorithm::encoding::serialize_uint256(highest.or_else(0)));
 			return server_response().success(std::move(data));
 		}
 		server_response server_node::mempoolstate_get_transactions(http::connection* base, format::variables&& args)

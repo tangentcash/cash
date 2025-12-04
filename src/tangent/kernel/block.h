@@ -556,7 +556,7 @@ namespace tangent
 			btree_map<algorithm::pubkeyhash_t, uint64_t> nonces;
 			vector<states::validator_production> producers;
 			vector<transaction_info> incoming;
-			vector<uint256_t> outgoing;
+			hash_set<uint256_t> outgoing;
 			size_t precomputed = 0;
 
 			void apply_temporary_state(ledger::block* abstract_block, const ledger::transaction* abstract_transaction, ledger::receipt&& abstract_receipt);

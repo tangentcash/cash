@@ -229,6 +229,7 @@ namespace tangent
 		private:
 			struct
 			{
+				std::atomic<bool> prepared = false;
 				std::atomic<bool> waiting = false;
 				std::atomic<bool> dirty = false;
 				std::atomic<uint64_t> dispatcher_time = 0;

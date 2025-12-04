@@ -420,6 +420,8 @@ namespace tangent
 	{
 		schedule::desc policy;
 		policy.ping = [this]() { return exit_code == 0xFFFFFFFF; };
+		policy.max_recycles = 0;
+
 		if (protocol::now().user.storage.computation_threads_ratio > 0.0)
 		{
 			auto threads = os::hw::get_quantity_info().logical;

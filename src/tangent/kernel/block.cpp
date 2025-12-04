@@ -774,7 +774,7 @@ namespace tangent
 				auto execution = transaction_context::execute_tx(environment, this, &changelog, candidate_transaction, item.hash, item.owner, item.size, item.candidate->is_commitment() ? (uint8_t)transaction_context::execution_mode::pedantic : 0);
 				if (!execution)
 				{
-					environment->outgoing.push_back(item.hash);
+					environment->outgoing.insert(item.hash);
 					executionlog.append(stringify::text("\n  in transaction %s execution error: %s", algorithm::encoding::encode_0xhex256(item.hash).c_str(), execution.error().what()));
 					while (candidate_transaction == *item.candidate && replace_transaction)
 					{
@@ -3583,7 +3583,7 @@ namespace tangent
 					++precomputed;
 				}
 				else if (decision == include_decision::not_executable)
-					outgoing.push_back(item.hash);
+					outgoing.insert(item.hash);
 			}
 			if (validation.commitment_gas_limit >= max_commitment_gas_limit - max_commitment_gas_limit / 100)
 				validation.commitment_gas_limit = max_commitment_gas_limit;
@@ -3612,7 +3612,7 @@ namespace tangent
 			{
 				auto initial_nonce = validation.context.get_account_nonce(item.owner).or_else(states::account_nonce(algorithm::pubkeyhash_t(), nullptr)).nonce;
 				if (item.candidate->nonce != initial_nonce)
-					return include_decision::not_includable;
+					return item.candidate->nonce < initial_nonce ? include_decision::not_executable : include_decision::not_includable;
 			}
 			else if (item.candidate->nonce != map_nonce->second + 1)
 				return include_decision::not_includable;

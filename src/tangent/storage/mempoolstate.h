@@ -98,9 +98,9 @@ namespace tangent
 			expects_lr<attestation_tree> get_attestation(const uint256_t& attestation_hash);
 			expects_lr<void> remove_attestation(const uint256_t& attestation_hash);
 			expects_lr<void> add_transaction(const ledger::transaction& value, bool resurrection);
-			expects_lr<void> remove_transactions(const vector<uint256_t>& transaction_hashes);
 			expects_lr<void> remove_transactions(const hash_set<uint256_t>& transaction_hashes);
 			expects_lr<size_t> expire_transactions();
+			expects_lr<size_t> get_transactions_count();
 			expects_lr<void> apply_secret_entropy(const algorithm::pubkeyhash_t& participant, const ledger::dispatch_context::secret_entropy& entropy);
 			expects_lr<ledger::dispatch_context::secret_entropy> get_secret_entropy(const algorithm::pubkeyhash_t& participant, const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner);
 			expects_lr<vector<states::bridge_account>> get_secret_entropies_by_manager(const algorithm::pubkeyhash_t& manager, size_t offset, size_t count);
