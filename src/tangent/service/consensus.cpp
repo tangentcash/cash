@@ -39,10 +39,12 @@ namespace tangent
 			auto ip_port = value.get_ip_port();
 			return ip_address && ip_port ? option<string>(*ip_address + ":" + to_string(*ip_port)) : option<string>(optional::none);
 		}
-		static uint256_t handshake_proof(const ledger::node& node, uint64_t time)
+		static uint256_t handshake_proof(const ledger::node& node, uint64_t time, string* node_message_out)
 		{
 			format::wo_stream message;
 			node.store(&message);
+			if (node_message_out != nullptr)
+				node_message_out->assign(message.data);
 			message.write_integer(time);
 			return message.hash();
 		}
@@ -1184,7 +1186,7 @@ namespace tangent
 			algorithm::hashsig_t peer_signature = algorithm::hashsig_t(event.args[2].as_string());
 			if (!peer_node.load(peer_message))
 				return remote_exception("invalid message");
-			else if (!algorithm::signing::recover(handshake_proof(peer_node, peer_time), peer_wallet.public_key, peer_signature))
+			else if (!algorithm::signing::recover(handshake_proof(peer_node, peer_time, nullptr), peer_wallet.public_key, peer_signature))
 				return remote_exception("invalid signature");
 
 			auto mempool = storages::mempoolstate();
@@ -1209,11 +1211,11 @@ namespace tangent
 				return format::variables();
 
 			auto& [node, wallet] = descriptor;
-			if (!algorithm::signing::sign(handshake_proof(node, system_time), wallet.secret_key, peer_signature))
+			auto node_message = string();
+			if (!algorithm::signing::sign(handshake_proof(node, system_time, &node_message), wallet.secret_key, peer_signature))
 				return remote_exception("proof generation error");
 
-			fill_node_neighbors();
-			return format::variables({ format::variable(node.as_message().data), format::variable(system_time), format::variable(peer_signature.optimized_view()), format::variable(peer_latency) });
+			return format::variables({ format::variable(node_message), format::variable(system_time), format::variable(peer_signature.optimized_view()), format::variable(peer_latency) });
 		}
 		expects_rt<format::variables> server_node::perform_discovery(uref<relay>&& state, const exchange& event, bool is_acknowledgement)
 		{
@@ -1252,6 +1254,7 @@ namespace tangent
 			if (new_nodes > 0)
 				run_topology_optimization();
 
+			fill_node_neighbors();
 			if (is_acknowledgement)
 				return format::variables();
 
@@ -1784,13 +1787,13 @@ namespace tangent
 					coreturn remote_exception(std::move(status.error().message()));
 
 				auto& [node, wallet] = descriptor;
+				auto node_message = string();
 				algorithm::hashsig_t signature;
 				uint64_t system_time = protocol::now().time.now_cpu();
-				if (!algorithm::signing::sign(handshake_proof(node, system_time), wallet.secret_key, signature))
+				if (!algorithm::signing::sign(handshake_proof(node, system_time, &node_message), wallet.secret_key, signature))
 					coreturn remote_exception("proof generation error");
 
 				uref<relay> state = new relay(node_type::outbound, candidate.reset());
-				fill_node_neighbors();
 				append_node(uref(state));
 
 				auto abort = [&](remote_exception&& exception) -> remote_exception&&
@@ -1800,7 +1803,7 @@ namespace tangent
 				};
 				cospawn([this, state]() mutable { pull_messages(std::move(state)); });
 
-				auto result = coawait(query(uref(state), descriptors::perform_handshake(), { format::variable(node.as_message().data), format::variable(system_time), format::variable(signature.optimized_view()) }, protocol::now().user.tcp.timeout, true));
+				auto result = coawait(query(uref(state), descriptors::perform_handshake(), { format::variable(node_message), format::variable(system_time), format::variable(signature.optimized_view()) }, protocol::now().user.tcp.timeout, true));
 				if (!result)
 					coreturn abort(std::move(result.error()));
 
