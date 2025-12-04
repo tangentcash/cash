@@ -143,6 +143,7 @@ namespace tangent
 		{
 			struct
 			{
+				string account;
 				string address = "0.0.0.0";
 				uint16_t port = 18418;
 				uint64_t time_offset = 300000;

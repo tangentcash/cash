@@ -2005,7 +2005,7 @@ namespace tangent
 			map.push_back(var::set::integer(block_number));
 			map.push_back(var::set::integer(block_number + count));
 
-			auto cursor = get_block_storage().emplace_query(__func__, "SELECT block_hash FROM blocks WHERE block_number BETWEEN ? AND ? ORDER BY block_number DESC", &map);
+			auto cursor = get_block_storage().emplace_query(__func__, "SELECT block_hash FROM blocks WHERE block_number BETWEEN ? AND ? ORDER BY block_number ASC", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<vector<ledger::block_header>>(layer_exception(ledger::storage_util::error_of(cursor)));
 

@@ -2072,20 +2072,16 @@ namespace tangent
 					option<remote_exception> error = optional::none;
 					uint256_t best_new_tip_hash = 0;
 					uint64_t best_new_tip_number = 0;
-					size_t batch_size = 16, batch_offset = 1;
-					size_t block_count = result->args.size() - batch_offset;
-					size_t batch_groups = std::max<size_t>(1, block_count / batch_size);
-					for (auto& task : parallel::for_loop(batch_groups, 1, [&](size_t batch_index)
+					size_t batch_size = 16, block_count = result->args.size() - 1;
+					size_t batch_count = block_count / batch_size + (block_count % batch_size == 0 ? 0 : 1);
+					for (auto& task : parallel::for_loop(batch_count, 1, [&](size_t batch_index)
 					{
-						size_t begin = batch_offset + batch_index * batch_size;
-						size_t end = batch_offset + (batch_index + 1) * batch_size + (batch_index == batch_groups - 1 ? block_count % batch_size : 0);
-						if (!end)
-							return;
-
 						auto chain = storages::chainstate();
 						auto parent_header = ledger::block_header();
 						auto child_header = ledger::block_header();
-						for (size_t i = end - 1; i >= begin && i < end; --i)
+						size_t begin = 1 + batch_index * batch_size;
+						size_t end = begin + (batch_index == batch_count - 1 ? block_count % batch_size : batch_size);
+						for (size_t i = begin; i < end; i++)
 						{
 							auto message = format::ro_stream(result->args[i].as_string());
 							auto verification = child_header.load(message) ? child_header.verify_validity(parent_header.number > 0 ? &parent_header : nullptr) : expects_lr<void>(layer_exception("bad message"));
@@ -2855,20 +2851,38 @@ namespace tangent
 			else if (protocol::now().user.consensus.max_outbound_connections > 0 && protocol::now().user.consensus.logging)
 				VI_INFO("OK consensus node listen (type: out)");
 
-			auto mempool = storages::mempoolstate();
-			auto node_id = codec::hex_encode(std::string_view((char*)this, sizeof(this)));
-			superchain::server_node::get()->add_transaction_callback(node_id, std::bind(&server_node::dispatch_transaction_logs, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
-			accept_local_wallet(optional::none).expect("failed to save local node");
-			for (auto& node : protocol::now().user.known_nodes)
+			auto& account = protocol::change().user.consensus.account;
+			if (!account.empty())
 			{
-				auto endpoint = system_endpoint(node);
-				if (endpoint.is_valid())
+				algorithm::seckey_t secret_key;
+				if (algorithm::signing::decode_secret_key(account, secret_key) && algorithm::signing::verify_secret_key(secret_key))
+					accept_local_wallet(ledger::wallet::from_secret_key(secret_key));
+				else if (algorithm::signing::verify_mnemonic(account))
+					accept_local_wallet(ledger::wallet::from_mnemonic(account));
+				else if (format::util::is_hex_encoding(account))
+					accept_local_wallet(ledger::wallet::from_seed(codec::hex_decode(account)));
+				else
+					VI_PANIC(false, "consensus account must be either a word mnemonic, hex seed or an encoded secret key");
+				memset(account.data(), 0, account.size());
+				account.clear();
+			}
+			else
+				accept_local_wallet(optional::none);
+
+			if (!protocol::now().user.known_nodes.empty())
+			{
+				auto mempool = storages::mempoolstate();
+				for (auto& node : protocol::now().user.known_nodes)
 				{
-					mempool.clear_node(endpoint.address);
-					mempool.apply_unknown_node(endpoint.address, true);
+					auto endpoint = system_endpoint(node);
+					if (endpoint.is_valid())
+					{
+						mempool.clear_node(endpoint.address);
+						mempool.apply_unknown_node(endpoint.address, true);
+					}
+					else if (protocol::now().user.consensus.logging)
+						VI_ERR("pre-configured node \"%s\" error: url not valid", node.c_str());
 				}
-				else if (protocol::now().user.consensus.logging)
-					VI_ERR("pre-configured node \"%s\" error: url not valid", node.c_str());
 			}
 
 			bind_event(descriptors::broadcast_block_hash(), std::bind(&server_node::broadcast_block_hash, this, std::placeholders::_2, std::placeholders::_3), true);
@@ -2890,6 +2904,7 @@ namespace tangent
 			bind_query(descriptors::aggregate_public_key(), std::bind(&server_node::aggregate_public_key, this, std::placeholders::_2, std::placeholders::_3));
 			bind_query(descriptors::aggregate_signature(), std::bind(&server_node::aggregate_signature, this, std::placeholders::_2, std::placeholders::_3));
 
+			superchain::server_node::get()->add_transaction_callback(codec::hex_encode(std::string_view((char*)this, sizeof(this))), std::bind(&server_node::dispatch_transaction_logs, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
 			control_sys.interval_if_none(TASK_MEMPOOL_VACUUM "_runner", protocol::now().user.consensus.transaction_timeout, std::bind(&server_node::run_mempool_vacuum, this));
 			control_sys.interval_if_none(TASK_TOPOLOGY_OPTIMIZATION "_runner", protocol::now().user.consensus.topology_timeout, std::bind(&server_node::run_topology_optimization, this));
 			control_sys.interval_if_none(TASK_ATTESTATION_RESOLUTION "_runner", protocol::now().user.consensus.attestation_timeout, std::bind(&server_node::run_attestation_resolution, this));

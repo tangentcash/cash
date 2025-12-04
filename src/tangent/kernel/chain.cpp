@@ -433,7 +433,6 @@ namespace tangent
 		os::directory::set_working(library->c_str());
 		console::get()->attach();
 
-		auto overriding_account = string();
 		auto config = uptr<schema>(path.empty() ? (schema*)nullptr : *schema::from_json(*os::file::read_as_string(path)));
 		if (!environment.args.empty())
 		{
@@ -487,6 +486,10 @@ namespace tangent
 						user.bootstrap_nodes.insert(seed->value.get_blob());
 				}
 			}
+
+			value = config->fetch("consensus.account");
+			if (value != nullptr && value->value.is(var_type::string))
+				user.consensus.account = value->value.get_blob();
 
 			value = config->fetch("consensus.address");
 			if (value != nullptr && value->value.is(var_type::string))
@@ -563,10 +566,6 @@ namespace tangent
 			value = config->fetch("consensus.logging");
 			if (value != nullptr && value->value.is(var_type::boolean))
 				user.consensus.logging = value->value.get_boolean();
-
-			value = config->fetch("consensus.account");
-			if (value != nullptr && value->value.is(var_type::string))
-				overriding_account = value->value.get_blob();
 
 			value = config->fetch("discovery.address");
 			if (value != nullptr && value->value.is(var_type::string))
@@ -893,26 +892,6 @@ namespace tangent
 
 		uplinks::link_instance();
 		algorithm::signing::initialize();
-		if (overriding_account.empty())
-			return;
-
-		auto apply = [&](const ledger::wallet& wallet)
-		{
-			ledger::node node;
-			node.address = socket_address(user.consensus.address, user.consensus.port);
-
-			auto mempool = storages::mempoolstate();
-			mempool.apply_node(std::make_pair(node, wallet));
-		};
-		algorithm::seckey_t secret_key;
-		if (algorithm::signing::decode_secret_key(overriding_account, secret_key) && algorithm::signing::verify_secret_key(secret_key))
-			apply(ledger::wallet::from_secret_key(secret_key));
-		else if (algorithm::signing::verify_mnemonic(overriding_account))
-			apply(ledger::wallet::from_mnemonic(overriding_account));
-		else if (format::util::is_hex_encoding(overriding_account))
-			apply(ledger::wallet::from_seed(codec::hex_decode(overriding_account)));
-		else
-			VI_PANIC(false, "consensus account must be either a word mnemonic, hex seed or an encoded secret key");
 	}
 	protocol::~protocol()
 	{
