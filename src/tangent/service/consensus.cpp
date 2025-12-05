@@ -966,7 +966,7 @@ namespace tangent
 			auto it = batch->proofs.find(best_commitment_hash);
 			if (it == batch->proofs.end())
 				return layer_exception("proof required");
-
+			
 			auto* transaction = memory::init<transactions::attestate>();
 			transaction->asset = batch->asset;
 			transaction->set_computed_proof(std::move(it->second), std::move(batch->commitments));
@@ -1067,7 +1067,7 @@ namespace tangent
 		}
 		expects_rt<void> server_node::broadcast_attestation(uref<relay>&& state, const exchange& event)
 		{
-			if (event.args.size() != 3)
+			if (event.args.size() != 2)
 				return remote_exception("invalid arguments");
 
 			algorithm::asset_id asset = event.args[0].as_uint256();
@@ -2684,19 +2684,53 @@ namespace tangent
 				size_t offset = 0, resolutions = 0;
 				auto mempool = storages::mempoolstate();
 			retry:
-				auto attestation_hash = mempool.pull_best_attestation_hash(offset);
+				auto attestation_hash = mempool.pull_best_attestation_hash(offset++);
 				if (attestation_hash)
 				{
 					auto status = accept_attestation(nullptr, *attestation_hash);
-					if (!status && protocol::now().user.consensus.logging)
+					if (status)
+					{
+						++resolutions;
+						goto retry;
+					}
+					else if (protocol::now().user.consensus.logging)
 						VI_INFO("attestation %s resolution delayed: ", algorithm::encoding::encode_0xhex256(*attestation_hash).c_str(), status.what().c_str());
-					else if (!status)
-						++offset;
-					++resolutions;
+
+					auto& [node, wallet] = descriptor;
+					if (!node.services.has_attestation)
+						goto retry;
+
+					auto batch = mempool.get_attestation(*attestation_hash);
+					if (!batch)
+						goto retry;
+
+					bool rebroadcasted = false;
+					for (auto& [commitment_hash, commitments] : batch->commitments)
+					{
+						auto proof = batch->proofs.find(commitment_hash);
+						if (proof == batch->proofs.end())
+							continue;
+
+						for (auto& commitment_signature : commitments)
+						{
+							algorithm::pubkeyhash_t attester;
+							if (!algorithm::signing::recover_hash(commitment_hash, attester, commitment_signature) || attester != wallet.public_key_hash)
+								continue;
+
+							size_t notifications = notify_all(descriptors::broadcast_attestation(), { format::variable(proof->second.as_message().data), format::variable(commitment_signature.view()) });
+							if (notifications > 0 && protocol::now().user.consensus.logging)
+								VI_DEBUG("attestation %s re-broadcasted to %i nodes", algorithm::encoding::encode_0xhex256(commitment_hash).c_str(), (int)notifications);
+
+							rebroadcasted = true;
+							break;
+						}
+						if (rebroadcasted)
+							break;
+					}
 					goto retry;
 				}
-				if (resolutions > 0 && protocol::now().user.consensus.logging)
-					VI_INFO("attestation resolution: %i proposals", (int)resolutions);
+				if (offset > 0 && protocol::now().user.consensus.logging)
+					VI_INFO("attestation resolution: %i proposed (%i pending)", (int)resolutions, (int)offset);
 			});
 		}
 		bool server_node::run_block_production()
