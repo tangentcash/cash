@@ -332,7 +332,7 @@ namespace tangent
 			map.clear();
 			map.push_back((*cursor)["quality"].get_inline());
 
-			cursor = storage.emplace_query(__func__, "SELECT node_message, wallet_message FROM nodes WHERE quality > ? AND ORDER BY quality DESC LIMIT 1 OFFSET ?", &map);
+			cursor = storage.emplace_query(__func__, "SELECT node_message, wallet_message FROM nodes WHERE quality > ? AND ORDER BY random() LIMIT 1", &map);
 			if (!cursor || cursor->error_or_empty())
 				return expects_lr<node_pair>(layer_exception(ledger::storage_util::error_of(cursor)));
 
