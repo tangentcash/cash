@@ -861,7 +861,7 @@ namespace tangent
 			candidate_tx->set_optimal_gas(decimal::zero());
 			candidate_tx->gas_limit += 21000;
 
-			auto status = candidate_tx->sign(wallet.secret_key, account_nonce ? *account_nonce : 0, decimal::zero());
+			auto status = candidate_tx->sign(wallet.secret_key, *account_nonce, decimal::zero());
 			if (!status)
 			{
 				auto purpose = candidate_tx->as_typename();
@@ -966,12 +966,16 @@ namespace tangent
 			auto it = batch->proofs.find(best_commitment_hash);
 			if (it == batch->proofs.end())
 				return layer_exception("proof required");
-			
+
 			auto* transaction = memory::init<transactions::attestate>();
 			transaction->asset = batch->asset;
 			transaction->set_computed_proof(std::move(it->second), std::move(batch->commitments));
-			accept_unsigned_transaction(nullptr, transaction, nullptr);
 			mempool.remove_attestation(attestation_hash);
+
+			umutex<std::recursive_mutex> unique(sync.account);
+			auto& [node, wallet] = descriptor;
+			auto account_nonce = wallet.get_latest_nonce().or_else(0);
+			accept_unsigned_transaction(nullptr, transaction, &account_nonce);
 			return expectation::met;
 		}
 		expects_lr<void> server_node::accept_committed_attestation(uref<relay>&& from, const algorithm::asset_id& asset, const superchain::computed_transaction& proof, const algorithm::hashsig_t& signature)
