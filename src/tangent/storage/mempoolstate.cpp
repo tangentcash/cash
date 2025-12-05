@@ -573,7 +573,7 @@ namespace tangent
 			map.push_back(var::set::binary(signature.view()));
 
 			auto cursor = get_storage().emplace_query(__func__,
-				"INSERT OR REPLACE INTO proofs (hash, commitment, asset, message) VALUES (?, ?, ?);"
+				"INSERT OR REPLACE INTO proofs (hash, commitment, asset, message) VALUES (?, ?, ?, ?);"
 				"INSERT OR REPLACE INTO commitments (hash, commitment, signature) VALUES (?, ?, ?)", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));

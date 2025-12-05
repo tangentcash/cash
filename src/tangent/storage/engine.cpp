@@ -1,5 +1,6 @@
 #include "engine.h"
 #include <rocksdb/db.h>
+#define DB_IMMATURE 1
 
 namespace tangent
 {
@@ -200,9 +201,9 @@ namespace tangent
 
 			VI_ASSERT(connection, "connection not initialized (transaction begin)");
 			auto cursor = connection->tx_begin(type);
-#ifndef NDEBUG
+#ifdef DB_IMMATURE
 			string error = storage_util::error_of(cursor);
-			if (!error.empty() && protocol::now().user.storage.logging)
+			if (!error.empty())
 				VI_ERR("index storage operation %.*s error (transaction begin): %s", (int)operation.size(), operation.data(), error.c_str());
 #endif
 			++invocations; ++thread_invocations;
@@ -219,9 +220,9 @@ namespace tangent
 
 			VI_ASSERT(connection, "connection not initialized (transaction commit)");
 			auto cursor = connection->tx_commit(connection->get_connection());
-#ifndef NDEBUG
+#ifdef DB_IMMATURE
 			string error = storage_util::error_of(cursor);
-			if (!error.empty() && protocol::now().user.storage.logging)
+			if (!error.empty())
 				VI_ERR("index storage operation %.*s error (transaction commit): %s", (int)operation.size(), operation.data(), error.c_str());
 #endif
 			++invocations; ++thread_invocations;
@@ -235,9 +236,9 @@ namespace tangent
 
 			VI_ASSERT(connection, "connection not initialized (transaction rollback)");
 			auto cursor = connection->tx_rollback(connection->get_connection());
-#ifndef NDEBUG
+#ifdef DB_IMMATURE
 			string error = storage_util::error_of(cursor);
-			if (!error.empty() && protocol::now().user.storage.logging)
+			if (!error.empty())
 				VI_ERR("index storage operation %.*s error (transaction rollback): %s", (int)operation.size(), operation.data(), error.c_str());
 #endif
 			++invocations; ++thread_invocations;
@@ -248,9 +249,9 @@ namespace tangent
 		{
 			VI_ASSERT(connection, "connection not initialized (operation: %.*s)", (int)operation.size(), operation.data());
 			auto cursor = connection->query(command, query_ops, transaction ? connection->get_connection() : nullptr);
-#ifndef NDEBUG
+#ifdef DB_IMMATURE
 			string error = storage_util::error_of(cursor);
-			if (!error.empty() && protocol::now().user.storage.logging)
+			if (!error.empty())
 				VI_ERR("index storage operation %.*s failed: %s", (int)operation.size(), operation.data(), error.c_str());
 #endif
 			++invocations; ++thread_invocations;
@@ -260,9 +261,9 @@ namespace tangent
 		{
 			VI_ASSERT(connection, "connection not initialized (operation: %.*s)", (int)operation.size(), operation.data());
 			auto cursor = connection->emplace_query(command, map, query_ops, transaction ? connection->get_connection() : nullptr);
-#ifndef NDEBUG
+#ifdef DB_IMMATURE
 			string error = storage_util::error_of(cursor);
-			if (!error.empty() && protocol::now().user.storage.logging)
+			if (!error.empty())
 				VI_ERR("index storage operation %.*s failed: %s", (int)operation.size(), operation.data(), error.c_str());
 #endif
 			++invocations; ++thread_invocations;
@@ -272,9 +273,9 @@ namespace tangent
 		{
 			VI_ASSERT(connection, "connection not initialized (operation: %.*s)", (int)operation.size(), operation.data());
 			auto cursor = connection->prepared_query(statement, transaction ? connection->get_connection() : nullptr);
-#ifndef NDEBUG
+#ifdef DB_IMMATURE
 			string error = storage_util::error_of(cursor);
-			if (!error.empty() && protocol::now().user.storage.logging)
+			if (!error.empty())
 				VI_ERR("index storage operation %.*s failed: %s", (int)operation.size(), operation.data(), error.c_str());
 #endif
 			++invocations; ++thread_invocations;
@@ -284,9 +285,9 @@ namespace tangent
 		{
 			VI_ASSERT(connection, "connection not initialized (operation: %.*s)", (int)operation.size(), operation.data());
 			auto cursor = connection->prepare_statement(command, nullptr);
-#ifndef NDEBUG
+#ifdef DB_IMMATURE
 			string error = storage_util::error_of(cursor);
-			if (!error.empty() && protocol::now().user.storage.logging)
+			if (!error.empty())
 				VI_ERR("index storage operation %.*s failed: %s", (int)operation.size(), operation.data(), error.c_str());
 #endif
 			return cursor;
@@ -365,8 +366,10 @@ namespace tangent
 			if (!status.ok())
 			{
 				auto message = status.ToString();
-				if (!status.IsNotFound() && protocol::now().user.storage.logging)
+#ifdef DB_IMMATURE
+				if (!status.IsNotFound())
 					VI_ERR("blob storage operation %.*s failed: %s", (int)operation.size(), operation.data(), message.c_str());
+#endif
 				return sqlite::expects_db<string>(sqlite::database_exception(string(message.begin(), message.end())));
 			}
 
@@ -381,8 +384,10 @@ namespace tangent
 			if (!status.ok())
 			{
 				auto message = status.ToString();
-				if (!status.IsNotFound() && protocol::now().user.storage.logging)
+#ifdef DB_IMMATURE
+				if (!status.IsNotFound())
 					VI_ERR("connection storage operation %.*s failed: %s", (int)operation.size(), operation.data(), message.c_str());
+#endif
 				return sqlite::database_exception(string(message.begin(), message.end()));
 			}
 

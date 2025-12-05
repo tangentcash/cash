@@ -2683,10 +2683,12 @@ namespace tangent
 			{
 				size_t offset = 0, resolutions = 0;
 				auto mempool = storages::mempoolstate();
+				bool has_any_pending_attestations = false;
 			retry:
 				auto attestation_hash = mempool.pull_best_attestation_hash(offset++);
 				if (attestation_hash)
 				{
+					has_any_pending_attestations = true;
 					auto status = accept_attestation(nullptr, *attestation_hash);
 					if (status)
 					{
@@ -2729,7 +2731,7 @@ namespace tangent
 					}
 					goto retry;
 				}
-				if (offset > 0 && protocol::now().user.consensus.logging)
+				if (has_any_pending_attestations && protocol::now().user.consensus.logging)
 					VI_INFO("attestation resolution: %i proposed (%i pending)", (int)resolutions, (int)offset);
 			});
 		}
