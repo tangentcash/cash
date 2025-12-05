@@ -858,6 +858,13 @@ namespace tangent
 		expects_lr<void> server_node::accept_unsigned_transaction(uref<relay>&& from, uptr<ledger::transaction>&& candidate_tx, uint64_t* account_nonce, uint256_t* output_hash)
 		{
 			auto& [node, wallet] = descriptor;
+			uint64_t overrider_account_nonce = 0;
+			if (!account_nonce)
+			{
+				umutex<std::recursive_mutex> unique(sync.account);
+				overrider_account_nonce = wallet.get_latest_nonce().or_else(0);
+				account_nonce = &overrider_account_nonce;
+			}
 			candidate_tx->set_optimal_gas(decimal::zero());
 			candidate_tx->gas_limit += 21000;
 
@@ -971,11 +978,7 @@ namespace tangent
 			transaction->asset = batch->asset;
 			transaction->set_computed_proof(std::move(it->second), std::move(batch->commitments));
 			mempool.remove_attestation(attestation_hash);
-
-			umutex<std::recursive_mutex> unique(sync.account);
-			auto& [node, wallet] = descriptor;
-			auto account_nonce = wallet.get_latest_nonce().or_else(0);
-			accept_unsigned_transaction(nullptr, transaction, &account_nonce);
+			accept_unsigned_transaction(nullptr, transaction);
 			return expectation::met;
 		}
 		expects_lr<void> server_node::accept_committed_attestation(uref<relay>&& from, const algorithm::asset_id& asset, const superchain::computed_transaction& proof, const algorithm::hashsig_t& signature)
