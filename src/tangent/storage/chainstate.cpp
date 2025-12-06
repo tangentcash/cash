@@ -547,6 +547,10 @@ namespace tangent
 					return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 			}
 
+			auto& blob_storage = get_blob_storage();
+			blob_storage.clear(__func__, string(1, BLOB_UNIFORM));
+			blob_storage.clear(__func__, string(1, BLOB_MULTIFORM));
+
 			uint64_t current_number = 1;
 			uint64_t checkpoint_number = get_checkpoint_block_number().or_else(0);
 			uint64_t tip_number = get_latest_block_number().or_else(0);
@@ -568,8 +572,8 @@ namespace tangent
 				if (!finalization)
 					return layer_exception("block " + to_string(current_number) + " checkpoint failed: " + finalization.error().message());
 
-				if (protocol::now().user.storage.logging)
-					VI_INFO("reorganization checkpoint at block number %" PRIu64 " (state_delta: +%i)", current_number, evaluation.block.state_count);
+				if (protocol::now().user.consensus.logging)
+					VI_INFO("block %s reorganized (height: %" PRIu64 ", reorg: %.2f%%)", algorithm::encoding::encode_0xhex256(candidate_block->as_hash()).c_str(), current_number, 100.0 * (double)current_number / tip_number);
 
 				parent_block = evaluation.block;
 				++current_number;
@@ -588,7 +592,7 @@ namespace tangent
 			schema_list map;
 			map.push_back(var::set::integer(block_number));
 			map.push_back(var::set::integer(block_number));
-
+			
 			auto checkpoint_number = get_checkpoint_block_number();
 			auto cursor = get_block_storage().emplace_query(__func__,
 				"DELETE FROM blocks WHERE block_number > ? RETURNING block_hash;"
@@ -646,6 +650,34 @@ namespace tangent
 
 			for (auto& [type, uniform_storage] : get_uniform_multi_storage())
 			{
+				size_t offset = 0, count = 1024;
+				map.clear();
+				map.push_back(var::set::integer(block_number));
+				map.push_back(var::set::integer(count));
+				map.push_back(var::set::integer(offset));
+
+				while (true)
+				{
+					map.back()->value = var::integer(offset);
+					cursor = uniform_storage.emplace_query(__func__, "SELECT (SELECT index_hash FROM indices WHERE indices.index_number = snapshots.index_number) AS index_hash, block_number FROM snapshots WHERE block_number > ? LIMIT ? OFFSET ?", &map);
+					if (!cursor || cursor->error())
+						return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
+
+					auto response = cursor->first();
+					parallel::wail_all(parallel::for_each_sequential(response.begin(), response.end(), response.size(), ELEMENTS_FEW, [&](sqlite::row row)
+					{
+						string index = row["index_hash"].get().get_blob();
+						uint64_t number = row["block_number"].get().get_integer();
+						blob_storage.store(__func__, get_uniform_label(type, index, number), std::string_view());
+					}));
+
+					size_t results = cursor->first().size();
+					offset += results;
+					state_delta += results;
+					if (results < count)
+						break;
+				}
+
 				map.clear();
 				map.push_back(var::set::integer(block_number));
 				map.push_back(var::set::integer(block_number));
@@ -663,6 +695,35 @@ namespace tangent
 
 			for (auto& [type, multiform_storage] : get_multiform_multi_storage())
 			{
+				size_t offset = 0, count = 1024;
+				map.clear();
+				map.push_back(var::set::integer(block_number));
+				map.push_back(var::set::integer(count));
+				map.push_back(var::set::integer(offset));
+
+				while (true)
+				{
+					map.back()->value = var::integer(offset);
+					cursor = multiform_storage.emplace_query(__func__, "SELECT (SELECT column_hash FROM columns WHERE columns.column_number = snapshots.column_number) AS column_hash, (SELECT row_hash FROM rows WHERE rows.row_number = snapshots.row_number) AS row_hash, block_number FROM snapshots WHERE block_number > ? LIMIT ? OFFSET ?", &map);
+					if (!cursor || cursor->error())
+						return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
+
+					auto response = cursor->first();
+					parallel::wail_all(parallel::for_each_sequential(response.begin(), response.end(), response.size(), ELEMENTS_FEW, [&](sqlite::row next)
+					{
+						string column = next["column_hash"].get().get_blob();
+						string row = next["row_hash"].get().get_blob();
+						uint64_t number = next["block_number"].get().get_integer();
+						blob_storage.store(__func__, get_multiform_label(type, column, row, number), std::string_view());
+					}));
+
+					size_t results = cursor->first().size();
+					offset += results;
+					state_delta += results;
+					if (results < count)
+						break;
+				}
+
 				map.clear();
 				map.push_back(var::set::integer(block_number));
 				map.push_back(var::set::integer(block_number));

@@ -3077,7 +3077,7 @@ namespace tangent
 				schema* tip = data->set("tip", var::object());
 				tip->set("hash", var::string(algorithm::encoding::encode_0xhex256(block_hash)));
 				tip->set("number", algorithm::encoding::serialize_uint256(block_header->number));
-				tip->set("sync", var::number(consensus_service->get_sync_progress(block_hash, block_header ? block_header->number : 0)));
+				tip->set("sync", var::number(consensus_service->get_sync_progress(block_header ? block_header->number : 0)));
 			}
 			else
 				data->set("tip", var::null());
@@ -3100,7 +3100,7 @@ namespace tangent
 				item->set("fork_hash", var::string(algorithm::encoding::encode_0xhex256(fork.first)));
 				item->set("tip_hash", algorithm::encoding::serialize_uint256(fork.second.header.as_hash()));
 				item->set("tip_number", algorithm::encoding::serialize_uint256(fork.second.header.number));
-				item->set("progress", var::number(consensus_service->get_sync_progress(fork.first, block_header ? block_header->number : 0)));
+				item->set("progress", var::number(consensus_service->get_sync_progress(block_header ? block_header->number : 0, *fork.second.state)));
 			}
 
 			switch (protocol::now().user.network)

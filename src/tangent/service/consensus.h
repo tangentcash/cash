@@ -198,12 +198,6 @@ namespace tangent
 		class server_node final : public socket_server
 		{
 		public:
-			enum class fork_head
-			{
-				append,
-				replace
-			};
-
 			struct fork_header
 			{
 				ledger::block_header header;
@@ -214,9 +208,9 @@ namespace tangent
 			struct
 			{
 				std::recursive_mutex account;
-				std::recursive_mutex block;
 				std::recursive_mutex attestation;
 				std::recursive_mutex neighbor;
+				std::recursive_mutex fork;
 				std::mutex inventory;
 			} sync;
 
@@ -229,6 +223,7 @@ namespace tangent
 		private:
 			struct
 			{
+				std::atomic<bool> checkpointing = false;
 				std::atomic<bool> prepared = false;
 				std::atomic<bool> waiting = false;
 				std::atomic<bool> dirty = false;
@@ -299,7 +294,7 @@ namespace tangent
 			void shutdown();
 			void clear_pending_neighbors();
 			void clear_pending_fork(relay* state);
-			void accept_pending_fork(uref<relay>&& state, fork_head head, const uint256_t& candidate_hash, ledger::block_header&& candidate_block);
+			void accept_pending_fork(uref<relay>&& state, const uint256_t& candidate_hash, ledger::block_header&& candidate_block);
 			bool accept_block(uref<relay>&& from, ledger::block_evaluation&& candidate, const uint256_t& fork_tip);
 			bool has_address(const socket_address& address);
 			uref<relay> find_by_address(const socket_address& address);
@@ -310,7 +305,8 @@ namespace tangent
 			size_t get_connections();
 			bool is_active();
 			bool is_syncing();
-			double get_sync_progress(const uint256_t& fork_tip, uint64_t current_number);
+			double get_sync_progress(uint64_t current_number);
+			double get_sync_progress(uint64_t current_number, relay* state);
 			service_control::service_node get_entrypoint();
 			std::recursive_mutex& get_mutex();
 			const hash_map<void*, uref<relay>>& get_nodes() const;
@@ -326,7 +322,6 @@ namespace tangent
 			void announce_peer(uref<relay>&& state, bool available);
 			void fill_node_services();
 			void fill_node_neighbors();
-			bool accept_block_candidate(ledger::block_evaluation& candidate, const uint256_t& candidate_hash, const uint256_t& fork_tip);
 			bool accept_proposal_transaction(const ledger::block& checkpoint_block, const ledger::block_transaction& transaction);
 			void pull_messages(uref<relay>&& state);
 			void push_messages(uref<relay>&& state);

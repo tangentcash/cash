@@ -1237,6 +1237,11 @@ namespace tangent
 			return "block_proof";
 		}
 
+		bool block_evaluation::requires_reorganization() const
+		{
+			auto chain = storages::chainstate();
+			return chain.get_checkpoint_block_number().or_else(0) > block.number - 1;
+		}
 		expects_lr<block_checkpoint> block_evaluation::checkpoint(bool keep_reverted_transactions)
 		{
 			auto chain = storages::chainstate();
@@ -1263,12 +1268,6 @@ namespace tangent
 			mutation.is_fork = mutation.old_tip_block_number > 0 && mutation.old_tip_block_number >= mutation.new_tip_block_number;
 			if (mutation.is_fork)
 			{
-				if (protocol::now().user.storage.checkpoint_reorganization_only && chain.get_checkpoint_block_number().or_else(0) > mutation.new_tip_block_number - 1)
-				{
-					storage_util::multi_tx_rollback(__func__, std::move(global_state)).report("global state rollback failed");
-					return layer_exception(stringify::text("checkpoint requires chain reorganization (depth: %" PRIu64 " blocks)", mutation.old_tip_block_number - mutation.new_tip_block_number));
-				}
-
 				uint64_t revert_number = mutation.old_tip_block_number;
 				while (keep_reverted_transactions && revert_number >= mutation.new_tip_block_number)
 				{
@@ -1296,7 +1295,6 @@ namespace tangent
 					--revert_number;
 				}
 
-				auto fork_block_hash = chain.get_block_hash_by_number(block.number);
 				auto status = chain.revert(mutation.new_tip_block_number - 1, &mutation.block_delta, &mutation.transaction_delta, &mutation.state_delta);
 				if (!status)
 				{
@@ -1307,15 +1305,15 @@ namespace tangent
 				if (protocol::now().user.storage.logging)
 					VI_INFO("revert chain to block %s (height: %" PRIu64 ", mempool: +%" PRIu64 ", blocktrie: %" PRIi64 ", transactiontrie: %" PRIi64 ", statetrie: %" PRIi64 ")", algorithm::encoding::encode_0xhex256(block.as_hash()).c_str(), mutation.new_tip_block_number, mutation.mempool_transactions, mutation.block_delta, mutation.transaction_delta, mutation.state_delta);
 			
-				if (block.state_count != state.finalized.size() && fork_block_hash && *fork_block_hash == block.as_hash())
+				if (state.finalized.empty() || block.state_count != state.finalized.size())
 				{
-					ledger::block_evaluation evaluation;
 					auto parent_block = chain.get_block_by_number(block.number - 1);
-					auto validation = block.validate(parent_block.address(), &evaluation);
+					auto validation = block.validate(parent_block.address(), this);
 					if (!validation)
-						return layer_exception("block " + to_string(block.number) + " state restore failed: " + validation.error().message());
-
-					state = std::move(evaluation.state);
+					{
+						storage_util::multi_tx_rollback(__func__, std::move(global_state)).report("global state rollback failed");
+						return validation.error();
+					}
 				}
 			}
 

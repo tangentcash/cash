@@ -101,7 +101,6 @@
         "transaction_to_rollup_index": true,
         "prune_transactions": false,
         "prune_blocks": false,
-        "checkpoint_reorganization_only": true,
         "logging": false
     },
     "logs": {

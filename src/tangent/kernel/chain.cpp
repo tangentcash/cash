@@ -555,6 +555,10 @@ namespace tangent
 			if (value != nullptr && value->value.is(var_type::integer))
 				user.consensus.transaction_timeout = value->value.get_integer();
 
+			value = config->fetch("consensus.may_reorganize");
+			if (value != nullptr && value->value.is(var_type::boolean))
+				user.consensus.may_reorganize = value->value.get_boolean();
+
 			value = config->fetch("consensus.may_propose");
 			if (value != nullptr && value->value.is(var_type::boolean))
 				user.consensus.may_propose = value->value.get_boolean();
@@ -720,10 +724,6 @@ namespace tangent
 			value = config->fetch("storage.transaction_to_rollup_index");
 			if (value != nullptr && value->value.is(var_type::boolean))
 				user.storage.transaction_to_rollup_index = value->value.get_boolean();
-
-			value = config->fetch("storage.checkpoint_reorganization_only");
-			if (value != nullptr && value->value.is(var_type::boolean))
-				user.storage.checkpoint_reorganization_only = value->value.get_boolean();
 
 			value = config->fetch("storage.prune_transactions");
 			if (value != nullptr && value->value.is(var_type::boolean))

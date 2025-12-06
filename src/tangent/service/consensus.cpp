@@ -1200,7 +1200,9 @@ namespace tangent
 			uint64_t peer_latency = peer_time > system_time ? peer_time - system_time : system_time - peer_time;
 			peer_node.availability.latency = peer_latency;
 			peer_node.availability.reachable = is_acknowledgement;
-			peer_node.address = socket_address(state->peer_address(), peer_node.address.get_ip_port().or_else(protocol::now().user.consensus.port));
+			if (!state->private_network())
+				peer_node.address = socket_address(state->peer_address(), peer_node.address.get_ip_port().or_else(protocol::now().user.consensus.port));
+
 			algorithm::signing::derive_public_key_hash(peer_wallet.public_key, peer_wallet.public_key_hash);
 			if (!peer_node.is_valid() || peer_wallet.public_key_hash.empty() || peer_wallet.public_key_hash.equals(descriptor.second.public_key_hash))
 			{
@@ -2056,11 +2058,30 @@ namespace tangent
 		{
 			return coasync<expects_rt<void>>([this, fork = std::move(fork)]() mutable -> expects_promise_rt<void>
 			{
-				auto& [new_tip_fork_hash, new_tip] = fork;
-				auto new_tip_hash = uint256_t(0);
-				auto new_tip_number = new_tip.header.number;
-				auto old_tip_number = storages::chainstate().get_latest_block_number().or_else(0);
 				std::mutex batch_mutex;
+				auto& [new_tip_fork_hash, new_tip] = fork;
+				auto new_tip_number = new_tip.header.number;
+				auto new_tip_hash = uint256_t(0);
+				auto old_tip = storages::chainstate().get_latest_block_header();
+				auto old_tip_number = old_tip ? old_tip->number : 0;
+				if (old_tip_number > 0 && new_tip_number > old_tip_number)
+				{
+					auto result = coawait(query(uref(new_tip.state), descriptors::fetch_headers(), { format::variable(old_tip_number + 1), format::variable((uint8_t)1) }, protocol::now().user.tcp.timeout));
+					if (result && result->args.size() >= 3)
+					{
+						auto collision_tip = ledger::block_header();
+						auto message = format::ro_stream(result->args[2].as_string());
+						if (collision_tip.load(message) && collision_tip.parent_hash == old_tip->as_hash())
+						{
+							new_tip_number = collision_tip.number;
+							new_tip_hash = collision_tip.as_hash();
+							old_tip_number = 0;
+						}
+					}
+				}
+				else if (old_tip_number > 0 && old_tip_number == new_tip_number && old_tip->as_hash() == new_tip.header.as_hash())
+					coreturn expectation::met;
+
 				while (is_active() && old_tip_number > 0 && new_tip_number > 0)
 				{
 					auto result = coawait(query(uref(new_tip.state), descriptors::fetch_headers(), { format::variable(new_tip_number), format::variable(new_tip_number > old_tip_number ? 1 + new_tip_number - (old_tip_number - 1) : protocol::now().message.headers_per_query) }, protocol::now().user.tcp.timeout));
@@ -2126,13 +2147,14 @@ namespace tangent
 					new_tip_number = new_tip_number > block_count ? new_tip_number - block_count : 0;
 					if (best_new_tip_number > 0 && best_new_tip_hash > 0)
 					{
-						if (protocol::now().user.consensus.logging)
-							VI_INFO("block %s chain fork: collision detected (height: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(best_new_tip_hash).c_str(), best_new_tip_number);
-
 						new_tip_hash = best_new_tip_hash;
+						new_tip_number = best_new_tip_number;
 						old_tip_number = 0;
 					}
 				}
+
+				if (new_tip_hash > 0 && protocol::now().user.consensus.logging)
+					VI_INFO("block %s chain fork: collision found (height: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(new_tip_hash).c_str(), new_tip_number);
 
 				new_tip_number = new_tip_hash > 0 ? 0 : 1;
 				while (is_active() && (new_tip_number > 0 || new_tip_hash > 0))
@@ -2672,9 +2694,9 @@ namespace tangent
 				if (!status && protocol::now().user.consensus.logging)
 					VI_WARN("block %s chain fork rejected: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), status.what().c_str());
 
-				clear_pending_fork(*state);
 				auto new_best_fork = get_best_fork_header();
-				if (new_best_fork && best_fork->second.header < new_best_fork->second.header)
+				clear_pending_fork(*state);
+				if (new_best_fork && new_best_fork->first != candidate_hash && best_fork->second.header < new_best_fork->second.header)
 				{
 					best_fork = std::move(new_best_fork);
 					goto retry;
@@ -2971,7 +2993,7 @@ namespace tangent
 		}
 		void server_node::clear_pending_neighbors()
 		{
-			umutex<std::recursive_mutex> unique(sync.block);
+			umutex<std::recursive_mutex> unique(sync.neighbor);
 			for (auto& [id, resolver] : neighbors)
 				resolver(algorithm::pubkey_t(), 0);
 			neighbors.clear();
@@ -2979,7 +3001,7 @@ namespace tangent
 		void server_node::clear_pending_fork(relay* state)
 		{
 			auto* queue = schedule::get();
-			umutex<std::recursive_mutex> unique(sync.block);
+			umutex<std::recursive_mutex> unique(sync.fork);
 			if (state)
 			{
 				for (auto it = forks.cbegin(); it != forks.cend();)
@@ -2993,15 +3015,21 @@ namespace tangent
 			else
 				forks.clear();
 		}
-		void server_node::accept_pending_fork(uref<relay>&& state, fork_head head, const uint256_t& candidate_hash, ledger::block_header&& candidate_block)
+		void server_node::accept_pending_fork(uref<relay>&& state, const uint256_t& candidate_hash, ledger::block_header&& candidate_block)
 		{
 			if (!state || !candidate_hash || !is_active())
 				return;
 
-			if (head == fork_head::replace)
-				clear_pending_fork(nullptr);
-
-			umutex<std::recursive_mutex> unique(sync.block);
+			umutex<std::recursive_mutex> unique(sync.fork);
+		retry:
+			for (auto& fork_candidate_tip : forks)
+			{
+				if (*fork_candidate_tip.second.state == *state)
+				{
+					forks.erase(fork_candidate_tip.first);
+					goto retry;
+				}
+			}
 			auto& fork = forks[candidate_hash];
 			fork.header = candidate_block;
 			fork.state = state;
@@ -3018,7 +3046,7 @@ namespace tangent
 			auto fork_tip_block = ledger::block_header();
 			if (fork_branch)
 			{
-				umutex<std::recursive_mutex> unique(sync.block);
+				umutex<std::recursive_mutex> unique(sync.fork);
 				auto it = forks.find(fork_tip);
 				if (it != forks.end())
 					fork_tip_block = it->second.header;
@@ -3065,7 +3093,7 @@ namespace tangent
 					return false;
 				}
 
-				umutex<std::recursive_mutex> unique(sync.block);
+				umutex<std::recursive_mutex> unique(sync.fork);
 				bool better_than_prev_fork = forks.empty();
 				for (auto& fork_candidate_tip : forks)
 				{
@@ -3100,20 +3128,11 @@ namespace tangent
 														  \
 														   <+> = possibly orphan
 				*/
-				accept_pending_fork(uref(from), fork_head::append, candidate_hash, ledger::block_header(candidate.block));
-				unique.unlock();
+				accept_pending_fork(uref(from), candidate_hash, ledger::block_header(candidate.block));
 				run_fork_resolution();
 				if (protocol::now().user.consensus.logging)
-					VI_INFO("block %s chain fork: new possible best found (height: %" PRIu64 ", distance: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), candidate.block.number, std::abs((int64_t)(tip_block ? tip_block->number : 0) - (int64_t)candidate.block.number));
+					VI_INFO("block %s chain fork: new best found (height: %" PRIu64 ", distance: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), candidate.block.number, std::abs((int64_t)(tip_block ? tip_block->number : 0) - (int64_t)candidate.block.number));
 				return true;
-			}
-
-			auto validation = from ? candidate.block.validate(parent_block.address(), &candidate) : environment.verify_solved_block(candidate.block, &candidate.state);
-			if (!validation)
-			{
-				if (protocol::now().user.consensus.logging)
-					VI_WARN("block %s rejected: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), validation.error().what());
-				return false;
 			}
 
 			/*
@@ -3121,48 +3140,43 @@ namespace tangent
 											\
 											<+> - <+> = possible reorganization
 			*/
-			if (!accept_block_candidate(candidate, candidate_hash, fork_tip))
-				return false;
-
-			size_t notifications = notify_all_except(uref(from), descriptors::broadcast_block_hash(), { format::variable(candidate_hash) });
-			if (notifications > 0 && protocol::now().user.consensus.logging)
-				VI_DEBUG("block %s broadcasted to %i nodes (height: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)notifications, candidate.block.number);
-
-			if (fork_tip != candidate_hash)
-				accept_pending_fork(uref(from), fork_head::replace, fork_tip, std::move(fork_tip_block));
-			else
-				clear_pending_fork(nullptr);
-
-			if (!is_syncing())
+			auto reorganization = candidate.requires_reorganization();
+			auto validation = fork_branch && reorganization ? expects_lr<void>(expectation::met) : (from ? candidate.block.validate(parent_block.address(), &candidate) : environment.verify_solved_block(candidate.block, &candidate.state));
+			if (!validation)
 			{
-				auto timeout = std::min(candidate.block.get_proof_duration(), protocol::now().policy.pow.time);
-				schedule::get()->set_timeout(timeout, [this]() { run_block_dispatcher(); });
-				if (from && mempool.dirty)
-				{
-					mempool.dirty = false;
-					synchronize_mempool_with(uref(from));
-				}
+				if (protocol::now().user.consensus.logging)
+					VI_WARN("block %s rejected: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), validation.error().what());
+				return false;
+			}
+			else if (reorganization && !protocol::now().user.consensus.may_reorganize)
+			{
+				if (protocol::now().user.consensus.logging)
+					VI_WARN("block %s rejected: requires deep chain reorganization (disabled)", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), validation.error().what());
+				return false;
 			}
 
-			return true;
-		}
-		bool server_node::accept_block_candidate(ledger::block_evaluation& candidate, const uint256_t& candidate_hash, const uint256_t& fork_tip)
-		{
-			umutex<std::recursive_mutex> unique(sync.block);
-			auto mutation = candidate.checkpoint();
+			umutex<std::recursive_mutex> unique(sync.fork);
+			bool busy = mempool.checkpointing.load();
+			mempool.checkpointing = true;
+			unique.unlock();
+			auto mutation = busy ? expects_lr<ledger::block_checkpoint>(layer_exception("busy in chain reorganization")) : candidate.checkpoint();
+			mempool.checkpointing = false;
 			if (!mutation)
 			{
 				if (protocol::now().user.consensus.logging)
-					VI_WARN("block %s checkpoint failed: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), mutation.error().what());
+					VI_ERR("block %s checkpoint failed: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), mutation.error().what());
 				return false;
 			}
-
-			if (protocol::now().user.consensus.logging)
+			else if (protocol::now().user.consensus.logging)
 			{
-				double progress = get_sync_progress(fork_tip, candidate.block.number);
 				if (mutation->is_fork)
-					VI_INFO("block %s chain forked (height: %" PRIu64 ", mempool: %" PRIu64 ", block-delta: %" PRIi64 ", transaction-delta: %" PRIi64 ", state-delta: %" PRIi64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), mutation->old_tip_block_number, mutation->mempool_transactions, mutation->block_delta, mutation->transaction_delta, mutation->state_delta);
-				VI_INFO("block %s chain %s (height: %" PRIu64 ", sync: %.2f%%, priority: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), mutation->is_fork ? "shortened" : "extended", candidate.block.number, 100.0 * progress, candidate.block.priority);
+				{
+					VI_INFO("block %s chain shortened (height: %" PRIu64 ", sync: %.2f%%, leader: %" PRIu64 ", length: %" PRIi64 ", txns: %" PRIi64 " / %" PRIi64 ", states: %" PRIi64 ")\n",
+						algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), candidate.block.number, 100.0 * get_sync_progress(candidate.block.number, *from), candidate.block.priority + 1,
+						mutation->block_delta, mutation->transaction_delta, mutation->mempool_transactions, mutation->state_delta);
+				}
+				else
+					VI_INFO("block %s chain extended (height: %" PRIu64 ", sync: %.2f%%, leader: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), candidate.block.number, 100.0 * get_sync_progress(candidate.block.number, *from), candidate.block.priority + 1);
 			}
 
 			if (events.accept_block)
@@ -3173,6 +3187,21 @@ namespace tangent
 			{
 				if (transaction.receipt.from == wallet.public_key_hash)
 					accept_proposal_transaction(candidate.block, transaction);
+			}
+
+			if (is_syncing())
+				return true;
+
+			size_t notifications = notify_all_except(uref(from), descriptors::broadcast_block_hash(), { format::variable(candidate_hash) });
+			if (notifications > 0 && protocol::now().user.consensus.logging)
+				VI_DEBUG("block %s broadcasted to %i nodes (height: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)notifications, candidate.block.number);
+
+			auto timeout = std::min(candidate.block.get_proof_duration(), protocol::now().policy.pow.time);
+			schedule::get()->set_timeout(timeout, [this]() { run_block_dispatcher(); });
+			if (from && mempool.dirty)
+			{
+				mempool.dirty = false;
+				synchronize_mempool_with(uref(from));
 			}
 
 			return true;
@@ -3249,17 +3278,30 @@ namespace tangent
 		}
 		bool server_node::is_syncing()
 		{
-			umutex<std::recursive_mutex> unique(sync.block);
+			umutex<std::recursive_mutex> unique(sync.fork);
 			return !forks.empty();
 		}
-		double server_node::get_sync_progress(const uint256_t& fork_tip, uint64_t current_number)
+		double server_node::get_sync_progress(uint64_t current_number)
 		{
-			if (!current_number)
+			auto best = get_best_fork_header();
+			if (best)
+				return (current_number <= best->second.header.number ? (double)current_number / (double)best->second.header.number : 1.0);
+
+			return 1.0;
+		}
+		double server_node::get_sync_progress(uint64_t current_number, relay* state)
+		{
+			if (!state || !current_number)
 				return 1.0;
 
-			umutex<std::recursive_mutex> unique(sync.block);
-			auto it = forks.find(fork_tip);
-			return it != forks.end() ? (current_number <= it->second.header.number ? (double)current_number / (double)it->second.header.number : 1.0) : 1.0;
+			umutex<std::recursive_mutex> unique(sync.fork);
+			for (auto& fork_candidate_tip : forks)
+			{
+				if (*fork_candidate_tip.second.state == state)
+					return (current_number <= fork_candidate_tip.second.header.number ? (double)current_number / (double)fork_candidate_tip.second.header.number : 1.0);
+			}
+
+			return 1.0;
 		}
 		const hash_map<void*, uref<relay>>& server_node::get_nodes() const
 		{
@@ -3267,7 +3309,7 @@ namespace tangent
 		}
 		option<std::pair<uint256_t, server_node::fork_header>> server_node::get_best_fork_header()
 		{
-			umutex<std::recursive_mutex> unique(sync.block);
+			umutex<std::recursive_mutex> unique(sync.fork);
 			option<std::pair<uint256_t, server_node::fork_header>> best_fork = optional::none;
 			if (!is_active())
 				return best_fork;

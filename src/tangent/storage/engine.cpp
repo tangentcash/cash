@@ -393,23 +393,23 @@ namespace tangent
 
 			return expectation::met;
 		}
-		sqlite::expects_db<void> storage_blob_ptr::clear(const std::string_view& operation, const std::string_view& table_ids)
+		sqlite::expects_db<void> storage_blob_ptr::clear(const std::string_view& operation, const std::string_view& key_prefix)
 		{
 			VI_ASSERT(connection, "connection not initialized (operation: %.*s)", (int)operation.size(), operation.data());
 			auto& read = get_blob_read_options();
 			auto& write = get_blob_write_options();
-			auto it = connection->NewIterator(read);
-			it->SeekToFirst();
-			while (it->Valid())
+			auto* iterator = connection->NewIterator(read);
+			iterator->Seek(key_prefix);
+
+			rocksdb::WriteBatch batch;
+			while (iterator->Valid() && iterator->key().ToStringView().substr(0, key_prefix.size()) == key_prefix)
 			{
-				if (table_ids.find(*it->key().data()))
-				{
-					connection->Delete(write, it->key());
-					++invocations; ++thread_invocations;
-				}
-				it->Next();
+				batch.Delete(iterator->key().ToString());
+				iterator->Next();
 			}
-			delete it;
+			delete iterator;
+
+			rocksdb::Status status = connection->Write(write, &batch);
 			return expectation::met;
 		}
 		void storage_blob_ptr::set_uses(uint32_t value)

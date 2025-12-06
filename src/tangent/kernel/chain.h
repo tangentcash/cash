@@ -160,6 +160,7 @@ namespace tangent
 				uint64_t aggregation_attempts = 6;
 				uint64_t aggregation_cooldown = 2000;
 				uint8_t coordination_attempts = 15;
+				bool may_reorganize = false;
 				bool may_propose = true;
 				bool server = true;
 				bool logging = true;
@@ -216,7 +217,6 @@ namespace tangent
 				double computation_threads_ratio = 0.00;
 				bool transaction_to_account_index = true;
 				bool transaction_to_rollup_index = true;
-				bool checkpoint_reorganization_only = true;
 				bool prune_transactions = false;
 				bool prune_blocks = false;
 				bool logging = false;

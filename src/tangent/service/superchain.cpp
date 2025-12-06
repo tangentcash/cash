@@ -1307,7 +1307,7 @@ namespace tangent
 					if (!info->block_hash.empty())
 					{
 						if (protocol::now().user.superchain.logging)
-							VI_INFO("%s block %s accepted (height: %i, progress: %.2f%%, txns: 0)",
+							VI_INFO("%s block %s found (height: %i, sync: %.2f%%, txns: 0)",
 							algorithm::asset::name_of(listener->asset).c_str(),
 							info->block_hash.c_str(),
 							(int)info->block_height,
@@ -1321,7 +1321,7 @@ namespace tangent
 					coreturn_void;
 				}
 				else if (protocol::now().user.superchain.logging)
-					VI_INFO("%s block %s accepted (height: %i, progress: %.2f%%, txns: %i)",
+					VI_INFO("%s block %s found (height: %i, sync: %.2f%%, txns: %i)",
 					algorithm::asset::name_of(listener->asset).c_str(),
 					info->block_hash.c_str(),
 					(int)info->block_height,
@@ -1331,12 +1331,12 @@ namespace tangent
 				if (protocol::now().user.superchain.logging)
 				{
 					for (auto& tx : info->pending)
-						VI_INFO("%s transaction %s accepted (block: %" PRIu64 ", status: pending)", algorithm::asset::name_of(listener->asset).c_str(), tx.transaction_id.c_str(), tx.block_id);
+						VI_INFO("%s transaction %s found (block: %" PRIu64 ", status: pending)", algorithm::asset::name_of(listener->asset).c_str(), tx.transaction_id.c_str(), tx.block_id);
 
 					for (auto& tx : info->finalized)
 					{
 						string transfer_logs = stringify::text(
-							"%s transaction %s accepted (block: %" PRIu64 ", status: finalized)\n",
+							"%s transaction %s found (block: %" PRIu64 ", status: finalized)\n",
 							algorithm::asset::name_of(listener->asset).c_str(),
 							tx.transaction_id.c_str(), tx.block_id);
 						for (auto& [hash, input] : tx.inputs)

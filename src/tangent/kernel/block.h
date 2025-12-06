@@ -263,6 +263,7 @@ namespace tangent
 			block block;
 			block_state state;
 
+			bool requires_reorganization() const;
 			expects_lr<block_checkpoint> checkpoint(bool keep_reverted_transactions = true);
 			uptr<schema> as_schema() const;
 		};

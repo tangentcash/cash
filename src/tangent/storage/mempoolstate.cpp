@@ -69,6 +69,15 @@ namespace tangent
 
 			return false;
 		}
+		bool routing_util::is_address_loopback(const socket_address& address)
+		{
+			auto value = address.get_ip_value();
+			if (!value)
+				return false;
+
+			static socket_cidr loopback_ip = *vitex::network::utils::parse_address_mask("127.0.0.0/8");
+			return loopback_ip.is_matching(*value);
+		}
 		bool routing_util::is_address_private(const socket_address& address)
 		{
 			auto value = address.get_ip_value();

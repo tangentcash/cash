@@ -48,6 +48,7 @@ namespace tangent
 		{
 		public:
 			static bool is_address_reserved(const socket_address& address);
+			static bool is_address_loopback(const socket_address& address);
 			static bool is_address_private(const socket_address& address);
 			static bool is_address_reserved_or_private(const socket_address& address);
 		};
