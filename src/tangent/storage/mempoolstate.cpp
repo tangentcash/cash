@@ -135,7 +135,7 @@ namespace tangent
 			map.push_back(var::set::binary(address_to_message(node_address)));
 			map.push_back(var::set::integer(protocol::now().time.now_cpu() + protocol::now().user.tcp.timeout));
 
-			auto cursor = get_storage().emplace_query(__func__, cooldown ? "INSERT INTO cooldowns (address, expiration, attempt) VALUES (?, ?, 0) ON CONFLICT DO UPDATE SET expiration = EXCLUDED.expiration, attempt = attempt + 1 RETURNING attempt" : "DELETE FROM cooldowns WHERE address = ?", &map);
+			auto cursor = get_peer_storage().emplace_query(__func__, cooldown ? "INSERT INTO cooldowns (address, expiration, attempt) VALUES (?, ?, 0) ON CONFLICT DO UPDATE SET expiration = EXCLUDED.expiration, attempt = attempt + 1 RETURNING attempt" : "DELETE FROM cooldowns WHERE address = ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 			else if (!cooldown)
@@ -148,7 +148,7 @@ namespace tangent
 				return expectation::met;
 
 			map[1] = var::set::integer(std::pow(4, attempt));
-			cursor = get_storage().emplace_query(__func__, "UPDATE cooldowns SET expiration = expiration + ? WHERE address = ?", &map);
+			cursor = get_peer_storage().emplace_query(__func__, "UPDATE cooldowns SET expiration = expiration + ? WHERE address = ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -166,7 +166,7 @@ namespace tangent
 			map.push_back(var::set::binary(address_to_message(node_address)));
 			map.push_back(var::set::boolean(!allow_reserved && routing_util::is_address_reserved_or_private(node_address)));
 
-			auto cursor = get_storage().emplace_query(__func__, "INSERT OR IGNORE INTO addresses (address, reserved) VALUES (?, ?)", &map);
+			auto cursor = get_peer_storage().emplace_query(__func__, "INSERT OR IGNORE INTO addresses (address, reserved) VALUES (?, ?)", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -198,7 +198,7 @@ namespace tangent
 			map.push_back(var::set::binary(node_message.data));
 			map.push_back(var::set::binary(*encrypted_wallet_message));
 
-			auto cursor = get_storage().emplace_query(__func__,
+			auto cursor = get_peer_storage().emplace_query(__func__,
 				"DELETE FROM nodes WHERE address = ? OR account = ?;"
 				"INSERT OR REPLACE INTO nodes (address, account, quality, services, node_message, wallet_message) VALUES (?, ?, ?, ?, ?, ?)", &map);
 			if (!cursor || cursor->error())
@@ -211,7 +211,7 @@ namespace tangent
 			schema_list map;
 			map.push_back(var::set::binary(address_to_message(node_address)));
 
-			auto& storage = get_storage();
+			auto& storage = get_peer_storage();
 			auto cursor = storage.emplace_query(__func__, "SELECT node_message FROM nodes WHERE address = ? AND quality IS NOT NULL", &map);
 			if (!cursor || cursor->error_or_empty())
 				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
@@ -241,6 +241,9 @@ namespace tangent
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 
+			if (call_result < 0)
+				return apply_cooldown_node(node.address, true);
+
 			return expectation::met;
 		}
 		expects_lr<void> mempoolstate::clear_node(const algorithm::pubkeyhash_t& account)
@@ -248,7 +251,7 @@ namespace tangent
 			schema_list map;
 			map.push_back(var::set::binary(account.view()));
 
-			auto cursor = get_storage().emplace_query(__func__, "DELETE FROM nodes WHERE account = ?", &map);
+			auto cursor = get_peer_storage().emplace_query(__func__, "DELETE FROM nodes WHERE account = ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -262,7 +265,7 @@ namespace tangent
 			map.push_back(var::set::binary(address_message));
 			map.push_back(var::set::binary(address_message));
 
-			auto cursor = get_storage().emplace_query(__func__,
+			auto cursor = get_peer_storage().emplace_query(__func__,
 				"DELETE FROM nodes WHERE address = ?;"
 				"DELETE FROM cooldowns WHERE address = ?;"
 				"DELETE FROM addresses WHERE address = ?", &map);
@@ -273,7 +276,7 @@ namespace tangent
 		}
 		expects_lr<void> mempoolstate::clear_cooldowns()
 		{
-			auto cursor = get_storage().query(__func__, "DELETE FROM cooldowns");
+			auto cursor = get_peer_storage().query(__func__, "DELETE FROM cooldowns");
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -281,7 +284,7 @@ namespace tangent
 		}
 		expects_lr<node_pair> mempoolstate::get_local_node()
 		{
-			auto cursor = get_storage().query(__func__, "SELECT node_message, wallet_message FROM nodes WHERE quality IS NULL LIMIT 1");
+			auto cursor = get_peer_storage().query(__func__, "SELECT node_message, wallet_message FROM nodes WHERE quality IS NULL LIMIT 1");
 			if (!cursor || cursor->error_or_empty())
 				return expects_lr<node_pair>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -307,7 +310,7 @@ namespace tangent
 			schema_list map;
 			map.push_back(var::set::integer(offset));
 
-			auto cursor = get_storage().emplace_query(__func__, "SELECT node_message, wallet_message FROM nodes WHERE quality IS NOT NULL ORDER BY quality DESC LIMIT 1 OFFSET ?", &map);
+			auto cursor = get_peer_storage().emplace_query(__func__, "SELECT node_message, wallet_message FROM nodes WHERE quality IS NOT NULL ORDER BY quality DESC LIMIT 1 OFFSET ?", &map);
 			if (!cursor || cursor->error_or_empty())
 				return expects_lr<node_pair>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -333,7 +336,7 @@ namespace tangent
 			schema_list map;
 			map.push_back(var::set::binary(account.view()));
 
-			auto& storage = get_storage();
+			auto& storage = get_peer_storage();
 			auto cursor = storage.emplace_query(__func__, "SELECT quality FROM nodes WHERE account = ?", &map);
 			if (!cursor || cursor->error_or_empty())
 				return expects_lr<node_pair>(layer_exception(ledger::storage_util::error_of(cursor)));
@@ -367,7 +370,7 @@ namespace tangent
 			schema_list map;
 			map.push_back(var::set::binary(address_to_message(node_address)));
 
-			auto cursor = get_storage().emplace_query(__func__, "SELECT node_message, wallet_message FROM nodes WHERE address = ?", &map);
+			auto cursor = get_peer_storage().emplace_query(__func__, "SELECT node_message, wallet_message FROM nodes WHERE address = ?", &map);
 			if (!cursor || cursor->error_or_empty())
 				return expects_lr<node_pair>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -393,7 +396,7 @@ namespace tangent
 			schema_list map;
 			map.push_back(var::set::binary(account.view()));
 
-			auto cursor = get_storage().emplace_query(__func__, "SELECT node_message, wallet_message FROM nodes WHERE account = ?", &map);
+			auto cursor = get_peer_storage().emplace_query(__func__, "SELECT node_message, wallet_message FROM nodes WHERE account = ?", &map);
 			if (!cursor || cursor->error_or_empty())
 				return expects_lr<node_pair>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -422,7 +425,7 @@ namespace tangent
 			map.push_back(var::set::integer(count));
 			map.push_back(var::set::integer(offset));
 
-			auto cursor = get_storage().emplace_query(__func__, "SELECT account, address FROM nodes WHERE quality IS NOT NULL AND (services & ?) == ? ORDER BY quality DESC LIMIT ? OFFSET ?", &map);
+			auto cursor = get_peer_storage().emplace_query(__func__, "SELECT account, address FROM nodes WHERE quality IS NOT NULL AND (services & ?) == ? ORDER BY quality DESC LIMIT ? OFFSET ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<vector<node_location_pair>>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -445,7 +448,7 @@ namespace tangent
 			map.push_back(var::set::integer(services));
 			map.push_back(var::set::integer(count));
 
-			auto cursor = get_storage().emplace_query(__func__, "SELECT account, address FROM nodes WHERE quality IS NOT NULL AND (services & ?) == ? ORDER BY random() LIMIT ?", &map);
+			auto cursor = get_peer_storage().emplace_query(__func__, "SELECT account, address FROM nodes WHERE quality IS NOT NULL AND (services & ?) == ? ORDER BY random() LIMIT ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<vector<node_location_pair>>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -480,7 +483,7 @@ namespace tangent
 			schema_list map;
 			map.push_back(var::set::integer(protocol::now().time.now_cpu()));
 
-			auto& storage = get_storage();
+			auto& storage = get_peer_storage();
 			auto cursor = storage.emplace_query(__func__, "SELECT addresses.address FROM addresses LEFT JOIN cooldowns ON cooldowns.address = addresses.address WHERE reserved = FALSE AND expiration IS NULL OR expiration < ? ORDER BY random() LIMIT 1", &map);
 			if (!cursor || cursor->error_or_empty())
 				return expects_lr<socket_address>(layer_exception(ledger::storage_util::error_of(cursor)));
@@ -504,7 +507,7 @@ namespace tangent
 			schema_list map;
 			map.push_back(var::set::integer(protocol::now().time.now_cpu()));
 
-			auto cursor = get_storage().emplace_query(__func__, "SELECT COUNT(1) AS counter FROM addresses LEFT JOIN cooldowns ON cooldowns.address = addresses.address WHERE reserved = FALSE AND expiration IS NULL OR expiration < ?", &map);
+			auto cursor = get_peer_storage().emplace_query(__func__, "SELECT COUNT(1) AS counter FROM addresses LEFT JOIN cooldowns ON cooldowns.address = addresses.address WHERE reserved = FALSE AND expiration IS NULL OR expiration < ?", &map);
 			if (!cursor || cursor->error_or_empty())
 				return expects_lr<size_t>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -512,7 +515,7 @@ namespace tangent
 		}
 		expects_lr<size_t> mempoolstate::get_nodes_count()
 		{
-			auto cursor = get_storage().query(__func__, "SELECT COUNT(1) AS counter FROM nodes WHERE quality IS NOT NULL");
+			auto cursor = get_peer_storage().query(__func__, "SELECT COUNT(1) AS counter FROM nodes WHERE quality IS NOT NULL");
 			if (!cursor || cursor->error_or_empty())
 				return expects_lr<size_t>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -524,7 +527,7 @@ namespace tangent
 			map.push_back(var::set::binary(address_to_message(address)));
 			map.push_back(var::set::integer(protocol::now().time.now_cpu()));
 
-			auto cursor = get_storage().emplace_query(__func__, "SELECT TRUE AS cooldown FROM cooldowns WHERE address = ? AND expiration >= ? LIMIT 1", &map);
+			auto cursor = get_peer_storage().emplace_query(__func__, "SELECT TRUE AS cooldown FROM cooldowns WHERE address = ? AND expiration >= ? LIMIT 1", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<bool>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -542,7 +545,7 @@ namespace tangent
 			map.push_back(var::set::binary(hash, sizeof(hash)));
 			map.push_back(var::set::number(1.0 - priority_percentile));
 
-			auto cursor = get_storage().emplace_query(__func__, "SELECT price FROM transactions WHERE asset = ? ORDER BY quality DESC NULLS FIRST LIMIT 1 OFFSET (SELECT CAST((COUNT(1) * ?) AS INT) FROM transactions)", &map);
+			auto cursor = get_peer_storage().emplace_query(__func__, "SELECT price FROM transactions WHERE asset = ? ORDER BY quality DESC NULLS FIRST LIMIT 1 OFFSET (SELECT CAST((COUNT(1) * ?) AS INT) FROM transactions)", &map);
 			if (!cursor || cursor->error_or_empty())
 				return expects_lr<decimal>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -581,7 +584,7 @@ namespace tangent
 			map.push_back(var::set::binary(commitment, sizeof(commitment)));
 			map.push_back(var::set::binary(signature.view()));
 
-			auto cursor = get_storage().emplace_query(__func__,
+			auto cursor = get_peer_storage().emplace_query(__func__,
 				"INSERT OR REPLACE INTO proofs (hash, commitment, asset, message) VALUES (?, ?, ?, ?);"
 				"INSERT OR REPLACE INTO commitments (hash, commitment, signature) VALUES (?, ?, ?)", &map);
 			if (!cursor || cursor->error())
@@ -594,7 +597,7 @@ namespace tangent
 			schema_list map;
 			map.push_back(var::set::integer(offset));
 
-			auto cursor = get_storage().emplace_query(__func__, "SELECT hash FROM (SELECT hash, COUNT(*) OVER (PARTITION BY hash, commitment) AS signatures FROM commitments) counts ORDER BY signatures DESC LIMIT 1 OFFSET ?", &map);
+			auto cursor = get_peer_storage().emplace_query(__func__, "SELECT hash FROM (SELECT hash, COUNT(*) OVER (PARTITION BY hash, commitment) AS signatures FROM commitments) counts ORDER BY signatures DESC LIMIT 1 OFFSET ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<uint256_t>(layer_exception(ledger::storage_util::error_of(cursor)));
 			else if (cursor->empty())
@@ -614,7 +617,7 @@ namespace tangent
 			map.push_back(var::set::binary(hash, sizeof(hash)));
 			map.push_back(var::set::binary(hash, sizeof(hash)));
 
-			auto cursor = get_storage().emplace_query(__func__,
+			auto cursor = get_peer_storage().emplace_query(__func__,
 				"SELECT commitment, signature FROM commitments WHERE hash = ?;"
 				"SELECT commitment, asset, message FROM proofs WHERE hash = ?", &map);
 			if (!cursor || cursor->error())
@@ -657,7 +660,7 @@ namespace tangent
 			map.push_back(var::set::binary(hash, sizeof(hash)));
 			map.push_back(var::set::binary(hash, sizeof(hash)));
 
-			auto cursor = get_storage().emplace_query(__func__,
+			auto cursor = get_peer_storage().emplace_query(__func__,
 				"DELETE FROM proofs WHERE hash = ?;"
 				"DELETE FROM commitments WHERE hash = ?", &map);
 			if (!cursor || cursor->error())
@@ -702,7 +705,7 @@ namespace tangent
 			map.push_back(var::set::binary(message.data));
 			map.push_back(var::set::binary(owner.view()));
 
-			auto cursor = get_storage().emplace_query(__func__,
+			auto cursor = get_peer_storage().emplace_query(__func__,
 				"INSERT OR REPLACE INTO transactions (hash, owner, asset, nonce, quality, time, price, message) VALUES (?, ?, ?, ?, ?, ?, ?, ?);"
 				"WITH epochs AS (SELECT rowid, ROW_NUMBER() OVER (ORDER BY nonce) AS epoch FROM transactions WHERE owner = ?) UPDATE transactions SET epoch = epochs.epoch FROM epochs WHERE transactions.rowid = epochs.rowid", &map);
 			if (!cursor || cursor->error())
@@ -727,7 +730,7 @@ namespace tangent
 			schema_list map;
 			map.push_back(var::set::string(*sqlite::utils::inline_array(std::move(hash_list))));
 
-			auto cursor = get_storage().emplace_query(__func__,
+			auto cursor = get_peer_storage().emplace_query(__func__,
 				"WITH hashes AS (SELECT c.hash FROM transactions p INNER JOIN transactions c ON c.owner = p.owner WHERE p.hash IN ($?) AND c.nonce <= p.nonce) "
 				"DELETE FROM transactions WHERE hash IN (SELECT hash FROM hashes)", &map);
 			if (!cursor || cursor->error())
@@ -740,7 +743,7 @@ namespace tangent
 			schema_list map;
 			map.push_back(var::set::integer(time(nullptr)));
 
-			auto cursor = get_storage().emplace_query(__func__, "DELETE FROM transactions WHERE time < ?", &map);
+			auto cursor = get_peer_storage().emplace_query(__func__, "DELETE FROM transactions WHERE time < ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<size_t>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -748,13 +751,13 @@ namespace tangent
 		}
 		expects_lr<size_t> mempoolstate::get_transactions_count()
 		{
-			auto cursor = get_storage().query(__func__, "SELECT COUNT(1) AS counter FROM transactions");
+			auto cursor = get_peer_storage().query(__func__, "SELECT COUNT(1) AS counter FROM transactions");
 			if (!cursor || cursor->error_or_empty())
 				return expects_lr<size_t>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 			return (size_t)(*cursor)["counter"].get().get_integer();
 		}
-		expects_lr<void> mempoolstate::apply_secret_entropy(const algorithm::pubkeyhash_t& participant, const ledger::dispatch_context::secret_entropy& entropy)
+		expects_lr<void> mempoolstate::apply_secret_entropy(const algorithm::pubkeyhash_t& participant, const ledger::dispatcher_context::secret_entropy& entropy)
 		{
 			format::wo_stream entropy_message;
 			if (!entropy.store(&entropy_message))
@@ -774,13 +777,13 @@ namespace tangent
 			map.push_back(var::set::binary(participant.view()));
 			map.push_back(var::set::binary(*encrypted_entropy_message));
 
-			auto cursor = get_storage().emplace_query(__func__, "INSERT OR REPLACE INTO secrets (asset, owner, manager, participant, entropy_message) VALUES (?, ?, ?, ?, ?)", &map);
+			auto cursor = get_secret_storage().emplace_query(__func__, "INSERT OR REPLACE INTO secrets (asset, owner, manager, participant, entropy_message) VALUES (?, ?, ?, ?, ?)", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 			
 			return expectation::met;
 		}
-		expects_lr<ledger::dispatch_context::secret_entropy> mempoolstate::get_secret_entropy(const algorithm::pubkeyhash_t& participant, const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner)
+		expects_lr<ledger::dispatcher_context::secret_entropy> mempoolstate::get_secret_entropy(const algorithm::pubkeyhash_t& participant, const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner)
 		{
 			uint8_t asset_data[32];
 			asset.encode(asset_data);
@@ -791,9 +794,9 @@ namespace tangent
 			map.push_back(var::set::binary(manager.view()));
 			map.push_back(var::set::binary(participant.view()));
 
-			auto cursor = get_storage().emplace_query(__func__, "SELECT entropy_message FROM secrets WHERE asset = ? AND owner = ? AND manager = ? AND participant = ?", &map);
+			auto cursor = get_secret_storage().emplace_query(__func__, "SELECT entropy_message FROM secrets WHERE asset = ? AND owner = ? AND manager = ? AND participant = ?", &map);
 			if (!cursor || cursor->error())
-				return expects_lr<ledger::dispatch_context::secret_entropy>(layer_exception(ledger::storage_util::error_of(cursor)));
+				return expects_lr<ledger::dispatcher_context::secret_entropy>(layer_exception(ledger::storage_util::error_of(cursor)));
 			else if (cursor->empty())
 				return layer_exception("entropy not found");
 
@@ -801,12 +804,12 @@ namespace tangent
 			if (!decrypted_entropy_message)
 				return decrypted_entropy_message.error();
 
-			ledger::dispatch_context::secret_entropy entropy;
+			ledger::dispatcher_context::secret_entropy entropy;
 			format::ro_stream entropy_message = format::ro_stream(*decrypted_entropy_message);
 			if (!entropy.load(entropy_message))
-				return expects_lr<ledger::dispatch_context::secret_entropy>(layer_exception("entropy deserialization error"));
+				return expects_lr<ledger::dispatcher_context::secret_entropy>(layer_exception("entropy deserialization error"));
 
-			return expects_lr<ledger::dispatch_context::secret_entropy>(std::move(entropy));
+			return expects_lr<ledger::dispatcher_context::secret_entropy>(std::move(entropy));
 		}
 		expects_lr<vector<states::bridge_account>> mempoolstate::get_secret_entropies_by_manager(const algorithm::pubkeyhash_t& manager, size_t offset, size_t count)
 		{
@@ -816,11 +819,11 @@ namespace tangent
 			map.push_back(var::set::integer(count));
 			map.push_back(var::set::integer(offset));
 
-			auto cursor = get_storage().emplace_query(__func__, !manager.empty() ? "SELECT asset, owner FROM secrets WHERE manager = ? LIMIT ? OFFSET ?" : "SELECT asset, manager, owner FROM secrets LIMIT ? OFFSET ?", &map);
+			auto cursor = get_secret_storage().emplace_query(__func__, !manager.empty() ? "SELECT asset, owner FROM secrets WHERE manager = ? LIMIT ? OFFSET ?" : "SELECT asset, manager, owner FROM secrets LIMIT ? OFFSET ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<vector<states::bridge_account>>(layer_exception(ledger::storage_util::error_of(cursor)));
 
-			auto context = ledger::transaction_context();
+			auto executor = ledger::executor_context(nullptr);
 			vector<states::bridge_account> result;
 			for (auto row : cursor->first())
 			{
@@ -833,7 +836,7 @@ namespace tangent
 
 				auto owner = algorithm::pubkeyhash_t(row["owner"].get().get_blob());
 				auto submanager = algorithm::pubkeyhash_t(row["manager"].get().get_blob());
-				auto account = context.get_bridge_account(asset, !manager.empty() ? manager : submanager.data, owner.data);
+				auto account = executor.get_bridge_account(asset, !manager.empty() ? manager : submanager.data, owner.data);
 				if (account)
 					result.push_back(std::move(*account));
 			}
@@ -847,7 +850,7 @@ namespace tangent
 			schema_list map;
 			map.push_back(var::set::binary(hash, sizeof(hash)));
 
-			auto cursor = get_storage().emplace_query(__func__, "SELECT TRUE FROM transactions WHERE hash = ?", &map);
+			auto cursor = get_peer_storage().emplace_query(__func__, "SELECT TRUE FROM transactions WHERE hash = ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<bool>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -858,7 +861,7 @@ namespace tangent
 			schema_list map;
 			map.push_back(var::set::binary(owner.view()));
 
-			auto cursor = get_storage().emplace_query(__func__, "SELECT MIN(nonce) AS nonce FROM transactions WHERE owner = ?", &map);
+			auto cursor = get_peer_storage().emplace_query(__func__, "SELECT MIN(nonce) AS nonce FROM transactions WHERE owner = ?", &map);
 			if (!cursor || cursor->error_or_empty())
 				return expects_lr<uint64_t>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -873,7 +876,7 @@ namespace tangent
 			schema_list map;
 			map.push_back(var::set::binary(owner.view()));
 
-			auto cursor = get_storage().emplace_query(__func__, "SELECT max(nonce) AS nonce FROM transactions WHERE owner = ?", &map);
+			auto cursor = get_peer_storage().emplace_query(__func__, "SELECT max(nonce) AS nonce FROM transactions WHERE owner = ?", &map);
 			if (!cursor || cursor->error_or_empty())
 				return expects_lr<uint64_t>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -891,7 +894,7 @@ namespace tangent
 			schema_list map;
 			map.push_back(var::set::binary(hash, sizeof(hash)));
 
-			auto cursor = get_storage().emplace_query(__func__, "SELECT hash, message FROM transactions WHERE hash = ?", &map);
+			auto cursor = get_peer_storage().emplace_query(__func__, "SELECT hash, message FROM transactions WHERE hash = ?", &map);
 			if (!cursor || cursor->error_or_empty())
 				return expects_lr<uptr<ledger::transaction>>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -910,7 +913,7 @@ namespace tangent
 			map.push_back(var::set::integer(count));
 			map.push_back(var::set::integer(offset));
 
-			auto cursor = get_storage().emplace_query(__func__, commitment ?
+			auto cursor = get_peer_storage().emplace_query(__func__, commitment ?
 				"SELECT message FROM transactions WHERE quality IS NULL ORDER BY epoch ASC, time ASC NULLS LAST LIMIT ? OFFSET ?" :
 				"SELECT message FROM transactions WHERE quality IS NOT NULL ORDER BY epoch ASC, quality DESC NULLS LAST LIMIT ? OFFSET ?", &map);
 			if (!cursor || cursor->error())
@@ -944,7 +947,7 @@ namespace tangent
 			map.push_back(var::set::integer(count));
 			map.push_back(var::set::integer(offset));
 
-			auto cursor = get_storage().emplace_query(__func__, "SELECT message FROM transactions WHERE owner = ? ORDER BY nonce $? LIMIT ? OFFSET ?", &map);
+			auto cursor = get_peer_storage().emplace_query(__func__, "SELECT message FROM transactions WHERE owner = ? ORDER BY nonce $? LIMIT ? OFFSET ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<vector<uptr<ledger::transaction>>>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -977,7 +980,7 @@ namespace tangent
 			map.push_back(var::set::integer(count));
 			map.push_back(var::set::integer(offset));
 
-			auto cursor = get_storage().emplace_query(__func__, "SELECT hash FROM transactions ORDER BY hash ASC LIMIT ? OFFSET ?", &map);
+			auto cursor = get_peer_storage().emplace_query(__func__, "SELECT hash FROM transactions ORDER BY hash ASC LIMIT ? OFFSET ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<vector<uint256_t>>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -998,19 +1001,39 @@ namespace tangent
 
 			return result;
 		}
-		ledger::storage_index_ptr& mempoolstate::get_storage()
+		ledger::storage_index_ptr& mempoolstate::get_peer_storage()
 		{
-			if (!local_storage.may_use())
+			if (!peer_local_storage.may_use())
 			{
-				if (!parent_mempoolstate->local_storage.may_use())
-					parent_mempoolstate->local_storage = ledger::storage_index_ptr(ledger::storage_util::index_storage_of("mempoolstate", &mempoolstate::make_schema));
-				local_storage = parent_mempoolstate->local_storage;
+				if (!parent_mempoolstate->peer_local_storage.may_use())
+					parent_mempoolstate->peer_local_storage = ledger::storage_index_ptr(ledger::storage_util::index_storage_named_of("mempoolindex", "peerdata", &mempoolstate::make_schema));
+				peer_local_storage = parent_mempoolstate->peer_local_storage;
 			}
-			return local_storage;
+			return peer_local_storage;
+		}
+		ledger::storage_index_ptr& mempoolstate::get_secret_storage()
+		{
+			if (!secret_local_storage.may_use())
+			{
+				if (!parent_mempoolstate->secret_local_storage.may_use())
+					parent_mempoolstate->secret_local_storage = ledger::storage_index_ptr(ledger::storage_util::index_storage_named_of("mempoolindex", "secretdata", &mempoolstate::make_schema));
+				secret_local_storage = parent_mempoolstate->secret_local_storage;
+			}
+			return secret_local_storage;
+		}
+		ledger::storage_util::multi_storage_index_ptr mempoolstate::get_multi_storage()
+		{
+			auto& peer_storage = get_peer_storage();
+			auto& secret_storage = get_secret_storage();
+			auto result = ledger::storage_util::multi_storage_index_ptr();
+			result.reserve(2);
+			result.insert(&peer_storage);
+			result.insert(&secret_storage);
+			return result;
 		}
 		uint32_t mempoolstate::get_queries() const
 		{
-			return local_storage.uses();
+			return peer_local_storage.uses() + secret_local_storage.uses();
 		}
 		double mempoolstate::fee_percentile(fee_priority priority)
 		{
@@ -1056,93 +1079,101 @@ namespace tangent
 			auto commitments = ledger::block_header::get_commitment_limit() * (params.user.consensus.commitment_timeout / params.policy.pow.time);
 			return transactions + commitments;
 		}
-		bool mempoolstate::make_schema(sqlite::connection* connection)
+		bool mempoolstate::make_schema(sqlite::connection* connection, const std::string_view& name)
 		{
-			string command = VI_STRINGIFY(
-			CREATE TABLE IF NOT EXISTS nodes
-			(
-				address BLOB NOT NULL,
-				account BLOB(20) NOT NULL,
-				quality INTEGER DEFAULT NULL,
-				services INTEGER NOT NULL,
-				node_message BLOB NOT NULL,
-				wallet_message BLOB NOT NULL,
-				PRIMARY KEY (address)
-				UNIQUE (account)
-			) WITHOUT ROWID;
-			CREATE TABLE IF NOT EXISTS addresses
-			(
-				address BLOB NOT NULL,
-				reserved BOOLEAN NOT NULL,
-				PRIMARY KEY (address)
-			) WITHOUT ROWID;
-			CREATE TABLE IF NOT EXISTS cooldowns
-			(
-				address BLOB NOT NULL,
-				expiration INTEGER NOT NULL,
-				attempt INTEGER NOT NULL,
-				PRIMARY KEY (address)
-			) WITHOUT ROWID;
-			CREATE TABLE IF NOT EXISTS secrets
-			(
-				asset BLOB(32) NOT NULL,
-				owner BLOB(20) NOT NULL,
-				manager BLOB(20) NOT NULL,
-				participant BLOB(20) NOT NULL,
-				entropy_message BLOB NOT NULL,
-				PRIMARY KEY (asset, owner, manager, participant)
-			) WITHOUT ROWID;
-			CREATE INDEX IF NOT EXISTS secrets_manager ON secrets (manager);
-			CREATE TABLE IF NOT EXISTS proofs
-			(
-				hash BLOB(32) NOT NULL,
-				commitment BLOB(32) NOT NULL,
-				asset BLOB(32) NOT NULL,
-				message BLOB NOT NULL,
-				PRIMARY KEY (hash, commitment)
-			);
-			CREATE TABLE IF NOT EXISTS commitments
-			(
-				hash BLOB(32) NOT NULL,
-				commitment BLOB(32) NOT NULL,
-				signature BLOB(65) NOT NULL,
-				PRIMARY KEY (hash, commitment, signature)
-			);
-			CREATE TABLE IF NOT EXISTS transactions
-			(
-				hash BLOB(32) NOT NULL,
-				owner BLOB(20) NOT NULL,
-				asset BLOB(32) NOT NULL,
-				nonce BIGINT NOT NULL,
-				epoch INTEGER DEFAULT 0,
-				quality INTEGER DEFAULT NULL,
-				time INTEGER NOT NULL,
-				price TEXT NOT NULL,
-				message BLOB NOT NULL,
-				PRIMARY KEY (hash)
-			);
-			CREATE TABLE IF NOT EXISTS transactions
-			(
-				hash BLOB(32) NOT NULL,
-				owner BLOB(20) NOT NULL,
-				asset BLOB(32) NOT NULL,
-				nonce BIGINT NOT NULL,
-				epoch INTEGER DEFAULT 0,
-				quality INTEGER DEFAULT NULL,
-				time INTEGER NOT NULL,
-				price TEXT NOT NULL,
-				message BLOB NOT NULL,
-				PRIMARY KEY (hash)
-			);
-			CREATE INDEX IF NOT EXISTS transactions_owner_nonce ON transactions (owner, nonce);
-			CREATE INDEX IF NOT EXISTS transactions_asset_quality ON transactions (asset ASC, quality DESC);
-			CREATE INDEX IF NOT EXISTS transactions_epoch_quality ON transactions (epoch ASC, quality DESC);
-			CREATE INDEX IF NOT EXISTS transactions_epoch_time ON transactions(epoch ASC, time ASC);
-			CREATE TRIGGER IF NOT EXISTS transactions_capacity BEFORE INSERT ON transactions BEGIN
-				DELETE FROM transactions WHERE hash = (SELECT hash FROM transactions ORDER BY epoch DESC, quality ASC NULLS FIRST) AND (SELECT COUNT(1) FROM transactions) >= max_mempool_size;
-			END;);
-			stringify::replace(command, "max_mempool_size", to_string(transaction_limit()));
-
+			string command;
+			if (name == "peerdata")
+			{
+				command = VI_STRINGIFY(
+				CREATE TABLE IF NOT EXISTS nodes
+				(
+					address BLOB NOT NULL,
+					account BLOB(20) NOT NULL,
+					quality INTEGER DEFAULT NULL,
+					services INTEGER NOT NULL,
+					node_message BLOB NOT NULL,
+					wallet_message BLOB NOT NULL,
+					PRIMARY KEY (address)
+					UNIQUE (account)
+				) WITHOUT ROWID;
+				CREATE TABLE IF NOT EXISTS addresses
+				(
+					address BLOB NOT NULL,
+					reserved BOOLEAN NOT NULL,
+					PRIMARY KEY (address)
+				) WITHOUT ROWID;
+				CREATE TABLE IF NOT EXISTS cooldowns
+				(
+					address BLOB NOT NULL,
+					expiration INTEGER NOT NULL,
+					attempt INTEGER NOT NULL,
+					PRIMARY KEY (address)
+				) WITHOUT ROWID;
+				CREATE TABLE IF NOT EXISTS proofs
+				(
+					hash BLOB(32) NOT NULL,
+					commitment BLOB(32) NOT NULL,
+					asset BLOB(32) NOT NULL,
+					message BLOB NOT NULL,
+					PRIMARY KEY (hash, commitment)
+				);
+				CREATE TABLE IF NOT EXISTS commitments
+				(
+					hash BLOB(32) NOT NULL,
+					commitment BLOB(32) NOT NULL,
+					signature BLOB(65) NOT NULL,
+					PRIMARY KEY (hash, commitment, signature)
+				);
+				CREATE TABLE IF NOT EXISTS transactions
+				(
+					hash BLOB(32) NOT NULL,
+					owner BLOB(20) NOT NULL,
+					asset BLOB(32) NOT NULL,
+					nonce BIGINT NOT NULL,
+					epoch INTEGER DEFAULT 0,
+					quality INTEGER DEFAULT NULL,
+					time INTEGER NOT NULL,
+					price TEXT NOT NULL,
+					message BLOB NOT NULL,
+					PRIMARY KEY (hash)
+				);
+				CREATE TABLE IF NOT EXISTS transactions
+				(
+					hash BLOB(32) NOT NULL,
+					owner BLOB(20) NOT NULL,
+					asset BLOB(32) NOT NULL,
+					nonce BIGINT NOT NULL,
+					epoch INTEGER DEFAULT 0,
+					quality INTEGER DEFAULT NULL,
+					time INTEGER NOT NULL,
+					price TEXT NOT NULL,
+					message BLOB NOT NULL,
+					PRIMARY KEY (hash)
+				);
+				CREATE INDEX IF NOT EXISTS transactions_owner_nonce ON transactions (owner, nonce);
+				CREATE INDEX IF NOT EXISTS transactions_asset_quality ON transactions (asset ASC, quality DESC);
+				CREATE INDEX IF NOT EXISTS transactions_epoch_quality ON transactions (epoch ASC, quality DESC);
+				CREATE INDEX IF NOT EXISTS transactions_epoch_time ON transactions(epoch ASC, time ASC);
+				CREATE TRIGGER IF NOT EXISTS transactions_capacity BEFORE INSERT ON transactions BEGIN
+					DELETE FROM transactions WHERE hash = (SELECT hash FROM transactions ORDER BY epoch DESC, quality ASC NULLS FIRST) AND (SELECT COUNT(1) FROM transactions) >= max_mempool_size;
+				END;);
+				stringify::replace(command, "max_mempool_size", to_string(transaction_limit()));
+			}
+			else if (name == "secretdata")
+			{
+				command = VI_STRINGIFY(
+				CREATE TABLE IF NOT EXISTS secrets
+				(
+					asset BLOB(32) NOT NULL,
+					owner BLOB(20) NOT NULL,
+					manager BLOB(20) NOT NULL,
+					participant BLOB(20) NOT NULL,
+					entropy_message BLOB NOT NULL,
+					PRIMARY KEY (asset, owner, manager, participant)
+				) WITHOUT ROWID;
+				CREATE INDEX IF NOT EXISTS secrets_manager ON secrets (manager););
+			}
+			
 			auto cursor = connection->query(command);
 			cursor.report("mempoolstate configuration failed");
 			return (cursor && !cursor->error());

@@ -56,7 +56,7 @@ namespace tangent
 			account_cache() = default;
 			virtual ~account_cache() = default;
 			void clear_locations();
-			void clear_account_location(const algorithm::pubkeyhash_t& account);
+			void revive_location(const algorithm::pubkeyhash_t& account);
 			void set_account_location(const algorithm::pubkeyhash_t& account, uint64_t location);
 			option<uint64_t> get_account_location(const algorithm::pubkeyhash_t& account);
 		};
@@ -72,8 +72,7 @@ namespace tangent
 			uniform_cache() = default;
 			virtual ~uniform_cache() = default;
 			void clear_locations();
-			void clear_uniform_location(uint32_t type, const std::string_view& index);
-			void clear_block_location(uint32_t type, const std::string_view& index);
+			void revive_location(uint32_t type, const std::string_view& index, uint64_t block_number, bool erase);
 			void set_index_location(uint32_t type, const std::string_view& index, uint64_t location);
 			void set_block_location(uint32_t type, uint64_t location, uint64_t block_number, bool hidden);
 			option<uint64_t> get_index_location(uint32_t type, const std::string_view& index);
@@ -96,8 +95,7 @@ namespace tangent
 			multiform_cache() = default;
 			virtual ~multiform_cache() = default;
 			void clear_locations();
-			void clear_multiform_location(uint32_t type, const std::string_view& column, const std::string_view& row);
-			void clear_block_location(uint32_t type, const std::string_view& column, const std::string_view& row);
+			void revive_location(uint32_t type, const std::string_view& column, const std::string_view& row, uint64_t block_number, bool erase);
 			void set_multiform_location(uint32_t type, const std::string_view& column, const std::string_view& row, uint64_t column_location, uint64_t row_location);
 			void set_column_location(uint32_t type, const std::string_view& column, uint64_t location);
 			void set_row_location(uint32_t type, const std::string_view& row, uint64_t location);
@@ -209,6 +207,18 @@ namespace tangent
 
 		struct chainstate final
 		{
+		public:
+			struct state_local_storage
+			{
+				ledger::storage_index_ptr local_storage;
+				uint32_t type;
+			};
+
+			typedef std::array<state_local_storage, 7> uniform_storage_map;
+			typedef std::array<state_local_storage, 8> multiform_storage_map;
+			static_assert(std::tuple_size_v<states::resolver::uniform_type_map> == std::tuple_size_v<uniform_storage_map>, "uniform storage size mismatch");
+			static_assert(std::tuple_size_v<states::resolver::multiform_type_map> == std::tuple_size_v<multiform_storage_map>, "multiform storage size mismatch");
+
 		private:
 			enum class resolver : uint8_t
 			{
@@ -236,8 +246,8 @@ namespace tangent
 			};
 
 		private:
-			hash_map<uint32_t, ledger::storage_index_ptr> uniform_local_storage;
-			hash_map<uint32_t, ledger::storage_index_ptr> multiform_local_storage;
+			uniform_storage_map uniform_local_storage;
+			multiform_storage_map multiform_local_storage;
 			ledger::storage_index_ptr block_local_storage;
 			ledger::storage_index_ptr account_local_storage;
 			ledger::storage_index_ptr tx_local_storage;
@@ -312,8 +322,8 @@ namespace tangent
 			ledger::storage_index_ptr& get_party_storage();
 			ledger::storage_index_ptr& get_alias_storage();
 			ledger::storage_blob_ptr& get_blob_storage();
-			hash_map<uint32_t, ledger::storage_index_ptr>& get_uniform_multi_storage();
-			hash_map<uint32_t, ledger::storage_index_ptr>& get_multiform_multi_storage();
+			uniform_storage_map& get_uniform_multi_storage();
+			multiform_storage_map& get_multiform_multi_storage();
 			ledger::storage_util::multi_storage_index_ptr get_multi_storage();
 			void clear_indexer_cache();
 			uint32_t get_queries() const;

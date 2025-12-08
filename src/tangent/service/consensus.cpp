@@ -918,7 +918,7 @@ namespace tangent
 			}
 
 			algorithm::pubkeyhash_t validation_owner;
-			auto validation = ledger::transaction_context::validate_tx(*candidate_tx, candidate_hash, validation_owner);
+			auto validation = ledger::executor_context::validate_tx(*candidate_tx, candidate_hash, validation_owner);
 			if (!validation)
 			{
 				if (protocol::now().user.consensus.logging)
@@ -932,10 +932,10 @@ namespace tangent
 			{
 				ledger::block temp_block;
 				ledger::block_changelog temp_changelog;
-				ledger::evaluation_context temp_environment;
-				temp_environment.apply_temporary_state(&temp_block, *candidate_tx, { });
+				ledger::solver_context temp_solver;
+				temp_solver.apply_temporary_state(&temp_block, *candidate_tx, { });
 
-				auto validation = ledger::transaction_context::execute_tx(&temp_environment, &temp_block, &temp_changelog, *candidate_tx, candidate_hash, owner, candidate_tx->as_message().data.size(), (uint8_t)ledger::transaction_context::execution_mode::pedantic);
+				auto validation = ledger::executor_context::execute_tx(&temp_solver, &temp_block, &temp_changelog, *candidate_tx, candidate_hash, owner, candidate_tx->as_message().data.size(), (uint8_t)ledger::executor_context::flags::pedantic);
 				if (!validation)
 				{
 					if (protocol::now().user.consensus.logging)
@@ -956,8 +956,8 @@ namespace tangent
 			else if (batch->proofs.empty())
 				return layer_exception("proof required");
 
-			auto context = ledger::transaction_context();
-			auto collision = context.get_witness_transaction(batch->asset, batch->proofs.begin()->second.transaction_id);
+			auto executor = ledger::executor_context(nullptr);
+			auto collision = executor.get_witness_transaction(batch->asset, batch->proofs.begin()->second.transaction_id);
 			if (collision)
 			{
 				mempool.remove_attestation(attestation_hash);
@@ -966,7 +966,7 @@ namespace tangent
 
 			uint256_t best_commitment_hash = 0;
 			btree_map<uint256_t, btree_set<algorithm::pubkeyhash_t>> attesters;
-			auto verification = transactions::attestate::verify_proof_commitment(&context, batch->asset, batch->commitments, best_commitment_hash, attesters);
+			auto verification = transactions::attestate::verify_proof_commitment(&executor, batch->asset, batch->commitments, best_commitment_hash, attesters);
 			if (!verification)
 				return verification;
 
@@ -1089,8 +1089,8 @@ namespace tangent
 			if (!algorithm::signing::recover_hash(commitment_hash, attester, commitment_signature))
 				return remote_exception("invalid commitment");
 
-			auto context = ledger::transaction_context();
-			auto validation = context.get_verified_validator_attestation(asset, attester);
+			auto executor = ledger::executor_context(nullptr);
+			auto validation = executor.get_verified_validator_attestation(asset, attester);
 			if (!validation)
 				return remote_exception(std::move(validation.error().message()));
 
@@ -1117,7 +1117,6 @@ namespace tangent
 			if (!address)
 				return remote_exception("invalid address");
 
-			auto context = ledger::transaction_context();
 			size_t accounts_size = event.args.size() - 2;
 			btree_set<algorithm::pubkeyhash_t> accounts;
 			for (size_t i = 2; i < event.args.size(); i++)
@@ -1204,7 +1203,7 @@ namespace tangent
 				peer_node.address = socket_address(state->peer_address(), peer_node.address.get_ip_port().or_else(protocol::now().user.consensus.port));
 
 			algorithm::signing::derive_public_key_hash(peer_wallet.public_key, peer_wallet.public_key_hash);
-			if (!peer_node.is_valid() || peer_wallet.public_key_hash.empty() || peer_wallet.public_key_hash.equals(descriptor.second.public_key_hash))
+			if (!peer_node.is_valid() || peer_wallet.public_key_hash.empty() || peer_wallet.public_key_hash.equals(descriptor.second.public_key_hash) || find_by_account(peer_wallet.public_key_hash))
 			{
 				mempool.clear_node(peer_descriptor.first.address);
 				return remote_exception("invalid node");
@@ -1231,14 +1230,6 @@ namespace tangent
 			if (event.args.size() < 3)
 				return remote_exception("invalid arguments");
 
-			auto mempool = storages::mempoolstate();
-			auto address = text_address_to_socket_address(event.args[0].as_string());
-			if (address && !storages::routing_util::is_address_reserved(*address) && !storages::routing_util::is_address_private(*address))
-			{
-				descriptor.first.address = std::move(*address);
-				apply_node(mempool, descriptor).report("mempool local node save failed");
-			}
-
 			auto block_handle = exchange();
 			block_handle.args.reserve(1);
 			block_handle.args.push_back(event.args[1]);
@@ -1246,6 +1237,14 @@ namespace tangent
 			auto status = broadcast_block_hash(uref(state), std::move(block_handle));
 			if (!status)
 				return status.error();
+
+			auto mempool = storages::mempoolstate();
+			auto address = text_address_to_socket_address(event.args[0].as_string());
+			if (address && !storages::routing_util::is_address_reserved(*address) && !storages::routing_util::is_address_private(*address))
+			{
+				descriptor.first.address = std::move(*address);
+				apply_node(mempool, descriptor).report("mempool local node save failed");
+			}
 
 			size_t new_nodes = 0;
 			bool private_network = state->private_network();
@@ -1420,8 +1419,8 @@ namespace tangent
 			if (chainstate.get_latest_block_number().or_else(1) < block_number)
 				return remote_exception::retry();
 
-			auto context = ledger::transaction_context();
-			auto proof_transaction = context.get_block_transaction<transactions::route>(proof_hash);
+			auto executor = ledger::executor_context(nullptr);
+			auto proof_transaction = executor.get_block_transaction<transactions::route>(proof_hash);
 			if (!proof_transaction)
 				return remote_exception("state proof not found");
 
@@ -1448,11 +1447,11 @@ namespace tangent
 				encrypted_shares[participant] = std::move(encrypted_share);
 			}
 
-			auto dispatcher = dispatch_context(this);
-			context.transaction = *proof_transaction->transaction;
-			context.receipt = std::move(proof_transaction->receipt);
+			auto dispatcher = dispatcher_context(this);
+			executor.transaction = *proof_transaction->transaction;
+			executor.receipt = std::move(proof_transaction->receipt);
 
-			auto aggregation = local_dispatch_context::distribute_entropy_shares(&dispatcher, &context, encrypted_shares);
+			auto aggregation = local_dispatcher_context::distribute_entropy_shares(&dispatcher, &executor, encrypted_shares);
 			if (!aggregation)
 				return remote_exception(std::move(aggregation.error().message()));
 
@@ -1472,8 +1471,8 @@ namespace tangent
 			if (chainstate.get_latest_block_number().or_else(1) < block_number)
 				return remote_exception::retry();
 
-			auto context = ledger::transaction_context();
-			auto proof_transaction = context.get_block_transaction<transactions::setup>(proof_hash);
+			auto executor = ledger::executor_context(nullptr);
+			auto proof_transaction = executor.get_block_transaction<transactions::setup>(proof_hash);
 			if (!proof_transaction)
 				return remote_exception("state proof not found");
 
@@ -1483,7 +1482,7 @@ namespace tangent
 
 			auto intermediate = string();
 			auto reader = format::ro_stream(packed->at(2).as_string());
-			auto aggregator = ledger::dispatch_context::entropy_aggregation_state();
+			auto aggregator = ledger::dispatcher_context::entropy_aggregation_state();
 			if (!reader.read_string(reader.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, aggregator.public_key.data, sizeof(aggregator.public_key.data)))
 				return remote_exception("invalid public key of new participant");
 
@@ -1500,11 +1499,11 @@ namespace tangent
 				aggregator.encrypted_shares[ref_hash] = btree_map<algorithm::pubkeyhash_t, string>();
 			}
 
-			auto dispatcher = dispatch_context(this);
-			context.transaction = *proof_transaction->transaction;
-			context.receipt = std::move(proof_transaction->receipt);
+			auto dispatcher = dispatcher_context(this);
+			executor.transaction = *proof_transaction->transaction;
+			executor.receipt = std::move(proof_transaction->receipt);
 
-			auto aggregation = local_dispatch_context::aggregate_entropy_shares(&dispatcher, &context, aggregator.public_key, aggregator.encrypted_shares);
+			auto aggregation = local_dispatcher_context::aggregate_entropy_shares(&dispatcher, &executor, aggregator.public_key, aggregator.encrypted_shares);
 			if (!aggregation)
 				return remote_exception(std::move(aggregation.error().message()));
 
@@ -1536,8 +1535,8 @@ namespace tangent
 			if (chainstate.get_latest_block_number().or_else(1) < block_number)
 				return remote_exception::retry();
 
-			auto context = ledger::transaction_context();
-			auto proof_transaction = context.get_block_transaction<transactions::setup>(proof_hash);
+			auto executor = ledger::executor_context(nullptr);
+			auto proof_transaction = executor.get_block_transaction<transactions::setup>(proof_hash);
 			if (!proof_transaction)
 				return remote_exception("state proof not found");
 
@@ -1546,15 +1545,15 @@ namespace tangent
 				return remote_exception("manager public key not found");
 
 			auto reader = format::ro_stream(packed->at(2).as_string());
-			auto aggregator = ledger::dispatch_context::entropy_recovery_state();
+			auto aggregator = ledger::dispatcher_context::entropy_recovery_state();
 			if (!aggregator.load_message(reader))
 				return remote_exception("state machine not valid");
 
-			auto dispatcher = dispatch_context(this);
-			context.transaction = *proof_transaction->transaction;
-			context.receipt = std::move(proof_transaction->receipt);
+			auto dispatcher = dispatcher_context(this);
+			executor.transaction = *proof_transaction->transaction;
+			executor.receipt = std::move(proof_transaction->receipt);
 
-			auto aggregation = local_dispatch_context::recover_entropy(&dispatcher, &context, aggregator.proof, aggregator.encrypted_shares, aggregator.encrypted_entropies);
+			auto aggregation = local_dispatcher_context::recover_entropy(&dispatcher, &executor, aggregator.proof, aggregator.encrypted_shares, aggregator.encrypted_entropies);
 			if (!aggregation)
 				return remote_exception(std::move(aggregation.error().message()));
 
@@ -1574,8 +1573,8 @@ namespace tangent
 			if (chainstate.get_latest_block_number().or_else(1) < block_number)
 				return remote_exception::retry();
 
-			auto context = ledger::transaction_context();
-			auto proof_transaction = context.get_block_transaction<transactions::route>(proof_hash);
+			auto executor = ledger::executor_context(nullptr);
+			auto proof_transaction = executor.get_block_transaction<transactions::route>(proof_hash);
 			if (!proof_transaction)
 				return remote_exception("state proof not found");
 
@@ -1602,11 +1601,11 @@ namespace tangent
 				list.insert(std::make_pair(item, string()));
 			}
 
-			auto dispatcher = dispatch_context(this);
-			context.transaction = *proof_transaction->transaction;
-			context.receipt = std::move(proof_transaction->receipt);
+			auto dispatcher = dispatcher_context(this);
+			executor.transaction = *proof_transaction->transaction;
+			executor.receipt = std::move(proof_transaction->receipt);
 
-			auto aggregation = local_dispatch_context::aggregate_public_key(&dispatcher, &context, list, **aggregator);
+			auto aggregation = local_dispatcher_context::aggregate_public_key(&dispatcher, &executor, list, **aggregator);
 			if (!aggregation)
 				return remote_exception(std::move(aggregation.error().message()));
 
@@ -1633,8 +1632,8 @@ namespace tangent
 			if (chainstate.get_latest_block_number().or_else(1) < block_number)
 				return remote_exception::retry();
 
-			auto context = ledger::transaction_context();
-			auto proof_transaction = context.get_block_transaction<transactions::withdraw>(proof_hash);
+			auto executor = ledger::executor_context(nullptr);
+			auto proof_transaction = executor.get_block_transaction<transactions::withdraw>(proof_hash);
 			if (!proof_transaction)
 				return remote_exception("state proof not found");
 
@@ -1652,11 +1651,11 @@ namespace tangent
 			if (!aggregator)
 				return remote_exception("in state machine not valid");
 
-			auto dispatcher = dispatch_context(this);
-			context.transaction = *proof_transaction->transaction;
-			context.receipt = std::move(proof_transaction->receipt);
+			auto dispatcher = dispatcher_context(this);
+			executor.transaction = *proof_transaction->transaction;
+			executor.receipt = std::move(proof_transaction->receipt);
 
-			auto aggregation = local_dispatch_context::aggregate_signature(&dispatcher, &context, message, **aggregator);
+			auto aggregation = local_dispatcher_context::aggregate_signature(&dispatcher, &executor, message, **aggregator);
 			if (!aggregation)
 				return remote_exception(std::move(aggregation.error().message()));
 
@@ -2387,16 +2386,10 @@ namespace tangent
 
 							unique.unlock();
 							auto result = it->second.event(this, uref(state), message);
-							if (!result && !result.error().is_retry())
-							{
-								if (protocol::now().user.consensus.logging)
-									VI_WARN("node %s event \"%.*s\" error: %s", state->peer_address().c_str(), (int)it->second.name.size(), it->second.name.data(), result.what().c_str());
-								goto abort;
-							}
-
-							if (protocol::now().user.consensus.logging)
+							if (!result && protocol::now().user.consensus.logging)
+								VI_WARN("node %s event \"%.*s\" error: %s", state->peer_address().c_str(), (int)it->second.name.size(), it->second.name.data(), result.what().c_str());
+							else if (result && protocol::now().user.consensus.logging)
 								VI_DEBUG("node %s event \"%.*s\" result: %s", state->peer_address().c_str(), (int)it->second.name.size(), it->second.name.data(), result ? "OK" : "RETRY");
-
 							break;
 						}
 						case exchange::side::query:
@@ -2406,17 +2399,13 @@ namespace tangent
 								goto abort;
 
 							auto result = it->second.query(this, uref(state), message);
-							if (!result && !result.error().is_retry())
-							{
-								if (protocol::now().user.consensus.logging)
-									VI_WARN("node %s query \"%.*s\" error out: %s", state->peer_address().c_str(), (int)it->second.name.size(), it->second.name.data(), result.what().c_str());
-								goto abort;
-							}
-
+							if (!result && protocol::now().user.consensus.logging)
+								VI_WARN("node %s query \"%.*s\" error out: %s", state->peer_address().c_str(), (int)it->second.name.size(), it->second.name.data(), result.what().c_str());
+							else if (result && protocol::now().user.consensus.logging)
+								VI_DEBUG("node %s query \"%.*s\" result out: %s", state->peer_address().c_str(), (int)it->second.name.size(), it->second.name.data(), result ? result->empty() ? "OK" : stringify::text("[%i values]", (int)result->size()).c_str() : "RETRY");
+							
 							state->push_event(message.session, pack_query_result(result));
 							push_messages(uref(state));
-							if (protocol::now().user.consensus.logging)
-								VI_DEBUG("node %s query \"%.*s\" result out: %s", state->peer_address().c_str(), (int)it->second.name.size(), it->second.name.data(), result ? result->empty() ? "OK" : stringify::text("[%i values]", (int)result->size()).c_str() : "RETRY");
 							break;
 						}
 						case exchange::side::forward:
@@ -2443,12 +2432,9 @@ namespace tangent
 							query(uref(forward_state), method, std::move(message.args), protocol::now().user.tcp.timeout).when([this, state, forward_state, method, session](expects_rt<exchange>&& result) mutable
 							{
 								auto* descriptor = state->as_descriptor();
-								if (!result && !result.error().is_retry())
-								{
-									if (protocol::now().user.consensus.logging)
-										VI_WARN("node %s forward query \"%.*s\" error in: %s", forward_state->peer_address().c_str(), (int)method.name.size(), method.name.data(), result.what().c_str());
-								}
-								else if (protocol::now().user.consensus.logging)
+								if (!result && protocol::now().user.consensus.logging)
+									VI_WARN("node %s forward query \"%.*s\" error in: %s", forward_state->peer_address().c_str(), (int)method.name.size(), method.name.data(), result.what().c_str());
+								else if (result && protocol::now().user.consensus.logging)
 									VI_DEBUG("node %s forward query \"%.*s\" result in: %s", state->peer_address().c_str(), (int)method.name.size(), method.name.data(), result ? result->args.empty() ? "OK" : stringify::text("[%i values]", (int)result->args.size()).c_str() : "RETRY");
 
 								state->push_event(session, pack_query_result(result ? expects_rt<format::variables>(std::move(result->args)) : expects_rt<format::variables>(result.error())));
@@ -2567,19 +2553,24 @@ namespace tangent
 			if (state)
 				return pull_messages(std::move(state));
 
-			auto duplicate = find_by_address(node->address);
-			if (!duplicate)
-			{
-				node->stream->set_io_timeout(protocol::now().user.tcp.timeout);
-				state = new relay(node_type::inbound, node);
-				append_node(uref(state));
-				pull_messages(std::move(state));
-			}
-			else
-			{
-				node->abort();
-				finalize(node);
-			}
+			node->stream->set_io_timeout(protocol::now().user.tcp.timeout);
+			state = new relay(node_type::inbound, node);
+			append_node(uref(state));
+			pull_messages(std::move(state));
+		}
+		bool server_node::try_acquire_checkpointer()
+		{
+			umutex<std::recursive_mutex> unique(sync.fork);
+			if (mempool.verifying.load())
+				return false;
+
+			mempool.verifying = true;
+			return true;
+		}
+		void server_node::release_checkpointer()
+		{
+			umutex<std::recursive_mutex> unique(sync.fork);
+			mempool.verifying = false;
 		}
 		bool server_node::run_topology_optimization()
 		{
@@ -2791,7 +2782,7 @@ namespace tangent
 				auto& [node, wallet] = descriptor;
 				auto chain = storages::chainstate();
 				auto tip = chain.get_latest_block_header();
-				auto priority = environment.configure_priority_from_validator(wallet.public_key_hash, wallet.secret_key, tip.address());
+				auto priority = solver.apply_validator_state(wallet.public_key_hash, wallet.secret_key, tip.address());
 				auto position = priority.or_else(protocol::now().policy.production.max_per_block);
 				auto baseline_solution_time = tip ? tip->get_slot_proof_duration_average() : 0;
 				auto current_node_solution_time = (uint64_t)((double)baseline_solution_time * algorithm::wesolowski::adjustment_scaling(position));
@@ -2817,19 +2808,19 @@ namespace tangent
 				size_t offset[2] = { 0, 0 }, count = 512;
 				bool accepting[2] = { true, true };
 				auto mempool = storages::mempoolstate();
-				while (is_active() && (accepting[0] || accepting[1]) && environment.can_accept_more_transactions())
+				while (is_active() && (accepting[0] || accepting[1]) && solver.can_accept_more_transactions())
 				{
 					auto transactions = accepting[0] ? mempool.get_transactions(false, offset[0], count) : expects_lr<vector<uptr<ledger::transaction>>>(layer_exception());
 					auto commitments = accepting[1] ? mempool.get_transactions(true, offset[1], count) : expects_lr<vector<uptr<ledger::transaction>>>(layer_exception());
-					offset[0] += transactions ? environment.try_include_transactions(std::move(*transactions)) : 0;
-					offset[1] += commitments ? environment.try_include_transactions(std::move(*commitments)) : 0;
+					offset[0] += transactions ? solver.try_include_transactions(std::move(*transactions)) : 0;
+					offset[1] += commitments ? solver.try_include_transactions(std::move(*commitments)) : 0;
 					accepting[0] = count == (transactions ? transactions->size() : 0);
 					accepting[1] = count == (commitments ? commitments->size() : 0);
 				}
-				if (!is_active() || (environment.incoming.empty() && protocol::now().is(network_type::regtest)))
-					return environment.cleanup().report("mempool cleanup failed");
+				if (!is_active() || (solver.transactions.pending.empty() && protocol::now().is(network_type::regtest)))
+					return solver.erase_failed_transactions().report("mempool cleanup failed");
 
-				auto evaluation = environment.evaluate_block([&](bool commitment) -> uptr<ledger::transaction>
+				auto evaluation = solver.evaluate_block([&](bool commitment) -> uptr<ledger::transaction>
 				{
 					auto candidate = mempool.get_transactions(commitment, offset[commitment ? 1 : 0]++, 1);
 					return candidate && !candidate->empty() ? candidate->front().reset() : nullptr;
@@ -2837,7 +2828,7 @@ namespace tangent
 				if (!evaluation)
 					return evaluation.report("block evaluation failed");
 
-				auto solution = environment.solve_evaluated_block(evaluation->block);
+				auto solution = solver.solve_evaluated_block(*evaluation);
 				if (!solution)
 					return solution.report("block solution failed");
 
@@ -2845,13 +2836,13 @@ namespace tangent
 				if (is_active() && (!tip || evaluation->block.number > tip->number || (evaluation->block.number == tip->number && evaluation->block.priority < tip->priority)))
 				{
 					if (protocol::now().user.consensus.logging)
-						VI_INFO("block %s solved (number: %" PRIu64", txns: %" PRIu64 ", leader: %" PRIu64 ", work: < ~%" PRIu64 " sec.)", algorithm::encoding::encode_0xhex256(evaluation->block.as_hash()).c_str(), evaluation->block.number, (uint64_t)environment.incoming.size(), position + 1, current_node_solution_time / 1000 + 1);
+						VI_INFO("block %s solved (number: %" PRIu64", txns: %" PRIu64 ", leader: %" PRIu64 ", work: < ~%" PRIu64 " sec.)", algorithm::encoding::encode_0xhex256(evaluation->block.as_hash()).c_str(), evaluation->block.number, (uint64_t)solver.transactions.pending.size(), position + 1, current_node_solution_time / 1000 + 1);
 
 					if (accept_block(nullptr, std::move(*evaluation), 0))
 						goto next_block;
 				}
 				else if (protocol::now().user.consensus.logging)
-					VI_WARN("block %s dismissed (number: %" PRIu64", txns: %" PRIu64 ", leader: %" PRIu64 ", work: < ~%" PRIu64 " sec. wasted)", algorithm::encoding::encode_0xhex256(evaluation->block.as_hash()).c_str(), evaluation->block.number, (uint64_t)environment.incoming.size(), position + 1, current_node_solution_time / 1000 + 1);
+					VI_WARN("block %s dismissed (number: %" PRIu64", txns: %" PRIu64 ", leader: %" PRIu64 ", work: < ~%" PRIu64 " sec. wasted)", algorithm::encoding::encode_0xhex256(evaluation->block.as_hash()).c_str(), evaluation->block.number, (uint64_t)solver.transactions.pending.size(), position + 1, current_node_solution_time / 1000 + 1);
 			});
 		}
 		bool server_node::run_block_dispatcher()
@@ -2865,7 +2856,7 @@ namespace tangent
 
 			return control_sys.async_task_if_none(TASK_BLOCK_DISPATCHER, [this, tip = std::move(tip)]() mutable -> promise<void>
 			{
-				auto dispatcher = dispatch_context(this);
+				auto dispatcher = dispatcher_context(this);
 				coawait(dispatcher.dispatch_async(tip));
 
 				auto& sendable_transactions = dispatcher.get_sendable_transactions();
@@ -3140,8 +3131,8 @@ namespace tangent
 											\
 											<+> - <+> = possible reorganization
 			*/
-			auto reorganization = candidate.requires_reorganization();
-			auto validation = fork_branch && reorganization ? expects_lr<void>(expectation::met) : (from ? candidate.block.validate(parent_block.address(), &candidate) : environment.verify_solved_block(candidate.block, &candidate.state));
+			auto reorganization = solver.requires_reorganization(candidate);
+			auto validation = fork_branch && reorganization ? expects_lr<void>(expectation::met) : (from ? candidate.block.validate(parent_block.address(), &candidate) : solver.verify_solved_block(candidate));
 			if (!validation)
 			{
 				if (protocol::now().user.consensus.logging)
@@ -3155,12 +3146,15 @@ namespace tangent
 				return false;
 			}
 
-			umutex<std::recursive_mutex> unique(sync.fork);
-			bool busy = mempool.checkpointing.load();
-			mempool.checkpointing = true;
-			unique.unlock();
-			auto mutation = busy ? expects_lr<ledger::block_checkpoint>(layer_exception("busy in chain reorganization")) : candidate.checkpoint();
-			mempool.checkpointing = false;
+			if (!try_acquire_checkpointer())
+			{
+				if (protocol::now().user.consensus.logging)
+					VI_WARN("block %s checkpoint failed: checkpointer busy", algorithm::encoding::encode_0xhex256(candidate_hash).c_str());
+				return false;
+			}
+
+			auto mutation = solver.checkpoint_solved_block(candidate);
+			release_checkpointer();
 			if (!mutation)
 			{
 				if (protocol::now().user.consensus.logging)
@@ -3234,18 +3228,18 @@ namespace tangent
 		void server_node::fill_node_services()
 		{
 			auto& [node, wallet] = descriptor;
-			auto context = ledger::transaction_context();
-			node.services.has_production = protocol::now().user.consensus.may_propose ? context.get_validator_production(wallet.public_key_hash).or_else(states::validator_production(algorithm::pubkeyhash_t(), nullptr)).is_active() : false;
-			node.services.has_participation = context.get_validator_participation(wallet.public_key_hash).or_else(states::validator_participation(algorithm::pubkeyhash_t(), nullptr)).is_active();
+			auto executor = ledger::executor_context(nullptr);
+			node.services.has_production = protocol::now().user.consensus.may_propose ? executor.get_validator_production(wallet.public_key_hash).or_else(states::validator_production(algorithm::pubkeyhash_t(), nullptr)).is_active() : false;
+			node.services.has_participation = executor.get_validator_participation(wallet.public_key_hash).or_else(states::validator_participation(algorithm::pubkeyhash_t(), nullptr)).is_active();
 			node.services.has_attestation = false;
 			if (protocol::now().user.consensus.may_propose && !node.services.has_production)
-				node.services.has_production = context.calculate_producers_size().or_else(0) == 0;
+				node.services.has_production = executor.calculate_producers_size().or_else(0) == 0;
 
 			size_t count = 64;
 			size_t offset = 0;
 			while (true)
 			{
-				auto attestations = context.get_validator_attestations(wallet.public_key_hash, offset, count);
+				auto attestations = executor.get_validator_attestations(wallet.public_key_hash, offset, count);
 				if (!attestations || attestations->empty())
 					break;
 
@@ -3321,9 +3315,9 @@ namespace tangent
 			}
 			return best_fork;
 		}
-		dispatch_context server_node::get_dispatcher() const
+		dispatcher_context server_node::get_dispatcher() const
 		{
-			return dispatch_context((server_node*)this);
+			return dispatcher_context((server_node*)this);
 		}
 		service_control::service_node server_node::get_entrypoint()
 		{
@@ -3460,25 +3454,25 @@ namespace tangent
 			return it != nodes.end() ? it->second : nullptr;
 		}
 
-		dispatch_context::dispatch_context(server_node* new_server) : server(new_server)
+		dispatcher_context::dispatcher_context(server_node* new_server) : server(new_server)
 		{
 			VI_ASSERT(server != nullptr, "server should be set");
 		}
-		dispatch_context::dispatch_context(const dispatch_context& other) noexcept : ledger::dispatch_context(other), server(other.server)
+		dispatcher_context::dispatcher_context(const dispatcher_context& other) noexcept : ledger::dispatcher_context(other), server(other.server)
 		{
 		}
-		dispatch_context& dispatch_context::operator=(const dispatch_context& other) noexcept
+		dispatcher_context& dispatcher_context::operator=(const dispatcher_context& other) noexcept
 		{
 			if (this == &other)
 				return *this;
 
-			auto& base_this = *(ledger::dispatch_context*)this;
-			auto& base_other = *(const ledger::dispatch_context*)&other;
+			auto& base_this = *(ledger::dispatcher_context*)this;
+			auto& base_other = *(const ledger::dispatcher_context*)&other;
 			base_this = base_other;
 			server = other.server;
 			return *this;
 		}
-		algorithm::pubkey_t dispatch_context::get_public_key(const algorithm::pubkeyhash_t& validator) const
+		algorithm::pubkey_t dispatcher_context::get_public_key(const algorithm::pubkeyhash_t& validator) const
 		{
 			auto target = server->find_public_key(validator);
 			if (!target)
@@ -3486,12 +3480,12 @@ namespace tangent
 
 			return *target;
 		}
-		const ledger::wallet& dispatch_context::get_runner_wallet() const
+		const ledger::wallet& dispatcher_context::get_runner_wallet() const
 		{
 			auto& [node, wallet] = server->descriptor;
 			return wallet;
 		}
-		expects_promise_rt<void> dispatch_context::aggregate_validators(const btree_set<algorithm::pubkeyhash_t>& validators)
+		expects_promise_rt<void> dispatcher_context::aggregate_validators(const btree_set<algorithm::pubkeyhash_t>& validators)
 		{
 			if (protocol::now().user.consensus.logging)
 				VI_INFO("logical connection: connect to %i validators", (int)validators.size());
@@ -3516,14 +3510,14 @@ namespace tangent
 				coreturn expectation::met;
 			});
 		}
-		expects_promise_rt<void> dispatch_context::distribute_entropy_shares(const ledger::transaction_context* context, entropy_distribution_state& state, const algorithm::pubkeyhash_t& validator)
+		expects_promise_rt<void> dispatcher_context::distribute_entropy_shares(const ledger::executor_context* executor, entropy_distribution_state& state, const algorithm::pubkeyhash_t& validator)
 		{
 			if (protocol::now().user.consensus.logging)
 				VI_DEBUG("mpc entropy shares distribution: inquiry to %s", algorithm::signing::encode_address(validator).c_str());
 
-			return coasync<expects_rt<void>>([this, context, &state, &validator]() mutable -> expects_promise_rt<void>
+			return coasync<expects_rt<void>>([this, executor, &state, &validator]() mutable -> expects_promise_rt<void>
 			{
-				auto result = coawait(distribute_entropy_shares_internal(context, state, validator));
+				auto result = coawait(distribute_entropy_shares_internal(executor, state, validator));
 				if (!result)
 				{
 					if (protocol::now().user.consensus.logging)
@@ -3537,17 +3531,17 @@ namespace tangent
 				coreturn expectation::met;
 			});
 		}
-		expects_promise_rt<void> dispatch_context::distribute_entropy_shares_internal(const ledger::transaction_context* context, entropy_distribution_state& state, const algorithm::pubkeyhash_t& validator)
+		expects_promise_rt<void> dispatcher_context::distribute_entropy_shares_internal(const ledger::executor_context* executor, entropy_distribution_state& state, const algorithm::pubkeyhash_t& validator)
 		{
 			if (is_running_on(validator.data))
-				coreturn local_dispatch_context::distribute_entropy_shares(this, context, state.encrypted_shares);
+				coreturn local_dispatcher_context::distribute_entropy_shares(this, executor, state.encrypted_shares);
 
 			auto public_key = server->find_public_key(validator);
 			if (!public_key)
 				coreturn remote_exception::retry();
 
 			uint64_t attempt = 0;
-			auto args = pack_private_result({ format::variable(context->receipt.block_number), format::variable(context->receipt.transaction_hash), format::variable(state.as_message().data) }, *public_key);
+			auto args = pack_private_result({ format::variable(executor->receipt.block_number), format::variable(executor->receipt.transaction_hash), format::variable(state.as_message().data) }, *public_key);
 			if (!args)
 				coreturn args.error();
 		retry:
@@ -3570,14 +3564,14 @@ namespace tangent
 
 			coreturn expectation::met;
 		}
-		expects_promise_rt<void> dispatch_context::aggregate_entropy_shares(const ledger::transaction_context* context, entropy_aggregation_state& state, const algorithm::pubkeyhash_t& validator)
+		expects_promise_rt<void> dispatcher_context::aggregate_entropy_shares(const ledger::executor_context* executor, entropy_aggregation_state& state, const algorithm::pubkeyhash_t& validator)
 		{
 			if (protocol::now().user.consensus.logging)
 				VI_DEBUG("mpc entropy shares aggregation: inquiry to %s", algorithm::signing::encode_address(validator).c_str());
 
-			return coasync<expects_rt<void>>([this, context, &state, &validator]() mutable -> expects_promise_rt<void>
+			return coasync<expects_rt<void>>([this, executor, &state, &validator]() mutable -> expects_promise_rt<void>
 			{
-				auto result = coawait(aggregate_entropy_shares_internal(context, state, validator));
+				auto result = coawait(aggregate_entropy_shares_internal(executor, state, validator));
 				if (!result)
 				{
 					if (protocol::now().user.consensus.logging)
@@ -3591,10 +3585,10 @@ namespace tangent
 				coreturn expectation::met;
 			});
 		}
-		expects_promise_rt<void> dispatch_context::aggregate_entropy_shares_internal(const ledger::transaction_context* context, entropy_aggregation_state& state, const algorithm::pubkeyhash_t& validator)
+		expects_promise_rt<void> dispatcher_context::aggregate_entropy_shares_internal(const ledger::executor_context* executor, entropy_aggregation_state& state, const algorithm::pubkeyhash_t& validator)
 		{
 			if (is_running_on(validator.data))
-				coreturn local_dispatch_context::aggregate_entropy_shares(this, context, state.public_key, state.encrypted_shares);
+				coreturn local_dispatcher_context::aggregate_entropy_shares(this, executor, state.public_key, state.encrypted_shares);
 
 			auto public_key = server->find_public_key(validator);
 			if (!public_key)
@@ -3607,7 +3601,7 @@ namespace tangent
 				writer.write_integer(ref_hash);
 
 			uint64_t attempt = 0;
-			auto args = pack_private_result({ format::variable(context->receipt.block_number), format::variable(context->receipt.transaction_hash), format::variable(state.as_message().data) }, *public_key);
+			auto args = pack_private_result({ format::variable(executor->receipt.block_number), format::variable(executor->receipt.transaction_hash), format::variable(state.as_message().data) }, *public_key);
 			if (!args)
 				coreturn args.error();
 		retry:
@@ -3656,14 +3650,14 @@ namespace tangent
 
 			coreturn expectation::met;
 		}
-		expects_promise_rt<void> dispatch_context::recover_entropy(const ledger::transaction_context* context, entropy_recovery_state& state, const algorithm::pubkeyhash_t& validator)
+		expects_promise_rt<void> dispatcher_context::recover_entropy(const ledger::executor_context* executor, entropy_recovery_state& state, const algorithm::pubkeyhash_t& validator)
 		{
 			if (protocol::now().user.consensus.logging)
 				VI_DEBUG("mpc entropy recovery: inquiry to %s", algorithm::signing::encode_address(validator).c_str());
 
-			return coasync<expects_rt<void>>([this, context, &state, &validator]() mutable -> expects_promise_rt<void>
+			return coasync<expects_rt<void>>([this, executor, &state, &validator]() mutable -> expects_promise_rt<void>
 			{
-				auto result = coawait(recover_entropy_internal(context, state, validator));
+				auto result = coawait(recover_entropy_internal(executor, state, validator));
 				if (!result)
 				{
 					if (protocol::now().user.consensus.logging)
@@ -3677,17 +3671,17 @@ namespace tangent
 				coreturn expectation::met;
 			});
 		}
-		expects_promise_rt<void> dispatch_context::recover_entropy_internal(const ledger::transaction_context* context, entropy_recovery_state& state, const algorithm::pubkeyhash_t& validator)
+		expects_promise_rt<void> dispatcher_context::recover_entropy_internal(const ledger::executor_context* executor, entropy_recovery_state& state, const algorithm::pubkeyhash_t& validator)
 		{
 			if (is_running_on(validator.data))
-				coreturn local_dispatch_context::recover_entropy(this, context, state.proof, state.encrypted_shares, state.encrypted_entropies);
+				coreturn local_dispatcher_context::recover_entropy(this, executor, state.proof, state.encrypted_shares, state.encrypted_entropies);
 
 			auto public_key = server->find_public_key(validator);
 			if (!public_key)
 				coreturn remote_exception::retry();
 
 			uint64_t attempt = 0;
-			auto args = pack_private_result({ format::variable(context->receipt.block_number), format::variable(context->receipt.transaction_hash), format::variable(state.as_message().data) }, *public_key);
+			auto args = pack_private_result({ format::variable(executor->receipt.block_number), format::variable(executor->receipt.transaction_hash), format::variable(state.as_message().data) }, *public_key);
 			if (!args)
 				coreturn args.error();
 		retry:
@@ -3714,14 +3708,14 @@ namespace tangent
 
 			coreturn expectation::met;
 		}
-		expects_promise_rt<void> dispatch_context::aggregate_public_key(const ledger::transaction_context* context, public_state& state, const algorithm::pubkeyhash_t& validator)
+		expects_promise_rt<void> dispatcher_context::aggregate_public_key(const ledger::executor_context* executor, public_state& state, const algorithm::pubkeyhash_t& validator)
 		{
 			if (protocol::now().user.consensus.logging)
 				VI_DEBUG("mpc public key aggregation: inquiry to %s", algorithm::signing::encode_address(validator).c_str());
 
-			return coasync<expects_rt<void>>([this, context, &state, &validator]() mutable -> expects_promise_rt<void>
+			return coasync<expects_rt<void>>([this, executor, &state, &validator]() mutable -> expects_promise_rt<void>
 			{
-				auto result = coawait(aggregate_public_key_internal(context, state, validator));
+				auto result = coawait(aggregate_public_key_internal(executor, state, validator));
 				if (!result)
 				{
 					if (protocol::now().user.consensus.logging)
@@ -3735,14 +3729,14 @@ namespace tangent
 				coreturn expectation::met;
 			});
 		}
-		expects_promise_rt<void> dispatch_context::aggregate_public_key_internal(const ledger::transaction_context* context, public_state& state, const algorithm::pubkeyhash_t& validator)
+		expects_promise_rt<void> dispatcher_context::aggregate_public_key_internal(const ledger::executor_context* executor, public_state& state, const algorithm::pubkeyhash_t& validator)
 		{
 			if (is_running_on(validator.data))
 			{
 				auto runner_wallet = get_runner_wallet();
-				auto list = local_dispatch_context::new_encrypted_distribution_shares(runner_wallet.public_key, state);
-				auto status = local_dispatch_context::aggregate_public_key(this, context, list, *state.aggregator);
-				if (status && !local_dispatch_context::apply_encrypted_distribution_shares(state, validator, list))
+				auto list = local_dispatcher_context::new_encrypted_distribution_shares(runner_wallet.public_key, state);
+				auto status = local_dispatcher_context::aggregate_public_key(this, executor, list, *state.aggregator);
+				if (status && !local_dispatcher_context::apply_encrypted_distribution_shares(state, validator, list))
 					status = remote_exception("encrypted shares are not valid");
 				coreturn status;
 			}
@@ -3755,13 +3749,13 @@ namespace tangent
 			if (!algorithm::composition::store_public_state(state.alg, *state.aggregator, &writer))
 				coreturn remote_exception("out state machine not valid");
 
-			auto list = local_dispatch_context::new_encrypted_distribution_shares(*public_key, state);
+			auto list = local_dispatcher_context::new_encrypted_distribution_shares(*public_key, state);
 			writer.write_integer((uint8_t)list.size());
 			for (auto& [public_key, encrypted_share] : list)
 				writer.write_string(public_key.optimized_view());
 
 			uint64_t attempt = 0;
-			auto args = pack_private_result({ format::variable(context->receipt.block_number), format::variable(context->receipt.transaction_hash), format::variable(writer.data) }, *public_key);
+			auto args = pack_private_result({ format::variable(executor->receipt.block_number), format::variable(executor->receipt.transaction_hash), format::variable(writer.data) }, *public_key);
 			if (!args)
 				coreturn args.error();
 		retry:
@@ -3794,19 +3788,19 @@ namespace tangent
 				++encrypted_share_public_key;
 			}
 
-			if (!local_dispatch_context::apply_encrypted_distribution_shares(state, validator, list))
+			if (!local_dispatcher_context::apply_encrypted_distribution_shares(state, validator, list))
 				coreturn remote_exception("encrypted shares are not valid");
 
 			coreturn expectation::met;
 		}
-		expects_promise_rt<void> dispatch_context::aggregate_signature(const ledger::transaction_context* context, signature_state& state, const algorithm::pubkeyhash_t& validator)
+		expects_promise_rt<void> dispatcher_context::aggregate_signature(const ledger::executor_context* executor, signature_state& state, const algorithm::pubkeyhash_t& validator)
 		{
 			if (protocol::now().user.consensus.logging)
 				VI_DEBUG("mpc signature aggregation: inquiry to %s", algorithm::signing::encode_address(validator).c_str());
 
-			return coasync<expects_rt<void>>([this, context, &state, &validator]() mutable -> expects_promise_rt<void>
+			return coasync<expects_rt<void>>([this, executor, &state, &validator]() mutable -> expects_promise_rt<void>
 			{
-				auto result = coawait(aggregate_signature_internal(context, state, validator));
+				auto result = coawait(aggregate_signature_internal(executor, state, validator));
 				if (!result)
 				{
 					if (protocol::now().user.consensus.logging)
@@ -3820,10 +3814,10 @@ namespace tangent
 				coreturn expectation::met;
 			});
 		}
-		expects_promise_rt<void> dispatch_context::aggregate_signature_internal(const ledger::transaction_context* context, signature_state& state, const algorithm::pubkeyhash_t& validator)
+		expects_promise_rt<void> dispatcher_context::aggregate_signature_internal(const ledger::executor_context* executor, signature_state& state, const algorithm::pubkeyhash_t& validator)
 		{
 			if (is_running_on(validator.data))
-				coreturn local_dispatch_context::aggregate_signature(this, context, **state.message, *state.aggregator);
+				coreturn local_dispatcher_context::aggregate_signature(this, executor, **state.message, *state.aggregator);
 
 			auto public_key = server->find_public_key(validator);
 			if (!public_key)
@@ -3834,7 +3828,7 @@ namespace tangent
 				coreturn remote_exception("out state machine not valid");
 
 			uint64_t attempt = 0;
-			auto args = pack_private_result({ format::variable(context->receipt.block_number), format::variable(context->receipt.transaction_hash), format::variable(state.message->as_message().data), format::variable(writer.data) }, *public_key);
+			auto args = pack_private_result({ format::variable(executor->receipt.block_number), format::variable(executor->receipt.transaction_hash), format::variable(state.message->as_message().data), format::variable(writer.data) }, *public_key);
 			if (!args)
 				coreturn args.error();
 		retry:
@@ -3859,48 +3853,48 @@ namespace tangent
 			coreturn expectation::met;
 		}
 
-		local_dispatch_context::local_dispatch_context(const vector<ledger::wallet>& new_validators)
+		local_dispatcher_context::local_dispatcher_context(const vector<ledger::wallet>& new_validators)
 		{
 			for (auto& target : new_validators)
 				validators[algorithm::pubkeyhash_t(target.public_key_hash)] = target;
 			validator = validators.find(algorithm::pubkeyhash_t(new_validators.front().public_key_hash));
 		}
-		local_dispatch_context::local_dispatch_context(const local_dispatch_context& other) noexcept : ledger::dispatch_context(other), validators(other.validators)
+		local_dispatcher_context::local_dispatcher_context(const local_dispatcher_context& other) noexcept : ledger::dispatcher_context(other), validators(other.validators)
 		{
 			validator = validators.find(other.validator->first);
 		}
-		local_dispatch_context& local_dispatch_context::operator=(const local_dispatch_context& other) noexcept
+		local_dispatcher_context& local_dispatcher_context::operator=(const local_dispatcher_context& other) noexcept
 		{
 			if (this == &other)
 				return *this;
 
-			auto& base_this = *(ledger::dispatch_context*)this;
-			auto& base_other = *(const ledger::dispatch_context*)&other;
+			auto& base_this = *(ledger::dispatcher_context*)this;
+			auto& base_other = *(const ledger::dispatcher_context*)&other;
 			base_this = base_other;
 			validators = other.validators;
 			validator = validators.find(other.validator->first);
 			return *this;
 		}
-		algorithm::pubkey_t local_dispatch_context::get_public_key(const algorithm::pubkeyhash_t& validator) const
+		algorithm::pubkey_t local_dispatcher_context::get_public_key(const algorithm::pubkeyhash_t& validator) const
 		{
 			auto it = validators.find(validator);
 			return it != validators.end() ? it->second.public_key : algorithm::pubkey_t();
 		}
-		const ledger::wallet& local_dispatch_context::get_runner_wallet() const
+		const ledger::wallet& local_dispatcher_context::get_runner_wallet() const
 		{
 			return validator->second;
 		}
-		void local_dispatch_context::set_running_validator(const algorithm::pubkeyhash_t& owner)
+		void local_dispatcher_context::set_running_validator(const algorithm::pubkeyhash_t& owner)
 		{
 			auto it = validators.find(owner);
 			if (it != validators.end())
 				validator = it;
 		}
-		expects_promise_rt<void> local_dispatch_context::aggregate_validators(const btree_set<algorithm::pubkeyhash_t>& validators)
+		expects_promise_rt<void> local_dispatcher_context::aggregate_validators(const btree_set<algorithm::pubkeyhash_t>& validators)
 		{
 			return expects_promise_rt<void>(expectation::met);
 		}
-		expects_promise_rt<void> local_dispatch_context::distribute_entropy_shares(const ledger::transaction_context* context, entropy_distribution_state& state, const algorithm::pubkeyhash_t& validator)
+		expects_promise_rt<void> local_dispatcher_context::distribute_entropy_shares(const ledger::executor_context* executor, entropy_distribution_state& state, const algorithm::pubkeyhash_t& validator)
 		{
 			auto next = validators.find(validator);
 			if (next == validators.end())
@@ -3908,17 +3902,17 @@ namespace tangent
 
 			auto prev = this->validator;
 			this->validator = next;
-			auto result = distribute_entropy_shares(this, context, state.encrypted_shares);
+			auto result = distribute_entropy_shares(this, executor, state.encrypted_shares);
 			this->validator = prev;
 			return expects_promise_rt<void>(std::move(result));
 		}
-		expects_rt<void> local_dispatch_context::distribute_entropy_shares(ledger::dispatch_context* dispatcher, const ledger::transaction_context* context, const btree_map<algorithm::pubkeyhash_t, string>& encrypted_shares)
+		expects_rt<void> local_dispatcher_context::distribute_entropy_shares(ledger::dispatcher_context* dispatcher, const ledger::executor_context* executor, const btree_map<algorithm::pubkeyhash_t, string>& encrypted_shares)
 		{
-			auto* route = (transactions::route*)context->transaction;
+			auto* route = (transactions::route*)executor->transaction;
 			if (!route)
 				return remote_exception("invalid transaction");
 
-			auto secret = dispatcher->recover_secret_entropy(route->asset, route->manager, context->receipt.from);
+			auto secret = dispatcher->recover_secret_entropy(route->asset, route->manager, executor->receipt.from);
 			if (!secret)
 				return remote_exception(std::move(secret.error().message()));
 
@@ -3926,7 +3920,7 @@ namespace tangent
 			for (auto& [participant, encrypted_share] : encrypted_shares)
 			{
 				algorithm::seckey_t tweak, tweaked_secret_key = runner_wallet.secret_key;
-				algorithm::signing::derive_secret_key(context->receipt.transaction_hash, tweak);
+				algorithm::signing::derive_secret_key(executor->receipt.transaction_hash, tweak);
 				if (!algorithm::signing::scalar_add_secret_key(tweaked_secret_key, tweak))
 					return remote_exception("invalid tweaked secret key");
 
@@ -3943,7 +3937,7 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_promise_rt<void> local_dispatch_context::aggregate_entropy_shares(const ledger::transaction_context* context, entropy_aggregation_state& state, const algorithm::pubkeyhash_t& validator)
+		expects_promise_rt<void> local_dispatcher_context::aggregate_entropy_shares(const ledger::executor_context* executor, entropy_aggregation_state& state, const algorithm::pubkeyhash_t& validator)
 		{
 			auto next = validators.find(validator);
 			if (next == validators.end())
@@ -3951,17 +3945,17 @@ namespace tangent
 
 			auto prev = this->validator;
 			this->validator = next;
-			auto result = aggregate_entropy_shares(this, context, state.public_key, state.encrypted_shares);
+			auto result = aggregate_entropy_shares(this, executor, state.public_key, state.encrypted_shares);
 			this->validator = prev;
 			return expects_promise_rt<void>(std::move(result));
 		}
-		expects_rt<void> local_dispatch_context::aggregate_entropy_shares(ledger::dispatch_context* dispatcher, const ledger::transaction_context* context, const algorithm::pubkey_t& public_key, btree_map<uint256_t, btree_map<algorithm::pubkeyhash_t, string>>& encrypted_shares)
+		expects_rt<void> local_dispatcher_context::aggregate_entropy_shares(ledger::dispatcher_context* dispatcher, const ledger::executor_context* executor, const algorithm::pubkey_t& public_key, btree_map<uint256_t, btree_map<algorithm::pubkeyhash_t, string>>& encrypted_shares)
 		{
-			auto* setup = (transactions::setup*)context->transaction;
+			auto* setup = (transactions::setup*)executor->transaction;
 			if (!setup)
 				return remote_exception("invalid transaction");
 
-			auto new_participant = setup->get_new_participant(context->receipt);
+			auto new_participant = setup->get_new_participant(executor->receipt);
 			if (new_participant.empty())
 				return remote_exception("new participant not found");
 
@@ -3976,11 +3970,11 @@ namespace tangent
 
 			auto tweaked_public_key = public_key;
 			algorithm::seckey_t tweak;
-			algorithm::signing::derive_secret_key(context->receipt.transaction_hash, tweak);
+			algorithm::signing::derive_secret_key(executor->receipt.transaction_hash, tweak);
 			if (!algorithm::signing::scalar_add_public_key(tweaked_public_key, tweak))
 				return remote_exception("invalid tweaked public key");
 
-			auto migrations = setup->get_migration_refs(context, context->receipt);
+			auto migrations = setup->get_migration_refs(executor, executor->receipt);
 			if (!migrations)
 				return remote_exception(std::move(migrations.error().message()));
 
@@ -4025,7 +4019,7 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_promise_rt<void> local_dispatch_context::recover_entropy(const ledger::transaction_context* context, entropy_recovery_state& state, const algorithm::pubkeyhash_t& validator)
+		expects_promise_rt<void> local_dispatcher_context::recover_entropy(const ledger::executor_context* executor, entropy_recovery_state& state, const algorithm::pubkeyhash_t& validator)
 		{
 			auto next = validators.find(validator);
 			if (next == validators.end())
@@ -4033,17 +4027,17 @@ namespace tangent
 
 			auto prev = this->validator;
 			this->validator = next;
-			auto result = recover_entropy(this, context, state.proof, state.encrypted_shares, state.encrypted_entropies);
+			auto result = recover_entropy(this, executor, state.proof, state.encrypted_shares, state.encrypted_entropies);
 			this->validator = prev;
 			return expects_promise_rt<void>(std::move(result));
 		}
-		expects_rt<void> local_dispatch_context::recover_entropy(ledger::dispatch_context* dispatcher, const ledger::transaction_context* context, algorithm::hashsig_t& proof, const btree_map<uint256_t, btree_map<algorithm::pubkeyhash_t, string>>& encrypted_shares, const btree_map<uint256_t, string>& encrypted_entropies)
+		expects_rt<void> local_dispatcher_context::recover_entropy(ledger::dispatcher_context* dispatcher, const ledger::executor_context* executor, algorithm::hashsig_t& proof, const btree_map<uint256_t, btree_map<algorithm::pubkeyhash_t, string>>& encrypted_shares, const btree_map<uint256_t, string>& encrypted_entropies)
 		{
-			auto* setup = (transactions::setup*)context->transaction;
+			auto* setup = (transactions::setup*)executor->transaction;
 			if (!setup)
 				return remote_exception("invalid transaction");
 
-			auto new_participant = setup->get_new_participant(context->receipt);
+			auto new_participant = setup->get_new_participant(executor->receipt);
 			if (new_participant.empty())
 				return remote_exception("new participant not found");
 
@@ -4052,11 +4046,11 @@ namespace tangent
 				return remote_exception("participant operation mismatch");
 
 			algorithm::seckey_t tweak, tweaked_secret_key = runner_wallet.secret_key;
-			algorithm::signing::derive_secret_key(context->receipt.transaction_hash, tweak);
+			algorithm::signing::derive_secret_key(executor->receipt.transaction_hash, tweak);
 			if (!algorithm::signing::scalar_add_secret_key(tweaked_secret_key, tweak))
 				return remote_exception("invalid tweaked secret key");
 
-			auto migrations = setup->get_migration_refs(context, context->receipt);
+			auto migrations = setup->get_migration_refs(executor, executor->receipt);
 			if (!migrations)
 				return remote_exception(std::move(migrations.error().message()));
 
@@ -4137,7 +4131,7 @@ namespace tangent
 			}
 
 			uint8_t transaction_hash_data[32];
-			context->receipt.transaction_hash.encode(transaction_hash_data);
+			executor->receipt.transaction_hash.encode(transaction_hash_data);
 
 			auto proof_hash = algorithm::hashing::hash256i(transaction_hash_data, sizeof(transaction_hash_data));
 			if (!algorithm::signing::sign(proof_hash, runner_wallet.secret_key, proof))
@@ -4145,7 +4139,7 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_promise_rt<void> local_dispatch_context::aggregate_public_key(const ledger::transaction_context* context, public_state& state, const algorithm::pubkeyhash_t& validator)
+		expects_promise_rt<void> local_dispatcher_context::aggregate_public_key(const ledger::executor_context* executor, public_state& state, const algorithm::pubkeyhash_t& validator)
 		{
 			auto next = validators.find(validator);
 			if (next == validators.end())
@@ -4154,14 +4148,14 @@ namespace tangent
 			auto list = new_encrypted_distribution_shares(next->second.public_key, state);
 			auto prev = this->validator;
 			this->validator = next;
-			auto result = aggregate_public_key(this, context, list, *state.aggregator);
+			auto result = aggregate_public_key(this, executor, list, *state.aggregator);
 			this->validator = prev;
 			apply_encrypted_distribution_shares(state, next->second.public_key_hash, list);
 			return expects_promise_rt<void>(std::move(result));
 		}
-		expects_rt<void> local_dispatch_context::aggregate_public_key(ledger::dispatch_context* dispatcher, const ledger::transaction_context* context, btree_map<algorithm::pubkey_t, string>& encrypted_shares, algorithm::composition::public_state* aggregator)
+		expects_rt<void> local_dispatcher_context::aggregate_public_key(ledger::dispatcher_context* dispatcher, const ledger::executor_context* executor, btree_map<algorithm::pubkey_t, string>& encrypted_shares, algorithm::composition::public_state* aggregator)
 		{
-			auto* route = (transactions::route*)context->transaction;
+			auto* route = (transactions::route*)executor->transaction;
 			if (!route)
 				return remote_exception("invalid transaction");
 
@@ -4169,19 +4163,19 @@ namespace tangent
 			if (!chain)
 				return remote_exception("invalid operation");
 
-			auto secret = dispatcher->recover_secret_entropy(route->asset, route->manager, context->receipt.from);
+			auto secret = dispatcher->recover_secret_entropy(route->asset, route->manager, executor->receipt.from);
 			if (!secret)
 			{
 				auto& runner_wallet = dispatcher->get_runner_wallet();
 				format::wo_stream scalar;
 				scalar.write_integer(algorithm::hashing::hash256i(runner_wallet.secret_key.view()));
 				scalar.write_integer(algorithm::hashing::hash256i(route->manager.view()));
-				scalar.write_integer(algorithm::hashing::hash256i(context->receipt.from.view()));
+				scalar.write_integer(algorithm::hashing::hash256i(executor->receipt.from.view()));
 				scalar.write_integer(route->asset);
 
 				algorithm::storage_type<uint8_t, 64> entropy;
 				algorithm::hashing::hash512((uint8_t*)scalar.data.data(), scalar.data.size(), entropy.data);
-				secret = dispatcher->apply_secret_entropy(route->asset, route->manager, context->receipt.from, entropy, { });
+				secret = dispatcher->apply_secret_entropy(route->asset, route->manager, executor->receipt.from, entropy, { });
 				if (!secret)
 					return remote_exception(std::move(secret.error().message()));
 			}
@@ -4194,7 +4188,7 @@ namespace tangent
 			if (!derivation)
 				return remote_exception(std::move(derivation.error().message()));
 
-			auto group = route->get_group(context->receipt);
+			auto group = route->get_group(executor->receipt);
 			if (group.size() < protocol::now().policy.participation.min_per_account)
 				return remote_exception("group is too small");
 
@@ -4222,7 +4216,7 @@ namespace tangent
 
 				auto tweaked_public_key = public_key;
 				algorithm::seckey_t tweak;
-				algorithm::signing::derive_secret_key(context->receipt.transaction_hash, tweak);
+				algorithm::signing::derive_secret_key(executor->receipt.transaction_hash, tweak);
 				if (!algorithm::signing::scalar_add_public_key(tweaked_public_key, tweak))
 					return remote_exception("invalid tweaked public key");
 
@@ -4242,7 +4236,7 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_promise_rt<void> local_dispatch_context::aggregate_signature(const ledger::transaction_context* context, signature_state& state, const algorithm::pubkeyhash_t& validator)
+		expects_promise_rt<void> local_dispatcher_context::aggregate_signature(const ledger::executor_context* executor, signature_state& state, const algorithm::pubkeyhash_t& validator)
 		{
 			auto next = validators.find(validator);
 			if (next == validators.end())
@@ -4250,17 +4244,17 @@ namespace tangent
 
 			auto prev = this->validator;
 			this->validator = next;
-			auto result = aggregate_signature(this, context, **state.message, *state.aggregator);
+			auto result = aggregate_signature(this, executor, **state.message, *state.aggregator);
 			this->validator = prev;
 			return expects_promise_rt<void>(std::move(result));
 		}
-		expects_rt<void> local_dispatch_context::aggregate_signature(ledger::dispatch_context* dispatcher, const ledger::transaction_context* context, superchain::prepared_transaction& message, algorithm::composition::signature_state* aggregator)
+		expects_rt<void> local_dispatcher_context::aggregate_signature(ledger::dispatcher_context* dispatcher, const ledger::executor_context* executor, superchain::prepared_transaction& message, algorithm::composition::signature_state* aggregator)
 		{
-			auto* withdraw = (transactions::withdraw*)context->transaction;
+			auto* withdraw = (transactions::withdraw*)executor->transaction;
 			if (!withdraw)
 				return remote_exception("invalid transaction");
 
-			auto validation = transactions::broadcast::validate_possible_proof(context, withdraw, context->receipt, message);
+			auto validation = transactions::broadcast::validate_possible_proof(executor, withdraw, executor->receipt, message);
 			if (!validation)
 				return remote_exception(std::move(validation.error().message()));
 
@@ -4268,11 +4262,11 @@ namespace tangent
 			if (!input)
 				return remote_exception("invalid operation");
 
-			auto witness = context->get_witness_account_tagged(withdraw->asset, input->utxo.link.address, 0);
+			auto witness = executor->get_witness_account_tagged(withdraw->asset, input->utxo.link.address, 0);
 			if (!witness)
 				return remote_exception(std::move(witness.error().message()));
 
-			auto account = context->get_bridge_account(withdraw->asset, witness->manager, witness->owner);
+			auto account = executor->get_bridge_account(withdraw->asset, witness->manager, witness->owner);
 			if (!account)
 				return expectation::met;
 
@@ -4290,7 +4284,7 @@ namespace tangent
 
 			return expectation::met;
 		}
-		btree_map<algorithm::pubkey_t, string> local_dispatch_context::new_encrypted_distribution_shares(const algorithm::pubkey_t& validator_public_key, const public_state& state)
+		btree_map<algorithm::pubkey_t, string> local_dispatcher_context::new_encrypted_distribution_shares(const algorithm::pubkey_t& validator_public_key, const public_state& state)
 		{
 			btree_map<algorithm::pubkey_t, string> list;
 			for (auto& [public_key, encrypted_share_values] : state.encrypted_shares)
@@ -4300,7 +4294,7 @@ namespace tangent
 			}
 			return list;
 		}
-		bool local_dispatch_context::apply_encrypted_distribution_shares(public_state& state, const algorithm::pubkeyhash_t& validator, const btree_map<algorithm::pubkey_t, string>& list)
+		bool local_dispatcher_context::apply_encrypted_distribution_shares(public_state& state, const algorithm::pubkeyhash_t& validator, const btree_map<algorithm::pubkey_t, string>& list)
 		{
 			for (auto& [public_key, encrypted_share] : list)
 			{

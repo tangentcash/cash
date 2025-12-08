@@ -33,15 +33,15 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<void> transaction::execute(transaction_context* context) const
+		expects_lr<void> transaction::execute(executor_context* executor) const
 		{
-			auto nonce_requirement = context->verify_account_nonce();
+			auto nonce_requirement = executor->verify_account_nonce();
 			if (!nonce_requirement)
 				return nonce_requirement;
 
-			return context->verify_gas_transfer_balance();
+			return executor->verify_gas_transfer_balance();
 		}
-		expects_promise_rt<void> transaction::dispatch(const transaction_context* context, dispatch_context* dispatcher) const
+		expects_promise_rt<void> transaction::dispatch(const executor_context* executor, dispatcher_context* dispatcher) const
 		{
 			return expects_promise_rt<void>(remote_exception("invalid operation"));
 		}
@@ -70,11 +70,11 @@ namespace tangent
 
 			return load_body(stream);
 		}
-		bool transaction::recover_many(const transaction_context* context, const receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const
+		bool transaction::recover_many(const executor_context* executor, const ledger::receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const
 		{
 			return true;
 		}
-		bool transaction::recover_aliases(const transaction_context* context, const receipt& receipt, btree_set<uint256_t>& aliases) const
+		bool transaction::recover_aliases(btree_set<uint256_t>& aliases) const
 		{
 			return true;
 		}
@@ -93,7 +93,7 @@ namespace tangent
 			if (!sign(secret_key, new_nonce))
 				return layer_exception("authentification failed");
 
-			auto optimal_gas = ledger::transaction_context::calculate_tx_gas(this);
+			auto optimal_gas = ledger::executor_context::calculate_tx_gas(this);
 			if (!optimal_gas)
 				return optimal_gas.error();
 			
@@ -109,7 +109,7 @@ namespace tangent
 		}
 		expects_lr<void> transaction::set_optimal_gas(const decimal& price)
 		{
-			auto optimal_gas = ledger::transaction_context::calculate_tx_gas(this);
+			auto optimal_gas = ledger::executor_context::calculate_tx_gas(this);
 			if (!optimal_gas)
 				return optimal_gas.error();
 			
@@ -150,9 +150,9 @@ namespace tangent
 		{
 			gas_price = decimal::zero();
 		}
-		expects_lr<void> commitment::execute(transaction_context* context) const
+		expects_lr<void> commitment::execute(executor_context* executor) const
 		{
-			return context->verify_account_nonce();
+			return executor->verify_account_nonce();
 		}
 		bool commitment::store_payload(format::wo_stream* stream) const
 		{

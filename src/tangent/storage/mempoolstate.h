@@ -63,7 +63,8 @@ namespace tangent
 		struct mempoolstate
 		{
 		private:
-			ledger::storage_index_ptr local_storage;
+			ledger::storage_index_ptr peer_local_storage;
+			ledger::storage_index_ptr secret_local_storage;
 #ifndef NDEBUG
 			std::thread::id local_id;
 #endif
@@ -102,8 +103,8 @@ namespace tangent
 			expects_lr<void> remove_transactions(const hash_set<uint256_t>& transaction_hashes);
 			expects_lr<size_t> expire_transactions();
 			expects_lr<size_t> get_transactions_count();
-			expects_lr<void> apply_secret_entropy(const algorithm::pubkeyhash_t& participant, const ledger::dispatch_context::secret_entropy& entropy);
-			expects_lr<ledger::dispatch_context::secret_entropy> get_secret_entropy(const algorithm::pubkeyhash_t& participant, const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner);
+			expects_lr<void> apply_secret_entropy(const algorithm::pubkeyhash_t& participant, const ledger::dispatcher_context::secret_entropy& entropy);
+			expects_lr<ledger::dispatcher_context::secret_entropy> get_secret_entropy(const algorithm::pubkeyhash_t& participant, const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner);
 			expects_lr<vector<states::bridge_account>> get_secret_entropies_by_manager(const algorithm::pubkeyhash_t& manager, size_t offset, size_t count);
 			expects_lr<bool> has_transaction(const uint256_t& transaction_hash);
 			expects_lr<uint64_t> get_lowest_transaction_nonce(const algorithm::pubkeyhash_t& owner);
@@ -112,7 +113,9 @@ namespace tangent
 			expects_lr<vector<uptr<ledger::transaction>>> get_transactions(bool commitment, size_t offset, size_t count);
 			expects_lr<vector<uptr<ledger::transaction>>> get_transactions_by_owner(const algorithm::pubkeyhash_t& owner, int8_t direction, size_t offset, size_t count);
 			expects_lr<vector<uint256_t>> get_transaction_hashset(size_t offset, size_t count);
-			ledger::storage_index_ptr& get_storage();
+			ledger::storage_index_ptr& get_peer_storage();
+			ledger::storage_index_ptr& get_secret_storage();
+			ledger::storage_util::multi_storage_index_ptr get_multi_storage();
 			uint32_t get_queries() const;
 
 		public:
@@ -121,7 +124,7 @@ namespace tangent
 			static uint64_t transaction_limit();
 
 		private:
-			static bool make_schema(sqlite::connection* connection);
+			static bool make_schema(sqlite::connection* connection, const std::string_view& name);
 		};
 	}
 }

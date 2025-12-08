@@ -42,7 +42,7 @@ namespace tangent
 			} program;
 			struct
 			{
-				ledger::evaluation_context environment;
+				ledger::solver_context solver;
 				uptr<transactions::call> contextual;
 				uptr<schema> returning;
 				uptr<schema> log;
@@ -64,7 +64,7 @@ namespace tangent
 				vm->set_ts_imports_concat_mode(true);
 				vm->set_preserve_source_code(true);
 				vm->set_compiler_features(compiler_features);
-				context = &tracer.environment.validation.context;
+				executor = &tracer.solver.state.executor;
 			}
 			~script_context() = default;
 			expects_lr<void> assign_transaction(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& from, const algorithm::pubkeyhash_t& to, const decimal& value, const std::string_view& function_decl, const format::variables& args)
@@ -75,11 +75,11 @@ namespace tangent
 				uptr<transactions::call> transaction = memory::init<transactions::call>();
 				transaction->asset = asset;
 				transaction->signature.data[0] = 0xFF;
-				transaction->nonce = std::max<size_t>(1, tracer.environment.validation.context.get_account_nonce(from).or_else(states::account_nonce(algorithm::pubkeyhash_t(), nullptr)).nonce);
+				transaction->nonce = std::max<size_t>(1, tracer.solver.state.executor.get_account_nonce(from).or_else(states::account_nonce(algorithm::pubkeyhash_t(), nullptr)).nonce);
 				transaction->program_call(to, value, function_decl, format::variables(args));
 				transaction->set_gas(decimal::zero(), ledger::block::get_transaction_gas_limit());
 				tracer.contextual = std::move(transaction);
-				tracer.environment.apply_temporary_state(&tracer.block, *tracer.contextual, std::move(receipt));
+				tracer.solver.apply_temporary_state(&tracer.block, *tracer.contextual, std::move(receipt));
 				return expectation::met;
 			}
 			expects_lr<void> call_transaction(script::ccall mutability, const script::function& entrypoint, const format::variables& args)
@@ -99,13 +99,13 @@ namespace tangent
 
 					return expectation::met;
 				});
-				context->receipt.successful = !!execution;
-				context->receipt.block_time = protocol::now().time.now();
-				if (!context->receipt.successful)
-					context->emit_event(0, { format::variable(execution.what()) }, false);
+				executor->receipt.successful = !!execution;
+				executor->receipt.block_time = protocol::now().time.now();
+				if (!executor->receipt.successful)
+					executor->emit_event(0, { format::variable(execution.what()) }, false);
 
 				tracer.log = var::set::array();
-				for (auto& [event, args] : context->receipt.events)
+				for (auto& [event, args] : executor->receipt.events)
 				{
 					auto target = tracer.events.find(tracer.log->size());
 					auto* next = tracer.log->push(var::set::object());
@@ -234,14 +234,14 @@ namespace tangent
 					{
 						for (auto& [asset, value] : balances)
 						{
-							auto prev_balance = context->get_account_balance(asset, account.data);
+							auto prev_balance = executor->get_account_balance(asset, account.data);
 							if (prev_balance && prev_balance->get_balance() >= value)
 								continue;
 
 							auto balance = states::account_balance(account.data, asset, nullptr);
 							balance.supply = value;
 
-							auto status = context->store(&balance, false);
+							auto status = executor->store(&balance, false);
 							if (!status)
 								return status.error();
 						}
@@ -249,7 +249,7 @@ namespace tangent
 
 					if (state.pay.is_positive())
 					{
-						auto payment = context->apply_payment(state.payable, state.from.data, state.to.data, state.pay);
+						auto payment = executor->apply_payment(state.payable, state.from.data, state.to.data, state.pay);
 						if (!payment)
 							return payment.error();
 					}
@@ -358,19 +358,19 @@ namespace tangent
 				if (!execution)
 					return execution.error();
 
-				tracer.environment.validation.changelog.commit();
+				tracer.solver.state.changelog.commit();
 				state.balances.clear();
 				return expectation::met;
 			}
 			void dispatch_event(int event_type_id, const void* object_value, int object_type_id) override
 			{
-				if (!context->receipt.events.empty())
+				if (!executor->receipt.events.empty())
 				{
 					auto data = uptr<schema>(var::set::object());
 					auto type = script::factory::get()->get_vm()->get_type_info_by_id(event_type_id);
 					data->key = type.is_valid() ? type.get_name() : std::string_view("__pod__");
 					if (script::marshall::store(*data, object_value, object_type_id))
-						tracer.events[context->receipt.events.size() - 1] = std::move(data);
+						tracer.events[executor->receipt.events.size() - 1] = std::move(data);
 				}
 			}
 			void dispatch_exception(script::immediate_context* coroutine) override
@@ -392,7 +392,7 @@ namespace tangent
 				program.log.clear();
 				program.trap = 0;
 				program.instructions = false;
-				tracer.environment = ledger::evaluation_context();
+				tracer.solver = ledger::solver_context();
 				tracer.contextual = uptr<transactions::call>();
 				tracer.returning = uptr<schema>();
 				tracer.log = uptr<schema>();
@@ -656,7 +656,7 @@ namespace tangent
 					if (!result)
 						return err(result.what());
 
-					bool success = context.tracer.environment.validation.context.receipt.successful;
+					bool success = context.tracer.solver.state.executor.receipt.successful;
 					terminal->write_color(std_color::white, success ? std_color::dark_green : std_color::red);
 					terminal->fwrite("%s in %" PRIu64 " ms", success ? "OK finalize transaction" : "ERR revert transaction", (uint64_t)(date_time().milliseconds() - time));
 					terminal->clear_color();
@@ -681,7 +681,7 @@ namespace tangent
 					if (!result)
 						return err(result.what());
 
-					bool success = context.tracer.environment.validation.context.receipt.successful;
+					bool success = context.tracer.solver.state.executor.receipt.successful;
 					terminal->write_color(std_color::white, success ? std_color::dark_green : std_color::red);
 					terminal->fwrite("%s in %" PRIu64 " ms", success ? "OK finalize transaction" : "ERR revert transaction", (uint64_t)(date_time().milliseconds() - time));
 					terminal->clear_color();
@@ -707,7 +707,7 @@ namespace tangent
 					uptr<schema> changelog = var::set::object();
 					auto* erase = changelog->set("erase", var::set::object());
 					auto* upsert = changelog->set("upsert", var::set::object());
-					for (auto& [index, change] : context.tracer.environment.validation.changelog.outgoing.finalized)
+					for (auto& [index, change] : context.tracer.solver.state.changelog.outgoing.finalized)
 					{
 						if (change.erase)
 							erase->set(format::util::encode_0xhex(index), change.state->as_schema().reset());
@@ -719,7 +719,7 @@ namespace tangent
 				}
 				else if (method == "receipt")
 				{
-					terminal->jwrite_line(*context.context->receipt.as_schema());
+					terminal->jwrite_line(*context.executor->receipt.as_schema());
 					return true;
 				}
 				else if (method == "abi")

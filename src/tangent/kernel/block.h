@@ -16,7 +16,7 @@ namespace tangent
 		struct block_header;
 		struct block_proof;
 		struct block_evaluation;
-		struct evaluation_context;
+		struct solver_context;
 
 		typedef std::function<uptr<transaction>(bool commitment)> replace_transaction_callback;
 
@@ -51,8 +51,8 @@ namespace tangent
 
 		struct block_transaction final : messages::uniform
 		{
-			uptr<ledger::transaction> transaction;
-			ledger::receipt receipt;
+			uptr<transaction> transaction;
+			receipt receipt;
 
 			block_transaction() = default;
 			block_transaction(uptr<ledger::transaction>&& new_transaction, ledger::receipt&& new_receipt);
@@ -73,7 +73,7 @@ namespace tangent
 		{
 			struct state_change
 			{
-				uptr<ledger::state> state;
+				uptr<state> state;
 				bool erase;
 
 				state_change() noexcept;
@@ -168,7 +168,7 @@ namespace tangent
 			virtual bool operator>=(const block_header& other) const;
 			virtual bool operator==(const block_header& other) const;
 			virtual bool operator!=(const block_header& other) const;
-			virtual expects_lr<void> verify_validity(const block_header* parent_block) const;
+			virtual expects_lr<void> verify_validity(const block_header* parent_block, const algorithm::pubkeyhash_t& recovered_producer = algorithm::pubkeyhash_t()) const;
 			virtual bool store_payload_proof(format::wo_stream* stream) const;
 			virtual bool load_payload_proof(format::ro_stream& stream);
 			virtual bool store_payload(format::wo_stream* stream) const override;
@@ -218,7 +218,7 @@ namespace tangent
 			virtual ~block() override = default;
 			block& operator=(const block&) = default;
 			block& operator=(block&&) = default;
-			expects_lr<block_state> evaluate(const block_header* parent_block, evaluation_context* environment, const replace_transaction_callback& callback);
+			expects_lr<void> evaluate(const block_header* parent_block, solver_context* solver, const replace_transaction_callback& callback);
 			expects_lr<void> validate(const block_header* parent_block, block_evaluation* evaluated_result = nullptr) const;
 			expects_lr<void> verify_integrity(const block_header* parent_block, const block_state* state) const;
 			bool store_payload(format::wo_stream* stream) const override;
@@ -263,46 +263,43 @@ namespace tangent
 			block block;
 			block_state state;
 
-			bool requires_reorganization() const;
-			expects_lr<block_checkpoint> checkpoint(bool keep_reverted_transactions = true);
 			uptr<schema> as_schema() const;
 		};
 
-		struct transaction_context
+		struct executor_context
 		{
 		public:
-			enum class execution_mode : uint8_t
+			enum class flags : uint8_t
 			{
 				pedantic = 1 << 0,
 				evaluation = 1 << 1,
-				replayable = 1 << 2
+				replayable = 1 << 2,
+				unrestricted = 1 << 3
 			};
 
-			enum class stake_type : uint8_t
+			enum class staker : uint8_t
 			{
 				lock,
 				reward_or_penalty,
 				unlock
 			};
 
-		private:
-			uint8_t execution_flags;
-
 		public:
 			btree_map<algorithm::asset_id, uint64_t> witnesses;
-			const evaluation_context* environment;
-			const ledger::transaction* transaction;
-			ledger::block_changelog* changelog;
-			ledger::block_header* block;
-			ledger::receipt receipt;
+			const solver_context* solver;
+			const transaction* transaction;
+			block_changelog* changelog;
+			block_header* block;
+			receipt receipt;
+			uint8_t options;
 
 		public:
-			transaction_context();
-			transaction_context(const ledger::evaluation_context* new_environment, ledger::block_header* new_block_header, block_changelog* new_changelog, const ledger::transaction* new_transaction, ledger::receipt&& new_receipt);
-			transaction_context(const transaction_context& other);
-			transaction_context(transaction_context&&) = default;
-			transaction_context& operator=(const transaction_context& other);
-			transaction_context& operator=(transaction_context&&) = default;
+			executor_context(block_changelog* new_changelog);
+			executor_context(block_changelog* new_changelog, const solver_context* new_solver, block_header* new_block_header, const ledger::transaction* new_transaction, ledger::receipt&& new_receipt);
+			executor_context(const executor_context& other);
+			executor_context(executor_context&&) = default;
+			executor_context& operator=(const executor_context& other);
+			executor_context& operator=(executor_context&&) = default;
 			expects_lr<void> query(state* value, bool paid_in_full);
 			expects_lr<void> load(state* value, bool paid);
 			expects_lr<void> store(state* value, bool paid);
@@ -330,9 +327,9 @@ namespace tangent
 			expects_lr<states::account_balance> apply_transfer(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const decimal& supply, const decimal& reserve);
 			expects_lr<states::account_balance> apply_fee_transfer(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const decimal& value);
 			expects_lr<states::account_balance> apply_payment(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& from, const algorithm::pubkeyhash_t& to, const decimal& value);
-			expects_lr<states::validator_production> apply_validator_production(const algorithm::pubkeyhash_t& owner, stake_type type, btree_map<algorithm::asset_id, decimal>&& rewards);
-			expects_lr<states::validator_participation> apply_validator_participation(const algorithm::pubkeyhash_t& owner, stake_type type, btree_map<algorithm::asset_id, std::pair<bool, states::validator_participation::participation_ref>>&& participations, btree_map<algorithm::asset_id, decimal>&& rewards);
-			expects_lr<states::validator_attestation> apply_validator_attestation(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, stake_type type, btree_map<algorithm::asset_id, decimal>&& rewards);
+			expects_lr<states::validator_production> apply_validator_production(const algorithm::pubkeyhash_t& owner, staker type, btree_map<algorithm::asset_id, decimal>&& rewards);
+			expects_lr<states::validator_participation> apply_validator_participation(const algorithm::pubkeyhash_t& owner, staker type, btree_map<algorithm::asset_id, std::pair<bool, states::validator_participation::participation_ref>>&& participations, btree_map<algorithm::asset_id, decimal>&& rewards);
+			expects_lr<states::validator_attestation> apply_validator_attestation(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, staker type, btree_map<algorithm::asset_id, decimal>&& rewards);
 			expects_lr<states::validator_attestation> apply_validator_attestation_policy(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, uint8_t security_level, const decimal& participation_threshold, const decimal& incoming_fee, const decimal& outgoing_fee, bool accepts_account_requests, bool accepts_withdrawal_requests);
 			expects_lr<states::validator_attestation> apply_validator_attestation_queue(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const uint256_t& transaction_hash);
 			expects_lr<states::validator_attestation> apply_validator_attestation_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, uint64_t new_accounts);
@@ -370,7 +367,7 @@ namespace tangent
 			expects_lr<states::witness_account> get_witness_account(const algorithm::asset_id& asset, const std::string_view& address, size_t offset) const;
 			expects_lr<states::witness_account> get_witness_account_tagged(const algorithm::asset_id& asset, const std::string_view& address, size_t offset) const;
 			expects_lr<states::witness_transaction> get_witness_transaction(const algorithm::asset_id& asset, const std::string_view& transaction_id) const;
-			expects_lr<ledger::block_transaction> get_block_transaction_instance(const uint256_t& transaction_hash, bool may_have_distinct_asset = false) const;
+			expects_lr<block_transaction> get_block_transaction_instance(const uint256_t& transaction_hash, bool may_have_distinct_asset = false) const;
 			uint64_t get_validation_nonce() const;
 			uint256_t get_gas_use() const;
 			uint256_t get_gas_left() const;
@@ -383,7 +380,7 @@ namespace tangent
 				return emit_event(t::as_instance_type(), std::move(values), paid);
 			}
 			template <typename t>
-			expects_lr<ledger::block_transaction> get_block_transaction(const uint256_t& transaction_hash, bool may_have_distinct_asset = false) const
+			expects_lr<block_transaction> get_block_transaction(const uint256_t& transaction_hash, bool may_have_distinct_asset = false) const
 			{
 				auto transaction = get_block_transaction_instance(transaction_hash, may_have_distinct_asset);
 				if (!transaction)
@@ -398,11 +395,11 @@ namespace tangent
 		public:
 			static expects_lr<uint256_t> calculate_tx_gas(const ledger::transaction* transaction, ledger::receipt* out_receipt = nullptr);
 			static expects_lr<void> validate_tx(const ledger::transaction* new_transaction, const uint256_t& new_transaction_hash, algorithm::pubkeyhash_t& owner);
-			static expects_lr<transaction_context> execute_tx(const ledger::evaluation_context* new_environment, ledger::block* new_block, block_changelog* changelog, const ledger::transaction* new_transaction, const uint256_t& new_transaction_hash, const algorithm::pubkeyhash_t& owner, size_t transaction_size, uint8_t execution_flags, option<ledger::receipt>&& from_receipt = optional::none);
-			static expects_promise_rt<void> dispatch_tx(dispatch_context* dispatcher, ledger::block_transaction* transaction);
+			static expects_lr<executor_context> execute_tx(const solver_context* new_solver, ledger::block_header* new_block, block_changelog* changelog, const ledger::transaction* new_transaction, const uint256_t& new_transaction_hash, const algorithm::pubkeyhash_t& owner, size_t transaction_size, uint8_t execution_flags, option<ledger::receipt>&& from_receipt = optional::none);
+			static expects_promise_rt<void> dispatch_tx(dispatcher_context* dispatcher, block_transaction* transaction);
 		};
 
-		struct dispatch_context
+		struct dispatcher_context
 		{
 			struct secret_entropy : messages::uniform
 			{
@@ -488,19 +485,19 @@ namespace tangent
 			vector<uint256_t> inputs;
 			vector<uint256_t> repeaters;
 
-			dispatch_context() noexcept = default;
-			dispatch_context(const dispatch_context& other) noexcept;
-			dispatch_context(dispatch_context&&) noexcept = default;
-			dispatch_context& operator=(const dispatch_context& other) noexcept;
-			dispatch_context& operator=(dispatch_context&&) noexcept = default;
+			dispatcher_context() noexcept = default;
+			dispatcher_context(const dispatcher_context& other) noexcept;
+			dispatcher_context(dispatcher_context&&) noexcept = default;
+			dispatcher_context& operator=(const dispatcher_context& other) noexcept;
+			dispatcher_context& operator=(dispatcher_context&&) noexcept = default;
 			virtual expects_lr<secret_entropy> apply_secret_entropy(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner, const algorithm::storage_type<uint8_t, 64>& entropy, btree_map<algorithm::pubkeyhash_t, secret_entropy::share_pair>&& shares);
 			virtual expects_lr<secret_entropy> recover_secret_entropy(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner) const;
 			virtual expects_promise_rt<void> aggregate_validators(const btree_set<algorithm::pubkeyhash_t>& validators) = 0;
-			virtual expects_promise_rt<void> distribute_entropy_shares(const transaction_context* context, entropy_distribution_state& state, const algorithm::pubkeyhash_t& validator) = 0;
-			virtual expects_promise_rt<void> aggregate_entropy_shares(const transaction_context* context, entropy_aggregation_state& state, const algorithm::pubkeyhash_t& validator) = 0;
-			virtual expects_promise_rt<void> recover_entropy(const transaction_context* context, entropy_recovery_state& state, const algorithm::pubkeyhash_t& validator) = 0;
-			virtual expects_promise_rt<void> aggregate_public_key(const transaction_context* context, public_state& state, const algorithm::pubkeyhash_t& validator) = 0;
-			virtual expects_promise_rt<void> aggregate_signature(const transaction_context* context, signature_state& state, const algorithm::pubkeyhash_t& validator) = 0;
+			virtual expects_promise_rt<void> distribute_entropy_shares(const executor_context* executor, entropy_distribution_state& state, const algorithm::pubkeyhash_t& validator) = 0;
+			virtual expects_promise_rt<void> aggregate_entropy_shares(const executor_context* executor, entropy_aggregation_state& state, const algorithm::pubkeyhash_t& validator) = 0;
+			virtual expects_promise_rt<void> recover_entropy(const executor_context* executor, entropy_recovery_state& state, const algorithm::pubkeyhash_t& validator) = 0;
+			virtual expects_promise_rt<void> aggregate_public_key(const executor_context* executor, public_state& state, const algorithm::pubkeyhash_t& validator) = 0;
+			virtual expects_promise_rt<void> aggregate_signature(const executor_context* executor, signature_state& state, const algorithm::pubkeyhash_t& validator) = 0;
 			virtual expects_lr<void> checkpoint();
 			virtual promise<void> dispatch_async(const block_header& target);
 			virtual void dispatch_sync(const block_header& target);
@@ -511,13 +508,13 @@ namespace tangent
 			virtual void report_error(const uint256_t& transaction_hash, const std::string_view& error_message);
 			virtual bool is_running_on(const algorithm::pubkeyhash_t& validator) const;
 			virtual vector<uptr<transaction>>& get_sendable_transactions();
-			virtual format::ro_stream pull_cache(const transaction_context* context);
-			virtual void push_cache(const transaction_context* context, const format::wo_stream& message) const;
+			virtual format::ro_stream pull_cache(const executor_context* executor);
+			virtual void push_cache(const executor_context* executor, const format::wo_stream& message) const;
 			virtual algorithm::pubkey_t get_public_key(const algorithm::pubkeyhash_t& validator) const = 0;
 			virtual const wallet& get_runner_wallet() const = 0;
 		};
 
-		struct evaluation_context
+		struct solver_context
 		{
 			enum class include_decision
 			{
@@ -526,52 +523,61 @@ namespace tangent
 				not_includable
 			};
 
-			struct transaction_info
+			enum class state_origin
+			{
+				chain,
+				chain_block,
+				block
+			};
+
+			struct queued_transaction
 			{
 				uint256_t hash = 0;
 				algorithm::pubkeyhash_t owner;
 				uptr<transaction> candidate;
 				size_t size = 0;
 
-				transaction_info() = default;
-				transaction_info(const transaction_info& other);
-				transaction_info(transaction_info&&) noexcept = default;
-				transaction_info& operator= (const transaction_info& other);
-				transaction_info& operator= (transaction_info&&) noexcept = default;
+				queued_transaction() = default;
+				queued_transaction(const queued_transaction& other);
+				queued_transaction(queued_transaction&&) noexcept = default;
+				queued_transaction& operator= (const queued_transaction& other);
+				queued_transaction& operator= (queued_transaction&&) noexcept = default;
 			};
 
-			struct validation_info
-			{
-				transaction_context context;
-				uint256_t commitment_gas_limit = 0;
-				uint256_t transaction_gas_limit = 0;
-				block_changelog changelog;
-				bool tip = false;
-			} validation;
-			struct validator_context
+			struct state_variables
 			{
 				algorithm::pubkeyhash_t public_key_hash;
 				algorithm::seckey_t secret_key;
-			} validator;
+				uint256_t commitment_gas_limit = 0;
+				uint256_t transaction_gas_limit = 0;
+				block_changelog changelog;
+				executor_context executor = executor_context(&changelog);
+				state_origin origin = state_origin::chain;
+			} state;
+			struct transaction_queue
+			{
+				vector<queued_transaction> pending;
+				hash_set<uint256_t> failed;
+				size_t queued = 0;
+			} transactions;
 			option<block_header> tip = optional::none;
 			btree_map<algorithm::pubkeyhash_t, uint64_t> nonces;
 			vector<states::validator_production> producers;
-			vector<transaction_info> incoming;
-			hash_set<uint256_t> outgoing;
-			size_t precomputed = 0;
 
-			void apply_temporary_state(ledger::block* abstract_block, const ledger::transaction* abstract_transaction, ledger::receipt&& abstract_receipt);
-			option<uint64_t> configure_priority_from_validator(const algorithm::pubkeyhash_t& public_key_hash, const algorithm::seckey_t& secret_key, option<const block_header*>&& parent_block = optional::none);
+			void apply_temporary_state(block_header* abstract_block, const transaction* abstract_transaction, receipt&& abstract_receipt);
+			option<uint64_t> apply_validator_state(const algorithm::pubkeyhash_t& public_key_hash, const algorithm::seckey_t& secret_key, option<const block_header*>&& parent_block = optional::none);
 			size_t try_include_transactions(vector<uptr<transaction>>&& candidates);
-			transaction_info& force_include_transaction(uptr<transaction>&& candidate);
-			include_decision decide_on_inclusion(const transaction_info& candidate, const uint256_t& current_gas_limit, const uint256_t& max_gas_limit) const;
+			queued_transaction& force_include_transaction(uptr<transaction>&& candidate);
+			include_decision decide_on_inclusion(const queued_transaction& candidate, const uint256_t& current_gas_limit, const uint256_t& max_gas_limit) const;
 			expects_lr<block_evaluation> evaluate_block(const replace_transaction_callback& callback);
-			expects_lr<void> solve_evaluated_block(block& candidate);
-			expects_lr<void> verify_solved_block(const block& candidate, const block_state* state);
-			expects_lr<void> cleanup();
+			expects_lr<block_checkpoint> checkpoint_solved_block(block_evaluation& solution, bool keep_reverted_transactions = true);
+			expects_lr<void> solve_evaluated_block(block_evaluation& evaluation);
+			expects_lr<void> verify_solved_block(const block_evaluation& solution, const algorithm::pubkeyhash_t& recovered_producer = algorithm::pubkeyhash_t());
+			expects_lr<void> erase_failed_transactions();
+			bool requires_reorganization(const block_evaluation& solution) const;
 			bool can_accept_more_transactions();
-			static transaction_info precompute_transaction_element(uptr<transaction>&& candidate);
-			static void precompute_transaction_list(vector<transaction_info>& candidates);
+			static queued_transaction precompute_transaction_element(uptr<transaction>&& candidate);
+			static void precompute_transaction_list(vector<queued_transaction>& candidates);
 		};
 	}
 }

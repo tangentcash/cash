@@ -8,8 +8,8 @@ namespace tangent
 	{
 		struct state;
 		struct block_header;
-		struct dispatch_context;
-		struct transaction_context;
+		struct executor_context;
+		struct dispatcher_context;
 		struct receipt;
 
 		enum class state_level
@@ -26,14 +26,14 @@ namespace tangent
 			uint64_t nonce = 0;
 
 			virtual expects_lr<void> validate(uint64_t block_number) const;
-			virtual expects_lr<void> execute(transaction_context* context) const;
-			virtual expects_promise_rt<void> dispatch(const transaction_context* context, dispatch_context* dispatcher) const;
+			virtual expects_lr<void> execute(executor_context* executor) const;
+			virtual expects_promise_rt<void> dispatch(const executor_context* executor, dispatcher_context* dispatcher) const;
 			virtual bool store_payload(format::wo_stream* stream) const override;
 			virtual bool load_payload(format::ro_stream& stream) override;
 			virtual bool store_body(format::wo_stream* stream) const = 0;
 			virtual bool load_body(format::ro_stream& stream) = 0;
-			virtual bool recover_many(const transaction_context* context, const receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const;
-			virtual bool recover_aliases(const transaction_context* context, const receipt& receipt, btree_set<uint256_t>& aliases) const;
+			virtual bool recover_many(const executor_context* executor, const receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const;
+			virtual bool recover_aliases(btree_set<uint256_t>& aliases) const;
 			virtual bool sign(const algorithm::seckey_t& secret_key) override;
 			virtual bool sign(const algorithm::seckey_t& secret_key, uint64_t new_nonce);
 			virtual expects_lr<void> sign(const algorithm::seckey_t& secret_key, uint64_t new_nonce, const decimal& price, const uint256_t& gas_padding = 0);
@@ -50,7 +50,7 @@ namespace tangent
 		struct commitment : transaction
 		{
 			commitment();
-			virtual expects_lr<void> execute(transaction_context* context) const override;
+			virtual expects_lr<void> execute(executor_context* executor) const override;
 			virtual bool store_payload(format::wo_stream* stream) const override;
 			virtual bool load_payload(format::ro_stream& stream) override;
 			virtual bool is_commitment() const override;
@@ -117,7 +117,7 @@ namespace tangent
 			state(uint64_t new_block_number, uint64_t new_block_nonce);
 			state(const block_header* new_block_header);
 			virtual ~state() = default;
-			virtual expects_lr<void> transition(const transaction_context* context, const state* prev_state) = 0;
+			virtual expects_lr<void> transition(const state* prev_state) = 0;
 			virtual bool store(format::wo_stream* stream) const override;
 			virtual bool load(format::ro_stream& stream) override;
 			virtual bool store_optimized(format::wo_stream* stream) const;

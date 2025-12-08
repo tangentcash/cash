@@ -20,67 +20,51 @@ namespace tangent
 		static thread_local uint32_t thread_invocations = 0;
 		sqlite::expects_db<void> storage_util::multi_tx_begin(const std::string_view& operation, sqlite::isolation type, multi_storage_index_ptr& ptr)
 		{
-			std::mutex mutex;
-			sqlite::expects_db<void> status = expectation::met;
-			parallel::wail_all(parallel::for_each_sequential(ptr.begin(), ptr.end(), ptr.size(), ELEMENTS_FEW, [&](storage_index_ptr* target)
+			for (auto& target : ptr)
 			{
 				auto result = target->tx_begin(operation, type);
 				if (result)
-					return;
+					continue;
 
-				umutex<std::mutex> unique(mutex);
-				if (!status)
-					status = sqlite::database_exception(status.error().message() + ", " + result.error().message());
-				else
-					status = std::move(result.error());
-			}));
-			if (status)
-				return expectation::met;
+				for (auto& target : ptr)
+				{
+					if (target->in_transaction())
+						target->tx_rollback(operation);
+				}
 
-			for (auto& target : ptr)
-			{
-				if (target->in_transaction())
-					target->tx_rollback(operation);
+				return result;
 			}
-			return status.error();
+			return expectation::met;
 		}
 		sqlite::expects_db<void> storage_util::multi_tx_commit(const std::string_view& operation, multi_storage_index_ptr&& ptr)
 		{
-			std::mutex mutex;
-			sqlite::expects_db<void> status = expectation::met;
-			parallel::wail_all(parallel::for_each_sequential(ptr.begin(), ptr.end(), ptr.size(), ELEMENTS_FEW, [&](storage_index_ptr* target)
+			for (auto& target : ptr)
 			{
 				auto result = target->tx_commit(operation);
-				if (result)
-					return;
+				if (!result)
+				{
+					ptr.clear();
+					return result;
+				}
+			}
 
-				umutex<std::mutex> unique(mutex);
-				if (!status)
-					status = sqlite::database_exception(status.error().message() + ", " + result.error().message());
-				else
-					status = std::move(result.error());
-			}));
 			ptr.clear();
-			return status;
+			return expectation::met;
 		}
 		sqlite::expects_db<void> storage_util::multi_tx_rollback(const std::string_view& operation, multi_storage_index_ptr&& ptr)
 		{
-			std::mutex mutex;
-			sqlite::expects_db<void> status = expectation::met;
-			parallel::wail_all(parallel::for_each_sequential(ptr.begin(), ptr.end(), ptr.size(), ELEMENTS_FEW, [&](storage_index_ptr* target)
+			for (auto& target : ptr)
 			{
 				auto result = target->tx_rollback(operation);
-				if (result)
-					return;
+				if (!result)
+				{
+					ptr.clear();
+					return result;
+				}
+			}
 
-				umutex<std::mutex> unique(mutex);
-				if (!status)
-					status = sqlite::database_exception(status.error().message() + ", " + result.error().message());
-				else
-					status = std::move(result.error());
-			}));
 			ptr.clear();
-			return status;
+			return expectation::met;
 		}
 		uref<sqlite::connection> storage_util::index_storage_of(const std::string_view& location, const std::function<bool(sqlite::connection*)>& callback)
 		{

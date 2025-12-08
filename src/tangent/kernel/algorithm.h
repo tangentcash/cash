@@ -240,8 +240,21 @@ namespace tangent
 			}
 			inline static uint256_t fixed256(const decimal& value)
 			{
-				auto copy = value * decimal(std::pow<uint64_t>(10, protocol::now().message.decimal_precision));
-				return uint256_t(copy.truncate(0).to_string(), 10);
+				if (!value.is_positive())
+					return uint256_t(0);
+
+				auto numeric = value.to_string();
+				size_t index = numeric.find('.');
+				size_t size = protocol::now().message.decimal_precision;
+				if (index != std::string::npos)
+				{
+					numeric.append(size - (numeric.size() - index - 1), '0');
+					numeric.erase(index, 1);
+				}
+				else
+					numeric.append(size, '0');
+
+				return uint256_t(numeric, 10);
 			}
 			template <typename t>
 			inline static decimal range(const t& value)

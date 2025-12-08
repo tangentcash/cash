@@ -1,5 +1,6 @@
 #include "format.h"
 #include "algorithm.h"
+#include <bitset>
 
 namespace tangent
 {
@@ -17,6 +18,36 @@ namespace tangent
 				return uint256_t(*from_string<uint64_t>(numeric));
 
 			return uint256_t(numeric);
+		}
+		static void append_uint256_base_10(string& buffer, const uint256_t& value)
+		{
+			if (!value)
+				return buffer.push_back('0');
+
+			uint8_t data[sizeof(value)];
+			value.encode(data);
+
+			uint8_t base[sizeof(data)];
+			for (int i = 0; i < sizeof(base); ++i)
+				base[i] = data[31 - i];
+
+			size_t begin = buffer.size();
+			bool eof = false;
+			while (!eof)
+			{
+				uint8_t remainder = 0; eof = true;
+				for (int i = 31; i >= 0; --i)
+				{
+					uint16_t temp = (remainder << 8) | base[i];
+					base[i] = temp / 10;
+					remainder = temp % 10;
+					if (base[i] != 0)
+						eof = false;
+				}
+				buffer.push_back('0' + remainder);
+			}
+			if (buffer.size() > begin)
+				std::reverse(buffer.begin() + begin, buffer.end());
 		}
 
 		wo_stream::wo_stream() : checksum(0)
@@ -311,7 +342,7 @@ namespace tangent
 				return false;
 
 			string numeric = "-";
-			numeric.append(left.to_string());
+			append_uint256_base_10(numeric, left);
 			if (type == viewable::decimal_neg2 || type == viewable::decimal_pos2)
 			{
 				uint256_t right;
@@ -320,7 +351,7 @@ namespace tangent
 
 				numeric.append(1, '.');
 				size_t offset = numeric.size();
-				numeric.append(right.to_string());
+				append_uint256_base_10(numeric, right);
 				std::reverse(numeric.begin() + offset, numeric.end());
 			}
 
@@ -528,7 +559,11 @@ namespace tangent
 				case viewable::decimal_zero:
 					return ((decimal*)value.pointer)->to_string();
 				case viewable::uint_min:
-					return value.integer.to_string();
+				{
+					string numeric;
+					append_uint256_base_10(numeric, value.integer);
+					return numeric;
+				}
 				case viewable::true_type:
 				case viewable::false_type:
 					return value.boolean ? "true" : "false";
@@ -546,7 +581,11 @@ namespace tangent
 				case viewable::decimal_zero:
 					return ((decimal*)value.pointer)->to_string();
 				case viewable::uint_min:
-					return value.integer.to_string();
+				{
+					string numeric;
+					append_uint256_base_10(numeric, value.integer);
+					return numeric;
+				}
 				case viewable::true_type:
 				case viewable::false_type:
 					return value.boolean ? "1" : "0";
@@ -564,7 +603,11 @@ namespace tangent
 				case viewable::decimal_zero:
 					return *(decimal*)value.pointer;
 				case viewable::uint_min:
-					return decimal(value.integer.to_string());
+				{
+					string numeric;
+					append_uint256_base_10(numeric, value.integer);
+					return decimal(numeric);
+				}
 				case viewable::true_type:
 				case viewable::false_type:
 					return decimal(value.boolean ? 1 : 0);

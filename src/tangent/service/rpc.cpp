@@ -683,11 +683,11 @@ namespace tangent
 				return;
 
 			btree_set<algorithm::pubkeyhash_t> addresses;
-			auto context = ledger::transaction_context();
+			auto executor = ledger::executor_context(nullptr);
 			for (auto& transaction : block.transactions)
 			{
 				addresses.insert(algorithm::pubkeyhash_t(transaction.receipt.from));
-				transaction.transaction->recover_many(&context, transaction.receipt, addresses);
+				transaction.transaction->recover_many(&executor, transaction.receipt, addresses);
 			}
 
 			hash_set<http::web_socket_frame*> web_sockets;
@@ -1295,7 +1295,7 @@ namespace tangent
 
 				auto parties = btree_set<algorithm::pubkeyhash_t>();
 				auto aliases = btree_set<uint256_t>();
-				auto context = ledger::transaction_context();
+				auto executor = ledger::executor_context(nullptr);
 				uptr<schema> data = var::set::array();
 				while (true)
 				{
@@ -1309,8 +1309,8 @@ namespace tangent
 						auto affected_data = tx_data->set("affected", var::set::object());
 						auto accounts_data = affected_data->set("accounts", var::set::array());
 						auto aliases_data = affected_data->set("aliases", var::set::array());
-						item.transaction->recover_many(&context, item.receipt, parties);
-						item.transaction->recover_aliases(&context, item.receipt, aliases);
+						item.transaction->recover_many(&executor, item.receipt, parties);
+						item.transaction->recover_aliases(aliases);
 						accounts_data->push(algorithm::signing::serialize_address(item.receipt.from));
 						for (auto& party : parties)
 							accounts_data->push(algorithm::signing::serialize_address(party));
@@ -1381,7 +1381,7 @@ namespace tangent
 			{
 				auto parties = btree_set<algorithm::pubkeyhash_t>();
 				auto aliases = btree_set<uint256_t>();
-				auto context = ledger::transaction_context();
+				auto executor = ledger::executor_context(nullptr);
 				uptr<schema> data = var::set::array();
 				while (true)
 				{
@@ -1395,8 +1395,8 @@ namespace tangent
 						auto affected_data = tx_data->set("affected", var::set::object());
 						auto accounts_data = affected_data->set("accounts", var::set::array());
 						auto aliases_data = affected_data->set("aliases", var::set::array());
-						item.transaction->recover_many(&context, item.receipt, parties);
-						item.transaction->recover_aliases(&context, item.receipt, aliases);
+						item.transaction->recover_many(&executor, item.receipt, parties);
+						item.transaction->recover_aliases(aliases);
 						accounts_data->push(algorithm::signing::serialize_address(item.receipt.from));
 						for (auto& party : parties)
 							accounts_data->push(algorithm::signing::serialize_address(party));
@@ -1643,8 +1643,8 @@ namespace tangent
 			for (size_t i = 5; i < args.size(); i++)
 				function_args.push_back(args[i]);
 
-			auto temp_environment = ledger::evaluation_context();
-			auto index = temp_environment.validation.context.get_account_program(to);
+			auto temp_solver = ledger::solver_context();
+			auto index = temp_solver.state.executor.get_account_program(to);
 			if (!index)
 				return server_response().error(error_codes::bad_params, "to account has no program hash");
 
@@ -1657,12 +1657,12 @@ namespace tangent
 			temp_receipt.from = from;
 
 			ledger::block temp_block;
-			temp_environment.apply_temporary_state(&temp_block, &temp_transaction, std::move(temp_receipt));
+			temp_solver.apply_temporary_state(&temp_block, &temp_transaction, std::move(temp_receipt));
 
 			auto returning = uptr<schema>();
-			auto execution = temp_transaction.subexecute(&temp_environment.validation.context, [&](void* module_ptr)
+			auto execution = temp_transaction.subexecute(&temp_solver.state.executor, [&](void* module_ptr)
 			{
-				auto script = script::program(&temp_environment.validation.context, (asIScriptModule*)module_ptr);
+				auto script = script::program(&temp_solver.state.executor, (asIScriptModule*)module_ptr);
 				return script.execute(script::ccall::const_call, temp_transaction.function, temp_transaction.args, [&](void* address, int type_id) -> expects_lr<void>
 				{
 					returning = var::set::object();
@@ -1678,12 +1678,12 @@ namespace tangent
 			if (!execution)
 				return server_response().error(error_codes::bad_params, execution.error().message());
 
-			temp_environment.validation.context.receipt.successful = !!execution;
-			temp_environment.validation.context.receipt.block_time = protocol::now().time.now();
-			if (!temp_environment.validation.context.receipt.successful)
-				temp_environment.validation.context.emit_event(0, { format::variable(execution.what()) }, false);
+			temp_solver.state.executor.receipt.successful = !!execution;
+			temp_solver.state.executor.receipt.block_time = protocol::now().time.now();
+			if (!temp_solver.state.executor.receipt.successful)
+				temp_solver.state.executor.emit_event(0, { format::variable(execution.what()) }, false);
 
-			auto data = temp_environment.validation.context.receipt.as_schema();
+			auto data = temp_solver.state.executor.receipt.as_schema();
 			data->set("to", algorithm::signing::serialize_address(to));
 			data->set("result", returning ? returning->copy() : var::set::null());
 			return server_response().success(std::move(data));
@@ -2379,8 +2379,8 @@ namespace tangent
 		server_response server_node::chainstate_get_witness_account_tagged(http::connection* base, format::variables&& args)
 		{
 			auto asset = algorithm::asset::id_of_handle(args[0].as_string());
-			auto context = ledger::transaction_context();
-			auto result = context.get_witness_account_tagged(asset, args[1].as_string(), args[2].as_uint64());
+			auto executor = ledger::executor_context(nullptr);
+			auto result = executor.get_witness_account_tagged(asset, args[1].as_string(), args[2].as_uint64());
 			if (!result)
 				return server_response().error(error_codes::not_found, result.error().message());
 
@@ -2601,7 +2601,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "invalid message");
 
 			auto receipt = ledger::receipt();
-			auto gas_limit = ledger::transaction_context::calculate_tx_gas(*candidate_tx, &receipt);
+			auto gas_limit = ledger::executor_context::calculate_tx_gas(*candidate_tx, &receipt);
 			if (!gas_limit)
 				return server_response().error(error_codes::bad_params, gas_limit.error().message());
 
@@ -2790,10 +2790,18 @@ namespace tangent
 			if (!state)
 				return server_response().error(error_codes::not_found, "block state not found");
 
+			if (consensus_service != nullptr && !consensus_service->try_acquire_checkpointer())
+				return server_response().error(error_codes::not_found, "checkpointer busy");
+
 			ledger::block_evaluation evaluation;
 			evaluation.block = std::move(*block);
 			evaluation.state = std::move(*state);
-			auto checkpoint = evaluation.checkpoint(args.size() > 1 ? args[1].as_boolean() : false);
+
+			ledger::solver_context temp_solver;
+			auto checkpoint = temp_solver.checkpoint_solved_block(evaluation, args.size() > 1 ? args[1].as_boolean() : false);
+			if (consensus_service != nullptr)
+				consensus_service->release_checkpointer();
+
 			if (!checkpoint)
 				return server_response().error(error_codes::bad_params, checkpoint.error().message());
 

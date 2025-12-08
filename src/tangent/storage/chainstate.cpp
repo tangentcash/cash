@@ -257,7 +257,7 @@ namespace tangent
 			umutex<std::mutex> unique(mutex);
 			accounts.clear();
 		}
-		void account_cache::clear_account_location(const algorithm::pubkeyhash_t& account)
+		void account_cache::revive_location(const algorithm::pubkeyhash_t& account)
 		{
 			umutex<std::mutex> unique(mutex);
 			auto it = accounts.find(account);
@@ -288,19 +288,31 @@ namespace tangent
 			indices.clear();
 			blocks.clear();
 		}
-		void uniform_cache::clear_uniform_location(uint32_t type, const std::string_view& index)
+		void uniform_cache::revive_location(uint32_t type, const std::string_view& index, uint64_t block_number, bool erase)
 		{
 			umutex<std::mutex> unique(mutex);
 			auto index_iterator = indices.find(key_of_indices(type, index));
 			if (index_iterator != indices.end())
-				indices.erase(index_iterator);
-		}
-		void uniform_cache::clear_block_location(uint32_t type, const std::string_view& index)
-		{
-			umutex<std::mutex> unique(mutex);
-			auto index_iterator = indices.find(key_of_indices(type, index));
-			if (index_iterator != indices.end())
-				blocks.erase(key_of_blocks(type, index_iterator->second));
+			{
+				bool requires_erase = erase;
+				auto block_iterator = blocks.find(key_of_blocks(type, index_iterator->second));
+				if (block_iterator != blocks.end())
+				{
+					if (!requires_erase && !block_iterator->second.hidden)
+					{
+						requires_erase = false;
+						block_iterator->second.number = block_number;
+						block_iterator->second.hidden = false;
+					}
+					else
+					{
+						requires_erase = requires_erase || block_iterator->second.hidden;
+						blocks.erase(block_iterator);
+					}
+				}
+				if (!index_iterator->second || requires_erase)
+					indices.erase(index_iterator);
+			}
 		}
 		void uniform_cache::set_index_location(uint32_t type, const std::string_view& index, uint64_t index_location)
 		{
@@ -357,24 +369,34 @@ namespace tangent
 			rows.clear();
 			blocks.clear();
 		}
-		void multiform_cache::clear_multiform_location(uint32_t type, const std::string_view& column, const std::string_view& row)
+		void multiform_cache::revive_location(uint32_t type, const std::string_view& column, const std::string_view& row, uint64_t block_number, bool erase)
 		{
 			umutex<std::mutex> unique(mutex);
+			bool requires_erase = erase;
 			auto column_iterator = columns.find(key_of_columns(type, column));
-			if (column_iterator != columns.end())
-				columns.erase(column_iterator);
-
 			auto row_iterator = rows.find(key_of_rows(type, row));
-			if (row_iterator != rows.end())
+			if (column_iterator != columns.end() && row_iterator != rows.end())
+			{
+				auto block_iterator = blocks.find(key_of_blocks(type, column_iterator->second, row_iterator->second));
+				if (block_iterator != blocks.end())
+				{
+					if (!requires_erase && !block_iterator->second.hidden)
+					{
+						requires_erase = false;
+						block_iterator->second.number = block_number;
+						block_iterator->second.hidden = false;
+					}
+					else
+					{
+						requires_erase = requires_erase || block_iterator->second.hidden;
+						blocks.erase(block_iterator);
+					}
+				}
+			}
+			if (column_iterator != columns.end() && (!column_iterator->second || requires_erase))
+				columns.erase(column_iterator);
+			if (row_iterator != rows.end() && (!row_iterator->second || requires_erase))
 				rows.erase(row_iterator);
-		}
-		void multiform_cache::clear_block_location(uint32_t type, const std::string_view& column, const std::string_view& row)
-		{
-			umutex<std::mutex> unique(mutex);
-			auto column_location = columns.find(key_of_columns(type, column));
-			auto row_location = rows.find(key_of_rows(type, row));
-			if (column_location != columns.end() && row_location != rows.end())
-				blocks.erase(key_of_blocks(type, column_location->second, row_location->second));
 		}
 		void multiform_cache::set_multiform_location(uint32_t type, const std::string_view& column, const std::string_view& row, uint64_t column_location, uint64_t row_location)
 		{
@@ -506,6 +528,12 @@ namespace tangent
 		static thread_local chainstate* parent_chainstate = nullptr;
 		chainstate::chainstate() noexcept
 		{
+			auto& uniform_types = states::resolver::get_uniform_types();
+			auto& multiform_types = states::resolver::get_multiform_types();
+			for (size_t i = 0; i < uniform_types.size(); i++)
+				uniform_local_storage[i].type = uniform_types[i];
+			for (size_t i = 0; i < multiform_types.size(); i++)
+				multiform_local_storage[i].type = multiform_types[i];
 #ifndef NDEBUG
 			local_id = std::this_thread::get_id();
 #endif
@@ -526,7 +554,7 @@ namespace tangent
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 
-			for (auto& [type, uniform_storage] : get_uniform_multi_storage())
+			for (auto& [uniform_storage, type] : get_uniform_multi_storage())
 			{
 				cursor = uniform_storage.query(__func__,
 					"DELETE FROM snapshots;"
@@ -536,7 +564,7 @@ namespace tangent
 					return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 			}
 
-			for (auto& [type, multiform_storage] : get_multiform_multi_storage())
+			for (auto& [multiform_storage, type] : get_multiform_multi_storage())
 			{
 				cursor = multiform_storage.query(__func__,
 					"DELETE FROM snapshots;"
@@ -573,7 +601,7 @@ namespace tangent
 					return layer_exception("block " + to_string(current_number) + " checkpoint failed: " + finalization.error().message());
 
 				if (protocol::now().user.consensus.logging)
-					VI_INFO("block %s reorganized (height: %" PRIu64 ", reorg: %.2f%%)", algorithm::encoding::encode_0xhex256(candidate_block->as_hash()).c_str(), current_number, 100.0 * (double)current_number / tip_number);
+					VI_INFO("block %s reorganized (height: %" PRIu64 ", top: %.2f%%)", algorithm::encoding::encode_0xhex256(candidate_block->as_hash()).c_str(), current_number, 100.0 * (double)current_number / tip_number);
 
 				parent_block = evaluation.block;
 				++current_number;
@@ -648,7 +676,7 @@ namespace tangent
 			if (checkpoint_number && *checkpoint_number > block_number)
 				return reorganize(block_delta, transaction_delta, state_delta);
 
-			for (auto& [type, uniform_storage] : get_uniform_multi_storage())
+			for (auto& [uniform_storage, type] : get_uniform_multi_storage())
 			{
 				size_t offset = 0, count = 1024;
 				map.clear();
@@ -693,7 +721,7 @@ namespace tangent
 					return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 			}
 
-			for (auto& [type, multiform_storage] : get_multiform_multi_storage())
+			for (auto& [multiform_storage, type] : get_multiform_multi_storage())
 			{
 				size_t offset = 0, count = 1024;
 				map.clear();
@@ -874,7 +902,7 @@ namespace tangent
 			size_t state_delta = 0;
 			if (types & (uint32_t)pruning::state)
 			{
-				for (auto& [type, uniform_storage] : get_uniform_multi_storage())
+				for (auto& [uniform_storage, type] : get_uniform_multi_storage())
 				{
 					size_t offset = 0, count = 1024;
 					schema_list map;
@@ -911,7 +939,7 @@ namespace tangent
 						return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 				}
 
-				for (auto& [type, multiform_storage] : get_multiform_multi_storage())
+				for (auto& [multiform_storage, type] : get_multiform_multi_storage())
 				{
 					size_t offset = 0, count = 1024;
 					schema_list map;
@@ -1004,7 +1032,7 @@ namespace tangent
 				return expects_lr<void>(layer_exception(std::move(commit_alias_data.error().message())));
 
 			hash_map<uint32_t, uniform_writer> uniform_writers;
-			for (auto& [type, uniform_storage] : get_uniform_multi_storage())
+			for (auto& [uniform_storage, type] : get_uniform_multi_storage())
 			{
 				vector<uniform_blob> blobs;
 				blobs.reserve(evaluation.state.finalized.size());
@@ -1048,7 +1076,7 @@ namespace tangent
 			}
 
 			hash_map<uint32_t, multiform_writer> multiform_writers;
-			for (auto& [type, multiform_storage] : get_multiform_multi_storage())
+			for (auto& [multiform_storage, type] : get_multiform_multi_storage())
 			{
 				vector<multiform_blob> blobs;
 				fill_multiform_writer_from_block_state(&blobs, type, evaluation.state.finalized);
@@ -1093,15 +1121,14 @@ namespace tangent
 					item.context->receipt.transaction_hash.encode(item.transaction_hash);
 					if (transaction_to_account_index)
 					{
-						auto context = ledger::transaction_context();
-						item.context->transaction->recover_many(&context, item.context->receipt, item.parties);
+						auto executor = ledger::executor_context(nullptr);
+						item.context->transaction->recover_many(&executor, item.context->receipt, item.parties);
 						item.parties.insert(algorithm::pubkeyhash_t(item.context->receipt.from));
 					}
 					if (transaction_to_rollup_index)
 					{
 						btree_set<uint256_t> aliases;
-						auto context = ledger::transaction_context();
-						item.context->transaction->recover_aliases(&context, item.context->receipt, aliases);
+						item.context->transaction->recover_aliases(aliases);
 						item.aliases.reserve(aliases.size());
 
 						transaction_alias_blob alias;
@@ -1139,41 +1166,27 @@ namespace tangent
 					queue.emplace_back(std::move(task));
 			}
 
-			parallel::wail_all(std::move(queue));
-			if (!reorganization)
-			{
-				auto* cache_a = account_cache::get();
-				for (auto& data : transactions)
-				{
-					for (auto& party : data.parties)
-						cache_a->clear_account_location(party.data);
-				}
-			}
-
+			auto* cache_a = account_cache::get();
 			auto* cache_u = uniform_cache::get();
-			for (auto& [type, writer] : uniform_writers)
-			{
-				for (auto& item : writer.blobs)
-					cache_u->clear_block_location(type, item.index);
-			}
-
-			for (auto& [type, writer] : uniform_writers)
-			{
-				for (auto& item : writer.blobs)
-					cache_u->clear_uniform_location(type, item.index);
-			}
-
 			auto* cache_m = multiform_cache::get();
-			for (auto& [type, writer] : multiform_writers)
+			parallel::wail_all(std::move(queue));
+
+			for (auto& data : transactions)
+			{
+				for (auto& party : data.parties)
+					cache_a->revive_location(party.data);
+			}
+
+			for (auto& [type, writer] : uniform_writers)
 			{
 				for (auto& item : writer.blobs)
-					cache_m->clear_block_location(type, item.column, item.row);
+					cache_u->revive_location(type, item.index, evaluation.block.number, item.change->erase);
 			}
 
 			for (auto& [type, writer] : multiform_writers)
 			{
 				for (auto& item : writer.blobs)
-					cache_m->clear_multiform_location(type, item.column, item.row);
+					cache_m->revive_location(type, item.column, item.row, evaluation.block.number, item.change->erase);
 			}
 
 			vector<promise<expects_lr<void>>> expectation_queue;
@@ -1890,7 +1903,7 @@ namespace tangent
 				}
 			}));
 
-			for (auto& [type, uniform_storage] : get_uniform_multi_storage())
+			for (auto& [uniform_storage, type] : get_uniform_multi_storage())
 			{
 				cursor = uniform_storage.emplace_query(__func__, "SELECT (SELECT index_hash FROM indices WHERE indices.index_number = snapshots.index_number) AS index_hash FROM snapshots WHERE block_number = ?", &map);
 				if (!cursor || cursor->error())
@@ -1909,7 +1922,7 @@ namespace tangent
 				}));
 			}
 
-			for (auto& [type, multiform_storage] : get_multiform_multi_storage())
+			for (auto& [multiform_storage, type] : get_multiform_multi_storage())
 			{
 				cursor = multiform_storage.emplace_query(__func__, "SELECT (SELECT column_hash FROM columns WHERE columns.column_number = snapshots.column_number) AS column_hash, (SELECT row_hash FROM rows WHERE rows.row_number = snapshots.row_number) AS row_hash FROM snapshots WHERE block_number = ?", &map);
 				if (!cursor || cursor->error())
@@ -1983,7 +1996,7 @@ namespace tangent
 			map.push_back(var::set::integer(block_number));
 
 			auto& blob_storage = get_blob_storage();
-			for (auto& [type, uniform_storage] : get_uniform_multi_storage())
+			for (auto& [uniform_storage, type] : get_uniform_multi_storage())
 			{
 				auto cursor = uniform_storage.emplace_query(__func__, "SELECT (SELECT index_hash FROM indices WHERE indices.index_number = snapshots.index_number) AS index_hash FROM snapshots WHERE block_number = ?", &map);
 				if (!cursor || cursor->error())
@@ -2002,7 +2015,7 @@ namespace tangent
 				}));
 			}
 
-			for (auto& [type, multiform_storage] : get_multiform_multi_storage())
+			for (auto& [multiform_storage, type] : get_multiform_multi_storage())
 			{
 				auto cursor = multiform_storage.emplace_query(__func__, "SELECT (SELECT column_hash FROM columns WHERE columns.column_number = snapshots.column_number) AS column_hash, (SELECT row_hash FROM rows WHERE rows.row_number = snapshots.row_number) AS row_hash FROM snapshots WHERE block_number = ?", &map);
 				if (!cursor || cursor->error())
@@ -2096,7 +2109,7 @@ namespace tangent
 			map.push_back(var::set::integer(0));
 
 			ledger::block_state result;
-			for (auto& [type, uniform_storage] : get_uniform_multi_storage())
+			for (auto& [uniform_storage, type] : get_uniform_multi_storage())
 			{
 				size_t offset = 0;
 				map[2]->value = var::integer(offset);
@@ -2126,7 +2139,7 @@ namespace tangent
 				}
 			}
 
-			for (auto& [type, multiform_storage] : get_multiform_multi_storage())
+			for (auto& [multiform_storage, type] : get_multiform_multi_storage())
 			{
 				size_t offset = 0;
 				map[2]->value = var::integer(offset);
@@ -2538,9 +2551,9 @@ namespace tangent
 					return expects_lr<state_result>(layer_exception("uniform state not found"));
 				}
 
-				auto cache = uniform_cache::get();
 				location->block = block_pair((*cursor)["block_number"].get().get_integer(), (*cursor)["hidden"].get().get_boolean());
-				cache->set_block_location(type, location->index.or_else(0), location->block->number, location->block->hidden);
+				if (!block_number)
+					uniform_cache::get()->set_block_location(type, location->index.or_else(0), location->block->number, location->block->hidden);
 			}
 
 			auto blob = get_blob_storage().load(__func__, get_uniform_label(type, index, location->block->number)).or_else(string());
@@ -2605,9 +2618,9 @@ namespace tangent
 					return expects_lr<state_result>(layer_exception("multiform state not found"));
 				}
 
-				auto cache = multiform_cache::get();
 				location->block = block_pair((*cursor)["block_number"].get().get_integer(), (*cursor)["hidden"].get().get_boolean());
-				cache->set_block_location(type, location->column.or_else(0), location->row.or_else(0), location->block->number, location->block->hidden);
+				if (!block_number)
+					multiform_cache::get()->set_block_location(type, location->column.or_else(0), location->row.or_else(0), location->block->number, location->block->hidden);
 			}
 
 			auto blob = get_blob_storage().load(__func__, get_multiform_label(type, column, row, location->block->number)).or_else(string());
@@ -3173,27 +3186,47 @@ namespace tangent
 		}
 		ledger::storage_index_ptr& chainstate::get_uniform_storage(uint32_t type)
 		{
-			auto& target_uniform_local_storage = uniform_local_storage[type];
-			if (!target_uniform_local_storage.may_use())
+			for (size_t i = 0; i < uniform_local_storage.size(); i++)
 			{
-				auto& parent_target_uniform_local_storage = parent_chainstate->uniform_local_storage[type];
-				if (!parent_target_uniform_local_storage.may_use())
-					parent_target_uniform_local_storage = ledger::storage_index_ptr(ledger::storage_util::index_storage_named_of("chainindex", stringify::text("uniformdata.0x%x", type), &chainstate::make_schema));
-				target_uniform_local_storage = parent_target_uniform_local_storage;
+				auto& child = uniform_local_storage[i];
+				if (child.type != type)
+					continue;
+
+				if (!child.local_storage.may_use())
+				{
+					auto& parent = parent_chainstate->uniform_local_storage[i];
+					if (!parent.local_storage.may_use())
+						parent.local_storage = ledger::storage_index_ptr(ledger::storage_util::index_storage_named_of("chainindex", stringify::text("uniformdata.0x%x", type), &chainstate::make_schema));
+					child.local_storage = parent.local_storage;
+				}
+
+				return child.local_storage;
 			}
-			return target_uniform_local_storage;
+
+			VI_PANIC(false, "uniform storage type not recognized");
+			return alias_local_storage;
 		}
 		ledger::storage_index_ptr& chainstate::get_multiform_storage(uint32_t type)
 		{
-			auto& target_multiform_local_storage = multiform_local_storage[type];
-			if (!target_multiform_local_storage.may_use())
+			for (size_t i = 0; i < multiform_local_storage.size(); i++)
 			{
-				auto& parent_target_multiform_local_storage = parent_chainstate->multiform_local_storage[type];
-				if (!parent_target_multiform_local_storage.may_use())
-					parent_target_multiform_local_storage = ledger::storage_index_ptr(ledger::storage_util::index_storage_named_of("chainindex", stringify::text("multiformdata.0x%x", type), &chainstate::make_schema));
-				target_multiform_local_storage = parent_target_multiform_local_storage;
+				auto& child = multiform_local_storage[i];
+				if (child.type != type)
+					continue;
+
+				if (!child.local_storage.may_use())
+				{
+					auto& parent = parent_chainstate->multiform_local_storage[i];
+					if (!parent.local_storage.may_use())
+						parent.local_storage = ledger::storage_index_ptr(ledger::storage_util::index_storage_named_of("chainindex", stringify::text("multiformdata.0x%x", type), &chainstate::make_schema));
+					child.local_storage = parent.local_storage;
+				}
+
+				return child.local_storage;
 			}
-			return target_multiform_local_storage;
+
+			VI_PANIC(false, "multiform storage type not recognized");
+			return alias_local_storage;
 		}
 		ledger::storage_index_ptr& chainstate::get_block_storage()
 		{
@@ -3255,13 +3288,13 @@ namespace tangent
 			}
 			return blob_local_storage;
 		}
-		hash_map<uint32_t, ledger::storage_index_ptr>& chainstate::get_uniform_multi_storage()
+		chainstate::uniform_storage_map& chainstate::get_uniform_multi_storage()
 		{
 			for (uint32_t type : states::resolver::get_uniform_types())
 				get_uniform_storage(type);
 			return uniform_local_storage;
 		}
-		hash_map<uint32_t, ledger::storage_index_ptr>& chainstate::get_multiform_multi_storage()
+		chainstate::multiform_storage_map& chainstate::get_multiform_multi_storage()
 		{
 			for (uint32_t type : states::resolver::get_multiform_types())
 				get_multiform_storage(type);
@@ -3278,9 +3311,9 @@ namespace tangent
 			auto& alias_storage = get_alias_storage();
 			auto result = ledger::storage_util::multi_storage_index_ptr();
 			result.reserve(uniform_local_storage.size() + multiform_local_storage.size() + 5);
-			for (auto& [type, uniform_storage] : uniform_multi_storage)
+			for (auto& [uniform_storage, type] : uniform_multi_storage)
 				result.insert(&uniform_storage);
-			for (auto& [type, multiform_storage] : multiform_multi_storage)
+			for (auto& [multiform_storage, type] : multiform_multi_storage)
 				result.insert(&multiform_storage);
 			result.insert(&block_storage);
 			result.insert(&account_storage);
@@ -3298,9 +3331,9 @@ namespace tangent
 		uint32_t chainstate::get_queries() const
 		{
 			uint32_t queries = blob_local_storage.uses() + block_local_storage.uses() + account_local_storage.uses() + tx_local_storage.uses() + party_local_storage.uses() + alias_local_storage.uses();
-			for (auto& [type, uniform_storage] : uniform_local_storage)
+			for (auto& [uniform_storage, type] : uniform_local_storage)
 				queries += uniform_storage.uses();
-			for (auto& [type, multiform_storage] : multiform_local_storage)
+			for (auto& [multiform_storage, type] : multiform_local_storage)
 				queries += multiform_storage.uses();
 			return queries;
 		}

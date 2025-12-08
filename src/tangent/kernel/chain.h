@@ -178,8 +178,8 @@ namespace tangent
 				uint64_t block_replay_multiplier = 4;
 				uint64_t relaying_timeout = 30000;
 				uint64_t relaying_retry_timeout = 300;
-				uint32_t cache1_size = 32768;
-				uint32_t cache2_size = 131072;
+				uint32_t cache1_size = 4096;
+				uint32_t cache2_size = 16384;
 				bool server = false;
 				bool logging = true;
 			} superchain;
@@ -206,7 +206,7 @@ namespace tangent
 				string path;
 				string module_cache_path;
 				storage_optimization optimization = storage_optimization::speed;
-				uint64_t checkpoint_size = 200;
+				uint64_t checkpoint_size = 128;
 				uint64_t location_cache_size = 500000;
 				uint64_t module_cache_size = 8192;
 				uint64_t blob_cache_size = 134217728;
@@ -240,12 +240,12 @@ namespace tangent
 			uint64_t packet_magic = 0x73d308e9;
 			uint32_t protocol_version = 0x10;
 			uint32_t max_message_size = 0xffffff;
-			uint32_t max_body_size = 1024 * 1024 * 32;
+			uint32_t max_body_size = 1024 * 1024 * 40;
 			uint32_t decimal_precision = 18;
 			uint32_t integer_precision = 78;
 			uint64_t hashes_per_query = 8192;
 			uint64_t headers_per_query = 2048;
-			uint64_t blocks_per_query = 10;
+			uint64_t blocks_per_query = 16;
 			uint64_t transactions_per_query = 32;
 			uint64_t items_per_query = 512;
 			uint64_t pages_per_query = 64;

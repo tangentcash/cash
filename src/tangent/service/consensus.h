@@ -16,7 +16,7 @@ namespace tangent
 		class relay;
 		class outbound_node;
 		class server_node;
-		class dispatch_context;
+		class dispatcher_context;
 
 		typedef std::function<expects_rt<void>(server_node*, uref<relay>&&, const struct exchange&)> event_callback;
 		typedef std::function<expects_rt<format::variables>(server_node*, uref<relay>&&, const struct exchange&)> query_callback;
@@ -223,7 +223,7 @@ namespace tangent
 		private:
 			struct
 			{
-				std::atomic<bool> checkpointing = false;
+				std::atomic<bool> verifying = false;
 				std::atomic<bool> prepared = false;
 				std::atomic<bool> waiting = false;
 				std::atomic<bool> dirty = false;
@@ -238,8 +238,8 @@ namespace tangent
 			system_control control_sys;
 
 		public:
-			ledger::evaluation_context environment;
 			hash_map<uint256_t, fork_header> forks;
+			ledger::solver_context solver;
 			relay_descriptor descriptor;
 
 		public:
@@ -284,6 +284,8 @@ namespace tangent
 			size_t notify_all_except(uref<relay>&& exception, const callable::descriptor& descriptor, format::variables&& args);
 			void bind_event(const callable::descriptor& descriptor, event_callback&& on_event_callback, bool inventory = false);
 			void bind_query(const callable::descriptor& descriptor, query_callback&& on_query_callback);
+			bool try_acquire_checkpointer();
+			void release_checkpointer();
 			bool run_topology_optimization();
 			bool run_mempool_vacuum();
 			bool run_fork_resolution();
@@ -310,7 +312,7 @@ namespace tangent
 			service_control::service_node get_entrypoint();
 			std::recursive_mutex& get_mutex();
 			const hash_map<void*, uref<relay>>& get_nodes() const;
-			dispatch_context get_dispatcher() const;
+			dispatcher_context get_dispatcher() const;
 			option<std::pair<uint256_t, fork_header>> get_best_fork_header();
 
 		private:
@@ -335,62 +337,62 @@ namespace tangent
 			void on_request_open(inbound_node* base) override;
 		};
 
-		class dispatch_context final : public ledger::dispatch_context
+		class dispatcher_context final : public ledger::dispatcher_context
 		{
 		public:
 			server_node* server;
 
 		public:
-			dispatch_context(server_node* new_server);
-			dispatch_context(const dispatch_context& other) noexcept;
-			dispatch_context(dispatch_context&&) noexcept = default;
-			dispatch_context& operator=(const dispatch_context& other) noexcept;
-			dispatch_context& operator=(dispatch_context&&) noexcept = default;
+			dispatcher_context(server_node* new_server);
+			dispatcher_context(const dispatcher_context& other) noexcept;
+			dispatcher_context(dispatcher_context&&) noexcept = default;
+			dispatcher_context& operator=(const dispatcher_context& other) noexcept;
+			dispatcher_context& operator=(dispatcher_context&&) noexcept = default;
 			expects_promise_rt<void> aggregate_validators(const btree_set<algorithm::pubkeyhash_t>& validators) override;
-			expects_promise_rt<void> distribute_entropy_shares(const ledger::transaction_context* context, entropy_distribution_state& state, const algorithm::pubkeyhash_t& validator) override;
-			expects_promise_rt<void> aggregate_entropy_shares(const ledger::transaction_context* context, entropy_aggregation_state& state, const algorithm::pubkeyhash_t& validator) override;
-			expects_promise_rt<void> recover_entropy(const ledger::transaction_context* context, entropy_recovery_state& state, const algorithm::pubkeyhash_t& validator) override;
-			expects_promise_rt<void> aggregate_public_key(const ledger::transaction_context* context, public_state& state, const algorithm::pubkeyhash_t& validator) override;
-			expects_promise_rt<void> aggregate_signature(const ledger::transaction_context* context, signature_state& state, const algorithm::pubkeyhash_t& validator) override;
+			expects_promise_rt<void> distribute_entropy_shares(const ledger::executor_context* executor, entropy_distribution_state& state, const algorithm::pubkeyhash_t& validator) override;
+			expects_promise_rt<void> aggregate_entropy_shares(const ledger::executor_context* executor, entropy_aggregation_state& state, const algorithm::pubkeyhash_t& validator) override;
+			expects_promise_rt<void> recover_entropy(const ledger::executor_context* executor, entropy_recovery_state& state, const algorithm::pubkeyhash_t& validator) override;
+			expects_promise_rt<void> aggregate_public_key(const ledger::executor_context* executor, public_state& state, const algorithm::pubkeyhash_t& validator) override;
+			expects_promise_rt<void> aggregate_signature(const ledger::executor_context* executor, signature_state& state, const algorithm::pubkeyhash_t& validator) override;
 			algorithm::pubkey_t get_public_key(const algorithm::pubkeyhash_t& validator) const override;
 			const ledger::wallet& get_runner_wallet() const override;
 
 		private:
-			expects_promise_rt<void> distribute_entropy_shares_internal(const ledger::transaction_context* context, entropy_distribution_state& state, const algorithm::pubkeyhash_t& validator);
-			expects_promise_rt<void> aggregate_entropy_shares_internal(const ledger::transaction_context* context, entropy_aggregation_state& state, const algorithm::pubkeyhash_t& validator);
-			expects_promise_rt<void> recover_entropy_internal(const ledger::transaction_context* context, entropy_recovery_state& state, const algorithm::pubkeyhash_t& validator);
-			expects_promise_rt<void> aggregate_public_key_internal(const ledger::transaction_context* context, public_state& state, const algorithm::pubkeyhash_t& validator);
-			expects_promise_rt<void> aggregate_signature_internal(const ledger::transaction_context* context, signature_state& state, const algorithm::pubkeyhash_t& validator);
+			expects_promise_rt<void> distribute_entropy_shares_internal(const ledger::executor_context* executor, entropy_distribution_state& state, const algorithm::pubkeyhash_t& validator);
+			expects_promise_rt<void> aggregate_entropy_shares_internal(const ledger::executor_context* executor, entropy_aggregation_state& state, const algorithm::pubkeyhash_t& validator);
+			expects_promise_rt<void> recover_entropy_internal(const ledger::executor_context* executor, entropy_recovery_state& state, const algorithm::pubkeyhash_t& validator);
+			expects_promise_rt<void> aggregate_public_key_internal(const ledger::executor_context* executor, public_state& state, const algorithm::pubkeyhash_t& validator);
+			expects_promise_rt<void> aggregate_signature_internal(const ledger::executor_context* executor, signature_state& state, const algorithm::pubkeyhash_t& validator);
 		};
 
-		class local_dispatch_context final : public ledger::dispatch_context
+		class local_dispatcher_context final : public ledger::dispatcher_context
 		{
 		public:
 			btree_map<algorithm::pubkeyhash_t, ledger::wallet> validators;
 			btree_map<algorithm::pubkeyhash_t, ledger::wallet>::iterator validator;
 
 		public:
-			local_dispatch_context(const vector<ledger::wallet>& new_validators);
-			local_dispatch_context(const local_dispatch_context& other) noexcept;
-			local_dispatch_context(local_dispatch_context&&) noexcept = default;
-			local_dispatch_context& operator=(const local_dispatch_context& other) noexcept;
-			local_dispatch_context& operator=(local_dispatch_context&&) noexcept = default;
+			local_dispatcher_context(const vector<ledger::wallet>& new_validators);
+			local_dispatcher_context(const local_dispatcher_context& other) noexcept;
+			local_dispatcher_context(local_dispatcher_context&&) noexcept = default;
+			local_dispatcher_context& operator=(const local_dispatcher_context& other) noexcept;
+			local_dispatcher_context& operator=(local_dispatcher_context&&) noexcept = default;
 			void set_running_validator(const algorithm::pubkeyhash_t& owner);
 			expects_promise_rt<void> aggregate_validators(const btree_set<algorithm::pubkeyhash_t>& validators) override;
-			expects_promise_rt<void> distribute_entropy_shares(const ledger::transaction_context* context, entropy_distribution_state& state, const algorithm::pubkeyhash_t& validator) override;
-			expects_promise_rt<void> aggregate_entropy_shares(const ledger::transaction_context* context, entropy_aggregation_state& state, const algorithm::pubkeyhash_t& validator) override;
-			expects_promise_rt<void> recover_entropy(const ledger::transaction_context* context, entropy_recovery_state& state, const algorithm::pubkeyhash_t& validator) override;
-			expects_promise_rt<void> aggregate_public_key(const ledger::transaction_context* context, public_state& state, const algorithm::pubkeyhash_t& validator) override;
-			expects_promise_rt<void> aggregate_signature(const ledger::transaction_context* context, signature_state& state, const algorithm::pubkeyhash_t& validator) override;
+			expects_promise_rt<void> distribute_entropy_shares(const ledger::executor_context* executor, entropy_distribution_state& state, const algorithm::pubkeyhash_t& validator) override;
+			expects_promise_rt<void> aggregate_entropy_shares(const ledger::executor_context* executor, entropy_aggregation_state& state, const algorithm::pubkeyhash_t& validator) override;
+			expects_promise_rt<void> recover_entropy(const ledger::executor_context* executor, entropy_recovery_state& state, const algorithm::pubkeyhash_t& validator) override;
+			expects_promise_rt<void> aggregate_public_key(const ledger::executor_context* executor, public_state& state, const algorithm::pubkeyhash_t& validator) override;
+			expects_promise_rt<void> aggregate_signature(const ledger::executor_context* executor, signature_state& state, const algorithm::pubkeyhash_t& validator) override;
 			algorithm::pubkey_t get_public_key(const algorithm::pubkeyhash_t& validator) const override;
 			const ledger::wallet& get_runner_wallet() const override;
 
 		public:
-			static expects_rt<void> distribute_entropy_shares(ledger::dispatch_context* dispatcher, const ledger::transaction_context* context, const btree_map<algorithm::pubkeyhash_t, string>& encrypted_shares);
-			static expects_rt<void> aggregate_entropy_shares(ledger::dispatch_context* dispatcher, const ledger::transaction_context* context, const algorithm::pubkey_t& public_key, btree_map<uint256_t, btree_map<algorithm::pubkeyhash_t, string>>& encrypted_shares);
-			static expects_rt<void> recover_entropy(ledger::dispatch_context* dispatcher, const ledger::transaction_context* context, algorithm::hashsig_t& proof, const btree_map<uint256_t, btree_map<algorithm::pubkeyhash_t, string>>& encrypted_shares, const btree_map<uint256_t, string>& encrypted_entropies);
-			static expects_rt<void> aggregate_public_key(ledger::dispatch_context* dispatcher, const ledger::transaction_context* context, btree_map<algorithm::pubkey_t, string>& encrypted_shares, algorithm::composition::public_state* aggregator);
-			static expects_rt<void> aggregate_signature(ledger::dispatch_context* dispatcher, const ledger::transaction_context* context, superchain::prepared_transaction& message, algorithm::composition::signature_state* aggregator);
+			static expects_rt<void> distribute_entropy_shares(ledger::dispatcher_context* dispatcher, const ledger::executor_context* executor, const btree_map<algorithm::pubkeyhash_t, string>& encrypted_shares);
+			static expects_rt<void> aggregate_entropy_shares(ledger::dispatcher_context* dispatcher, const ledger::executor_context* executor, const algorithm::pubkey_t& public_key, btree_map<uint256_t, btree_map<algorithm::pubkeyhash_t, string>>& encrypted_shares);
+			static expects_rt<void> recover_entropy(ledger::dispatcher_context* dispatcher, const ledger::executor_context* executor, algorithm::hashsig_t& proof, const btree_map<uint256_t, btree_map<algorithm::pubkeyhash_t, string>>& encrypted_shares, const btree_map<uint256_t, string>& encrypted_entropies);
+			static expects_rt<void> aggregate_public_key(ledger::dispatcher_context* dispatcher, const ledger::executor_context* executor, btree_map<algorithm::pubkey_t, string>& encrypted_shares, algorithm::composition::public_state* aggregator);
+			static expects_rt<void> aggregate_signature(ledger::dispatcher_context* dispatcher, const ledger::executor_context* executor, superchain::prepared_transaction& message, algorithm::composition::signature_state* aggregator);
 			static btree_map<algorithm::pubkey_t, string> new_encrypted_distribution_shares(const algorithm::pubkey_t& validator_public_key, const public_state& state);
 			static bool apply_encrypted_distribution_shares(public_state& state, const algorithm::pubkeyhash_t& validator, const btree_map<algorithm::pubkey_t, string>& list);
 		};

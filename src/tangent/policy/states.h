@@ -13,7 +13,7 @@ namespace tangent
 
 			account_nonce(const algorithm::pubkeyhash_t& new_owner, uint64_t new_block_number, uint64_t new_block_nonce);
 			account_nonce(const algorithm::pubkeyhash_t& new_owner, const ledger::block_header* new_block_header);
-			expects_lr<void> transition(const ledger::transaction_context* context, const ledger::state* prev_state) override;
+			expects_lr<void> transition(const ledger::state* prev_state) override;
 			bool store_index(format::wo_stream* stream) const override;
 			bool load_index(format::ro_stream& stream) override;
 			bool store_data(format::wo_stream* stream) const override;
@@ -33,7 +33,7 @@ namespace tangent
 
 			account_program(const algorithm::pubkeyhash_t& new_owner, uint64_t new_block_number, uint64_t new_block_nonce);
 			account_program(const algorithm::pubkeyhash_t& new_owner, const ledger::block_header* new_block_header);
-			expects_lr<void> transition(const ledger::transaction_context* context, const ledger::state* prev_state) override;
+			expects_lr<void> transition(const ledger::state* prev_state) override;
 			bool store_index(format::wo_stream* stream) const override;
 			bool load_index(format::ro_stream& stream) override;
 			bool store_data(format::wo_stream* stream) const override;
@@ -54,7 +54,7 @@ namespace tangent
 
 			account_uniform(const algorithm::pubkeyhash_t& new_owner, const std::string_view& new_index, uint64_t new_block_number, uint64_t new_block_nonce);
 			account_uniform(const algorithm::pubkeyhash_t& new_owner, const std::string_view& new_index, const ledger::block_header* new_block_header);
-			expects_lr<void> transition(const ledger::transaction_context* context, const ledger::state* prev_state) override;
+			expects_lr<void> transition(const ledger::state* prev_state) override;
 			bool store_index(format::wo_stream* stream) const override;
 			bool load_index(format::ro_stream& stream) override;
 			bool store_data(format::wo_stream* stream) const override;
@@ -77,7 +77,7 @@ namespace tangent
 
 			account_multiform(const algorithm::pubkeyhash_t& new_owner, const std::string_view& new_column, const std::string_view& new_row, uint64_t new_block_number, uint64_t new_block_nonce);
 			account_multiform(const algorithm::pubkeyhash_t& new_owner, const std::string_view& new_column, const std::string_view& new_row, const ledger::block_header* new_block_header);
-			expects_lr<void> transition(const ledger::transaction_context* context, const ledger::state* prev_state) override;
+			expects_lr<void> transition(const ledger::state* prev_state) override;
 			bool store_column(format::wo_stream* stream) const override;
 			bool load_column(format::ro_stream& stream) override;
 			bool store_row(format::wo_stream* stream) const override;
@@ -101,7 +101,7 @@ namespace tangent
 
 			account_delegation(const algorithm::pubkeyhash_t& new_owner, uint64_t new_block_number, uint64_t new_block_nonce);
 			account_delegation(const algorithm::pubkeyhash_t& new_owner, const ledger::block_header* new_block_header);
-			expects_lr<void> transition(const ledger::transaction_context* context, const ledger::state* prev_state) override;
+			expects_lr<void> transition(const ledger::state* prev_state) override;
 			bool store_index(format::wo_stream* stream) const override;
 			bool load_index(format::ro_stream& stream) override;
 			bool store_data(format::wo_stream* stream) const override;
@@ -124,7 +124,7 @@ namespace tangent
 
 			account_balance(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, uint64_t new_block_number, uint64_t new_block_nonce);
 			account_balance(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, const ledger::block_header* new_block_header);
-			expects_lr<void> transition(const ledger::transaction_context* context, const ledger::state* prev_state) override;
+			expects_lr<void> transition(const ledger::state* prev_state) override;
 			bool store_column(format::wo_stream* stream) const override;
 			bool load_column(format::ro_stream& stream) override;
 			bool store_row(format::wo_stream* stream) const override;
@@ -150,7 +150,7 @@ namespace tangent
 
 			validator_production(const algorithm::pubkeyhash_t& new_owner, uint64_t new_block_number, uint64_t new_block_nonce);
 			validator_production(const algorithm::pubkeyhash_t& new_owner, const ledger::block_header* new_block_header);
-			expects_lr<void> transition(const ledger::transaction_context* context, const ledger::state* prev_state) override;
+			expects_lr<void> transition(const ledger::state* prev_state) override;
 			bool store_column(format::wo_stream* stream) const override;
 			bool load_column(format::ro_stream& stream) override;
 			bool store_row(format::wo_stream* stream) const override;
@@ -184,7 +184,7 @@ namespace tangent
 
 			validator_participation(const algorithm::pubkeyhash_t& new_owner, uint64_t new_block_number, uint64_t new_block_nonce);
 			validator_participation(const algorithm::pubkeyhash_t& new_owner, const ledger::block_header* new_block_header);
-			expects_lr<void> transition(const ledger::transaction_context* context, const ledger::state* prev_state) override;
+			expects_lr<void> transition(const ledger::state* prev_state) override;
 			bool store_column(format::wo_stream* stream) const override;
 			bool load_column(format::ro_stream& stream) override;
 			bool store_row(format::wo_stream* stream) const override;
@@ -219,7 +219,7 @@ namespace tangent
 
 			validator_attestation(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, uint64_t new_block_number, uint64_t new_block_nonce);
 			validator_attestation(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, const ledger::block_header* new_block_header);
-			expects_lr<void> transition(const ledger::transaction_context* context, const ledger::state* prev_state) override;
+			expects_lr<void> transition(const ledger::state* prev_state) override;
 			bool store_column(format::wo_stream* stream) const override;
 			bool load_column(format::ro_stream& stream) override;
 			bool store_row(format::wo_stream* stream) const override;
@@ -245,7 +245,7 @@ namespace tangent
 
 			bridge_balance(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, uint64_t new_block_number, uint64_t new_block_nonce);
 			bridge_balance(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, const ledger::block_header* new_block_header);
-			expects_lr<void> transition(const ledger::transaction_context* context, const ledger::state* prev_state) override;
+			expects_lr<void> transition(const ledger::state* prev_state) override;
 			bool store_column(format::wo_stream* stream) const override;
 			bool load_column(format::ro_stream& stream) override;
 			bool store_row(format::wo_stream* stream) const override;
@@ -274,7 +274,7 @@ namespace tangent
 
 			bridge_account(const algorithm::pubkeyhash_t& new_manager, const algorithm::asset_id& new_asset, const algorithm::pubkeyhash_t& new_owner, uint64_t new_block_number, uint64_t new_block_nonce);
 			bridge_account(const algorithm::pubkeyhash_t& new_manager, const algorithm::asset_id& new_asset, const algorithm::pubkeyhash_t& new_owner, const ledger::block_header* new_block_header);
-			expects_lr<void> transition(const ledger::transaction_context* context, const ledger::state* prev_state) override;
+			expects_lr<void> transition(const ledger::state* prev_state) override;
 			bool store_column(format::wo_stream* stream) const override;
 			bool load_column(format::ro_stream& stream) override;
 			bool store_row(format::wo_stream* stream) const override;
@@ -299,7 +299,7 @@ namespace tangent
 
 			witness_program(const std::string_view& new_hashcode, uint64_t new_block_number, uint64_t new_block_nonce);
 			witness_program(const std::string_view& new_hashcode, const ledger::block_header* new_block_header);
-			expects_lr<void> transition(const ledger::transaction_context* context, const ledger::state* prev_state) override;
+			expects_lr<void> transition(const ledger::state* prev_state) override;
 			bool store_index(format::wo_stream* stream) const override;
 			bool load_index(format::ro_stream& stream) override;
 			bool store_data(format::wo_stream* stream) const override;
@@ -322,7 +322,7 @@ namespace tangent
 
 			witness_event(const uint256_t& new_parent_transaction_hash, uint64_t new_block_number, uint64_t new_block_nonce);
 			witness_event(const uint256_t& new_parent_transaction_hash, const ledger::block_header* new_block_header);
-			expects_lr<void> transition(const ledger::transaction_context* context, const ledger::state* prev_state) override;
+			expects_lr<void> transition(const ledger::state* prev_state) override;
 			bool store_index(format::wo_stream* stream) const override;
 			bool load_index(format::ro_stream& stream) override;
 			bool store_data(format::wo_stream* stream) const override;
@@ -352,7 +352,7 @@ namespace tangent
 
 			witness_account(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, const address_map& new_addresses, uint64_t new_block_number, uint64_t new_block_nonce);
 			witness_account(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, const address_map& new_addresses, const ledger::block_header* new_block_header);
-			expects_lr<void> transition(const ledger::transaction_context* context, const ledger::state* prev_state) override;
+			expects_lr<void> transition(const ledger::state* prev_state) override;
 			bool store_column(format::wo_stream* stream) const override;
 			bool load_column(format::ro_stream& stream) override;
 			bool store_row(format::wo_stream* stream) const override;
@@ -381,7 +381,7 @@ namespace tangent
 
 			witness_transaction(const algorithm::asset_id& new_asset, const std::string_view& new_transaction_id, uint64_t new_block_number, uint64_t new_block_nonce);
 			witness_transaction(const algorithm::asset_id& new_asset, const std::string_view& new_transaction_id, const ledger::block_header* new_block_header);
-			expects_lr<void> transition(const ledger::transaction_context* context, const ledger::state* prev_state) override;
+			expects_lr<void> transition(const ledger::state* prev_state) override;
 			bool store_index(format::wo_stream* stream) const override;
 			bool load_index(format::ro_stream& stream) override;
 			bool store_data(format::wo_stream* stream) const override;
@@ -398,13 +398,17 @@ namespace tangent
 		class resolver
 		{
 		public:
+			typedef std::array<uint32_t, 7> uniform_type_map;
+			typedef std::array<uint32_t, 8> multiform_type_map;
+
+		public:
 			static ledger::state* from_stream(format::ro_stream& stream);
 			static ledger::state* from_type(uint32_t hash);
 			static ledger::state* from_copy(const ledger::state* base);
 			static void value_copy(uint32_t hash, const ledger::state* from, ledger::state* to);
 			static bool will_delete(const ledger::state* base, uptr<ledger::state>& cache);
-			static std::array<uint32_t, 7> get_uniform_types();
-			static std::array<uint32_t, 8> get_multiform_types();
+			static uniform_type_map& get_uniform_types();
+			static multiform_type_map& get_multiform_types();
 		};
 	}
 }

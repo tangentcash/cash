@@ -79,17 +79,17 @@ namespace tangent
 	const char* remote_exception::what() const noexcept
 	{
 		if (error_status > 0)
-			return "retry again later (minor failure)";
+			return "result currently unavailable (may retry)";
 		else if (error_status < 0)
-			return "retry again later (major failure)";
+			return "failed due to a shutdown";
 		return error_message.c_str();
 	}
 	string&& remote_exception::message() noexcept
 	{
 		if (error_message.empty() && error_status > 0)
-			error_message = "retry again later (minor failure)";
+			error_message = "result currently unavailable (may retry)";
 		else if (error_message.empty() && error_status < 0)
-			error_message = "retry again later (major failure)";
+			error_message = "failed due to a shutdown";
 		return std::move(error_message);
 	}
 	bool remote_exception::is_retry() const noexcept

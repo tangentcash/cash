@@ -2520,7 +2520,7 @@ namespace tangent
 			if (!p || !value.is_positive())
 				return;
 
-			auto payment = p->context->apply_payment(asset, p->callable().data, hash.data, value);
+			auto payment = p->executor->apply_payment(asset, p->callable().data, hash.data, value);
 			if (!payment)
 				return contract::throw_ptr(exception_repr(exception_repr::category::execution(), std::string_view(payment.error().message())));
 		}
@@ -2530,7 +2530,7 @@ namespace tangent
 			if (!p || token.empty() || (!supply.is_positive() && !reserve.is_positive()))
 				return;
 
-			auto payment = p->context->apply_transfer(contract::coin_token(token), hash.data, supply.is_positive() ? supply : decimal::zero(), reserve.is_positive() ? reserve : decimal::zero());
+			auto payment = p->executor->apply_transfer(contract::coin_token(token), hash.data, supply.is_positive() ? supply : decimal::zero(), reserve.is_positive() ? reserve : decimal::zero());
 			if (!payment)
 				return contract::throw_ptr(exception_repr(exception_repr::category::execution(), std::string_view(payment.error().message())));
 		}
@@ -2540,14 +2540,14 @@ namespace tangent
 			if (!p || token.empty() || (!supply.is_positive() && !reserve.is_positive()))
 				return;
 
-			auto payment = p->context->apply_transfer(contract::coin_token(token), hash.data, supply.is_positive() ? -supply : decimal::zero(), reserve.is_positive() ? -reserve : decimal::zero());
+			auto payment = p->executor->apply_transfer(contract::coin_token(token), hash.data, supply.is_positive() ? -supply : decimal::zero(), reserve.is_positive() ? -reserve : decimal::zero());
 			if (!payment)
 				return contract::throw_ptr(exception_repr(exception_repr::category::execution(), std::string_view(payment.error().message())));
 		}
 		decimal address_repr::balance_of(const uint256_t& asset) const
 		{
 			auto* p = program::fetch_immutable_or_throw();
-			return p ? p->context->get_account_balance(asset, hash.data).or_else(states::account_balance(algorithm::pubkeyhash_t(), asset, nullptr)).get_balance() : decimal::zero();
+			return p ? p->executor->get_account_balance(asset, hash.data).or_else(states::account_balance(algorithm::pubkeyhash_t(), asset, nullptr)).get_balance() : decimal::zero();
 		}
 		string_repr address_repr::to_string() const
 		{
@@ -3052,16 +3052,16 @@ namespace tangent
 				switch (mode)
 				{
 					case cquery::column:
-						results = p->context->get_account_multiforms_by_column(p->callable().data, subject.data, (size_t)offset, count);
+						results = p->executor->get_account_multiforms_by_column(p->callable().data, subject.data, (size_t)offset, count);
 						break;
 					case cquery::column_filter:
-						results = p->context->get_account_multiforms_by_column_filter(p->callable().data, subject.data, comparator, value, order, (size_t)offset, count);
+						results = p->executor->get_account_multiforms_by_column_filter(p->callable().data, subject.data, comparator, value, order, (size_t)offset, count);
 						break;
 					case cquery::row:
-						results = p->context->get_account_multiforms_by_row(p->callable().data, subject.data, (size_t)offset, count);
+						results = p->executor->get_account_multiforms_by_row(p->callable().data, subject.data, (size_t)offset, count);
 						break;
 					case cquery::row_filter:
-						results = p->context->get_account_multiforms_by_row_filter(p->callable().data, subject.data, comparator, value, order, (size_t)offset, count);
+						results = p->executor->get_account_multiforms_by_row_filter(p->callable().data, subject.data, comparator, value, order, (size_t)offset, count);
 						break;
 					default:
 						break;
@@ -3384,12 +3384,12 @@ namespace tangent
 
 			if (!object_value || object_type_id == (int)type_id::void_t)
 			{
-				auto requires_erase = p->context->get_account_uniform(p->callable().data, index.data);
+				auto requires_erase = p->executor->get_account_uniform(p->callable().data, index.data);
 				if (!requires_erase)
 					return;
 			}
 
-			auto data = p->context->apply_account_uniform(p->callable().data, index.data, stream.data);
+			auto data = p->executor->apply_account_uniform(p->callable().data, index.data, stream.data);
 			if (!data)
 				return contract::throw_ptr(exception_repr(exception_repr::category::storage(), std::string_view(data.error().message())));
 		}
@@ -3414,7 +3414,7 @@ namespace tangent
 				return false;
 			}
 
-			auto data = p->context->get_account_uniform(p->callable().data, index.data);
+			auto data = p->executor->get_account_uniform(p->callable().data, index.data);
 			if (!data)
 			{
 				if (throw_on_error)
@@ -3462,7 +3462,7 @@ namespace tangent
 				return false;
 			}
 
-			auto data = p->context->get_account_uniform(p->callable().data, index.data);
+			auto data = p->executor->get_account_uniform(p->callable().data, index.data);
 			return data && !data->data.empty();
 		}
 		bool contract::uniform_into(const void* index_value, int index_type_id, void* object_value, int object_type_id)
@@ -3511,12 +3511,12 @@ namespace tangent
 
 			if (!object_value || object_type_id == (int)type_id::void_t)
 			{
-				auto requires_erase = p->context->get_account_multiform(p->callable().data, column.data, row.data);
+				auto requires_erase = p->executor->get_account_multiform(p->callable().data, column.data, row.data);
 				if (!requires_erase)
 					return;
 			}
 
-			auto data = p->context->apply_account_multiform(p->callable().data, column.data, row.data, stream.data, filter_value);
+			auto data = p->executor->apply_account_multiform(p->callable().data, column.data, row.data, stream.data, filter_value);
 			if (!data)
 				return contract::throw_ptr(exception_repr(exception_repr::category::storage(), std::string_view(data.error().message())));
 
@@ -3560,7 +3560,7 @@ namespace tangent
 				return false;
 			}
 
-			auto data = p->context->get_account_multiform(p->callable().data, column.data, row.data);
+			auto data = p->executor->get_account_multiform(p->callable().data, column.data, row.data);
 			if (!data)
 			{
 				if (throw_on_error)
@@ -3635,7 +3635,7 @@ namespace tangent
 				return false;
 			}
 
-			auto data = p->context->get_account_multiform(p->callable().data, column.data, row.data);
+			auto data = p->executor->get_account_multiform(p->callable().data, column.data, row.data);
 			return data && !data->data.empty();
 		}
 		void contract::multiform_get(asIScriptGeneric* generic)
@@ -3667,7 +3667,7 @@ namespace tangent
 			if (!format::variables_util::deserialize_flat_from(reader, &returns))
 				return contract::throw_ptr(exception_repr(exception_repr::category::argument(), stringify::text("event %.*s load failed", (int)name.size(), name.data())));
 
-			auto data = p->context->emit_event(algorithm::hashing::hash32d(name), std::move(returns), true);
+			auto data = p->executor->emit_event(algorithm::hashing::hash32d(name), std::move(returns), true);
 			if (!data)
 				return contract::throw_ptr(exception_repr(exception_repr::category::storage(), std::string_view(data.error().message())));
 
@@ -3691,7 +3691,7 @@ namespace tangent
 			if (!format::variables_util::deserialize_flat_from(reader, &returns))
 				return contract::throw_ptr(exception_repr(exception_repr::category::argument(), stringify::text("event %.*s load failed", (int)name.size(), name.data())));
 
-			auto data = p->context->emit_event(algorithm::hashing::hash32d(name), std::move(returns), true);
+			auto data = p->executor->emit_event(algorithm::hashing::hash32d(name), std::move(returns), true);
 			if (!data)
 				contract::throw_ptr(exception_repr(exception_repr::category::storage(), std::string_view(data.error().message())));
 
@@ -3706,7 +3706,7 @@ namespace tangent
 			auto type = factory::get()->get_vm()->get_type_info_by_id(object_type_id);
 			auto name = type.is_valid() ? type.get_name() : std::string_view("?");
 			auto id = algorithm::hashing::hash32d(name);
-			auto* event = event_index < 0 ? p->context->receipt.reverse_find_event(id, (size_t)(-event_index)) : p->context->receipt.find_event(id, (size_t)event_index);
+			auto* event = event_index < 0 ? p->executor->receipt.reverse_find_event(id, (size_t)(-event_index)) : p->executor->receipt.find_event(id, (size_t)event_index);
 			if (!event)
 				return false;
 
@@ -3731,7 +3731,7 @@ namespace tangent
 			auto type = factory::get()->get_vm()->get_type_info_by_id(event_type_id);
 			auto name = type.is_valid() ? type.get_name() : std::string_view("?");
 			auto id = algorithm::hashing::hash32d(name);
-			auto* event = event_index < 0 ? p->context->receipt.reverse_find_event(id, (size_t)(-event_index)) : p->context->receipt.find_event(id, (size_t)event_index);
+			auto* event = event_index < 0 ? p->executor->receipt.reverse_find_event(id, (size_t)(-event_index)) : p->executor->receipt.find_event(id, (size_t)event_index);
 			if (!event)
 			{
 				inout.set_return_byte(false);
@@ -3761,7 +3761,7 @@ namespace tangent
 			auto type = factory::get()->get_vm()->get_type_info_by_id(object_type_id);
 			auto name = type.is_valid() ? type.get_name() : std::string_view("?");
 			auto id = algorithm::hashing::hash32d(name);
-			auto* event = event_index < 0 ? p->context->receipt.reverse_find_event(id, (size_t)(-event_index - 1)) : p->context->receipt.find_event(id, (size_t)event_index);
+			auto* event = event_index < 0 ? p->executor->receipt.reverse_find_event(id, (size_t)(-event_index - 1)) : p->executor->receipt.find_event(id, (size_t)event_index);
 			if (!event)
 				return contract::throw_ptr(exception_repr(exception_repr::category::argument(), stringify::text("event %.*s[%i] not found", (int)name.size(), name.data(), event_index)));
 
@@ -3788,7 +3788,7 @@ namespace tangent
 			auto type = factory::get()->get_vm()->get_type_info_by_id(event_type_id);
 			auto name = type.is_valid() ? type.get_name() : std::string_view("?");
 			auto id = algorithm::hashing::hash32d(name);
-			auto* event = event_index < 0 ? p->context->receipt.reverse_find_event(id, (size_t)(-event_index - 1)) : p->context->receipt.find_event(id, (size_t)event_index);
+			auto* event = event_index < 0 ? p->executor->receipt.reverse_find_event(id, (size_t)(-event_index - 1)) : p->executor->receipt.find_event(id, (size_t)event_index);
 			if (!event)
 				return contract::throw_ptr(exception_repr(exception_repr::category::argument(), stringify::text("event %.*s[%i] not found", (int)name.size(), name.data(), event_index)));
 
@@ -3807,33 +3807,33 @@ namespace tangent
 			if (!p)
 				return address_repr();
 
-			size_t index = (size_t)p->context->block->priority;
-			return index < p->context->environment->producers.size() ? address_repr(algorithm::pubkeyhash_t(p->context->environment->producers[index].owner)) : address_repr();
+			size_t index = (size_t)p->executor->block->priority;
+			return index < p->executor->solver->producers.size() ? address_repr(algorithm::pubkeyhash_t(p->executor->solver->producers[index].owner)) : address_repr();
 		}
 		uint256_t contract::block_parent_hash()
 		{
 			auto* p = program::fetch_immutable_or_throw();
-			return p ? p->context->block->parent_hash : uint256_t((uint8_t)0);
+			return p ? p->executor->block->parent_hash : uint256_t((uint8_t)0);
 		}
 		uint256_t contract::block_gas_use()
 		{
 			auto* p = program::fetch_immutable_or_throw();
-			return p ? p->context->block->gas_use : uint256_t((uint8_t)0);
+			return p ? p->executor->block->gas_use : uint256_t((uint8_t)0);
 		}
 		uint256_t contract::block_gas_left()
 		{
 			auto* p = program::fetch_immutable_or_throw();
-			return p ? p->context->block->gas_limit - p->context->block->gas_use : uint256_t((uint8_t)0);
+			return p ? p->executor->block->gas_limit - p->executor->block->gas_use : uint256_t((uint8_t)0);
 		}
 		uint256_t contract::block_gas_limit()
 		{
 			auto* p = program::fetch_immutable_or_throw();
-			return p ? p->context->block->gas_limit : uint256_t((uint8_t)0);
+			return p ? p->executor->block->gas_limit : uint256_t((uint8_t)0);
 		}
 		uint128_t contract::block_difficulty()
 		{
 			auto* p = program::fetch_immutable_or_throw();
-			return p ? algorithm::wesolowski::kdifficulty(p->context->block->difficulty) : uint128_t((uint8_t)0);
+			return p ? algorithm::wesolowski::kdifficulty(p->executor->block->difficulty) : uint128_t((uint8_t)0);
 		}
 		uint64_t contract::block_time()
 		{
@@ -3841,7 +3841,7 @@ namespace tangent
 			if (!p)
 				return 0;
 
-			uint64_t milliseconds = p->context->block->generation_time - p->context->block->generation_time % protocol::now().policy.pow.time;
+			uint64_t milliseconds = p->executor->block->generation_time - p->executor->block->generation_time % protocol::now().policy.pow.time;
 			return milliseconds / 1000;
 		}
 		uint64_t contract::block_time_between(uint64_t block_number_a, uint64_t block_number_b)
@@ -3853,12 +3853,12 @@ namespace tangent
 		uint64_t contract::block_priority()
 		{
 			auto* p = program::fetch_immutable_or_throw();
-			return p ? p->context->block->priority : 0;
+			return p ? p->executor->block->priority : 0;
 		}
 		uint64_t contract::block_number()
 		{
 			auto* p = program::fetch_immutable_or_throw();
-			return p ? p->context->block->number : 0;
+			return p ? p->executor->block->number : 0;
 		}
 		decimal contract::tx_value()
 		{
@@ -3872,7 +3872,7 @@ namespace tangent
 		address_repr contract::tx_from()
 		{
 			auto* p = program::fetch_immutable_or_throw();
-			return p ? address_repr(p->context->receipt.from) : address_repr();
+			return p ? address_repr(p->executor->receipt.from) : address_repr();
 		}
 		address_repr contract::tx_to()
 		{
@@ -3882,42 +3882,42 @@ namespace tangent
 		string_repr contract::tx_blockchain()
 		{
 			auto* p = program::fetch_immutable_or_throw();
-			return p ? string_repr(algorithm::asset::blockchain_of(p->context->transaction->asset)) : string_repr();
+			return p ? string_repr(algorithm::asset::blockchain_of(p->executor->transaction->asset)) : string_repr();
 		}
 		string_repr contract::tx_token()
 		{
 			auto* p = program::fetch_immutable_or_throw();
-			return p ? string_repr(algorithm::asset::token_of(p->context->transaction->asset)) : string_repr();
+			return p ? string_repr(algorithm::asset::token_of(p->executor->transaction->asset)) : string_repr();
 		}
 		string_repr contract::tx_contract()
 		{
 			auto* p = program::fetch_immutable_or_throw();
-			return p ? string_repr(algorithm::asset::checksum_of(p->context->transaction->asset)) : string_repr();
+			return p ? string_repr(algorithm::asset::checksum_of(p->executor->transaction->asset)) : string_repr();
 		}
 		decimal contract::tx_gas_price()
 		{
 			auto* p = program::fetch_immutable_or_throw();
-			return p ? p->context->transaction->gas_price : decimal::zero();
+			return p ? p->executor->transaction->gas_price : decimal::zero();
 		}
 		uint256_t contract::tx_gas_use()
 		{
 			auto* p = program::fetch_immutable_or_throw();
-			return p ? p->context->receipt.relative_gas_use : uint256_t((uint8_t)0);
+			return p ? p->executor->receipt.relative_gas_use : uint256_t((uint8_t)0);
 		}
 		uint256_t contract::tx_gas_left()
 		{
 			auto* p = program::fetch_immutable_or_throw();
-			return p ? p->context->get_gas_left() : uint256_t((uint8_t)0);
+			return p ? p->executor->get_gas_left() : uint256_t((uint8_t)0);
 		}
 		uint256_t contract::tx_gas_limit()
 		{
 			auto* p = program::fetch_immutable_or_throw();
-			return p ? p->context->transaction->gas_limit : uint256_t((uint8_t)0);
+			return p ? p->executor->transaction->gas_limit : uint256_t((uint8_t)0);
 		}
 		uint256_t contract::tx_asset()
 		{
 			auto* p = program::fetch_immutable_or_throw();
-			return p ? p->context->transaction->asset : uint256_t((uint8_t)0);
+			return p ? p->executor->transaction->asset : uint256_t((uint8_t)0);
 		}
 		uint256_t contract::coin_native()
 		{
@@ -4121,7 +4121,7 @@ namespace tangent
 
 			if (!p->cache.distribution)
 			{
-				auto candidate = p->context->calculate_random(p->context->get_gas_use());
+				auto candidate = p->executor->calculate_random(p->executor->get_gas_use());
 				if (!candidate)
 				{
 					contract::throw_ptr(exception_repr(exception_repr::category::execution(), std::string_view(candidate.error().message())));
@@ -5755,7 +5755,7 @@ namespace tangent
 			return (int)virtual_error::success;
 		}
 
-		program::program(ledger::transaction_context* new_context, library&& new_module) : context(new_context), module(new_module)
+		program::program(ledger::executor_context* new_executor, library&& new_module) : executor(new_executor), module(new_module)
 		{
 		}
 		expects_lr<void> program::execute(ccall mutability, const std::string_view& entrypoint, const format::variables& args, std::function<expects_lr<void>(void*, int)>&& return_callback)
@@ -5810,7 +5810,7 @@ namespace tangent
 						{
 							auto type = factory::get()->get_vm()->get_type_info_by_id(output_type_id);
 							auto name = type.is_valid() ? type.get_name() : std::string_view("?");
-							auto status = context->emit_event(algorithm::hashing::hash32d(name), std::move(returns), true);
+							auto status = executor->emit_event(algorithm::hashing::hash32d(name), std::move(returns), true);
 							if (!status)
 								resolver = std::move(status);
 						}
@@ -5866,24 +5866,24 @@ namespace tangent
 			if (entrypoint.empty())
 				return layer_exception(stringify::text("illegal subcall to %s program: illegal operation", address_repr(target).to_string().data()));
 
-			auto link = context->get_account_program(target.data);
+			auto link = executor->get_account_program(target.data);
 			if (!link)
 				return layer_exception(stringify::text("illegal subcall to %s program on function \"%.*s\": illegal operation", address_repr(target).to_string().data(), (int)entrypoint.size(), entrypoint.data()));
 
 			auto transaction = transactions::call();
 			transaction.program_call(target, value, entrypoint, std::move(args));
-			transaction.asset = context->transaction->asset;
-			transaction.gas_price = context->transaction->gas_price;
-			transaction.gas_limit = context->get_gas_left();
+			transaction.asset = executor->transaction->asset;
+			transaction.gas_price = executor->transaction->gas_price;
+			transaction.gas_limit = executor->get_gas_left();
 			transaction.nonce = 0;
 
 			ledger::receipt receipt;
 			receipt.transaction_hash = transaction.as_hash();
-			receipt.absolute_gas_use = context->block->gas_use;
-			receipt.block_number = context->block->number;
+			receipt.absolute_gas_use = executor->block->gas_use;
+			receipt.block_number = executor->block->number;
 			receipt.from = callable();
 
-			auto subcontext = ledger::transaction_context(context->environment, context->block, context->changelog, &transaction, std::move(receipt));
+			auto subcontext = ledger::executor_context(executor->changelog, executor->solver, executor->block, &transaction, std::move(receipt));
 			auto subexecution = transaction.subexecute(&subcontext, [&](void* module_ptr)
 			{
 				auto script = program(&subcontext, (asIScriptModule*)module_ptr);
@@ -5902,8 +5902,8 @@ namespace tangent
 					return expectation::met;
 				});
 			});
-			context->receipt.events.insert(context->receipt.events.begin(), subcontext.receipt.events.begin(), subcontext.receipt.events.end());
-			context->receipt.relative_gas_use += subcontext.receipt.relative_gas_use;
+			executor->receipt.events.insert(executor->receipt.events.begin(), subcontext.receipt.events.begin(), subcontext.receipt.events.end());
+			executor->receipt.relative_gas_use += subcontext.receipt.relative_gas_use;
 			return subexecution;
 		}
 		expects_lr<vector<std::function<void(immediate_context*)>>> program::dispatch_arguments(ccall* mutability, const function& entrypoint, const format::variables& args) const
@@ -6020,7 +6020,7 @@ namespace tangent
 		}
 		void program::dispatch_coroutine(immediate_context* coroutine)
 		{
-			auto status = context->burn_gas((uint64_t)ledger::gas_cost::program_iop);
+			auto status = executor->burn_gas((uint64_t)ledger::gas_cost::program_iop);
 			if (!status)
 				coroutine->abort();
 		}
@@ -6039,19 +6039,19 @@ namespace tangent
 		}
 		algorithm::pubkeyhash_t program::callable() const
 		{
-			uint32_t type = context->transaction->as_type();
+			uint32_t type = executor->transaction->as_type();
 			if (type == transactions::call::as_instance_type())
-				return ((transactions::call*)context->transaction)->callable;
+				return ((transactions::call*)executor->transaction)->callable;
 			else if (type == transactions::deploy::as_instance_type())
-				return ((transactions::deploy*)context->transaction)->get_account();
+				return ((transactions::deploy*)executor->transaction)->get_account();
 
-			return context->receipt.from;
+			return executor->receipt.from;
 		}
 		decimal program::payable() const
 		{
-			uint32_t type = context->transaction->as_type();
+			uint32_t type = executor->transaction->as_type();
 			if (type == transactions::call::as_instance_type())
-				return ((transactions::call*)context->transaction)->value;
+				return ((transactions::call*)executor->transaction)->value;
 			else if (type == transactions::deploy::as_instance_type())
 				return decimal::zero();
 
@@ -6063,9 +6063,9 @@ namespace tangent
 		}
 		string program::function_declaration() const
 		{
-			uint32_t type = context->transaction->as_type();
+			uint32_t type = executor->transaction->as_type();
 			if (type == transactions::call::as_instance_type())
-				return ((transactions::call*)context->transaction)->function;
+				return ((transactions::call*)executor->transaction)->function;
 			else if (type == transactions::deploy::as_instance_type())
 				return string(SCRIPT_FUNCTION_CONSTRUCT);
 
@@ -6073,15 +6073,15 @@ namespace tangent
 		}
 		const format::variables* program::function_arguments() const
 		{
-			uint32_t type = context->transaction->as_type();
+			uint32_t type = executor->transaction->as_type();
 			if (type == transactions::deploy::as_instance_type())
 			{
-				auto& args = ((transactions::deploy*)context->transaction)->args;
+				auto& args = ((transactions::deploy*)executor->transaction)->args;
 				return &args;
 			}
 			else if (type == transactions::call::as_instance_type())
 			{
-				auto& args = ((transactions::call*)context->transaction)->args;
+				auto& args = ((transactions::call*)executor->transaction)->args;
 				return &args;
 			}
 			return nullptr;
@@ -6113,7 +6113,7 @@ namespace tangent
 		bool program::request_gas_mop(size_t difficulty)
 		{
 			auto* program = program::fetch_immutable();
-			if (program && !program->context->burn_gas((size_t)ledger::gas_cost::program_mop * (1 + difficulty)))
+			if (program && !program->executor->burn_gas((size_t)ledger::gas_cost::program_mop * (1 + difficulty)))
 			{
 				contract::throw_ptr(exception_repr(exception_repr::category::execution(), std::string_view("ran out of gas")));
 				return false;

@@ -19,18 +19,18 @@ namespace tangent
 
 			return ledger::transaction::validate(block_number);
 		}
-		expects_lr<void> transfer::execute(ledger::transaction_context* context) const
+		expects_lr<void> transfer::execute(ledger::executor_context* executor) const
 		{
-			auto validation = transaction::execute(context);
+			auto validation = transaction::execute(executor);
 			if (!validation)
 				return validation.error();
 
 			for (auto& [owner, value] : to)
 			{
-				if (context->receipt.from == algorithm::pubkeyhash_t(owner.data))
+				if (executor->receipt.from == algorithm::pubkeyhash_t(owner.data))
 					return layer_exception("invalid payment");
 
-				auto payment = context->apply_payment(asset, context->receipt.from, owner.data, value);
+				auto payment = executor->apply_payment(asset, executor->receipt.from, owner.data, value);
 				if (!payment)
 					return payment.error();
 			}
@@ -100,7 +100,7 @@ namespace tangent
 
 			return true;
 		}
-		bool transfer::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const
+		bool transfer::recover_many(const ledger::executor_context* executor, const ledger::receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const
 		{
 			for (auto& [owner, value] : to)
 				parties.insert(algorithm::pubkeyhash_t(owner.data));
@@ -150,9 +150,9 @@ namespace tangent
 
 			return ledger::transaction::validate(block_number);
 		}
-		expects_lr<void> deploy::execute(ledger::transaction_context* context) const
+		expects_lr<void> deploy::execute(ledger::executor_context* executor) const
 		{
-			auto validation = transaction::execute(context);
+			auto validation = transaction::execute(executor);
 			if (!validation)
 				return validation.error();
 
@@ -174,17 +174,17 @@ namespace tangent
 					if (!result)
 						return result.error();
 
-					auto collision = context->get_witness_program(hashcode);
+					auto collision = executor->get_witness_program(hashcode);
 					if (!collision)
 					{
-						auto status = context->apply_witness_program(storage);
+						auto status = executor->apply_witness_program(storage);
 						if (!status)
 							return status.error();
 					}
 					else if (collision->storage != data)
 						return layer_exception("program hashcode collision");
 
-					auto status = context->apply_account_program(account.data, hashcode);
+					auto status = executor->apply_account_program(account.data, hashcode);
 					if (!status)
 						return status.error();
 
@@ -193,7 +193,7 @@ namespace tangent
 				}
 				case data_type::hashcode:
 				{
-					auto program = context->get_witness_program(storage);
+					auto program = executor->get_witness_program(storage);
 					if (!program)
 						return layer_exception("program is not stored");
 
@@ -201,7 +201,7 @@ namespace tangent
 					if (!result)
 						return result.error();
 
-					auto status = context->apply_account_program(account.data, storage);
+					auto status = executor->apply_account_program(account.data, storage);
 					if (!status)
 						return status.error();
 
@@ -212,7 +212,7 @@ namespace tangent
 					return layer_exception("invalid data type");
 			}
 
-			auto script = script::program(context, pmodule->get_module());
+			auto script = script::program(executor, pmodule->get_module());
 			return script.execute(script::ccall::deploy_call, script.deploy_function(), args, nullptr);
 		}
 		bool deploy::store_body(format::wo_stream* stream) const
@@ -229,7 +229,7 @@ namespace tangent
 			args.clear();
 			return format::variables_util::deserialize_merge_from(stream, &args);
 		}
-		bool deploy::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const
+		bool deploy::recover_many(const ledger::executor_context* executor, const ledger::receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const
 		{
 			size_t offset = 0;
 			parties.insert(get_account());
@@ -337,27 +337,27 @@ namespace tangent
 
 			return ledger::transaction::validate(block_number);
 		}
-		expects_lr<void> call::execute(ledger::transaction_context* context) const
+		expects_lr<void> call::execute(ledger::executor_context* executor) const
 		{
-			auto validation = transaction::execute(context);
+			auto validation = transaction::execute(executor);
 			if (!validation)
 				return validation.error();
 
-			return subexecute(context, [this, context](void* module_ptr)
+			return subexecute(executor, [this, executor](void* module_ptr)
 			{
-				auto script = script::program(context, (asIScriptModule*)module_ptr);
+				auto script = script::program(executor, (asIScriptModule*)module_ptr);
 				return script.execute(script::ccall::paying_call, function, args, nullptr);
 			});
 		}
-		expects_lr<void> call::subexecute(ledger::transaction_context* context, std::function<expects_lr<void>(void*)>&& executor) const
+		expects_lr<void> call::subexecute(ledger::executor_context* executor, std::function<expects_lr<void>(void*)>&& callback) const
 		{
 			VI_ASSERT(executor, "executor should be set");
-			auto index = context->get_account_program(callable);
+			auto index = executor->get_account_program(callable);
 			if (!index)
 				return layer_exception("program is not assigned");
 
 			auto& hashcode = index->hashcode;
-			auto program = context->get_witness_program(hashcode);
+			auto program = executor->get_witness_program(hashcode);
 			if (!program)
 				return layer_exception("program is not stored");
 
@@ -367,15 +367,15 @@ namespace tangent
 
 			if (value.is_positive())
 			{
-				if (context->receipt.from == callable)
+				if (executor->receipt.from == callable)
 					return layer_exception("invalid payment");
 
-				auto payment = context->apply_payment(asset, context->receipt.from, callable, value);
+				auto payment = executor->apply_payment(asset, executor->receipt.from, callable, value);
 				if (!payment)
 					return payment.error();
 			}
 
-			return executor(pmodule->ref.get_module());
+			return callback(pmodule->ref.get_module());
 		}
 		bool call::store_body(format::wo_stream* stream) const
 		{
@@ -400,7 +400,7 @@ namespace tangent
 			args.clear();
 			return format::variables_util::deserialize_merge_from(stream, &args);
 		}
-		bool call::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const
+		bool call::recover_many(const ledger::executor_context* executor, const ledger::receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const
 		{
 			size_t offset = 0;
 			const format::variables* event = receipt.find_event<states::account_balance>();
@@ -515,9 +515,9 @@ namespace tangent
 
 			return ledger::transaction::validate(block_number);
 		}
-		expects_lr<void> rollup::execute(ledger::transaction_context* context) const
+		expects_lr<void> rollup::execute(ledger::executor_context* executor) const
 		{
-			auto validation = transaction::execute(context);
+			auto validation = transaction::execute(executor);
 			if (!validation)
 				return validation.error();
 
@@ -531,9 +531,9 @@ namespace tangent
 			}
 
 			algorithm::pubkeyhash_t owner;
-			uint256_t absolute_gas_limit = context->block->gas_limit;
-			uint256_t absolute_gas_use = context->block->gas_use;
-			uint256_t relative_gas_use = context->receipt.relative_gas_use;
+			uint256_t absolute_gas_limit = executor->block->gas_limit;
+			uint256_t absolute_gas_use = executor->block->gas_use;
+			uint256_t relative_gas_use = executor->receipt.relative_gas_use;
 			std::sort(queue.begin(), queue.end(), [](const std::pair<ledger::transaction*, uint16_t>& a, const std::pair<ledger::transaction*, uint16_t>& b)
 			{
 				return a.first->nonce > 0 && b.first->nonce > 0 && a.first->nonce != b.first->nonce ? a.first->nonce < b.first->nonce : a.second < b.second;
@@ -546,20 +546,20 @@ namespace tangent
 				uint256_t transaction_hash = transaction->as_hash();
 				uint64_t transaction_nonce = transaction->nonce;
 				uint8_t transaction_code = transaction->signature.data[0];
-				uint8_t execution_flags = (uint8_t)ledger::transaction_context::execution_mode::pedantic;
+				uint8_t execution_flags = (uint8_t)ledger::executor_context::flags::pedantic;
 				if (internal_transaction)
 				{
 					transaction->nonce = nonce;
 					transaction->signature.data[0] = 0xFF;
-					execution_flags |= (uint8_t)ledger::transaction_context::execution_mode::replayable;
-					owner = context->receipt.from;
+					execution_flags |= (uint8_t)ledger::executor_context::flags::replayable;
+					owner = executor->receipt.from;
 				}
 				else if (!transaction->recover_hash(owner) || owner.empty())
 					return layer_exception("sub-transaction " + algorithm::encoding::encode_0xhex256(transaction_hash) + " validation failed: invalid signature");
 
 				transaction->gas_price = decimal::zero();
-				transaction->gas_limit = gas_limit - context->receipt.relative_gas_use;
-				auto execution = ledger::transaction_context::execute_tx(context->environment, (ledger::block*)context->block, context->changelog, transaction, transaction_hash, owner, 0, execution_flags, internal_receipt);
+				transaction->gas_limit = gas_limit - executor->receipt.relative_gas_use;
+				auto execution = ledger::executor_context::execute_tx(executor->solver, executor->block, executor->changelog, transaction, transaction_hash, owner, 0, execution_flags, internal_receipt);
 				transaction->signature.data[0] = transaction_code;
 				transaction->nonce = transaction_nonce;
 				transaction->gas_limit = 0;
@@ -568,39 +568,39 @@ namespace tangent
 					return layer_exception("sub-transaction " + algorithm::encoding::encode_0xhex256(transaction_hash) + " execution failed: " + execution.error().message());
 
 				relative_gas_use += execution->receipt.relative_gas_use;
-				auto report = context->emit_event<rollup>({ format::variable(execution->receipt.transaction_hash), format::variable(index), format::variable(execution->receipt.relative_gas_use) });
+				auto report = executor->emit_event<rollup>({ format::variable(execution->receipt.transaction_hash), format::variable(index), format::variable(execution->receipt.relative_gas_use) });
 				if (!report)
 					return layer_exception("sub-transaction " + algorithm::encoding::encode_0xhex256(transaction_hash) + " merge failed: " + report.error().message());
 
 				size_t prev_size = internal_receipt.events.size();
 				internal_receipt.events = std::move(execution->receipt.events);
 				if (internal_receipt.events.size() > prev_size)
-					context->receipt.events.insert(context->receipt.events.end(), internal_receipt.events.begin() + prev_size, internal_receipt.events.end());
+					executor->receipt.events.insert(executor->receipt.events.end(), internal_receipt.events.begin() + prev_size, internal_receipt.events.end());
 			}
 
-			context->block->gas_limit = absolute_gas_limit;
-			context->block->gas_use = absolute_gas_use;
-			context->receipt.relative_gas_use = relative_gas_use;
+			executor->block->gas_limit = absolute_gas_limit;
+			executor->block->gas_use = absolute_gas_use;
+			executor->receipt.relative_gas_use = relative_gas_use;
 			return expectation::met;
 		}
-		expects_promise_rt<void> rollup::dispatch(const ledger::transaction_context* context, ledger::dispatch_context* dispatcher) const
+		expects_promise_rt<void> rollup::dispatch(const ledger::executor_context* executor, ledger::dispatcher_context* dispatcher) const
 		{
 			if (!is_dispatchable())
 				return expects_promise_rt<void>(expectation::met);
 
-			return coasync<expects_rt<void>>([this, context, dispatcher]() -> expects_promise_rt<void>
+			return coasync<expects_rt<void>>([this, executor, dispatcher]() -> expects_promise_rt<void>
 			{
 				string error_message;
 				for (auto& group : transactions)
 				{
 					for (auto& transaction : group.second)
 					{
-						auto resolved_transaction = resolve_block_transaction(context->receipt, transaction->as_hash());
+						auto resolved_transaction = resolve_block_transaction(executor->receipt, transaction->as_hash());
 						if (!resolved_transaction)
 							continue;
 
 						auto& target_transaction = *resolved_transaction;
-						auto status = coawait(ledger::transaction_context::dispatch_tx(dispatcher, &target_transaction));
+						auto status = coawait(ledger::executor_context::dispatch_tx(dispatcher, &target_transaction));
 						if (!status && (status.error().is_retry() || status.error().is_shutdown()))
 							coreturn status;
 						else if (!status)
@@ -699,7 +699,7 @@ namespace tangent
 			}
 			return true;
 		}
-		bool rollup::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const
+		bool rollup::recover_many(const ledger::executor_context* executor, const ledger::receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const
 		{
 			algorithm::pubkeyhash_t from;
 			for (auto& group : transactions)
@@ -709,19 +709,20 @@ namespace tangent
 					bool internal_transaction = transaction->signature.empty();
 					if (!internal_transaction && transaction->recover_hash(from))
 						parties.insert(from);
-					transaction->recover_many(context, receipt, parties);
+					transaction->recover_many(executor, receipt, parties);
 				}
 			}
 			return true;
 		}
-		bool rollup::recover_aliases(const ledger::transaction_context* context, const ledger::receipt& receipt, btree_set<uint256_t>& aliases) const
+		bool rollup::recover_aliases(btree_set<uint256_t>& aliases) const
 		{
 			for (auto& group : transactions)
 			{
 				for (auto& transaction : group.second)
 				{
 					aliases.insert(transaction->as_hash());
-					transaction->recover_aliases(context, receipt, aliases);
+					if (!transaction->recover_aliases(aliases))
+						return false;
 				}
 			}
 			return true;
@@ -934,9 +935,9 @@ namespace tangent
 
 			return ledger::transaction::validate(block_number);
 		}
-		expects_lr<void> setup::execute(ledger::transaction_context* context) const
+		expects_lr<void> setup::execute(ledger::executor_context* executor) const
 		{
-			auto validation = transaction::execute(context);
+			auto validation = transaction::execute(executor);
 			if (!validation)
 				return validation.error();
 
@@ -945,15 +946,15 @@ namespace tangent
 			btree_set<algorithm::pubkeyhash_t> exclusion;
 			for (auto& [broadcast_hash, participant] : migrations)
 			{
-				auto parent = context->get_block_transaction<broadcast>(broadcast_hash, true);
+				auto parent = executor->get_block_transaction<broadcast>(broadcast_hash, true);
 				if (!parent)
 					return layer_exception("broadcast transaction not found");
 
 				auto* parent_transaction = (broadcast*)*parent->transaction;
-				if (parent_transaction->proof || parent->receipt.from != context->receipt.from)
+				if (parent_transaction->proof || parent->receipt.from != executor->receipt.from)
 					return layer_exception("broadcast transaction not applicable");
 
-				auto info = context->get_validator_participation(participant);
+				auto info = executor->get_validator_participation(participant);
 				if (!info)
 					return layer_exception("participant for a migration not found");
 
@@ -964,14 +965,14 @@ namespace tangent
 				{
 					for (auto& ref : refs->second)
 					{
-						if (ref.manager != context->receipt.from)
+						if (ref.manager != executor->receipt.from)
 							continue;
 
-						auto attestation = context->get_verified_validator_attestation(base_asset, ref.manager);
+						auto attestation = executor->get_verified_validator_attestation(base_asset, ref.manager);
 						if (!attestation)
 							return attestation.error();
 
-						auto account = context->get_bridge_account(base_asset, ref.manager, ref.owner);
+						auto account = executor->get_bridge_account(base_asset, ref.manager, ref.owner);
 						if (!account)
 							return account.error();
 
@@ -980,7 +981,7 @@ namespace tangent
 						if (threshold < attestation->participation_threshold)
 							threshold = attestation->participation_threshold;
 
-						auto ref_hash = ledger::dispatch_context::secret_entropy::ref_hash(base_asset, ref.manager, ref.owner);
+						auto ref_hash = ledger::dispatcher_context::secret_entropy::ref_hash(base_asset, ref.manager, ref.owner);
 						if (accounts.find(ref_hash) != accounts.end())
 							return layer_exception("migration requires migration to multiple new participants");
 
@@ -997,8 +998,8 @@ namespace tangent
 				if (!algorithm::asset::token_of(asset).empty())
 					continue;
 
-				auto prev_policy = context->get_validator_attestation(asset, context->receipt.from).or_else(states::validator_attestation(context->receipt.from, asset, nullptr));
-				auto next_policy = context->apply_validator_attestation_policy(algorithm::asset::base_id_of(asset), context->receipt.from,
+				auto prev_policy = executor->get_validator_attestation(asset, executor->receipt.from).or_else(states::validator_attestation(executor->receipt.from, asset, nullptr));
+				auto next_policy = executor->apply_validator_attestation_policy(algorithm::asset::base_id_of(asset), executor->receipt.from,
 					setup.security_level.or_else(prev_policy.security_level),
 					setup.participation_threshold.or_else(prev_policy.participation_threshold),
 					setup.incoming_fee.or_else(prev_policy.incoming_fee),
@@ -1008,18 +1009,18 @@ namespace tangent
 				if (!next_policy)
 					return next_policy.error();
 
-				auto type = setup.stake.is_nan() ? ledger::transaction_context::stake_type::unlock : ledger::transaction_context::stake_type::lock;
-				if (type == ledger::transaction_context::stake_type::unlock && (next_policy->accepts_account_requests || next_policy->accepts_withdrawal_requests))
+				auto type = setup.stake.is_nan() ? ledger::executor_context::staker::unlock : ledger::executor_context::staker::lock;
+				if (type == ledger::executor_context::staker::unlock && (next_policy->accepts_account_requests || next_policy->accepts_withdrawal_requests))
 					return layer_exception(algorithm::asset::handle_of(asset) + " bridge is still active");
 
-				auto balance = context->get_bridge_balance(asset, context->receipt.from);
-				if (balance && (type == ledger::transaction_context::stake_type::unlock || (prev_policy.is_active() && prev_policy.accepts_withdrawal_requests != next_policy->accepts_withdrawal_requests && !next_policy->accepts_withdrawal_requests)))
+				auto balance = executor->get_bridge_balance(asset, executor->receipt.from);
+				if (balance && (type == ledger::executor_context::staker::unlock || (prev_policy.is_active() && prev_policy.accepts_withdrawal_requests != next_policy->accepts_withdrawal_requests && !next_policy->accepts_withdrawal_requests)))
 				{
 					for (auto& [token_asset, token_value] : balance->balances)
 					{
 						if (algorithm::asset::is_aux(token_asset, true))
 						{
-							auto dust = context->calculate_amount_considered_dust(token_asset).or_else(decimal::zero());
+							auto dust = executor->calculate_amount_considered_dust(token_asset).or_else(decimal::zero());
 							if (token_value > dust)
 								return layer_exception(algorithm::asset::handle_of(token_asset) + " bridge has non-dust custodial balance (max_dust: " + dust.to_string() + ")");
 						}
@@ -1028,7 +1029,7 @@ namespace tangent
 					}
 				}
 
-				auto status = context->apply_validator_attestation(asset, context->receipt.from, type, { { algorithm::asset::native(), setup.stake } });
+				auto status = executor->apply_validator_attestation(asset, executor->receipt.from, type, { { algorithm::asset::native(), setup.stake } });
 				if (!status)
 					return status.error();
 			}
@@ -1036,10 +1037,10 @@ namespace tangent
 			bool requires_self_migration = false;
 			if (participation)
 			{
-				auto type = participation->is_nan() ? ledger::transaction_context::stake_type::unlock : ledger::transaction_context::stake_type::lock;
-				if (type == ledger::transaction_context::stake_type::unlock)
+				auto type = participation->is_nan() ? ledger::executor_context::staker::unlock : ledger::executor_context::staker::lock;
+				if (type == ledger::executor_context::staker::unlock)
 				{
-					auto info = context->get_validator_participation(context->receipt.from);
+					auto info = executor->get_validator_participation(executor->receipt.from);
 					if (!info)
 						return info.error();
 					else if (info->participations.empty())
@@ -1049,11 +1050,11 @@ namespace tangent
 					{
 						for (auto& ref : refs)
 						{
-							auto attestation = context->get_verified_validator_attestation(asset, ref.manager);
+							auto attestation = executor->get_verified_validator_attestation(asset, ref.manager);
 							if (!attestation)
 								return attestation.error();
 
-							auto account = context->get_bridge_account(asset, ref.manager, ref.owner);
+							auto account = executor->get_bridge_account(asset, ref.manager, ref.owner);
 							if (!account)
 								return account.error();
 
@@ -1062,7 +1063,7 @@ namespace tangent
 							if (threshold < attestation->participation_threshold)
 								threshold = attestation->participation_threshold;
 
-							auto ref_hash = ledger::dispatch_context::secret_entropy::ref_hash(asset, ref.manager, ref.owner);
+							auto ref_hash = ledger::dispatcher_context::secret_entropy::ref_hash(asset, ref.manager, ref.owner);
 							if (accounts.find(ref_hash) != accounts.end())
 								return layer_exception("migration requires migration to multiple new participants");
 
@@ -1076,7 +1077,7 @@ namespace tangent
 				else
 				{
 				modify_participation:
-					auto status = context->apply_validator_participation(context->receipt.from, type, { }, { { algorithm::asset::native(), *participation } });
+					auto status = executor->apply_validator_participation(executor->receipt.from, type, { }, { { algorithm::asset::native(), *participation } });
 					if (!status)
 						return status.error();
 				}
@@ -1084,7 +1085,7 @@ namespace tangent
 
 			if (production)
 			{
-				auto status = context->apply_validator_production(context->receipt.from, production->is_nan() ? ledger::transaction_context::stake_type::unlock : ledger::transaction_context::stake_type::lock, { { algorithm::asset::native(), *production } });
+				auto status = executor->apply_validator_production(executor->receipt.from, production->is_nan() ? ledger::executor_context::staker::unlock : ledger::executor_context::staker::lock, { { algorithm::asset::native(), *production } });
 				if (!status)
 					return status.error();
 			}
@@ -1092,37 +1093,37 @@ namespace tangent
 			if (exclusion.empty())
 				return expectation::met;
 
-			auto committee = context->calculate_participants(exclusion, 1, threshold);
+			auto committee = executor->calculate_participants(exclusion, 1, threshold);
 			if (!committee)
 				return committee.error();
 
 			auto& new_manager = committee->front();
-			auto event = context->emit_event<setup>({ format::variable(requires_self_migration), format::variable(new_manager.owner.view()) });
+			auto event = executor->emit_event<setup>({ format::variable(requires_self_migration), format::variable(new_manager.owner.view()) });
 			if (!event)
 				return event;
 
 			return expectation::met;
 		}
-		expects_promise_rt<void> setup::dispatch(const ledger::transaction_context* context, ledger::dispatch_context* dispatcher) const
+		expects_promise_rt<void> setup::dispatch(const ledger::executor_context* executor, ledger::dispatcher_context* dispatcher) const
 		{
-			if (!dispatcher->is_running_on(context->receipt.from))
+			if (!dispatcher->is_running_on(executor->receipt.from))
 				return expects_promise_rt<void>(expectation::met);
 
 			bool requires_new_participant = false;
-			auto new_participant = get_new_participant(context->receipt, &requires_new_participant);
+			auto new_participant = get_new_participant(executor->receipt, &requires_new_participant);
 			if (!requires_new_participant)
 				return expects_promise_rt<void>(expectation::met);
-			else if (new_participant.empty() || context->get_witness_event(context->receipt.transaction_hash))
+			else if (new_participant.empty() || executor->get_witness_event(executor->receipt.transaction_hash))
 				return expects_promise_rt<void>(remote_exception("invalid new participant"));
 
-			return coasync<expects_rt<void>>([this, context, dispatcher, new_participant]() -> expects_promise_rt<void>
+			return coasync<expects_rt<void>>([this, executor, dispatcher, new_participant]() -> expects_promise_rt<void>
 			{
 				auto migrations = expects_lr<vector<migration_ref>>(layer_exception());
-				auto cache = dispatcher->pull_cache(context);
-				auto aggregation_state = ledger::dispatch_context::entropy_aggregation_state();
+				auto cache = dispatcher->pull_cache(executor);
+				auto aggregation_state = ledger::dispatcher_context::entropy_aggregation_state();
 				if (!aggregation_state.load_message(cache))
 				{
-					migrations = get_migration_refs(context, context->receipt);
+					migrations = get_migration_refs(executor, executor->receipt);
 					if (!migrations)
 						coreturn remote_exception(std::move(migrations.error().message()));
 					else if (migrations->empty())
@@ -1133,7 +1134,7 @@ namespace tangent
 						if (migration.must_have_locally)
 							continue;
 
-						auto ref_hash = ledger::dispatch_context::secret_entropy::ref_hash(migration.account.asset, migration.account.manager, migration.account.owner);
+						auto ref_hash = ledger::dispatcher_context::secret_entropy::ref_hash(migration.account.asset, migration.account.manager, migration.account.owner);
 						migration.account.group.erase(migration.old_participant);
 						aggregation_state.participants.insert(migration.account.group.begin(), migration.account.group.end());
 						aggregation_state.encrypted_shares[ref_hash] = btree_map<algorithm::pubkeyhash_t, string>();
@@ -1157,14 +1158,14 @@ namespace tangent
 					if (++aggregation_state.attempt >= protocol::now().user.consensus.coordination_attempts)
 						coreturn remote_exception("failed to coordinate participants after several retries");
 
-					dispatcher->push_cache(context, aggregation_state.as_message());
+					dispatcher->push_cache(executor, aggregation_state.as_message());
 					coreturn remote_exception::retry();
 				}
 
 				btree_set<algorithm::pubkeyhash_t> deferred_participants;
 				while (!aggregation_state.participants.empty())
 				{
-					auto result = coawait(dispatcher->aggregate_entropy_shares(context, aggregation_state, *aggregation_state.participants.begin()));
+					auto result = coawait(dispatcher->aggregate_entropy_shares(executor, aggregation_state, *aggregation_state.participants.begin()));
 					if (!result && (result.error().is_retry() || result.error().is_shutdown()))
 						deferred_participants.insert(*aggregation_state.participants.begin());
 					else if (!result)
@@ -1181,18 +1182,18 @@ namespace tangent
 
 				auto tweaked_public_key = aggregation_state.public_key;
 				algorithm::seckey_t tweak;
-				algorithm::signing::derive_secret_key(context->receipt.transaction_hash, tweak);
+				algorithm::signing::derive_secret_key(executor->receipt.transaction_hash, tweak);
 				if (!algorithm::signing::scalar_add_public_key(tweaked_public_key, tweak))
 					coreturn remote_exception("invalid tweaked public key");
 
 				if (!migrations)
 				{
-					migrations = get_migration_refs(context, context->receipt);
+					migrations = get_migration_refs(executor, executor->receipt);
 					if (!migrations)
 						coreturn remote_exception(std::move(migrations.error().message()));
 				}
 
-				auto recovery_state = ledger::dispatch_context::entropy_recovery_state();
+				auto recovery_state = ledger::dispatcher_context::entropy_recovery_state();
 				recovery_state.encrypted_shares = aggregation_state.encrypted_shares;
 				for (auto& migration : *migrations)
 				{
@@ -1211,7 +1212,7 @@ namespace tangent
 					recovery_state.encrypted_entropies[secret->as_ref_hash()] = std::move(*encrypted_entropy);
 				}
 
-				auto result = coawait(dispatcher->recover_entropy(context, recovery_state, new_participant));
+				auto result = coawait(dispatcher->recover_entropy(executor, recovery_state, new_participant));
 				if (!result && (result.error().is_retry() || result.error().is_shutdown()))
 					goto postpone;
 				else if (!result)
@@ -1219,7 +1220,7 @@ namespace tangent
 
 				auto* transaction = memory::init<migrate>();
 				transaction->asset = asset;
-				transaction->setup_hash = context->receipt.transaction_hash;
+				transaction->setup_hash = executor->receipt.transaction_hash;
 				transaction->proof = recovery_state.proof;
 				dispatcher->emit_transaction(transaction);
 				coreturn expects_promise_rt<void>(expectation::met);
@@ -1398,7 +1399,7 @@ namespace tangent
 
 			return true;
 		}
-		bool setup::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const
+		bool setup::recover_many(const ledger::executor_context* executor, const ledger::receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const
 		{
 			for (auto& [broadcast_hash, participant] : migrations)
 				parties.insert(participant);
@@ -1471,7 +1472,7 @@ namespace tangent
 		{
 			return true;
 		}
-		expects_lr<vector<setup::migration_ref>> setup::get_migration_refs(const ledger::transaction_context* context, const ledger::receipt& receipt) const
+		expects_lr<vector<setup::migration_ref>> setup::get_migration_refs(const ledger::executor_context* executor, const ledger::receipt& receipt) const
 		{
 			vector<migration_ref> results;
 			auto* event = receipt.find_event<setup>();
@@ -1481,7 +1482,7 @@ namespace tangent
 			bool requires_self_migration = event->front().as_boolean();
 			if (requires_self_migration)
 			{
-				auto participation = context->get_validator_participation(receipt.from);
+				auto participation = executor->get_validator_participation(receipt.from);
 				if (!participation)
 					return participation.error();
 
@@ -1489,7 +1490,7 @@ namespace tangent
 				{
 					for (auto& ref : refs)
 					{
-						auto account = context->get_bridge_account(asset, ref.manager, ref.owner);
+						auto account = executor->get_bridge_account(asset, ref.manager, ref.owner);
 						if (!account)
 							return account.error();
 
@@ -1504,11 +1505,11 @@ namespace tangent
 
 			for (auto& [broadcast_hash, participant] : migrations)
 			{
-				auto parent = context->get_block_transaction<broadcast>(broadcast_hash, true);
+				auto parent = executor->get_block_transaction<broadcast>(broadcast_hash, true);
 				if (!parent)
 					return layer_exception("invalid migration reasoning transaction");
 
-				auto participation = context->get_validator_participation(participant);
+				auto participation = executor->get_validator_participation(participant);
 				if (!participation)
 					return participation.error();
 
@@ -1521,7 +1522,7 @@ namespace tangent
 					if (ref.manager != receipt.from)
 						continue;
 
-					auto account = context->get_bridge_account(refs->first, ref.manager, ref.owner);
+					auto account = executor->get_bridge_account(refs->first, ref.manager, ref.owner);
 					if (!account)
 						return account.error();
 
@@ -1608,22 +1609,22 @@ namespace tangent
 
 			return ledger::commitment::validate(block_number);
 		}
-		expects_lr<void> migrate::execute(ledger::transaction_context* context) const
+		expects_lr<void> migrate::execute(ledger::executor_context* executor) const
 		{
-			auto validation = commitment::execute(context);
+			auto validation = commitment::execute(executor);
 			if (!validation)
 				return validation.error();
 
-			auto event = context->apply_witness_event(setup_hash, context->receipt.transaction_hash);
+			auto event = executor->apply_witness_event(setup_hash, executor->receipt.transaction_hash);
 			if (!event)
 				return event.error();
 
-			auto parent = context->get_block_transaction<setup>(setup_hash);
+			auto parent = executor->get_block_transaction<setup>(setup_hash);
 			if (!parent)
 				return layer_exception("setup transaction not found");
 
 			auto* parent_transaction = (setup*)*parent->transaction;
-			if (parent->receipt.from != context->receipt.from)
+			if (parent->receipt.from != executor->receipt.from)
 				return layer_exception("setup transaction not applicable");
 
 			uint8_t transaction_hash_data[32];
@@ -1635,13 +1636,13 @@ namespace tangent
 			if (!algorithm::signing::recover_hash(proof_hash, new_participant_check, proof) || new_participant != new_participant_check)
 				return layer_exception("new participant proof not valid");
 
-			auto migrations = parent_transaction->get_migration_refs(context, parent->receipt);
+			auto migrations = parent_transaction->get_migration_refs(executor, parent->receipt);
 			if (!migrations)
 				return migrations.error();
 
 			for (auto& migration : *migrations)
 			{
-				auto account = context->get_bridge_account(migration.account.asset, migration.account.manager, migration.account.owner);
+				auto account = executor->get_bridge_account(migration.account.asset, migration.account.manager, migration.account.owner);
 				if (!account)
 					return account.error();
 
@@ -1651,7 +1652,7 @@ namespace tangent
 				if (prev_size != account->group.size())
 					return layer_exception("conflicting group migration (size changed)");
 
-				account = context->apply_bridge_account(account->asset, account->manager, account->owner, account->public_key, std::move(account->group));
+				account = executor->apply_bridge_account(account->asset, account->manager, account->owner, account->public_key, std::move(account->group));
 				if (!account)
 					return account.error();
 
@@ -1659,11 +1660,11 @@ namespace tangent
 				ref.manager = account->manager;
 				ref.owner = account->owner;
 				
-				auto status = context->apply_validator_participation(migration.old_participant, ledger::transaction_context::stake_type::lock, { { account->asset, { false, ref } } }, { });
+				auto status = executor->apply_validator_participation(migration.old_participant, ledger::executor_context::staker::lock, { { account->asset, { false, ref } } }, { });
 				if (!status)
 					return status.error();
 
-				status = context->apply_validator_participation(new_participant, ledger::transaction_context::stake_type::lock, { { account->asset, { true, ref } } }, { });
+				status = executor->apply_validator_participation(new_participant, ledger::executor_context::staker::lock, { { account->asset, { true, ref } } }, { });
 				if (!status)
 					return status.error();
 			}
@@ -1764,9 +1765,9 @@ namespace tangent
 
 			return ledger::commitment::validate(block_number);
 		}
-		expects_lr<void> attestate::execute(ledger::transaction_context* context) const
+		expects_lr<void> attestate::execute(ledger::executor_context* executor) const
 		{
-			auto validation = commitment::execute(context);
+			auto validation = commitment::execute(executor);
 			if (!validation)
 				return validation.error();
 
@@ -1774,13 +1775,13 @@ namespace tangent
 			if (!chain)
 				return layer_exception("invalid chain");
 
-			auto collision = context->get_witness_transaction(asset, proof.transaction_id);
+			auto collision = executor->get_witness_transaction(asset, proof.transaction_id);
 			if (collision)
 				return layer_exception("proof " + proof.transaction_id + " finalized");
 
 			uint256_t best_commitment_hash = 0;
 			btree_map<uint256_t, btree_set<algorithm::pubkeyhash_t>> attesters;
-			auto verification = verify_proof_commitment(context, asset, commitments, best_commitment_hash, attesters);
+			auto verification = verify_proof_commitment(executor, asset, commitments, best_commitment_hash, attesters);
 			if (!verification)
 				return verification;
 			else if (best_commitment_hash != proof.as_hash())
@@ -1807,7 +1808,7 @@ namespace tangent
 			};
 			for (auto& [hash, input] : proof.inputs)
 			{
-				auto source = context->get_witness_account(asset, input.link.address, 0);
+				auto source = executor->get_witness_account(asset, input.link.address, 0);
 				if (source && source->is_bridge_account())
 				{
 					auto from_bridge = algorithm::pubkeyhash_t(source->manager);
@@ -1818,7 +1819,7 @@ namespace tangent
 					for (auto& [token_hash, token] : input.tokens)
 						bridge.transfers[token.get_asset(asset)].supply -= token.value;
 
-					auto account = context->get_bridge_account(asset, from_bridge.data, source->owner);
+					auto account = executor->get_bridge_account(asset, from_bridge.data, source->owner);
 					if (account)
 						bridge.participants.insert(account->group.begin(), account->group.end());
 					bridges.insert(from_bridge);
@@ -1842,7 +1843,7 @@ namespace tangent
 
 			for (auto& [hash, output] : proof.outputs)
 			{
-				auto source = context->get_witness_account(asset, output.link.address, 0);
+				auto source = executor->get_witness_account(asset, output.link.address, 0);
 				if (source && source->is_bridge_account())
 				{
 					auto to_bridge = algorithm::pubkeyhash_t(source->manager);
@@ -1854,7 +1855,7 @@ namespace tangent
 					for (auto& [token_hash, token] : output.tokens)
 						amounts[token.get_asset(asset)] = token.value;
 
-					auto account = context->get_bridge_account(asset, to_bridge.data, source->owner);
+					auto account = executor->get_bridge_account(asset, to_bridge.data, source->owner);
 					if (account)
 						bridge.participants.insert(account->group.begin(), account->group.end());
 
@@ -1869,7 +1870,7 @@ namespace tangent
 							balance.supply += token_value;
 							if (!to_bridge.equals(to_account.data))
 							{
-								auto reward = context->get_verified_validator_attestation(token_asset, to_bridge.data);
+								auto reward = executor->get_verified_validator_attestation(token_asset, to_bridge.data);
 								if (reward && reward->incoming_fee.is_positive())
 								{
 									balance.supply -= reward->incoming_fee;
@@ -1902,7 +1903,7 @@ namespace tangent
 						{
 							for (auto from_bridge = bridges.begin(); from_bridge != bridges.end(); from_bridge++)
 							{
-								auto reward = context->get_verified_validator_attestation(asset, from_bridge->data);
+								auto reward = executor->get_verified_validator_attestation(asset, from_bridge->data);
 								auto outgoing_fee = reward ? algorithm::arithmetic::divide(reward->outgoing_fee, bridges.size()) : decimal::zero();
 								if (outgoing_fee.is_positive())
 								{
@@ -1946,7 +1947,7 @@ namespace tangent
 					auto reserve_delta = transfer.reserve.is_nan() ? decimal::zero() : transfer.reserve;
 					if (supply_delta.is_negative() || reserve_delta.is_negative())
 					{
-						auto balance = context->get_account_balance(transfer_asset, owner.data);
+						auto balance = executor->get_account_balance(transfer_asset, owner.data);
 						auto supply = (balance ? balance->supply : decimal::zero()) + supply_delta;
 						auto reserve = (balance ? balance->reserve : decimal::zero()) + reserve_delta;
 						operations.weights[transfer_asset].accountable += std::min(decimal::zero(), std::min(supply, reserve));
@@ -1958,7 +1959,7 @@ namespace tangent
 
 					if (!supply_delta.is_zero() || !reserve_delta.is_zero())
 					{
-						auto delta_transfer = context->apply_transfer(transfer_asset, owner.data, supply_delta, reserve_delta);
+						auto delta_transfer = executor->apply_transfer(transfer_asset, owner.data, supply_delta, reserve_delta);
 						if (!delta_transfer)
 							return delta_transfer.error();
 					}
@@ -1980,7 +1981,7 @@ namespace tangent
 					penalty = math0::abs(penalty);
 					if (transfer.supply.is_negative())
 					{
-						auto balance = context->get_bridge_balance(transfer_asset, owner.data);
+						auto balance = executor->get_bridge_balance(transfer_asset, owner.data);
 						auto supply = balance ? -balance->get_balance(transfer_asset) : decimal::zero();
 						if (supply > transfer.supply)
 						{
@@ -1991,7 +1992,7 @@ namespace tangent
 
 					if (!transfer.supply.is_zero())
 					{
-						auto bridge = context->apply_bridge_balance(transfer_asset, owner.data, { { transfer_asset, transfer.supply } });
+						auto bridge = executor->apply_bridge_balance(transfer_asset, owner.data, { { transfer_asset, transfer.supply } });
 						if (!bridge)
 							return bridge.error();
 					}
@@ -2006,11 +2007,11 @@ namespace tangent
 					{
 						for (auto& failing_attester : failing_attesters)
 						{
-							auto prev_attestation = context->get_verified_validator_attestation(transfer_asset, failing_attester.data);
+							auto prev_attestation = executor->get_verified_validator_attestation(transfer_asset, failing_attester.data);
 							if (!prev_attestation)
 								continue;
 
-							auto next_attestation = context->apply_validator_attestation(transfer_asset, failing_attester.data, ledger::transaction_context::stake_type::lock, { { transfer_asset, -attestation_fee } });
+							auto next_attestation = executor->apply_validator_attestation(transfer_asset, failing_attester.data, ledger::executor_context::staker::lock, { { transfer_asset, -attestation_fee } });
 							if (!next_attestation)
 								return next_attestation.error();
 
@@ -2026,7 +2027,7 @@ namespace tangent
 
 						for (auto& succeeding_attester : succeeding_attesters)
 						{
-							auto attestation = context->apply_validator_attestation(transfer_asset, succeeding_attester, ledger::transaction_context::stake_type::reward_or_penalty, { { transfer_asset, attestation_fee } });
+							auto attestation = executor->apply_validator_attestation(transfer_asset, succeeding_attester, ledger::executor_context::staker::reward_or_penalty, { { transfer_asset, attestation_fee } });
 							if (!attestation)
 								return attestation.error();
 						}
@@ -2037,7 +2038,7 @@ namespace tangent
 						auto individual_penalty = -algorithm::arithmetic::divide(penalty, batch.participants.size());
 						for (auto& participant : batch.participants)
 						{
-							auto participation = context->apply_validator_participation(participant.data, ledger::transaction_context::stake_type::reward_or_penalty, { }, { { transfer_asset, individual_penalty.is_negative() ? individual_penalty : participation_fee } });
+							auto participation = executor->apply_validator_participation(participant.data, ledger::executor_context::staker::reward_or_penalty, { }, { { transfer_asset, individual_penalty.is_negative() ? individual_penalty : participation_fee } });
 							if (!participation)
 								return participation.error();
 						}
@@ -2045,18 +2046,18 @@ namespace tangent
 
 					if (bridge_fee.is_positive())
 					{
-						auto attestation = context->apply_validator_attestation(transfer_asset, owner.data, ledger::transaction_context::stake_type::reward_or_penalty, { { transfer_asset, bridge_fee } });
+						auto attestation = executor->apply_validator_attestation(transfer_asset, owner.data, ledger::executor_context::staker::reward_or_penalty, { { transfer_asset, bridge_fee } });
 						if (!attestation)
 							return attestation.error();
 					}
 				}
 			}
 
-			auto finalization = context->apply_witness_transaction(asset, proof.transaction_id);
+			auto finalization = executor->apply_witness_transaction(asset, proof.transaction_id);
 			if (!finalization)
 				return finalization.error();
 
-			return context->emit_witness(asset, proof.block_id);
+			return executor->emit_witness(asset, proof.block_id);
 		}
 		bool attestate::store_body(format::wo_stream* stream) const
 		{
@@ -2106,7 +2107,7 @@ namespace tangent
 
 			return true;
 		}
-		bool attestate::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const
+		bool attestate::recover_many(const ledger::executor_context* executor, const ledger::receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const
 		{
 			for (auto& event : receipt.find_events<states::account_balance>())
 			{
@@ -2183,7 +2184,7 @@ namespace tangent
 		{
 			return "attestate";
 		}
-		expects_lr<void> attestate::verify_proof_commitment(ledger::transaction_context* context, const algorithm::asset_id& asset, const btree_map<uint256_t, btree_set<algorithm::hashsig_t>>& commitments, uint256_t& best_commitment_hash, btree_map<uint256_t, btree_set<algorithm::pubkeyhash_t>>& attesters)
+		expects_lr<void> attestate::verify_proof_commitment(ledger::executor_context* executor, const algorithm::asset_id& asset, const btree_map<uint256_t, btree_set<algorithm::hashsig_t>>& commitments, uint256_t& best_commitment_hash, btree_map<uint256_t, btree_set<algorithm::pubkeyhash_t>>& attesters)
 		{
 			btree_set<algorithm::pubkeyhash_t> duplicates;
 			best_commitment_hash = 0;
@@ -2212,7 +2213,7 @@ namespace tangent
 				decimal commitment_stake = decimal::zero();
 				for (auto& attester : attesters[commitment_hash])
 				{
-					auto attestation = context->get_verified_validator_attestation(asset, attester);
+					auto attestation = executor->get_verified_validator_attestation(asset, attester);
 					if (attestation)
 					{
 						commitment_stake += attestation->stake;
@@ -2232,7 +2233,7 @@ namespace tangent
 				return layer_exception("proof requires more attestations");
 
 			auto& params = protocol::now();
-			auto best_attesters = context->calculate_attesters(asset, params.policy.attestation.max_per_transaction);
+			auto best_attesters = executor->calculate_attesters(asset, params.policy.attestation.max_per_transaction);
 			if (!best_attesters)
 				return best_attesters.error();
 
@@ -2269,17 +2270,17 @@ namespace tangent
 
 			return ledger::commitment::validate(block_number);
 		}
-		expects_lr<void> route::execute(ledger::transaction_context* context) const
+		expects_lr<void> route::execute(ledger::executor_context* executor) const
 		{
-			auto validation = commitment::execute(context);
+			auto validation = commitment::execute(executor);
 			if (!validation)
 				return validation.error();
 
-			auto delegation_requirement = context->verify_account_delegation(manager);
+			auto delegation_requirement = executor->verify_account_delegation(manager);
 			if (!delegation_requirement)
 				return delegation_requirement;
 
-			auto delegation = context->apply_account_delegation(manager, 1);
+			auto delegation = executor->apply_account_delegation(manager, 1);
 			if (!delegation)
 				return delegation.error();
 
@@ -2287,7 +2288,7 @@ namespace tangent
 			if (!params)
 				return layer_exception("invalid operation");
 
-			auto policy = context->get_verified_validator_attestation(asset, manager);
+			auto policy = executor->get_verified_validator_attestation(asset, manager);
 			if (!policy)
 				return policy.error();
 			else if (!policy->accepts_account_requests)
@@ -2296,13 +2297,13 @@ namespace tangent
 			bool routing_address_application = false;
 			if (!routing_address.empty())
 			{
-				auto collision = context->get_witness_account(asset, routing_address, 0);
-				if (collision && (!collision->is_routing_account() || collision->owner != context->receipt.from))
+				auto collision = executor->get_witness_account(asset, routing_address, 0);
+				if (collision && (!collision->is_routing_account() || collision->owner != executor->receipt.from))
 					return layer_exception("routing account address " + routing_address + " taken");
 
 				if (!collision)
 				{
-					auto status = context->apply_witness_routing_account(asset, context->receipt.from, { { (uint8_t)1, string(routing_address) } });
+					auto status = executor->apply_witness_routing_account(asset, executor->receipt.from, { { (uint8_t)1, string(routing_address) } });
 					if (!status)
 						return status.error();
 
@@ -2316,7 +2317,7 @@ namespace tangent
 				{
 					if (!policy->accounts_under_management)
 					{
-						if (context->receipt.from != manager)
+						if (executor->receipt.from != manager)
 							return layer_exception("bridge account for manager required");
 						break;
 					}
@@ -2329,12 +2330,12 @@ namespace tangent
 				{
 					if (!policy->accounts_under_management)
 					{
-						if (context->receipt.from != manager)
+						if (executor->receipt.from != manager)
 							return layer_exception("bridge account for manager required");
 						break;
 					}
 
-					auto manager_account = context->get_bridge_account(asset, manager, manager);
+					auto manager_account = executor->get_bridge_account(asset, manager, manager);
 					if (!manager_account || manager_account->public_key.empty() || manager_account->group.empty() || manager_account->owner != manager || manager_account->manager != manager)
 						return layer_exception("bridge account for manager required");
 
@@ -2342,7 +2343,7 @@ namespace tangent
 					bool duplicate = false;
 					while (true)
 					{
-						auto duplicates = context->get_witness_accounts_by_purpose(context->receipt.from, states::witness_account::account_type::bridge, 0, count);
+						auto duplicates = executor->get_witness_accounts_by_purpose(executor->receipt.from, states::witness_account::account_type::bridge, 0, count);
 						if (!duplicates)
 							break;
 
@@ -2380,11 +2381,11 @@ namespace tangent
 					for (auto& address : *addresses)
 						address.second = superchain::address_util::encode_tag_address(address.second, to_string(policy->accounts_under_management));
 					
-					auto policy_status = context->apply_validator_attestation_account(asset, manager, 1);
+					auto policy_status = executor->apply_validator_attestation_account(asset, manager, 1);
 					if (!policy_status)
 						return policy_status.error();
 
-					auto witness_account_status = context->apply_witness_bridge_account(asset, context->receipt.from, manager, *addresses);
+					auto witness_account_status = executor->apply_witness_bridge_account(asset, executor->receipt.from, manager, *addresses);
 					if (!witness_account_status)
 						return witness_account_status.error();
 
@@ -2392,7 +2393,7 @@ namespace tangent
 				}
 				case superchain::routing_policy::utxo:
 				{
-					auto duplicate = context->get_bridge_account(asset, manager, context->receipt.from);
+					auto duplicate = executor->get_bridge_account(asset, manager, executor->receipt.from);
 					if (!duplicate)
 						break;
 
@@ -2406,38 +2407,38 @@ namespace tangent
 			}
 
 			btree_set<algorithm::pubkeyhash_t> exclusion;
-			auto committee = context->calculate_participants(exclusion, policy->security_level, policy->participation_threshold);
+			auto committee = executor->calculate_participants(exclusion, policy->security_level, policy->participation_threshold);
 			if (!committee)
 				return committee.error();
 
 			for (auto& work : *committee)
 			{
-				auto event = context->emit_event<route>({ format::variable(work.owner.view()) });
+				auto event = executor->emit_event<route>({ format::variable(work.owner.view()) });
 				if (!event)
 					return event;
 			}
 
 			return expectation::met;
 		}
-		expects_promise_rt<void> route::dispatch(const ledger::transaction_context* context, ledger::dispatch_context* dispatcher) const
+		expects_promise_rt<void> route::dispatch(const ledger::executor_context* executor, ledger::dispatcher_context* dispatcher) const
 		{
 			if (!dispatcher->is_running_on(manager))
 				return expects_promise_rt<void>(expectation::met);
 
-			auto* event = context->receipt.find_event<route>();
-			if (!event || context->get_witness_event(context->receipt.transaction_hash))
+			auto* event = executor->receipt.find_event<route>();
+			if (!event || executor->get_witness_event(executor->receipt.transaction_hash))
 				return expects_promise_rt<void>(expectation::met);
 
-			return coasync<expects_rt<void>>([this, context, dispatcher]() -> expects_promise_rt<void>
+			return coasync<expects_rt<void>>([this, executor, dispatcher]() -> expects_promise_rt<void>
 			{
 				auto* chain = superchain::server_node::get()->get_chainparams(asset);
 				if (!chain)
 					coreturn remote_exception("invalid operation");
 
 				size_t required_public_keys = 0;
-				auto cache = dispatcher->pull_cache(context);
-				auto group = get_group(context->receipt);
-				auto state = ledger::dispatch_context::public_state();
+				auto cache = dispatcher->pull_cache(executor);
+				auto group = get_group(executor->receipt);
+				auto state = ledger::dispatcher_context::public_state();
 				if (!state.load_message(cache))
 				{
 					auto aggregator = algorithm::composition::make_public_state(chain->composition);
@@ -2462,7 +2463,7 @@ namespace tangent
 						if (++state.attempt >= protocol::now().user.consensus.coordination_attempts)
 							coreturn remote_exception("failed to coordinate participants after several retries");
 
-						dispatcher->push_cache(context, state.as_message());
+						dispatcher->push_cache(executor, state.as_message());
 						coreturn remote_exception::retry();
 					}
 
@@ -2480,7 +2481,7 @@ namespace tangent
 				btree_set<algorithm::pubkeyhash_t> deferred_participants;
 				while (!state.distribution && !state.participants.empty())
 				{
-					auto result = coawait(dispatcher->aggregate_public_key(context, state, *state.participants.begin()));
+					auto result = coawait(dispatcher->aggregate_public_key(executor, state, *state.participants.begin()));
 					if (!result && (result.error().is_retry() || result.error().is_shutdown()))
 						deferred_participants.insert(*state.participants.begin());
 					else if (!result)
@@ -2505,7 +2506,7 @@ namespace tangent
 				if (!status)
 					coreturn remote_exception(std::move(status.error().message()));
 
-				auto distribution_state = ledger::dispatch_context::entropy_distribution_state();
+				auto distribution_state = ledger::dispatcher_context::entropy_distribution_state();
 				while (!state.participants.empty())
 				{
 					distribution_state.encrypted_shares.clear();
@@ -2522,7 +2523,7 @@ namespace tangent
 					if (distribution_state.encrypted_shares.empty())
 						coreturn remote_exception("participant requires group shares but none were found");
 
-					auto result = coawait(dispatcher->distribute_entropy_shares(context, distribution_state, *state.participants.begin()));
+					auto result = coawait(dispatcher->distribute_entropy_shares(executor, distribution_state, *state.participants.begin()));
 					if (!result && (result.error().is_retry() || result.error().is_shutdown()))
 						deferred_participants.insert(*state.participants.begin());
 					else if (!result)
@@ -2539,7 +2540,7 @@ namespace tangent
 
 				auto* transaction = memory::init<bind>();
 				transaction->asset = asset;
-				transaction->set_witness(context->receipt.transaction_hash, aggregated_public_key);
+				transaction->set_witness(executor->receipt.transaction_hash, aggregated_public_key);
 				dispatcher->emit_transaction(transaction);
 				coreturn expectation::met;
 			});
@@ -2562,7 +2563,7 @@ namespace tangent
 
 			return true;
 		}
-		bool route::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const
+		bool route::recover_many(const ledger::executor_context* executor, const ledger::receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const
 		{
 			auto group = get_group(receipt);
 			parties.insert(algorithm::pubkeyhash_t(manager));
@@ -2629,17 +2630,17 @@ namespace tangent
 
 			return ledger::commitment::validate(block_number);
 		}
-		expects_lr<void> bind::execute(ledger::transaction_context* context) const
+		expects_lr<void> bind::execute(ledger::executor_context* executor) const
 		{
-			auto validation = commitment::execute(context);
+			auto validation = commitment::execute(executor);
 			if (!validation)
 				return validation.error();
 
-			auto event = context->apply_witness_event(route_hash, context->receipt.transaction_hash);
+			auto event = executor->apply_witness_event(route_hash, executor->receipt.transaction_hash);
 			if (!event)
 				return event.error();
 
-			auto parent = context->get_block_transaction<route>(route_hash);
+			auto parent = executor->get_block_transaction<route>(route_hash);
 			if (!parent)
 				return parent.error();
 
@@ -2650,7 +2651,7 @@ namespace tangent
 			if (!chain || !params)
 				return layer_exception("invalid operation");
 
-			auto duplicate = context->get_bridge_account(asset, parent_transaction->manager, parent->receipt.from);
+			auto duplicate = executor->get_bridge_account(asset, parent_transaction->manager, parent->receipt.from);
 			if (duplicate)
 				return layer_exception("bridge account already exists");
 
@@ -2662,7 +2663,7 @@ namespace tangent
 			if (!addresses)
 				return addresses.error();
 
-			auto policy = context->get_verified_validator_attestation(asset, parent_transaction->manager);
+			auto policy = executor->get_verified_validator_attestation(asset, parent_transaction->manager);
 			if (!policy)
 				return policy.error();
 
@@ -2685,7 +2686,7 @@ namespace tangent
 					break;
 			}
 
-			auto policy_status = context->apply_validator_attestation_account(asset, parent_transaction->manager, 1);
+			auto policy_status = executor->apply_validator_attestation_account(asset, parent_transaction->manager, 1);
 			if (!policy_status)
 				return policy_status.error();
 
@@ -2696,29 +2697,29 @@ namespace tangent
 			auto group = parent_transaction->get_group(parent->receipt);
 			for (auto& participant : group)
 			{
-				auto status = context->apply_validator_participation(participant.data, ledger::transaction_context::stake_type::lock, { { asset, { true, ref } } }, { });
+				auto status = executor->apply_validator_participation(participant.data, ledger::executor_context::staker::lock, { { asset, { true, ref } } }, { });
 				if (!status)
 					return status.error();
 			}
 
-			auto bridge_account_status = context->apply_bridge_account(asset, ref.owner, ref.manager, public_key, std::move(group));
+			auto bridge_account_status = executor->apply_bridge_account(asset, ref.owner, ref.manager, public_key, std::move(group));
 			if (!bridge_account_status)
 				return bridge_account_status.error();
 
-			auto witness_account_status = context->apply_witness_bridge_account(asset, ref.owner, ref.manager, *addresses);
+			auto witness_account_status = executor->apply_witness_bridge_account(asset, ref.owner, ref.manager, *addresses);
 			if (!witness_account_status)
 				return witness_account_status.error();
 
 			return expectation::met;
 		}
-		expects_promise_rt<void> bind::dispatch(const ledger::transaction_context* context, ledger::dispatch_context* dispatcher) const
+		expects_promise_rt<void> bind::dispatch(const ledger::executor_context* executor, ledger::dispatcher_context* dispatcher) const
 		{
-			auto parent = context->get_block_transaction<route>(route_hash);
+			auto parent = executor->get_block_transaction<route>(route_hash);
 			if (!parent)
 				return expects_promise_rt<void>(remote_exception(std::move(parent.error().message())));
 
 			btree_set<string> addresses;
-			for (auto& event : context->receipt.find_events<states::witness_account>())
+			for (auto& event : executor->receipt.find_events<states::witness_account>())
 			{
 				for (size_t i = 2; i < event->size(); i++)
 					addresses.insert(event->at(i).as_blob());
@@ -2779,9 +2780,9 @@ namespace tangent
 			memcpy(public_key.data(), public_key_assembly.data(), public_key_assembly.size());
 			return true;
 		}
-		bool bind::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const
+		bool bind::recover_many(const ledger::executor_context* executor, const ledger::receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const
 		{
-			auto parent = context->get_block_transaction<route>(route_hash);
+			auto parent = executor->get_block_transaction<route>(route_hash);
 			if (!parent)
 				return false;
 
@@ -2851,17 +2852,17 @@ namespace tangent
 
 			return ledger::transaction::validate(block_number);
 		}
-		expects_lr<void> withdraw::execute(ledger::transaction_context* context) const
+		expects_lr<void> withdraw::execute(ledger::executor_context* executor) const
 		{
-			auto validation = transaction::execute(context);
+			auto validation = transaction::execute(executor);
 			if (!validation)
 				return validation.error();
 
-			bool migration = to.empty() && context->receipt.from == manager;
+			bool migration = to.empty() && executor->receipt.from == manager;
 			if (to.empty() && !migration)
 				return layer_exception("must include at least one withdrawal destination");
 
-			auto policy = context->get_verified_validator_attestation(asset, manager);
+			auto policy = executor->get_verified_validator_attestation(asset, manager);
 			if (!policy)
 				return policy.error();
 			else if (!policy->accepts_withdrawal_requests && !migration)
@@ -2869,14 +2870,14 @@ namespace tangent
 			else if (only_if_not_in_queue && policy->queue_transaction_hash > 0)
 				return layer_exception("bridge is in use - withdrawal will be queued");
 
-			auto token_value = get_token_value(context);
+			auto token_value = get_token_value(executor);
 			if (!token_value.is_positive())
 				return layer_exception("zero value withdrawal not allowed");
 
 			auto fee_asset = algorithm::asset::base_id_of(asset);
 			if (migration)
 			{
-				auto bridge = context->get_bridge_balance(fee_asset, manager);
+				auto bridge = executor->get_bridge_balance(fee_asset, manager);
 				if (!bridge || !bridge->get_balance(asset).is_positive())
 					return layer_exception(algorithm::asset::handle_of(asset) + " balance is insufficient perform migration");
 
@@ -2889,112 +2890,112 @@ namespace tangent
 					}
 				}
 
-				auto next_policy = context->calculate_attester_for_migration(asset, manager);
+				auto next_policy = executor->calculate_attester_for_migration(asset, manager);
 				if (!next_policy)
 					return next_policy.error();
 
-				auto account = find_receiving_account(context, asset, manager, next_policy->owner);
+				auto account = find_receiving_account(executor, asset, manager, next_policy->owner);
 				if (!account)
 					return account.error();
 
-				auto registration = context->apply_validator_attestation_queue(asset, manager, context->receipt.transaction_hash);
+				auto registration = executor->apply_validator_attestation_queue(asset, manager, executor->receipt.transaction_hash);
 				if (!registration)
 					return registration.error();
 
-				auto event = context->emit_event<withdraw>({ format::variable(next_policy->owner.view()) });
+				auto event = executor->emit_event<withdraw>({ format::variable(next_policy->owner.view()) });
 				if (!event)
 					return event;
 
 				return expectation::met;
 			}
 
-			auto fee_value = get_fee_value(context);
+			auto fee_value = get_fee_value(executor);
 			if (fee_asset != asset)
 			{
-				auto balance_requirement = context->verify_transfer_balance(fee_asset, fee_value);
+				auto balance_requirement = executor->verify_transfer_balance(fee_asset, fee_value);
 				if (!balance_requirement)
 					return balance_requirement.error();
 
-				auto bridge = context->get_bridge_balance(fee_asset, manager);
+				auto bridge = executor->get_bridge_balance(fee_asset, manager);
 				if (!bridge || bridge->get_balance(fee_asset) < fee_value)
 					return layer_exception(algorithm::asset::handle_of(fee_asset) + " balance is insufficient to cover base withdrawal value (value: " + fee_value.to_string() + ")");
 			}
 			else
 				token_value += fee_value;
 
-			auto balance_requirement = context->verify_transfer_balance(asset, token_value);
+			auto balance_requirement = executor->verify_transfer_balance(asset, token_value);
 			if (!balance_requirement)
 				return balance_requirement;
 
-			auto bridge = context->get_bridge_balance(asset, manager);
+			auto bridge = executor->get_bridge_balance(asset, manager);
 			if (!bridge || bridge->get_balance(asset) < token_value)
 				return layer_exception(algorithm::asset::handle_of(asset) + " balance is insufficient to cover token withdrawal value (value: " + token_value.to_string() + ")");
 
 			for (auto& item : to)
 			{
-				auto collision = context->get_witness_account(fee_asset, item.first, 0);
-				if (collision && (!collision->is_routing_account() || collision->owner != context->receipt.from))
+				auto collision = executor->get_witness_account(fee_asset, item.first, 0);
+				if (collision && (!collision->is_routing_account() || collision->owner != executor->receipt.from))
 					return layer_exception("invalid to address (not owned by sender)");
 				else if (!collision)
-					collision = context->apply_witness_routing_account(asset, context->receipt.from, { { (uint8_t)1, string(item.first) } });
+					collision = executor->apply_witness_routing_account(asset, executor->receipt.from, { { (uint8_t)1, string(item.first) } });
 				if (!collision)
 					return collision.error();
 			}
 
 			if (fee_asset != asset)
 			{
-				auto fee_transfer = context->apply_transfer(fee_asset, context->receipt.from, decimal::zero(), fee_value);
+				auto fee_transfer = executor->apply_transfer(fee_asset, executor->receipt.from, decimal::zero(), fee_value);
 				if (!fee_transfer)
 					return fee_transfer.error();
 			}
 
-			auto token_transfer = context->apply_transfer(asset, context->receipt.from, decimal::zero(), token_value);
+			auto token_transfer = executor->apply_transfer(asset, executor->receipt.from, decimal::zero(), token_value);
 			if (!token_transfer)
 				return token_transfer.error();
 
-			auto registration = context->apply_validator_attestation_queue(asset, manager, context->receipt.transaction_hash);
+			auto registration = executor->apply_validator_attestation_queue(asset, manager, executor->receipt.transaction_hash);
 			if (!registration)
 				return registration.error();
 
 			return expectation::met;
 		}
-		expects_promise_rt<void> withdraw::dispatch(const ledger::transaction_context* context, ledger::dispatch_context* dispatcher) const
+		expects_promise_rt<void> withdraw::dispatch(const ledger::executor_context* executor, ledger::dispatcher_context* dispatcher) const
 		{
 			if (!dispatcher->is_running_on(manager))
 				return expects_promise_rt<void>(expectation::met);
 
-			if (context->get_witness_event(context->receipt.transaction_hash))
+			if (executor->get_witness_event(executor->receipt.transaction_hash))
 				return expects_promise_rt<void>(expectation::met);
 
-			auto policy = context->get_verified_validator_attestation(asset, manager);
-			if (policy && policy->queue_transaction_hash != context->receipt.transaction_hash)
+			auto policy = executor->get_verified_validator_attestation(asset, manager);
+			if (policy && policy->queue_transaction_hash != executor->receipt.transaction_hash)
 				return expects_promise_rt<void>(remote_exception::retry());
 
-			return coasync<expects_rt<void>>([this, context, dispatcher]() mutable -> expects_promise_rt<void>
+			return coasync<expects_rt<void>>([this, executor, dispatcher]() mutable -> expects_promise_rt<void>
 			{
 				auto* server = superchain::server_node::get();
 				auto* chain = server->get_chainparams(asset);
-				auto cancel = [this, context, dispatcher](remote_exception&& error) -> expects_rt<void>
+				auto cancel = [this, executor, dispatcher](remote_exception&& error) -> expects_rt<void>
 				{
 					auto* transaction = memory::init<broadcast>();
 					transaction->asset = asset;
-					transaction->set_proof(context->receipt.transaction_hash, layer_exception(std::move(remote_exception(error).message())));
+					transaction->set_proof(executor->receipt.transaction_hash, layer_exception(std::move(remote_exception(error).message())));
 					dispatcher->emit_transaction(transaction);
 					return expects_rt<void>(std::move(error));
 				};
 
 				vector<superchain::value_transfer> transfers;
-				auto new_manager = get_new_manager(context->receipt);
+				auto new_manager = get_new_manager(executor->receipt);
 				if (!new_manager.empty())
 				{
 					if (new_manager.empty() || new_manager == manager)
 						coreturn cancel(remote_exception(remote_exception("invalid manager to migrate to")));
 
-					auto account = find_receiving_account(context, asset, manager, new_manager);
+					auto account = find_receiving_account(executor, asset, manager, new_manager);
 					if (!account)
 						coreturn cancel(remote_exception(std::move(account.error().message())));
 
-					transfers.push_back(superchain::value_transfer(asset, account->addresses.begin()->second, get_token_value(context)));
+					transfers.push_back(superchain::value_transfer(asset, account->addresses.begin()->second, get_token_value(executor)));
 				}
 				else
 				{
@@ -3005,11 +3006,11 @@ namespace tangent
 						transfers.push_back(superchain::value_transfer(asset, item.first, decimal(item.second)));
 				}
 
-				auto cache = dispatcher->pull_cache(context);
-				auto state = ledger::dispatch_context::signature_state();
+				auto cache = dispatcher->pull_cache(executor);
+				auto state = ledger::dispatcher_context::signature_state();
 				if (chain->requires_transaction_expiration || !state.load_message_if_preferred(cache))
 				{
-					auto message = coawait(resolver::prepare_transaction(algorithm::asset::base_id_of(asset), superchain::wallet_link::from_owner(manager), transfers, get_fee_value(context)));
+					auto message = coawait(resolver::prepare_transaction(algorithm::asset::base_id_of(asset), superchain::wallet_link::from_owner(manager), transfers, get_fee_value(executor)));
 					if (!message)
 						coreturn message.error().is_retry() || message.error().is_shutdown() ? expects_rt<void>(std::move(message.error())) : cancel(std::move(message.error()));
 					else if (message->inputs.size() > std::numeric_limits<uint8_t>::max())
@@ -3023,11 +3024,11 @@ namespace tangent
 				auto* input = state.message->next_input_for_aggregation();
 				while (input != nullptr)
 				{
-					auto witness = context->get_witness_account_tagged(asset, input->utxo.link.address, 0);
+					auto witness = executor->get_witness_account_tagged(asset, input->utxo.link.address, 0);
 					if (!witness)
 						coreturn cancel(remote_exception(std::move(witness.error().message())));
 
-					auto account = context->get_bridge_account(asset, witness->manager, witness->owner);
+					auto account = executor->get_bridge_account(asset, witness->manager, witness->owner);
 					if (!account)
 						coreturn cancel(remote_exception(std::move(account.error().message())));
 
@@ -3048,11 +3049,15 @@ namespace tangent
 						state.alg = input->alg;
 					}
 
+					bool reset = false;
 					while (true)
 					{
 						auto phase = state.aggregator->next_phase();
-						if (phase == algorithm::composition::phase::any_input_after_reset || phase == algorithm::composition::phase::chosen_input_after_reset)
+						if (!reset && (phase == algorithm::composition::phase::any_input_after_reset || phase == algorithm::composition::phase::chosen_input_after_reset))
+						{
 							state.participants = account->group;
+							reset = true;
+						}
 
 						bool uniform_input = phase == algorithm::composition::phase::any_input_after_reset || phase == algorithm::composition::phase::any_input;
 						bool chosen_input = phase == algorithm::composition::phase::chosen_input_after_reset || phase == algorithm::composition::phase::chosen_input;
@@ -3061,7 +3066,7 @@ namespace tangent
 						if (it == state.participants.end())
 							break;
 
-						auto result = coawait(dispatcher->aggregate_signature(context, state, *it));
+						auto result = coawait(dispatcher->aggregate_signature(executor, state, *it));
 						if (!result && (result.error().is_retry() || result.error().is_shutdown()))
 						{
 							unavailable.insert(*it);
@@ -3070,6 +3075,8 @@ namespace tangent
 						}
 						else if (!result)
 							coreturn cancel(std::move(result.error()));
+						else
+							reset = false;
 
 						state.participants.erase(it);
 					}
@@ -3092,14 +3099,14 @@ namespace tangent
 				if (!finalization)
 					coreturn cancel(remote_exception(std::move(finalization.error().message())));
 
-				result = coawait(resolver::broadcast_transaction(algorithm::asset::base_id_of(asset), context->receipt.transaction_hash, superchain::finalized_transaction(*finalization), dispatcher));
+				result = coawait(resolver::broadcast_transaction(algorithm::asset::base_id_of(asset), executor->receipt.transaction_hash, superchain::finalized_transaction(*finalization), dispatcher));
 				if (!result && (result.error().is_retry() || result.error().is_shutdown()))
 				{
 				postpone:
 					if (++state.attempt >= protocol::now().user.consensus.coordination_attempts)
 						coreturn remote_exception("failed to coordinate participants after several retries");
 
-					dispatcher->push_cache(context, state.as_message());
+					dispatcher->push_cache(executor, state.as_message());
 					coreturn remote_exception::retry();
 				}
 				else if (!result)
@@ -3107,7 +3114,7 @@ namespace tangent
 
 				auto* transaction = memory::init<broadcast>();
 				transaction->asset = asset;
-				transaction->set_proof(context->receipt.transaction_hash, std::move(*finalization));
+				transaction->set_proof(executor->receipt.transaction_hash, std::move(*finalization));
 				dispatcher->emit_transaction(transaction);
 				coreturn expectation::met;
 			});
@@ -3153,7 +3160,7 @@ namespace tangent
 
 			return true;
 		}
-		bool withdraw::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const
+		bool withdraw::recover_many(const ledger::executor_context* executor, const ledger::receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const
 		{
 			auto new_manager = get_new_manager(receipt);
 			parties.insert(algorithm::pubkeyhash_t(manager));
@@ -3194,12 +3201,12 @@ namespace tangent
 				result = algorithm::pubkeyhash_t();
 			return result;
 		}
-		decimal withdraw::get_token_value(const ledger::transaction_context* context) const
+		decimal withdraw::get_token_value(const ledger::executor_context* executor) const
 		{
 			decimal value = 0.0;
-			if (to.empty() && context->receipt.from == manager)
+			if (to.empty() && executor->receipt.from == manager)
 			{
-				auto bridge = context->get_bridge_balance(asset, manager);
+				auto bridge = executor->get_bridge_balance(asset, manager);
 				if (bridge)
 					value += bridge->get_balance(asset);
 			}
@@ -3210,9 +3217,9 @@ namespace tangent
 			}
 			return value;
 		}
-		decimal withdraw::get_fee_value(const ledger::transaction_context* context) const
+		decimal withdraw::get_fee_value(const ledger::executor_context* executor) const
 		{
-			auto reward = context->get_verified_validator_attestation(algorithm::asset::base_id_of(asset), manager);
+			auto reward = executor->get_verified_validator_attestation(algorithm::asset::base_id_of(asset), manager);
 			if (!reward)
 				return decimal::zero();
 
@@ -3252,13 +3259,13 @@ namespace tangent
 		{
 			return "withdraw";
 		}
-		expects_lr<states::witness_account> withdraw::find_receiving_account(const ledger::transaction_context* context, const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& from_manager, const algorithm::pubkeyhash_t& to_manager)
+		expects_lr<states::witness_account> withdraw::find_receiving_account(const ledger::executor_context* executor, const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& from_manager, const algorithm::pubkeyhash_t& to_manager)
 		{
 			auto base_asset = algorithm::asset::base_id_of(asset);
 			size_t offset = 0, count = 8;
 			while (true)
 			{
-				auto candidates = context->get_witness_accounts_by_purpose(to_manager, states::witness_account::account_type::bridge, offset, count);
+				auto candidates = executor->get_witness_accounts_by_purpose(to_manager, states::witness_account::account_type::bridge, offset, count);
 				if (!candidates)
 					return candidates.error();
 
@@ -3274,7 +3281,7 @@ namespace tangent
 			offset = 0;
 			while (true)
 			{
-				auto candidates = context->get_witness_accounts_by_purpose(from_manager, states::witness_account::account_type::bridge, offset, count);
+				auto candidates = executor->get_witness_accounts_by_purpose(from_manager, states::witness_account::account_type::bridge, offset, count);
 				if (!candidates)
 					return candidates.error();
 
@@ -3297,29 +3304,29 @@ namespace tangent
 
 			return ledger::commitment::validate(block_number);
 		}
-		expects_lr<void> broadcast::execute(ledger::transaction_context* context) const
+		expects_lr<void> broadcast::execute(ledger::executor_context* executor) const
 		{
-			auto validation = commitment::execute(context);
+			auto validation = commitment::execute(executor);
 			if (!validation)
 				return validation.error();
 
-			auto parent = context->get_block_transaction<withdraw>(withdraw_hash);
+			auto parent = executor->get_block_transaction<withdraw>(withdraw_hash);
 			if (!parent)
 				return layer_exception("parent transaction not found");
 
 			auto* parent_transaction = (withdraw*)*parent->transaction;
-			if (parent_transaction->manager != context->receipt.from)
+			if (parent_transaction->manager != executor->receipt.from)
 				return layer_exception("parent transaction not valid");
 
-			auto event = context->apply_witness_event(withdraw_hash, context->receipt.transaction_hash);
+			auto event = executor->apply_witness_event(withdraw_hash, executor->receipt.transaction_hash);
 			if (!event)
 				return event.error();
 
-			auto finalization = context->apply_validator_attestation_queue(parent_transaction->asset, parent_transaction->manager, 0);
+			auto finalization = executor->apply_validator_attestation_queue(parent_transaction->asset, parent_transaction->manager, 0);
 			if (!finalization)
 				return finalization.error();
 
-			auto confirmation = proof ? validate_finalized_proof(context, parent_transaction, parent->receipt, *proof) : proof.error();
+			auto confirmation = proof ? validate_finalized_proof(executor, parent_transaction, parent->receipt, *proof) : proof.error();
 			if (confirmation)
 				return expectation::met;
 			else if (proof)
@@ -3329,18 +3336,18 @@ namespace tangent
 				return expectation::met;
 
 			auto fee_asset = algorithm::asset::base_id_of(parent_transaction->asset);
-			auto fee_value = parent_transaction->get_fee_value(context);
-			auto token_value = parent_transaction->get_token_value(context);
+			auto fee_value = parent_transaction->get_fee_value(executor);
+			auto token_value = parent_transaction->get_token_value(executor);
 			if (fee_asset != parent_transaction->asset)
 			{
-				auto fee_transfer = context->apply_transfer(fee_asset, parent->receipt.from, decimal::zero(), -fee_value);
+				auto fee_transfer = executor->apply_transfer(fee_asset, parent->receipt.from, decimal::zero(), -fee_value);
 				if (!fee_transfer)
 					return fee_transfer.error();
 			}
 			else
 				token_value += fee_value;
 
-			auto token_transfer = context->apply_transfer(parent_transaction->asset, parent->receipt.from, decimal::zero(), -token_value);
+			auto token_transfer = executor->apply_transfer(parent_transaction->asset, parent->receipt.from, decimal::zero(), -token_value);
 			if (!token_transfer)
 				return token_transfer.error();
 
@@ -3383,9 +3390,9 @@ namespace tangent
 
 			return true;
 		}
-		bool broadcast::recover_many(const ledger::transaction_context* context, const ledger::receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const
+		bool broadcast::recover_many(const ledger::executor_context* executor, const ledger::receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const
 		{
-			auto parent = context->get_block_transaction_instance(withdraw_hash);
+			auto parent = executor->get_block_transaction_instance(withdraw_hash);
 			if (!parent)
 				return false;
 
@@ -3429,7 +3436,7 @@ namespace tangent
 		{
 			return "broadcast";
 		}
-		expects_lr<void> broadcast::validate_possible_proof(const ledger::transaction_context* context, const withdraw* transaction, const ledger::receipt& receipt, const superchain::prepared_transaction& prepared)
+		expects_lr<void> broadcast::validate_possible_proof(const ledger::executor_context* executor, const withdraw* transaction, const ledger::receipt& receipt, const superchain::prepared_transaction& prepared)
 		{
 			if (prepared.as_status() == superchain::prepared_transaction::status::invalid)
 				return layer_exception("invalid prepared transaction");
@@ -3447,7 +3454,7 @@ namespace tangent
 
 				if (required_output_witness.find(normalized_address) == required_output_witness.end())
 				{
-					auto witness = context->get_witness_account_tagged(base_asset, normalized_address, 0);
+					auto witness = executor->get_witness_account_tagged(base_asset, normalized_address, 0);
 					if (!witness)
 						return layer_exception("transaction requires paying to unknown address");
 
@@ -3464,11 +3471,11 @@ namespace tangent
 				if (!transaction->to.empty())
 					return layer_exception("migration/withdrawal confusion");
 
-				auto witness = withdraw::find_receiving_account(context, transaction->asset, transaction->manager, new_manager);
+				auto witness = withdraw::find_receiving_account(executor, transaction->asset, transaction->manager, new_manager);
 				if (!witness)
 					return layer_exception("prepared transaction not possible");
 
-				auto account = context->get_bridge_account(base_asset, witness->manager, witness->owner);
+				auto account = executor->get_bridge_account(base_asset, witness->manager, witness->owner);
 				if (!account)
 					return layer_exception("transaction output refers to a non-bridge account");
 
@@ -3497,11 +3504,11 @@ namespace tangent
 				auto it = inout_witness.find(normalized_address);
 				if (it == inout_witness.end())
 				{
-					auto witness = context->get_witness_account_tagged(base_asset, normalized_address, 0);
+					auto witness = executor->get_witness_account_tagged(base_asset, normalized_address, 0);
 					if (!witness)
 						return layer_exception("witness transaction input spends from unknown address");
 
-					auto account = context->get_bridge_account(base_asset, witness->manager, witness->owner);
+					auto account = executor->get_bridge_account(base_asset, witness->manager, witness->owner);
 					if (!account)
 						return layer_exception("witness transaction input refers to a non-bridge account");
 
@@ -3530,7 +3537,7 @@ namespace tangent
 				auto it = inout_witness.find(normalized_address);
 				if (it == inout_witness.end())
 				{
-					auto witness = context->get_witness_account_tagged(base_asset, normalized_address, 0);
+					auto witness = executor->get_witness_account_tagged(base_asset, normalized_address, 0);
 					if (!witness)
 						return layer_exception("witness transaction output pays to unknown address");
 
@@ -3544,7 +3551,7 @@ namespace tangent
 					if (!it->second.is_bridge_account())
 						return layer_exception("witness transaction output receives change into unrelated address");
 
-					auto account = context->get_bridge_account(base_asset, it->second.manager, it->second.owner);
+					auto account = executor->get_bridge_account(base_asset, it->second.manager, it->second.owner);
 					if (!account)
 						return layer_exception("witness transaction output refers to a non-bridge account as change");
 				}
@@ -3566,7 +3573,7 @@ namespace tangent
 			auto& output_base_value = output_value[base_asset];
 			auto& change_base_value = change_value[base_asset];
 			auto fee_value = (input_base_value.is_nan() ? decimal::zero() : input_base_value) - ((output_base_value.is_nan() ? decimal::zero() : output_base_value) + (change_base_value.is_nan() ? decimal::zero() : change_base_value));
-			auto max_fee_value = transaction->get_fee_value(context);
+			auto max_fee_value = transaction->get_fee_value(executor);
 			if (fee_value.is_negative())
 				return layer_exception("witness transaction output pays more that possible");
 			else if (fee_value > max_fee_value)
@@ -3593,9 +3600,9 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<void> broadcast::validate_finalized_proof(const ledger::transaction_context* context, const withdraw* transaction, const ledger::receipt& receipt, const superchain::finalized_transaction& finalized)
+		expects_lr<void> broadcast::validate_finalized_proof(const ledger::executor_context* executor, const withdraw* transaction, const ledger::receipt& receipt, const superchain::finalized_transaction& finalized)
 		{
-			auto validation = validate_possible_proof(context, transaction, receipt, finalized.prepared);
+			auto validation = validate_possible_proof(executor, transaction, receipt, finalized.prepared);
 			if (!validation)
 				return validation;
 
@@ -3732,7 +3739,7 @@ namespace tangent
 			regtest_finalized.calldata = regtest_finalized.as_message().encode();
 			return expects_lr<superchain::finalized_transaction>(std::move(regtest_finalized));
 		}
-		expects_promise_rt<void> resolver::broadcast_transaction(const algorithm::asset_id& asset, const uint256_t& external_id, superchain::finalized_transaction&& finalized, ledger::dispatch_context* dispatcher)
+		expects_promise_rt<void> resolver::broadcast_transaction(const algorithm::asset_id& asset, const uint256_t& external_id, superchain::finalized_transaction&& finalized, ledger::dispatcher_context* dispatcher)
 		{
 			auto* server = superchain::server_node::get();
 			bool may_mock_up = protocol::now().is(network_type::regtest);

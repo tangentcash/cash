@@ -12,7 +12,7 @@ namespace tangent
 		account_nonce::account_nonce(const algorithm::pubkeyhash_t& new_owner, const ledger::block_header* new_block_header) : ledger::uniform(new_block_header), owner(new_owner), nonce(0)
 		{
 		}
-		expects_lr<void> account_nonce::transition(const ledger::transaction_context* context, const ledger::state* prev_state)
+		expects_lr<void> account_nonce::transition(const ledger::state* prev_state)
 		{
 			if (owner.empty())
 				return layer_exception("invalid state owner");
@@ -90,7 +90,7 @@ namespace tangent
 		account_program::account_program(const algorithm::pubkeyhash_t& new_owner, const ledger::block_header* new_block_header) : ledger::uniform(new_block_header), owner(new_owner)
 		{
 		}
-		expects_lr<void> account_program::transition(const ledger::transaction_context* context, const ledger::state* prev_state)
+		expects_lr<void> account_program::transition(const ledger::state* prev_state)
 		{
 			if (owner.empty())
 				return layer_exception("invalid state owner");
@@ -161,7 +161,7 @@ namespace tangent
 		account_uniform::account_uniform(const algorithm::pubkeyhash_t& new_owner, const std::string_view& new_index, const ledger::block_header* new_block_header) : ledger::uniform(new_block_header), owner(new_owner), index(new_index)
 		{
 		}
-		expects_lr<void> account_uniform::transition(const ledger::transaction_context* context, const ledger::state* prev_state)
+		expects_lr<void> account_uniform::transition(const ledger::state* prev_state)
 		{
 			if (owner.empty())
 				return layer_exception("invalid state owner");
@@ -243,7 +243,7 @@ namespace tangent
 		account_multiform::account_multiform(const algorithm::pubkeyhash_t& new_owner, const std::string_view& new_column, const std::string_view& new_row, const ledger::block_header* new_block_header) : ledger::multiform(new_block_header), owner(new_owner), column(new_column), row(new_row), filter(0)
 		{
 		}
-		expects_lr<void> account_multiform::transition(const ledger::transaction_context* context, const ledger::state* prev_state)
+		expects_lr<void> account_multiform::transition(const ledger::state* prev_state)
 		{
 			if (owner.empty())
 				return layer_exception("invalid state owner");
@@ -361,7 +361,7 @@ namespace tangent
 		account_delegation::account_delegation(const algorithm::pubkeyhash_t& new_owner, const ledger::block_header* new_block_header) : ledger::uniform(new_block_header), owner(new_owner), delegations(0)
 		{
 		}
-		expects_lr<void> account_delegation::transition(const ledger::transaction_context* context, const ledger::state* prev_state)
+		expects_lr<void> account_delegation::transition(const ledger::state* prev_state)
 		{
 			if (owner.empty())
 				return layer_exception("invalid state owner");
@@ -459,7 +459,7 @@ namespace tangent
 		account_balance::account_balance(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, const ledger::block_header* new_block_header) : ledger::multiform(new_block_header), owner(new_owner), asset(new_asset)
 		{
 		}
-		expects_lr<void> account_balance::transition(const ledger::transaction_context* context, const ledger::state* prev_state)
+		expects_lr<void> account_balance::transition(const ledger::state* prev_state)
 		{
 			if (owner.empty())
 				return layer_exception("invalid state owner");
@@ -589,7 +589,7 @@ namespace tangent
 		validator_production::validator_production(const algorithm::pubkeyhash_t& new_owner, const ledger::block_header* new_block_header) : ledger::multiform(new_block_header), owner(new_owner)
 		{
 		}
-		expects_lr<void> validator_production::transition(const ledger::transaction_context* context, const ledger::state* prev_state)
+		expects_lr<void> validator_production::transition(const ledger::state* prev_state)
 		{
 			if (owner.empty())
 				return layer_exception("invalid state owner");
@@ -734,7 +734,7 @@ namespace tangent
 		validator_participation::validator_participation(const algorithm::pubkeyhash_t& new_owner, const ledger::block_header* new_block_header) : ledger::multiform(new_block_header), owner(new_owner)
 		{
 		}
-		expects_lr<void> validator_participation::transition(const ledger::transaction_context* context, const ledger::state* prev_state)
+		expects_lr<void> validator_participation::transition(const ledger::state* prev_state)
 		{
 			if (owner.empty())
 				return layer_exception("invalid state owner");
@@ -953,7 +953,7 @@ namespace tangent
 		validator_attestation::validator_attestation(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, const ledger::block_header* new_block_header) : ledger::multiform(new_block_header), owner(new_owner), asset(algorithm::asset::base_id_of(new_asset))
 		{
 		}
-		expects_lr<void> validator_attestation::transition(const ledger::transaction_context* context, const ledger::state* prev_state)
+		expects_lr<void> validator_attestation::transition(const ledger::state* prev_state)
 		{
 			if (owner.empty())
 				return layer_exception("invalid state owner");
@@ -1175,7 +1175,7 @@ namespace tangent
 		bridge_balance::bridge_balance(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, const ledger::block_header* new_block_header) : ledger::multiform(new_block_header), owner(new_owner), asset(algorithm::asset::base_id_of(new_asset))
 		{
 		}
-		expects_lr<void> bridge_balance::transition(const ledger::transaction_context* context, const ledger::state* prev_state)
+		expects_lr<void> bridge_balance::transition(const ledger::state* prev_state)
 		{
 			if (owner.empty())
 				return layer_exception("invalid state owner");
@@ -1328,7 +1328,7 @@ namespace tangent
 		bridge_account::bridge_account(const algorithm::pubkeyhash_t& new_manager, const algorithm::asset_id& new_asset, const algorithm::pubkeyhash_t& new_owner, const ledger::block_header* new_block_header) : ledger::multiform(new_block_header), owner(new_owner), manager(new_manager), asset(algorithm::asset::base_id_of(new_asset))
 		{
 		}
-		expects_lr<void> bridge_account::transition(const ledger::transaction_context* context, const ledger::state* prev_state)
+		expects_lr<void> bridge_account::transition(const ledger::state* prev_state)
 		{
 			if (owner.empty())
 				return layer_exception("invalid state owner");
@@ -1472,7 +1472,7 @@ namespace tangent
 		witness_program::witness_program(const std::string_view& new_hashcode, const ledger::block_header* new_block_header) : ledger::uniform(new_block_header), hashcode(new_hashcode)
 		{
 		}
-		expects_lr<void> witness_program::transition(const ledger::transaction_context* context, const ledger::state* prev_state)
+		expects_lr<void> witness_program::transition(const ledger::state* prev_state)
 		{
 			if (prev_state != nullptr)
 				return layer_exception("program already exists");
@@ -1568,7 +1568,7 @@ namespace tangent
 		witness_event::witness_event(const uint256_t& new_parent_transaction_hash, const ledger::block_header* new_block_header) : ledger::uniform(new_block_header), parent_transaction_hash(new_parent_transaction_hash)
 		{
 		}
-		expects_lr<void> witness_event::transition(const ledger::transaction_context* context, const ledger::state* prev_state)
+		expects_lr<void> witness_event::transition(const ledger::state* prev_state)
 		{
 			if (!parent_transaction_hash)
 				return layer_exception("invalid parent transaction hash");
@@ -1644,7 +1644,7 @@ namespace tangent
 		witness_account::witness_account(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, const address_map& new_addresses, const ledger::block_header* new_block_header) : ledger::multiform(new_block_header), owner(new_owner), asset(algorithm::asset::base_id_of(new_asset)), addresses(new_addresses)
 		{
 		}
-		expects_lr<void> witness_account::transition(const ledger::transaction_context* context, const ledger::state* prev_state)
+		expects_lr<void> witness_account::transition(const ledger::state* prev_state)
 		{
 			if (owner.empty())
 				return layer_exception("invalid state owner");
@@ -1836,7 +1836,7 @@ namespace tangent
 		witness_transaction::witness_transaction(const algorithm::asset_id& new_asset, const std::string_view& new_transaction_id, const ledger::block_header* new_block_header) : ledger::uniform(new_block_header), asset(algorithm::asset::base_id_of(new_asset)), transaction_id(new_transaction_id)
 		{
 		}
-		expects_lr<void> witness_transaction::transition(const ledger::transaction_context* context, const ledger::state* prev_state)
+		expects_lr<void> witness_transaction::transition(const ledger::state* prev_state)
 		{
 			auto* prev = (witness_account*)prev_state;
 			if (!prev && !algorithm::asset::is_aux(asset, true))
@@ -2054,9 +2054,9 @@ namespace tangent
 					return true;
 			}
 		}
-		std::array<uint32_t, 7> resolver::get_uniform_types()
+		resolver::uniform_type_map& resolver::get_uniform_types()
 		{
-			return
+			static uniform_type_map result =
 			{
 				account_nonce::as_instance_type(),
 				account_program::as_instance_type(),
@@ -2066,10 +2066,11 @@ namespace tangent
 				witness_event::as_instance_type(),
 				witness_transaction::as_instance_type()
 			};
+			return result;
 		}
-		std::array<uint32_t, 8> resolver::get_multiform_types()
+		resolver::multiform_type_map& resolver::get_multiform_types()
 		{
-			return
+			static multiform_type_map result =
 			{
 				account_multiform::as_instance_type(),
 				account_balance::as_instance_type(),
@@ -2080,6 +2081,7 @@ namespace tangent
 				bridge_account::as_instance_type(),
 				witness_account::as_instance_type(),
 			};
+			return result;
 		}
 	}
 }

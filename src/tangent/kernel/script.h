@@ -778,10 +778,10 @@ namespace tangent
 				hash_map<string, hash_map<size_t, uptr<states::account_multiform>>> index[2];
 				option<algorithm::wesolowski::distribution> distribution = optional::none;
 			} cache;
-			ledger::transaction_context* context;
+			ledger::executor_context* executor;
 			library module;
 
-			program(ledger::transaction_context* new_context, library&& new_module);
+			program(ledger::executor_context* new_executor, library&& new_module);
 			virtual expects_lr<void> execute(ccall mutability, const std::string_view& entrypoint, const format::variables& args, std::function<expects_lr<void>(void*, int)>&& return_callback);
 			virtual expects_lr<void> execute(ccall mutability, const function& entrypoint, const format::variables& args, std::function<expects_lr<void>(void*, int)>&& return_callback);
 			virtual expects_lr<void> subexecute(const algorithm::pubkeyhash_t& target, const decimal& value, ccall mutability, const std::string_view& entrypoint, format::variables&& args, void* output_value, int output_type_id) const;
@@ -808,7 +808,7 @@ namespace tangent
 				{
 					size_t paid_blocks = std::max(size / sizeof(uint128_t), sizeof(uint128_t));
 					size_t paid_gas = (size_t)ledger::gas_cost::program_memory * paid_blocks;
-					if (paid_gas > 0 && !program->context->burn_gas(paid_gas))
+					if (paid_gas > 0 && !program->executor->burn_gas(paid_gas))
 					{
 						contract::throw_ptr(exception_repr(exception_repr::category::memory(), std::string_view("ran out of gas")));
 						return nullptr;
