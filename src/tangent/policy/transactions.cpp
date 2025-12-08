@@ -3434,6 +3434,8 @@ namespace tangent
 			if (prepared.as_status() == superchain::prepared_transaction::status::invalid)
 				return layer_exception("invalid prepared transaction");
 
+			console::get()->jwrite_line(*prepared.as_schema());
+
 			auto server = superchain::server_node::get();
 			auto base_asset = algorithm::asset::base_id_of(transaction->asset);
 			auto required_output_witness = btree_map<string, states::witness_account>();
