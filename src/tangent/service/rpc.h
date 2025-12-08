@@ -178,6 +178,8 @@ namespace tangent
 			server_response chainstate_get_witness_program(http::connection* base, format::variables&& args);
 			server_response chainstate_get_witness_event(http::connection* base, format::variables&& args);
 			server_response chainstate_get_witness_account(http::connection* base, format::variables&& args);
+			server_response chainstate_get_witness_account(http::connection* base, format::variables&& args);
+			server_response chainstate_get_witness_account_tagged(http::connection* base, format::variables&& args);
 			server_response chainstate_get_witness_accounts(http::connection* base, format::variables&& args);
 			server_response chainstate_get_witness_accounts_by_purpose(http::connection* base, format::variables&& args);
 			server_response chainstate_get_witness_transaction(http::connection* base, format::variables&& args);

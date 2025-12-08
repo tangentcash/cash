@@ -372,6 +372,7 @@ namespace tangent
 			bind(0 | access_type::r, "chainstate", "getwitnessprogram", 1, 1, "string hashcode", "uniform", "get witness program by hashcode (512bit number)", std::bind(&server_node::chainstate_get_witness_program, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getwitnessevent", 1, 1, "uint256 transaction_hash", "uniform", "get witness event by transaction hash", std::bind(&server_node::chainstate_get_witness_event, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getwitnessaccount", 3, 3, "string address, string asset, string wallet_address", "multiform", "get witness address by owner address, asset, wallet address", std::bind(&server_node::chainstate_get_witness_account, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getwitnessaccounttagged", 3, 3, "string asset, string wallet_address, uint64 offset", "multiform", "get witness address by asset and wallet address", std::bind(&server_node::chainstate_get_witness_account_tagged, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getwitnessaccounts", 3, 3, "string address, uint64 offset, uint64 count", "multiform[]", "get witness addresses by owner address", std::bind(&server_node::chainstate_get_witness_accounts, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getwitnessaccountsbypurpose", 4, 4, "string address, string purpose = 'witness' | 'router' | 'custodian' | 'bridge', uint64 offset, uint64 count", "multiform[]", "get witness addresses by owner address", std::bind(&server_node::chainstate_get_witness_accounts_by_purpose, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getwitnesstransaction", 2, 2, "string asset, string transaction_id", "uniform", "get witness transaction by asset and transaction id", std::bind(&server_node::chainstate_get_witness_transaction, this, std::placeholders::_1, std::placeholders::_2));
@@ -2374,6 +2375,16 @@ namespace tangent
 			auto chain = storages::chainstate();
 			auto state = chain.get_multiform(states::witness_account::as_instance_type(), nullptr, states::witness_account::as_instance_column(owner), states::witness_account::as_instance_row(asset, args[2].as_string()), 0);
 			return server_response().success(state ? state->value->as_schema().reset() : var::set::null());
+		}
+		server_response server_node::chainstate_get_witness_account_tagged(http::connection* base, format::variables&& args)
+		{
+			auto asset = algorithm::asset::id_of_handle(args[0].as_string());
+			auto context = ledger::transaction_context();
+			auto result = context.get_witness_account_tagged(asset, args[1].as_string(), args[2].as_uint64());
+			if (!result)
+				return server_response().error(error_codes::not_found, result.error().message());
+
+			return server_response().success(result->as_schema());
 		}
 		server_response server_node::chainstate_get_witness_accounts(http::connection* base, format::variables&& args)
 		{
