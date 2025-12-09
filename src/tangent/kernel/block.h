@@ -464,7 +464,8 @@ namespace tangent
 				uint8_t attempt = 0;
 				bool distribution = false;
 
-				bool load_message(format::ro_stream& stream);
+				bool load_compositor_transition(format::ro_stream& stream);
+				bool load(format::ro_stream& stream);
 				format::wo_stream as_message() const;
 			};
 
@@ -476,7 +477,8 @@ namespace tangent
 				algorithm::composition::type alg;
 				uint8_t attempt = 0;
 
-				bool load_message_if_preferred(format::ro_stream& stream);
+				bool load_compositor_transition(format::ro_stream& stream);
+				bool load(format::ro_stream& stream);
 				format::wo_stream as_message() const;
 			};
 

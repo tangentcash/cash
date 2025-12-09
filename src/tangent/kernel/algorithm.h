@@ -367,7 +367,7 @@ namespace tangent
 				virtual phase next_phase() const = 0;
 				virtual bool store(format::wo_stream* stream) const = 0;
 				virtual bool load(format::ro_stream& stream) = 0;
-				virtual bool prefer_over(const compositor& other) const = 0;
+				virtual bool may_transition_to(const compositor& next) const = 0;
 			};
 
 			struct keypair

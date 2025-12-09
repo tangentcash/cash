@@ -3070,7 +3070,18 @@ namespace tangent
 			return message;
 		}
 
-		bool dispatcher_context::public_state::load_message(format::ro_stream& stream)
+		bool dispatcher_context::public_state::load_compositor_transition(format::ro_stream& stream)
+		{
+			auto state = algorithm::composition::load_compositor(stream, &alg);
+			if (!state)
+				return false;
+
+			if (compositor && *state && !(*compositor)->may_transition_to(***state))
+				return false;
+
+			return true;
+		}
+		bool dispatcher_context::public_state::load(format::ro_stream& stream)
 		{
 			auto state = algorithm::composition::load_compositor(stream, &alg);
 			if (!state)
@@ -3154,10 +3165,21 @@ namespace tangent
 			return result;
 		}
 
-		bool dispatcher_context::signature_state::load_message_if_preferred(format::ro_stream& stream)
+		bool dispatcher_context::signature_state::load_compositor_transition(format::ro_stream& stream)
 		{
 			auto state = algorithm::composition::load_compositor(stream, &alg);
-			if (!state || (compositor && *state && !(*state)->prefer_over(**compositor)))
+			if (!state)
+				return false;
+
+			if (compositor && *state && !(*compositor)->may_transition_to(***state))
+				return false;
+
+			return true;
+		}
+		bool dispatcher_context::signature_state::load(format::ro_stream& stream)
+		{
+			auto state = algorithm::composition::load_compositor(stream, &alg);
+			if (!state)
 				return false;
 
 			superchain::prepared_transaction possible_message;

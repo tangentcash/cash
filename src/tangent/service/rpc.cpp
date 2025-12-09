@@ -2890,7 +2890,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "address not valid");
 
 			umutex<std::recursive_mutex> unique(consensus_service->get_mutex());
-			auto node = consensus_service->find_by_address(endpoint.address);
+			auto node = consensus_service->find_by_ip_address(endpoint.address);
 			if (!node)
 				return server_response().error(error_codes::bad_request, "node not found");
 
@@ -2907,7 +2907,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "address not valid");
 
 			umutex<std::recursive_mutex> unique(consensus_service->get_mutex());
-			auto node = consensus_service->find_by_address(endpoint.address);
+			auto node = consensus_service->find_by_ip_address(endpoint.address);
 			if (!node)
 				return server_response().error(error_codes::bad_request, "node not found");
 

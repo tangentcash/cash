@@ -287,13 +287,16 @@ namespace tangent
 			memcpy(message.data(), intermediate.data(), intermediate.size());
 			return true;
 		}
-		bool ed25519_compositor::prefer_over(const compositor& other) const
+		bool ed25519_compositor::may_transition_to(const compositor& next_ptr) const
 		{
-			auto* prev = (const ed25519_compositor*)&other;
-			if (participants != prev->participants || message != prev->message || !group_public_key.equals(prev->group_public_key))
+			auto* next = (const ed25519_compositor*)&next_ptr;
+			if (participants != next->participants || message != next->message)
 				return false;
 
-			return r_steps + s_steps < prev->r_steps + prev->s_steps;
+			if (z_steps == next->z_steps && !group_public_key.equals(next->group_public_key))
+				return false;
+
+			return z_steps + r_steps + s_steps > next->z_steps + next->r_steps + next->s_steps;
 		}
 
 		expects_lr<void> ed25519_clsag_compositor::setup_public_key(const uint8_t* new_message, size_t new_message_size, uint16_t new_participants)
@@ -407,9 +410,14 @@ namespace tangent
 
 			return true;
 		}
-		bool ed25519_clsag_compositor::prefer_over(const compositor& other) const
+		bool ed25519_clsag_compositor::may_transition_to(const compositor& next_ptr) const
 		{
-			return true;
+			auto* next = (const ed25519_clsag_compositor*)&next_ptr;
+			if (z_steps == next->z_steps && !group_public_key.equals(next->group_public_key))
+				return false;
+
+			/* Not implemented yet */
+			return z_steps > next->z_steps;
 		}
 
 		expects_lr<void> secp256k1_compositor::setup_public_key(const uint8_t* new_message, size_t new_message_size, uint16_t new_participants)
@@ -929,16 +937,19 @@ namespace tangent
 
 			return true;
 		}
-		bool secp256k1_compositor::prefer_over(const compositor& other) const
+		bool secp256k1_compositor::may_transition_to(const compositor& next_ptr) const
 		{
-			auto* prev = (const secp256k1_compositor*)&other;
-			if (additions != prev->additions || multiplications != prev->multiplications || p_bits != prev->p_bits || memcmp(message_hash, prev->message_hash, sizeof(message_hash)) != 0 || !group_public_key.equals(prev->group_public_key))
+			auto* next = (const secp256k1_compositor*)&next_ptr;
+			if (additions != next->additions || multiplications != next->multiplications || p_bits != next->p_bits || memcmp(message_hash, next->message_hash, sizeof(message_hash)) != 0)
 				return false;
 
-			if (!group_paillier_key.empty() && !prev->group_paillier_key.empty() && group_paillier_key != prev->group_paillier_key)
+			if (z_steps == next->z_steps && !group_public_key.equals(next->group_public_key))
 				return false;
 
-			return r_steps + i_steps + s_steps < prev->r_steps + prev->i_steps + prev->s_steps;
+			if (!group_paillier_key.empty() && !next->group_paillier_key.empty() && group_paillier_key != next->group_paillier_key)
+				return false;
+
+			return z_steps + r_steps + i_steps + s_steps > next->z_steps + next->r_steps + next->i_steps + next->s_steps;
 		}
 
 		expects_lr<void> secp256k1_schnorr_compositor::setup_public_key(const uint8_t* new_message, size_t new_message_size, uint16_t new_participants)
@@ -1269,13 +1280,16 @@ namespace tangent
 			memcpy(message_hash, intermediate.data(), intermediate.size());
 			return true;
 		}
-		bool secp256k1_schnorr_compositor::prefer_over(const compositor& other) const
+		bool secp256k1_schnorr_compositor::may_transition_to(const compositor& next_ptr) const
 		{
-			auto* prev = (const secp256k1_schnorr_compositor*)&other;
-			if (participants != prev->participants || memcmp(message_hash, prev->message_hash, sizeof(message_hash)) != 0 || !group_public_key.equals(prev->group_public_key) || !group_public_key_tweak.equals(prev->group_public_key_tweak))
+			auto* next = (const secp256k1_schnorr_compositor*)&next_ptr;
+			if (participants != next->participants || memcmp(message_hash, next->message_hash, sizeof(message_hash)) != 0 || !group_public_key_tweak.equals(next->group_public_key_tweak))
 				return false;
 
-			return r_steps + s_steps < prev->r_steps + prev->s_steps;
+			if (z_steps == next->z_steps && !group_public_key.equals(next->group_public_key))
+				return false;
+
+			return z_steps + r_steps + s_steps > next->z_steps + next->r_steps + next->s_steps;
 		}
 		expects_lr<algorithm::composition::cpubkey_t> secp256k1_schnorr_compositor::to_tweaked_public_key(const secp256k1_point_t& public_key, const secp256k1_scalar_t& tweak)
 		{

@@ -2442,7 +2442,7 @@ namespace tangent
 				auto cache = dispatcher->pull_cache(executor);
 				auto group = get_group(executor->receipt);
 				auto state = ledger::dispatcher_context::public_state();
-				if (!state.load_message(cache))
+				if (!state.load(cache))
 				{
 					auto compositor = algorithm::composition::make_public_key_compositor(chain->composition, message_hash, sizeof(message_hash), (uint16_t)group.size());
 					if (!compositor)
@@ -3071,7 +3071,7 @@ namespace tangent
 
 				auto cache = dispatcher->pull_cache(executor);
 				auto state = ledger::dispatcher_context::signature_state();
-				if (chain->requires_transaction_expiration || !state.load_message_if_preferred(cache))
+				if (chain->requires_transaction_expiration || !state.load(cache))
 				{
 					auto message = coawait(resolver::prepare_transaction(algorithm::asset::base_id_of(asset), superchain::wallet_link::from_owner(manager), transfers, get_fee_value(executor)));
 					if (!message)

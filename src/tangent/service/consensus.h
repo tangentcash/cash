@@ -299,8 +299,8 @@ namespace tangent
 			void clear_pending_fork(relay* state);
 			void accept_pending_fork(uref<relay>&& state, const uint256_t& candidate_hash, ledger::block_header&& candidate_block);
 			bool accept_block(uref<relay>&& from, ledger::block_evaluation&& candidate, const uint256_t& fork_tip);
-			bool has_address(const socket_address& address);
-			uref<relay> find_by_address(const socket_address& address);
+			bool connected_to_ip_address(const socket_address& address);
+			uref<relay> find_by_ip_address(const socket_address& address);
 			uref<relay> find_by_account(const algorithm::pubkeyhash_t& account);
 			uref<relay> find_with_neighbor_account(const algorithm::pubkeyhash_t& account);
 			option<algorithm::pubkey_t> find_public_key(const algorithm::pubkeyhash_t& account);

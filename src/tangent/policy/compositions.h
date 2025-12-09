@@ -34,7 +34,7 @@ namespace tangent
 			algorithm::composition::phase next_phase() const override;
 			bool store(format::wo_stream* stream) const override;
 			bool load(format::ro_stream& stream) override;
-			bool prefer_over(const compositor& other) const override;
+			bool may_transition_to(const compositor& next) const override;
 		};
 
 		struct ed25519_clsag_compositor final : algorithm::composition::compositor
@@ -53,7 +53,7 @@ namespace tangent
 			algorithm::composition::phase next_phase() const override;
 			bool store(format::wo_stream* stream) const override;
 			bool load(format::ro_stream& stream) override;
-			bool prefer_over(const compositor& other) const override;
+			bool may_transition_to(const compositor& next) const override;
 		};
 
 		struct secp256k1_compositor final : algorithm::composition::compositor
@@ -84,7 +84,7 @@ namespace tangent
 			algorithm::composition::phase next_phase() const override;
 			bool store(format::wo_stream* stream) const override;
 			bool load(format::ro_stream& stream) override;
-			bool prefer_over(const compositor& other) const override;
+			bool may_transition_to(const compositor& next) const override;
 		};
 
 		struct secp256k1_schnorr_compositor final : algorithm::composition::compositor
@@ -110,7 +110,7 @@ namespace tangent
 			algorithm::composition::phase next_phase() const override;
 			bool store(format::wo_stream* stream) const override;
 			bool load(format::ro_stream& stream) override;
-			bool prefer_over(const compositor& other) const override;
+			bool may_transition_to(const compositor& next) const override;
 			static expects_lr<algorithm::composition::cpubkey_t> to_tweaked_public_key(const secp256k1_point_t& public_key, const secp256k1_scalar_t& tweak);
 		};
 	}

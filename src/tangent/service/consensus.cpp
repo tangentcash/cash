@@ -122,12 +122,12 @@ namespace tangent
 
 			auto decrypted_message = algorithm::signing::private_decrypt(secret_key, packed_result.front().as_string());
 			if (!decrypted_message)
-				return remote_exception("private result decryption failed");
+				return remote_exception("private result decryption failed (possible attack)");
 
 			format::variables result;
 			format::ro_stream message = format::ro_stream(*decrypted_message);
 			if (!format::variables_util::deserialize_flat_from(message, &result))
-				return remote_exception("invalid private result");
+				return remote_exception("invalid private result (possible attack)");
 
 			return expects_rt<format::variables>(std::move(result));
 		}
@@ -1697,7 +1697,7 @@ namespace tangent
 				auto unknown_node = mempool.sample_connectable_unknown_node();
 				if (!unknown_node)
 					return layer_exception("no candidate found in mempool");
-				else if (has_address(*unknown_node))
+				else if (connected_to_ip_address(*unknown_node))
 					goto retry_unknown_node;
 
 				if (protocol::now().user.consensus.logging)
@@ -1705,7 +1705,7 @@ namespace tangent
 
 				return expects_lr<socket_address>(std::move(*unknown_node));
 			}
-			else if (has_address(known_node->first.address) || mempool.has_cooldown_on_node(known_node->first.address).or_else(false))
+			else if (connected_to_ip_address(known_node->first.address) || mempool.has_cooldown_on_node(known_node->first.address).or_else(false))
 			{
 				++offset;
 				goto retry_known_node;
@@ -1776,10 +1776,10 @@ namespace tangent
 			if (!is_active())
 				return expects_promise_rt<uref<relay>>(remote_exception::shutdown());
 
-			auto duplicate = find_by_address(address);
+			auto duplicate = find_by_ip_address(address);
 			if (duplicate)
 				return expects_promise_rt<uref<relay>>(std::move(duplicate));
-			else if (has_address(address))
+			else if (connected_to_ip_address(address))
 				return expects_promise_rt<uref<relay>>(remote_exception("possible loopback"));
 
 			return coasync<expects_rt<uref<relay>>>([this, address]() mutable -> expects_promise_rt<uref<relay>>
@@ -1787,11 +1787,8 @@ namespace tangent
 				uptr<outbound_node> candidate = new outbound_node();
 				append_pending_node(*candidate);
 				auto status = coawait(candidate->connect_async(address, PEER_NOT_SECURE));
-				auto duplicate = find_by_address(candidate->get_peer_address());
 				erase_pending_node(*candidate);
-				if (duplicate)
-					coreturn expects_promise_rt<uref<relay>>(std::move(duplicate));
-				else if (!status)
+				if (!status)
 					coreturn remote_exception(std::move(status.error().message()));
 
 				auto& [node, wallet] = descriptor;
@@ -3348,7 +3345,7 @@ namespace tangent
 		{
 			return exclusive;
 		}
-		bool server_node::has_address(const socket_address& address)
+		bool server_node::connected_to_ip_address(const socket_address& address)
 		{
 			auto ip_address = address.get_ip_address();
 			if (!ip_address)
@@ -3370,7 +3367,7 @@ namespace tangent
 
 			return false;
 		}
-		uref<relay> server_node::find_by_address(const socket_address& address)
+		uref<relay> server_node::find_by_ip_address(const socket_address& address)
 		{
 			auto ip_address = address.get_ip_address();
 			if (!ip_address)
@@ -3789,15 +3786,15 @@ namespace tangent
 				coreturn args.error();
 
 			auto message = format::ro_stream(args->front().as_string());
-			if (!state.compositor->load(message))
-				coreturn remote_exception("group public key remote computation failed");
+			if (!state.load_compositor_transition(message))
+				coreturn remote_exception("compositor transition failed (possible attack)");
 
 			auto encrypted_share_public_key = list.begin();
 			for (size_t i = 0; i < list.size(); i++)
 			{
 				string encrypted_share;
 				if (!message.read_string(message.read_type(), &encrypted_share))
-					coreturn remote_exception("group encrypted share remote computation failed");
+					coreturn remote_exception("encrypted share aggregation failed (possible attack)");
 
 				encrypted_share_public_key->second = std::move(encrypted_share);
 				++encrypted_share_public_key;
@@ -3860,8 +3857,8 @@ namespace tangent
 				coreturn args.error();
 
 			auto message = format::ro_stream(args->front().as_string());
-			if (!state.load_message_if_preferred(message))
-				coreturn remote_exception("group signature remote computation error");
+			if (!state.load_compositor_transition(message))
+				coreturn remote_exception("compositor transition failed (possible attack)");
 
 			coreturn expectation::met;
 		}
