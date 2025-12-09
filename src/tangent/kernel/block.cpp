@@ -3418,12 +3418,18 @@ namespace tangent
 
 			state = state_variables();
 			state.executor = executor_context(&state.changelog, this, abstract_block, abstract_transaction, std::move(abstract_receipt));
+			transactions = transaction_queue();
+			tip = optional::none;
+			producers.clear();
+			nonces.clear();
 			memset(state.public_key_hash.data, 0xFF, sizeof(algorithm::pubkeyhash_t));
 			memset(state.secret_key.data, 0xFF, sizeof(algorithm::seckey_t));
 		}
 		option<uint64_t> solver_context::apply_validator_state(const algorithm::pubkeyhash_t& public_key_hash, const algorithm::seckey_t& secret_key, option<const block_header*>&& parent_block)
 		{
+			nonces.clear();
 			state = state_variables();
+			transactions = transaction_queue();
 			if (!parent_block)
 			{
 				auto chain = storages::chainstate();
@@ -3451,7 +3457,6 @@ namespace tangent
 			state.secret_key = secret_key;
 			state.executor = executor_context(&state.changelog, this, tip.address(), nullptr, { });
 			state.origin = state.origin == state_origin::block ? state_origin::chain_block : state_origin::chain;
-			transactions = transaction_queue();
 			producers = state.executor.calculate_producers(protocol::now().policy.production.max_per_block).or_else(vector<states::validator_production>());
 			if (producers.empty())
 			{
