@@ -250,17 +250,19 @@ namespace tangent
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
+			static void challenge(const uint256_t& route_hash, uint8_t message_hash[32]);
 		};
 
 		struct bind final : ledger::commitment
 		{
-			algorithm::composition::cpubkey_t public_key;
+			algorithm::composition::cpubkey_t group_public_key;
+			algorithm::composition::chashsig_t group_signature;
 			uint256_t route_hash = 0;
 
 			expects_lr<void> validate(uint64_t block_number) const override;
 			expects_lr<void> execute(ledger::executor_context* executor) const override;
 			expects_promise_rt<void> dispatch(const ledger::executor_context* executor, ledger::dispatcher_context* dispatcher) const override;
-			void set_witness(const uint256_t& new_route_hash, const algorithm::composition::cpubkey_t& new_public_key);
+			void set_witness(const uint256_t& new_route_hash, algorithm::composition::cpubkey_t&& new_group_public_key, algorithm::composition::chashsig_t&& new_group_signature);
 			bool store_body(format::wo_stream* stream) const override;
 			bool load_body(format::ro_stream& stream) override;
 			bool recover_many(const ledger::executor_context* executor, const ledger::receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const override;

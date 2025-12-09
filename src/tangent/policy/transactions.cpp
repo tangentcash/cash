@@ -2435,17 +2435,20 @@ namespace tangent
 				if (!chain)
 					coreturn remote_exception("invalid operation");
 
+				uint8_t message_hash[32];
+				challenge(executor->receipt.transaction_hash, message_hash);
+
 				size_t required_public_keys = 0;
 				auto cache = dispatcher->pull_cache(executor);
 				auto group = get_group(executor->receipt);
 				auto state = ledger::dispatcher_context::public_state();
 				if (!state.load_message(cache))
 				{
-					auto aggregator = algorithm::composition::make_public_state(chain->composition);
-					if (!aggregator)
-						coreturn remote_exception(std::move(aggregator.error().message()));
+					auto compositor = algorithm::composition::make_public_key_compositor(chain->composition, message_hash, sizeof(message_hash), (uint16_t)group.size());
+					if (!compositor)
+						coreturn remote_exception(std::move(compositor.error().message()));
 
-					state.aggregator = std::move(*aggregator);
+					state.compositor = std::move(*compositor);
 					state.participants = group;
 					state.alg = chain->composition;
 					required_public_keys = state.participants.size();
@@ -2478,31 +2481,56 @@ namespace tangent
 					}
 				}
 
-				btree_set<algorithm::pubkeyhash_t> deferred_participants;
-				while (!state.distribution && !state.participants.empty())
+				bool reset = false;
+				auto chosen = group.begin();
+				auto unavailable = btree_set<algorithm::pubkeyhash_t>();
+				std::advance(chosen, (size_t)(algorithm::hashing::hash256i(message_hash, sizeof(message_hash)) % uint256_t(group.size())));
+				while (!state.distribution)
 				{
-					auto result = coawait(dispatcher->aggregate_public_key(executor, state, *state.participants.begin()));
+					auto phase = state.compositor->next_phase();
+					if (!reset && (phase == algorithm::composition::phase::any_input_after_reset || phase == algorithm::composition::phase::chosen_input_after_reset))
+					{
+						state.participants = group;
+						reset = true;
+					}
+
+					bool uniform_input = phase == algorithm::composition::phase::any_input_after_reset || phase == algorithm::composition::phase::any_input;
+					bool chosen_input = phase == algorithm::composition::phase::chosen_input_after_reset || phase == algorithm::composition::phase::chosen_input;
+					auto it = (uniform_input ? state.participants.begin() : (chosen_input ? state.participants.find(*chosen) : state.participants.end()));
+					it = (!chosen_input && state.participants.size() > 1 && it != state.participants.end() && it->equals(*chosen) ? ++it : it);
+					if (it == state.participants.end())
+						break;
+
+					auto result = coawait(dispatcher->aggregate_public_key(executor, state, *it));
 					if (!result && (result.error().is_retry() || result.error().is_shutdown()))
-						deferred_participants.insert(*state.participants.begin());
+					{
+						unavailable.insert(*it);
+						if (chosen_input)
+							goto postpone;
+					}
 					else if (!result)
 						coreturn result.error();
+					else
+						reset = false;
 
-					state.participants.erase(state.participants.begin());
-					if (state.participants.empty() && deferred_participants.empty())
-					{
-						state.participants = std::move(group);
-						state.distribution = true;
-					}
+					state.participants.erase(it);
 				}
 
-				if (!deferred_participants.empty())
+				state.distribution = unavailable.empty();
+				state.participants = std::move(group);
+				if (!unavailable.empty())
 				{
-					state.participants = std::move(deferred_participants);
+					state.participants = std::move(unavailable);
 					goto postpone;
 				}
 
 				algorithm::composition::cpubkey_t aggregated_public_key;
-				auto status = state.aggregator->finalize(&aggregated_public_key);
+				auto status = state.compositor->to_public_key(&aggregated_public_key);
+				if (!status)
+					coreturn remote_exception(std::move(status.error().message()));
+
+				algorithm::composition::chashsig_t aggregated_signature;
+				status = state.compositor->to_signature(&aggregated_signature);
 				if (!status)
 					coreturn remote_exception(std::move(status.error().message()));
 
@@ -2525,22 +2553,22 @@ namespace tangent
 
 					auto result = coawait(dispatcher->distribute_entropy_shares(executor, distribution_state, *state.participants.begin()));
 					if (!result && (result.error().is_retry() || result.error().is_shutdown()))
-						deferred_participants.insert(*state.participants.begin());
+						unavailable.insert(*state.participants.begin());
 					else if (!result)
 						coreturn result.error();
 
 					state.participants.erase(state.participants.begin());
 				}
 
-				if (!deferred_participants.empty())
+				if (!unavailable.empty())
 				{
-					state.participants = std::move(deferred_participants);
+					state.participants = std::move(unavailable);
 					goto postpone;
 				}
 
 				auto* transaction = memory::init<bind>();
 				transaction->asset = asset;
-				transaction->set_witness(executor->receipt.transaction_hash, aggregated_public_key);
+				transaction->set_witness(executor->receipt.transaction_hash, std::move(aggregated_public_key), std::move(aggregated_signature));
 				dispatcher->emit_transaction(transaction);
 				coreturn expectation::met;
 			});
@@ -2616,6 +2644,13 @@ namespace tangent
 		{
 			return "route";
 		}
+		void route::challenge(const uint256_t& route_hash, uint8_t message_hash[32])
+		{
+			VI_ASSERT(message_hash != nullptr, "message hash should be set");
+			uint8_t transaction_hash[32];
+			route_hash.encode(transaction_hash);
+			algorithm::hashing::hash256(transaction_hash, sizeof(transaction_hash), message_hash);
+		}
 
 		expects_lr<void> bind::validate(uint64_t block_number) const
 		{
@@ -2625,8 +2660,27 @@ namespace tangent
 			if (!route_hash)
 				return layer_exception("invalid route hash");
 
-			if (public_key.empty())
-				return layer_exception("invalid public key");
+			if (group_public_key.empty())
+				return layer_exception("invalid group public key");
+
+			if (group_signature.empty())
+				return layer_exception("invalid group signature");
+
+			auto* chain = superchain::server_node::get()->get_chainparams(asset);
+			if (!chain)
+				return layer_exception("invalid operation");
+
+			auto compositor = algorithm::composition::make_compositor(chain->composition);
+			if (!compositor)
+				return compositor.error();
+
+			uint8_t message_hash[32];
+			route::challenge(route_hash, message_hash);
+
+			auto& compositor_ptr = *compositor;
+			auto status = compositor_ptr->verify_signature(message_hash, sizeof(message_hash), group_signature, group_public_key);
+			if (!status)
+				return status;
 
 			return ledger::commitment::validate(block_number);
 		}
@@ -2655,7 +2709,7 @@ namespace tangent
 			if (duplicate)
 				return layer_exception("bridge account already exists");
 
-			auto encoded_public_key = chain->encode_public_key(std::string_view((char*)public_key.data(), public_key.size()));
+			auto encoded_public_key = chain->encode_public_key(std::string_view((char*)group_public_key.data(), group_public_key.size()));
 			if (!encoded_public_key)
 				return encoded_public_key.error();
 
@@ -2702,7 +2756,7 @@ namespace tangent
 					return status.error();
 			}
 
-			auto bridge_account_status = executor->apply_bridge_account(asset, ref.owner, ref.manager, public_key, std::move(group));
+			auto bridge_account_status = executor->apply_bridge_account(asset, ref.owner, ref.manager, group_public_key, std::move(group));
 			if (!bridge_account_status)
 				return bridge_account_status.error();
 
@@ -2733,7 +2787,7 @@ namespace tangent
 			if (!chain || !params)
 				return expects_promise_rt<void>(remote_exception("invalid operation"));
 
-			auto encoded_public_key = chain->encode_public_key(std::string_view((char*)public_key.data(), public_key.size()));
+			auto encoded_public_key = chain->encode_public_key(std::string_view((char*)group_public_key.data(), group_public_key.size()));
 			if (!encoded_public_key)
 				return expects_promise_rt<void>(remote_exception(std::move(encoded_public_key.error().message())));
 
@@ -2755,29 +2809,37 @@ namespace tangent
 
 			return expects_promise_rt<void>(expectation::met);
 		}
-		void bind::set_witness(const uint256_t& new_route_hash, const algorithm::composition::cpubkey_t& new_public_key)
+		void bind::set_witness(const uint256_t& new_route_hash, algorithm::composition::cpubkey_t&& new_group_public_key, algorithm::composition::chashsig_t&& new_group_signature)
 		{
 			route_hash = new_route_hash;
-			public_key = new_public_key;
+			group_public_key = std::move(new_group_public_key);
+			group_signature = std::move(new_group_signature);
 		}
 		bool bind::store_body(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
-			stream->write_string(std::string_view((char*)public_key.data(), public_key.size()));
+			stream->write_string(std::string_view((char*)group_public_key.data(), group_public_key.size()));
+			stream->write_string(std::string_view((char*)group_signature.data(), group_signature.size()));
 			stream->write_integer(route_hash);
 			return true;
 		}
 		bool bind::load_body(format::ro_stream& stream)
 		{
-			string public_key_assembly;
-			if (!stream.read_string(stream.read_type(), &public_key_assembly))
+			string group_public_key_assembly;
+			if (!stream.read_string(stream.read_type(), &group_public_key_assembly))
+				return false;
+
+			string group_signature_assembly;
+			if (!stream.read_string(stream.read_type(), &group_signature_assembly))
 				return false;
 
 			if (!stream.read_integer(stream.read_type(), &route_hash))
 				return false;
 
-			public_key.resize(public_key_assembly.size());
-			memcpy(public_key.data(), public_key_assembly.data(), public_key_assembly.size());
+			group_public_key.resize(group_public_key_assembly.size());
+			group_signature.resize(group_signature_assembly.size());
+			memcpy(group_public_key.data(), group_public_key_assembly.data(), group_public_key_assembly.size());
+			memcpy(group_signature.data(), group_signature_assembly.data(), group_signature_assembly.size());
 			return true;
 		}
 		bool bind::recover_many(const ledger::executor_context* executor, const ledger::receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const
@@ -2799,7 +2861,8 @@ namespace tangent
 		{
 			schema* data = ledger::commitment::as_schema().reset();
 			data->set("route_hash", route_hash > 0 ? var::string(algorithm::encoding::encode_0xhex256(route_hash)) : var::null());
-			data->set("public_key", var::string(format::util::encode_0xhex(std::string_view((char*)public_key.data(), public_key.size()))));
+			data->set("group_public_key", var::string(format::util::encode_0xhex(std::string_view((char*)group_public_key.data(), group_public_key.size()))));
+			data->set("group_signature", var::string(format::util::encode_0xhex(std::string_view((char*)group_signature.data(), group_signature.size()))));
 			return data;
 		}
 		uint32_t bind::as_type() const
@@ -3039,20 +3102,20 @@ namespace tangent
 					auto chosen = account->group.begin();
 					auto unavailable = btree_set<algorithm::pubkeyhash_t>();
 					std::advance(chosen, (size_t)(algorithm::hashing::hash256i(input->message.data(), input->message.size()) % uint256_t(account->group.size())));
-					if (!state.aggregator)
+					if (!state.compositor)
 					{
-						auto aggregator = algorithm::composition::make_signature_state(input->alg, input->public_key, input->message.data(), input->message.size(), (uint16_t)account->group.size());
-						if (!aggregator)
-							coreturn cancel(remote_exception(std::move(aggregator.error().message())));
+						auto compositor = algorithm::composition::make_signature_compositor(input->alg, input->public_key, input->message.data(), input->message.size(), (uint16_t)account->group.size());
+						if (!compositor)
+							coreturn cancel(remote_exception(std::move(compositor.error().message())));
 
-						state.aggregator = std::move(*aggregator);
+						state.compositor = std::move(*compositor);
 						state.alg = input->alg;
 					}
 
 					bool reset = false;
 					while (true)
 					{
-						auto phase = state.aggregator->next_phase();
+						auto phase = state.compositor->next_phase();
 						if (!reset && (phase == algorithm::composition::phase::any_input_after_reset || phase == algorithm::composition::phase::chosen_input_after_reset))
 						{
 							state.participants = account->group;
@@ -3087,12 +3150,12 @@ namespace tangent
 						goto postpone;
 					}
 
-					auto finalization = state.aggregator->finalize(&input->signature);
+					auto finalization = state.compositor->to_signature(&input->signature);
 					if (!finalization)
 						coreturn cancel(remote_exception(std::move(finalization.error().message())));
 
 					input = state.message->next_input_for_aggregation();
-					state.aggregator.destroy();
+					state.compositor.destroy();
 				}
 
 				finalization = resolver::finalize_transaction(algorithm::asset::base_id_of(asset), std::move(**state.message));

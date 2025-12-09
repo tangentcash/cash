@@ -823,47 +823,10 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<void> chainstate::prune(uint32_t types, uint64_t block_number)
+		expects_lr<void> chainstate::compact(uint64_t block_number)
 		{
-			size_t block_delta = 0;
-			auto& blob_storage = get_blob_storage();
-			if (types & (uint32_t)pruning::block)
-			{
-				size_t offset = 0, count = 1024;
-				schema_list map;
-				map.push_back(var::set::integer(block_number));
-				map.push_back(var::set::integer(count));
-				map.push_back(var::set::integer(offset = 0));
-
-				while (true)
-				{
-					map.back()->value = var::integer(offset);
-
-					auto cursor = get_block_storage().emplace_query(__func__, "SELECT block_hash FROM blocks WHERE block_number < ? LIMIT ? OFFSET ?", &map);
-					if (!cursor || cursor->error())
-						return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
-
-					auto response = cursor->first();
-					parallel::wail_all(parallel::for_each_sequential(response.begin(), response.end(), response.size(), ELEMENTS_FEW, [&](sqlite::row row)
-					{
-						auto block_hash = row["block_hash"].get();
-						blob_storage.store(__func__, get_block_label(block_hash.get_binary()), std::string_view());
-					}));
-
-					size_t results = cursor->first().size();
-					offset += results;
-					block_delta += results;
-					if (results < count)
-						break;
-				}
-
-				auto cursor = get_block_storage().emplace_query(__func__, "DELETE FROM blocks WHERE block_number < ?", &map);
-				if (!cursor || cursor->error())
-					return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
-			}
-
-			size_t transaction_delta = 0;
-			if (types & (uint32_t)pruning::transaction)
+			auto& blob_storage = get_blob_storage(); uint64_t state_delta = 0;
+			for (auto& [uniform_storage, type] : get_uniform_multi_storage())
 			{
 				size_t offset = 0, count = 1024;
 				schema_list map;
@@ -874,108 +837,68 @@ namespace tangent
 				while (true)
 				{
 					map.back()->value = var::integer(offset);
-
-					auto cursor = get_tx_storage().emplace_query(__func__, "SELECT transaction_hash FROM transactions WHERE block_number < ? LIMIT ? OFFSET ?", &map);
+					auto cursor = uniform_storage.emplace_query(__func__,
+						"SELECT (SELECT index_hash FROM indices WHERE indices.index_number = snapshots.index_number) AS index_hash, block_number "
+						"FROM snapshots WHERE block_number < ? AND EXISTS (SELECT 1 FROM uniforms WHERE uniforms.index_number = snapshots.index_number AND uniforms.block_number > snapshots.block_number) LIMIT ? OFFSET ?", &map);
 					if (!cursor || cursor->error())
 						return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 					auto response = cursor->first();
 					parallel::wail_all(parallel::for_each_sequential(response.begin(), response.end(), response.size(), ELEMENTS_FEW, [&](sqlite::row row)
 					{
-						auto transaction_hash = row["transaction_hash"].get();
-						blob_storage.store(__func__, get_transaction_label(transaction_hash.get_binary()), std::string_view());
-						blob_storage.store(__func__, get_receipt_label(transaction_hash.get_binary()), std::string_view());
+						string index = row["index_hash"].get().get_blob();
+						uint64_t number = row["block_number"].get().get_integer();
+						blob_storage.store(__func__, get_uniform_label(type, index, number), std::string_view());
 					}));
 
 					size_t results = cursor->first().size();
 					offset += results;
-					transaction_delta += results;
+					state_delta += results;
 					if (results < count)
 						break;
 				}
 
-				auto cursor = get_tx_storage().emplace_query(__func__, "DELETE FROM transactions WHERE block_number < ?", &map);
+				auto cursor = uniform_storage.emplace_query(__func__, "DELETE FROM snapshots WHERE block_number < ? AND EXISTS (SELECT 1 FROM uniforms WHERE uniforms.index_number = snapshots.index_number AND uniforms.block_number > snapshots.block_number)", &map);
 				if (!cursor || cursor->error())
 					return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 			}
 
-			size_t state_delta = 0;
-			if (types & (uint32_t)pruning::state)
+			for (auto& [multiform_storage, type] : get_multiform_multi_storage())
 			{
-				for (auto& [uniform_storage, type] : get_uniform_multi_storage())
+				size_t offset = 0, count = 1024;
+				schema_list map;
+				map.push_back(var::set::integer(block_number));
+				map.push_back(var::set::integer(count));
+				map.push_back(var::set::integer(offset));
+
+				while (true)
 				{
-					size_t offset = 0, count = 1024;
-					schema_list map;
-					map.push_back(var::set::integer(block_number));
-					map.push_back(var::set::integer(count));
-					map.push_back(var::set::integer(offset));
-
-					while (true)
-					{
-						map.back()->value = var::integer(offset);
-						auto cursor = uniform_storage.emplace_query(__func__,
-							"SELECT (SELECT index_hash FROM indices WHERE indices.index_number = snapshots.index_number) AS index_hash, block_number "
-							"FROM snapshots WHERE block_number < ? AND EXISTS (SELECT 1 FROM uniforms WHERE uniforms.index_number = snapshots.index_number AND uniforms.block_number > snapshots.block_number) LIMIT ? OFFSET ?", &map);
-						if (!cursor || cursor->error())
-							return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
-
-						auto response = cursor->first();
-						parallel::wail_all(parallel::for_each_sequential(response.begin(), response.end(), response.size(), ELEMENTS_FEW, [&](sqlite::row row)
-						{
-							string index = row["index_hash"].get().get_blob();
-							uint64_t number = row["block_number"].get().get_integer();
-							blob_storage.store(__func__, get_uniform_label(type, index, number), std::string_view());
-						}));
-
-						size_t results = cursor->first().size();
-						offset += results;
-						state_delta += results;
-						if (results < count)
-							break;
-					}
-
-					auto cursor = uniform_storage.emplace_query(__func__, "DELETE FROM snapshots WHERE block_number < ? AND EXISTS (SELECT 1 FROM uniforms WHERE uniforms.index_number = snapshots.index_number AND uniforms.block_number > snapshots.block_number)", &map);
+					map.back()->value = var::integer(offset);
+					auto cursor = multiform_storage.emplace_query(__func__,
+						"SELECT (SELECT column_hash FROM columns WHERE columns.column_number = snapshots.column_number) AS column_hash, (SELECT row_hash FROM rows WHERE rows.row_number = snapshots.row_number) AS row_hash, block_number "
+						"FROM snapshots WHERE block_number < ? AND EXISTS (SELECT 1 FROM multiforms WHERE multiforms.column_number = snapshots.column_number AND multiforms.row_number = snapshots.row_number AND multiforms.block_number > snapshots.block_number) LIMIT ? OFFSET ?", &map);
 					if (!cursor || cursor->error())
 						return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
-				}
 
-				for (auto& [multiform_storage, type] : get_multiform_multi_storage())
-				{
-					size_t offset = 0, count = 1024;
-					schema_list map;
-					map.push_back(var::set::integer(block_number));
-					map.push_back(var::set::integer(count));
-					map.push_back(var::set::integer(offset));
-
-					while (true)
+					auto response = cursor->first();
+					parallel::wail_all(parallel::for_each_sequential(response.begin(), response.end(), response.size(), ELEMENTS_FEW, [&](sqlite::row next)
 					{
-						map.back()->value = var::integer(offset);
-						auto cursor = multiform_storage.emplace_query(__func__,
-							"SELECT (SELECT column_hash FROM columns WHERE columns.column_number = snapshots.column_number) AS column_hash, (SELECT row_hash FROM rows WHERE rows.row_number = snapshots.row_number) AS row_hash, block_number "
-							"FROM snapshots WHERE block_number < ? AND EXISTS (SELECT 1 FROM multiforms WHERE multiforms.column_number = snapshots.column_number AND multiforms.row_number = snapshots.row_number AND multiforms.block_number > snapshots.block_number) LIMIT ? OFFSET ?", &map);
-						if (!cursor || cursor->error())
-							return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
+						string column = next["column_hash"].get().get_blob();
+						string row = next["row_hash"].get().get_blob();
+						uint64_t number = next["block_number"].get().get_integer();
+						blob_storage.store(__func__, get_multiform_label(type, column, row, number), std::string_view());
+					}));
 
-						auto response = cursor->first();
-						parallel::wail_all(parallel::for_each_sequential(response.begin(), response.end(), response.size(), ELEMENTS_FEW, [&](sqlite::row next)
-						{
-							string column = next["column_hash"].get().get_blob();
-							string row = next["row_hash"].get().get_blob();
-							uint64_t number = next["block_number"].get().get_integer();
-							blob_storage.store(__func__, get_multiform_label(type, column, row, number), std::string_view());
-						}));
-
-						size_t results = cursor->first().size();
-						offset += results;
-						state_delta += results;
-						if (results < count)
-							break;
-					}
-
-					auto cursor = multiform_storage.emplace_query(__func__, "DELETE FROM snapshots WHERE block_number < ? AND EXISTS (SELECT 1 FROM multiforms WHERE multiforms.column_number = snapshots.column_number AND multiforms.row_number = snapshots.row_number AND multiforms.block_number > snapshots.block_number)", &map);
-					if (!cursor || cursor->error())
-						return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
+					size_t results = cursor->first().size();
+					offset += results;
+					state_delta += results;
+					if (results < count)
+						break;
 				}
+
+				auto cursor = multiform_storage.emplace_query(__func__, "DELETE FROM snapshots WHERE block_number < ? AND EXISTS (SELECT 1 FROM multiforms WHERE multiforms.column_number = snapshots.column_number AND multiforms.row_number = snapshots.row_number AND multiforms.block_number > snapshots.block_number)", &map);
+				if (!cursor || cursor->error())
+					return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 			}
 
 			schema_list map;
@@ -986,7 +909,7 @@ namespace tangent
 				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 			if (protocol::now().user.storage.logging)
-				VI_INFO("pruning checkpoint at block number %" PRIu64 " (block_delta: -%" PRIu64 ", transaction_delta: -%" PRIu64 ", state_delta: -%" PRIu64 ")", block_number, (uint64_t)block_delta, (uint64_t)transaction_delta, (uint64_t)state_delta);
+				VI_INFO("state compaction checkpoint %" PRIu64 " (state_delta: -%" PRIu64 ")", block_number, state_delta);
 
 			return expectation::met;
 		}
@@ -1442,12 +1365,7 @@ namespace tangent
 			if (evaluation.block.number <= latest_checkpoint)
 				return expectation::met;
 
-			uint32_t flags = (uint32_t)pruning::state;
-			if (protocol::now().user.storage.prune_transactions)
-				flags |= (uint32_t)pruning::transaction;
-			if (protocol::now().user.storage.prune_blocks)
-				flags |= (uint32_t)pruning::block;
-			return prune(flags, evaluation.block.number - checkpoint_size);
+			return compact(evaluation.block.number - checkpoint_size);
 		}
 		expects_lr<void> chainstate::resolve_block_transactions(vector<ledger::block_transaction>& result, uint64_t block_number, bool fully, size_t chunk)
 		{

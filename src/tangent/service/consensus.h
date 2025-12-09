@@ -230,6 +230,7 @@ namespace tangent
 			} mempool;
 
 		private:
+			hash_map<algorithm::asset_id, uint64_t> witnesses;
 			hash_map<uint256_t, neighbor_callback> neighbors;
 			hash_map<uint8_t, callable> callables;
 			hash_map<void*, uref<relay>> nodes;
@@ -391,10 +392,10 @@ namespace tangent
 			static expects_rt<void> distribute_entropy_shares(ledger::dispatcher_context* dispatcher, const ledger::executor_context* executor, const btree_map<algorithm::pubkeyhash_t, string>& encrypted_shares);
 			static expects_rt<void> aggregate_entropy_shares(ledger::dispatcher_context* dispatcher, const ledger::executor_context* executor, const algorithm::pubkey_t& public_key, btree_map<uint256_t, btree_map<algorithm::pubkeyhash_t, string>>& encrypted_shares);
 			static expects_rt<void> recover_entropy(ledger::dispatcher_context* dispatcher, const ledger::executor_context* executor, algorithm::hashsig_t& proof, const btree_map<uint256_t, btree_map<algorithm::pubkeyhash_t, string>>& encrypted_shares, const btree_map<uint256_t, string>& encrypted_entropies);
-			static expects_rt<void> aggregate_public_key(ledger::dispatcher_context* dispatcher, const ledger::executor_context* executor, btree_map<algorithm::pubkey_t, string>& encrypted_shares, algorithm::composition::public_state* aggregator);
-			static expects_rt<void> aggregate_signature(ledger::dispatcher_context* dispatcher, const ledger::executor_context* executor, superchain::prepared_transaction& message, algorithm::composition::signature_state* aggregator);
+			static expects_rt<void> aggregate_public_key(ledger::dispatcher_context* dispatcher, const ledger::executor_context* executor, btree_map<algorithm::pubkey_t, string>& encrypted_shares, algorithm::composition::compositor* compositor);
+			static expects_rt<void> aggregate_signature(ledger::dispatcher_context* dispatcher, const ledger::executor_context* executor, superchain::prepared_transaction& message, algorithm::composition::compositor* compositor);
 			static btree_map<algorithm::pubkey_t, string> new_encrypted_distribution_shares(const algorithm::pubkey_t& validator_public_key, const public_state& state);
-			static bool apply_encrypted_distribution_shares(public_state& state, const algorithm::pubkeyhash_t& validator, const btree_map<algorithm::pubkey_t, string>& list);
+			static void apply_encrypted_distribution_shares(public_state& state, const algorithm::pubkeyhash_t& validator, const btree_map<algorithm::pubkey_t, string>& list);
 		};
 	}
 }

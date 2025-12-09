@@ -1049,48 +1049,13 @@ public:
 		};
 		for (auto& [alg, alg_name] : algorithms)
 		{
-			uint64_t mpc_secret_state_time = 0;
-			uint64_t mpc_public_state_time = 0;
-			size_t mpc_secret_state_bandwidth = 0;
-			size_t mpc_public_state_bandwidth = 0;
 			auto mpc_data = uptr(var::set::object());
-			auto mpc_secret_state = algorithm::composition::make_secret_state(alg).expect("failed to make the secret state");
-			auto mpc_public_state = algorithm::composition::make_public_state(alg).expect("failed to make the public state");
 			for (size_t i = 0; i < participants.size(); i++)
 			{
 				auto& share = participants[i];
 				auto entropy = "seed" + to_string(i);
 				algorithm::hashing::hash512((uint8_t*)entropy.data(), entropy.size(), share.seed.data);
-
 				share.keypair = algorithm::composition::derive_keypair(alg, share.seed.data, share.seed.size()).expect("failed to derive a keypair share");
-				{
-					auto time = date_time();
-					format::wo_stream message;
-					algorithm::composition::store_secret_state(alg, *mpc_secret_state, &message).expect("failed to store the secret state");
-
-					auto reader = message.ro();
-					mpc_secret_state = algorithm::composition::load_secret_state(reader).expect("failed to load the secret state");
-					mpc_secret_state->derive_from_key(share.keypair.secret_key).expect("failed to aggregate the secret state");
-
-					format::wo_stream updated_message;
-					algorithm::composition::store_secret_state(alg, *mpc_secret_state, &updated_message).expect("failed to store the secret state");
-					mpc_secret_state_bandwidth += message.data.size() + updated_message.data.size();
-					mpc_secret_state_time += date_time().nanoseconds() - time.nanoseconds();
-				}
-				{
-					auto time = date_time();
-					format::wo_stream message;
-					algorithm::composition::store_public_state(alg, *mpc_public_state, &message).expect("failed to store the public state");
-
-					auto reader = message.ro();
-					mpc_public_state = algorithm::composition::load_public_state(reader).expect("failed to load the public state");
-					mpc_public_state->derive_from_key(share.keypair.secret_key).expect("failed to aggregate the public state");
-
-					format::wo_stream updated_message;
-					algorithm::composition::store_public_state(alg, *mpc_public_state, &updated_message).expect("failed to store the public state");
-					mpc_public_state_bandwidth += message.data.size() + updated_message.data.size();
-					mpc_public_state_time += date_time().nanoseconds() - time.nanoseconds();
-				}
 
 				auto participant_data = mpc_data->set("participant" + to_string(i + 1), var::set::object());
 				participant_data->set("seed", var::string(format::util::encode_0xhex(share.seed.view())));
@@ -1100,49 +1065,47 @@ public:
 
 			uint8_t message_hash[32];
 			std::string_view message = "Hello, World!";
-			algorithm::composition::cseckey_t mpc_secret_key;
-			algorithm::composition::cpubkey_t mpc_public_key;
 			algorithm::hashing::hash256((uint8_t*)message.data(), message.size(), message_hash);
-			mpc_secret_state->finalize(&mpc_secret_key).expect("failed to finalize the secret state");
-			mpc_public_state->finalize(&mpc_public_key).expect("failed to finalize the public state");
 
-			uint64_t mpc_signature_state_time = 0;
-			size_t mpc_signature_steps = 0;
-			size_t mpc_signature_state_bandwidth = 0;
+			uint64_t mpc_state_time = 0;
+			size_t mpc_steps = 0;
+			size_t mpc_state_bandwidth = 0;
 			auto mpc_chosen_phase_participant = participants.begin() + (size_t)(crypto::random() % (uint64_t)participants.size());
 			auto mpc_phase_participants = vector<participant>();
-			auto mpc_signature_timeline = vector<string>();
-			auto mpc_signature_state = algorithm::composition::make_signature_state(alg, mpc_public_key, message_hash, sizeof(message_hash), (uint16_t)participants.size()).expect("failed to make the signature state");
+			auto mpc_timeline = vector<string>();
+			auto mpc_state = algorithm::composition::make_public_key_compositor(alg, message_hash, sizeof(message_hash), (uint16_t)participants.size()).expect("failed to make the state");
 			while (true)
 			{
 				auto time = date_time();
 				auto next = mpc_phase_participants.end();
-				switch (mpc_signature_state->next_phase())
+				switch (mpc_state->next_phase())
 				{
 					case algorithm::composition::phase::any_input_after_reset:
 						mpc_phase_participants = participants;
 						next = mpc_phase_participants.begin();
 						next = mpc_phase_participants.size() > 1 && next->seed == mpc_chosen_phase_participant->seed ? next + 1 : next;
-						mpc_signature_timeline.push_back("next_round");
-						mpc_signature_timeline.push_back("use_participant" + to_string(1 + std::distance(participants.begin(), std::find_if(participants.begin(), participants.end(), [&](const participant& item) { return item.seed == next->seed; }))));
+						if (!mpc_timeline.empty())
+							mpc_timeline.push_back("advance");
+						mpc_timeline.push_back(stringify::text("random(%i)", 1 + (int)std::distance(participants.begin(), std::find_if(participants.begin(), participants.end(), [&](const participant& item) { return item.seed == next->seed; }))));
 						break;
 					case algorithm::composition::phase::any_input:
 						next = mpc_phase_participants.begin();
 						next = mpc_phase_participants.size() > 1 && next->seed == mpc_chosen_phase_participant->seed ? next + 1 : next;
-						mpc_signature_timeline.push_back("use_participant" + to_string(1 + std::distance(participants.begin(), std::find_if(participants.begin(), participants.end(), [&](const participant& item) { return item.seed == next->seed; }))));
+						mpc_timeline.push_back(stringify::text("random(%i)", 1 + (int)std::distance(participants.begin(), std::find_if(participants.begin(), participants.end(), [&](const participant& item) { return item.seed == next->seed; }))));
 						break;
 					case algorithm::composition::phase::chosen_input_after_reset:
 						mpc_phase_participants = participants;
 						next = std::find_if(mpc_phase_participants.begin(), mpc_phase_participants.end(), [&](const participant& item) { return item.seed == mpc_chosen_phase_participant->seed; });
-						mpc_signature_timeline.push_back("next_round");
-						mpc_signature_timeline.push_back("reuse_participant" + to_string(1 + std::distance(participants.begin(), std::find_if(participants.begin(), participants.end(), [&](const participant& item) { return item.seed == next->seed; }))));
+						if (!mpc_timeline.empty())
+							mpc_timeline.push_back("advance");
+						mpc_timeline.push_back(stringify::text("chosen(%i)", 1 + (int)std::distance(participants.begin(), std::find_if(participants.begin(), participants.end(), [&](const participant& item) { return item.seed == next->seed; }))));
 						break;
 					case algorithm::composition::phase::chosen_input:
 						next = std::find_if(mpc_phase_participants.begin(), mpc_phase_participants.end(), [&](const participant& item) { return item.seed == mpc_chosen_phase_participant->seed; });
-						mpc_signature_timeline.push_back("reuse_participant" + to_string(1 + std::distance(participants.begin(), std::find_if(participants.begin(), participants.end(), [&](const participant& item) { return item.seed == next->seed; }))));
+						mpc_timeline.push_back(stringify::text("chosen(%i)", 1 + (int)std::distance(participants.begin(), std::find_if(participants.begin(), participants.end(), [&](const participant& item) { return item.seed == next->seed; }))));
 						break;
 					case algorithm::composition::phase::finalized:
-						mpc_signature_timeline.push_back("final_round");
+						mpc_timeline.push_back("finalize");
 						break;
 					default:
 						VI_PANIC(false, "invalid phase");
@@ -1152,46 +1115,35 @@ public:
 					break;
 
 				format::wo_stream message;
-				algorithm::composition::store_signature_state(alg, *mpc_signature_state, &message).expect("failed to store the signature state");
+				algorithm::composition::store_compositor(alg, *mpc_state, &message).expect("failed to store the state");
 
 				auto reader = message.ro();
-				mpc_signature_state = algorithm::composition::load_signature_state(reader).expect("failed to load the signature state");
-				mpc_signature_state->aggregate(next->keypair.secret_key).expect("failed to aggregate the signature state");
+				mpc_state = algorithm::composition::load_compositor(reader).expect("failed to load the state");
+				mpc_state->aggregate(next->keypair.secret_key).expect("failed to aggregate the state");
 				mpc_phase_participants.erase(next);
 
 				format::wo_stream updated_message;
-				algorithm::composition::store_signature_state(alg, *mpc_signature_state, &updated_message).expect("failed to store the signature state");
-				mpc_signature_state_bandwidth += message.data.size() + updated_message.data.size();
-				mpc_signature_state_time += date_time().nanoseconds() - time.nanoseconds();
-				++mpc_signature_steps;
+				algorithm::composition::store_compositor(alg, *mpc_state, &updated_message).expect("failed to store the state");
+				mpc_state_bandwidth += message.data.size() + updated_message.data.size();
+				mpc_state_time += date_time().nanoseconds() - time.nanoseconds();
+				++mpc_steps;
 			}
 
+			algorithm::composition::cpubkey_t mpc_public_key;
 			algorithm::composition::chashsig_t mpc_signature;
-			mpc_signature_state->finalize(&mpc_signature).expect("failed to finalize the signature state");
+			mpc_state->to_public_key(&mpc_public_key).expect("failed to extract public key from state");
+			mpc_state->to_signature(&mpc_signature).expect("failed to extract signature from state");
 
-			auto* secret_aggregation_data = mpc_data->set("secret_aggregation", var::set::object());
-			secret_aggregation_data->set("secret_key", var::string(format::util::encode_0xhex(std::string_view((char*)mpc_secret_key.data(), mpc_secret_key.size()))));
-			secret_aggregation_data->set("network_bytes_required", var::integer(mpc_secret_state_bandwidth));
-			secret_aggregation_data->set("network_communications", var::integer(participants.size() * 2));
-			secret_aggregation_data->set("step_time_ns", var::integer(mpc_secret_state_time / participants.size()));
-			secret_aggregation_data->set("total_time_ms", var::integer(mpc_secret_state_time / 1'000'000));
-
-			auto* public_aggregation_data = mpc_data->set("public_aggregation", var::set::object());
-			public_aggregation_data->set("public_key", var::string(format::util::encode_0xhex(std::string_view((char*)mpc_public_key.data(), mpc_public_key.size()))));
-			public_aggregation_data->set("network_bytes_required", var::integer(mpc_public_state_bandwidth));
-			public_aggregation_data->set("network_communications", var::integer(participants.size() * 2));
-			public_aggregation_data->set("step_time_ns", var::integer(mpc_public_state_time / participants.size()));
-			public_aggregation_data->set("total_time_ms", var::integer(mpc_public_state_time / 1'000'000));
-
-			auto* signature_aggregation_data = mpc_data->set("signature_aggregation", var::set::object());
-			auto* signature_aggregation_timeline_data = signature_aggregation_data->set("timeline", var::set::array());
-			signature_aggregation_data->set("signature", var::string(format::util::encode_0xhex(std::string_view((char*)mpc_signature.data(), mpc_signature.size()))));
-			signature_aggregation_data->set("network_bytes_required", var::integer(mpc_signature_state_bandwidth));
-			signature_aggregation_data->set("network_communications", var::integer(mpc_signature_steps * 2));
-			signature_aggregation_data->set("step_time_ns", var::integer(mpc_signature_steps > 0 ? mpc_signature_state_time / mpc_signature_steps : 0));
-			signature_aggregation_data->set("total_time_ms", var::integer(mpc_signature_state_time / 1'000'000));
-			for (auto& item : mpc_signature_timeline)
-				signature_aggregation_timeline_data->push(var::string(item));
+			auto* aggregation_data = mpc_data->set("aggregation", var::set::object());
+			auto* aggregation_timeline_data = aggregation_data->set("timeline", var::set::array());
+			aggregation_data->set("public_key", var::string(format::util::encode_0xhex(std::string_view((char*)mpc_public_key.data(), mpc_public_key.size()))));
+			aggregation_data->set("signature", var::string(format::util::encode_0xhex(std::string_view((char*)mpc_signature.data(), mpc_signature.size()))));
+			aggregation_data->set("network_bytes_required", var::integer(mpc_state_bandwidth));
+			aggregation_data->set("network_communications", var::integer(mpc_steps * 2));
+			aggregation_data->set("step_time_ns", var::integer(mpc_steps > 0 ? mpc_state_time / mpc_steps : 0));
+			aggregation_data->set("total_time_ms", var::integer(mpc_state_time / 1'000'000));
+			for (auto& item : mpc_timeline)
+				aggregation_timeline_data->push(var::string(item));
 
 			mpc_data->set("message", var::string(message));
 			mpc_data->set("message_hash", var::string(format::util::encode_0xhex(std::string_view((char*)message_hash, sizeof(message_hash)))));
@@ -1221,10 +1173,10 @@ public:
 		{
 			for (auto& [hash, input] : prepared.inputs)
 			{
-				auto state = algorithm::composition::make_signature_state(input.alg, input.public_key, input.message.data(), input.message.size(), 1).expect("signature state initialization error");
+				auto state = algorithm::composition::make_signature_compositor(input.alg, input.public_key, input.message.data(), input.message.size(), 1).expect("state initialization error");
 				while (state->next_phase() != algorithm::composition::phase::finalized)
 					state->aggregate(wallet.secret_key).expect("signature aggregation error");
-				state->finalize(&input.signature);
+				state->to_signature(&input.signature);
 			}
 
 			superchain::finalized_transaction finalized = server->finalize_transaction(asset, std::move(prepared)).expect("prepared transaction finalization error");
@@ -1266,9 +1218,9 @@ public:
 			input_p2wpkh_1.transaction_id = "5594c04289179bff0f434e5349fafbaa4d43da403b9dc7a637f5afe035b99729";
 			input_p2wpkh_1.value = 0.1;
 
-			auto input_p2tr_public_key = compositions::secp256k1_public_state::point_t(wallet.public_key);
-			auto input_p2tr_tweak = compositions::secp256k1_secret_state::scalar_t(codec::hex_decode("0x04c32a8b5fae170a7a0d28332a663b96f43d24ed4c9db30dfdd9d9d053d3d3e6"));
-			auto input_p2tr_tweaked_public_key = compositions::secp256k1_schnorr_signature_state::to_tweaked_public_key(input_p2tr_public_key, input_p2tr_tweak).expect("failed to tweak a public key");
+			auto input_p2tr_public_key = compositions::secp256k1_point_t(wallet.public_key);
+			auto input_p2tr_tweak = compositions::secp256k1_scalar_t(codec::hex_decode("0x04c32a8b5fae170a7a0d28332a663b96f43d24ed4c9db30dfdd9d9d053d3d3e6"));
+			auto input_p2tr_tweaked_public_key = compositions::secp256k1_schnorr_compositor::to_tweaked_public_key(input_p2tr_public_key, input_p2tr_tweak).expect("failed to tweak a public key");
 			auto input_p2tr_hash = codec::hex_decode("0xb4e9006bcd2adfb5e831c49bac44f1ca7b12d0955ed7f704d65f08762a5ed41f");
 			superchain::coin_utxo input_p2tr;
 			input_p2tr.link = superchain::wallet_link(user.public_key_hash, wallet.encoded_public_key, wallet.encoded_addresses[4]);
@@ -1596,24 +1548,24 @@ public:
 			TEST_BLOCK(&generators::setup_stage_1, "0x4b22e1cf4e865c5ddd13172391c7a104176db00e31ba6685af7a013663a97521", 1);
 			TEST_BLOCK(std::bind(&generators::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 1, 0), "0xdda6a6624d4d087cb4146a3beb8aabbedccaebaf85f91d973a829c26eb48ac54", 2);
 			TEST_BLOCK(&generators::route_stage_1, "0x9a15658f182ccfdf8b67e5315d1f28b90a46ac755bf0197da3ce606ca436d052", 3);
-			TEST_BLOCK(&generators::route_stage_2, "0x2b4e1651379b6387cf0318da871b2b7351165e32feba57f10ba8ba177e0eb36f", 5);
-			TEST_BLOCK(&generators::attestate_stage_1, "0x1534e8a03cd8c47c8cb8e7e4490e1c77d9bf030223e86ce51da7584e720579cc", 7);
-			TEST_BLOCK(&generators::transfer_stage_1, "0x882d64da9cd10803e9ff02b1cc1d2a7679eb5de3054095ed3951796a000ff191", 8);
-			TEST_BLOCK(&generators::transfer_stage_2, "0xed2348b0b7cfbae7cfd20ad7f58394f4a21822a0ece1f75417bcbed34abdb771", 9);
-			TEST_BLOCK(std::bind(&generators::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), users[2].wallet.get_address(), 0.05), "0xf3cf9948759a7064d28da10ebb8df3b705ed5295e718d4db11f8f1d05c0c40d2", 10);
-			TEST_BLOCK(std::bind(&generators::deploy_stage_1, std::placeholders::_1, std::placeholders::_2, &contracts), "0x8e37beaefdafe3df2bad4e235df59517cd9466b95f2dcdfc887eb3d4c4cdd02d", 11);
-			TEST_BLOCK(std::bind(&generators::deploy_stage_2, std::placeholders::_1, std::placeholders::_2, &contracts), "0x0c0acb6a22df394830e9958539196f6fb7004bd3f7cd6b8c68f4a64794c5baf1", 12);
-			TEST_BLOCK(std::bind(&generators::call_stage_1, std::placeholders::_1, std::placeholders::_2, &contracts), "0xd042eae21827b7a593bce863fe624c9c8ee09bbe6f179ac4bf7960f78dddc785", 13);
-			TEST_BLOCK(&generators::rollup_stage_1, "0xcb696f2151545c7144c6f2f291bf7753e3a98bd2815f8fad4962442b09504c82", 14);
-			TEST_BLOCK(std::bind(&generators::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 0, 1), "0xf18efb39a0520b4784c04b85961aa4c5ae45a639b6f468487640a84a6e1bd9e0", 15);
-			TEST_BLOCK_FAULT(&generators::migrate_stage_1, "0x7abba7732ee69ecda94cdaca371967c733e4023ed892b73c6cc20b811eb2070d", 16);
-			TEST_BLOCK(&generators::migrate_stage_2, "0x8126b8c387c0ac81393cfb7d06ee94b6f902513c1ea23d1cffb7c27c3606476d", 18);
-			TEST_BLOCK(&generators::migrate_stage_3, "0x8cc2f0f858aa8f4268ccb7fe9fbfe99c8b0a33a49cecd3b778a96b0d7c48c4c5", 20);
-			TEST_BLOCK(&generators::withdraw_stage_1, "0x67780fcd770072f9784486456cd13b9027e3639bf8c3b0e95cde094aca79e263", 22);
-			TEST_BLOCK(&generators::withdraw_stage_2, "0x022db8239c48a458b2658d5bafdc8eadc8f342303b3c5543b30a306ea0a0c001", 24);
-			TEST_BLOCK(&generators::withdraw_stage_3, "0xafb5aac3abb060ae63a465dd56490ab14b32ac36962138ab422c16f7b2fcbe56", 26);
-			TEST_BLOCK(&generators::withdraw_stage_4, "0x023bf73aab99c332570a3d879c6ec181b726d4e55a45009d62c3f44f59a93816", 28);
-			TEST_BLOCK(std::bind(&generators::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 1, 0), "0x0cc227a3742d7961ced65636bc789952f3a2d30a5f329271803957d81f4827b4", 30);
+			TEST_BLOCK(&generators::route_stage_2, "0xff09c827b2b3198296243c07995f22e2c9726f46fe4b8335b93816dc2f0a189e", 5);
+			TEST_BLOCK(&generators::attestate_stage_1, "0x20650b7aeec4393081b86b600f49d80c657ba74a2870296aa56a8f5dc0a71119", 7);
+			TEST_BLOCK(&generators::transfer_stage_1, "0xd42dde7402cdd1c47c837fd23967bde77db05fa23eb2eac4523e34cd1dc7324e", 8);
+			TEST_BLOCK(&generators::transfer_stage_2, "0xd7a65e300aaa30d96e62d7dab829c6c22d978b402db00d2684c71b902c18f387", 9);
+			TEST_BLOCK(std::bind(&generators::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), users[2].wallet.get_address(), 0.05), "0x34ca31328bb9cb0ba7a19070bb775ebf13e8bc47ef7f34c8fe1c23ea870c6844", 10);
+			TEST_BLOCK(std::bind(&generators::deploy_stage_1, std::placeholders::_1, std::placeholders::_2, &contracts), "0xf7739286aef1d7065e1524e2b903223b6b62a23d90034b6d9fd2e8d35bb555cf", 11);
+			TEST_BLOCK(std::bind(&generators::deploy_stage_2, std::placeholders::_1, std::placeholders::_2, &contracts), "0x0a41dd51814692b9787696aa377bede37a174b95ec4fde7f7f1d0f3d91023e41", 12);
+			TEST_BLOCK(std::bind(&generators::call_stage_1, std::placeholders::_1, std::placeholders::_2, &contracts), "0xfd2458797c6f75a5075f0a3e297b0f30cff3753b115306b351b17e67af2a8797", 13);
+			TEST_BLOCK(&generators::rollup_stage_1, "0x1ef229c82ab11080157843942ed2e27c84de8c0bfd61a333d3b2920a7b49ee25", 14);
+			TEST_BLOCK(std::bind(&generators::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 0, 1), "0xa5456db2f43ccfebe881d44d833c24f80a38cbfb87adf5d38ad975c1389cf9a5", 15);
+			TEST_BLOCK_FAULT(&generators::migrate_stage_1, "0x030f58e2b34ae9ec972107d91da8916c51e8fe7e0481af70181af1bb61e7fe82", 16);
+			TEST_BLOCK(&generators::migrate_stage_2, "0xf3808da0c7ad499b12ee090825518fd5d19cc61361301b4addbd7b99981ff5a4", 18);
+			TEST_BLOCK(&generators::migrate_stage_3, "0xe06b42c4479d567824e263e566c18bbf027a9431c3dcd4c025802d85819f8c7f", 20);
+			TEST_BLOCK(&generators::withdraw_stage_1, "0x00f1b314ed74fd61d329e9ee53107b804632e767de8ab5fe91f786e45aa76c03", 22);
+			TEST_BLOCK(&generators::withdraw_stage_2, "0xc5344f94259dbd5e13a8fa59c12b98ae8c0cbb64cb67fa8a62bae78cf84a6977", 24);
+			TEST_BLOCK(&generators::withdraw_stage_3, "0x50d35e446f89e9925afcba5bda7e10c49d5b2b6834313edbda498496b4e2225c", 26);
+			TEST_BLOCK(&generators::withdraw_stage_4, "0x6cd6e456169fec48fec7d971f60ebf8338293c9efa7ea13aec02a05aa2a401fd", 28);
+			TEST_BLOCK(std::bind(&generators::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 1, 0), "0x9ddac1c96050d3042227b49740fb27f61ce52e33502a8daeb7854f97d03809c6", 30);
 			if (userdata != nullptr)
 				*userdata = std::move(users);
 			else
@@ -1632,9 +1584,9 @@ public:
 			uptr<schema> data = userdata ? nullptr : var::set::array();
 			TEST_BLOCK(&generators::setup_stage_0, "0x18b302caa37b6326715bdb41cac8101681893dc311b77b90b610f2310af984d8", 1);
 			TEST_BLOCK(&generators::route_stage_0, "0xccd0a4bd5e6fa5165682748feca117ca6b85d966b24f92361236af2f4264d8ba", 2);
-			TEST_BLOCK(&generators::attestate_stage_0, "0x60d4e15529fbf325a09586efa12faf956eaca9d6de485431239e771e6e63a754", 4);
-			TEST_BLOCK(std::bind(&generators::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), "tcrt1x00g22stp0qcprrxra7x2pz2au33armtfc50460", 0.1), "0xdcb6824fcec72aa422104647fe4c7e90394609ad65dbab32f36e787c4eb43960", 5);
-			TEST_BLOCK(std::bind(&generators::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("ETH", "USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7"), "tcrt1x00g22stp0qcprrxra7x2pz2au33armtfc50460", 5000), "0xcefaceb72d9c88977d01411bb59b919a0a5b17960d66bdc6bb7a3647135b7980", 6);
+			TEST_BLOCK(&generators::attestate_stage_0, "0x093a669d90c718ba0a4cea8a8e7c1cb2b7ee401722ab7bfedca64f96bb6d19ce", 4);
+			TEST_BLOCK(std::bind(&generators::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), "tcrt1x00g22stp0qcprrxra7x2pz2au33armtfc50460", 0.1), "0x5ce1cf5bbc5bfc27cae6e5053f800408390f0405752471f82df78d80882406c3", 5);
+			TEST_BLOCK(std::bind(&generators::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("ETH", "USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7"), "tcrt1x00g22stp0qcprrxra7x2pz2au33armtfc50460", 5000), "0x74585ddf6e84daf6af2d595e350f2fb9692bcdf89b684e49825a3a7a985eb1fb", 6);
 			if (userdata != nullptr)
 				*userdata = std::move(users);
 			else

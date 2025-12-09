@@ -24,13 +24,6 @@ namespace tangent
 			states = 1 << 2
 		};
 
-		enum class pruning
-		{
-			block = 1 << 0,
-			transaction = 1 << 1,
-			state = 1 << 2
-		};
-
 		struct block_pair
 		{
 			uint64_t number;
@@ -267,7 +260,7 @@ namespace tangent
 			expects_lr<void> reorganize(int64_t* block_delta = nullptr, int64_t* transaction_delta = nullptr, int64_t* state_delta = nullptr);
 			expects_lr<void> revert(uint64_t block_number, int64_t* block_delta = nullptr, int64_t* transaction_delta = nullptr, int64_t* state_delta = nullptr);
 			expects_lr<void> dispatch(const vector<uint256_t>& finalized_transaction_hashes, const vector<uint256_t>& repeated_transaction_hashes);
-			expects_lr<void> prune(uint32_t types, uint64_t block_number);
+			expects_lr<void> compact(uint64_t block_number);
 			expects_lr<void> checkpoint(const ledger::block_evaluation& evaluation, bool reorganization = false);
 			expects_lr<uint64_t> get_checkpoint_block_number();
 			expects_lr<uint64_t> get_latest_block_number();

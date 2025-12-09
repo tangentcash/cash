@@ -457,7 +457,7 @@ namespace tangent
 
 			struct public_state
 			{
-				uptr<algorithm::composition::public_state> aggregator;
+				uptr<algorithm::composition::compositor> compositor;
 				btree_map<algorithm::pubkey_t, btree_map<algorithm::pubkeyhash_t, string>> encrypted_shares;
 				btree_set<algorithm::pubkeyhash_t> participants;
 				algorithm::composition::type alg;
@@ -470,7 +470,7 @@ namespace tangent
 
 			struct signature_state
 			{
-				uptr<algorithm::composition::signature_state> aggregator;
+				uptr<algorithm::composition::compositor> compositor;
 				btree_set<algorithm::pubkeyhash_t> participants;
 				uptr<superchain::prepared_transaction> message;
 				algorithm::composition::type alg;
@@ -491,7 +491,7 @@ namespace tangent
 			dispatcher_context& operator=(const dispatcher_context& other) noexcept;
 			dispatcher_context& operator=(dispatcher_context&&) noexcept = default;
 			virtual expects_lr<secret_entropy> apply_secret_entropy(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner, const algorithm::storage_type<uint8_t, 64>& entropy, btree_map<algorithm::pubkeyhash_t, secret_entropy::share_pair>&& shares);
-			virtual expects_lr<secret_entropy> recover_secret_entropy(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner) const;
+			virtual expects_lr<secret_entropy> recover_secret_entropy(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner);
 			virtual expects_promise_rt<void> aggregate_validators(const btree_set<algorithm::pubkeyhash_t>& validators) = 0;
 			virtual expects_promise_rt<void> distribute_entropy_shares(const executor_context* executor, entropy_distribution_state& state, const algorithm::pubkeyhash_t& validator) = 0;
 			virtual expects_promise_rt<void> aggregate_entropy_shares(const executor_context* executor, entropy_aggregation_state& state, const algorithm::pubkeyhash_t& validator) = 0;

@@ -738,6 +738,11 @@ namespace tangent
 		{
 			hashing::hash160(public_key.data, sizeof(pubkey_t), public_key_hash.data);
 		}
+		bool signing::derive_seed_from_password(const uint8_t* input, size_t input_size, uint8_t* output, size_t output_size)
+		{
+			const uint8_t salt[crypto_pwhash_SALTBYTES + 1] = "ecf64bb58acc059f";
+			return crypto_pwhash(output, output_size, (const char*)input, input_size, salt, 3, 1 << 20, 1) == 0;
+		}
 		bool signing::split_secret_into_shares(const uint8_t message[64], uint8_t threshold, uint8_t count, btree_set<share_t>& shares)
 		{
 			VI_ASSERT(message != nullptr, "message must be set");
@@ -1393,157 +1398,80 @@ namespace tangent
 		expects_lr<composition::keypair> composition::derive_keypair(type alg, const uint8_t* seed, size_t seed_size)
 		{
 			VI_ASSERT(seed != nullptr, "seed should be set");
-			auto keypair_secret_state = make_secret_state(alg);
-			if (!keypair_secret_state)
-				return keypair_secret_state.error();
+			auto keypair_state = make_compositor(alg);
+			if (!keypair_state)
+				return keypair_state.error();
 
-			auto keypair_public_state = make_public_state(alg);
-			if (!keypair_public_state)
-				return keypair_public_state.error();
-
-			auto& keypair_secret_state_ptr = *keypair_secret_state;
-			auto& keypair_public_state_ptr = *keypair_public_state;
-			auto configuration = keypair_secret_state_ptr->derive_from_seed(seed, seed_size);
-			if (!configuration)
-				return configuration.error();
-
+			auto& keypair_state_ptr = *keypair_state;
 			auto keypair_result = keypair();
-			auto finalization = keypair_secret_state_ptr->finalize(&keypair_result.secret_key);
-			if (!finalization)
-				return finalization.error();
+			auto aggregation = keypair_state_ptr->to_partial_secret_key(seed, seed_size, &keypair_result.secret_key);
+			if (!aggregation)
+				return aggregation.error();
 
-			configuration = keypair_public_state_ptr->derive_from_key(keypair_result.secret_key);
-			if (!configuration)
-				return configuration.error();
+			uint8_t message[32] = { 0xFF };
+			aggregation = keypair_state_ptr->setup_public_key(message, sizeof(message), 1);
+			if (!aggregation)
+				return aggregation.error();
 
-			finalization = keypair_public_state_ptr->finalize(&keypair_result.public_key);
-			if (!finalization)
-				return finalization.error();
+			aggregation = keypair_state_ptr->aggregate(keypair_result.secret_key);
+			if (!aggregation)
+				return aggregation.error();
+
+			aggregation = keypair_state_ptr->to_public_key(&keypair_result.public_key);
+			if (!aggregation)
+				return aggregation.error();
 
 			return expects_lr<composition::keypair>(std::move(keypair_result));
 		}
-		expects_lr<uptr<composition::secret_state>> composition::make_secret_state(type alg)
+		expects_lr<uptr<composition::compositor>> composition::make_compositor(type alg)
 		{
 			switch (alg)
 			{
 				case type::ed25519:
+					return expects_lr<uptr<compositor>>(memory::init<compositions::ed25519_compositor>());
 				case type::ed25519_clsag:
-					return expects_lr<uptr<secret_state>>(memory::init<compositions::ed25519_secret_state>());
+					return expects_lr<uptr<compositor>>(memory::init<compositions::ed25519_clsag_compositor>());
 				case type::secp256k1:
+					return expects_lr<uptr<compositor>>(memory::init<compositions::secp256k1_compositor>());
 				case type::secp256k1_schnorr:
-					return expects_lr<uptr<secret_state>>(memory::init<compositions::secp256k1_secret_state>());
+					return expects_lr<uptr<compositor>>(memory::init<compositions::secp256k1_schnorr_compositor>());
 				default:
 					return layer_exception("invalid type");
 			}
 		}
-		expects_lr<uptr<composition::secret_state>> composition::load_secret_state(format::ro_stream& stream, type* out_alg)
+		expects_lr<uptr<composition::compositor>> composition::make_public_key_compositor(type alg, const uint8_t* message, size_t message_size, uint16_t participants)
 		{
-			type alg;
-			if (!stream.read_integer(stream.read_type(), (uint8_t*)&alg))
-				return layer_exception("invalid type");
-
-			auto state = make_secret_state(alg);
-			if (!state)
-				return state.error();
-
-			auto& state_ptr = *state;
-			if (!state_ptr->load(stream))
-				return layer_exception("state load error");
-
-			if (out_alg != nullptr)
-				*out_alg = alg;
-
-			return expects_lr<uptr<composition::secret_state>>(std::move(state_ptr));
-		}
-		expects_lr<void> composition::store_secret_state(type alg, const secret_state* state, format::wo_stream* stream)
-		{
-			VI_ASSERT(state != nullptr, "state should be set");
-			VI_ASSERT(stream != nullptr, "stream should be set");
-			stream->write_integer((uint8_t)alg);
-			if (!state->store(stream))
-				return layer_exception("state store error");
-
-			return expectation::met;
-		}
-		expects_lr<uptr<composition::public_state>> composition::make_public_state(type alg)
-		{
-			switch (alg)
-			{
-				case type::ed25519:
-				case type::ed25519_clsag:
-					return expects_lr<uptr<public_state>>(memory::init<compositions::ed25519_public_state>());
-				case type::secp256k1:
-				case type::secp256k1_schnorr:
-					return expects_lr<uptr<public_state>>(memory::init<compositions::secp256k1_public_state>());
-				default:
-					return layer_exception("invalid type");
-			}
-		}
-		expects_lr<uptr<composition::public_state>> composition::load_public_state(format::ro_stream& stream, type* out_alg)
-		{
-			type alg;
-			if (!stream.read_integer(stream.read_type(), (uint8_t*)&alg))
-				return layer_exception("invalid type");
-
-			auto state = make_public_state(alg);
-			if (!state)
-				return state.error();
-
-			auto& state_ptr = *state;
-			if (!state_ptr->load(stream))
-				return layer_exception("state load error");
-
-			if (out_alg != nullptr)
-				*out_alg = alg;
-
-			return expects_lr<uptr<composition::public_state>>(std::move(state_ptr));
-		}
-		expects_lr<void> composition::store_public_state(type alg, const public_state* state, format::wo_stream* stream)
-		{
-			VI_ASSERT(state != nullptr, "state should be set");
-			VI_ASSERT(stream != nullptr, "stream should be set");
-			stream->write_integer((uint8_t)alg);
-			if (!state->store(stream))
-				return layer_exception("state store error");
-
-			return expectation::met;
-		}
-		expects_lr<uptr<composition::signature_state>> composition::make_signature_state(type alg)
-		{
-			switch (alg)
-			{
-				case type::ed25519:
-					return expects_lr<uptr<signature_state>>(memory::init<compositions::ed25519_signature_state>());
-				case type::ed25519_clsag:
-					return expects_lr<uptr<signature_state>>(memory::init<compositions::ed25519_clsag_signature_state>());
-				case type::secp256k1:
-					return expects_lr<uptr<signature_state>>(memory::init<compositions::secp256k1_signature_state>());
-				case type::secp256k1_schnorr:
-					return expects_lr<uptr<signature_state>>(memory::init<compositions::secp256k1_schnorr_signature_state>());
-				default:
-					return layer_exception("invalid type");
-			}
-		}
-		expects_lr<uptr<composition::signature_state>> composition::make_signature_state(type alg, const cpubkey_t& public_key, const uint8_t* message, size_t message_size, uint16_t participants)
-		{
-			auto state = make_signature_state(alg);
+			auto state = make_compositor(alg);
 			if (!state)
 				return layer_exception("invalid type");
 
 			auto& state_ptr = *state;
-			auto configuration = state_ptr->setup(public_key, message, message_size, participants);
+			auto configuration = state_ptr->setup_public_key(message, message_size, participants);
 			if (!configuration)
 				return configuration.error();
 
-			return expects_lr<uptr<composition::signature_state>>(std::move(state_ptr));
+			return expects_lr<uptr<composition::compositor>>(std::move(state_ptr));
 		}
-		expects_lr<uptr<composition::signature_state>> composition::load_signature_state(format::ro_stream& stream, type* out_alg)
+		expects_lr<uptr<composition::compositor>> composition::make_signature_compositor(type alg, const cpubkey_t& public_key, const uint8_t* message, size_t message_size, uint16_t participants)
+		{
+			auto state = make_compositor(alg);
+			if (!state)
+				return layer_exception("invalid type");
+
+			auto& state_ptr = *state;
+			auto configuration = state_ptr->setup_signature(public_key, message, message_size, participants);
+			if (!configuration)
+				return configuration.error();
+
+			return expects_lr<uptr<composition::compositor>>(std::move(state_ptr));
+		}
+		expects_lr<uptr<composition::compositor>> composition::load_compositor(format::ro_stream& stream, type* out_alg)
 		{
 			type alg;
 			if (!stream.read_integer(stream.read_type(), (uint8_t*)&alg))
 				return layer_exception("invalid type");
 
-			auto state = make_signature_state(alg);
+			auto state = make_compositor(alg);
 			if (!state)
 				return state.error();
 
@@ -1554,9 +1482,9 @@ namespace tangent
 			if (out_alg != nullptr)
 				*out_alg = alg;
 
-			return expects_lr<uptr<composition::signature_state>>(std::move(state_ptr));
+			return expects_lr<uptr<composition::compositor>>(std::move(state_ptr));
 		}
-		expects_lr<void> composition::store_signature_state(type alg, const signature_state* state, format::wo_stream* stream)
+		expects_lr<void> composition::store_compositor(type alg, const compositor* state, format::wo_stream* stream)
 		{
 			VI_ASSERT(state != nullptr, "state should be set");
 			VI_ASSERT(stream != nullptr, "stream should be set");

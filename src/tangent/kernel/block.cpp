@@ -3072,7 +3072,7 @@ namespace tangent
 
 		bool dispatcher_context::public_state::load_message(format::ro_stream& stream)
 		{
-			auto state = algorithm::composition::load_public_state(stream, &alg);
+			auto state = algorithm::composition::load_compositor(stream, &alg);
 			if (!state)
 				return false;
 
@@ -3126,7 +3126,7 @@ namespace tangent
 				}
 			}
 
-			aggregator = std::move(*state);
+			compositor = std::move(*state);
 			participants = std::move(possible_participants);
 			encrypted_shares = std::move(possible_shares);
 			return true;
@@ -3134,7 +3134,7 @@ namespace tangent
 		format::wo_stream dispatcher_context::public_state::as_message() const
 		{
 			format::wo_stream result;
-			algorithm::composition::store_public_state(alg, *aggregator, &result);
+			algorithm::composition::store_compositor(alg, *compositor, &result);
 			result.write_boolean(distribution);
 			result.write_integer(attempt);
 			result.write_integer((uint8_t)encrypted_shares.size());
@@ -3156,8 +3156,8 @@ namespace tangent
 
 		bool dispatcher_context::signature_state::load_message_if_preferred(format::ro_stream& stream)
 		{
-			auto state = algorithm::composition::load_signature_state(stream, &alg);
-			if (!state || (aggregator && *state && !(*state)->prefer_over(**aggregator)))
+			auto state = algorithm::composition::load_compositor(stream, &alg);
+			if (!state || (compositor && *state && !(*state)->prefer_over(**compositor)))
 				return false;
 
 			superchain::prepared_transaction possible_message;
@@ -3181,7 +3181,7 @@ namespace tangent
 				possible_participants.insert(item);
 			}
 
-			aggregator = std::move(*state);
+			compositor = std::move(*state);
 			participants = std::move(possible_participants);
 			message = memory::init<superchain::prepared_transaction>(std::move(possible_message));
 			return true;
@@ -3190,7 +3190,7 @@ namespace tangent
 		{
 			VI_ASSERT(message, "message should be set");
 			format::wo_stream result;
-			algorithm::composition::store_signature_state(alg, *aggregator, &result);
+			algorithm::composition::store_compositor(alg, *compositor, &result);
 			message->store(&result);
 			result.write_integer(attempt);
 			result.write_integer((uint16_t)participants.size());
@@ -3241,10 +3241,31 @@ namespace tangent
 
 			return expects_lr<dispatcher_context::secret_entropy>(std::move(result));
 		}
-		expects_lr<dispatcher_context::secret_entropy> dispatcher_context::recover_secret_entropy(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner) const
+		expects_lr<dispatcher_context::secret_entropy> dispatcher_context::recover_secret_entropy(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner)
 		{
+			auto& runner_wallet = get_runner_wallet();
 			auto mempool = storages::mempoolstate();
-			return mempool.get_secret_entropy(get_runner_wallet().public_key_hash, asset, manager, owner);
+			auto result = mempool.get_secret_entropy(runner_wallet.public_key_hash, asset, manager, owner);
+			if (result)
+				return result;
+
+			uint8_t entropy_source_1[sizeof(asset)];
+			auto entropy_source_2 = runner_wallet.secret_key.view();
+			auto entropy_source_3 = manager.view();
+			auto entropy_source_4 = owner.view();
+			asset.encode(entropy_source_1);
+
+			format::wo_stream entropy_source;
+			entropy_source.write_string_raw(algorithm::hashing::hash512(entropy_source_1, sizeof(entropy_source_1)));
+			entropy_source.write_string_raw(algorithm::hashing::hash512((uint8_t*)entropy_source_2.data(), entropy_source_2.size()));
+			entropy_source.write_string_raw(algorithm::hashing::hash512((uint8_t*)entropy_source_3.data(), entropy_source_3.size()));
+			entropy_source.write_string_raw(algorithm::hashing::hash512((uint8_t*)entropy_source_4.data(), entropy_source_4.size()));
+
+			algorithm::storage_type<uint8_t, 64> entropy;
+			if (!algorithm::signing::derive_seed_from_password((uint8_t*)entropy_source.data.data(), entropy_source.data.size(), entropy.data, entropy.size()))
+				return layer_exception("secret entropy source generation failed");
+
+			return apply_secret_entropy(asset, manager, owner, entropy, { });
 		}
 		expects_lr<void> dispatcher_context::checkpoint()
 		{

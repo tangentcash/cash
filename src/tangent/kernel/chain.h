@@ -217,8 +217,6 @@ namespace tangent
 				double computation_threads_ratio = 0.00;
 				bool transaction_to_account_index = true;
 				bool transaction_to_rollup_index = true;
-				bool prune_transactions = false;
-				bool prune_blocks = false;
 				bool logging = false;
 			} storage;
 			struct

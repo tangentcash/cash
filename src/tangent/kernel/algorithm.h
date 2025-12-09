@@ -168,6 +168,7 @@ namespace tangent
 			static void derive_secret_key(const uint256_t& entropy, seckey_t& secret_key);
 			static bool derive_public_key(const seckey_t& secret_key, pubkey_t& public_key);
 			static void derive_public_key_hash(const pubkey_t& public_key, pubkeyhash_t& public_key_hash);
+			static bool derive_seed_from_password(const uint8_t* input, size_t input_size, uint8_t* output, size_t output_size);
 			static bool split_secret_into_shares(const uint8_t message[64], uint8_t threshold, uint8_t count, btree_set<share_t>& shares);
 			static bool combine_shares_into_secret(const btree_set<share_t>& shares, uint8_t message[64]);
 			static uint8_t recovery_threshold(size_t shares);
@@ -353,35 +354,20 @@ namespace tangent
 				secp256k1_schnorr
 			};
 
-			struct secret_state
+			struct compositor
 			{
-				virtual ~secret_state() = default;
-				virtual expects_lr<void> derive_from_seed(const uint8_t* seed, size_t seed_size) = 0;
-				virtual expects_lr<void> derive_from_key(const cseckey_t& secret_key) = 0;
-				virtual expects_lr<void> finalize(cseckey_t* output) const = 0;
-				virtual bool store(format::wo_stream* stream) const = 0;
-				virtual bool load(format::ro_stream& stream) = 0;
-			};
-
-			struct public_state
-			{
-				virtual ~public_state() = default;
-				virtual expects_lr<void> derive_from_key(const cseckey_t& secret_key) = 0;
-				virtual expects_lr<void> finalize(cpubkey_t* output) const = 0;
-				virtual bool store(format::wo_stream* stream) const = 0;
-				virtual bool load(format::ro_stream& stream) = 0;
-			};
-
-			struct signature_state
-			{
-				virtual ~signature_state() = default;
-				virtual expects_lr<void> setup(const cpubkey_t& public_key, const uint8_t* message, size_t message_size, uint16_t participants) = 0;
+				virtual ~compositor() = default;
+				virtual expects_lr<void> setup_public_key(const uint8_t* message, size_t message_size, uint16_t participants) = 0;
+				virtual expects_lr<void> setup_signature(const cpubkey_t& public_key, const uint8_t* message, size_t message_size, uint16_t participants) = 0;
 				virtual expects_lr<void> aggregate(const cseckey_t& secret_key) = 0;
-				virtual expects_lr<void> finalize(chashsig_t* output) const = 0;
+				virtual expects_lr<void> to_partial_secret_key(const uint8_t* seed, size_t seed_size, cseckey_t* output) const = 0;
+				virtual expects_lr<void> to_public_key(cpubkey_t* output) const = 0;
+				virtual expects_lr<void> to_signature(chashsig_t* output) const = 0;
+				virtual expects_lr<void> verify_signature(const uint8_t* message, size_t message_size, const chashsig_t& signature, const cpubkey_t& public_key) const = 0;
 				virtual phase next_phase() const = 0;
 				virtual bool store(format::wo_stream* stream) const = 0;
 				virtual bool load(format::ro_stream& stream) = 0;
-				virtual bool prefer_over(const signature_state& other) const = 0;
+				virtual bool prefer_over(const compositor& other) const = 0;
 			};
 
 			struct keypair
@@ -392,16 +378,11 @@ namespace tangent
 
 		public:
 			static expects_lr<keypair> derive_keypair(type alg, const uint8_t* seed, size_t seed_size);
-			static expects_lr<uptr<secret_state>> make_secret_state(type alg);
-			static expects_lr<uptr<secret_state>> load_secret_state(format::ro_stream& stream, type* alg = nullptr);
-			static expects_lr<void> store_secret_state(type alg, const secret_state* state, format::wo_stream* stream);
-			static expects_lr<uptr<public_state>> make_public_state(type alg);
-			static expects_lr<uptr<public_state>> load_public_state(format::ro_stream& stream, type* alg = nullptr);
-			static expects_lr<void> store_public_state(type alg, const public_state* state, format::wo_stream* stream);
-			static expects_lr<uptr<signature_state>> make_signature_state(type alg);
-			static expects_lr<uptr<signature_state>> make_signature_state(type alg, const cpubkey_t& public_key, const uint8_t* message, size_t message_size, uint16_t participants);
-			static expects_lr<uptr<signature_state>> load_signature_state(format::ro_stream& stream, type* alg = nullptr);
-			static expects_lr<void> store_signature_state(type alg, const signature_state* state, format::wo_stream* stream);
+			static expects_lr<uptr<compositor>> make_compositor(type alg);
+			static expects_lr<uptr<compositor>> make_public_key_compositor(type alg, const uint8_t* message, size_t message_size, uint16_t participants);
+			static expects_lr<uptr<compositor>> make_signature_compositor(type alg, const cpubkey_t& public_key, const uint8_t* message, size_t message_size, uint16_t participants);
+			static expects_lr<uptr<compositor>> load_compositor(format::ro_stream& stream, type* alg = nullptr);
+			static expects_lr<void> store_compositor(type alg, const compositor* state, format::wo_stream* stream);
 
 		public:
 			template <typename T>
