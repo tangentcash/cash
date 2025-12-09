@@ -190,6 +190,7 @@ namespace tangent
 			auto address_message = address_to_message(node.address);
 			schema_list map;
 			map.push_back(var::set::binary(address_message));
+			map.push_back(var::set::binary(address_message));
 			map.push_back(var::set::binary(wallet.public_key_hash.view()));
 			map.push_back(var::set::binary(address_message));
 			map.push_back(var::set::binary(wallet.public_key_hash.view()));
@@ -199,6 +200,7 @@ namespace tangent
 			map.push_back(var::set::binary(*encrypted_wallet_message));
 
 			auto cursor = get_peer_storage().emplace_query(__func__,
+				"DELETE FROM addresses WHERE address = ?;"
 				"DELETE FROM nodes WHERE address = ? OR account = ?;"
 				"INSERT OR REPLACE INTO nodes (address, account, quality, services, node_message, wallet_message) VALUES (?, ?, ?, ?, ?, ?)", &map);
 			if (!cursor || cursor->error())
