@@ -2096,7 +2096,7 @@ namespace tangent
 					if (protocol::now().user.consensus.logging)
 					{
 						uint64_t blocks_count = (uint64_t)(result->args.size() - 1);
-						VI_INFO("block %s chain fork: verifying headers (range: [%" PRIu64 "; %" PRIu64 "])", algorithm::encoding::encode_0xhex256(new_tip_fork_hash).c_str(), new_tip_number - (blocks_count > new_tip_number ? 1 : blocks_count), new_tip_number);
+						VI_INFO("block %s conflict: verifying headers (range: [%" PRIu64 "; %" PRIu64 "])", algorithm::encoding::encode_0xhex256(new_tip_fork_hash).c_str(), new_tip_number - (blocks_count > new_tip_number ? 1 : blocks_count), new_tip_number);
 					}
 
 					option<remote_exception> error = optional::none;
@@ -2153,7 +2153,7 @@ namespace tangent
 				}
 
 				if (new_tip_hash > 0 && protocol::now().user.consensus.logging)
-					VI_INFO("block %s chain fork: collision found (height: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(new_tip_hash).c_str(), new_tip_number);
+					VI_INFO("block %s conflict: collision found (height: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(new_tip_hash).c_str(), new_tip_number);
 
 				new_tip_number = new_tip_hash > 0 ? 0 : 1;
 				while (is_active() && (new_tip_number > 0 || new_tip_hash > 0))
@@ -2683,7 +2683,7 @@ namespace tangent
 				auto state = uref(best_fork->second.state);
 				auto status = coawait(resolve_and_verify_fork(std::move(*best_fork)));
 				if (!status && protocol::now().user.consensus.logging)
-					VI_WARN("block %s chain fork rejected: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), status.what().c_str());
+					VI_WARN("block %s conflict unresolved: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), status.what().c_str());
 
 				auto new_best_fork = get_best_fork_header();
 				clear_pending_fork(*state);
@@ -3126,7 +3126,7 @@ namespace tangent
 				accept_pending_fork(uref(from), candidate_hash, ledger::block_header(candidate.block));
 				run_fork_resolution();
 				if (protocol::now().user.consensus.logging)
-					VI_INFO("block %s chain fork: new best found (height: %" PRIu64 ", distance: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), candidate.block.number, std::abs((int64_t)(tip_block ? tip_block->number : 0) - (int64_t)candidate.block.number));
+					VI_INFO("block %s new best found (height: %" PRIu64 ", distance: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), candidate.block.number, std::abs((int64_t)(tip_block ? tip_block->number : 0) - (int64_t)candidate.block.number));
 				return true;
 			}
 
@@ -3169,12 +3169,12 @@ namespace tangent
 			{
 				if (mutation->is_fork)
 				{
-					VI_INFO("block %s chain shortened (height: %" PRIu64 ", sync: %.2f%%, leader: %" PRIu64 ", length: %" PRIi64 ", txns: %" PRIi64 " / %" PRIi64 ", states: %" PRIi64 ")\n",
+					VI_INFO("block %s reorganized (height: %" PRIu64 ", sync: %.2f%%, leader: %" PRIu64 ", length: %" PRIi64 ", txns: %" PRIi64 " / %" PRIi64 ", states: %" PRIi64 ")\n",
 						algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), candidate.block.number, 100.0 * get_sync_progress(candidate.block.number, *from), candidate.block.priority + 1,
 						mutation->block_delta, mutation->transaction_delta, mutation->mempool_transactions, mutation->state_delta);
 				}
 				else
-					VI_INFO("block %s chain extended (height: %" PRIu64 ", sync: %.2f%%, leader: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), candidate.block.number, 100.0 * get_sync_progress(candidate.block.number, *from), candidate.block.priority + 1);
+					VI_INFO("block %s finalized (height: %" PRIu64 ", sync: %.2f%%, leader: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), candidate.block.number, 100.0 * get_sync_progress(candidate.block.number, *from), candidate.block.priority + 1);
 			}
 
 			if (events.accept_block)

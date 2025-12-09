@@ -601,7 +601,7 @@ namespace tangent
 					return layer_exception("block " + to_string(current_number) + " checkpoint failed: " + finalization.error().message());
 
 				if (protocol::now().user.consensus.logging)
-					VI_INFO("block %s reorganized (height: %" PRIu64 ", top: %.2f%%)", algorithm::encoding::encode_0xhex256(candidate_block->as_hash()).c_str(), current_number, 100.0 * (double)current_number / tip_number);
+					VI_INFO("block %s revived (height: %" PRIu64 ", tape: %.2f%%)", algorithm::encoding::encode_0xhex256(candidate_block->as_hash()).c_str(), current_number, 100.0 * (double)current_number / tip_number);
 
 				parent_block = evaluation.block;
 				++current_number;
