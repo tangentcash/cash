@@ -399,7 +399,7 @@ namespace tangent
 			bind(access_type::r | access_type::a, "validatorstate", "setwallet", 2, 2, "string type = 'mnemonic' | 'seed' | 'key', string entropy", "wallet", "set validator wallet from mnemonic phrase, seed value or secret key", std::bind(&server_node::validatorstate_set_wallet, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::r | access_type::a, "validatorstate", "getwallet", 0, 0, "", "wallet", "get validator wallet", std::bind(&server_node::validatorstate_get_wallet, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::r | access_type::a, "validatorstate", "verify", 2, 3, "uint64 number, uint64 count, bool? validate", "uint256[]", "verify chain and possibly re-execute each block", std::bind(&server_node::validatorstate_verify, this, std::placeholders::_1, std::placeholders::_2));
-			bind(access_type::w | access_type::a, "validatorstate", "prune", 2, 2, "string types = 'state' | 'blocktrie' | 'transactiontrie', uint64 number", "void", "prune chainstate data using pruning level (types is '|' separated list)", std::bind(&server_node::validatorstate_prune, this, std::placeholders::_1, std::placeholders::_2));
+			bind(access_type::w | access_type::a, "validatorstate", "compact", 1, 1, "uint64 number", "void", "prune chainstate data", std::bind(&server_node::validatorstate_compact, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "validatorstate", "revert", 1, 2, "uint64 number, bool? keep_reverted_transactions", "{ new_tip_block_number: uint64, old_tip_block_number: uint64, mempool_transactions: uint64, block_delta: int64, transaction_delta: int64, state_delta: int64, is_fork: bool }", "revert chainstate to block number and possibly send removed transactions to mempool", std::bind(&server_node::validatorstate_revert, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "validatorstate", "reorganize", 0, 0, "", "{ new_tip_block_number: uint64, old_tip_block_number: uint64, mempool_transactions: uint64, block_delta: int64, transaction_delta: int64, state_delta: int64, is_fork: bool }", "reorganize current chain which re-executes every saved block from genesis to tip and re-calculates the final chain state (helpful for corrupted state recovery or pruning checkpoint size change without re-downloading full block history)", std::bind(&server_node::validatorstate_reorganize, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "validatorstate", "acceptnode", 1, 1, "string uri_address", "void", "try to accept and connect to a node possibly by ip address", std::bind(&server_node::validatorstate_accept_node, this, std::placeholders::_1, std::placeholders::_2));
@@ -2754,26 +2754,10 @@ namespace tangent
 				return server_response().success(std::move(data));
 			}
 		}
-		server_response server_node::validatorstate_prune(http::connection* base, format::variables&& args)
+		server_response server_node::validatorstate_compact(http::connection* base, format::variables&& args)
 		{
-			uint32_t types = 0;
-			for (auto& subtype : stringify::split(args[0].as_string(), ','))
-			{
-				subtype = stringify::trim(subtype);
-				if (subtype == "block")
-					types |= (uint32_t)storages::pruning::block;
-				else if (subtype == "transaction")
-					types |= (uint32_t)storages::pruning::transaction;
-				else if (subtype == "state")
-					types |= (uint32_t)storages::pruning::state;
-			}
-
-			if (types == 0)
-				return server_response().error(error_codes::not_found, "invalid type");
-
-			uint64_t number = args[1].as_uint64();
 			auto chain = storages::chainstate();
-			auto status = chain.prune(types, number);
+			auto status = chain.compact(args[0].as_uint64());
 			if (!status)
 				return server_response().error(error_codes::not_found, status.error().message());
 
@@ -3087,8 +3071,6 @@ namespace tangent
 			storage->set("checkpoint_size", var::integer(protocol::now().user.storage.checkpoint_size));
 			storage->set("transaction_to_account_index", var::boolean(protocol::now().user.storage.transaction_to_account_index));
 			storage->set("transaction_to_rollup_index", var::boolean(protocol::now().user.storage.transaction_to_rollup_index));
-			storage->set("transaction_pruning", var::boolean(!protocol::now().user.storage.prune_transactions));
-			storage->set("block_pruning", var::boolean(!protocol::now().user.storage.prune_blocks));
 
 			if (block_header)
 			{
