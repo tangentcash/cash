@@ -1251,7 +1251,7 @@ namespace tangent
 			for (size_t i = 3; i < event.args.size(); i++)
 			{
 				auto address = text_address_to_socket_address(event.args[i].as_string());
-				new_nodes += address && mempool.apply_unknown_node(*address, private_network) ? 1 : 0;
+				new_nodes += address && !connected_to_ip_address(*address) && mempool.apply_unknown_node(*address, private_network) ? 1 : 0;
 			}
 
 			size_t self_transactions = mempool.get_transactions_count().or_else(0);
@@ -1749,7 +1749,7 @@ namespace tangent
 							for (auto* address : addresses->get_childs())
 							{
 								auto endpoint = system_endpoint(address->value.get_blob(), bootstrap_url);
-								if (endpoint.is_valid() && mempool.apply_unknown_node(endpoint.address, false))
+								if (endpoint.is_valid() && !connected_to_ip_address(endpoint.address) && mempool.apply_unknown_node(endpoint.address, false))
 									++results;
 							}
 						}
@@ -2937,8 +2937,11 @@ namespace tangent
 					auto endpoint = system_endpoint(node);
 					if (endpoint.is_valid())
 					{
-						mempool.clear_node(endpoint.address);
-						mempool.apply_unknown_node(endpoint.address, true);
+						if (!connected_to_ip_address(endpoint.address))
+						{
+							mempool.clear_node(endpoint.address);
+							mempool.apply_unknown_node(endpoint.address, true);
+						}
 					}
 					else if (protocol::now().user.consensus.logging)
 						VI_ERR("pre-configured node \"%s\" error: url not valid", node.c_str());
@@ -3365,7 +3368,8 @@ namespace tangent
 					return true;
 			}
 
-			return false;
+			auto& [node, wallet] = descriptor;
+			return *node.address.get_ip_address() == *ip_address;
 		}
 		uref<relay> server_node::find_by_ip_address(const socket_address& address)
 		{
