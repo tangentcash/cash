@@ -142,6 +142,7 @@ namespace tangent
 
 		public:
 			std::recursive_mutex mutex;
+			string shutdown_message;
 			pacemaker bandwidth;
 			uint64_t handshake_time;
 			task_id deferred_pull;
@@ -160,7 +161,7 @@ namespace tangent
 			void report_call(int8_t call_result, uint64_t call_latency);
 			void resolve_query(exchange&& result);
 			void cancel_queries();
-			void abort();
+			void abort(const std::string_view& message);
 			void initialize(relay_descriptor&& target);
 			void invalidate();
 			bool private_network() const;
@@ -327,8 +328,8 @@ namespace tangent
 			bool accept_proposal_transaction(const ledger::block& checkpoint_block, const ledger::block_transaction& transaction);
 			void pull_messages(uref<relay>&& state);
 			void push_messages(uref<relay>&& state);
-			void abort_node(uref<relay>&& state);
-			void abort_node_by_account(const algorithm::pubkeyhash_t& account);
+			void abort_node(uref<relay>&& state, const std::string_view& message);
+			void abort_node_by_account(const algorithm::pubkeyhash_t& account, const std::string_view& message);
 			void append_node(uref<relay>&& state);
 			void erase_node(uref<relay>&& state);
 			void erase_node_by_instance(void* instance);

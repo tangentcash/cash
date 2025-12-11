@@ -439,8 +439,11 @@ namespace tangent
 			}
 			queries.clear();
 		}
-		void relay::abort()
+		void relay::abort(const std::string_view& message)
 		{
+			if (shutdown_message.empty())
+				shutdown_message = message;
+
 			cancel_queries();
 			if (deferred_pull != INVALID_TASK_ID)
 			{
@@ -449,9 +452,9 @@ namespace tangent
 			}
 
 			auto* socket = as_socket();
+			aborted = true;
 			if (socket != nullptr)
 				socket->shutdown(true);
-			aborted = true;
 		}
 		void relay::initialize(relay_descriptor&& new_descriptor)
 		{
@@ -474,9 +477,9 @@ namespace tangent
 			{
 				report_call(0, 0);
 				if (protocol::now().user.consensus.logging)
-					VI_INFO("node %s channel shutdown", peer_address().c_str());
+					VI_INFO("node %s channel shutdown (%s)", peer_address().c_str(), shutdown_message.empty() ? "abnormal" : shutdown_message.c_str());
 			}
-			abort();
+			abort(shutdown_message);
 
 			umutex<std::recursive_mutex> unique(mutex);
 			auto* inbound = type == node_type::inbound ? (inbound_node*)instance : nullptr;
@@ -801,7 +804,7 @@ namespace tangent
 				current_nodes.swap(nodes);
 				unique.unlock();
 				for (auto& node : current_nodes)
-					node.second->abort();
+					node.second->abort("server shutdown");
 			}
 			unique.lock();
 			if (!nodes.empty())
@@ -1806,7 +1809,7 @@ namespace tangent
 
 				auto abort = [&](remote_exception&& exception) -> remote_exception&&
 				{
-					state->abort();
+					state->abort(exception.message());
 					return std::move(exception);
 				};
 				cospawn([this, state]() mutable { pull_messages(std::move(state)); });
@@ -2311,7 +2314,7 @@ namespace tangent
 			VI_ASSERT(state, "state should be set");
 			auto* stream = state->as_socket();
 			if (!stream)
-				return abort_node(std::move(state));
+				return abort_node(std::move(state), "connection lost");
 
 			uint8_t buffer[CHUNK_SIZE];
 			size_t max_buffer_size = sizeof(buffer);
@@ -2322,14 +2325,14 @@ namespace tangent
 				if (!size)
 				{
 					if (size.error() != std::errc::operation_would_block)
-						return abort_node(std::move(state));
+						return abort_node(std::move(state), "connection reset");
 					
 					multiplexer::get()->when_readable(stream, [this, state](socket_poll event) mutable
 					{
 						if (packet::is_done(event))
 							pull_messages(std::move(state));
 						else if (packet::is_error(event))
-							abort_node(std::move(state));
+							abort_node(std::move(state), "connection reset");
 					});
 					return;
 				}
@@ -2348,7 +2351,7 @@ namespace tangent
 					{
 					abort:
 						state->report_call(-1, message_latency);
-						abort_node(std::move(state));
+						abort_node(std::move(state), "invalid message header");
 						return;
 					}
 					else if (state->incoming_size() < sizeof(message_header) + header.length)
@@ -2463,7 +2466,7 @@ namespace tangent
 			VI_ASSERT(state, "state and abort callback should be set");
 			auto* stream = state->as_socket();
 			if (!stream)
-				return abort_node(std::move(state));
+				return abort_node(std::move(state), "connection lost");
 			else if (!state->prepare_outgoing())
 				return;
 
@@ -2473,16 +2476,16 @@ namespace tangent
 				if (packet::is_done(event))
 					cospawn([this, state = std::move(state)]() mutable { push_messages(std::move(state)); });
 				else if (packet::is_error(event))
-					abort_node(std::move(state));
+					abort_node(std::move(state), "connection reset");
 			}, false);
 		}
-		void server_node::abort_node(uref<relay>&& state)
+		void server_node::abort_node(uref<relay>&& state, const std::string_view& message)
 		{
 			VI_ASSERT(state, "state should be set");
 			auto* inbound_node = state->as_inbound_node();
 			auto* outbound_node = state->as_outbound_node();
 			announce_peer(uref(state), false);
-			state->abort();
+			state->abort(message);
 			erase_node(std::move(state));
 			if (inbound_node != nullptr)
 			{
@@ -2492,7 +2495,7 @@ namespace tangent
 			if (outbound_node != nullptr)
 				outbound_node->release();
 		}
-		void server_node::abort_node_by_account(const algorithm::pubkeyhash_t& account)
+		void server_node::abort_node_by_account(const algorithm::pubkeyhash_t& account, const std::string_view& message)
 		{
 			umutex<std::recursive_mutex> unique(exclusive);
 			for (auto& node : nodes)
@@ -2501,7 +2504,7 @@ namespace tangent
 				if (descriptor != nullptr && descriptor->second.public_key_hash.equals(account))
 				{
 					unique.unlock();
-					return abort_node(uref(node.second));
+					return abort_node(uref(node.second), message);
 				}
 			}
 		}
@@ -2610,15 +2613,15 @@ namespace tangent
 					for (auto& account : current_nodes)
 					{
 						auto better_node = mempool.get_better_node(account);
-						if (better_node && current_nodes.find(better_node->second.public_key_hash) == current_nodes.end())
+						if (better_node && current_nodes.find(better_node->second.public_key_hash) == current_nodes.end() && !connected_to_ip_address(better_node->first.address))
 							replacement_nodes[account] = std::move(better_node->first.address);
 					}
 					try_unknown_nodes = replacement_nodes.empty() && !may_connect_to_node() && mempool.get_connectable_unknown_nodes_count().or_else(0) > 0;
 				}
 				for (auto& [account, address] : replacement_nodes)
-					abort_node_by_account(account);
+					abort_node_by_account(account, "better node found");
 				if (try_unknown_nodes)
-					abort_node_by_account(worst_account);
+					abort_node_by_account(worst_account, "trying unknown node instead");
 
 				for (auto& [account, address] : replacement_nodes)
 				{

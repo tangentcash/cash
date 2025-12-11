@@ -2893,7 +2893,7 @@ namespace tangent
 			if (!node)
 				return server_response().error(error_codes::bad_request, "node not found");
 
-			node->abort();
+			node->abort("manually closed");
 			return server_response().success(var::set::null());
 		}
 		server_response server_node::validatorstate_get_node(http::connection* base, format::variables&& args)
