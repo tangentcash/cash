@@ -147,7 +147,7 @@ namespace tangent
 				string address = "0.0.0.0";
 				uint16_t port = 18418;
 				uint64_t time_offset = 300000;
-				uint32_t max_inbound_connections = 128;
+				uint32_t max_inbound_connections = 64;
 				uint32_t max_outbound_connections = 8;
 				uint64_t inventory_timeout = 300000;
 				uint32_t inventory_size = 65536;
@@ -238,12 +238,12 @@ namespace tangent
 			uint64_t packet_magic = 0x73d308e9;
 			uint32_t protocol_version = 0x10;
 			uint32_t max_message_size = 0xffffff;
-			uint32_t max_body_size = 1024 * 1024 * 40;
+			uint32_t max_body_size = 1024 * 1024 * 24;
 			uint32_t decimal_precision = 18;
 			uint32_t integer_precision = 78;
 			uint64_t hashes_per_query = 8192;
 			uint64_t headers_per_query = 2048;
-			uint64_t blocks_per_query = 16;
+			uint64_t blocks_size_per_query = 1024 * 1024 * 8;
 			uint64_t transactions_per_query = 32;
 			uint64_t items_per_query = 512;
 			uint64_t pages_per_query = 64;
@@ -263,11 +263,11 @@ namespace tangent
 			struct
 			{
 				string base = "2786a4886c124f36871891095339534d0209538631bc0225d52faab6792df26c";
-				uint64_t time = 6000;
+				uint64_t time = 12000;
 				uint64_t adjustment_time = 60000;
 				uint64_t difficulty = 2048;
 				uint16_t security = 2048;
-				uint64_t genesis_length = 14400;
+				uint64_t genesis_length = 7200;
 				decimal max_increase = std::string_view("2.00");
 				decimal max_decrease = std::string_view("0.50");
 				decimal bump_per_priority = std::string_view("1.3625");
@@ -294,7 +294,7 @@ namespace tangent
 				uint64_t max_per_block = 12;
 				decimal min_stake_value = std::string_view("36");
 				decimal reward_value = std::string_view("1.2");
-				decimal genesis_reward_value = std::string_view("240");
+				decimal genesis_reward_value = std::string_view("90");
 			} production;
 			string token = "TAN";
 			uint64_t commitment_tps = 10;

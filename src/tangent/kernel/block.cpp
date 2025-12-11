@@ -886,7 +886,7 @@ namespace tangent
 			if (input.as_message().data != output.as_message().data)
 				return layer_exception("resulting block deviates from pre-computed block");
 
-			auto verification = solver.verify_solved_block(result, producer);
+			auto verification = solver.verify_block(result, producer);
 			if (!verification)
 				return verification;
 
@@ -3562,6 +3562,48 @@ namespace tangent
 			state.changelog.outgoing.finalized.swap(result.state.finalized);
 			return expects_lr<block_evaluation>(std::move(result));
 		}
+		expects_lr<void> solver_context::solve_block(block_evaluation& evaluation)
+		{
+			return solve_evaluated_block(evaluation, state.public_key_hash, state.secret_key);
+		}
+		expects_lr<void> solver_context::verify_block(const block_evaluation& solution, const algorithm::pubkeyhash_t& recovered_producer)
+		{
+			return verify_solved_block(tip.address(), solution, recovered_producer);
+		}
+		expects_lr<block_checkpoint> solver_context::checkpoint_block(block_evaluation& solution, bool keep_reverted_transactions)
+		{
+			return checkpoint_solved_block(solution, keep_reverted_transactions);
+		}
+		expects_lr<void> solver_context::erase_failed_transactions()
+		{
+			if (transactions.failed.empty())
+				return expectation::met;
+
+			auto mempool = storages::mempoolstate();
+			return mempool.remove_transactions(transactions.failed);
+		}
+		bool solver_context::can_accept_more_transactions()
+		{
+			return state.commitment_gas_limit + state.transaction_gas_limit < block_header::get_total_gas_limit();
+		}
+		expects_lr<void> solver_context::solve_evaluated_block(block_evaluation& evaluation, const algorithm::pubkeyhash_t& public_key_hash, const algorithm::seckey_t& secret_key)
+		{
+			if (!evaluation.block.solve(public_key_hash))
+				return layer_exception("block proof evaluation failed");
+
+			if (!evaluation.block.sign(secret_key))
+				return layer_exception("block signature evaluation failed");
+
+			return expectation::met;
+		}
+		expects_lr<void> solver_context::verify_solved_block(const block_header* parent_block, const block_evaluation& solution, const algorithm::pubkeyhash_t& recovered_producer)
+		{
+			auto validity = solution.block.verify_validity(parent_block, recovered_producer);
+			if (!validity)
+				return validity;
+
+			return solution.block.verify_integrity(parent_block, &solution.state);
+		}
 		expects_lr<block_checkpoint> solver_context::checkpoint_solved_block(block_evaluation& solution, bool keep_reverted_transactions)
 		{
 			auto chain = storages::chainstate();
@@ -3651,41 +3693,6 @@ namespace tangent
 
 			return mutation;
 		}
-		expects_lr<void> solver_context::solve_evaluated_block(block_evaluation& evaluation)
-		{
-			if (!evaluation.block.solve(state.public_key_hash))
-				return layer_exception("block proof evaluation failed");
-
-			if (!evaluation.block.sign(state.secret_key))
-				return layer_exception("block signature evaluation failed");
-
-			return expectation::met;
-		}
-		expects_lr<void> solver_context::verify_solved_block(const block_evaluation& solution, const algorithm::pubkeyhash_t& recovered_producer)
-		{
-			auto validity = solution.block.verify_validity(tip.address(), recovered_producer);
-			if (!validity)
-				return validity;
-
-			return solution.block.verify_integrity(tip.address(), &solution.state);
-		}
-		expects_lr<void> solver_context::erase_failed_transactions()
-		{
-			if (transactions.failed.empty())
-				return expectation::met;
-
-			auto mempool = storages::mempoolstate();
-			return mempool.remove_transactions(transactions.failed);
-		}
-		bool solver_context::requires_reorganization(const block_evaluation& solution) const
-		{
-			auto chain = storages::chainstate();
-			return chain.get_checkpoint_block_number().or_else(0) > solution.block.number - 1;
-		}
-		bool solver_context::can_accept_more_transactions()
-		{
-			return state.commitment_gas_limit + state.transaction_gas_limit < block_header::get_total_gas_limit();
-		}
 		solver_context::queued_transaction solver_context::precompute_transaction_element(uptr<transaction>&& candidate)
 		{
 			solver_context::queued_transaction result;
@@ -3710,6 +3717,11 @@ namespace tangent
 				item.candidate->recover_hash(item.owner);
 			}));
 			VI_SORT(candidates.begin(), candidates.end(), [](const queued_transaction& a, const queued_transaction& b) { return a.candidate->nonce < b.candidate->nonce; });
+		}
+		bool solver_context::requires_reorganization(const block_evaluation& solution)
+		{
+			auto chain = storages::chainstate();
+			return chain.get_checkpoint_block_number().or_else(0) > solution.block.number - 1;
 		}
 	}
 }

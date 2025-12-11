@@ -307,7 +307,6 @@ namespace tangent
 				if (fee && fee_value > max_fee)
 					coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
 
-				decimal fee_value_per_output = algorithm::arithmetic::divide(fee_value, to.size());
 				prepared_transaction result;
 				result.requires_abi(format::variable(to_lovelace(fee_value)));
 
@@ -318,13 +317,9 @@ namespace tangent
 					auto min_output_value = get_min_protocol_value_per_output(item.asset != native_asset ? 1 : 0);
 					if (item.asset == native_asset)
 					{
-						auto output_value = item.value - fee_value_per_output;
-						if (output_value.is_negative())
-							coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", output_value.to_string().c_str(), fee_value_per_output.to_string().c_str())));
-
-						total_value += output_value;
-						if (item.asset == native_asset && output_value < min_output_value)
-							coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s (value is less than minimum required by protocol)", output_value.to_string().c_str(), min_output_value.to_string().c_str())));
+						total_value += item.value;
+						if (item.asset == native_asset && item.value < min_output_value)
+							coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s (value is less than minimum required by protocol)", item.value.to_string().c_str(), min_output_value.to_string().c_str())));
 					}
 					else
 					{
@@ -357,7 +352,7 @@ namespace tangent
 				{
 					auto link = find_linked_addresses({ item.address });
 					auto min_output_value = get_min_protocol_value_per_output(item.asset != native_asset ? 1 : 0);
-					auto output = coin_utxo(link ? std::move(link->begin()->second) : wallet_link::from_address(item.address), string(), (uint32_t)result.outputs.size(), item.asset == native_asset ? decimal(item.value - fee_value_per_output) : std::move(min_output_value));
+					auto output = coin_utxo(link ? std::move(link->begin()->second) : wallet_link::from_address(item.address), string(), (uint32_t)result.outputs.size(), item.asset == native_asset ? decimal(item.value) : std::move(min_output_value));
 					if (item.asset != native_asset)
 					{
 						auto& change_token = change_tokens[item.asset];

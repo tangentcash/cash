@@ -577,34 +577,12 @@ namespace tangent
 				if (fee_value > max_fee)
 					coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
 
-				decimal fee_value_per_output = paid_outputs_size > 0 ? algorithm::arithmetic::divide(fee_value, paid_outputs_size) : decimal::zero();
-				for (auto& account : accounts)
-				{
-					if (!paid_outputs_size || !account.has_starting_balance)
-						continue;
-
-					auto new_value = from_stroop((uint64_t)account.starting_balance) - fee_value_per_output;
-					if (new_value.is_negative())
-						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s", new_value.to_string().c_str())));
-
-					account.starting_balance = (uint64_t)to_stroop(new_value);
-				}
-				for (auto& payment : payments)
-				{
-					if (!paid_outputs_size || payment.asset.type != (uint32_t)stellar::asset_type::ASSET_TYPE_NATIVE)
-						continue;
-
-					auto new_value = from_stroop((uint64_t)payment.amount) - fee_value_per_output;
-					if (new_value.is_negative())
-						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s", new_value.to_string().c_str())));
-
-					payment.amount = (uint64_t)to_stroop(new_value);
-				}
-
+				auto& fee_input = inputs[native_asset];
+				fee_input = fee_input.is_nan() ? fee_value : (fee_input + fee_value);
 				transaction = tx_create_transaction(from_link.address, passphrase, account_info->sequence + 1, memo_id.or_else(0), !memo.empty(), accounts.size(), payments.size(), get_base_stroop_fee());
 				for (auto& [token_asset, send_value] : inputs)
 				{
-					auto total_value = token_asset == native_asset ? inputs[native_asset] : inputs[token_asset];
+					auto& total_value = token_asset == native_asset ? inputs[native_asset] : inputs[token_asset];
 					auto balance_value = account_info->balances.find(token_asset);
 					if (balance_value == account_info->balances.end() || balance_value->second.balance < total_value)
 						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", (balance_value != account_info->balances.end() ? balance_value->second.balance : decimal(0.0)).to_string().c_str(), total_value.to_string().c_str())));
@@ -619,7 +597,7 @@ namespace tangent
 				prepared_transaction result;
 				result.requires_account_input(algorithm::composition::type::ed25519, wallet_link(from_link), public_key, raw_data.data(), raw_data.size(), hash_map<algorithm::asset_id, decimal>(inputs));
 				for (auto& item : to)
-					result.requires_account_output(item.address, { { item.asset, item.value - fee_value_per_output } });
+					result.requires_account_output(item.address, { { item.asset, item.value } });
 				result.requires_abi(format::variable(transaction.sequence_number));
 				result.requires_abi(format::variable((uint32_t)accounts.size()));
 				result.requires_abi(format::variable((uint32_t)payments.size()));

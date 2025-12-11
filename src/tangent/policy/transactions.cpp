@@ -1832,6 +1832,7 @@ namespace tangent
 				}
 			}
 
+			auto native_asset = algorithm::asset::base_id_of(asset);
 			if (!bridges.empty())
 			{
 				for (auto& [asset, weight] : operations.weights)
@@ -1864,19 +1865,19 @@ namespace tangent
 					{
 						auto& transfer = bridge.transfers[token_asset];
 						transfer.supply += token_value;
-						if (token_value.is_positive() && bridges.empty())
+						if (!token_value.is_positive() || !bridges.empty())
+							continue;
+
+						auto& balance = operations.transfers[to_account][token_asset];
+						balance.supply += token_value;
+						if (token_asset != native_asset || to_bridge.equals(to_account.data))
+							continue;
+
+						auto reward = executor->get_verified_validator_attestation(token_asset, to_bridge.data);
+						if (reward && reward->incoming_fee.is_positive())
 						{
-							auto& balance = operations.transfers[to_account][token_asset];
-							balance.supply += token_value;
-							if (!to_bridge.equals(to_account.data))
-							{
-								auto reward = executor->get_verified_validator_attestation(token_asset, to_bridge.data);
-								if (reward && reward->incoming_fee.is_positive())
-								{
-									balance.supply -= reward->incoming_fee;
-									transfer.incoming_fee += reward->incoming_fee;
-								}
-							}
+							balance.supply -= std::min(token_value, reward->incoming_fee);
+							transfer.incoming_fee += reward->incoming_fee;
 						}
 					}
 				}
@@ -1899,21 +1900,15 @@ namespace tangent
 						auto& balance = from_transfers[token_asset];
 						balance.supply -= token_value;
 						balance.reserve -= token_value;
-						if (token_value.is_positive())
+						if (token_asset != native_asset)
+							continue;
+
+						for (auto from_bridge = bridges.begin(); from_bridge != bridges.end(); from_bridge++)
 						{
-							for (auto from_bridge = bridges.begin(); from_bridge != bridges.end(); from_bridge++)
-							{
-								auto reward = executor->get_verified_validator_attestation(asset, from_bridge->data);
-								auto outgoing_fee = reward ? algorithm::arithmetic::divide(reward->outgoing_fee, bridges.size()) : decimal::zero();
-								if (outgoing_fee.is_positive())
-								{
-									auto& base_transfer = operations.bridges[*from_bridge].transfers[asset];
-									auto& base_balance = from_transfers[asset];
-									base_balance.supply -= outgoing_fee;
-									base_balance.reserve -= outgoing_fee;
-									base_transfer.outgoing_fee += outgoing_fee;
-								}
-							}
+							auto reward = executor->get_verified_validator_attestation(asset, from_bridge->data);
+							auto outgoing_fee = reward ? algorithm::arithmetic::divide(reward->outgoing_fee, bridges.size()) : decimal::zero();
+							if (outgoing_fee.is_positive())
+								operations.bridges[*from_bridge].transfers[asset].outgoing_fee += std::min(token_value, outgoing_fee);
 						}
 					}
 				}
@@ -2933,15 +2928,19 @@ namespace tangent
 			else if (only_if_not_in_queue && policy->queue_transaction_hash > 0)
 				return layer_exception("bridge is in use - withdrawal will be queued");
 
-			auto token_value = get_token_value(executor);
+			auto token_value = get_token_value(executor, executor->receipt);
 			if (!token_value.is_positive())
 				return layer_exception("zero value withdrawal not allowed");
 
 			auto fee_asset = algorithm::asset::base_id_of(asset);
+			auto fee_value = get_fee_value(executor);
+			if (!fee_value.is_positive())
+				return layer_exception("bridge does not have a withdrawal fee - network fee cannot be paid");
+
 			if (migration)
 			{
 				auto bridge = executor->get_bridge_balance(fee_asset, manager);
-				if (!bridge || !bridge->get_balance(asset).is_positive())
+				if (!bridge || bridge->get_balance(asset) < fee_value)
 					return layer_exception(algorithm::asset::handle_of(asset) + " balance is insufficient perform migration");
 
 				if (asset != fee_asset)
@@ -2972,7 +2971,6 @@ namespace tangent
 				return expectation::met;
 			}
 
-			auto fee_value = get_fee_value(executor);
 			if (fee_asset != asset)
 			{
 				auto balance_requirement = executor->verify_transfer_balance(fee_asset, fee_value);
@@ -3058,7 +3056,7 @@ namespace tangent
 					if (!account)
 						coreturn cancel(remote_exception(std::move(account.error().message())));
 
-					transfers.push_back(superchain::value_transfer(asset, account->addresses.begin()->second, get_token_value(executor)));
+					transfers.push_back(superchain::value_transfer(asset, account->addresses.begin()->second, get_token_value(executor, executor->receipt)));
 				}
 				else
 				{
@@ -3264,14 +3262,22 @@ namespace tangent
 				result = algorithm::pubkeyhash_t();
 			return result;
 		}
-		decimal withdraw::get_token_value(const ledger::executor_context* executor) const
+		decimal withdraw::get_token_value(const ledger::executor_context* executor, const ledger::receipt& receipt) const
 		{
 			decimal value = 0.0;
-			if (to.empty() && executor->receipt.from == manager)
+			if (to.empty() && receipt.from == manager)
 			{
 				auto bridge = executor->get_bridge_balance(asset, manager);
 				if (bridge)
+				{
 					value += bridge->get_balance(asset);
+					if (algorithm::asset::is_aux(asset, true))
+					{
+						auto fee_value = get_fee_value(executor);
+						if (fee_value <= value)
+							value -= fee_value;
+					}
+				}
 			}
 			else
 			{
@@ -3283,10 +3289,7 @@ namespace tangent
 		decimal withdraw::get_fee_value(const ledger::executor_context* executor) const
 		{
 			auto reward = executor->get_verified_validator_attestation(algorithm::asset::base_id_of(asset), manager);
-			if (!reward)
-				return decimal::zero();
-
-			return reward->outgoing_fee * to.size();
+			return reward ? reward->outgoing_fee * std::max<size_t>(1, to.size()) : decimal::zero();
 		}
 		uptr<schema> withdraw::as_schema() const
 		{
@@ -3389,30 +3392,34 @@ namespace tangent
 			if (!finalization)
 				return finalization.error();
 
-			auto confirmation = proof ? validate_finalized_proof(executor, parent_transaction, parent->receipt, *proof) : proof.error();
-			if (confirmation)
-				return expectation::met;
-			else if (proof)
+			auto confirmation = proof ? validate_finalized_proof(executor, parent_transaction, parent->receipt, *proof) : expects_lr<void>(expectation::met);
+			if (!confirmation)
 				return confirmation.error();
-
-			if (!parent_transaction->get_new_manager(parent->receipt).empty())
+			else if (!parent_transaction->get_new_manager(parent->receipt).empty())
 				return expectation::met;
 
 			auto fee_asset = algorithm::asset::base_id_of(parent_transaction->asset);
 			auto fee_value = parent_transaction->get_fee_value(executor);
-			auto token_value = parent_transaction->get_token_value(executor);
-			if (fee_asset != parent_transaction->asset)
+			if (!proof)
 			{
-				auto fee_transfer = executor->apply_transfer(fee_asset, parent->receipt.from, decimal::zero(), -fee_value);
+				if (fee_asset != parent_transaction->asset)
+				{
+					auto fee_transfer = executor->apply_transfer(fee_asset, parent->receipt.from, decimal::zero(), -fee_value);
+					if (!fee_transfer)
+						return fee_transfer.error();
+				}
+
+				auto token_value = parent_transaction->get_token_value(executor, parent->receipt);
+				auto token_transfer = executor->apply_transfer(parent_transaction->asset, parent->receipt.from, decimal::zero(), -token_value);
+				if (!token_transfer)
+					return token_transfer.error();
+			}
+			else
+			{
+				auto fee_transfer = executor->apply_transfer(fee_asset, parent->receipt.from, -fee_value, -fee_value);
 				if (!fee_transfer)
 					return fee_transfer.error();
 			}
-			else
-				token_value += fee_value;
-
-			auto token_transfer = executor->apply_transfer(parent_transaction->asset, parent->receipt.from, decimal::zero(), -token_value);
-			if (!token_transfer)
-				return token_transfer.error();
 
 			return expectation::met;
 		}
@@ -3767,6 +3774,7 @@ namespace tangent
 				return expects_promise_rt<superchain::prepared_transaction>(remote_exception(std::move(public_key.error().message())));
 
 			auto transfers = hash_map<algorithm::asset_id, decimal>();
+			transfers[algorithm::asset::base_id_of(asset)] = decimal("0.000001");
 			for (auto& transfer : to)
 			{
 				if (transfer.address == "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")

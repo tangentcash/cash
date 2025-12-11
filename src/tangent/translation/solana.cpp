@@ -428,11 +428,10 @@ namespace tangent
 					from_token = std::move(*from_token_balance);
 					to_token = std::move(*to_token_balance);
 				}
-				else if (output.value < fee_value)
-					coreturn expects_rt<prepared_transaction>(remote_exception("fee is more than output value"));
 
-				if (*native_balance < output.value || output.value.is_negative())
-					coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", native_balance->to_string().c_str(), output.value.to_string().c_str())));
+				auto total_value = contract_address ? fee_value : (output.value + fee_value);
+				if (*native_balance < total_value || total_value.is_negative())
+					coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", native_balance->to_string().c_str(), total_value.to_string().c_str())));
 
 				sol_transaction transaction;
 				transaction.token_program_address = from_token ? from_token->program_id : string();
@@ -441,7 +440,7 @@ namespace tangent
 				transaction.from_address = from_link.address;
 				transaction.to_address = output.address;
 				transaction.recent_block_hash = *recent_block_hash;
-				transaction.value = (from_token ? (output.value * from_token->divisibility) : ((output.value - fee_value) * netdata.divisibility)).to_uint64();
+				transaction.value = (output.value * (from_token ? from_token->divisibility : netdata.divisibility)).to_uint64();
 
 				vector<uint8_t> message_buffer = tx_message_serialize(&transaction);
 				if (message_buffer.empty())
@@ -456,19 +455,18 @@ namespace tangent
 				if (contract_address)
 					result.requires_account_input(algorithm::composition::type::ed25519, wallet_link(from_link), public_key, message_buffer.data(), message_buffer.size(), { { output.asset, output.value }, { native_asset, fee_value } });
 				else
-					result.requires_account_input(algorithm::composition::type::ed25519, wallet_link(from_link), public_key, message_buffer.data(), message_buffer.size(), { { native_asset, output.value } });
+					result.requires_account_input(algorithm::composition::type::ed25519, wallet_link(from_link), public_key, message_buffer.data(), message_buffer.size(), { { native_asset, total_value } });
 				result.requires_account_output(output.address, { { output.asset, output.value } });
 				result.requires_abi(format::variable(from_token ? from_token->divisibility : netdata.divisibility));
 				result.requires_abi(format::variable(transaction.token_program_address));
 				result.requires_abi(format::variable(transaction.from_token_address));
 				result.requires_abi(format::variable(transaction.to_token_address));
 				result.requires_abi(format::variable(transaction.recent_block_hash));
-				result.requires_abi(format::variable(fee_value));
 				coreturn expects_rt<prepared_transaction>(std::move(result));
 			}
 			expects_lr<finalized_transaction> solana::finalize_transaction(superchain::prepared_transaction&& prepared)
 			{
-				if (prepared.abi.size() != 6)
+				if (prepared.abi.size() != 5)
 					return layer_exception("invalid prepared abi");
 
 				auto& input = prepared.inputs.begin()->second;
@@ -481,7 +479,7 @@ namespace tangent
 				transaction.from_address = input.utxo.link.address;
 				transaction.to_address = output.link.address;
 				transaction.recent_block_hash = prepared.abi[4].as_blob();
-				transaction.value = ((output.tokens.empty() ? output.value - prepared.abi[5].as_decimal() : output.tokens.begin()->second.value) * divisibility).to_uint64();
+				transaction.value = ((output.tokens.empty() ? output.value : output.tokens.begin()->second.value) * divisibility).to_uint64();
 
 				vector<uint8_t> message_buffer = tx_message_serialize(&transaction);
 				if (input.message.size() != message_buffer.size() || memcmp(input.message.data(), message_buffer.data(), message_buffer.size()))

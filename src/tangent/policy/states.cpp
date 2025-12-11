@@ -1001,6 +1001,9 @@ namespace tangent
 			if (outgoing_fee.is_nan() || outgoing_fee.is_negative())
 				return layer_exception("invalid outgoing fee");
 
+			if (accepts_withdrawal_requests && !outgoing_fee.is_positive())
+				return layer_exception("outgoing fee must be positive when withdrawals are accepted");
+
 			auto blockchain = algorithm::asset::blockchain_of(asset);
 			for (auto& [token_asset, reward] : rewards)
 			{

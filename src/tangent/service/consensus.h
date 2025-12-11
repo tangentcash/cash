@@ -240,7 +240,6 @@ namespace tangent
 
 		public:
 			hash_map<uint256_t, fork_header> forks;
-			ledger::solver_context solver;
 			relay_descriptor descriptor;
 
 		public:

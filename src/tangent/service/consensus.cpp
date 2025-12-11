@@ -1326,16 +1326,19 @@ namespace tangent
 				if (result)
 					block_number = *result;
 			}
-			if (!block_number)
-				return format::variables();
 
 			format::variables result;
-			result.reserve(protocol::now().message.blocks_per_query);
-			for (size_t i = 0; i < protocol::now().message.blocks_per_query; i++)
+			uint64_t size = protocol::now().message.blocks_size_per_query, offset = 0;
+			while (block_number > 0 && size > 0)
 			{
-				auto block = chain.get_block_by_number(block_number + i, BLOCK_RATE_NORMAL, BLOCK_DATA_CONSENSUS);
-				if (block)
-					result.push_back(format::variable(block->as_message().data));
+				auto block = chain.get_block_by_number(block_number + offset, BLOCK_RATE_NORMAL, BLOCK_DATA_CONSENSUS);
+				if (!block)
+					break;
+
+				auto message = block->as_message();
+				result.push_back(format::variable(message.data));
+				size -= std::min(size, message.data.size());
+				++offset;
 			}
 
 			return expects_rt<format::variables>(std::move(result));
@@ -2172,6 +2175,9 @@ namespace tangent
 						new_tip_number = tip.block.number + 1;
 						if (!accept_block(uref(new_tip.state), std::move(tip), new_tip_fork_hash))
 							coreturn remote_exception("fork block rejected");
+						
+						if (!is_active())
+							break;
 					}
 				}
 
@@ -2779,6 +2785,7 @@ namespace tangent
 				auto& [node, wallet] = descriptor;
 				auto chain = storages::chainstate();
 				auto tip = chain.get_latest_block_header();
+				auto solver = ledger::solver_context();
 				auto priority = solver.apply_validator_state(wallet.public_key_hash, wallet.secret_key, tip.address());
 				auto position = priority.or_else(protocol::now().policy.production.max_per_block);
 				auto baseline_solution_time = tip ? tip->get_slot_proof_duration_average() : 0;
@@ -2825,7 +2832,7 @@ namespace tangent
 				if (!evaluation)
 					return evaluation.report("block evaluation failed");
 
-				auto solution = solver.solve_evaluated_block(*evaluation);
+				auto solution = solver.solve_block(*evaluation);
 				if (!solution)
 					return solution.report("block solution failed");
 
@@ -3135,8 +3142,8 @@ namespace tangent
 											\
 											<+> - <+> = possible reorganization
 			*/
-			auto reorganization = solver.requires_reorganization(candidate);
-			auto validation = fork_branch && reorganization ? expects_lr<void>(expectation::met) : (from ? candidate.block.validate(parent_block.address(), &candidate) : solver.verify_solved_block(candidate));
+			auto reorganization = ledger::solver_context::requires_reorganization(candidate);
+			auto validation = fork_branch && reorganization ? expects_lr<void>(expectation::met) : (from ? candidate.block.validate(parent_block.address(), &candidate) : ledger::solver_context::verify_solved_block(parent_block.address(), candidate));
 			if (!validation)
 			{
 				if (protocol::now().user.consensus.logging)
@@ -3157,7 +3164,7 @@ namespace tangent
 				return false;
 			}
 
-			auto mutation = solver.checkpoint_solved_block(candidate);
+			auto mutation = ledger::solver_context::checkpoint_solved_block(candidate);
 			release_checkpointer();
 			if (!mutation)
 			{

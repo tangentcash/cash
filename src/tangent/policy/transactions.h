@@ -290,7 +290,7 @@ namespace tangent
 			void set_manager(const algorithm::pubkeyhash_t& new_manager);
 			bool is_dispatchable() const override;
 			algorithm::pubkeyhash_t get_new_manager(const ledger::receipt& receipt) const;
-			decimal get_token_value(const ledger::executor_context* executor) const;
+			decimal get_token_value(const ledger::executor_context* executor, const ledger::receipt& receipt) const;
 			decimal get_fee_value(const ledger::executor_context* executor) const;
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;

@@ -2781,8 +2781,7 @@ namespace tangent
 			evaluation.block = std::move(*block);
 			evaluation.state = std::move(*state);
 
-			ledger::solver_context temp_solver;
-			auto checkpoint = temp_solver.checkpoint_solved_block(evaluation, args.size() > 1 ? args[1].as_boolean() : false);
+			auto checkpoint = ledger::solver_context::checkpoint_solved_block(evaluation, args.size() > 1 ? args[1].as_boolean() : false);
 			if (consensus_service != nullptr)
 				consensus_service->release_checkpointer();
 

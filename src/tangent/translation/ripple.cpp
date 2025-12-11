@@ -465,11 +465,10 @@ namespace tangent
 					if (!account_token_info || account_token_info->balance < output.value)
 						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", (account_token_info ? account_token_info->balance : decimal(0.0)).to_string().c_str(), output.value.to_string().c_str())));
 				}
-				else if (output.value < fee_value)
-					coreturn expects_rt<prepared_transaction>(remote_exception("fee is more than output value"));
 
-				if (account_info->balance < output.value || output.value.is_negative())
-					coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", account_info->balance.to_string().c_str(), output.value.to_string().c_str())));
+				auto total_value = contract_address ? fee_value : (output.value + fee_value);
+				if (account_info->balance < total_value || total_value.is_negative())
+					coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", account_info->balance.to_string().c_str(), total_value.to_string().c_str())));
 
 				auto [output_address, output_tag] = address_util::decode_tag_address(output.address);
 				transaction_buffer buffer;
@@ -489,7 +488,7 @@ namespace tangent
 					buffer.amount.issuer = *contract_address;
 				}
 				else
-					buffer.amount.base_value = (uint64_t)(to_drop(output.value) - buffer.fee);
+					buffer.amount.base_value = (uint64_t)to_drop(output.value);
 
 				auto signing_public_key = decode_public_key(from_link.public_key);
 				if (!signing_public_key)
@@ -501,7 +500,7 @@ namespace tangent
 				if (contract_address)
 					result.requires_account_input(algorithm::composition::type::ed25519, wallet_link(from_link), public_key, message.data(), message.size(), { { output.asset, output.value }, { native_asset, fee_value } });
 				else
-					result.requires_account_input(algorithm::composition::type::ed25519, wallet_link(from_link), public_key, message.data(), message.size(), { { native_asset, output.value } });
+					result.requires_account_input(algorithm::composition::type::ed25519, wallet_link(from_link), public_key, message.data(), message.size(), { { native_asset, total_value } });
 				result.requires_account_output(output.address, { { output.asset, output.value } });
 				result.requires_abi(format::variable(contract_address.or_else(string())));
 				result.requires_abi(format::variable(buffer.sequence));
@@ -540,7 +539,7 @@ namespace tangent
 					buffer.amount.issuer = contract_address;
 				}
 				else
-					buffer.amount.base_value = (uint64_t)(to_drop(output.value) - buffer.fee);
+					buffer.amount.base_value = (uint64_t)to_drop(output.value);
 
 				auto message = tx_serialize(&buffer, true);
 				if (input.message.size() != message.size() || memcmp(input.message.data(), message.data(), message.size()) != 0)

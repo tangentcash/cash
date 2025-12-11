@@ -762,12 +762,11 @@ namespace tangent
 				}
 				else if (!algorithm::asset::token_of(output.asset).empty())
 					coreturn expects_rt<prepared_transaction>(remote_exception("invalid sending token"));
-				else if (output.value < fee_value)
-					coreturn expects_rt<prepared_transaction>(remote_exception("fee is more than output value"));
 
+				auto total_value = contract_address ? fee_value : (output.value + fee_value);
 				auto balance = coawait(calculate_balance(output.asset, from_link));
-				if (!balance || *balance < output.value || output.value.is_negative())
-					coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", (balance ? *balance : decimal(0.0)).to_string().c_str(), output.value.to_string().c_str())));
+				if (!balance || *balance < total_value || total_value.is_negative())
+					coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", (balance ? *balance : decimal(0.0)).to_string().c_str(), total_value.to_string().c_str())));
 
 				auto nonce = coawait(get_transactions_count(from_link.address));
 				if (!nonce)
@@ -793,7 +792,7 @@ namespace tangent
 				else
 				{
 					transaction.address = decode_non_eth_address(output.address);
-					transaction.value = from_eth(output.value - fee_value, divisibility);
+					transaction.value = from_eth(output.value, divisibility);
 				}
 
 				auto public_key = to_composite_public_key(from_link.public_key);
@@ -806,7 +805,7 @@ namespace tangent
 				if (contract_address)
 					result.requires_account_input(algorithm::composition::type::secp256k1, wallet_link(from_link), *public_key, (uint8_t*)hash.data(), hash.size(), { { output.asset, output.value }, { native_asset, fee_value } });
 				else
-					result.requires_account_input(algorithm::composition::type::secp256k1, wallet_link(from_link), *public_key, (uint8_t*)hash.data(), hash.size(), { { native_asset, output.value } });
+					result.requires_account_input(algorithm::composition::type::secp256k1, wallet_link(from_link), *public_key, (uint8_t*)hash.data(), hash.size(), { { native_asset, total_value } });
 				result.requires_account_output(output.address, { { output.asset, output.value } });
 				result.requires_abi(format::variable(!!legacy.eip_155));
 				result.requires_abi(format::variable(contract_address.or_else(string())));
@@ -851,7 +850,7 @@ namespace tangent
 				{
 					auto fee_value = computed_fee::fee_per_gas_priority(to_eth(transaction.gas_base_price, divisibility), to_eth(transaction.gas_price, divisibility), transaction.gas_limit).get_max_fee();
 					transaction.address = decode_non_eth_address(output.link.address);
-					transaction.value = from_eth(output.value - fee_value, divisibility);
+					transaction.value = from_eth(output.value, divisibility);
 				}
 
 				auto hash = transaction.hash(transaction.serialize(type));

@@ -615,15 +615,9 @@ namespace tangent
 				if (fee_value > max_fee)
 					coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
 
-				decimal fee_value_per_output = algorithm::arithmetic::divide(fee_value, to.size());
 				decimal total_value = fee_value;
 				for (auto& item : to)
-				{
-					decimal value = item.value - fee_value_per_output;
-					total_value += value;
-					if (value.is_negative())
-						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", value.to_string().c_str(), fee_value_per_output.to_string().c_str())));
-				}
+					total_value += item.value;
 
 				auto possible_inputs = calculate_utxo(from_link, balance_query(total_value, { }));
 				decimal input_value = possible_inputs ? get_utxo_value(*possible_inputs, optional::none) : 0.0;
@@ -634,7 +628,7 @@ namespace tangent
 				for (auto& item : to)
 				{
 					auto link = find_linked_addresses({ item.address });
-					result.requires_output(coin_utxo(link ? std::move(link->begin()->second) : wallet_link::from_address(item.address), string(), (uint32_t)result.outputs.size(), item.value - fee_value_per_output));
+					result.requires_output(coin_utxo(link ? std::move(link->begin()->second) : wallet_link::from_address(item.address), string(), (uint32_t)result.outputs.size(), decimal(item.value)));
 				}
 				if (input_value > total_value)
 					result.requires_output(coin_utxo(wallet_link(possible_inputs->front().link), string(), (uint32_t)result.outputs.size(), decimal(input_value - total_value)));

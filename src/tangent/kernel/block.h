@@ -572,14 +572,17 @@ namespace tangent
 			queued_transaction& force_include_transaction(uptr<transaction>&& candidate);
 			include_decision decide_on_inclusion(const queued_transaction& candidate, const uint256_t& current_gas_limit, const uint256_t& max_gas_limit) const;
 			expects_lr<block_evaluation> evaluate_block(const replace_transaction_callback& callback);
-			expects_lr<block_checkpoint> checkpoint_solved_block(block_evaluation& solution, bool keep_reverted_transactions = true);
-			expects_lr<void> solve_evaluated_block(block_evaluation& evaluation);
-			expects_lr<void> verify_solved_block(const block_evaluation& solution, const algorithm::pubkeyhash_t& recovered_producer = algorithm::pubkeyhash_t());
+			expects_lr<void> solve_block(block_evaluation& evaluation);
+			expects_lr<void> verify_block(const block_evaluation& solution, const algorithm::pubkeyhash_t& recovered_producer = algorithm::pubkeyhash_t());
+			expects_lr<block_checkpoint> checkpoint_block(block_evaluation& solution, bool keep_reverted_transactions = true);
 			expects_lr<void> erase_failed_transactions();
-			bool requires_reorganization(const block_evaluation& solution) const;
 			bool can_accept_more_transactions();
+			static expects_lr<void> solve_evaluated_block(block_evaluation& evaluation, const algorithm::pubkeyhash_t& public_key_hash, const algorithm::seckey_t& secret_key);
+			static expects_lr<void> verify_solved_block(const block_header* parent_block, const block_evaluation& solution, const algorithm::pubkeyhash_t& recovered_producer = algorithm::pubkeyhash_t());
+			static expects_lr<block_checkpoint> checkpoint_solved_block(block_evaluation& solution, bool keep_reverted_transactions = true);
 			static queued_transaction precompute_transaction_element(uptr<transaction>&& candidate);
 			static void precompute_transaction_list(vector<queued_transaction>& candidates);
+			static bool requires_reorganization(const block_evaluation& solution);
 		};
 	}
 }
