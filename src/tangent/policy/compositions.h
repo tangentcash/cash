@@ -32,6 +32,7 @@ namespace tangent
 			expects_lr<void> to_signature(algorithm::composition::chashsig_t* output) const override;
 			expects_lr<void> verify_signature(const uint8_t* message, size_t message_size, const algorithm::composition::chashsig_t& signature, const algorithm::composition::cpubkey_t& public_key) const override;
 			algorithm::composition::phase next_phase() const override;
+			uint32_t steps_left() const override;
 			bool store(format::wo_stream* stream) const override;
 			bool load(format::ro_stream& stream) override;
 			bool may_transition_to(const compositor& next) const override;
@@ -51,6 +52,7 @@ namespace tangent
 			expects_lr<void> to_signature(algorithm::composition::chashsig_t* output) const override;
 			expects_lr<void> verify_signature(const uint8_t* message, size_t message_size, const algorithm::composition::chashsig_t& signature, const algorithm::composition::cpubkey_t& public_key) const override;
 			algorithm::composition::phase next_phase() const override;
+			uint32_t steps_left() const override;
 			bool store(format::wo_stream* stream) const override;
 			bool load(format::ro_stream& stream) override;
 			bool may_transition_to(const compositor& next) const override;
@@ -82,6 +84,7 @@ namespace tangent
 			expects_lr<void> verify_signature(const uint8_t* message, size_t message_size, const algorithm::composition::chashsig_t& signature, const algorithm::composition::cpubkey_t& public_key) const override;
 			expects_lr<void> verify_signature_set_recovery_id(const uint8_t* message, size_t message_size, algorithm::composition::chashsig_t& signature, const algorithm::composition::cpubkey_t& public_key) const;
 			algorithm::composition::phase next_phase() const override;
+			uint32_t steps_left() const override;
 			bool store(format::wo_stream* stream) const override;
 			bool load(format::ro_stream& stream) override;
 			bool may_transition_to(const compositor& next) const override;
@@ -108,6 +111,7 @@ namespace tangent
 			expects_lr<void> to_signature(algorithm::composition::chashsig_t* output) const override;
 			expects_lr<void> verify_signature(const uint8_t* message, size_t message_size, const algorithm::composition::chashsig_t& signature, const algorithm::composition::cpubkey_t& public_key) const override;
 			algorithm::composition::phase next_phase() const override;
+			uint32_t steps_left() const override;
 			bool store(format::wo_stream* stream) const override;
 			bool load(format::ro_stream& stream) override;
 			bool may_transition_to(const compositor& next) const override;

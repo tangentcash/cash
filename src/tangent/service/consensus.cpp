@@ -3548,12 +3548,12 @@ namespace tangent
 				if (!result)
 				{
 					if (protocol::now().user.consensus.logging)
-						VI_INFO("mpc entropy shares distribution failed: %s (participant: %s)", result.what().c_str(), algorithm::signing::encode_address(validator).c_str());
+						VI_INFO("mpc entropy shares distribution failed: %s (to: %s)", result.what().c_str(), algorithm::signing::encode_address(validator).c_str());
 
 					coreturn result.error();
 				}
 				else if (protocol::now().user.consensus.logging)
-					VI_INFO("mpc entropy shares distribution: OK (participant: %s)", algorithm::signing::encode_address(validator).c_str());
+					VI_INFO("mpc entropy shares distribution: OK (to: %s, shares: %i)", algorithm::signing::encode_address(validator).c_str(), (int)state.encrypted_shares.size());
 
 				coreturn expectation::met;
 			});
@@ -3602,12 +3602,12 @@ namespace tangent
 				if (!result)
 				{
 					if (protocol::now().user.consensus.logging)
-						VI_INFO("mpc entropy shares aggregation failed: %s (participant: %s)", result.what().c_str(), algorithm::signing::encode_address(validator).c_str());
+						VI_INFO("mpc entropy shares aggregation failed: %s (to: %s)", result.what().c_str(), algorithm::signing::encode_address(validator).c_str());
 
 					coreturn result.error();
 				}
 				else if (protocol::now().user.consensus.logging)
-					VI_INFO("mpc entropy shares aggregation: OK (participant: %s)", algorithm::signing::encode_address(validator).c_str());
+					VI_INFO("mpc entropy shares aggregation: OK (to: %s, shares: %i)", algorithm::signing::encode_address(validator).c_str(), (int)state.encrypted_shares.size());
 
 				coreturn expectation::met;
 			});
@@ -3688,12 +3688,12 @@ namespace tangent
 				if (!result)
 				{
 					if (protocol::now().user.consensus.logging)
-						VI_INFO("mpc entropy recovery failed: %s (participant: %s)", result.what().c_str(), algorithm::signing::encode_address(validator).c_str());
+						VI_INFO("mpc entropy recovery failed: %s (to: %s)", result.what().c_str(), algorithm::signing::encode_address(validator).c_str());
 
 					coreturn result.error();
 				}
 				else if (protocol::now().user.consensus.logging)
-					VI_INFO("mpc entropy recovery: OK (participant: %s)", algorithm::signing::encode_address(validator).c_str());
+					VI_INFO("mpc entropy recovery: OK (to: %s, entropies: %i, shares: %i)", algorithm::signing::encode_address(validator).c_str(), (int)state.encrypted_entropies.size(), (int)state.encrypted_shares.size());
 
 				coreturn expectation::met;
 			});
@@ -3746,12 +3746,12 @@ namespace tangent
 				if (!result)
 				{
 					if (protocol::now().user.consensus.logging)
-						VI_INFO("mpc public key aggregation failed: %s (participant: %s)", result.what().c_str(), algorithm::signing::encode_address(validator).c_str());
+						VI_INFO("mpc public key aggregation failed: %s (to: %s)", result.what().c_str(), algorithm::signing::encode_address(validator).c_str());
 
 					coreturn result.error();
 				}
 				else if (protocol::now().user.consensus.logging)
-					VI_INFO("mpc public key aggregation: OK (participant: %s)", algorithm::signing::encode_address(validator).c_str());
+					VI_INFO("mpc public key aggregation: OK (to: %s, shares: %i, stack: %i)", algorithm::signing::encode_address(validator).c_str(), (int)state.encrypted_shares.size(), state.compositor ? (int)state.compositor->steps_left() : 0);
 
 				coreturn expectation::met;
 			});
@@ -3829,12 +3829,12 @@ namespace tangent
 				if (!result)
 				{
 					if (protocol::now().user.consensus.logging)
-						VI_INFO("mpc signature aggregation failed: %s (participant: %s)", result.what().c_str(), algorithm::signing::encode_address(validator).c_str());
+						VI_INFO("mpc signature aggregation failed: %s (to: %s)", result.what().c_str(), algorithm::signing::encode_address(validator).c_str());
 
 					coreturn result.error();
 				}
 				else if (protocol::now().user.consensus.logging)
-					VI_INFO("mpc signature aggregation: OK (participant: %s)", algorithm::signing::encode_address(validator).c_str());
+					VI_INFO("mpc signature aggregation: OK (to: %s, stack: %i)", algorithm::signing::encode_address(validator).c_str(), state.compositor ? (int)state.compositor->steps_left() : 0);
 
 				coreturn expectation::met;
 			});
@@ -4260,6 +4260,8 @@ namespace tangent
 			this->validator = next;
 			auto result = aggregate_signature(this, executor, **state.message, *state.compositor);
 			this->validator = prev;
+			if (protocol::now().user.consensus.logging)
+				VI_INFO("mpc signature aggregate: %s (tx: %s, stack: %i)", result ? "OK" : result.error().what(), algorithm::encoding::encode_0xhex256(executor->receipt.transaction_hash).c_str(), state.compositor ? (int)state.compositor->steps_left() : 0);
 			return expects_promise_rt<void>(std::move(result));
 		}
 		expects_rt<void> local_dispatcher_context::aggregate_signature(ledger::dispatcher_context* dispatcher, const ledger::executor_context* executor, superchain::prepared_transaction& message, algorithm::composition::compositor* compositor)

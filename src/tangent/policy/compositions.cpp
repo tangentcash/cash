@@ -228,6 +228,10 @@ namespace tangent
 
 			return algorithm::composition::phase::finalized;
 		}
+		uint32_t ed25519_compositor::steps_left() const
+		{
+			return z_steps + r_steps + s_steps;
+		}
 		bool ed25519_compositor::store(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
@@ -296,7 +300,7 @@ namespace tangent
 			if (z_steps == next->z_steps && !group_public_key.equals(next->group_public_key))
 				return false;
 
-			return z_steps + r_steps + s_steps > next->z_steps + next->r_steps + next->s_steps;
+			return steps_left() > next->steps_left();
 		}
 
 		expects_lr<void> ed25519_clsag_compositor::setup_public_key(const uint8_t* new_message, size_t new_message_size, uint16_t new_participants)
@@ -388,6 +392,10 @@ namespace tangent
 
 			return algorithm::composition::phase::finalized;
 		}
+		uint32_t ed25519_clsag_compositor::steps_left() const
+		{
+			return z_steps;
+		}
 		bool ed25519_clsag_compositor::store(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
@@ -417,7 +425,7 @@ namespace tangent
 				return false;
 
 			/* Not implemented yet */
-			return z_steps > next->z_steps;
+			return steps_left() > next->steps_left();
 		}
 
 		expects_lr<void> secp256k1_compositor::setup_public_key(const uint8_t* new_message, size_t new_message_size, uint16_t new_participants)
@@ -856,6 +864,10 @@ namespace tangent
 
 			return algorithm::composition::phase::finalized;
 		}
+		uint32_t secp256k1_compositor::steps_left() const
+		{
+			return z_steps + r_steps + i_steps + s_steps;
+		}
 		bool secp256k1_compositor::store(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
@@ -949,7 +961,7 @@ namespace tangent
 			if (!group_paillier_key.empty() && !next->group_paillier_key.empty() && group_paillier_key != next->group_paillier_key)
 				return false;
 
-			return z_steps + r_steps + i_steps + s_steps > next->z_steps + next->r_steps + next->i_steps + next->s_steps;
+			return steps_left() > next->steps_left();
 		}
 
 		expects_lr<void> secp256k1_schnorr_compositor::setup_public_key(const uint8_t* new_message, size_t new_message_size, uint16_t new_participants)
@@ -1219,6 +1231,10 @@ namespace tangent
 
 			return algorithm::composition::phase::finalized;
 		}
+		uint32_t secp256k1_schnorr_compositor::steps_left() const
+		{
+			return z_steps + r_steps + s_steps;
+		}
 		bool secp256k1_schnorr_compositor::store(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
@@ -1289,7 +1305,7 @@ namespace tangent
 			if (z_steps == next->z_steps && !group_public_key.equals(next->group_public_key))
 				return false;
 
-			return z_steps + r_steps + s_steps > next->z_steps + next->r_steps + next->s_steps;
+			return steps_left() > next->steps_left();
 		}
 		expects_lr<algorithm::composition::cpubkey_t> secp256k1_schnorr_compositor::to_tweaked_public_key(const secp256k1_point_t& public_key, const secp256k1_scalar_t& tweak)
 		{

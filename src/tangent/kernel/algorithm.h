@@ -365,6 +365,7 @@ namespace tangent
 				virtual expects_lr<void> to_signature(chashsig_t* output) const = 0;
 				virtual expects_lr<void> verify_signature(const uint8_t* message, size_t message_size, const chashsig_t& signature, const cpubkey_t& public_key) const = 0;
 				virtual phase next_phase() const = 0;
+				virtual uint32_t steps_left() const = 0;
 				virtual bool store(format::wo_stream* stream) const = 0;
 				virtual bool load(format::ro_stream& stream) = 0;
 				virtual bool may_transition_to(const compositor& next) const = 0;

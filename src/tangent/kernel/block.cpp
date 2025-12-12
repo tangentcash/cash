@@ -3075,13 +3075,18 @@ namespace tangent
 
 		bool dispatcher_context::public_state::load_compositor_transition(format::ro_stream& stream)
 		{
-			auto state = algorithm::composition::load_compositor(stream, &alg);
+			auto state = algorithm::composition::make_compositor(alg);
 			if (!state)
 				return false;
 
-			if (compositor && *state && !(*compositor)->may_transition_to(***state))
+			auto& state_ptr = *state;
+			if (!state_ptr->load(stream))
 				return false;
 
+			if (compositor && !compositor->may_transition_to(**state_ptr))
+				return false;
+
+			compositor = std::move(state_ptr);
 			return true;
 		}
 		bool dispatcher_context::public_state::load(format::ro_stream& stream)
