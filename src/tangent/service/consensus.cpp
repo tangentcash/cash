@@ -938,7 +938,7 @@ namespace tangent
 				ledger::solver_context temp_solver;
 				temp_solver.apply_temporary_state(&temp_block, *candidate_tx, { });
 
-				auto validation = ledger::executor_context::execute_tx(&temp_solver, &temp_block, &temp_changelog, *candidate_tx, candidate_hash, owner, candidate_tx->as_message().data.size(), (uint8_t)ledger::executor_context::flags::pedantic);
+				auto validation = ledger::executor_context::execute_tx(&temp_solver, &temp_block, &temp_changelog, *candidate_tx, candidate_hash, owner, candidate_tx->as_message().data.size(), (uint8_t)ledger::executor_context::flags::pedantic | (uint8_t)ledger::executor_context::flags::replayable);
 				if (!validation)
 				{
 					if (protocol::now().user.consensus.logging)
