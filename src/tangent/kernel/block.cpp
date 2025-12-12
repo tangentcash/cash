@@ -752,6 +752,7 @@ namespace tangent
 			VI_ASSERT(solver != nullptr, "evaluation context should be set");
 			block_header::set_parent_block(parent_block);
 			auto position = std::find_if(solver->producers.begin(), solver->producers.end(), [&solver](const states::validator_production& a) { return a.owner == solver->state.public_key_hash; });
+			bool eligible = solver->state.executor.get_validator_production(solver->state.public_key_hash).or_else(states::validator_production(algorithm::pubkeyhash_t(), nullptr)).is_active();
 			priority = (uint64_t)(position == solver->producers.end() ? protocol::now().policy.production.max_per_block : std::distance(solver->producers.begin(), position));
 			difficulty = algorithm::wesolowski::scale(get_proof_slot_target(parent_block), get_proof_difficulty_multiplier());
 
@@ -808,13 +809,15 @@ namespace tangent
 			}
 
 			auto penalty = -fees[algorithm::asset::native()];
-			bool reward = solver->state.executor.get_validator_production(solver->state.public_key_hash).or_else(states::validator_production(algorithm::pubkeyhash_t(), nullptr)).is_active();
-			if (reward)
+			bool coinbase = solver->state.executor.get_validator_production(solver->state.public_key_hash).or_else(states::validator_production(algorithm::pubkeyhash_t(), nullptr)).is_active();
+			if (coinbase)
 			{
 				auto work = solver->state.executor.apply_validator_production(solver->state.public_key_hash, executor_context::staker::reward_or_penalty, std::move(fees));
 				if (!work)
 					return work.error();
 			}
+			else if (!eligible)
+				return layer_exception("block producer must be active");
 
 			for (size_t i = 0; i < (size_t)priority; i++)
 			{
@@ -884,7 +887,7 @@ namespace tangent
 
 			block_header input = *this, output = result.block;
 			if (input.as_message().data != output.as_message().data)
-				return layer_exception("resulting block deviates from pre-computed block");
+				return layer_exception("unproven state transition");
 
 			auto verification = solver.verify_block(result, producer);
 			if (!verification)
