@@ -1252,19 +1252,19 @@ namespace tangent
 			else if (listener->cooldown_id != INVALID_TASK_ID)
 			{
 				if (protocol::now().user.superchain.logging)
-					VI_INFO("%s server data collection: re-queued", algorithm::asset::name_of(listener->asset).c_str());
+					VI_INFO("%s node uplink: retrying connection", algorithm::asset::name_of(listener->asset).c_str());
 				listener->cooldown_id = INVALID_TASK_ID;
 			}
 			else if (listener->is_dry_run)
 			{
 				if (protocol::now().user.superchain.logging)
-					VI_INFO("%s server data collection: queued", algorithm::asset::name_of(listener->asset).c_str());
+					VI_INFO("%s node uplink: activation OK", algorithm::asset::name_of(listener->asset).c_str());
 				listener->is_dry_run = false;
 			}
 			else if (listener->options.will_wait_for_transactions())
 			{
 				if (protocol::now().user.superchain.logging)
-					VI_INFO("%s server data collection: waiting for updates in %is (total: %is)",
+					VI_INFO("%s node uplink: now sleeping %is (total: %is)",
 					algorithm::asset::name_of(listener->asset).c_str(),
 					(int)(listener->options.polling_frequency_ms / 1000),
 					(int)(listener->options.state.latest_time_awaited / 1000));
@@ -1280,7 +1280,7 @@ namespace tangent
 					if (info.error().is_retry())
 					{
 						if (protocol::now().user.superchain.logging)
-							VI_INFO("%s server data collection: finalized", algorithm::asset::name_of(listener->asset).c_str());
+							VI_INFO("%s node uplink: OK shutdown", algorithm::asset::name_of(listener->asset).c_str());
 
 						call_transaction_listener(listener);
 						coreturn_void;
@@ -1296,7 +1296,7 @@ namespace tangent
 							call_transaction_listener(listener);
 						});
 						if (protocol::now().user.superchain.logging)
-							VI_ERR("%s server data collection: waiting for connection (%s)", algorithm::asset::name_of(listener->asset).c_str(), info.error().what());
+							VI_ERR("%s node uplink: waiting for connection (%s)", algorithm::asset::name_of(listener->asset).c_str(), info.error().what());
 					}
 					else
 						listener->is_dead = true;
