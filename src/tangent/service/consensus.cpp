@@ -3208,14 +3208,15 @@ namespace tangent
 			}
 
 			unique.unlock();
-			if (is_syncing())
-				return true;
-
+			return get_sync_progress(candidate.block.number, *from) >= 1.0 ? post_full_sync_trigger(std::move(from), candidate.block, candidate_hash) : true;
+		}
+		bool server_node::post_full_sync_trigger(uref<relay>&& from, const ledger::block& candidate_block, const uint256_t& candidate_hash)
+		{
 			size_t notifications = notify_all_except(uref(from), descriptors::broadcast_block_hash(), { format::variable(candidate_hash) });
 			if (notifications > 0 && protocol::now().user.consensus.logging)
 				VI_DEBUG("block %s broadcasted to %i nodes (height: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)notifications, candidate.block.number);
 
-			auto timeout = std::min(candidate.block.get_proof_duration(), protocol::now().policy.pow.time);
+			auto timeout = std::min(candidate_block.get_proof_duration(), protocol::now().policy.pow.time);
 			schedule::get()->set_timeout(timeout, [this]() { run_block_dispatcher(); });
 			if (from && mempool.dirty)
 			{
