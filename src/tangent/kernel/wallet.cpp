@@ -186,10 +186,24 @@ namespace tangent
 		{
 			auto mempool = storages::mempoolstate();
 			auto chain = storages::chainstate();
+			auto next = mempool.get_highest_transaction_nonce(public_key_hash);
 			auto state = chain.get_uniform(states::account_nonce::as_instance_type(), nullptr, states::account_nonce::as_instance_index(public_key_hash), 0);
-			uint64_t pending_nonce = mempool.get_highest_transaction_nonce(public_key_hash).or_else(0);
-			uint64_t finalized_nonce = (state ? state->as<states::account_nonce>()->nonce : 0);
-			return std::max(finalized_nonce, pending_nonce);
+			auto* value = (states::account_nonce*)(state ? state->ptr() : nullptr);
+			if (value != nullptr)
+			{
+				auto nonce = std::max(value->nonce, next.or_else(0));
+				if (next && nonce >= value->nonce)
+				{
+					auto prev = mempool.get_lowest_transaction_nonce(public_key_hash);
+					next = !prev || *prev <= value->nonce ? nonce + 1 : value->nonce;
+				}
+				else
+					next = value->nonce;
+			}
+			else if (next)
+				*next += 1;
+
+			return next.or_else(0);
 		}
 		uptr<schema> wallet::as_schema() const
 		{

@@ -858,20 +858,14 @@ namespace tangent
 				VI_INFO("local account %s accepted", wallet.get_address().c_str());
 			return result;
 		}
-		expects_lr<void> server_node::accept_unsigned_transaction(uref<relay>&& from, uptr<ledger::transaction>&& candidate_tx, uint64_t* account_nonce, uint256_t* output_hash)
+		expects_lr<void> server_node::accept_local_transaction(uptr<ledger::transaction>&& candidate_tx, uint256_t* output_hash)
 		{
+			umutex<std::recursive_mutex> unique(sync.account);
 			auto& [node, wallet] = descriptor;
-			uint64_t overrider_account_nonce = 0;
-			if (!account_nonce)
-			{
-				umutex<std::recursive_mutex> unique(sync.account);
-				overrider_account_nonce = wallet.get_latest_nonce().or_else(0);
-				account_nonce = &overrider_account_nonce;
-			}
 			candidate_tx->set_optimal_gas(decimal::zero());
 			candidate_tx->gas_limit += 21000;
 
-			auto status = candidate_tx->sign(wallet.secret_key, *account_nonce, decimal::zero());
+			auto status = candidate_tx->sign(wallet.secret_key, wallet.get_latest_nonce().or_else(0), decimal::zero());
 			if (!status)
 			{
 				auto purpose = candidate_tx->as_typename();
@@ -881,12 +875,9 @@ namespace tangent
 				return status;
 			}
 
-			status = accept_transaction(uref(from), std::move(candidate_tx), false);
+			status = accept_transaction(nullptr, std::move(candidate_tx), false);
 			if (!status)
 				return status;
-
-			if (account_nonce != nullptr && *account_nonce == candidate_tx->nonce)
-				++(*account_nonce);
 
 			if (output_hash != nullptr)
 				*output_hash = candidate_tx->as_hash();
@@ -969,6 +960,7 @@ namespace tangent
 
 			uint256_t best_commitment_hash = 0;
 			btree_map<uint256_t, btree_set<algorithm::pubkeyhash_t>> attesters;
+			transactions::attestate::strip_commitments(&executor, batch->asset, batch->commitments);
 			auto verification = transactions::attestate::verify_proof_commitment(&executor, batch->asset, batch->commitments, best_commitment_hash, attesters);
 			if (!verification)
 				return verification;
@@ -981,7 +973,7 @@ namespace tangent
 			transaction->asset = batch->asset;
 			transaction->set_computed_proof(std::move(it->second), std::move(batch->commitments));
 			mempool.remove_attestation(attestation_hash);
-			accept_unsigned_transaction(nullptr, transaction);
+			accept_local_transaction(transaction);
 			return expectation::met;
 		}
 		expects_lr<void> server_node::accept_committed_attestation(uref<relay>&& from, const algorithm::asset_id& asset, const superchain::computed_transaction& proof, const algorithm::hashsig_t& signature)
@@ -1008,14 +1000,14 @@ namespace tangent
 			}
 
 			if (protocol::now().user.consensus.logging)
-				VI_INFO("transaction %s %.*s accepted", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data());
+				VI_INFO("transaction %s queued (type: %.*s, nonce: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data(), candidate_tx->nonce);
 
 			if (events.accept_transaction)
 				events.accept_transaction(candidate_hash, *candidate_tx, owner);
 
 			size_t notifications = notify_all_except(uref(from), descriptors::broadcast_transaction_hash(), { format::variable(candidate_hash) });
 			if (notifications > 0 && protocol::now().user.consensus.logging)
-				VI_DEBUG("transaction %s %.*s broadcasted to %i nodes", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data(), (int)notifications);
+				VI_DEBUG("transaction %s broadcasted to %i nodes (type: %.*s)", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)notifications, (int)purpose.size(), purpose.data());
 
 			run_block_production();
 			return expectation::met;
@@ -1674,7 +1666,7 @@ namespace tangent
 		expects_lr<void> server_node::dispatch_transaction_logs(const algorithm::asset_id& asset, const superchain::chain_supervisor_options& options, superchain::transaction_logs&& logs)
 		{
 			auto& [node, wallet] = descriptor;
-			for (auto& receipt : logs.finalized)
+			for (auto& receipt : logs.receipts)
 			{
 				algorithm::hashsig_t commitment_signature; uint256_t commitment_hash;
 				if (!transactions::attestate::commit_to_proof(receipt, wallet.secret_key, commitment_hash, commitment_signature))
@@ -2843,13 +2835,13 @@ namespace tangent
 				if (is_active() && (!tip || evaluation->block.number > tip->number || (evaluation->block.number == tip->number && evaluation->block.priority < tip->priority)))
 				{
 					if (protocol::now().user.consensus.logging)
-						VI_INFO("block %s solved (number: %" PRIu64", txns: %" PRIu64 ", leader: %" PRIu64 ", work: < ~%" PRIu64 " sec.)", algorithm::encoding::encode_0xhex256(evaluation->block.as_hash()).c_str(), evaluation->block.number, (uint64_t)solver.transactions.pending.size(), position + 1, current_node_solution_time / 1000 + 1);
+						VI_INFO("block %s solved (number: %" PRIu64", txns: %" PRIu64 ", leader: %" PRIu64 ", work: < ~%" PRIu64 " sec.)", algorithm::encoding::encode_0xhex256(evaluation->block.as_hash()).c_str(), evaluation->block.number, (uint64_t)evaluation->block.transactions.size(), position + 1, current_node_solution_time / 1000 + 1);
 
 					if (accept_block(nullptr, std::move(*evaluation), 0))
 						goto next_block;
 				}
 				else if (protocol::now().user.consensus.logging)
-					VI_WARN("block %s dismissed (number: %" PRIu64", txns: %" PRIu64 ", leader: %" PRIu64 ", work: < ~%" PRIu64 " sec. wasted)", algorithm::encoding::encode_0xhex256(evaluation->block.as_hash()).c_str(), evaluation->block.number, (uint64_t)solver.transactions.pending.size(), position + 1, current_node_solution_time / 1000 + 1);
+					VI_WARN("block %s dismissed (number: %" PRIu64", txns: %" PRIu64 ", leader: %" PRIu64 ", work: < ~%" PRIu64 " sec. wasted)", algorithm::encoding::encode_0xhex256(evaluation->block.as_hash()).c_str(), evaluation->block.number, (uint64_t)evaluation->block.transactions.size(), position + 1, current_node_solution_time / 1000 + 1);
 			});
 		}
 		bool server_node::run_block_dispatcher()
@@ -2869,11 +2861,8 @@ namespace tangent
 				auto& sendable_transactions = dispatcher.get_sendable_transactions();
 				if (!sendable_transactions.empty())
 				{
-					umutex<std::recursive_mutex> unique(sync.account);
-					auto& [node, wallet] = descriptor;
-					auto account_nonce = wallet.get_latest_nonce().or_else(0);
 					for (auto& transaction : sendable_transactions)
-						accept_unsigned_transaction(nullptr, std::move(transaction), &account_nonce);
+						accept_local_transaction(std::move(transaction));
 				}
 
 				auto status = dispatcher.checkpoint();
@@ -2881,13 +2870,17 @@ namespace tangent
 					VI_INFO("block dispatch: OK (height: %" PRIu64", txns: %" PRIu64 ", delayed: %" PRIu64 ", dropped: %" PRIu64 ")", tip.number, dispatcher.inputs.size(), dispatcher.repeaters.size(), dispatcher.errors.size());
 				else if (protocol::now().user.consensus.logging && !status)
 					VI_ERR("block dispatch failed: %s (height: %" PRIu64 ")", status.what().c_str(), tip.number);
-				
+
 				umutex<std::recursive_mutex> unique(sync.fork);
 				if (!witnesses.empty())
 				{
 					auto* server = superchain::server_node::get();
 					for (auto& [asset, block_height] : witnesses)
-						server->scan_from_block_height(asset, block_height);
+					{
+						auto earlist_block_height = server->get_earliest_scanned_block_height(asset);
+						if (!earlist_block_height || *earlist_block_height > block_height)
+							server->scan_from_block_height(asset, block_height);
+					}
 					witnesses.clear();
 				}
 				unique.unlock();
@@ -3235,7 +3228,7 @@ namespace tangent
 				if (transaction.receipt.successful)
 				{
 					if (protocol::now().user.consensus.logging)
-						VI_DEBUG("transaction %s %.*s finalized", algorithm::encoding::encode_0xhex256(transaction.transaction->as_hash()).c_str(), (int)purpose.size(), purpose.data());
+						VI_DEBUG("transaction %s finalized (type: %.*s)", algorithm::encoding::encode_0xhex256(transaction.transaction->as_hash()).c_str(), (int)purpose.size(), purpose.data());
 					fill_node_services();
 					run_block_production();
 				}
@@ -3245,7 +3238,7 @@ namespace tangent
 			else if (protocol::now().user.consensus.logging)
 			{
 				if (transaction.receipt.successful)
-					VI_DEBUG("transaction %s %.*s finalized", algorithm::encoding::encode_0xhex256(transaction.transaction->as_hash()).c_str(), (int)purpose.size(), purpose.data());
+					VI_DEBUG("transaction %s finalized (type: %.*s)", algorithm::encoding::encode_0xhex256(transaction.transaction->as_hash()).c_str(), (int)purpose.size(), purpose.data());
 				else
 					VI_ERR("transaction %s %.*s error: %s", algorithm::encoding::encode_0xhex256(transaction.transaction->as_hash()).c_str(), (int)purpose.size(), purpose.data(), transaction.receipt.get_error_messages().or_else(string("execution error")).c_str());
 			}

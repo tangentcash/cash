@@ -181,7 +181,7 @@ namespace tangent
 
 			return values;
 		}
-		expects_lr<void> superchainstate::add_incoming_transaction(const superchain::computed_transaction& value, bool finalized)
+		expects_lr<void> superchainstate::add_incoming_transaction(const superchain::computed_transaction& value)
 		{
 			format::wo_stream message;
 			if (!value.store(&message))
@@ -194,10 +194,9 @@ namespace tangent
 			map.push_back(var::set::binary(optimized_hash, sizeof(optimized_hash)));
 			map.push_back(var::set::string(value.transaction_id));
 			map.push_back(var::set::integer(value.block_id));
-			map.push_back(var::set::boolean(finalized));
 			map.push_back(var::set::binary(message.data));
 
-			auto cursor = get_storage().emplace_query(__func__, "INSERT INTO transactions (optimized_id, transaction_id, block_id, finalized, message) VALUES (?, ?, ?, ?, ?) ON CONFLICT (transaction_id) DO UPDATE SET external_id = (CASE WHEN external_id IS NOT NULL THEN external_id ELSE EXCLUDED.external_id END), block_id = EXCLUDED.block_id, finalized = EXCLUDED.finalized, message = EXCLUDED.message", &map);
+			auto cursor = get_storage().emplace_query(__func__, "INSERT INTO transactions (optimized_id, transaction_id, block_id, message) VALUES (?, ?, ?, ?) ON CONFLICT (transaction_id) DO UPDATE SET external_id = (CASE WHEN external_id IS NOT NULL THEN external_id ELSE EXCLUDED.external_id END), block_id = EXCLUDED.block_id, message = EXCLUDED.message", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -220,10 +219,9 @@ namespace tangent
 			map.push_back(var::set::binary(optimized_hash, sizeof(optimized_hash)));
 			map.push_back(var::set::string(value.transaction_id));
 			map.push_back(var::set::integer(value.block_id));
-			map.push_back(var::set::boolean(false));
 			map.push_back(var::set::binary(message.data));
 
-			auto cursor = get_storage().emplace_query(__func__, "INSERT INTO transactions (external_id, optimized_id, transaction_id, block_id, finalized, message) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (transaction_id) DO UPDATE SET external_id = (CASE WHEN external_id IS NOT NULL THEN external_id ELSE EXCLUDED.external_id END), block_id = EXCLUDED.block_id, finalized = EXCLUDED.finalized, message = EXCLUDED.message", &map);
+			auto cursor = get_storage().emplace_query(__func__, "INSERT INTO transactions (external_id, optimized_id, transaction_id, block_id, message) VALUES (?, ?, ?, ?, ?) ON CONFLICT (transaction_id) DO UPDATE SET external_id = (CASE WHEN external_id IS NOT NULL THEN external_id ELSE EXCLUDED.external_id END), block_id = EXCLUDED.block_id, message = EXCLUDED.message", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -253,36 +251,6 @@ namespace tangent
 				return expects_lr<superchain::computed_transaction>(layer_exception("witness transaction deserialization error"));
 
 			return value;
-		}
-		expects_lr<vector<superchain::computed_transaction>> superchainstate::finalize_computed_transactions(uint64_t block_height, uint64_t block_latency)
-		{
-			if (!block_height)
-				return expects_lr<vector<superchain::computed_transaction>>(layer_exception("invalid block height or block latency"));
-			else if (block_height <= block_latency)
-				return expects_lr<vector<superchain::computed_transaction>>(vector<superchain::computed_transaction>());
-
-			schema_list map;
-			map.push_back(var::set::integer(block_height - block_latency));
-
-			auto cursor = get_storage().emplace_query(__func__, "SELECT message FROM transactions WHERE block_id <= ? AND finalized = FALSE", &map);
-			if (!cursor || cursor->error())
-				return expects_lr<vector<superchain::computed_transaction>>(layer_exception(ledger::storage_util::error_of(cursor)));
-
-			auto& response = cursor->first();
-			size_t size = response.size();
-			vector<superchain::computed_transaction> values;
-			values.reserve(size);
-
-			for (size_t i = 0; i < size; i++)
-			{
-				superchain::computed_transaction value;
-				auto blob = response[i]["message"].get().get_blob();
-				auto message = format::ro_stream(blob);
-				if (value.load(message) && value.block_id > 0 && add_incoming_transaction(value, true))
-					values.emplace_back(std::move(value));
-			}
-
-			return expects_lr<vector<superchain::computed_transaction>>(std::move(values));
 		}
 		expects_lr<void> superchainstate::set_property(const std::string_view& key, uptr<schema>&& value)
 		{
@@ -575,11 +543,9 @@ namespace tangent
 				optimized_id BLOB DEFAULT NULL,
 				external_id BLOB DEFAULT NULL,
 				block_id BIGINT NOT NULL,
-				finalized BOOLEAN NOT NULL,
 				message BLOB NOT NULL,
   				PRIMARY KEY (transaction_id)
 			) WITHOUT ROWID;
-			CREATE INDEX IF NOT EXISTS transactions_block_id_finalized ON transactions (block_id, finalized);
 			CREATE TABLE IF NOT EXISTS links
 			(
 				owner BLOB(20) NOT NULL,

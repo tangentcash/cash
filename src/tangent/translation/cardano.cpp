@@ -170,7 +170,7 @@ namespace tangent
 							}
 						}
 
-						tx.outputs[new_output.as_hash()] = std::move(new_output);
+						tx.add_output(std::move(new_output));
 					}
 					else if (type == "input")
 					{
@@ -207,7 +207,7 @@ namespace tangent
 							}
 						}
 
-						tx.inputs[new_input.as_hash()] = std::move(new_input);
+						tx.add_input(std::move(new_input));
 					}
 				}
 
@@ -270,7 +270,7 @@ namespace tangent
 				}
 
 				if (is_coinbase)
-					tx.inputs[new_input.as_hash()] = std::move(new_input);
+					tx.add_input(std::move(new_input));
 
 				coreturn expects_rt<computed_transaction>(std::move(tx));
 			}

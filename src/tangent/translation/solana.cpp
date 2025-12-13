@@ -337,15 +337,13 @@ namespace tangent
 				for (auto& [address, values] : inputs)
 				{
 					auto target_link = discovery->find(address);
-					auto input = coin_utxo(target_link != discovery->end() ? target_link->second : wallet_link::from_address(address), std::move(values));
-					tx.inputs[input.as_hash()] = std::move(input);
+					tx.add_input(coin_utxo(target_link != discovery->end() ? target_link->second : wallet_link::from_address(address), std::move(values)));
 				}
 
 				for (auto& [address, values] : outputs)
 				{
 					auto target_link = discovery->find(address);
-					auto output = coin_utxo(target_link != discovery->end() ? target_link->second : wallet_link::from_address(address), std::move(values));
-					tx.outputs[output.as_hash()] = std::move(output);
+					tx.add_output(coin_utxo(target_link != discovery->end() ? target_link->second : wallet_link::from_address(address), std::move(values)));
 				}
 
 				coreturn expects_rt<computed_transaction>(std::move(tx));

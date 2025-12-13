@@ -347,7 +347,7 @@ namespace tangent
 						{
 							auto output = coawait(get_transaction_output(input->get_var("txid").get_blob(), input->get_var("vout").get_integer()));
 							if (output)
-								tx.inputs[output->as_hash()] = std::move(*output);
+								tx.add_input(std::move(*output));
 						}
 						else
 							is_coinbase = true;
@@ -356,16 +356,15 @@ namespace tangent
 
 				if (tx_outputs != nullptr)
 				{
-					size_t output_index = 0;
-					hash_set<size_t> resets;
+					uint64_t output_index = 0;
 					for (auto& output : tx_outputs->get_childs())
 					{
 						coin_utxo new_output;
 						new_output.transaction_id = tx.transaction_id;
 						new_output.value = output->get_var("value").get_decimal();
-						new_output.index = (uint32_t)(output->has("n") ? output->get_var("n").get_integer() : output_index);
-						if (new_output.index > (uint32_t)tx.outputs.size())
-							new_output.index = (uint32_t)output_index;
+						new_output.index = (uint64_t)(output->has("n") ? output->get_var("n").get_integer() : output_index);
+						if (new_output.index > (uint64_t)tx.outputs.size())
+							new_output.index = output_index;
 
 						bool is_standard_output = true;
 						auto receiver_addresses = get_output_addresses(output, &is_standard_output);
@@ -377,14 +376,11 @@ namespace tangent
 								new_output.link = std::move(it->second);
 						}
 						else
-							resets.insert(new_output.index);
+							new_output.value = decimal::nan();
 
-						tx.outputs[(size_t)new_output.index] = std::move(new_output);
+						tx.add_output(std::move(new_output));
 						++output_index;
 					}
-
-					for (auto& index : resets)
-						tx.outputs[index].value = decimal::nan();
 
 					for (auto it = tx.outputs.begin(); it != tx.outputs.end();)
 					{
@@ -401,7 +397,7 @@ namespace tangent
 					new_input.transaction_id = tx.transaction_id + "!";
 					new_input.value = tx.outputs.begin()->second.value;
 					new_input.index = (uint32_t)tx.inputs.size();
-					tx.inputs[new_input.as_hash()] = std::move(new_input);
+					tx.add_input(std::move(new_input));
 				}
 
 				coreturn expects_rt<computed_transaction>(std::move(tx));

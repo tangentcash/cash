@@ -1665,7 +1665,7 @@ public:
 			server->add_transaction_callback("logging", [&](const algorithm::asset_id& asset, const superchain::chain_supervisor_options& options, superchain::transaction_logs&& logs) -> expects_lr<void>
 			{
 				auto transactions = vector<uptr<ledger::transaction>>();
-				for (auto& receipt : logs.finalized)
+				for (auto& receipt : logs.receipts)
 				{
 					auto* transaction = memory::init<transactions::attestate>();
 					transaction->asset = asset;

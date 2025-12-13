@@ -392,6 +392,14 @@ namespace tangent
 			return "coin_utxo";
 		}
 
+		void computed_transaction::add_input(coin_utxo&& input)
+		{
+			inputs[input.as_hash()] = std::move(input);
+		}
+		void computed_transaction::add_output(coin_utxo&& output)
+		{
+			outputs[output.as_hash()] = std::move(output);
+		}
 		bool computed_transaction::store_payload(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
@@ -909,7 +917,7 @@ namespace tangent
 		}
 		uint64_t chain_supervisor_options::get_next_block_height()
 		{
-			return ++state.latest_block_height;
+			return state.latest_block_height++;
 		}
 		uint64_t chain_supervisor_options::get_time_awaited() const
 		{
@@ -917,7 +925,7 @@ namespace tangent
 		}
 		bool chain_supervisor_options::has_next_block_height() const
 		{
-			return state.current_block_height > state.latest_block_height + min_block_confirmations;
+			return state.current_block_height >= state.latest_block_height;
 		}
 		bool chain_supervisor_options::has_current_block_height() const
 		{

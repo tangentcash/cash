@@ -73,8 +73,7 @@
                 ],
                 "server": {
                     "props": ["p2pk", "p2sh_p2wpkh", "p2pkh", "p2wsh_p2pkh", "p2wpkh", "p2tr"],
-                    "tip": null,
-                    "delay": 0
+                    "tip": null
                 }
             }
         }

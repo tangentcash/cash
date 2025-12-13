@@ -27,10 +27,9 @@ namespace tangent
 			expects_lr<superchain::coin_utxo> get_stxo(const std::string_view& transaction_id, uint64_t index);
 			expects_lr<superchain::coin_utxo> get_utxo(const std::string_view& transaction_id, uint64_t index);
 			expects_lr<vector<superchain::coin_utxo>> get_utxos(const superchain::wallet_link& link, size_t offset, size_t count);
-			expects_lr<void> add_incoming_transaction(const superchain::computed_transaction& value, bool finalized);
+			expects_lr<void> add_incoming_transaction(const superchain::computed_transaction& value);
 			expects_lr<void> add_outgoing_transaction(const superchain::computed_transaction& value, const uint256_t& external_id);
 			expects_lr<superchain::computed_transaction> get_computed_transaction(const std::string_view& transaction_id, const uint256_t& external_id, const uint256_t& optimized_id);
-			expects_lr<vector<superchain::computed_transaction>> finalize_computed_transactions(uint64_t block_height, uint64_t block_latency);
 			expects_lr<void> set_property(const std::string_view& key, uptr<schema>&& value);
 			expects_lr<schema*> get_property(const std::string_view& key);
 			expects_lr<void> set_cache(superchain::cache_policy policy, const std::string_view& key, uptr<schema>&& value);

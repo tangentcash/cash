@@ -236,7 +236,7 @@ namespace tangent
 							auto& key_offset = input.key_offsets[info.key_offset_indices[i]];
 							auto utxo = get_utxo(to_string(key_offset, 16), 0);
 							if (utxo)
-								result.inputs[utxo->as_hash()] = std::move(*utxo);
+								result.add_input(std::move(*utxo));
 						}
 					}
 					else
@@ -343,7 +343,7 @@ namespace tangent
 								new_output.link = link.second;
 								new_output.value = value;
 								new_output.index = (uint64_t)i;
-								result.outputs[new_output.as_hash()] = std::move(new_output);
+								result.add_output(std::move(new_output));
 							}
 						}
 
@@ -379,7 +379,7 @@ namespace tangent
 					new_output.link = links->begin()->second;
 					new_output.value = from_baseline_value(output.amount);
 					new_output.index = (uint64_t)output_index;
-					result.outputs[new_output.as_hash()] = std::move(new_output);
+					result.add_output(std::move(new_output));
 				}
 
 				if (result.inputs.empty() && result.outputs.empty())
@@ -421,13 +421,13 @@ namespace tangent
 				{
 					coin_utxo new_input;
 					new_input.value = receiving_value - sending_value;
-					result.inputs[new_input.as_hash()] = std::move(new_input);
+					result.add_input(std::move(new_input));
 				}
 				else if (sending_value > receiving_value)
 				{
 					coin_utxo new_output;
 					new_output.value = sending_value - receiving_value;
-					result.outputs[new_output.as_hash()] = std::move(new_output);
+					result.add_output(std::move(new_output));
 				}
 
 				coreturn expects_rt<computed_transaction>(std::move(result));

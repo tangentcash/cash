@@ -2664,27 +2664,9 @@ namespace tangent
 			algorithm::pubkeyhash_t owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
 				return server_response().error(error_codes::bad_params, "owner address not valid");
-
-			auto mempool = storages::mempoolstate();
-			auto chain = storages::chainstate();
-			auto next = mempool.get_highest_transaction_nonce(owner);
-			auto state = chain.get_uniform(states::account_nonce::as_instance_type(), nullptr, states::account_nonce::as_instance_index(owner), 0);
-			auto* value = (states::account_nonce*)(state ? state->ptr() : nullptr);
-			if (value != nullptr)
-			{
-				auto nonce = std::max(value->nonce, next.or_else(0));
-				if (next && nonce >= value->nonce)
-				{
-					auto prev = mempool.get_lowest_transaction_nonce(owner);
-					next = !prev || *prev <= value->nonce ? nonce + 1 : value->nonce;
-				}
-				else
-					next = value->nonce;
-			}
-			else if (next)
-				*next += 1;
-
-			return server_response().success(var::set::integer(next.or_else(0)));
+			
+			auto wallet = ledger::wallet::from_public_key_hash(owner);
+			return server_response().success(var::set::integer(wallet.get_latest_nonce().or_else(0)));
 		}
 		server_response server_node::mempoolstate_get_transactions(http::connection* base, format::variables&& args)
 		{

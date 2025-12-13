@@ -2196,9 +2196,9 @@ namespace tangent
 				{
 					algorithm::pubkeyhash_t attester;
 					if (!algorithm::signing::recover_hash(commitment_hash, attester, signature))
-						return layer_exception("invalid commitment signature");
+						return layer_exception("commitment signature does not recover attester");
 					else if (duplicates.find(attester) != duplicates.end())
-						return layer_exception("duplicate commitment attester");
+						return layer_exception("multiple signatures from same attester");
 
 					attesters[commitment_hash].insert(attester);
 					duplicates.insert(attester);
@@ -2209,11 +2209,11 @@ namespace tangent
 				for (auto& attester : attesters[commitment_hash])
 				{
 					auto attestation = executor->get_verified_validator_attestation(asset, attester);
-					if (attestation)
-					{
-						commitment_stake += attestation->stake;
-						++commitment_size;
-					}
+					if (!attestation)
+						return layer_exception("commitment attester must be active");
+
+					commitment_stake += attestation->stake;
+					++commitment_size;
 				}
 
 				if (commitment_stake > best_commitment_stake)
@@ -2248,6 +2248,46 @@ namespace tangent
 				return layer_exception("proof requires better attestations");
 
 			return expectation::met;
+		}
+		void attestate::strip_commitments(const ledger::executor_context* executor, const algorithm::asset_id& asset, btree_map<uint256_t, btree_set<algorithm::hashsig_t>>& commitments)
+		{
+			btree_set<algorithm::pubkeyhash_t> duplicates;
+			btree_map<uint256_t, btree_set<algorithm::hashsig_t>> stripped_out;
+			for (auto& [commitment_hash, signatures] : commitments)
+			{
+				for (auto& signature : signatures)
+				{
+					algorithm::pubkeyhash_t attester;
+					if (!algorithm::signing::recover_hash(commitment_hash, attester, signature))
+					{
+					strip_out:
+						stripped_out[commitment_hash].insert(signature);
+						continue;
+					}
+					else if (duplicates.find(attester) != duplicates.end())
+						goto strip_out;
+
+					auto attestation = executor->get_verified_validator_attestation(asset, attester);
+					if (!attestation)
+						goto strip_out;
+
+					duplicates.insert(attester);
+				}
+			}
+
+			for (auto& [commitment_hash, signatures] : stripped_out)
+			{
+				for (auto& signature : signatures)
+					commitments[commitment_hash].erase(signature);
+			}
+
+			for (auto it = commitments.begin(); it != commitments.end();)
+			{
+				if (it->second.empty())
+					it = commitments.erase(it);
+				else
+					++it;
+			}
 		}
 		bool attestate::commit_to_proof(const superchain::computed_transaction& new_proof, const algorithm::seckey_t& secret_key, uint256_t& commitment_hash, algorithm::hashsig_t& signature)
 		{

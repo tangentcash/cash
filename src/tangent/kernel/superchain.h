@@ -142,6 +142,8 @@ namespace tangent
 			uint64_t block_id;
 
 			computed_transaction() = default;
+			void add_input(coin_utxo&& input);
+			void add_output(coin_utxo&& output);
 			bool store_payload(format::wo_stream* stream) const override;
 			bool load_payload(format::ro_stream& stream) override;
 			bool is_valid() const;
@@ -217,8 +219,7 @@ namespace tangent
 
 		struct transaction_logs
 		{
-			vector<computed_transaction> pending;
-			vector<computed_transaction> finalized;
+			vector<computed_transaction> receipts;
 			uint64_t block_height = (uint64_t)-1;
 			string block_hash;
 		};
@@ -256,7 +257,6 @@ namespace tangent
 		struct supervisor_options
 		{
 			uint64_t polling_frequency_ms = 70000;
-			uint64_t min_block_confirmations = 0;
 		};
 
 		struct chain_supervisor_options : supervisor_options

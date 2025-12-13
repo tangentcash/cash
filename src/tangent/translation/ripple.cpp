@@ -372,15 +372,9 @@ namespace tangent
 					outputs[token_asset] = token_value;
 				}
 				if (!inputs.empty())
-				{
-					auto input = coin_utxo(target_from_link != discovery->end() ? target_from_link->second : wallet_link::from_address(from), std::move(inputs));
-					tx.inputs[input.as_hash()] = std::move(input);
-				}
+					tx.add_input(coin_utxo(target_from_link != discovery->end() ? target_from_link->second : wallet_link::from_address(from), std::move(inputs)));	
 				if (!outputs.empty())
-				{
-					auto output = coin_utxo(std::move(to_link), std::move(outputs));
-					tx.outputs[output.as_hash()] = std::move(output);
-				}
+					tx.add_output(coin_utxo(std::move(to_link), std::move(outputs)));		
 				coreturn expects_rt<computed_transaction>(std::move(tx));
 			}
 			expects_promise_rt<decimal> ripple::calculate_balance(const algorithm::asset_id& for_asset, const wallet_link& link)

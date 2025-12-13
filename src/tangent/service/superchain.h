@@ -89,6 +89,7 @@ namespace tangent
 			expects_lr<void> enable_link(const algorithm::asset_id& asset, const wallet_link& link);
 			expects_lr<void> disable_link(const algorithm::asset_id& asset, const wallet_link& link);
 			expects_lr<wallet_link> normalize_link(const algorithm::asset_id& asset, const wallet_link& link);
+			expects_lr<uint64_t> get_earliest_scanned_block_height(const algorithm::asset_id& asset);
 			expects_lr<uint64_t> get_latest_known_block_height(const algorithm::asset_id& asset);
 			expects_lr<wallet_link> get_link(const algorithm::asset_id& asset, const std::string_view& address);
 			expects_lr<hash_map<string, wallet_link>> get_links_by_public_keys(const algorithm::asset_id& asset, const hash_set<string>& public_keys);

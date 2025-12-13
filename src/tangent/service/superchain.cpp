@@ -83,10 +83,6 @@ namespace tangent
 				if (polling_frequency != nullptr && polling_frequency->value.is(var_type::integer))
 					options.polling_frequency_ms = polling_frequency->value.get_integer();
 
-				auto* block_confirmations = config->fetch("strategy.block_confirmations");
-				if (block_confirmations != nullptr && block_confirmations->value.is(var_type::integer))
-					options.min_block_confirmations = block_confirmations->value.get_integer();
-
 				auto* protocols = config->get("protocols");
 				if (protocols != nullptr)
 				{
@@ -142,10 +138,6 @@ namespace tangent
 						auto* tip = root->fetch("server.tip");
 						if (tip != nullptr && tip->value.is(var_type::integer))
 							scan_from_block_height(asset, tip->value.get_integer());
-
-						block_confirmations = root->fetch("server.delay");
-						if (block_confirmations != nullptr && block_confirmations->value.is(var_type::integer))
-							options.add_specific_options(root->key).min_block_confirmations = block_confirmations->value.get_integer();
 					}
 				}
 			}
@@ -287,8 +279,13 @@ namespace tangent
 			if (!provider)
 				coreturn expects_rt<transaction_logs>(remote_exception("node not found"));
 
-			uptr<schema> tip_checkpoint, tip_latest, tip_override;
+			uptr<schema> tip_checkpoint, tip_earliest, tip_latest, tip_override;
 			bool is_dry_run = !options->has_latest_block_height();
+			auto to_delayed_block_height = [&](uint64_t block_height, bool zero_as_min)
+			{
+				auto latency = implementation->get_chainparams().sync_latency;
+				return block_height > latency ? block_height - latency : (zero_as_min ? 0 : 1);
+			};
 			implementation->interact = [options](server_relay* service) { options->state.interactions.insert(service); };
 			options->state.interactions.clear();
 			{
@@ -297,6 +294,7 @@ namespace tangent
 				if (tip_checkpoint)
 					options->set_checkpoint_from_block((uint64_t)std::max<int64_t>(1, tip_checkpoint->value.get_integer()) - 1);
 
+				tip_earliest = uptr<schema>(state.get_property("TIP:EARLIEST"));
 				tip_latest = uptr<schema>(state.get_property("TIP:LATEST"));
 				if (tip_latest && (uint64_t)tip_latest->value.get_integer() > options->state.latest_block_height)
 					options->set_checkpoint_from_block((uint64_t)tip_latest->value.get_integer());
@@ -304,7 +302,7 @@ namespace tangent
 				tip_override = uptr<schema>(state.get_property("TIP:OVERRIDE"));
 				if (tip_override)
 				{
-					uint64_t tip = (uint64_t)tip_override->value.get_integer();
+					uint64_t tip = to_delayed_block_height((uint64_t)tip_override->value.get_integer(), false);
 					options->state.starting_block_height = tip;
 					options->set_checkpoint_from_block(tip);
 				}
@@ -316,6 +314,8 @@ namespace tangent
 				auto latest_block_height = coawait(implementation->get_latest_block_height());
 				if (!latest_block_height)
 					coreturn expects_rt<transaction_logs>(std::move(latest_block_height.error()));
+
+				*latest_block_height = to_delayed_block_height(*latest_block_height, true);
 				options->set_checkpoint_to_block(*latest_block_height);
 				if (is_dry_run && !*latest_block_height)
 					is_dry_run = false;
@@ -327,11 +327,12 @@ namespace tangent
 					coreturn expects_rt<transaction_logs>(transaction_logs());
 				else if (!coawait(provider->yield_for_discovery(options)))
 					coreturn expects_rt<transaction_logs>(remote_exception::retry());
+
 				goto retry;
 			}
 
 			transaction_logs logs;
-			logs.block_height = tip_override ? (uint64_t)tip_override->value.get_integer() : options->get_next_block_height();
+			logs.block_height = options->get_next_block_height();
 			logs.block_hash = to_string(logs.block_height);
 
 			auto transactions = uptr<schema>(coawait(implementation->get_block_transactions(logs.block_height, &logs.block_hash)));
@@ -341,13 +342,15 @@ namespace tangent
 				{
 					auto computed = coawait(implementation->link_transaction(logs.block_height, logs.block_hash, item));
 					if (computed)
-						logs.pending.push_back(std::move(*computed));
+						logs.receipts.push_back(std::move(*computed));
 				}
 			}
 
 			storages::superchainstate state = storages::superchainstate(asset);
 			if (!tip_checkpoint || (uint64_t)tip_checkpoint->value.get_integer() != logs.block_height)
 				state.set_property("TIP:CHECKPOINT", var::set::integer(logs.block_height));
+			if (!tip_earliest || (uint64_t)tip_earliest->value.get_integer() > logs.block_height && logs.block_height > 0)
+				state.set_property("TIP:EARLIEST", var::set::integer(logs.block_height));
 			if (!tip_latest || (uint64_t)tip_latest->value.get_integer() != options->state.latest_block_height)
 				state.set_property("TIP:LATEST", var::set::integer(options->state.latest_block_height));
 			if (tip_override)
@@ -356,19 +359,15 @@ namespace tangent
 			auto* utxo_implementation = relay_backend_utxo::from_relay(implementation);
 			auto* server = server_node::get();
 			hash_set<string> transaction_ids;
-			for (auto& new_transaction : logs.pending)
+			for (auto& new_transaction : logs.receipts)
 			{
 				new_transaction.block_id = logs.block_height;
 				server->normalize_transaction_id(asset, &new_transaction.transaction_id);
-				state.add_incoming_transaction(new_transaction, false);
+				state.add_incoming_transaction(new_transaction);
 				transaction_ids.insert(algorithm::asset::handle_of(asset) + ":" + new_transaction.transaction_id);
 				if (utxo_implementation != nullptr)
 					utxo_implementation->update_utxo(new_transaction);
 			}
-
-			auto approvals = state.finalize_computed_transactions(logs.block_height, implementation->get_chainparams().sync_latency);
-			if (approvals)
-				logs.finalized = std::move(*approvals);
 
 			coreturn expects_rt<transaction_logs>(std::move(logs));
 		}
@@ -916,6 +915,18 @@ namespace tangent
 
 			return layer_exception("link not found");
 		}
+		expects_lr<uint64_t> server_node::get_earliest_scanned_block_height(const algorithm::asset_id& asset)
+		{
+			if (!algorithm::asset::is_aux(asset))
+				return expects_lr<uint64_t>(layer_exception("asset not found"));
+
+			storages::superchainstate state = storages::superchainstate(asset);
+			auto earliest_block_height = uptr<schema>(state.get_property("TIP:EARLIEST"));
+			if (!earliest_block_height || !earliest_block_height->value.is(var_type::integer))
+				return expects_lr<uint64_t>(layer_exception("block not found"));
+
+			return expects_lr<uint64_t>((uint64_t)earliest_block_height->value.get_integer());
+		}
 		expects_lr<uint64_t> server_node::get_latest_known_block_height(const algorithm::asset_id& asset)
 		{
 			if (!algorithm::asset::is_aux(asset))
@@ -1302,7 +1313,7 @@ namespace tangent
 						listener->is_dead = true;
 					coreturn_void;
 				}
-				else if (info->finalized.empty() && info->pending.empty())
+				else if (info->receipts.empty())
 				{
 					if (!info->block_hash.empty())
 					{
@@ -1326,17 +1337,14 @@ namespace tangent
 					info->block_hash.c_str(),
 					(int)info->block_height,
 					listener->options.get_checkpoint_percentage(),
-					(int)info->pending.size() + (int)info->finalized.size());
+					(int)info->receipts.size());
 
 				if (protocol::now().user.superchain.logging)
 				{
-					for (auto& tx : info->pending)
-						VI_INFO("%s transaction %s found (block: %" PRIu64 ", status: pending)", algorithm::asset::name_of(listener->asset).c_str(), tx.transaction_id.c_str(), tx.block_id);
-
-					for (auto& tx : info->finalized)
+					for (auto& tx : info->receipts)
 					{
 						string transfer_logs = stringify::text(
-							"%s transaction %s found (block: %" PRIu64 ", status: finalized)\n",
+							"%s transaction %s found (block: %" PRIu64 ")\n",
 							algorithm::asset::name_of(listener->asset).c_str(),
 							tx.transaction_id.c_str(), tx.block_id);
 						for (auto& [hash, input] : tx.inputs)

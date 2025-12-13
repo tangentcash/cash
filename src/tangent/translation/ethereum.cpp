@@ -589,14 +589,14 @@ namespace tangent
 				{
 					auto target_link = discovery->find(address);
 					auto input = coin_utxo(target_link != discovery->end() ? target_link->second : wallet_link::from_address(address), std::move(values));
-					result.inputs[input.as_hash()] = std::move(input);
+					result.add_input(std::move(input));
 				}
 
 				for (auto& [address, values] : outputs)
 				{
 					auto target_link = discovery->find(address);
 					auto output = coin_utxo(target_link != discovery->end() ? target_link->second : wallet_link::from_address(address), std::move(values));
-					result.outputs[output.as_hash()] = std::move(output);
+					result.add_output(std::move(output));
 				}
 
 				coreturn expects_rt<computed_transaction>(std::move(result));
