@@ -4203,8 +4203,6 @@ namespace tangent
 			size_t recovery_group = group.size() - 1;
 			if (encrypted_shares.size() != recovery_group)
 				return remote_exception("encrypted group shares count mismatch");
-			else if (secret->shares.size() >= encrypted_shares.size())
-				return expectation::met;
 
 			btree_set<algorithm::share_t> shares;
 			if (!algorithm::signing::split_secret_into_shares(secret->entropy.data, algorithm::signing::recovery_threshold(recovery_group), (uint8_t)recovery_group, shares))
@@ -4216,6 +4214,7 @@ namespace tangent
 				return remote_exception("group share recovery check failed");
 
 			auto share = shares.begin();
+			auto new_shares = btree_map<algorithm::pubkeyhash_t, secret_entropy::share_pair>();
 			auto& runner_wallet = dispatcher->get_runner_wallet();
 			for (auto& [public_key, encrypted_share] : encrypted_shares)
 			{
@@ -4235,12 +4234,12 @@ namespace tangent
 				if (!result)
 					return remote_exception("group share encryption failed");
 
-				secret->shares[participant].output = *share;
+				new_shares[participant].output = *share;
 				encrypted_share = std::move(*result);
 				++share;
 			}
 
-			secret = dispatcher->apply_secret_entropy(secret->asset, secret->manager, secret->owner, secret->entropy, std::move(secret->shares));
+			secret = dispatcher->apply_secret_entropy(secret->asset, secret->manager, secret->owner, secret->entropy, std::move(new_shares));
 			if (!secret)
 				return remote_exception(std::move(secret.error().message()));
 
