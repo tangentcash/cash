@@ -2572,6 +2572,7 @@ namespace tangent
 				auto distribution_state = ledger::dispatcher_context::entropy_distribution_state();
 				while (!state.participants.empty())
 				{
+					auto target = state.encrypted_shares.end();
 					distribution_state.encrypted_shares.clear();
 					for (auto it = state.encrypted_shares.begin(); it != state.encrypted_shares.end(); it++)
 					{
@@ -2580,10 +2581,13 @@ namespace tangent
 						if (participant == *state.participants.begin())
 						{
 							distribution_state.encrypted_shares = it->second;
+							target = it;
 							break;
 						}
 					}
-					if (distribution_state.encrypted_shares.empty())
+					if (target == state.encrypted_shares.end())
+						coreturn remote_exception("participant requires group shares but none were shared");
+					else if (distribution_state.encrypted_shares.empty())
 						coreturn remote_exception("participant requires group shares but none were found");
 
 					auto result = coawait(dispatcher->distribute_entropy_shares(executor, distribution_state, *state.participants.begin()));
