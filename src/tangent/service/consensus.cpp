@@ -2865,6 +2865,9 @@ namespace tangent
 						accept_local_transaction(std::move(transaction));
 				}
 
+				for (auto& [transaction_hash, error] : dispatcher.errors)
+					VI_ERR("transaction %s dispatch failed: %s", algorithm::encoding::encode_0xhex256(transaction_hash).c_str(), error.c_str());
+
 				auto status = dispatcher.checkpoint();
 				if (protocol::now().user.consensus.logging && status && !dispatcher.inputs.empty())
 					VI_INFO("block dispatch: OK (height: %" PRIu64", txns: %" PRIu64 ", delayed: %" PRIu64 ", dropped: %" PRIu64 ")", tip.number, dispatcher.inputs.size(), dispatcher.repeaters.size(), dispatcher.errors.size());

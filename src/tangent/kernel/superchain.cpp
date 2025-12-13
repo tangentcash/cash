@@ -955,7 +955,7 @@ namespace tangent
 			double current_value = (double)(state.latest_block_height - state.starting_block_height);
 			double target_value = (double)(state.current_block_height - state.starting_block_height);
 			double percentage = multiplier * current_value / target_value;
-			return std::max(std::floor(percentage * multiplier) / multiplier, multiplier);
+			return std::min(std::floor(percentage * multiplier) / multiplier, multiplier);
 		}
 		const hash_set<server_relay*>& chain_supervisor_options::get_interacted_nodes() const
 		{
