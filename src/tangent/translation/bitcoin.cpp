@@ -721,7 +721,7 @@ namespace tangent
 						return status.error();
 				}
 
-				for (auto& [hash, input] : prepared.inputs)
+				for (auto& [input_hash, input] : prepared.inputs)
 				{
 					auto hash = prepare_transaction_input(context, input.utxo, input.index);
 					if (!hash)
