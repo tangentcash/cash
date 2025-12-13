@@ -539,6 +539,7 @@ namespace tangent
 		uint256_t prepared_transaction::signable_coin_utxo::as_hash() const
 		{
 			format::wo_stream result;
+			result.write_integer(index);
 			result.write_integer((uint8_t)alg);
 			result.write_string_raw(std::string_view((char*)public_key.data(), public_key.size()));
 			result.write_string_raw(std::string_view((char*)signature.data(), signature.size()));
@@ -552,6 +553,7 @@ namespace tangent
 			signable_coin_utxo item;
 			item.utxo = std::move(input);
 			item.alg = new_alg;
+			item.index = (uint8_t)inputs.size();
 			item.public_key = new_public_key;
 			item.message.resize(new_message_size);
 			memcpy(item.message.data(), new_message, new_message_size);
@@ -595,6 +597,7 @@ namespace tangent
 			stream->write_integer((uint32_t)inputs.size());
 			for (auto& [hash, item] : inputs)
 			{
+				stream->write_integer(item.index);
 				stream->write_integer((uint8_t)item.alg);
 				stream->write_string(std::string_view((char*)item.public_key.data(), item.public_key.size()));
 				stream->write_string(std::string_view((char*)item.signature.data(), item.signature.size()));
@@ -622,6 +625,9 @@ namespace tangent
 			for (size_t i = 0; i < inputs_size; i++)
 			{
 				signable_coin_utxo next;
+				if (!stream.read_integer(stream.read_type(), &next.index))
+					return false;
+
 				if (!stream.read_integer(stream.read_type(), (uint8_t*)&next.alg))
 					return false;
 
@@ -746,6 +752,7 @@ namespace tangent
 				signer->set("public_key", input.public_key.empty() ? var::null() : var::string(format::util::encode_0xhex(std::string_view((char*)input.public_key.data(), input.public_key.size()))));
 				signer->set("signature", input.signature.empty() ? var::null() : var::string(format::util::encode_0xhex(std::string_view((char*)input.signature.data(), input.signature.size()))));
 				signer->set("message", var::string(format::util::encode_0xhex(std::string_view((char*)input.message.data(), input.message.size()))));
+				signer->set("index", var::integer(input.index));
 				signer->set("finalized", var::boolean(!input.signature.empty()));
 			}
 			schema* output_data = data->set("outputs", var::array());

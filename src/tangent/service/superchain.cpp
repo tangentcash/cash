@@ -1326,7 +1326,7 @@ namespace tangent
 					}
 
 					for (auto& item : callbacks)
-						item.second(listener->asset, listener->options, std::move(*info)).report("failed to dispatch transaction logs");;
+						item.second(listener->asset, listener->options, std::move(*info)).report("failed to dispatch transaction logs");
 
 					call_transaction_listener(listener);
 					coreturn_void;

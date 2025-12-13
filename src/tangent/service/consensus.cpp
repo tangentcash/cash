@@ -2165,11 +2165,11 @@ namespace tangent
 						ledger::block_evaluation tip;
 						format::ro_stream block_message = format::ro_stream(block.as_string());
 						if (!tip.block.load(block_message))
-							coreturn remote_exception("fork block rejected");
+							coreturn remote_exception("block violates message protocol");
 
 						new_tip_number = tip.block.number + 1;
 						if (!accept_block(uref(new_tip.state), std::move(tip), new_tip_fork_hash))
-							coreturn remote_exception("fork block rejected");
+							coreturn remote_exception("block violates consensus protocol");
 						
 						if (!is_active())
 							break;
@@ -4253,8 +4253,6 @@ namespace tangent
 			this->validator = next;
 			auto result = aggregate_signature(this, executor, **state.message, *state.compositor);
 			this->validator = prev;
-			if (protocol::now().user.consensus.logging)
-				VI_INFO("mpc signature aggregate: %s (tx: %s, stack: %i)", result ? "OK" : result.error().what(), algorithm::encoding::encode_0xhex256(executor->receipt.transaction_hash).c_str(), state.compositor ? (int)state.compositor->steps_left() : 0);
 			return expects_promise_rt<void>(std::move(result));
 		}
 		expects_rt<void> local_dispatcher_context::aggregate_signature(ledger::dispatcher_context* dispatcher, const ledger::executor_context* executor, superchain::prepared_transaction& message, algorithm::composition::compositor* compositor)

@@ -3449,7 +3449,7 @@ namespace tangent
 						return fee_transfer.error();
 				}
 
-				auto token_value = parent_transaction->get_token_value(executor, parent->receipt);
+				auto token_value = parent_transaction->get_token_value(executor, parent->receipt) + (fee_asset == parent_transaction->asset ? fee_value : decimal::zero());
 				auto token_transfer = executor->apply_transfer(parent_transaction->asset, parent->receipt.from, decimal::zero(), -token_value);
 				if (!token_transfer)
 					return token_transfer.error();

@@ -446,8 +446,16 @@ namespace tangent
 				{
 					Cardano::Transaction verifier = Cardano::Transaction();
 					uint8_t dummy_private_key[XSK_LENGTH] = { 0 };
-					for (auto& [hash, input] : prepared.inputs)
+					for (size_t i = 0; i < prepared.inputs.size(); i++)
 					{
+						auto it = prepared.inputs.begin();
+						while (it != prepared.inputs.end() && it->second.index != (uint8_t)i)
+							++it;
+
+						if (it == prepared.inputs.end())
+							return layer_exception("input not found");
+
+						auto& [hash, input] = *it;
 						verifier.Body.TransactionInput.addInput(copy<std::string>(input.utxo.transaction_id), input.utxo.index);
 						verifier.addExtendedSigningKey(dummy_private_key);
 					}
@@ -462,10 +470,12 @@ namespace tangent
 					std::vector<Cardano::Transaction::Digest> digests;
 					verifier.build(&digests);
 
-					size_t input_index = 0;
 					for (auto& [hash, input] : prepared.inputs)
 					{
-						auto& digest = digests[input_index++];
+						if (input.index >= digests.size())
+							return layer_exception("invalid input index");
+							
+						auto& digest = digests[input.index];
 						if (input.message.size() != sizeof(digest.Hash) || memcmp(input.message.data(), digest.Hash, sizeof(digest.Hash)) != 0)
 							return layer_exception("invalid input message");
 					}

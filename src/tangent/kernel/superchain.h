@@ -171,6 +171,7 @@ namespace tangent
 				algorithm::composition::type alg = algorithm::composition::type::unknown;
 				vector<uint8_t> message;
 				coin_utxo utxo;
+				uint8_t index;
 
 				uint256_t as_hash() const;
 			};

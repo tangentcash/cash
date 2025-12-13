@@ -660,7 +660,7 @@ namespace tangent
 					if (!signing_public_key)
 						coreturn expects_rt<prepared_transaction>(remote_exception(std::move(signing_public_key.error().message())));
 
-					switch ((btc_tx_out_type)context.types[index++])
+					switch ((btc_tx_out_type)context.types[(uint8_t)index++])
 					{
 						case BTC_TX_WITNESS_V1_TAPROOT_KEYPATH:
 						case BTC_TX_WITNESS_V1_TAPROOT_SCRIPTPATH:
@@ -702,8 +702,16 @@ namespace tangent
 						return status.error();
 				}
 
-				for (auto& [hash, input] : prepared.inputs)
+				for (size_t i = 0; i < prepared.inputs.size(); i++)
 				{
+					auto it = prepared.inputs.begin();
+					while (it != prepared.inputs.end() && it->second.index != (uint8_t)i)
+						++it;
+
+					if (it == prepared.inputs.end())
+						return layer_exception("input not found");
+
+					auto& [hash, input] = *it;
 					auto link = find_linked_addresses({ input.utxo.link.address });
 					if (!link)
 						return layer_exception("input link not found");
@@ -713,19 +721,17 @@ namespace tangent
 						return status.error();
 				}
 
-				size_t index = 0;
-				for (auto& [input_hash, input] : prepared.inputs)
+				for (auto& [hash, input] : prepared.inputs)
 				{
-					auto hash = prepare_transaction_input(context, input.utxo, index);
+					auto hash = prepare_transaction_input(context, input.utxo, input.index);
 					if (!hash)
 						return hash.error();
 					else if (input.message.size() != hash->size() || memcmp(input.message.data(), hash->data(), hash->size()) != 0)
 						return layer_exception("invalid input message");
 
-					auto finalization = finalize_transaction_input(context, input, index);
+					auto finalization = finalize_transaction_input(context, input, input.index);
 					if (!finalization)
 						return finalization.error();
-					++index;
 				}
 
 				auto result = finalized_transaction(std::move(prepared), serialize_transaction_data(context), serialize_transaction_id(context));
