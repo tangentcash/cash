@@ -759,7 +759,6 @@ namespace tangent
 				current_gas_limit += item.candidate->gas_limit;
 			}
 
-			auto executionlog = string();
 			auto fees = btree_map<algorithm::asset_id, decimal>({ { algorithm::asset::native(), get_reward_value() } });
 			for (auto& item : solver->transactions.pending)
 			{
@@ -768,8 +767,10 @@ namespace tangent
 				auto execution = executor_context::execute_tx(solver, this, &solver->state.changelog, candidate_transaction, item.hash, item.owner, item.size, item.candidate->is_commitment() ? (uint8_t)executor_context::flags::pedantic : 0);
 				if (!execution)
 				{
+					if (protocol::now().user.consensus.logging)
+						VI_WARN("transaction %s execution error: %s", algorithm::encoding::encode_0xhex256(item.hash).c_str(), execution.error().what());
+
 					solver->transactions.failed.insert(item.hash);
-					executionlog.append(stringify::text("\n  in transaction %s execution error: %s", algorithm::encoding::encode_0xhex256(item.hash).c_str(), execution.error().what()));
 					while (candidate_transaction == *item.candidate && replace_transaction)
 					{
 						auto& current_gas_limit = item.candidate->is_commitment() ? commitment_gas_limit : transaction_gas_limit;
