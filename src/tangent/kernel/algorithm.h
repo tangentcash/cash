@@ -118,7 +118,6 @@ namespace tangent
 			};
 
 		public:
-			static distribution random(uint64_t difficulty, const std::string_view& seed);
 			static uint64_t calibrate(uint64_t confidence, uint64_t target_time = protocol::now().policy.pow.time);
 			static uint64_t adjust(uint64_t prev_difficulty, uint64_t prev_time, uint64_t target_index);
 			static uint64_t scale(uint64_t difficulty, const decimal& multiplier);

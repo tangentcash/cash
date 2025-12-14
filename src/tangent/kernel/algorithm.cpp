@@ -146,13 +146,6 @@ namespace tangent
 			return hashing::hash256i(std::string_view(data, sizeof(data)));
 		}
 
-		wesolowski::distribution wesolowski::random(uint64_t difficulty, const std::string_view& seed)
-		{
-			distribution result;
-			result.signature = evaluate(difficulty, seed);
-			result.value = hashing::hash256i(*crypto::hash(digests::sha512(), result.signature));
-			return result;
-		}
 		uint64_t wesolowski::calibrate(uint64_t confidence, uint64_t target_time)
 		{
 			uint64_t target_nonce = confidence;

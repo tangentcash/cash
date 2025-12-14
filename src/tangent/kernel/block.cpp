@@ -3297,9 +3297,11 @@ namespace tangent
 			auto chain = storages::chainstate();
 			return chain.dispatch(inputs, repeaters);
 		}
-		promise<void> dispatcher_context::dispatch_async(const block_header& target)
+		promise<void> dispatcher_context::dispatch_async(uint64_t block_number)
 		{
-			uint64_t block_number = target.number;
+			if (!block_number)
+				return promise<void>::null();
+
 			return coasync<void>([this, block_number]() -> promise<void>
 			{
 				size_t offset = 0, count = 512;
@@ -3328,13 +3330,13 @@ namespace tangent
 				coreturn_void;
 			});
 		}
-		void dispatcher_context::dispatch_sync(const block_header& target)
+		void dispatcher_context::dispatch_sync(uint64_t block_number)
 		{
 			size_t offset = 0, count = 512;
-			while (true)
+			while (block_number > 0)
 			{
 				auto chain = storages::chainstate();
-				auto candidates = chain.get_pending_block_transactions(target.number, offset, count);
+				auto candidates = chain.get_pending_block_transactions(block_number, offset, count);
 				if (!candidates || candidates->empty())
 					break;
 

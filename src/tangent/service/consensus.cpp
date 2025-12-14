@@ -26,6 +26,14 @@ namespace tangent
 			uint32_t length;
 		};
 
+		struct background_miner_state : reference<background_miner_state>
+		{
+			std::mutex mutex;
+			std::condition_variable condition;
+			ledger::block_evaluation evaluation;
+			expects_rt<void> solution = remote_exception::retry();
+		};
+
 		static option<socket_address> text_address_to_socket_address(const std::string_view& value)
 		{
 			auto ip_address = value.substr(0, value.find(':'));
@@ -2830,11 +2838,60 @@ namespace tangent
 					return candidate && !candidate->empty() ? candidate->front().reset() : nullptr;
 				});
 				if (!evaluation)
-					return evaluation.report("block dismissal");
+					return evaluation.report("block evaluation dismissal");
 
-				auto solution = solver.solve_block(*evaluation);
-				if (!solution)
-					return solution.report("block dismissal");
+				if (position > 0)
+				{
+					auto state = uref(new background_miner_state());
+					state->evaluation = std::move(*evaluation);
+					std::thread worker([state, &wallet]()
+					{
+						auto solution = ledger::solver_context::solve_evaluated_block(state->evaluation, wallet.public_key_hash, wallet.secret_key);
+						if (!solution)
+							return solution.report("block solution dismissal");
+
+						umutex<std::mutex> unique(state->mutex);
+						state->solution = solution ? expects_rt<void>(expectation::met) : expects_rt<void>(remote_exception(std::move(solution.error().message())));
+						state->condition.notify_one();
+					});
+					while (true)
+					{
+						std::unique_lock<std::mutex> unique(state->mutex);
+						if (state->condition.wait_for(unique, std::chrono::milliseconds(1000), [&chain, &state, &wallet]
+						{
+							if (state->solution || !state->solution.error().is_retry())
+								return true;
+
+							auto tip = chain.get_latest_block_header();
+							auto priority = ledger::solver_context().apply_validator_state(wallet.public_key_hash, wallet.secret_key, tip.address());
+							if (priority.or_else(protocol::now().policy.production.max_per_block) != 0)
+								return false;
+
+							state->solution = remote_exception::shutdown();
+							return true;
+						}))
+							break;
+					}
+
+					std::unique_lock<std::mutex> unique(state->mutex);
+					if (!state->solution && state->solution.error().is_shutdown())
+					{
+						if (worker.joinable())
+							worker.detach();
+						goto next_block;
+					}
+
+					unique.unlock();
+					if (worker.joinable())
+						worker.join();
+					evaluation = std::move(state->evaluation);
+				}
+				else
+				{
+					auto solution = solver.solve_block(*evaluation);
+					if (!solution)
+						return solution.report("block solution dismissal");
+				}
 
 				tip = chain.get_latest_block_header();
 				if (is_active() && (!tip || evaluation->block.number > tip->number || (evaluation->block.number == tip->number && evaluation->block.priority < tip->priority)))
@@ -2854,14 +2911,11 @@ namespace tangent
 			if (is_syncing())
 				return false;
 
-			auto tip = storages::chainstate().get_latest_block_header().or_else(ledger::block_header());
-			if (!tip.number)
-				return false;
-
-			return control_sys.async_task_if_none(TASK_BLOCK_DISPATCHER, [this, tip = std::move(tip)]() mutable -> promise<void>
+			auto tip_number = storages::chainstate().get_latest_block_number().or_else(0);
+			return control_sys.async_task_if_none(TASK_BLOCK_DISPATCHER, [this, tip_number]() -> promise<void>
 			{
 				auto dispatcher = dispatcher_context(this);
-				coawait(dispatcher.dispatch_async(tip));
+				coawait(dispatcher.dispatch_async(tip_number));
 
 				auto& sendable_transactions = dispatcher.get_sendable_transactions();
 				if (!sendable_transactions.empty())
@@ -2875,9 +2929,9 @@ namespace tangent
 
 				auto status = dispatcher.checkpoint();
 				if (protocol::now().user.consensus.logging && status && !dispatcher.inputs.empty())
-					VI_INFO("block dispatch: OK (height: %" PRIu64", txns: %" PRIu64 ", delayed: %" PRIu64 ", dropped: %" PRIu64 ")", tip.number, dispatcher.inputs.size(), dispatcher.repeaters.size(), dispatcher.errors.size());
+					VI_INFO("block dispatch: OK (height: %" PRIu64", txns: %" PRIu64 ", delayed: %" PRIu64 ", dropped: %" PRIu64 ")", tip_number, dispatcher.inputs.size(), dispatcher.repeaters.size(), dispatcher.errors.size());
 				else if (protocol::now().user.consensus.logging && !status)
-					VI_ERR("block dispatch failed: %s (height: %" PRIu64 ")", status.what().c_str(), tip.number);
+					VI_ERR("block dispatch failed: %s (height: %" PRIu64 ")", status.what().c_str(), tip_number);
 
 				umutex<std::recursive_mutex> unique(sync.fork);
 				if (!witnesses.empty())

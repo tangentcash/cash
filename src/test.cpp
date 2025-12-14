@@ -1961,7 +1961,7 @@ public:
 		for (auto& [user, user_nonce] : users)
 		{
 			dispatcher.set_running_validator(user.public_key_hash);
-			dispatcher.dispatch_sync(proposal.block);
+			dispatcher.dispatch_sync(proposal.block.number);
 			if (!dispatcher.outputs.empty())
 			{
 				for (auto& transaction : dispatcher.outputs)

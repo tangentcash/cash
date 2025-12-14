@@ -500,8 +500,8 @@ namespace tangent
 			virtual expects_promise_rt<void> aggregate_public_key(const executor_context* executor, public_state& state, const algorithm::pubkeyhash_t& validator) = 0;
 			virtual expects_promise_rt<void> aggregate_signature(const executor_context* executor, signature_state& state, const algorithm::pubkeyhash_t& validator) = 0;
 			virtual expects_lr<void> checkpoint();
-			virtual promise<void> dispatch_async(const block_header& target);
-			virtual void dispatch_sync(const block_header& target);
+			virtual promise<void> dispatch_async(uint64_t block_number);
+			virtual void dispatch_sync(uint64_t block_number);
 			virtual void reset_for_checkpoint();
 			virtual void emit_transaction(uptr<transaction>&& value);
 			virtual void retry_later(const uint256_t& transaction_hash);
