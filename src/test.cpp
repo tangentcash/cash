@@ -1939,6 +1939,7 @@ public:
 		}
 
 		VI_PANIC(priority == 0, "block proposal not allowed");
+		ledger::solver_context::sort_transaction_list(transactions);
 		if (!solver.try_include_transactions(std::move(transactions)))
 			VI_PANIC(false, "empty block not allowed");
 

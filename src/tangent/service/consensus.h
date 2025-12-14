@@ -248,7 +248,7 @@ namespace tangent
 			virtual ~server_node() noexcept override;
 			expects_lr<void> accept_local_wallet(option<ledger::wallet>&& wallet);
 			expects_lr<void> accept_local_transaction(uptr<ledger::transaction>&& candidate_tx, uint256_t* output_hash = nullptr);
-			expects_lr<void> accept_transaction(uref<relay>&& from, uptr<ledger::transaction>&& candidate_tx, bool validate_execution = false);
+			expects_lr<void> accept_transaction(uref<relay>&& from, uptr<ledger::transaction>&& candidate_t);
 			expects_lr<void> accept_attestation(uref<relay>&& from, const uint256_t& attestation_hash);
 			expects_lr<void> accept_committed_attestation(uref<relay>&& from, const algorithm::asset_id& asset, const superchain::computed_transaction& proof, const algorithm::hashsig_t& signature);
 			expects_lr<void> broadcast_transaction(uref<relay>&& from, uptr<ledger::transaction>&& candidate_tx, const algorithm::pubkeyhash_t& owner);

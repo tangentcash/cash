@@ -883,7 +883,7 @@ namespace tangent
 				return status;
 			}
 
-			status = accept_transaction(nullptr, std::move(candidate_tx), false);
+			status = accept_transaction(nullptr, std::move(candidate_tx));
 			if (!status)
 				return status;
 
@@ -892,7 +892,7 @@ namespace tangent
 
 			return status;
 		}
-		expects_lr<void> server_node::accept_transaction(uref<relay>&& from, uptr<ledger::transaction>&& candidate_tx, bool validate_execution)
+		expects_lr<void> server_node::accept_transaction(uref<relay>&& from, uptr<ledger::transaction>&& candidate_tx)
 		{
 			algorithm::pubkeyhash_t owner;
 			auto purpose = candidate_tx->as_typename();
@@ -926,24 +926,6 @@ namespace tangent
 				if (protocol::now().user.consensus.logging)
 					VI_WARN("transaction %s %.*s validation failed: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data(), validation.error().what());
 				return validation.error();
-			}
-
-			auto& [node, wallet] = descriptor;
-			bool event = candidate_tx->is_commitment() && wallet.public_key_hash == owner;
-			if (event || validate_execution)
-			{
-				ledger::block temp_block;
-				ledger::block_changelog temp_changelog;
-				ledger::solver_context temp_solver;
-				temp_solver.apply_temporary_state(&temp_block, *candidate_tx, { });
-
-				auto validation = ledger::executor_context::execute_tx(&temp_solver, &temp_block, &temp_changelog, *candidate_tx, candidate_hash, owner, candidate_tx->as_message().data.size(), (uint8_t)ledger::executor_context::flags::pedantic | (uint8_t)ledger::executor_context::flags::replayable);
-				if (!validation)
-				{
-					if (protocol::now().user.consensus.logging)
-						VI_WARN("transaction %s %.*s pre-execution failed: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data(), validation.error().what());
-					return validation.error();
-				}
 			}
 
 			return broadcast_transaction(uref(from), std::move(candidate_tx), owner);

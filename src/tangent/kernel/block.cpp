@@ -3531,9 +3531,11 @@ namespace tangent
 			auto map_nonce = nonces.find(algorithm::pubkeyhash_t(item.owner));
 			if (map_nonce == nonces.end())
 			{
-				auto initial_nonce = state.executor.get_account_nonce(item.owner).or_else(states::account_nonce(algorithm::pubkeyhash_t(), nullptr)).nonce;
-				if (item.candidate->nonce != initial_nonce)
-					return item.candidate->nonce < initial_nonce ? include_decision::not_executable : include_decision::not_includable;
+				auto chain = storages::chainstate();
+				auto state = chain.get_uniform(states::account_nonce::as_instance_type(), nullptr, states::account_nonce::as_instance_index(item.owner), 0);
+				auto* value = (states::account_nonce*)(state ? state->ptr() : nullptr);
+				if (item.candidate->nonce != (value ? value->nonce : 0))
+					return include_decision::not_includable;
 			}
 			else if (item.candidate->nonce != map_nonce->second + 1)
 				return include_decision::not_includable;
@@ -3578,6 +3580,9 @@ namespace tangent
 		{
 			if (transactions.failed.empty())
 				return expectation::met;
+
+			if (protocol::now().user.consensus.logging)
+				VI_WARN("%" PRIu64 " failed mempool transaction%s dropped", (uint64_t)transactions.failed.size(), transactions.failed.size() > 1 ? " was" : "s were");
 
 			auto mempool = storages::mempoolstate();
 			return mempool.remove_transactions(transactions.failed);
@@ -3716,7 +3721,10 @@ namespace tangent
 				item.size = item.candidate->as_message().data.size();
 				item.candidate->recover_hash(item.owner);
 			}));
-			VI_SORT(candidates.begin(), candidates.end(), [](const queued_transaction& a, const queued_transaction& b) { return a.candidate->nonce < b.candidate->nonce; });
+		}
+		void solver_context::sort_transaction_list(vector<uptr<transaction>>& candidates)
+		{
+			VI_SORT(candidates.begin(), candidates.end(), [](const uptr<transaction>& a, const uptr<transaction>& b) { return a->nonce < b->nonce; });
 		}
 		bool solver_context::requires_reorganization(const block_evaluation& solution)
 		{

@@ -581,6 +581,7 @@ namespace tangent
 			static expects_lr<block_checkpoint> checkpoint_solved_block(block_evaluation& solution, bool keep_reverted_transactions = true);
 			static queued_transaction precompute_transaction_element(uptr<transaction>&& candidate);
 			static void precompute_transaction_list(vector<queued_transaction>& candidates);
+			static void sort_transaction_list(vector<uptr<transaction>>& candidates);
 			static bool requires_reorganization(const block_evaluation& solution);
 		};
 	}
