@@ -2150,6 +2150,7 @@ namespace tangent
 				if (new_tip_hash > 0 && protocol::now().user.consensus.logging)
 					VI_INFO("block %s conflict: collision found (height: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(new_tip_hash).c_str(), new_tip_number);
 
+				uint256_t best_tip_hash = 0;
 				new_tip_number = new_tip_hash > 0 ? 0 : 1;
 				while (is_active() && (new_tip_number > 0 || new_tip_hash > 0))
 				{
@@ -2167,6 +2168,7 @@ namespace tangent
 						if (!tip.block.load(block_message))
 							coreturn remote_exception("block violates message protocol");
 
+						best_tip_hash = tip.block.as_hash();
 						new_tip_number = tip.block.number + 1;
 						if (!accept_block(uref(new_tip.state), std::move(tip), new_tip_fork_hash))
 							coreturn remote_exception("block violates consensus protocol");
@@ -2175,6 +2177,9 @@ namespace tangent
 							break;
 					}
 				}
+
+				if (best_tip_hash > 0)
+					trigger_block(uref(new_tip.state), best_tip_hash);
 
 				coreturn expectation::met;
 			});
@@ -2825,11 +2830,11 @@ namespace tangent
 					return candidate && !candidate->empty() ? candidate->front().reset() : nullptr;
 				});
 				if (!evaluation)
-					return evaluation.report("block evaluation failed");
+					return evaluation.report("block dismissal");
 
 				auto solution = solver.solve_block(*evaluation);
 				if (!solution)
-					return solution.report("block solution failed");
+					return solution.report("block dismissal");
 
 				tip = chain.get_latest_block_header();
 				if (is_active() && (!tip || evaluation->block.number > tip->number || (evaluation->block.number == tip->number && evaluation->block.priority < tip->priority)))
@@ -3204,23 +3209,22 @@ namespace tangent
 			}
 
 			unique.unlock();
-			return get_sync_progress(candidate.block.number, *from) >= 1.0 ? post_full_sync_trigger(std::move(from), candidate.block, candidate_hash) : true;
+			if (!fork_tip)
+				trigger_block(std::move(from), candidate_hash);
+			return true;
 		}
-		bool server_node::post_full_sync_trigger(uref<relay>&& from, const ledger::block& candidate_block, const uint256_t& candidate_hash)
+		void server_node::trigger_block(uref<relay>&& from, const uint256_t& block_hash)
 		{
-			size_t notifications = notify_all_except(uref(from), descriptors::broadcast_block_hash(), { format::variable(candidate_hash) });
+			size_t notifications = notify_all_except(uref(from), descriptors::broadcast_block_hash(), { format::variable(block_hash) });
 			if (notifications > 0 && protocol::now().user.consensus.logging)
-				VI_DEBUG("block %s broadcasted to %i nodes (height: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)notifications, candidate.block.number);
+				VI_DEBUG("block %s broadcasted to %i nodes (height: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(block_hash).c_str(), (int)notifications, candidate.block.number);
 
-			auto timeout = std::min(candidate_block.get_proof_duration(), protocol::now().policy.pow.time);
-			schedule::get()->set_timeout(timeout, [this]() { run_block_dispatcher(); });
+			schedule::get()->set_timeout(protocol::now().policy.pow.time, [this]() { run_block_dispatcher(); });
 			if (from && mempool.dirty)
 			{
 				mempool.dirty = false;
 				synchronize_mempool_with(uref(from));
 			}
-
-			return true;
 		}
 		bool server_node::accept_proposal_transaction(const ledger::block& checkpoint_block, const ledger::block_transaction& transaction)
 		{

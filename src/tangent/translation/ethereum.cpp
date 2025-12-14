@@ -822,8 +822,8 @@ namespace tangent
 				if (prepared.abi.size() != 8)
 					return layer_exception("invalid prepared abi");
 
-				auto& input = prepared.inputs.begin()->second;
-				auto& output = prepared.outputs.begin()->second;
+				auto& input = prepared.inputs.front();
+				auto& output = prepared.outputs.front();
 				auto output_asset = output.get_asset(native_asset);
 				auto type = prepared.abi[0].as_boolean() ? evm_transaction::evm_type::eip_155 : evm_transaction::evm_type::eip_1559;
 				auto contract_address = prepared.abi[1].as_string();

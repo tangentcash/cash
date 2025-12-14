@@ -171,13 +171,10 @@ namespace tangent
 				algorithm::composition::type alg = algorithm::composition::type::unknown;
 				vector<uint8_t> message;
 				coin_utxo utxo;
-				uint8_t index;
-
-				uint256_t as_hash() const;
 			};
 
-			btree_map<uint256_t, signable_coin_utxo> inputs;
-			btree_map<uint256_t, coin_utxo> outputs;
+			vector<signable_coin_utxo> inputs;
+			vector<coin_utxo> outputs;
 			format::variables abi;
 
 			prepared_transaction() = default;

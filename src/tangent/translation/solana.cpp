@@ -467,8 +467,8 @@ namespace tangent
 				if (prepared.abi.size() != 5)
 					return layer_exception("invalid prepared abi");
 
-				auto& input = prepared.inputs.begin()->second;
-				auto& output = prepared.outputs.begin()->second;
+				auto& input = prepared.inputs.front();
+				auto& output = prepared.outputs.front();
 				auto divisibility = prepared.abi[0].as_decimal();
 				sol_transaction transaction;
 				transaction.token_program_address = prepared.abi[1].as_blob();

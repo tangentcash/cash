@@ -395,7 +395,7 @@ namespace tangent
 						builder.Body.TransactionInput.addInput(copy<std::string>(input.transaction_id), input.index);
 						builder.addExtendedSigningKey(dummy_private_key);
 					}
-					for (auto& [hash, output] : result.outputs)
+					for (auto& output : result.outputs)
 					{
 						builder.Body.TransactionOutput.addOutput(copy<std::string>(output.link.address), (uint64_t)to_lovelace(output.value));
 						for (auto& [token_hash, token] : output.tokens)
@@ -446,20 +446,12 @@ namespace tangent
 				{
 					Cardano::Transaction verifier = Cardano::Transaction();
 					uint8_t dummy_private_key[XSK_LENGTH] = { 0 };
-					for (size_t i = 0; i < prepared.inputs.size(); i++)
+					for (auto& input : prepared.inputs)
 					{
-						auto it = prepared.inputs.begin();
-						while (it != prepared.inputs.end() && it->second.index != (uint8_t)i)
-							++it;
-
-						if (it == prepared.inputs.end())
-							return layer_exception("input not found");
-
-						auto& [hash, input] = *it;
 						verifier.Body.TransactionInput.addInput(copy<std::string>(input.utxo.transaction_id), input.utxo.index);
 						verifier.addExtendedSigningKey(dummy_private_key);
 					}
-					for (auto& [hash, output] : prepared.outputs)
+					for (auto& output : prepared.outputs)
 					{
 						verifier.Body.TransactionOutput.addOutput(copy<std::string>(output.link.address), (uint64_t)to_lovelace(output.value));
 						for (auto& [token_hash, token] : output.tokens)
@@ -470,18 +462,16 @@ namespace tangent
 					std::vector<Cardano::Transaction::Digest> digests;
 					verifier.build(&digests);
 
-					for (auto& [hash, input] : prepared.inputs)
+					size_t index = 0;
+					for (auto& input : prepared.inputs)
 					{
-						if (input.index >= digests.size())
-							return layer_exception("invalid input index");
-							
-						auto& digest = digests[input.index];
+						auto& digest = digests[index++];
 						if (input.message.size() != sizeof(digest.Hash) || memcmp(input.message.data(), digest.Hash, sizeof(digest.Hash)) != 0)
 							return layer_exception("invalid input message");
 					}
 
 					Cardano::Transaction builder = Cardano::Transaction();
-					for (auto& [hash, input] : prepared.inputs)
+					for (auto& input : prepared.inputs)
 					{
 						auto raw_public_key = decode_public_key(input.utxo.link.public_key);
 						if (!raw_public_key)
@@ -492,7 +482,7 @@ namespace tangent
 						builder.Body.TransactionInput.addInput(copy<std::string>(input.utxo.transaction_id), input.utxo.index);
 						builder.addExtendedVerifyingKey((uint8_t*)raw_public_key->data(), signature);
 					}
-					for (auto& [hash, output] : prepared.outputs)
+					for (auto& output : prepared.outputs)
 					{
 						builder.Body.TransactionOutput.addOutput(copy<std::string>(output.link.address), (uint64_t)to_lovelace(output.value));
 						for (auto& [token_hash, token] : output.tokens)

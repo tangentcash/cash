@@ -1172,7 +1172,7 @@ public:
 		};
 		auto validate_transaction = [&](const algorithm::asset_id& asset, const superchain::computed_wallet& wallet, superchain::prepared_transaction& prepared, const std::string_view& feature, const std::string_view& expected_calldata)
 		{
-			for (auto& [hash, input] : prepared.inputs)
+			for (auto& input : prepared.inputs)
 			{
 				auto state = algorithm::composition::make_signature_compositor(input.alg, input.public_key, input.message.data(), input.message.size(), 1).expect("state initialization error");
 				while (state->next_phase() != algorithm::composition::phase::finalized)
@@ -1561,10 +1561,10 @@ public:
 			TEST_BLOCK(&generators::migrate_stage_2, "0x1aa7a39a0e4ebd16b93bd37647d80d136d53ccda170c8260b5c7af112d989800", 18);
 			TEST_BLOCK(&generators::migrate_stage_3, "0xba73e65f3bdaba1d5256d95555ac8820567c5714a433f94ea03e67755a56ed52", 20);
 			TEST_BLOCK(&generators::withdraw_stage_1, "0xa42fd61a15e30e260c9559d75a3f3aaf069086113a7f9df4f376f6dfe4b1660e", 22);
-			TEST_BLOCK(&generators::withdraw_stage_2, "0x3dada5f1553e454f51d6f6c9867f97f8f069c1a8b112cf313d56cb7d24b04ea9", 24);
-			TEST_BLOCK(&generators::withdraw_stage_3, "0x316a902cb3c0c37a38bd388dd92f8dadc90eba958a0d30a7c64969caf75d8e36", 26);
-			TEST_BLOCK(&generators::withdraw_stage_4, "0x2c2d9bd15f0c7202b361f90d638ab1b60fce70aad4218b82605a532118f5ae57", 28);
-			TEST_BLOCK(std::bind(&generators::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 1, 0), "0xda7d4279aee1095488ec3e606eed19cbcbfea9ea94870c49a55826a60d64095c", 30);
+			TEST_BLOCK(&generators::withdraw_stage_2, "0x90e7eff390b8d733bf8c6afb2cf708958010b657a7ea6ab55b9ae1bf7e915e0a", 24);
+			TEST_BLOCK(&generators::withdraw_stage_3, "0xa97a7650fc933ce824916a0645c8fe279a47bdb26a0f9e0628b82173a209dc4b", 26);
+			TEST_BLOCK(&generators::withdraw_stage_4, "0xa241c0896cf0764e4afbf9a9bf9093f770bada0b7302c80db8784f68f329360e", 28);
+			TEST_BLOCK(std::bind(&generators::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 1, 0), "0x0485b7d7f7f2c98c7f3a5e509b8e2d926e9df4af6e244e0cd1512ab79e72c738", 30);
 			if (userdata != nullptr)
 				*userdata = std::move(users);
 			else

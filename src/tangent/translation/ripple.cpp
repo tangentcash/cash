@@ -507,8 +507,8 @@ namespace tangent
 				if (prepared.abi.size() != 4)
 					return layer_exception("invalid prepared abi");
 
-				auto& input = prepared.inputs.begin()->second;
-				auto& output = prepared.outputs.begin()->second;
+				auto& input = prepared.inputs.front();
+				auto& output = prepared.outputs.front();
 				auto [output_address, output_tag] = address_util::decode_tag_address(output.link.address);
 				auto contract_address = prepared.abi[0].as_string();
 				transaction_buffer buffer;

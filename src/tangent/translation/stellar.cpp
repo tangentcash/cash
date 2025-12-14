@@ -610,14 +610,14 @@ namespace tangent
 				if (prepared.abi.size() < 3)
 					return layer_exception("invalid prepared abi");
 
-				auto& input = prepared.inputs.begin()->second;
+				auto& input = prepared.inputs.front();
 				auto& params = get_params();
 				uint8_t decoded_public_key[256]; size_t decoded_public_key_size = sizeof(decoded_public_key);
 				if (!decode_key(params.ed25519_public_key, input.utxo.link.public_key, decoded_public_key, &decoded_public_key_size))
 					return layer_exception("input public key invalid");
 
 				string memo;
-				for (auto& [hash, item] : prepared.outputs)
+				for (auto& item : prepared.outputs)
 				{
 					auto [address, tag] = address_util::decode_tag_address(item.link.address);
 					if (tag.empty())
@@ -637,7 +637,7 @@ namespace tangent
 				size_t abi_pointer = 3;
 				vector<StellarCreateAccountOp> accounts;
 				vector<StellarPaymentOp> payments;
-				for (auto& [hash, item] : prepared.outputs)
+				for (auto& item : prepared.outputs)
 				{
 					auto create_account_ptr = prepared.load_abi(&abi_pointer);
 					auto token_code_ptr = prepared.load_abi(&abi_pointer);

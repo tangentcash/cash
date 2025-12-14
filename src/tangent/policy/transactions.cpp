@@ -3608,7 +3608,7 @@ namespace tangent
 			auto input_value = btree_map<algorithm::asset_id, decimal>();
 			auto output_value = btree_map<algorithm::asset_id, decimal>();
 			auto change_value = btree_map<algorithm::asset_id, decimal>();
-			for (auto& [hash, input] : prepared.inputs)
+			for (auto& input : prepared.inputs)
 			{
 				auto normalized_address = input.utxo.link.address;
 				auto status = server->normalize_address(base_asset, &normalized_address);
@@ -3641,7 +3641,7 @@ namespace tangent
 					token_value = token_value.is_nan() ? token.value : (token_value + token.value);
 				}
 			}
-			for (auto& [hash, output] : prepared.outputs)
+			for (auto& output : prepared.outputs)
 			{
 				auto normalized_address = output.link.address;
 				auto status = server->normalize_address(base_asset, &normalized_address);

@@ -353,8 +353,8 @@ namespace tangent
 				block_header.expiration = (int64_t)prepared.abi[3].as_uint64();
 				block_header.timestamp = (int64_t)prepared.abi[4].as_uint64();
 
-				auto& input = prepared.inputs.begin()->second;
-				auto& output = prepared.outputs.begin()->second;
+				auto& input = prepared.inputs.front();
+				auto& output = prepared.outputs.front();
 				auto divisibility = prepared.abi[5].as_decimal();
 				auto contract_address = prepared.abi[0].as_blob();
 				auto eth_contract_address = contract_address.empty() ? string() : decode_non_eth_address_pf(contract_address);

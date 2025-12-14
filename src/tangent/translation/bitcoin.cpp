@@ -630,7 +630,7 @@ namespace tangent
 					result.requires_output(coin_utxo(wallet_link(possible_inputs->front().link), string(), (uint32_t)result.outputs.size(), decimal(input_value - total_value)));
 
 				btc_tx_context context;
-				for (auto& [hash, output] : result.outputs)
+				for (auto& output : result.outputs)
 				{
 					auto status = add_transaction_output(context, output.link.address, output.value);
 					if (!status)
@@ -695,23 +695,15 @@ namespace tangent
 			expects_lr<finalized_transaction> bitcoin::finalize_transaction(superchain::prepared_transaction&& prepared)
 			{
 				btc_tx_context context;
-				for (auto& [hash, output] : prepared.outputs)
+				for (auto& output : prepared.outputs)
 				{
 					auto status = add_transaction_output(context, output.link.address, output.value);
 					if (!status)
 						return status.error();
 				}
 
-				for (size_t i = 0; i < prepared.inputs.size(); i++)
+				for (auto& input : prepared.inputs)
 				{
-					auto it = prepared.inputs.begin();
-					while (it != prepared.inputs.end() && it->second.index != (uint8_t)i)
-						++it;
-
-					if (it == prepared.inputs.end())
-						return layer_exception("input not found");
-
-					auto& [hash, input] = *it;
 					auto link = find_linked_addresses({ input.utxo.link.address });
 					if (!link)
 						return layer_exception("input link not found");
@@ -721,17 +713,20 @@ namespace tangent
 						return status.error();
 				}
 
-				for (auto& [input_hash, input] : prepared.inputs)
+				size_t index = 0;
+				for (auto& input : prepared.inputs)
 				{
-					auto hash = prepare_transaction_input(context, input.utxo, input.index);
+					auto hash = prepare_transaction_input(context, input.utxo, index);
 					if (!hash)
 						return hash.error();
 					else if (input.message.size() != hash->size() || memcmp(input.message.data(), hash->data(), hash->size()) != 0)
 						return layer_exception("invalid input message");
 
-					auto finalization = finalize_transaction_input(context, input, input.index);
+					auto finalization = finalize_transaction_input(context, input, index);
 					if (!finalization)
 						return finalization.error();
+
+					++index;
 				}
 
 				auto result = finalized_transaction(std::move(prepared), serialize_transaction_data(context), serialize_transaction_id(context));

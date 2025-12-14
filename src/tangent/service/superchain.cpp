@@ -497,7 +497,7 @@ namespace tangent
 
 			auto blockchain = algorithm::asset::blockchain_of(asset);
 			auto base_asset = algorithm::asset::base_id_of(asset);
-			for (auto& [hash, input] : prepared.inputs)
+			for (auto& input : prepared.inputs)
 			{
 				auto input_asset = input.utxo.get_asset(base_asset);
 				if (!algorithm::asset::is_aux(input_asset) || algorithm::asset::blockchain_of(input_asset) != blockchain)
@@ -510,7 +510,7 @@ namespace tangent
 				}
 			}
 
-			for (auto& [hash, output] : prepared.outputs)
+			for (auto& output : prepared.outputs)
 			{
 				auto output_asset = output.get_asset(base_asset);
 				if (!algorithm::asset::is_aux(output_asset) || algorithm::asset::blockchain_of(output_asset) != blockchain)
