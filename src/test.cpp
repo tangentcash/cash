@@ -769,7 +769,6 @@ public:
 		algorithm::hashing::hash160((uint8_t*)"publickeyhash", 13, owner.data);
 		uint256_t asset = algorithm::asset::id_of("BTC");
 		uint64_t block_number = 1;
-		uint64_t block_nonce = 1;
 
 		new_serialization_comparison<superchain::wallet_link>(*data);
 		new_serialization_comparison<superchain::coin_utxo>(*data);
@@ -783,20 +782,20 @@ public:
 		new_serialization_comparison<ledger::block_header>(*data);
 		new_serialization_comparison<ledger::block>(*data);
 		new_serialization_comparison<ledger::block_proof>(*data);
-		new_serialization_comparison<states::account_nonce>(*data, owner, block_number++, block_nonce++);
-		new_serialization_comparison<states::account_program>(*data, owner, block_number++, block_nonce++);
-		new_serialization_comparison<states::account_uniform>(*data, owner, std::string_view(), block_number++, block_nonce++);
-		new_serialization_comparison<states::account_multiform>(*data, owner, std::string_view(), std::string_view(), block_number++, block_nonce++);
-		new_serialization_comparison<states::account_balance>(*data, owner, asset, block_number++, block_nonce++);
-		new_serialization_comparison<states::validator_production>(*data, owner, block_number++, block_nonce++);
-		new_serialization_comparison<states::validator_participation>(*data, owner, block_number++, block_nonce++);
-		new_serialization_comparison<states::validator_attestation>(*data, owner, asset, block_number++, block_nonce++);
-		new_serialization_comparison<states::bridge_balance>(*data, owner, asset, block_number++, block_nonce++);
-		new_serialization_comparison<states::bridge_account>(*data, owner, asset, owner, block_number++, block_nonce++);
-		new_serialization_comparison<states::witness_program>(*data, std::string_view(), block_number++, block_nonce++);
-		new_serialization_comparison<states::witness_event>(*data, asset, block_number++, block_nonce++);
-		new_serialization_comparison<states::witness_account>(*data, owner, asset, address_map(), block_number++, block_nonce++);
-		new_serialization_comparison<states::witness_transaction>(*data, asset, std::string_view(), block_number++, block_nonce++);
+		new_serialization_comparison<states::account_nonce>(*data, owner, block_number++);
+		new_serialization_comparison<states::account_program>(*data, owner, block_number++);
+		new_serialization_comparison<states::account_uniform>(*data, owner, std::string_view(), block_number++);
+		new_serialization_comparison<states::account_multiform>(*data, owner, std::string_view(), std::string_view(), block_number++);
+		new_serialization_comparison<states::account_balance>(*data, owner, asset, block_number++);
+		new_serialization_comparison<states::validator_production>(*data, owner, block_number++);
+		new_serialization_comparison<states::validator_participation>(*data, owner, block_number++);
+		new_serialization_comparison<states::validator_attestation>(*data, owner, asset, block_number++);
+		new_serialization_comparison<states::bridge_balance>(*data, owner, asset, block_number++);
+		new_serialization_comparison<states::bridge_account>(*data, owner, asset, owner, block_number++);
+		new_serialization_comparison<states::witness_program>(*data, std::string_view(), block_number++);
+		new_serialization_comparison<states::witness_event>(*data, asset, block_number++);
+		new_serialization_comparison<states::witness_account>(*data, owner, asset, address_map(), block_number++);
+		new_serialization_comparison<states::witness_transaction>(*data, asset, std::string_view(), block_number++);
 		new_serialization_comparison<transactions::transfer>(*data);
 		new_serialization_comparison<transactions::deploy>(*data);
 		new_serialization_comparison<transactions::call>(*data);
@@ -1544,27 +1543,27 @@ public:
 				users.push_back(account(ledger::wallet::from_seed(stringify::text("00000%i", (int)i)), 0));
 
 			uptr<schema> data = userdata ? nullptr : var::set::array();
-			TEST_BLOCK(&generators::setup_stage_1, "0x6cb3c6000ee0d41498bd071fdf1e585c923db248b494c5c9116d35b118c6e26c", 1);
-			TEST_BLOCK(std::bind(&generators::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 1, 0), "0xa8b5b4d642b2dfade281a644836bf0f4ab774d6ac9636cf0111283dde69a76f1", 2);
-			TEST_BLOCK(&generators::route_stage_1, "0x7038fdb05a3558c0c12b8d1da1264589243a03d83a4f8e1ec900d78e4507a9c9", 3);
-			TEST_BLOCK(&generators::route_stage_2, "0x5477ec4624db22c3701262474422f5aa088f371969239fb365dfbddeda29bf90", 5);
-			TEST_BLOCK(&generators::attestate_stage_1, "0x4ed636c5e7dac2d53af3e2745bf9706546c53bc0f51ee64fc3a39a2382974240", 7);
-			TEST_BLOCK(&generators::transfer_stage_1, "0x88d0bf4ee6009a6ff8fc6ff71901bcc3cc0a2741eaf660b03b305cccaf5e14bf", 8);
-			TEST_BLOCK(&generators::transfer_stage_2, "0xfca04d3a38653c611428d6aef7cd038d7c34a934a74e6e25e84011a6ea139974", 9);
-			TEST_BLOCK(std::bind(&generators::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), users[2].wallet.get_address(), 0.05), "0x4f3cb543729ef561fd4500dbc9edcf7ecf8cf87fea5f35bb5d75a1173287818f", 10);
-			TEST_BLOCK(std::bind(&generators::deploy_stage_1, std::placeholders::_1, std::placeholders::_2, &contracts), "0x0b2b302d05581a3a25c894c89a238d8a39ab463be2556e6b01fd7da54c4ba754", 11);
-			TEST_BLOCK(std::bind(&generators::deploy_stage_2, std::placeholders::_1, std::placeholders::_2, &contracts), "0x0c8e538a1c58c3adf6e6c8cdef57df968d2b475ceba6b3dc375b9a33dab01daa", 12);
-			TEST_BLOCK(std::bind(&generators::call_stage_1, std::placeholders::_1, std::placeholders::_2, &contracts), "0x623f46616930f915982d11fc2afc7e5aa22b93195055cc34d121634ed3df8c9c", 13);
-			TEST_BLOCK(&generators::rollup_stage_1, "0x6565376070349d99685f322c713bed22b70d1a0995ab9df1a82acd2d5e148253", 14);
-			TEST_BLOCK(std::bind(&generators::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 0, 1), "0x6bea3170025f974307d9d204ed9bfad4f0be98b9ee843c7ec8b78fa72b35eb3f", 15);
-			TEST_BLOCK_FAULT(&generators::migrate_stage_1, "0xa2259cefb88582b97b8e92a93d567f78fbd25a813d854aa3013c5e7b46190e95", 16);
-			TEST_BLOCK(&generators::migrate_stage_2, "0x1aa7a39a0e4ebd16b93bd37647d80d136d53ccda170c8260b5c7af112d989800", 18);
-			TEST_BLOCK(&generators::migrate_stage_3, "0xba73e65f3bdaba1d5256d95555ac8820567c5714a433f94ea03e67755a56ed52", 20);
-			TEST_BLOCK(&generators::withdraw_stage_1, "0xa42fd61a15e30e260c9559d75a3f3aaf069086113a7f9df4f376f6dfe4b1660e", 22);
-			TEST_BLOCK(&generators::withdraw_stage_2, "0x90e7eff390b8d733bf8c6afb2cf708958010b657a7ea6ab55b9ae1bf7e915e0a", 24);
-			TEST_BLOCK(&generators::withdraw_stage_3, "0xa97a7650fc933ce824916a0645c8fe279a47bdb26a0f9e0628b82173a209dc4b", 26);
-			TEST_BLOCK(&generators::withdraw_stage_4, "0xa241c0896cf0764e4afbf9a9bf9093f770bada0b7302c80db8784f68f329360e", 28);
-			TEST_BLOCK(std::bind(&generators::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 1, 0), "0x0485b7d7f7f2c98c7f3a5e509b8e2d926e9df4af6e244e0cd1512ab79e72c738", 30);
+			TEST_BLOCK(&generators::setup_stage_1, "0xff576ae2ae0e0bda5690efd6ce1202df9df674a494166311e1cbc80a3d7c993e", 1);
+			TEST_BLOCK(std::bind(&generators::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 1, 0), "0xd9149f46b01833ac30be732100385a362bef5d3b8c6c6b911cc79e71e9e5204e", 2);
+			TEST_BLOCK(&generators::route_stage_1, "0x9f2a285135d36225ebd83dfc0c03d26a51272577cb729bee4565f7fc1b686dd1", 3);
+			TEST_BLOCK(&generators::route_stage_2, "0x66ccaaebfdbd276f284def2e072ae5e3d2e49241b485e5f0040f946b484d74c3", 5);
+			TEST_BLOCK(&generators::attestate_stage_1, "0xe7119f587eeaf4bc0a528c59980d82f2d8d1308052b86668b1e283725b823a6a", 7);
+			TEST_BLOCK(&generators::transfer_stage_1, "0x350a9690335054d1a9fd381b45869b7df6a687d3cb2c62d51724d00866caf493", 8);
+			TEST_BLOCK(&generators::transfer_stage_2, "0x884f61fa6f9a6e44074c2f9a6ca89de770563bc770b774222224d7ed0e4ad686", 9);
+			TEST_BLOCK(std::bind(&generators::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), users[2].wallet.get_address(), 0.05), "0x67a9363f75fd98bcdb2d5c810e1341961c2ea90480be349576ab4a8ae947f339", 10);
+			TEST_BLOCK(std::bind(&generators::deploy_stage_1, std::placeholders::_1, std::placeholders::_2, &contracts), "0xbb579249256adf89aad1f4e0587e289d621d868fd4889052c8984eb7a5cbf5e5", 11);
+			TEST_BLOCK(std::bind(&generators::deploy_stage_2, std::placeholders::_1, std::placeholders::_2, &contracts), "0xf037b15dc214d4c743955454e2e412b1327274ffc8b722e53cd982f8dd4dabe2", 12);
+			TEST_BLOCK(std::bind(&generators::call_stage_1, std::placeholders::_1, std::placeholders::_2, &contracts), "0x72cf29d28b3a71d95273336d39eb4ad0d5269da40a805fa0dacd0441f733ceb8", 13);
+			TEST_BLOCK(&generators::rollup_stage_1, "0xfa8b4fdd464f5270daffaca10c74a31b34094f1e9e2403dbb5a272c0c98e2121", 14);
+			TEST_BLOCK(std::bind(&generators::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 0, 1), "0x5a2c8d9e325fdae4f827da959967a14de7e2830c29a0fa0286a433199ca26471", 15);
+			TEST_BLOCK_FAULT(&generators::migrate_stage_1, "0x3fd2d5407d78cab9f3e1870dfc7ead5f99f049e57c72bc83718c6c04247e5985", 16);
+			TEST_BLOCK(&generators::migrate_stage_2, "0x491597c1ceec98444ce01786d3e69e114c03d7da9feaa6b93ca5d07810dcdcc6", 18);
+			TEST_BLOCK(&generators::migrate_stage_3, "0xbf184f7413374c72a13fd0d83018b87be438edd9716a1bdbe1dd18677c54e1e7", 20);
+			TEST_BLOCK(&generators::withdraw_stage_1, "0xaab3cd375a80dd3225bb6e30e03eb9fa9a9427e08f358291adb0a45665dace5c", 22);
+			TEST_BLOCK(&generators::withdraw_stage_2, "0x2afd2b4993def8b99f93cc74d239b28221a64488950582895ac6e0ab7491c83f", 24);
+			TEST_BLOCK(&generators::withdraw_stage_3, "0xc96b49ce20243268f3923a2be398b06ea2705dba3d2297a32a7802c7ff4a7d3c", 26);
+			TEST_BLOCK(&generators::withdraw_stage_4, "0x6c2ff11c2574663a4e0f78dc98424b878b5b4d4831f90a7c19575c8a5e71fc6b", 28);
+			TEST_BLOCK(std::bind(&generators::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 1, 0), "0xd056a808b72663693c1f7bbebac291e42b2d7ec89be72c742e4c7d26f1d2b083", 30);
 			if (userdata != nullptr)
 				*userdata = std::move(users);
 			else
@@ -1581,11 +1580,11 @@ public:
 				users.push_back(account(ledger::wallet::from_seed(stringify::text("00000%i", (int)i)), 0));
 
 			uptr<schema> data = userdata ? nullptr : var::set::array();
-			TEST_BLOCK(&generators::setup_stage_0, "0x18b302caa37b6326715bdb41cac8101681893dc311b77b90b610f2310af984d8", 1);
-			TEST_BLOCK(&generators::route_stage_0, "0xccd0a4bd5e6fa5165682748feca117ca6b85d966b24f92361236af2f4264d8ba", 2);
-			TEST_BLOCK(&generators::attestate_stage_0, "0x093a669d90c718ba0a4cea8a8e7c1cb2b7ee401722ab7bfedca64f96bb6d19ce", 4);
-			TEST_BLOCK(std::bind(&generators::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), "tcrt1x00g22stp0qcprrxra7x2pz2au33armtfc50460", 0.1), "0x5ce1cf5bbc5bfc27cae6e5053f800408390f0405752471f82df78d80882406c3", 5);
-			TEST_BLOCK(std::bind(&generators::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("ETH", "USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7"), "tcrt1x00g22stp0qcprrxra7x2pz2au33armtfc50460", 5000), "0x74585ddf6e84daf6af2d595e350f2fb9692bcdf89b684e49825a3a7a985eb1fb", 6);
+			TEST_BLOCK(&generators::setup_stage_0, "0xa3eb74c8b8c79d16ab1c3ba58f28659f8b4741b30231cd04311bdae43b51b636", 1);
+			TEST_BLOCK(&generators::route_stage_0, "0x6f0f08e7957af2144ac011cfae04df5d1c553cca95346d59bd99c9dd275c4a28", 2);
+			TEST_BLOCK(&generators::attestate_stage_0, "0x9c49755bb1a74dc3a9c68b2cc15c845bf48e8e40b0d2cb74938c9d3e12386d83", 4);
+			TEST_BLOCK(std::bind(&generators::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), "tcrt1x00g22stp0qcprrxra7x2pz2au33armtfc50460", 0.1), "0xe4c74dfa9639c4b50dd51cee71062e95720e98a8cc5bded3d48d9c403fce594e", 5);
+			TEST_BLOCK(std::bind(&generators::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("ETH", "USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7"), "tcrt1x00g22stp0qcprrxra7x2pz2au33armtfc50460", 5000), "0x88827ce088b4af4c006e8ff9caac2a05658d4ba409b9554eef1fd3d578ce5976", 6);
 			if (userdata != nullptr)
 				*userdata = std::move(users);
 			else
@@ -2614,17 +2613,17 @@ public:
 		const decimal starting_account_balance = decimal(500).truncate(12);
 		auto checkpoint = [&](vector<uptr<ledger::transaction>>&& transactions, vector<tests::account>& users)
 		{
-			static uint64_t cumulative_transaction_count = 0, cumulative_state_count = 0;
+			static uint64_t cumulative_transaction_count = 0, cumulative_transition_count = 0;
 			auto cumulative_query_count = (uint64_t)ledger::storage_util::get_thread_invocations(); term->capture_time();
 			auto block = tests::new_block_from_list(nullptr, users, std::move(transactions));
 			auto time = term->get_captured_time();
 			cumulative_transaction_count += block.transaction_count;
-			cumulative_state_count += block.state_count;
+			cumulative_transition_count += block.transition_count;
 			term->fwrite_line("%05" PRIu64 ": %s = (d: %s / %.2f ms, t: %" PRIu64 " / %.2f hz, s: %" PRIu64 " / %.2f hz, q: %" PRIu64 " / %.2f hz)",
 				block.number, algorithm::encoding::encode_0xhex256(block.as_hash()).c_str(),
 				algorithm::wesolowski::kdifficulty(block.difficulty).to_string().c_str(), time,
 				cumulative_transaction_count, 1000.0 * (double)block.transaction_count / time,
-				cumulative_state_count, 1000.0 * (double)block.state_count / time,
+				cumulative_transition_count, 1000.0 * (double)block.transition_count / time,
 				cumulative_query_count, 1000.0 * (double)((uint64_t)ledger::storage_util::get_thread_invocations() - cumulative_query_count) / time);
 		};
 

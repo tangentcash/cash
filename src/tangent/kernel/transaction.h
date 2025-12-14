@@ -112,9 +112,8 @@ namespace tangent
 		struct state : messages::uniform
 		{
 			uint64_t block_number = 0;
-			uint64_t block_nonce = 0;
 
-			state(uint64_t new_block_number, uint64_t new_block_nonce);
+			state(uint64_t new_block_number);
 			state(const block_header* new_block_header);
 			virtual ~state() = default;
 			virtual expects_lr<void> transition(const state* prev_state) = 0;
@@ -135,7 +134,7 @@ namespace tangent
 
 		struct uniform : state
 		{
-			uniform(uint64_t new_block_number, uint64_t new_block_nonce);
+			uniform(uint64_t new_block_number);
 			uniform(const block_header* new_block_header);
 			virtual bool store_payload(format::wo_stream* stream) const override;
 			virtual bool load_payload(format::ro_stream& stream) override;
@@ -148,7 +147,7 @@ namespace tangent
 
 		struct multiform : state
 		{
-			multiform(uint64_t new_block_number, uint64_t new_block_nonce);
+			multiform(uint64_t new_block_number);
 			multiform(const block_header* new_block_header);
 			virtual bool store_payload(format::wo_stream* stream) const override;
 			virtual bool load_payload(format::ro_stream& stream) override;

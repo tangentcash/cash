@@ -392,9 +392,8 @@ namespace tangent
 			stream->write_integer(generation_time);
 			stream->write_integer(priority);
 			stream->write_integer(number);
-			stream->write_integer(mutation_count);
 			stream->write_integer(transaction_count);
-			stream->write_integer(state_count);
+			stream->write_integer(transition_count);
 			stream->write_integer((uint16_t)witnesses.size());
 			for (auto& item : witnesses)
 			{
@@ -441,13 +440,10 @@ namespace tangent
 			if (!stream.read_integer(stream.read_type(), &number))
 				return false;
 
-			if (!stream.read_integer(stream.read_type(), &mutation_count))
-				return false;
-
 			if (!stream.read_integer(stream.read_type(), &transaction_count))
 				return false;
 
-			if (!stream.read_integer(stream.read_type(), &state_count))
+			if (!stream.read_integer(stream.read_type(), &transition_count))
 				return false;
 
 			uint16_t witnesses_size;
@@ -569,8 +565,8 @@ namespace tangent
 			if (gas_use != other.gas_use)
 				return gas_use > other.gas_use ? 1 : -1;
 
-			uint256_t mutations_a = uint256_t(transaction_count + 1) * uint256_t(state_count + 1);
-			uint256_t mutations_b = uint256_t(other.transaction_count + 1) * uint256_t(other.state_count + 1);
+			uint256_t mutations_a = uint256_t(transaction_count + 1) * uint256_t(transition_count + 1);
+			uint256_t mutations_b = uint256_t(other.transaction_count + 1) * uint256_t(other.transition_count + 1);
 			if (mutations_a != mutations_b)
 				return mutations_a > mutations_b ? 1 : -1;
 
@@ -640,9 +636,8 @@ namespace tangent
 			data->set("proof_duration", algorithm::encoding::serialize_uint256(get_proof_duration()));
 			data->set("priority", algorithm::encoding::serialize_uint256(priority));
 			data->set("number", algorithm::encoding::serialize_uint256(number));
-			data->set("mutation_count", algorithm::encoding::serialize_uint256(mutation_count));
 			data->set("transaction_count", algorithm::encoding::serialize_uint256(transaction_count));
-			data->set("state_count", algorithm::encoding::serialize_uint256(state_count));
+			data->set("transition_count", algorithm::encoding::serialize_uint256(transition_count));
 			auto* pow_data = data->set("pow");
 			pow_data->set("proof", proof.empty() ? var::null() : var::string(format::util::encode_0xhex(proof)));
 			pow_data->set("mdifficulty", var::decimal(get_proof_difficulty_multiplier()));
@@ -902,7 +897,7 @@ namespace tangent
 		{
 			if (transaction_count != (uint32_t)transactions.size())
 				return layer_exception("invalid transactions count");
-			else if (!state_count && (state != nullptr && state_count != (uint32_t)state->finalized.size()))
+			else if (!transition_count && (state != nullptr && transition_count != (uint32_t)state->finalized.size()))
 				return layer_exception("invalid states count");
 
 			if (!parent_block && number > 1)
@@ -1031,7 +1026,7 @@ namespace tangent
 				for (auto& [index, change] : state->finalized)
 					state_tree.push_back(change.state->as_hash());
 				state_root = algorithm::merkle_tree::from(std::move(state_tree)).root();
-				state_count = (uint32_t)state->finalized.size();
+				transition_count = (uint32_t)state->finalized.size();
 			}
 
 			uint256_t cumulative = get_slot_length() > 1 ? 1 : 0;
@@ -1297,10 +1292,7 @@ namespace tangent
 
 			next->checksum = 0;
 			if (block != nullptr)
-			{
 				next->block_number = block->number;
-				next->block_nonce = ++block->mutation_count;
-			}
 
 			if (!next->block_number)
 				return layer_exception("invalid state block number");
@@ -1339,7 +1331,6 @@ namespace tangent
 			bool will_delete = states::resolver::will_delete(next, prev);
 			if (will_delete)
 			{
-				next->block_nonce = 0;
 				next->checksum = 0;
 				if (!prev_exists)
 					return expectation::met;
@@ -1470,7 +1461,6 @@ namespace tangent
 			message.write_typeless(block->number);
 			message.write_typeless(block->priority);
 			message.write_typeless(block->difficulty);
-			message.write_typeless(block->mutation_count);
 			message.write_typeless(receipt.transaction_hash);
 			message.write_typeless(receipt.relative_gas_use);
 			message.write_typeless(seed);
@@ -3634,7 +3624,7 @@ namespace tangent
 			mutation.new_tip_block_number = solution.block.number;
 			mutation.block_delta = 1;
 			mutation.transaction_delta = solution.block.transaction_count;
-			mutation.state_delta = solution.block.state_count;
+			mutation.state_delta = solution.block.transition_count;
 			mutation.is_fork = mutation.old_tip_block_number > 0 && mutation.old_tip_block_number >= mutation.new_tip_block_number;
 			if (mutation.is_fork)
 			{
@@ -3675,7 +3665,7 @@ namespace tangent
 				if (protocol::now().user.storage.logging)
 					VI_INFO("block %s rewinded (height: %" PRIu64 ", mempool: +%" PRIu64 ", blocktrie: %" PRIi64 ", transactiontrie: %" PRIi64 ", statetrie: %" PRIi64 ")", algorithm::encoding::encode_0xhex256(solution.block.as_hash()).c_str(), mutation.new_tip_block_number, mutation.mempool_transactions, mutation.block_delta, mutation.transaction_delta, mutation.state_delta);
 
-				if (solution.state.finalized.empty() || solution.block.state_count != solution.state.finalized.size())
+				if (solution.block.transition_count != solution.state.finalized.size())
 				{
 					auto parent_block = chain.get_block_by_number(solution.block.number - 1);
 					auto validation = solution.block.validate(parent_block.address(), &solution);

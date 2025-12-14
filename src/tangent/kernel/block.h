@@ -157,9 +157,8 @@ namespace tangent
 			uint64_t evaluation_time = 0;
 			uint64_t priority = 0;
 			uint64_t number = 0;
-			uint64_t mutation_count = 0;
 			uint32_t transaction_count = 0;
-			uint32_t state_count = 0;
+			uint32_t transition_count = 0;
 
 			virtual ~block_header() = default;
 			virtual bool operator<(const block_header& other) const;

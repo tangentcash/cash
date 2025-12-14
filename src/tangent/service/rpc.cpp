@@ -1699,7 +1699,7 @@ namespace tangent
 				if (!block_number)
 					return server_response().error(error_codes::not_found, "block not found");
 
-				auto hashes = chain.get_block_transaction_hashset(*block_number);
+				auto hashes = chain.get_block_state_hashset(*block_number);
 				if (!hashes)
 					return server_response().error(error_codes::not_found, "block not found");
 
@@ -1732,7 +1732,7 @@ namespace tangent
 			auto chain = storages::chainstate();
 			if (unrolling == 0)
 			{
-				auto hashes = chain.get_block_transaction_hashset(number);
+				auto hashes = chain.get_block_state_hashset(number);
 				if (!hashes)
 					return server_response().error(error_codes::not_found, "block not found");
 

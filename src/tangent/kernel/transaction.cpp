@@ -325,10 +325,10 @@ namespace tangent
 			return "receipt";
 		}
 
-		state::state(uint64_t new_block_number, uint64_t new_block_nonce) : block_number(new_block_number), block_nonce(new_block_nonce)
+		state::state(uint64_t new_block_number) : block_number(new_block_number)
 		{
 		}
-		state::state(const block_header* new_block_header) : block_number(new_block_header ? new_block_header->number : 0), block_nonce(new_block_header ? new_block_header->mutation_count : 0)
+		state::state(const block_header* new_block_header) : block_number(new_block_header ? new_block_header->number : 0)
 		{
 		}
 		bool state::store(format::wo_stream* stream) const
@@ -336,7 +336,6 @@ namespace tangent
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_integer(as_type());
 			stream->write_integer(block_number);
-			stream->write_integer(block_nonce);
 			return store_payload(stream);
 		}
 		bool state::load(format::ro_stream& stream)
@@ -346,9 +345,6 @@ namespace tangent
 				return false;
 
 			if (!stream.read_integer(stream.read_type(), &block_number))
-				return false;
-
-			if (!stream.read_integer(stream.read_type(), &block_nonce))
 				return false;
 
 			if (!load_payload(stream))
@@ -361,7 +357,6 @@ namespace tangent
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_integer(as_type());
 			stream->write_integer(block_number);
-			stream->write_integer(block_nonce);
 			return store_data(stream);
 		}
 		bool state::load_optimized(format::ro_stream& stream)
@@ -371,9 +366,6 @@ namespace tangent
 				return false;
 
 			if (!stream.read_integer(stream.read_type(), &block_number))
-				return false;
-
-			if (!stream.read_integer(stream.read_type(), &block_nonce))
 				return false;
 
 			if (!load_data(stream))
@@ -386,7 +378,7 @@ namespace tangent
 			return false;
 		}
 
-		uniform::uniform(uint64_t new_block_number, uint64_t new_block_nonce) : state(new_block_number, new_block_nonce)
+		uniform::uniform(uint64_t new_block_number) : state(new_block_number)
 		{
 		}
 		uniform::uniform(const block_header* new_block_header) : state(new_block_header)
@@ -412,7 +404,6 @@ namespace tangent
 			data->set("hash", var::string(algorithm::encoding::encode_0xhex256(as_hash())));
 			data->set("type", var::string(as_typename()));
 			data->set("block_number", algorithm::encoding::serialize_uint256(block_number));
-			data->set("block_nonce", block_nonce > 0 ? algorithm::encoding::serialize_uint256(block_nonce) : var::set::null());
 			data->set("index", var::string(format::util::encode_0xhex(as_index())));
 			return data;
 		}
@@ -427,7 +418,7 @@ namespace tangent
 			return message.data;
 		}
 
-		multiform::multiform(uint64_t new_block_number, uint64_t new_block_nonce) : state(new_block_number, new_block_nonce)
+		multiform::multiform(uint64_t new_block_number) : state(new_block_number)
 		{
 		}
 		multiform::multiform(const block_header* new_block_header) : state(new_block_header)
@@ -459,7 +450,6 @@ namespace tangent
 			data->set("hash", var::string(algorithm::encoding::encode_0xhex256(as_hash())));
 			data->set("type", var::string(as_typename()));
 			data->set("block_number", algorithm::encoding::serialize_uint256(block_number));
-			data->set("block_nonce", block_nonce > 0 ? algorithm::encoding::serialize_uint256(block_nonce) : var::set::null());
 			data->set("column", var::string(format::util::encode_0xhex(as_column())));
 			data->set("row", var::string(format::util::encode_0xhex(as_row())));
 			data->set("rank", algorithm::encoding::serialize_uint256(as_rank()));

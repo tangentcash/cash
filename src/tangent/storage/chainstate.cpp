@@ -175,10 +175,7 @@ namespace tangent
 						return nullptr;
 
 					if (!state->block_number)
-					{
 						state->block_number = block_number;
-						state->block_nonce = 0;
-					}
 
 					return state;
 				}
@@ -197,10 +194,7 @@ namespace tangent
 						return nullptr;
 
 					if (!state->block_number)
-					{
 						state->block_number = block_number;
-						state->block_nonce = 0;
-					}
 
 					return state;
 				}
@@ -610,7 +604,7 @@ namespace tangent
 				if (transaction_delta != nullptr)
 					*transaction_delta += evaluation.block.transaction_count;
 				if (state_delta != nullptr)
-					*state_delta += evaluation.block.state_count;
+					*state_delta += evaluation.block.transition_count;
 			}
 
 			return expectation::met;

@@ -6,7 +6,7 @@ namespace tangent
 {
 	namespace states
 	{
-		account_nonce::account_nonce(const algorithm::pubkeyhash_t& new_owner, uint64_t new_block_number, uint64_t new_block_nonce) : ledger::uniform(new_block_number, new_block_nonce), owner(new_owner), nonce(0)
+		account_nonce::account_nonce(const algorithm::pubkeyhash_t& new_owner, uint64_t new_block_number) : ledger::uniform(new_block_number), owner(new_owner), nonce(0)
 		{
 		}
 		account_nonce::account_nonce(const algorithm::pubkeyhash_t& new_owner, const ledger::block_header* new_block_header) : ledger::uniform(new_block_header), owner(new_owner), nonce(0)
@@ -84,7 +84,7 @@ namespace tangent
 			return message.data;
 		}
 
-		account_program::account_program(const algorithm::pubkeyhash_t& new_owner, uint64_t new_block_number, uint64_t new_block_nonce) : ledger::uniform(new_block_number, new_block_nonce), owner(new_owner)
+		account_program::account_program(const algorithm::pubkeyhash_t& new_owner, uint64_t new_block_number) : ledger::uniform(new_block_number), owner(new_owner)
 		{
 		}
 		account_program::account_program(const algorithm::pubkeyhash_t& new_owner, const ledger::block_header* new_block_header) : ledger::uniform(new_block_header), owner(new_owner)
@@ -155,7 +155,7 @@ namespace tangent
 			return message.data;
 		}
 
-		account_uniform::account_uniform(const algorithm::pubkeyhash_t& new_owner, const std::string_view& new_index, uint64_t new_block_number, uint64_t new_block_nonce) : ledger::uniform(new_block_number, new_block_nonce), owner(new_owner), index(new_index)
+		account_uniform::account_uniform(const algorithm::pubkeyhash_t& new_owner, const std::string_view& new_index, uint64_t new_block_number) : ledger::uniform(new_block_number), owner(new_owner), index(new_index)
 		{
 		}
 		account_uniform::account_uniform(const algorithm::pubkeyhash_t& new_owner, const std::string_view& new_index, const ledger::block_header* new_block_header) : ledger::uniform(new_block_header), owner(new_owner), index(new_index)
@@ -237,7 +237,7 @@ namespace tangent
 			return message.data;
 		}
 
-		account_multiform::account_multiform(const algorithm::pubkeyhash_t& new_owner, const std::string_view& new_column, const std::string_view& new_row, uint64_t new_block_number, uint64_t new_block_nonce) : ledger::multiform(new_block_number, new_block_nonce), owner(new_owner), column(new_column), row(new_row), filter(0)
+		account_multiform::account_multiform(const algorithm::pubkeyhash_t& new_owner, const std::string_view& new_column, const std::string_view& new_row, uint64_t new_block_number) : ledger::multiform(new_block_number), owner(new_owner), column(new_column), row(new_row), filter(0)
 		{
 		}
 		account_multiform::account_multiform(const algorithm::pubkeyhash_t& new_owner, const std::string_view& new_column, const std::string_view& new_row, const ledger::block_header* new_block_header) : ledger::multiform(new_block_header), owner(new_owner), column(new_column), row(new_row), filter(0)
@@ -355,7 +355,7 @@ namespace tangent
 			return message.data;
 		}
 
-		account_delegation::account_delegation(const algorithm::pubkeyhash_t& new_owner, uint64_t new_block_number, uint64_t new_block_nonce) : ledger::uniform(new_block_number, new_block_nonce), owner(new_owner), delegations(0)
+		account_delegation::account_delegation(const algorithm::pubkeyhash_t& new_owner, uint64_t new_block_number) : ledger::uniform(new_block_number), owner(new_owner), delegations(0)
 		{
 		}
 		account_delegation::account_delegation(const algorithm::pubkeyhash_t& new_owner, const ledger::block_header* new_block_header) : ledger::uniform(new_block_header), owner(new_owner), delegations(0)
@@ -453,7 +453,7 @@ namespace tangent
 			return message.data;
 		}
 
-		account_balance::account_balance(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, uint64_t new_block_number, uint64_t new_block_nonce) : ledger::multiform(new_block_number, new_block_nonce), owner(new_owner), asset(new_asset)
+		account_balance::account_balance(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, uint64_t new_block_number) : ledger::multiform(new_block_number), owner(new_owner), asset(new_asset)
 		{
 		}
 		account_balance::account_balance(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, const ledger::block_header* new_block_header) : ledger::multiform(new_block_header), owner(new_owner), asset(new_asset)
@@ -583,7 +583,7 @@ namespace tangent
 			return message.data;
 		}
 
-		validator_production::validator_production(const algorithm::pubkeyhash_t& new_owner, uint64_t new_block_number, uint64_t new_block_nonce) : ledger::multiform(new_block_number, new_block_nonce), owner(new_owner)
+		validator_production::validator_production(const algorithm::pubkeyhash_t& new_owner, uint64_t new_block_number) : ledger::multiform(new_block_number), owner(new_owner)
 		{
 		}
 		validator_production::validator_production(const algorithm::pubkeyhash_t& new_owner, const ledger::block_header* new_block_header) : ledger::multiform(new_block_header), owner(new_owner)
@@ -728,7 +728,7 @@ namespace tangent
 			return algorithm::arithmetic::fixed256(threshold) + 1;
 		}
 
-		validator_participation::validator_participation(const algorithm::pubkeyhash_t& new_owner, uint64_t new_block_number, uint64_t new_block_nonce) : ledger::multiform(new_block_number, new_block_nonce), owner(new_owner)
+		validator_participation::validator_participation(const algorithm::pubkeyhash_t& new_owner, uint64_t new_block_number) : ledger::multiform(new_block_number), owner(new_owner)
 		{
 		}
 		validator_participation::validator_participation(const algorithm::pubkeyhash_t& new_owner, const ledger::block_header* new_block_header) : ledger::multiform(new_block_header), owner(new_owner)
@@ -947,7 +947,7 @@ namespace tangent
 			return message.data;
 		}
 
-		validator_attestation::validator_attestation(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, uint64_t new_block_number, uint64_t new_block_nonce) : ledger::multiform(new_block_number, new_block_nonce), owner(new_owner), asset(algorithm::asset::base_id_of(new_asset))
+		validator_attestation::validator_attestation(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, uint64_t new_block_number) : ledger::multiform(new_block_number), owner(new_owner), asset(algorithm::asset::base_id_of(new_asset))
 		{
 		}
 		validator_attestation::validator_attestation(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, const ledger::block_header* new_block_header) : ledger::multiform(new_block_header), owner(new_owner), asset(algorithm::asset::base_id_of(new_asset))
@@ -1172,7 +1172,7 @@ namespace tangent
 			return message.data;
 		}
 
-		bridge_balance::bridge_balance(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, uint64_t new_block_number, uint64_t new_block_nonce) : ledger::multiform(new_block_number, new_block_nonce), owner(new_owner), asset(algorithm::asset::base_id_of(new_asset))
+		bridge_balance::bridge_balance(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, uint64_t new_block_number) : ledger::multiform(new_block_number), owner(new_owner), asset(algorithm::asset::base_id_of(new_asset))
 		{
 		}
 		bridge_balance::bridge_balance(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, const ledger::block_header* new_block_header) : ledger::multiform(new_block_header), owner(new_owner), asset(algorithm::asset::base_id_of(new_asset))
@@ -1325,7 +1325,7 @@ namespace tangent
 			return message.data;
 		}
 
-		bridge_account::bridge_account(const algorithm::pubkeyhash_t& new_manager, const algorithm::asset_id& new_asset, const algorithm::pubkeyhash_t& new_owner, uint64_t new_block_number, uint64_t new_block_nonce) : ledger::multiform(new_block_number, new_block_nonce), owner(new_owner), manager(new_manager), asset(algorithm::asset::base_id_of(new_asset))
+		bridge_account::bridge_account(const algorithm::pubkeyhash_t& new_manager, const algorithm::asset_id& new_asset, const algorithm::pubkeyhash_t& new_owner, uint64_t new_block_number) : ledger::multiform(new_block_number), owner(new_owner), manager(new_manager), asset(algorithm::asset::base_id_of(new_asset))
 		{
 		}
 		bridge_account::bridge_account(const algorithm::pubkeyhash_t& new_manager, const algorithm::asset_id& new_asset, const algorithm::pubkeyhash_t& new_owner, const ledger::block_header* new_block_header) : ledger::multiform(new_block_header), owner(new_owner), manager(new_manager), asset(algorithm::asset::base_id_of(new_asset))
@@ -1469,7 +1469,7 @@ namespace tangent
 			return message.data;
 		}
 
-		witness_program::witness_program(const std::string_view& new_hashcode, uint64_t new_block_number, uint64_t new_block_nonce) : ledger::uniform(new_block_number, new_block_nonce), hashcode(new_hashcode)
+		witness_program::witness_program(const std::string_view& new_hashcode, uint64_t new_block_number) : ledger::uniform(new_block_number), hashcode(new_hashcode)
 		{
 		}
 		witness_program::witness_program(const std::string_view& new_hashcode, const ledger::block_header* new_block_header) : ledger::uniform(new_block_header), hashcode(new_hashcode)
@@ -1565,7 +1565,7 @@ namespace tangent
 			return algorithm::hashing::ppc512(storage);
 		}
 
-		witness_event::witness_event(const uint256_t& new_parent_transaction_hash, uint64_t new_block_number, uint64_t new_block_nonce) : ledger::uniform(new_block_number, new_block_nonce), parent_transaction_hash(new_parent_transaction_hash)
+		witness_event::witness_event(const uint256_t& new_parent_transaction_hash, uint64_t new_block_number) : ledger::uniform(new_block_number), parent_transaction_hash(new_parent_transaction_hash)
 		{
 		}
 		witness_event::witness_event(const uint256_t& new_parent_transaction_hash, const ledger::block_header* new_block_header) : ledger::uniform(new_block_header), parent_transaction_hash(new_parent_transaction_hash)
@@ -1641,7 +1641,7 @@ namespace tangent
 			return message.data;
 		}
 
-		witness_account::witness_account(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, const address_map& new_addresses, uint64_t new_block_number, uint64_t new_block_nonce) : ledger::multiform(new_block_number, new_block_nonce), owner(new_owner), asset(algorithm::asset::base_id_of(new_asset)), addresses(new_addresses)
+		witness_account::witness_account(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, const address_map& new_addresses, uint64_t new_block_number) : ledger::multiform(new_block_number), owner(new_owner), asset(algorithm::asset::base_id_of(new_asset)), addresses(new_addresses)
 		{
 		}
 		witness_account::witness_account(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, const address_map& new_addresses, const ledger::block_header* new_block_header) : ledger::multiform(new_block_header), owner(new_owner), asset(algorithm::asset::base_id_of(new_asset)), addresses(new_addresses)
@@ -1833,7 +1833,7 @@ namespace tangent
 			return message.data;
 		}
 
-		witness_transaction::witness_transaction(const algorithm::asset_id& new_asset, const std::string_view& new_transaction_id, uint64_t new_block_number, uint64_t new_block_nonce) : ledger::uniform(new_block_number, new_block_nonce), asset(algorithm::asset::base_id_of(new_asset)), transaction_id(new_transaction_id)
+		witness_transaction::witness_transaction(const algorithm::asset_id& new_asset, const std::string_view& new_transaction_id, uint64_t new_block_number) : ledger::uniform(new_block_number), asset(algorithm::asset::base_id_of(new_asset)), transaction_id(new_transaction_id)
 		{
 		}
 		witness_transaction::witness_transaction(const algorithm::asset_id& new_asset, const std::string_view& new_transaction_id, const ledger::block_header* new_block_header) : ledger::uniform(new_block_header), asset(algorithm::asset::base_id_of(new_asset)), transaction_id(new_transaction_id)
@@ -2008,7 +2008,6 @@ namespace tangent
 				cache = from_type(base->as_type());
 
 			cache->block_number = base->block_number;
-			cache->block_nonce = base->block_nonce;
 			switch (base->as_level())
 			{
 				case ledger::state_level::uniform:

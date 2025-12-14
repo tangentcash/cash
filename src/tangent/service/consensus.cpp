@@ -3147,7 +3147,7 @@ namespace tangent
 											<+> - <+> = possible reorganization
 			*/
 			auto reorganization = ledger::solver_context::requires_reorganization(candidate);
-			auto validation = fork_branch && reorganization ? expects_lr<void>(expectation::met) : (from ? candidate.block.validate(parent_block.address(), &candidate) : ledger::solver_context::verify_solved_block(parent_block.address(), candidate));
+			auto validation = fork_branch && reorganization ? expects_lr<void>(expectation::met) : candidate.block.validate(parent_block.address(), &candidate);
 			if (!validation)
 			{
 				if (protocol::now().user.consensus.logging)
