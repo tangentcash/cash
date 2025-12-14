@@ -260,6 +260,9 @@ namespace tangent
 		}
 		void account_cache::set_account_location(const algorithm::pubkeyhash_t& account, uint64_t location)
 		{
+			if (!location)
+				return;
+
 			auto size = protocol::now().user.storage.location_cache_size;
 			umutex<std::mutex> unique(mutex);
 			if (accounts.size() >= size)
@@ -310,6 +313,9 @@ namespace tangent
 		}
 		void uniform_cache::set_index_location(uint32_t type, const std::string_view& index, uint64_t index_location)
 		{
+			if (!index_location)
+				return;
+
 			umutex<std::mutex> unique(mutex);
 			if (indices.size() >= protocol::now().user.storage.location_cache_size)
 				indices.clear();
@@ -317,6 +323,9 @@ namespace tangent
 		}
 		void uniform_cache::set_block_location(uint32_t type, uint64_t index_location, uint64_t block_number, bool hidden)
 		{
+			if (!index_location || !block_number)
+				return;
+
 			umutex<std::mutex> unique(mutex);
 			if (blocks.size() >= protocol::now().user.storage.location_cache_size)
 				blocks.clear();
@@ -394,16 +403,24 @@ namespace tangent
 		}
 		void multiform_cache::set_multiform_location(uint32_t type, const std::string_view& column, const std::string_view& row, uint64_t column_location, uint64_t row_location)
 		{
+			if (!column_location && !row_location)
+				return;
+
 			umutex<std::mutex> unique(mutex);
 			if (columns.size() >= protocol::now().user.storage.location_cache_size)
 				columns.clear();
 			if (rows.size() >= protocol::now().user.storage.location_cache_size)
 				rows.clear();
-			columns[key_of_columns(type, column)] = column_location;
-			rows[key_of_rows(type, row)] = row_location;
+			if (column_location > 0)
+				columns[key_of_columns(type, column)] = column_location;
+			if (row_location > 0)
+				rows[key_of_rows(type, row)] = row_location;
 		}
 		void multiform_cache::set_column_location(uint32_t type, const std::string_view& column, uint64_t location)
 		{
+			if (!location)
+				return;
+
 			umutex<std::mutex> unique(mutex);
 			if (columns.size() >= protocol::now().user.storage.location_cache_size)
 				columns.clear();
@@ -411,6 +428,9 @@ namespace tangent
 		}
 		void multiform_cache::set_row_location(uint32_t type, const std::string_view& row, uint64_t location)
 		{
+			if (!location)
+				return;
+
 			umutex<std::mutex> unique(mutex);
 			if (rows.size() >= protocol::now().user.storage.location_cache_size)
 				rows.clear();
@@ -418,6 +438,9 @@ namespace tangent
 		}
 		void multiform_cache::set_block_location(uint32_t type, uint64_t column_location, uint64_t row_location, uint64_t block_number, bool hidden)
 		{
+			if (!column_location || !row_location || !block_number)
+				return;
+
 			umutex<std::mutex> unique(mutex);
 			if (blocks.size() >= protocol::now().user.storage.location_cache_size)
 				blocks.clear();
@@ -1534,10 +1557,10 @@ namespace tangent
 				return expects_lr<uint64_t>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 			uint64_t account_number = (*cursor)["account_number"].get().get_integer();
-			cache->set_account_location(account, account_number);
 			if (!account_number)
 				return layer_exception("account not found");
-
+			
+			cache->set_account_location(account, account_number);
 			return account_number;
 		}
 		expects_lr<uint64_t> chainstate::get_checkpoint_block_number()
