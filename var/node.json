@@ -89,7 +89,6 @@
         "module_cache_path": null,
         "optimization": "speed",
         "checkpoint_size": 128,
-        "location_cache_size": 500000,
         "module_cache_size": 8192,
         "blob_cache_size": 134217728,
         "index_page_size": 65536,

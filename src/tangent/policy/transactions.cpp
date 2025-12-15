@@ -941,6 +941,18 @@ namespace tangent
 			if (!validation)
 				return validation.error();
 
+			size_t count = 32;
+			vector<states::validator_participation_ref> refs;
+			auto participation_type = participation ? (participation->is_nan() ? ledger::executor_context::staker::unlock : ledger::executor_context::staker::lock) : ledger::executor_context::staker::reward_or_penalty;
+			while (!migrations.empty() || participation_type == ledger::executor_context::staker::unlock)
+			{
+				auto results = executor->get_validator_participation_refs(executor->receipt.from, refs.size(), count);
+				if (results)
+					refs.insert(refs.end(), results->begin(), results->end());
+				if (!results || results->size() != count)
+					break;
+			}
+
 			decimal threshold = decimal::zero();
 			btree_set<uint256_t> accounts;
 			btree_set<algorithm::pubkeyhash_t> exclusion;
@@ -954,41 +966,33 @@ namespace tangent
 				if (parent_transaction->proof || parent->receipt.from != executor->receipt.from)
 					return layer_exception("broadcast transaction not applicable");
 
-				auto info = executor->get_validator_participation(participant);
-				if (!info)
-					return layer_exception("participant for a migration not found");
-
 				bool may_perform_migration = false;
 				auto base_asset = algorithm::asset::base_id_of(parent_transaction->asset);
-				auto refs = info->participations.find(base_asset);
-				if (refs != info->participations.end())
+				for (auto& ref_state : refs)
 				{
-					for (auto& ref : refs->second)
-					{
-						if (ref.manager != executor->receipt.from)
-							continue;
+					auto& ref = ref_state.ref;
+					if (!ref_state.active || ref.asset != base_asset || ref.manager != executor->receipt.from)
+						continue;
 
-						auto attestation = executor->get_verified_validator_attestation(base_asset, ref.manager);
-						if (!attestation)
-							return attestation.error();
+					auto attestation = executor->get_verified_validator_attestation(ref.asset, ref.manager);
+					if (!attestation)
+						return attestation.error();
 
-						auto account = executor->get_bridge_account(base_asset, ref.manager, ref.owner);
-						if (!account)
-							return account.error();
+					auto account = executor->get_bridge_account(ref.asset, ref.manager, ref.owner);
+					if (!account)
+						return account.error();
 
-						may_perform_migration = true;
-						exclusion.insert(account->group.begin(), account->group.end());
-						if (threshold < attestation->participation_threshold)
-							threshold = attestation->participation_threshold;
+					may_perform_migration = true;
+					exclusion.insert(account->group.begin(), account->group.end());
+					if (threshold < attestation->participation_threshold)
+						threshold = attestation->participation_threshold;
 
-						auto ref_hash = ledger::dispatcher_context::secret_entropy::ref_hash(base_asset, ref.manager, ref.owner);
-						if (accounts.find(ref_hash) != accounts.end())
-							return layer_exception("migration requires migration to multiple new participants");
+					auto ref_hash = ledger::dispatcher_context::secret_entropy::ref_hash(ref.asset, ref.manager, ref.owner);
+					if (accounts.find(ref_hash) != accounts.end())
+						return layer_exception("migration requires migration to multiple new participants");
 
-						accounts.insert(ref_hash);
-					}
+					accounts.insert(ref_hash);
 				}
-
 				if (!may_perform_migration)
 					return layer_exception("migrations for a participant not found");
 			}
@@ -1013,71 +1017,84 @@ namespace tangent
 				if (type == ledger::executor_context::staker::unlock && (next_policy->accepts_account_requests || next_policy->accepts_withdrawal_requests))
 					return layer_exception(algorithm::asset::handle_of(asset) + " bridge is still active");
 
-				auto balance = executor->get_bridge_balance(asset, executor->receipt.from);
-				if (balance && (type == ledger::executor_context::staker::unlock || (prev_policy.is_active() && prev_policy.accepts_withdrawal_requests != next_policy->accepts_withdrawal_requests && !next_policy->accepts_withdrawal_requests)))
+				if (type == ledger::executor_context::staker::unlock || (prev_policy.is_active() && prev_policy.accepts_withdrawal_requests != next_policy->accepts_withdrawal_requests && !next_policy->accepts_withdrawal_requests))
 				{
-					for (auto& [token_asset, token_value] : balance->balances)
+					size_t offset = 0, count = 32;
+					while (true)
 					{
-						if (algorithm::asset::is_aux(token_asset, true))
+						auto balances = executor->get_bridge_balances(executor->receipt.from, offset, count);
+						if (!balances)
+							break;
+
+						for (auto& balance : *balances)
 						{
-							auto dust = executor->calculate_amount_considered_dust(token_asset).or_else(decimal::zero());
-							if (token_value > dust)
-								return layer_exception(algorithm::asset::handle_of(token_asset) + " bridge has non-dust custodial balance (max_dust: " + dust.to_string() + ")");
+							if (asset != algorithm::asset::base_id_of(balance.asset))
+								continue;
+
+							if (algorithm::asset::is_aux(asset, true))
+							{
+								auto dust = executor->calculate_amount_considered_dust(balance.asset).or_else(decimal::zero());
+								if (balance.supply > dust)
+									return layer_exception(algorithm::asset::handle_of(balance.asset) + " bridge has non-dust custodial balance (max_dust: " + dust.to_string() + ")");
+							}
+							else if (balance.supply.is_positive())
+								return layer_exception(algorithm::asset::handle_of(balance.asset) + " bridge has custodial token balance");
 						}
-						else if (token_value.is_positive())
-							return layer_exception(algorithm::asset::handle_of(token_asset) + " bridge has custodial token balance");
+
+						offset += balances->size();
+						if (balances->size() != count)
+							break;
 					}
 				}
 
-				auto status = executor->apply_validator_attestation(asset, executor->receipt.from, type, { { algorithm::asset::native(), setup.stake } });
+				auto status = executor->apply_validator_attestation(asset, executor->receipt.from, type, setup.stake);
 				if (!status)
 					return status.error();
 			}
 
 			bool requires_self_migration = false;
-			if (participation)
+			if (participation_type != ledger::executor_context::staker::reward_or_penalty)
 			{
 				auto type = participation->is_nan() ? ledger::executor_context::staker::unlock : ledger::executor_context::staker::lock;
 				if (type == ledger::executor_context::staker::unlock)
 				{
-					auto info = executor->get_validator_participation(executor->receipt.from);
-					if (!info)
-						return info.error();
-					else if (info->participations.empty())
-						goto modify_participation;
-
-					for (auto& [asset, refs] : info->participations)
+					bool has_any = false;
+					for (auto& ref_state : refs)
 					{
-						for (auto& ref : refs)
-						{
-							auto attestation = executor->get_verified_validator_attestation(asset, ref.manager);
-							if (!attestation)
-								return attestation.error();
+						auto& ref = ref_state.ref;
+						if (!ref_state.active)
+							continue;
 
-							auto account = executor->get_bridge_account(asset, ref.manager, ref.owner);
-							if (!account)
-								return account.error();
+						auto attestation = executor->get_verified_validator_attestation(ref.asset, ref.manager);
+						if (!attestation)
+							return attestation.error();
 
-							requires_self_migration = true;
-							exclusion.insert(account->group.begin(), account->group.end());
-							if (threshold < attestation->participation_threshold)
-								threshold = attestation->participation_threshold;
+						auto account = executor->get_bridge_account(ref.asset, ref.manager, ref.owner);
+						if (!account)
+							return account.error();
 
-							auto ref_hash = ledger::dispatcher_context::secret_entropy::ref_hash(asset, ref.manager, ref.owner);
-							if (accounts.find(ref_hash) != accounts.end())
-								return layer_exception("migration requires migration to multiple new participants");
+						requires_self_migration = true;
+						exclusion.insert(account->group.begin(), account->group.end());
+						if (threshold < attestation->participation_threshold)
+							threshold = attestation->participation_threshold;
 
-							accounts.insert(ref_hash);
-						}
+						auto ref_hash = ledger::dispatcher_context::secret_entropy::ref_hash(ref.asset, ref.manager, ref.owner);
+						if (accounts.find(ref_hash) != accounts.end())
+							return layer_exception("migration requires migration to multiple new participants");
+
+						accounts.insert(ref_hash);
+						has_any = true;
 					}
 
-					if (!requires_self_migration)
+					if (!has_any)
+						goto modify_participation;
+					else if (!requires_self_migration)
 						return layer_exception("participant migration(s) required but not found");
 				}
 				else
 				{
 				modify_participation:
-					auto status = executor->apply_validator_participation(executor->receipt.from, type, { }, { { algorithm::asset::native(), *participation } });
+					auto status = executor->apply_validator_participation(executor->receipt.from, type, *participation);
 					if (!status)
 						return status.error();
 				}
@@ -1085,7 +1102,7 @@ namespace tangent
 
 			if (production)
 			{
-				auto status = executor->apply_validator_production(executor->receipt.from, production->is_nan() ? ledger::executor_context::staker::unlock : ledger::executor_context::staker::lock, { { algorithm::asset::native(), *production } });
+				auto status = executor->apply_validator_production(executor->receipt.from, production->is_nan() ? ledger::executor_context::staker::unlock : ledger::executor_context::staker::lock, *production);
 				if (!status)
 					return status.error();
 			}
@@ -1480,26 +1497,37 @@ namespace tangent
 				return expects_lr<vector<migration_ref>>(std::move(results));
 			
 			bool requires_self_migration = event->front().as_boolean();
+			if (!requires_self_migration && migrations.empty())
+				return expects_lr<vector<migration_ref>>(std::move(results));
+
+			size_t count = 32;
+			vector<states::validator_participation_ref> refs;
+			while (true)
+			{
+				auto results = executor->get_validator_participation_refs(executor->receipt.from, refs.size(), count);
+				if (results)
+					refs.insert(refs.end(), results->begin(), results->end());
+				if (!results || results->size() != count)
+					break;
+			}
+
 			if (requires_self_migration)
 			{
-				auto participation = executor->get_validator_participation(receipt.from);
-				if (!participation)
-					return participation.error();
-
-				for (auto& [asset, refs] : participation->participations)
+				for (auto& ref_state : refs)
 				{
-					for (auto& ref : refs)
-					{
-						auto account = executor->get_bridge_account(asset, ref.manager, ref.owner);
-						if (!account)
-							return account.error();
+					auto& ref = ref_state.ref;
+					if (!ref_state.active)
+						continue;
 
-						migration_ref migration;
-						migration.account = std::move(*account);
-						migration.old_participant = receipt.from;
-						migration.must_have_locally = true;
-						results.push_back(std::move(migration));
-					}
+					auto account = executor->get_bridge_account(ref.asset, ref.manager, ref.owner);
+					if (!account)
+						return account.error();
+
+					migration_ref migration;
+					migration.account = std::move(*account);
+					migration.old_participant = receipt.from;
+					migration.must_have_locally = true;
+					results.push_back(std::move(migration));
 				}
 			}
 
@@ -1513,16 +1541,15 @@ namespace tangent
 				if (!participation)
 					return participation.error();
 
-				auto refs = participation->participations.find(algorithm::asset::base_id_of(parent->transaction->asset));
-				if (refs == participation->participations.end())
-					return layer_exception("invalid migration participant");
-
-				for (auto& ref : refs->second)
+				bool has_any = false;
+				auto ref_asset = algorithm::asset::base_id_of(parent->transaction->asset);
+				for (auto& ref_state : refs)
 				{
-					if (ref.manager != receipt.from)
+					auto& ref = ref_state.ref;
+					if (!ref_state.active || ref.asset != ref_asset || ref.manager != receipt.from)
 						continue;
 
-					auto account = executor->get_bridge_account(refs->first, ref.manager, ref.owner);
+					auto account = executor->get_bridge_account(ref.asset, ref.manager, ref.owner);
 					if (!account)
 						return account.error();
 
@@ -1531,7 +1558,11 @@ namespace tangent
 					migration.old_participant = participant;
 					migration.must_have_locally = false;
 					results.push_back(std::move(migration));
+					has_any = true;
 				}
+
+				if (!has_any)
+					return layer_exception("invalid migration participant");
 			}
 
 			return expects_lr<vector<migration_ref>>(std::move(results));
@@ -1656,15 +1687,16 @@ namespace tangent
 				if (!account)
 					return account.error();
 
-				auto ref = states::validator_participation::participation_ref();
+				auto ref = states::validator_participation_ref::ref_value();
+				ref.asset = account->asset;
 				ref.manager = account->manager;
 				ref.owner = account->owner;
 				
-				auto status = executor->apply_validator_participation(migration.old_participant, ledger::executor_context::staker::lock, { { account->asset, { false, ref } } }, { });
+				auto status = executor->apply_validator_participation_ref(migration.old_participant, ref, false);
 				if (!status)
 					return status.error();
 
-				status = executor->apply_validator_participation(new_participant, ledger::executor_context::staker::lock, { { account->asset, { true, ref } } }, { });
+				status = executor->apply_validator_participation_ref(new_participant, ref, true);
 				if (!status)
 					return status.error();
 			}
@@ -1977,7 +2009,7 @@ namespace tangent
 					if (transfer.supply.is_negative())
 					{
 						auto balance = executor->get_bridge_balance(transfer_asset, owner.data);
-						auto supply = balance ? -balance->get_balance(transfer_asset) : decimal::zero();
+						auto supply = balance ? -balance->supply : decimal::zero();		
 						if (supply > transfer.supply)
 						{
 							consume_penalty(transfer.supply - supply);
@@ -1987,7 +2019,7 @@ namespace tangent
 
 					if (!transfer.supply.is_zero())
 					{
-						auto bridge = executor->apply_bridge_balance(transfer_asset, owner.data, { { transfer_asset, transfer.supply } });
+						auto bridge = executor->apply_bridge_balance(transfer_asset, owner.data, transfer.supply);
 						if (!bridge)
 							return bridge.error();
 					}
@@ -2002,27 +2034,22 @@ namespace tangent
 					{
 						for (auto& failing_attester : failing_attesters)
 						{
-							auto prev_attestation = executor->get_verified_validator_attestation(transfer_asset, failing_attester.data);
+							auto prev_attestation = executor->get_validator_attestation_reward(transfer_asset, failing_attester.data);
 							if (!prev_attestation)
 								continue;
 
-							auto next_attestation = executor->apply_validator_attestation(transfer_asset, failing_attester.data, ledger::executor_context::staker::lock, { { transfer_asset, -attestation_fee } });
+							auto next_attestation = executor->apply_validator_attestation_reward(transfer_asset, failing_attester.data, -attestation_fee);
 							if (!next_attestation)
 								return next_attestation.error();
 
-							auto& prev_value = prev_attestation->rewards[transfer_asset];
-							auto& next_value = next_attestation->rewards[transfer_asset];
-							prev_value = prev_value.is_nan() ? decimal::zero() : prev_value;
-							next_value = next_value.is_nan() ? decimal::zero() : next_value;
-
-							auto compensation_adjustment = std::max(decimal::zero(), prev_value - next_value);
+							auto compensation_adjustment = std::max(decimal::zero(), prev_attestation->reward - next_attestation->reward);
 							if (compensation_adjustment.is_positive())
 								bridge_fee += consume_penalty(compensation_adjustment);
 						}
 
 						for (auto& succeeding_attester : succeeding_attesters)
 						{
-							auto attestation = executor->apply_validator_attestation(transfer_asset, succeeding_attester, ledger::executor_context::staker::reward_or_penalty, { { transfer_asset, attestation_fee } });
+							auto attestation = executor->apply_validator_attestation_reward(transfer_asset, succeeding_attester, attestation_fee);
 							if (!attestation)
 								return attestation.error();
 						}
@@ -2033,7 +2060,7 @@ namespace tangent
 						auto individual_penalty = -algorithm::arithmetic::divide(penalty, batch.participants.size());
 						for (auto& participant : batch.participants)
 						{
-							auto participation = executor->apply_validator_participation(participant.data, ledger::executor_context::staker::reward_or_penalty, { }, { { transfer_asset, individual_penalty.is_negative() ? individual_penalty : participation_fee } });
+							auto participation = executor->apply_validator_participation_reward(transfer_asset, participant, individual_penalty.is_negative() ? individual_penalty : participation_fee);
 							if (!participation)
 								return participation.error();
 						}
@@ -2041,7 +2068,7 @@ namespace tangent
 
 					if (bridge_fee.is_positive())
 					{
-						auto attestation = executor->apply_validator_attestation(transfer_asset, owner.data, ledger::executor_context::staker::reward_or_penalty, { { transfer_asset, bridge_fee } });
+						auto attestation = executor->apply_validator_attestation_reward(transfer_asset, owner.data, bridge_fee);
 						if (!attestation)
 							return attestation.error();
 					}
@@ -2783,14 +2810,15 @@ namespace tangent
 			if (!policy_status)
 				return policy_status.error();
 
-			auto ref = states::validator_participation::participation_ref();
+			auto ref = states::validator_participation_ref::ref_value();
+			ref.asset = asset;
 			ref.manager = parent_transaction->manager;
 			ref.owner = parent->receipt.from;
 
 			auto group = parent_transaction->get_group(parent->receipt);
 			for (auto& participant : group)
 			{
-				auto status = executor->apply_validator_participation(participant.data, ledger::executor_context::staker::lock, { { asset, { true, ref } } }, { });
+				auto status = executor->apply_validator_participation_ref(participant.data, ref, true);
 				if (!status)
 					return status.error();
 			}
@@ -2983,16 +3011,31 @@ namespace tangent
 
 			if (migration)
 			{
-				auto bridge = executor->get_bridge_balance(fee_asset, manager);
-				if (!bridge || bridge->get_balance(asset) < fee_value)
-					return layer_exception(algorithm::asset::handle_of(asset) + " balance is insufficient perform migration");
+				auto fee_balance = executor->get_bridge_balance(fee_asset, manager);
+				if (!fee_balance || fee_balance->supply < fee_value)
+					return layer_exception(algorithm::asset::handle_of(fee_asset) + " balance is insufficient perform migration");
 
 				if (asset != fee_asset)
 				{
-					for (auto& [token_asset, token_balance] : bridge->balances)
+					size_t offset = 0, count = 32;
+					while (true)
 					{
-						if (token_asset != fee_asset && token_balance.is_positive())
-							return layer_exception(algorithm::asset::handle_of(token_asset) + " balance must be migrated before " + algorithm::asset::handle_of(fee_asset));
+						auto balances = executor->get_bridge_balances(manager, offset, count);
+						if (!balances)
+							break;
+
+						for (auto& balance : *balances)
+						{
+							if (fee_asset == balance.asset || fee_asset != algorithm::asset::base_id_of(balance.asset))
+								continue;
+
+							if (balance.supply.is_positive())
+								return layer_exception(algorithm::asset::handle_of(balance.asset) + " balance must be migrated before " + algorithm::asset::handle_of(fee_asset));
+						}
+
+						offset += balances->size();
+						if (balances->size() != count)
+							break;
 					}
 				}
 
@@ -3021,8 +3064,8 @@ namespace tangent
 				if (!balance_requirement)
 					return balance_requirement.error();
 
-				auto bridge = executor->get_bridge_balance(fee_asset, manager);
-				if (!bridge || bridge->get_balance(fee_asset) < fee_value)
+				auto fee_balance = executor->get_bridge_balance(fee_asset, manager);
+				if (!fee_balance || fee_balance->supply < fee_value)
 					return layer_exception(algorithm::asset::handle_of(fee_asset) + " balance is insufficient to cover base withdrawal value (value: " + fee_value.to_string() + ")");
 			}
 			else
@@ -3032,8 +3075,8 @@ namespace tangent
 			if (!balance_requirement)
 				return balance_requirement;
 
-			auto bridge = executor->get_bridge_balance(asset, manager);
-			if (!bridge || bridge->get_balance(asset) < token_value)
+			auto token_balance = executor->get_bridge_balance(asset, manager);
+			if (!token_balance || token_balance->supply < token_value)
 				return layer_exception(algorithm::asset::handle_of(asset) + " balance is insufficient to cover token withdrawal value (value: " + token_value.to_string() + ")");
 
 			for (auto& item : to)
@@ -3314,7 +3357,7 @@ namespace tangent
 				auto bridge = executor->get_bridge_balance(asset, manager);
 				if (bridge)
 				{
-					value += bridge->get_balance(asset);
+					value += bridge->supply;
 					if (algorithm::asset::is_aux(asset, true))
 					{
 						auto fee_value = get_fee_value(executor);

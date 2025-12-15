@@ -145,7 +145,6 @@ namespace tangent
 		struct validator_production final : ledger::multiform
 		{
 			algorithm::pubkeyhash_t owner;
-			btree_map<algorithm::asset_id, decimal> rewards;
 			decimal stake = decimal::nan();
 
 			validator_production(const algorithm::pubkeyhash_t& new_owner, uint64_t new_block_number);
@@ -169,17 +168,34 @@ namespace tangent
 			static uint256_t to_rank(const decimal& threshold);
 		};
 
+		struct validator_production_reward final : ledger::multiform
+		{
+			algorithm::pubkeyhash_t owner;
+			algorithm::asset_id asset;
+			decimal reward = decimal::zero();
+
+			validator_production_reward(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, uint64_t new_block_number);
+			validator_production_reward(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, const ledger::block_header* new_block_header);
+			expects_lr<void> transition(const ledger::state* prev_state) override;
+			bool store_column(format::wo_stream* stream) const override;
+			bool load_column(format::ro_stream& stream) override;
+			bool store_row(format::wo_stream* stream) const override;
+			bool load_row(format::ro_stream& stream) override;
+			bool store_data(format::wo_stream* stream) const override;
+			bool load_data(format::ro_stream& stream) override;
+			uptr<schema> as_schema() const override;
+			uint32_t as_type() const override;
+			std::string_view as_typename() const override;
+			uint256_t as_rank() const override;
+			static uint32_t as_instance_type();
+			static std::string_view as_instance_typename();
+			static string as_instance_column(const algorithm::pubkeyhash_t& owner);
+			static string as_instance_row(const algorithm::asset_id& asset);
+		};
+
 		struct validator_participation final : ledger::multiform
 		{
-			struct participation_ref
-			{
-				algorithm::pubkeyhash_t manager;
-				algorithm::pubkeyhash_t owner;
-			};
-
 			algorithm::pubkeyhash_t owner;
-			btree_map<algorithm::asset_id, vector<participation_ref>> participations;
-			btree_map<algorithm::asset_id, decimal> rewards;
 			decimal stake = decimal::nan();
 
 			validator_participation(const algorithm::pubkeyhash_t& new_owner, uint64_t new_block_number);
@@ -202,11 +218,65 @@ namespace tangent
 			static string as_instance_row();
 		};
 
+		struct validator_participation_reward final : ledger::multiform
+		{
+			algorithm::pubkeyhash_t owner;
+			algorithm::asset_id asset;
+			decimal reward = decimal::zero();
+
+			validator_participation_reward(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, uint64_t new_block_number);
+			validator_participation_reward(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, const ledger::block_header* new_block_header);
+			expects_lr<void> transition(const ledger::state* prev_state) override;
+			bool store_column(format::wo_stream* stream) const override;
+			bool load_column(format::ro_stream& stream) override;
+			bool store_row(format::wo_stream* stream) const override;
+			bool load_row(format::ro_stream& stream) override;
+			bool store_data(format::wo_stream* stream) const override;
+			bool load_data(format::ro_stream& stream) override;
+			uptr<schema> as_schema() const override;
+			uint32_t as_type() const override;
+			std::string_view as_typename() const override;
+			uint256_t as_rank() const override;
+			static uint32_t as_instance_type();
+			static std::string_view as_instance_typename();
+			static string as_instance_column(const algorithm::pubkeyhash_t& owner);
+			static string as_instance_row(const algorithm::asset_id& asset);
+		};
+
+		struct validator_participation_ref final : ledger::multiform
+		{
+			struct ref_value
+			{
+				algorithm::asset_id asset;
+				algorithm::pubkeyhash_t manager;
+				algorithm::pubkeyhash_t owner;
+			} ref;
+			algorithm::pubkeyhash_t owner;
+			bool active = false;
+
+			validator_participation_ref(const algorithm::pubkeyhash_t& new_owner, const ref_value& new_ref, uint64_t new_block_number);
+			validator_participation_ref(const algorithm::pubkeyhash_t& new_owner, const ref_value& new_ref, const ledger::block_header* new_block_header);
+			expects_lr<void> transition(const ledger::state* prev_state) override;
+			bool store_column(format::wo_stream* stream) const override;
+			bool load_column(format::ro_stream& stream) override;
+			bool store_row(format::wo_stream* stream) const override;
+			bool load_row(format::ro_stream& stream) override;
+			bool store_data(format::wo_stream* stream) const override;
+			bool load_data(format::ro_stream& stream) override;
+			uptr<schema> as_schema() const override;
+			uint32_t as_type() const override;
+			std::string_view as_typename() const override;
+			uint256_t as_rank() const override;
+			static uint32_t as_instance_type();
+			static std::string_view as_instance_typename();
+			static string as_instance_column(const algorithm::pubkeyhash_t& owner);
+			static string as_instance_row(const ref_value& ref);
+		};
+
 		struct validator_attestation final : ledger::multiform
 		{
 			algorithm::pubkeyhash_t owner;
 			algorithm::asset_id asset;
-			btree_map<algorithm::asset_id, decimal> rewards;
 			decimal participation_threshold = decimal::zero();
 			decimal stake = decimal::nan();
 			decimal incoming_fee = decimal::zero();
@@ -237,11 +307,36 @@ namespace tangent
 			static string as_instance_row(const algorithm::asset_id& asset);
 		};
 
+		struct validator_attestation_reward final : ledger::multiform
+		{
+			algorithm::pubkeyhash_t owner;
+			algorithm::asset_id asset;
+			decimal reward = decimal::zero();
+
+			validator_attestation_reward(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, uint64_t new_block_number);
+			validator_attestation_reward(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, const ledger::block_header* new_block_header);
+			expects_lr<void> transition(const ledger::state* prev_state) override;
+			bool store_column(format::wo_stream* stream) const override;
+			bool load_column(format::ro_stream& stream) override;
+			bool store_row(format::wo_stream* stream) const override;
+			bool load_row(format::ro_stream& stream) override;
+			bool store_data(format::wo_stream* stream) const override;
+			bool load_data(format::ro_stream& stream) override;
+			uptr<schema> as_schema() const override;
+			uint32_t as_type() const override;
+			std::string_view as_typename() const override;
+			uint256_t as_rank() const override;
+			static uint32_t as_instance_type();
+			static std::string_view as_instance_typename();
+			static string as_instance_column(const algorithm::pubkeyhash_t& owner);
+			static string as_instance_row(const algorithm::asset_id& asset);
+		};
+
 		struct bridge_balance final : ledger::multiform
 		{
 			algorithm::pubkeyhash_t owner;
 			algorithm::asset_id asset;
-			btree_map<algorithm::asset_id, decimal> balances;
+			decimal supply = decimal::zero();
 
 			bridge_balance(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, uint64_t new_block_number);
 			bridge_balance(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, const ledger::block_header* new_block_header);
@@ -252,8 +347,6 @@ namespace tangent
 			bool load_row(format::ro_stream& stream) override;
 			bool store_data(format::wo_stream* stream) const override;
 			bool load_data(format::ro_stream& stream) override;
-			decimal get_balance(const algorithm::asset_id& asset) const;
-			decimal get_ranked_balance() const;
 			uptr<schema> as_schema() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
@@ -399,7 +492,7 @@ namespace tangent
 		{
 		public:
 			typedef std::array<uint32_t, 7> uniform_type_map;
-			typedef std::array<uint32_t, 8> multiform_type_map;
+			typedef std::array<uint32_t, 12> multiform_type_map;
 
 		public:
 			static ledger::state* from_stream(format::ro_stream& stream);

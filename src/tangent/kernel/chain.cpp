@@ -685,10 +685,6 @@ namespace tangent
 			if (value != nullptr && value->value.is(var_type::integer))
 				user.storage.checkpoint_size = value->value.get_integer();
 
-			value = config->fetch("storage.location_cache_size");
-			if (value != nullptr && value->value.is(var_type::integer))
-				user.storage.location_cache_size = value->value.get_integer();
-
 			value = config->fetch("storage.module_cache_size");
 			if (value != nullptr && value->value.is(var_type::integer))
 				user.storage.module_cache_size = value->value.get_integer();
@@ -888,9 +884,6 @@ namespace tangent
 	protocol::~protocol()
 	{
 		database.checkpoint();
-		storages::account_cache::cleanup_instance();
-		storages::uniform_cache::cleanup_instance();
-		storages::multiform_cache::cleanup_instance();
 		superchain::server_node::cleanup_instance();
 		script::factory::cleanup_instance();
 		algorithm::signing::deinitialize();

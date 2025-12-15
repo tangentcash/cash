@@ -24,85 +24,6 @@ namespace tangent
 			states = 1 << 2
 		};
 
-		struct block_pair
-		{
-			uint64_t number;
-			bool hidden;
-
-			block_pair() = default;
-			block_pair(const block_pair&) = default;
-			block_pair(block_pair&&) noexcept = default;
-			block_pair(uint64_t new_number, bool new_hidden) : number(new_number), hidden(new_hidden)
-			{
-			}
-			block_pair& operator=(const block_pair&) = default;
-			block_pair& operator=(block_pair&&) noexcept = default;
-		};
-
-		class account_cache : public singleton<account_cache>
-		{
-		private:
-			hash_map<algorithm::pubkeyhash_t, uint64_t> accounts;
-			std::mutex mutex;
-
-		public:
-			account_cache() = default;
-			virtual ~account_cache() = default;
-			void clear_locations();
-			void revive_location(const algorithm::pubkeyhash_t& account);
-			void set_account_location(const algorithm::pubkeyhash_t& account, uint64_t location);
-			option<uint64_t> get_account_location(const algorithm::pubkeyhash_t& account);
-		};
-
-		class uniform_cache : public singleton<uniform_cache>
-		{
-		private:
-			hash_map<string, uint64_t> indices;
-			hash_map<string, block_pair> blocks;
-			std::mutex mutex;
-
-		public:
-			uniform_cache() = default;
-			virtual ~uniform_cache() = default;
-			void clear_locations();
-			void revive_location(uint32_t type, const std::string_view& index, uint64_t block_number, bool erase);
-			void set_index_location(uint32_t type, const std::string_view& index, uint64_t location);
-			void set_block_location(uint32_t type, uint64_t location, uint64_t block_number, bool hidden);
-			option<uint64_t> get_index_location(uint32_t type, const std::string_view& index);
-			option<block_pair> get_block_location(uint32_t type, uint64_t location);
-
-		private:
-			string key_of_indices(uint32_t type, const std::string_view& index);
-			string key_of_blocks(uint32_t type, uint64_t location);
-		};
-
-		class multiform_cache : public singleton<multiform_cache>
-		{
-		private:
-			hash_map<string, uint64_t> columns;
-			hash_map<string, uint64_t> rows;
-			hash_map<string, block_pair> blocks;
-			std::mutex mutex;
-
-		public:
-			multiform_cache() = default;
-			virtual ~multiform_cache() = default;
-			void clear_locations();
-			void revive_location(uint32_t type, const std::string_view& column, const std::string_view& row, uint64_t block_number, bool erase);
-			void set_multiform_location(uint32_t type, const std::string_view& column, const std::string_view& row, uint64_t column_location, uint64_t row_location);
-			void set_column_location(uint32_t type, const std::string_view& column, uint64_t location);
-			void set_row_location(uint32_t type, const std::string_view& row, uint64_t location);
-			void set_block_location(uint32_t type, uint64_t column_location, uint64_t row_location, uint64_t block_number, bool hidden);
-			option<uint64_t> get_column_location(uint32_t type, const std::string_view& column);
-			option<uint64_t> get_row_location(uint32_t type, const std::string_view& row);
-			option<block_pair> get_block_location(uint32_t type, uint64_t column_location, uint64_t row_location);
-
-		private:
-			string key_of_columns(uint32_t type, const std::string_view& column);
-			string key_of_rows(uint32_t type, const std::string_view& row);
-			string key_of_blocks(uint32_t type, uint64_t column_location, uint64_t row_location);
-		};
-
 		struct state_result
 		{
 			uptr<ledger::state> value;
@@ -208,28 +129,15 @@ namespace tangent
 			};
 
 			typedef std::array<state_local_storage, 7> uniform_storage_map;
-			typedef std::array<state_local_storage, 8> multiform_storage_map;
+			typedef std::array<state_local_storage, 12> multiform_storage_map;
 			static_assert(std::tuple_size_v<states::resolver::uniform_type_map> == std::tuple_size_v<uniform_storage_map>, "uniform storage size mismatch");
 			static_assert(std::tuple_size_v<states::resolver::multiform_type_map> == std::tuple_size_v<multiform_storage_map>, "multiform storage size mismatch");
 
 		private:
-			enum class resolver : uint8_t
-			{
-				find_exact_match = (1 << 0),
-				disable_cache = (1 << 1)
-			};
-
-			struct uniform_location
-			{
-				option<uint64_t> index = optional::none;
-				option<block_pair> block = optional::none;
-			};
-
 			struct multiform_location
 			{
 				option<uint64_t> column = optional::none;
 				option<uint64_t> row = optional::none;
-				option<block_pair> block = optional::none;
 			};
 
 			struct temporary_state_resolution
@@ -303,8 +211,8 @@ namespace tangent
 			expects_lr<size_t> get_multiforms_count_by_row_filter(uint32_t type, ledger::block_changelog* changelog, const std::string_view& row, const result_filter& filter, uint64_t block_number);
 			expects_lr<temporary_state_resolution> resolve_temporary_state(uint32_t type, ledger::block_changelog* changelog, const option<std::string_view>& column, const option<std::string_view>& row, uint64_t block_number);
 			expects_lr<void> resolve_block_transactions(vector<ledger::block_transaction>& result, uint64_t block_number, bool fully, size_t chunk);
-			expects_lr<uniform_location> resolve_uniform_location(uint32_t type, const std::string_view& index, uint8_t resolver_flags);
-			expects_lr<multiform_location> resolve_multiform_location(uint32_t type, const option<std::string_view>& column, const option<std::string_view>& row, uint8_t resolver_flags);
+			expects_lr<uint64_t> resolve_uniform_location(uint32_t type, const std::string_view& index);
+			expects_lr<multiform_location> resolve_multiform_location(uint32_t type, const option<std::string_view>& column, const option<std::string_view>& row);
 			expects_lr<uint64_t> resolve_account_location(const algorithm::pubkeyhash_t& account);
 			expects_lr<void> clear_temporary_state(ledger::block_changelog* changelog);
 			ledger::storage_index_ptr& get_uniform_storage(uint32_t type);
@@ -318,7 +226,6 @@ namespace tangent
 			uniform_storage_map& get_uniform_multi_storage();
 			multiform_storage_map& get_multiform_multi_storage();
 			ledger::storage_util::multi_storage_index_ptr get_multi_storage();
-			void clear_indexer_cache();
 			uint32_t get_queries() const;
 
 		private:

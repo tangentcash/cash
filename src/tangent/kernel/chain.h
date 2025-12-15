@@ -207,7 +207,6 @@ namespace tangent
 				string module_cache_path;
 				storage_optimization optimization = storage_optimization::speed;
 				uint64_t checkpoint_size = 128;
-				uint64_t location_cache_size = 500000;
 				uint64_t module_cache_size = 8192;
 				uint64_t blob_cache_size = 134217728;
 				uint64_t index_page_size = 65536;

@@ -129,6 +129,15 @@ namespace tangent
 				return multiform_location(states::validator_production::as_instance_type(), states::validator_production::as_instance_row(), states::validator_production::as_instance_column(owner));
 			}
 
+			if (type == states::validator_production_reward::as_instance_typename())
+			{
+				algorithm::pubkeyhash_t owner;
+				if (column.type_of() != format::viewable::invalid && !algorithm::signing::decode_address(column.as_string(), owner))
+					return layer_exception("invalid address");
+
+				return multiform_location(states::validator_production_reward::as_instance_type(), states::validator_production_reward::as_instance_row(algorithm::asset::id_of_handle(row.as_string())), states::validator_production_reward::as_instance_column(owner));
+			}
+
 			if (type == states::validator_participation::as_instance_typename())
 			{
 				algorithm::pubkeyhash_t owner;
@@ -136,6 +145,36 @@ namespace tangent
 					return layer_exception("invalid address");
 
 				return multiform_location(states::validator_participation::as_instance_type(), states::validator_participation::as_instance_row(), states::validator_participation::as_instance_column(owner));
+			}
+
+			if (type == states::validator_participation_reward::as_instance_typename())
+			{
+				algorithm::pubkeyhash_t owner;
+				if (column.type_of() != format::viewable::invalid && !algorithm::signing::decode_address(column.as_string(), owner))
+					return layer_exception("invalid address");
+
+				return multiform_location(states::validator_participation_reward::as_instance_type(), states::validator_participation_reward::as_instance_row(algorithm::asset::id_of_handle(row.as_string())), states::validator_participation_reward::as_instance_column(owner));
+			}
+
+			if (type == states::validator_participation_ref::as_instance_typename())
+			{
+				auto data = row.type_of() != format::viewable::invalid ? row.as_schema() : uptr(var::set::object());
+				if (!data)
+					return layer_exception("invalid value, expected { asset: string, manager: string, owner: string }");
+
+				algorithm::pubkeyhash_t owner;
+				if (column.type_of() != format::viewable::invalid && !algorithm::signing::decode_address(column.as_string(), owner))
+					return layer_exception("invalid address");
+
+				states::validator_participation_ref::ref_value ref;
+				ref.asset = algorithm::asset::id_of_handle(data->get_var("asset").get_blob());
+				if (!algorithm::signing::decode_address(data->get_var("manager").get_blob(), ref.owner))
+					return layer_exception("invalid address");
+
+				if (!algorithm::signing::decode_address(data->get_var("owner").get_blob(), ref.manager))
+					return layer_exception("invalid address");
+
+				return multiform_location(states::validator_participation_ref::as_instance_type(), states::validator_participation_ref::as_instance_row(ref), states::validator_participation_ref::as_instance_column(owner));
 			}
 
 			if (type == states::validator_attestation::as_instance_typename())
@@ -166,13 +205,12 @@ namespace tangent
 				if (column.type_of() != format::viewable::invalid && !algorithm::signing::decode_address(column.as_string(), manager))
 					return layer_exception("invalid address");
 
-				auto id = data->get_var("asset").get_blob();
-				auto owner_address = data->get_var("owner").get_blob();
 				algorithm::pubkeyhash_t owner;
-				if (!algorithm::signing::decode_address(owner_address, owner))
+				if (!algorithm::signing::decode_address(data->get_var("owner").get_blob(), owner))
 					return layer_exception("invalid address");
 
-				return multiform_location(states::bridge_account::as_instance_type(), states::bridge_account::as_instance_row(algorithm::asset::id_of_handle(id), owner), states::bridge_account::as_instance_column(manager));
+				auto asset = algorithm::asset::id_of_handle(data->get_var("asset").get_blob());
+				return multiform_location(states::bridge_account::as_instance_type(), states::bridge_account::as_instance_row(asset, owner), states::bridge_account::as_instance_column(manager));
 			}
 
 			if (type == states::witness_account::as_instance_typename())
@@ -355,14 +393,26 @@ namespace tangent
 			bind(0 | access_type::r, "chainstate", "getaccountbalance", 2, 2, "string address, string asset", "multiform", "get account balance by address and asset", std::bind(&server_node::chainstate_get_account_balance, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getaccountbalances", 3, 3, "string address, uint64 offset, uint64 count", "multiform[]", "get account balances by address", std::bind(&server_node::chainstate_get_account_balances, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getvalidatorproduction", 1, 1, "string address", "multiform", "get validator production by address", std::bind(&server_node::chainstate_get_validator_production, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getvalidatorproductionwithrewards", 1, 1, "string address", "multiform", "get validator production with rewards by address", std::bind(&server_node::chainstate_get_validator_production_with_rewards, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getbestvalidatorproducers", 3, 3, "uint256 commitment, uint64 offset, uint64 count", "multiform[]", "get best validator producers (zero commitment = offline, non-zero commitment = online threshold)", std::bind(&server_node::chainstate_get_best_validator_producers, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getvalidatorparticipation", 1, 1, "string address", "multiform", "get validator participation by address and asset", std::bind(&server_node::chainstate_get_validator_participation, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getvalidatorproductionreward", 2, 2, "string address, string asset", "multiform", "get validator production reward by address and asset", std::bind(&server_node::chainstate_get_validator_production_reward, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getvalidatorproductionrewards", 3, 3, "string address, uint64 offset, uint64 count", "multiform", "get validator production rewards by address", std::bind(&server_node::chainstate_get_validator_production_rewards, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getvalidatorparticipation", 1, 1, "string address", "multiform", "get validator participation by address", std::bind(&server_node::chainstate_get_validator_participation, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getvalidatorparticipationwithrewards", 1, 1, "string address", "multiform", "get validator participation with rewards by address", std::bind(&server_node::chainstate_get_validator_participation_with_rewards, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getvalidatorparticipations", 3, 3, "string address, uint64 offset, uint64 count", "multiform[]", "get validator participations by address", std::bind(&server_node::chainstate_get_validator_participations, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getbestvalidatorparticipation", 3, 3, "uint256 commitment, uint64 offset, uint64 count", "multiform[]", "get best validator participations (zero commitment = offline, non-zero commitment = online threshold)", std::bind(&server_node::chainstate_get_best_validator_participations, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getvalidatorparticipationreward", 2, 2, "string address, string asset", "multiform", "get validator participation reward by address and asset", std::bind(&server_node::chainstate_get_validator_participation_reward, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getvalidatorparticipationrewards", 3, 3, "string address, uint64 offset, uint64 count", "multiform", "get validator participation rewards by address", std::bind(&server_node::chainstate_get_validator_participation_rewards, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getvalidatorparticipationref", 2, 2, "string owner_address, string ref_manager_address, string ref_owner_address, string ref_asset", "multiform", "get validator participation by ref", std::bind(&server_node::chainstate_get_validator_participation_ref, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getvalidatorparticipationref", 3, 3, "string owner_address, uint64 offset, uint64 count", "multiform", "get validator participation refs by address", std::bind(&server_node::chainstate_get_validator_participation_refs, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getvalidatorattestation", 2, 2, "string asset, string address", "multiform", "get validator attestation by address and asset", std::bind(&server_node::chainstate_get_validator_attestation, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getvalidatorattestationwithrewards", 2, 2, "string asset, string address", "multiform", "get validator attestation by address and asset", std::bind(&server_node::chainstate_get_validator_attestation_with_rewards, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getvalidatorattestations", 3, 3, "string address, uint64 offset, uint64 count", "multiform[]", "get validator attestations by address", std::bind(&server_node::chainstate_get_validator_attestations, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getvalidatorattestationswithrewards", 1, 1, "string address", "multiform[]", "get validator attestations with rewards by address", std::bind(&server_node::chainstate_get_validator_attestations_with_rewards, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getbestvalidatorattestations", 3, 3, "string asset, uint256 commitment, uint64 offset, uint64 count", "multiform[]", "get best validator attestations (zero commitment = offline, non-zero commitment = online threshold)", std::bind(&server_node::chainstate_get_best_validator_attestations, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getbestvalidatorattestationsforselection", 3, 3, "string asset, uint256 commitment, uint64 offset, uint64 count", "{ attestation: multiform, balance: multiform? }[]", "get best validator attestations (zero commitment = offline, non-zero commitment = online threshold)", std::bind(&server_node::chainstate_get_best_validator_attestations_for_selection, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getvalidatorattestationreward", 2, 2, "string address, string asset", "multiform", "get validator attestation reward by address and asset", std::bind(&server_node::chainstate_get_validator_attestation_reward, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getvalidatorattestationrewards", 3, 3, "string address, uint64 offset, uint64 count", "multiform", "get validator attestation rewards by address", std::bind(&server_node::chainstate_get_validator_attestation_rewards, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getbridgeaccount", 3, 3, "string asset, string manager_address, string owner_address", "multiform", "get bridge account by manager and owner addresses and asset", std::bind(&server_node::chainstate_get_bridge_account, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getbridgeaccounts", 3, 3, "string manager_address", "multiform[]", "get bridge accounts by manager", std::bind(&server_node::chainstate_get_bridge_accounts, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getbridgebalance", 2, 2, "string address, string asset", "multiform", "get bridge balance by address and asset", std::bind(&server_node::chainstate_get_bridge_balance, this, std::placeholders::_1, std::placeholders::_2));
@@ -2095,6 +2145,35 @@ namespace tangent
 			auto state = chain.get_multiform(states::validator_production::as_instance_type(), nullptr, states::validator_production::as_instance_column(owner), states::validator_production::as_instance_row(), 0);
 			return server_response().success(state ? state->value->as_schema().reset() : var::set::null());
 		}
+		server_response server_node::chainstate_get_validator_production_with_rewards(http::connection* base, format::variables&& args)
+		{
+			algorithm::pubkeyhash_t owner;
+			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
+				return server_response().error(error_codes::bad_params, "account address not valid");
+
+			auto chain = storages::chainstate();
+			auto state = chain.get_multiform(states::validator_production::as_instance_type(), nullptr, states::validator_production::as_instance_column(owner), states::validator_production::as_instance_row(), 0);
+			if (!state)
+				return server_response().success(var::set::null());
+
+			size_t count = 512;
+			auto result = state->value->as_schema();
+			auto rewards = result->set("rewards", var::set::array());
+			auto stride = states::validator_production_reward::as_instance_column(owner);
+			while (true)
+			{
+				auto states = chain.get_multiforms_by_column(states::validator_production_reward::as_instance_type(), nullptr, stride, 0, rewards->size(), count);
+				if (!states)
+					break;
+
+				for (auto& state : *states)
+					rewards->push(state.ptr()->as_schema().reset());
+
+				if (states->size() != count)
+					break;
+			}
+			return server_response().success(std::move(result));
+		}
 		server_response server_node::chainstate_get_best_validator_producers(http::connection* base, format::variables&& args)
 		{
 			uint256_t commitment = args[0].as_uint256();
@@ -2113,6 +2192,37 @@ namespace tangent
 				data->push(item.value->as_schema().reset());
 			return server_response().success(std::move(data));
 		}
+		server_response server_node::chainstate_get_validator_production_reward(http::connection* base, format::variables&& args)
+		{
+			algorithm::pubkeyhash_t owner;
+			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
+				return server_response().error(error_codes::bad_params, "account address not valid");
+
+			auto chain = storages::chainstate();
+			auto asset = algorithm::asset::id_of_handle(args[1].as_string());
+			auto state = chain.get_multiform(states::validator_production_reward::as_instance_type(), nullptr, states::validator_production_reward::as_instance_column(owner), states::validator_production_reward::as_instance_row(asset), 0);
+			return server_response().success(state ? state->value->as_schema().reset() : var::set::null());
+		}
+		server_response server_node::chainstate_get_validator_production_rewards(http::connection* base, format::variables&& args)
+		{
+			algorithm::pubkeyhash_t owner;
+			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
+				return server_response().error(error_codes::bad_params, "account address not valid");
+
+			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
+			if (!count || count > protocol::now().message.pages_per_query)
+				return server_response().error(error_codes::bad_params, "count not valid");
+
+			auto chain = storages::chainstate();
+			auto list = chain.get_multiforms_by_column(states::validator_production_reward::as_instance_type(), nullptr, states::validator_production_reward::as_instance_column(owner), 0, offset, count);
+			if (!list)
+				return server_response().error(error_codes::not_found, "data not found");
+
+			uptr<schema> data = var::set::array();
+			for (auto& item : *list)
+				data->push(item.value->as_schema().reset());
+			return server_response().success(std::move(data));
+		}
 		server_response server_node::chainstate_get_validator_participation(http::connection* base, format::variables&& args)
 		{
 			algorithm::pubkeyhash_t owner;
@@ -2122,6 +2232,35 @@ namespace tangent
 			auto chain = storages::chainstate();
 			auto state = chain.get_multiform(states::validator_participation::as_instance_type(), nullptr, states::validator_participation::as_instance_column(owner), states::validator_participation::as_instance_row(), 0);
 			return server_response().success(state ? state->value->as_schema().reset() : var::set::null());
+		}
+		server_response server_node::chainstate_get_validator_participation_with_rewards(http::connection* base, format::variables&& args)
+		{
+			algorithm::pubkeyhash_t owner;
+			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
+				return server_response().error(error_codes::bad_params, "account address not valid");
+
+			auto chain = storages::chainstate();
+			auto state = chain.get_multiform(states::validator_participation::as_instance_type(), nullptr, states::validator_participation::as_instance_column(owner), states::validator_participation::as_instance_row(), 0);
+			if (!state)
+				return server_response().success(var::set::null());
+
+			size_t count = 512;
+			auto result = state->value->as_schema();
+			auto rewards = result->set("rewards", var::set::array());
+			auto stride = states::validator_participation_reward::as_instance_column(owner);
+			while (true)
+			{
+				auto states = chain.get_multiforms_by_column(states::validator_participation_reward::as_instance_type(), nullptr, stride, 0, rewards->size(), count);
+				if (!states)
+					break;
+
+				for (auto& state : *states)
+					rewards->push(state.ptr()->as_schema().reset());
+
+				if (states->size() != count)
+					break;
+			}
+			return server_response().success(std::move(result));
 		}
 		server_response server_node::chainstate_get_validator_participations(http::connection* base, format::variables&& args)
 		{
@@ -2161,6 +2300,75 @@ namespace tangent
 				data->push(item.value->as_schema().reset());
 			return server_response().success(std::move(data));
 		}
+		server_response server_node::chainstate_get_validator_participation_reward(http::connection* base, format::variables&& args)
+		{
+			algorithm::pubkeyhash_t owner;
+			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
+				return server_response().error(error_codes::bad_params, "account address not valid");
+
+			auto chain = storages::chainstate();
+			auto asset = algorithm::asset::id_of_handle(args[1].as_string());
+			auto state = chain.get_multiform(states::validator_participation_reward::as_instance_type(), nullptr, states::validator_participation_reward::as_instance_column(owner), states::validator_participation_reward::as_instance_row(asset), 0);
+			return server_response().success(state ? state->value->as_schema().reset() : var::set::null());
+		}
+		server_response server_node::chainstate_get_validator_participation_rewards(http::connection* base, format::variables&& args)
+		{
+			algorithm::pubkeyhash_t owner;
+			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
+				return server_response().error(error_codes::bad_params, "account address not valid");
+
+			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
+			if (!count || count > protocol::now().message.pages_per_query)
+				return server_response().error(error_codes::bad_params, "count not valid");
+
+			auto chain = storages::chainstate();
+			auto list = chain.get_multiforms_by_column(states::validator_participation_reward::as_instance_type(), nullptr, states::validator_participation_reward::as_instance_column(owner), 0, offset, count);
+			if (!list)
+				return server_response().error(error_codes::not_found, "data not found");
+
+			uptr<schema> data = var::set::array();
+			for (auto& item : *list)
+				data->push(item.value->as_schema().reset());
+			return server_response().success(std::move(data));
+		}
+		server_response server_node::chainstate_get_validator_participation_ref(http::connection* base, format::variables&& args)
+		{
+			algorithm::pubkeyhash_t owner;
+			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
+				return server_response().error(error_codes::bad_params, "account address not valid");
+
+			states::validator_participation_ref::ref_value ref;
+			ref.asset = algorithm::asset::id_of_handle(args[1].as_string());
+			if (!algorithm::signing::decode_address(args[2].as_string(), ref.manager))
+				return server_response().error(error_codes::bad_params, "account address not valid");
+
+			if (!algorithm::signing::decode_address(args[3].as_string(), ref.owner))
+				return server_response().error(error_codes::bad_params, "account address not valid");
+			
+			auto chain = storages::chainstate();
+			auto state = chain.get_multiform(states::validator_participation_ref::as_instance_type(), nullptr, states::validator_participation_ref::as_instance_column(owner), states::validator_participation_ref::as_instance_row(ref), 0);
+			return server_response().success(state ? state->value->as_schema().reset() : var::set::null());
+		}
+		server_response server_node::chainstate_get_validator_participation_refs(http::connection* base, format::variables&& args)
+		{
+			algorithm::pubkeyhash_t owner;
+			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
+				return server_response().error(error_codes::bad_params, "account address not valid");
+
+			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
+			if (!count || count > protocol::now().message.pages_per_query)
+				return server_response().error(error_codes::bad_params, "count not valid");
+
+			auto chain = storages::chainstate();
+			auto list = chain.get_multiforms_by_column(states::validator_participation_ref::as_instance_type(), nullptr, states::validator_participation_ref::as_instance_column(owner), 0, offset, count);
+			if (!list)
+				return server_response().error(error_codes::not_found, "data not found");
+
+			uptr<schema> data = var::set::array();
+			for (auto& item : *list)
+				data->push(item.value->as_schema().reset());
+			return server_response().success(std::move(data));
+		}
 		server_response server_node::chainstate_get_validator_attestation(http::connection* base, format::variables&& args)
 		{
 			algorithm::pubkeyhash_t owner;
@@ -2171,6 +2379,41 @@ namespace tangent
 			auto chain = storages::chainstate();
 			auto state = chain.get_multiform(states::validator_attestation::as_instance_type(), nullptr, states::validator_attestation::as_instance_column(owner), states::validator_attestation::as_instance_row(asset), 0);
 			return server_response().success(state ? state->value->as_schema().reset() : var::set::null());
+		}
+		server_response server_node::chainstate_get_validator_attestation_with_rewards(http::connection* base, format::variables&& args)
+		{
+			algorithm::pubkeyhash_t owner;
+			auto asset = algorithm::asset::id_of_handle(args[0].as_string());
+			if (!algorithm::signing::decode_address(args[1].as_string(), owner))
+				return server_response().error(error_codes::bad_params, "account address not valid");
+
+			auto chain = storages::chainstate();
+			auto state = chain.get_multiform(states::validator_attestation::as_instance_type(), nullptr, states::validator_attestation::as_instance_column(owner), states::validator_attestation::as_instance_row(asset), 0);
+			if (!state)
+				return server_response().success(var::set::null());
+
+			size_t offset = 0, count = 512;
+			auto result = state->value->as_schema();
+			auto rewards = result->set("rewards", var::set::array());
+			auto stride = states::validator_attestation_reward::as_instance_column(owner);
+			while (true)
+			{
+				auto states = chain.get_multiforms_by_column(states::validator_attestation_reward::as_instance_type(), nullptr, stride, 0, offset, count);
+				if (!states)
+					break;
+
+				for (auto& state : *states)
+				{
+					auto* ref = state.as<states::validator_attestation_reward>();
+					if (asset == algorithm::asset::base_id_of(ref->asset))
+						rewards->push(state.ptr()->as_schema().reset());
+				}
+
+				offset += states->size();
+				if (states->size() != count)
+					break;
+			}
+			return server_response().success(std::move(result));
 		}
 		server_response server_node::chainstate_get_validator_attestations(http::connection* base, format::variables&& args)
 		{
@@ -2190,6 +2433,60 @@ namespace tangent
 			uptr<schema> data = var::set::array();
 			for (auto& item : *list)
 				data->push(item.value->as_schema().reset());
+			return server_response().success(std::move(data));
+		}
+		server_response server_node::chainstate_get_validator_attestations_with_rewards(http::connection* base, format::variables&& args)
+		{
+			algorithm::pubkeyhash_t owner;
+			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
+				return server_response().error(error_codes::bad_params, "account address not valid");
+
+			size_t count = 512;
+			auto chain = storages::chainstate();
+			auto attestations = vector<states::validator_attestation>();
+			auto stride = states::validator_attestation::as_instance_column(owner);
+			while (true)
+			{
+				auto states = chain.get_multiforms_by_column(states::validator_attestation::as_instance_type(), nullptr, stride, 0, attestations.size(), count);
+				if (!states)
+					break;
+
+				for (auto& state : *states)
+					attestations.push_back(std::move(*state.as<states::validator_attestation>()));
+
+				if (states->size() != count)
+					break;
+			}
+
+			if (attestations.empty())
+				return server_response().success(var::set::array());
+
+			auto rewards = vector<states::validator_attestation_reward>();
+			stride = states::validator_attestation_reward::as_instance_column(owner);
+			while (true)
+			{
+				auto states = chain.get_multiforms_by_column(states::validator_attestation_reward::as_instance_type(), nullptr, stride, 0, rewards.size(), count);
+				if (!states)
+					break;
+
+				for (auto& state : *states)
+					rewards.push_back(std::move(*state.as<states::validator_attestation_reward>()));
+
+				if (states->size() != count)
+					break;
+			}
+
+			uptr<schema> data = var::set::array();
+			for (auto& attestation : attestations)
+			{
+				auto* result = data->push(attestation.as_schema().reset());
+				auto childs = result->set("rewards", var::set::array());
+				for (auto& reward : rewards)
+				{
+					if (attestation.asset == algorithm::asset::base_id_of(reward.asset))
+						childs->push(reward.as_schema().reset());
+				}
+			}
 			return server_response().success(std::move(data));
 		}
 		server_response server_node::chainstate_get_best_validator_attestations(http::connection* base, format::variables&& args)
@@ -2224,16 +2521,64 @@ namespace tangent
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
 
-			auto balance_stride = states::bridge_balance::as_instance_row(asset);
 			uptr<schema> data = var::set::array();
 			for (auto& item : *list)
 			{
 				auto* attestation_state = (states::validator_attestation*)item.ptr();
-				auto balance_state = chain.get_multiform(states::bridge_balance::as_instance_type(), nullptr, states::bridge_balance::as_instance_column(attestation_state->owner), balance_stride, 0);
+				auto balance_stride = states::bridge_balance::as_instance_column(attestation_state->owner);
 				auto* next = data->push(var::set::object());
 				next->set("attestation", attestation_state->as_schema().reset());
-				next->set("balance", balance_state ? balance_state->value->as_schema().reset() : var::set::null());
+
+				size_t offset = 0, count = 512;
+				auto tokens = next->set("balances", var::set::array());
+				while (true)
+				{
+					auto states = chain.get_multiforms_by_column(states::bridge_balance::as_instance_type(), nullptr, balance_stride, 0, tokens->size(), count);
+					if (!states)
+						break;
+
+					for (auto& state : *states)
+					{
+						auto* ref = state.as<states::bridge_balance>();
+						if (asset == algorithm::asset::base_id_of(ref->asset))
+							tokens->push(state.ptr()->as_schema().reset());
+					}
+
+					if (states->size() != count)
+						break;
+				}
 			}
+			return server_response().success(std::move(data));
+		}
+		server_response server_node::chainstate_get_validator_attestation_reward(http::connection* base, format::variables&& args)
+		{
+			algorithm::pubkeyhash_t owner;
+			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
+				return server_response().error(error_codes::bad_params, "account address not valid");
+
+			auto chain = storages::chainstate();
+			auto asset = algorithm::asset::id_of_handle(args[1].as_string());
+			auto state = chain.get_multiform(states::validator_attestation_reward::as_instance_type(), nullptr, states::validator_attestation_reward::as_instance_column(owner), states::validator_attestation_reward::as_instance_row(asset), 0);
+			return server_response().success(state ? state->value->as_schema().reset() : var::set::null());
+		}
+		server_response server_node::chainstate_get_validator_attestation_rewards(http::connection* base, format::variables&& args)
+		{
+			algorithm::pubkeyhash_t owner;
+			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
+				return server_response().error(error_codes::bad_params, "account address not valid");
+
+			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
+			if (!count || count > protocol::now().message.pages_per_query)
+				return server_response().error(error_codes::bad_params, "count not valid");
+
+			auto chain = storages::chainstate();
+			auto list = chain.get_multiforms_by_column(states::validator_attestation_reward::as_instance_type(), nullptr, states::validator_attestation_reward::as_instance_column(owner), 0, offset, count);
+			if (!list)
+				return server_response().error(error_codes::not_found, "data not found");
+
+			uptr<schema> data = var::set::array();
+			for (auto& item : *list)
+				data->push(item.value->as_schema().reset());
 			return server_response().success(std::move(data));
 		}
 		server_response server_node::chainstate_get_bridge_balance(http::connection* base, format::variables&& args)
@@ -2303,10 +2648,29 @@ namespace tangent
 			for (auto& item : *list)
 			{
 				auto* balance_state = (states::bridge_balance*)item.ptr();
+				auto balance_stride = states::bridge_balance::as_instance_column(balance_state->owner);
 				auto attestation_state = chain.get_multiform(states::validator_attestation::as_instance_type(), nullptr, states::validator_attestation::as_instance_column(balance_state->owner), attestation_stride, 0);
 				auto* next = data->push(var::set::object());
 				next->set("attestation", attestation_state ? attestation_state->value->as_schema().reset() : var::set::null());
-				next->set("balance", balance_state->as_schema().reset());
+
+				size_t offset = 0, count = 512;
+				auto tokens = next->set("balances", var::set::array());
+				while (true)
+				{
+					auto states = chain.get_multiforms_by_column(states::bridge_balance::as_instance_type(), nullptr, balance_stride, 0, tokens->size(), count);
+					if (!states)
+						break;
+
+					for (auto& state : *states)
+					{
+						auto* ref = state.as<states::bridge_balance>();
+						if (asset == algorithm::asset::base_id_of(ref->asset))
+							tokens->push(state.ptr()->as_schema().reset());
+					}
+
+					if (states->size() != count)
+						break;
+				}
 			}
 			return server_response().success(std::move(data));
 		}

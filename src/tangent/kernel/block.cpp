@@ -759,7 +759,7 @@ namespace tangent
 				current_gas_limit += item.candidate->gas_limit;
 			}
 
-			auto fees = btree_map<algorithm::asset_id, decimal>({ { algorithm::asset::native(), get_reward_value() } });
+			auto rewards = btree_map<algorithm::asset_id, decimal>({ { algorithm::asset::native(), get_reward_value() } });
 			for (auto& item : solver->transactions.pending)
 			{
 			retry_replacement_transaction:
@@ -793,8 +793,8 @@ namespace tangent
 					blob.receipt = std::move(execution->receipt);
 					if (blob.receipt.relative_gas_use > 0 && blob.transaction->asset != algorithm::asset::native() && blob.transaction->gas_price.is_positive())
 					{
-						auto& fee = fees[blob.transaction->asset];
-						fee = (fee.is_nan() ? decimal::zero() : fee) + blob.transaction->gas_price * blob.receipt.relative_gas_use.to_decimal();
+						auto& reward = rewards[blob.transaction->asset];
+						reward = (reward.is_nan() ? decimal::zero() : reward) + blob.transaction->gas_price * blob.receipt.relative_gas_use.to_decimal();
 					}
 					solver->state.changelog.outgoing.commit();
 				}
@@ -804,22 +804,34 @@ namespace tangent
 					goto retry_replacement_transaction;
 			}
 
-			auto penalty = -fees[algorithm::asset::native()];
 			bool coinbase = solver->state.executor.get_validator_production(solver->state.public_key_hash).or_else(states::validator_production(algorithm::pubkeyhash_t(), nullptr)).is_active();
 			if (coinbase)
 			{
-				auto work = solver->state.executor.apply_validator_production(solver->state.public_key_hash, executor_context::staker::reward_or_penalty, std::move(fees));
-				if (!work)
-					return work.error();
+				for (auto& [asset, reward] : rewards)
+				{
+					if (asset == algorithm::asset::native())
+					{
+						auto coinbase_reward = solver->state.executor.apply_validator_production(solver->state.public_key_hash, executor_context::staker::reward_or_penalty, reward);
+						if (!coinbase_reward)
+							return coinbase_reward.error();
+					}
+					else
+					{
+						auto coinbase_fee = solver->state.executor.apply_validator_production_reward(asset, solver->state.public_key_hash, reward);
+						if (!coinbase_fee)
+							return coinbase_fee.error();
+					}
+				}
 			}
 			else if (!eligible)
 				return layer_exception("block producer must be active");
 
 			for (size_t i = 0; i < (size_t)priority; i++)
 			{
-				auto work = solver->state.executor.apply_validator_production(solver->producers[i].owner, executor_context::staker::reward_or_penalty, { { algorithm::asset::native(), penalty } });
-				if (!work)
-					return work.error();
+				auto penalty = -rewards[algorithm::asset::native()];
+				auto coinbase_penalty = solver->state.executor.apply_validator_production(solver->producers[i].owner, executor_context::staker::reward_or_penalty, penalty);
+				if (!coinbase_penalty)
+					return coinbase_penalty.error();
 			}
 
 			size_t block_cost = (size_t)gas_cost::write_byte * 1024;
@@ -1774,6 +1786,9 @@ namespace tangent
 		}
 		expects_lr<states::account_balance> executor_context::apply_transfer(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const decimal& supply, const decimal& reserve)
 		{
+			if (supply.is_zero() && reserve.is_zero())
+				return get_account_balance(asset, owner).or_else(states::account_balance(owner, asset, block));
+
 			states::account_balance new_state = states::account_balance(owner, asset, block);
 			new_state.supply = supply;
 			new_state.reserve = reserve;
@@ -1790,6 +1805,9 @@ namespace tangent
 		}
 		expects_lr<states::account_balance> executor_context::apply_fee_transfer(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const decimal& value)
 		{
+			if (value.is_zero())
+				return get_account_balance(asset, owner).or_else(states::account_balance(owner, asset, block));
+
 			states::account_balance new_state = states::account_balance(owner, asset, block);
 			new_state.supply = -value;
 			if (solver != nullptr && solver->state.public_key_hash == owner)
@@ -1807,8 +1825,8 @@ namespace tangent
 		}
 		expects_lr<states::account_balance> executor_context::apply_payment(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& from, const algorithm::pubkeyhash_t& to, const decimal& value)
 		{
-			if (from == to)
-				return get_account_balance(asset, from);
+			if (from == to || value.is_zero())
+				return get_account_balance(asset, from).or_else(states::account_balance(from, asset, block));
 
 			states::account_balance new_state1 = states::account_balance(from, asset, block);
 			new_state1.supply = -value;
@@ -1830,49 +1848,65 @@ namespace tangent
 
 			return new_state1;
 		}
-		expects_lr<states::validator_production> executor_context::apply_validator_production(const algorithm::pubkeyhash_t& owner, staker type, btree_map<algorithm::asset_id, decimal>&& rewards)
+		expects_lr<states::validator_production> executor_context::apply_validator_production(const algorithm::pubkeyhash_t& owner, staker type, const decimal& stake)
 		{
 			states::validator_production new_state = get_validator_production(owner).or_else(states::validator_production(owner, block));
-			if (type == staker::unlock)
+			switch (type)
 			{
-				rewards[algorithm::asset::native()] = -new_state.stake;
-				for (auto& [asset, reward] : new_state.rewards)
-					rewards[asset] = -reward;
-			}
-
-			for (auto& [token_asset, reward] : rewards)
-			{
-				auto change = reward;
-				auto& value = token_asset == algorithm::asset::native() ? new_state.stake : new_state.rewards[token_asset];
-				if (change.is_nan() && type != staker::unlock)
-					return layer_exception("invalid stake");
-
-				auto delta = change.is_positive() ? change : std::max((value.is_nan() ? decimal::zero() : -value), reward);
-				value = value.is_nan() ? delta : (value + delta);
-				if (!delta.is_zero_or_nan())
+				case staker::lock:
+				case staker::reward_or_penalty:
 				{
-					auto transfer = apply_transfer(token_asset, owner, type == staker::reward_or_penalty ? delta : decimal::zero(), delta);
+					if (stake.is_nan())
+						return layer_exception("invalid stake");
+
+					if (new_state.stake.is_nan())
+						new_state.stake = decimal::zero();
+
+					auto stake_value = stake;
+					if (stake_value.is_negative())
+						stake_value = std::max(stake_value, -new_state.stake);
+					
+					new_state.stake += stake_value;
+					auto transfer = apply_transfer(algorithm::asset::native(), owner, type == staker::reward_or_penalty ? stake_value : decimal::zero(), stake_value);
 					if (!transfer)
 						return transfer.error();
+					break;
 				}
-			}
+				case staker::unlock:
+				{
+					if (!stake.is_nan())
+						return layer_exception("invalid stake");
 
-			auto it = new_state.rewards.find(algorithm::asset::native());
-			if (it != new_state.rewards.end())
-			{
-				new_state.stake = std::move(it->second);
-				new_state.rewards.erase(it);
-			}
-			if (type == staker::unlock)
-				new_state.stake = decimal::nan();
+					auto transfer = apply_transfer(algorithm::asset::native(), owner, decimal::zero(), -new_state.stake);
+					if (!transfer)
+						return transfer.error();
 
-			it = new_state.rewards.begin();
-			while (it != new_state.rewards.end())
-			{
-				if (!it->second.is_positive() || type == staker::unlock)
-					it = new_state.rewards.erase(it);
-				else
-					++it;
+					auto count = (size_t)32;
+					auto rewards = vector<states::validator_production_reward>();
+					while (true)
+					{
+						auto chunk = get_validator_production_rewards(owner, rewards.size(), count);
+						if (chunk)
+							rewards.insert(rewards.end(), chunk->begin(), chunk->end());
+						if (!chunk || chunk->size() != count)
+							break;
+					}
+
+					new_state.stake = stake;
+					for (auto& reward : rewards)
+					{
+						transfer = apply_transfer(algorithm::asset::native(), owner, decimal::zero(), -reward.reward);
+						if (!transfer)
+							return transfer.error();
+
+						auto status = apply_validator_production_reward(reward.asset, reward.owner, decimal::zero());
+						if (!status)
+							return status.error();
+					}
+					break;
+				}
+				default:
+					return layer_exception("invalid stake action");
 			}
 
 			auto result = store(&new_state, true);
@@ -1881,82 +1915,81 @@ namespace tangent
 
 			return new_state;
 		}
-		expects_lr<states::validator_participation> executor_context::apply_validator_participation(const algorithm::pubkeyhash_t& owner, staker type, btree_map<algorithm::asset_id, std::pair<bool, states::validator_participation::participation_ref>>&& participations, btree_map<algorithm::asset_id, decimal>&& rewards)
+		expects_lr<states::validator_production_reward> executor_context::apply_validator_production_reward(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const decimal& reward)
+		{
+			states::validator_production_reward new_state = get_validator_production_reward(asset, owner).or_else(states::validator_production_reward(owner, asset, block));
+			auto reward_value = reward.is_negative() ? std::max(reward, -new_state.reward) : reward;
+			new_state.reward += reward_value;
+
+			auto transfer = apply_transfer(asset, owner, reward_value, reward_value);
+			if (!transfer)
+				return transfer.error();
+
+			auto status = store(&new_state, true);
+			if (!status)
+				return status.error();
+
+			return new_state;
+		}
+		expects_lr<states::validator_participation> executor_context::apply_validator_participation(const algorithm::pubkeyhash_t& owner, staker type, const decimal& stake)
 		{
 			states::validator_participation new_state = get_validator_participation(owner).or_else(states::validator_participation(owner, block));
-			for (auto& [asset, change] : participations)
+			switch (type)
 			{
-				auto& [inclusion, ref] = change;
-				if (inclusion)
+				case staker::lock:
+				case staker::reward_or_penalty:
 				{
-					auto refs = new_state.participations.find(asset);
-					if (refs != new_state.participations.end())
-					{
-						auto it = std::find_if(refs->second.begin(), refs->second.end(), [&](const states::validator_participation::participation_ref& item)
-						{
-							return item.manager == ref.manager && item.owner == ref.owner;
-						});
-						if (it == refs->second.end())
-							refs->second.push_back(ref);
-					}
-					else
-						new_state.participations[asset].push_back(ref);
-				}
-				else
-				{
-					auto refs = new_state.participations.find(asset);
-					if (refs != new_state.participations.end())
-					{
-						refs->second.erase(std::remove_if(refs->second.begin(), refs->second.end(), [&](const states::validator_participation::participation_ref& item)
-						{
-							return item.manager == ref.manager && item.owner == ref.owner;
-						}), refs->second.end());
-						if (refs->second.empty())
-							new_state.participations.erase(refs);
-					}
-				}
-			}
+					if (stake.is_nan())
+						return layer_exception("invalid stake");
 
-			if (type == staker::unlock)
-			{
-				rewards[algorithm::asset::native()] = -new_state.stake;
-				for (auto& [asset, reward] : new_state.rewards)
-					rewards[asset] = -reward;
-			}
+					if (new_state.stake.is_nan())
+						new_state.stake = decimal::zero();
 
-			for (auto& [token_asset, reward] : rewards)
-			{
-				auto change = reward;
-				auto& value = token_asset == algorithm::asset::native() ? new_state.stake : new_state.rewards[token_asset];
-				if (change.is_nan() && type != staker::unlock)
-					return layer_exception("invalid stake");
+					auto stake_value = stake;
+					if (stake_value.is_negative())
+						stake_value = std::max(stake_value, -new_state.stake);
 
-				auto delta = change.is_positive() ? change : std::max((value.is_nan() ? decimal::zero() : -value), reward);
-				value = value.is_nan() ? delta : (value + delta);
-				if (!delta.is_zero_or_nan())
-				{
-					auto transfer = apply_transfer(token_asset, owner, type == staker::reward_or_penalty ? delta : decimal::zero(), delta);
+					new_state.stake += stake_value;
+					auto transfer = apply_transfer(algorithm::asset::native(), owner, type == staker::reward_or_penalty ? stake_value : decimal::zero(), stake_value);
 					if (!transfer)
 						return transfer.error();
+					break;
 				}
-			}
+				case staker::unlock:
+				{
+					if (!stake.is_nan())
+						return layer_exception("invalid stake");
 
-			auto it = new_state.rewards.find(algorithm::asset::native());
-			if (it != new_state.rewards.end())
-			{
-				new_state.stake = std::move(it->second);
-				new_state.rewards.erase(it);
-			}
-			if (type == staker::unlock)
-				new_state.stake = decimal::nan();
+					auto transfer = apply_transfer(algorithm::asset::native(), owner, decimal::zero(), -new_state.stake);
+					if (!transfer)
+						return transfer.error();
 
-			it = new_state.rewards.begin();
-			while (it != new_state.rewards.end())
-			{
-				if (!it->second.is_positive() || type == staker::unlock)
-					it = new_state.rewards.erase(it);
-				else
-					++it;
+					auto count = (size_t)32;
+					auto rewards = vector<states::validator_participation_reward>();
+					while (true)
+					{
+						auto chunk = get_validator_participation_rewards(owner, rewards.size(), count);
+						if (chunk)
+							rewards.insert(rewards.end(), chunk->begin(), chunk->end());
+						if (!chunk || chunk->size() != count)
+							break;
+					}
+
+					new_state.stake = stake;
+					for (auto& reward : rewards)
+					{
+						transfer = apply_transfer(algorithm::asset::native(), owner, decimal::zero(), -reward.reward);
+						if (!transfer)
+							return transfer.error();
+
+						auto status = apply_validator_participation_reward(reward.asset, reward.owner, decimal::zero());
+						if (!status)
+							return status.error();
+					}
+					break;
+				}
+				default:
+					return layer_exception("invalid stake action");
 			}
 
 			auto result = store(&new_state, true);
@@ -1965,54 +1998,113 @@ namespace tangent
 
 			return new_state;
 		}
-		expects_lr<states::validator_attestation> executor_context::apply_validator_attestation(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, staker type, btree_map<algorithm::asset_id, decimal>&& rewards)
+		expects_lr<states::validator_participation_reward> executor_context::apply_validator_participation_reward(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const decimal& reward)
+		{
+			states::validator_participation_reward new_state = get_validator_participation_reward(asset, owner).or_else(states::validator_participation_reward(owner, asset, block));
+			auto reward_value = reward.is_negative() ? std::max(reward, -new_state.reward) : reward;
+			new_state.reward += reward_value;
+
+			auto transfer = apply_transfer(asset, owner, reward_value, reward_value);
+			if (!transfer)
+				return transfer.error();
+
+			auto status = store(&new_state, true);
+			if (!status)
+				return status.error();
+
+			return new_state;
+		}
+		expects_lr<states::validator_participation_ref> executor_context::apply_validator_participation_ref(const algorithm::pubkeyhash_t& owner, const states::validator_participation_ref::ref_value& ref, bool active)
+		{
+			states::validator_participation_ref new_state = states::validator_participation_ref(owner, ref, block);
+			new_state.active = active;
+
+			auto status = store(&new_state, true);
+			if (!status)
+				return status.error();
+
+			return new_state;
+		}
+		expects_lr<states::validator_attestation> executor_context::apply_validator_attestation(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, staker type, const decimal& stake)
 		{
 			states::validator_attestation new_state = get_validator_attestation(asset, owner).or_else(states::validator_attestation(owner, asset, block));
-			if (type == staker::unlock)
+			switch (type)
 			{
-				rewards[algorithm::asset::native()] = -new_state.stake;
-				for (auto& [asset, reward] : new_state.rewards)
-					rewards[asset] = -reward;
-			}
-
-			for (auto& [token_asset, reward] : rewards)
-			{
-				auto change = reward;
-				auto& value = token_asset == algorithm::asset::native() ? new_state.stake : new_state.rewards[token_asset];
-				if (change.is_nan() && type != staker::unlock)
-					return layer_exception("invalid stake");
-
-				auto delta = change.is_positive() ? change : std::max((value.is_nan() ? decimal::zero() : -value), reward);
-				value = value.is_nan() ? delta : (value + delta);
-				if (!delta.is_zero_or_nan())
+				case staker::lock:
+				case staker::reward_or_penalty:
 				{
-					auto transfer = apply_transfer(token_asset, owner, type == staker::reward_or_penalty ? delta : decimal::zero(), delta);
+					if (stake.is_nan())
+						return layer_exception("invalid stake");
+
+					if (new_state.stake.is_nan())
+						new_state.stake = decimal::zero();
+
+					auto stake_value = stake;
+					if (stake_value.is_negative())
+						stake_value = std::max(stake_value, -new_state.stake);
+
+					new_state.stake += stake_value;
+					auto transfer = apply_transfer(algorithm::asset::native(), owner, type == staker::reward_or_penalty ? stake_value : decimal::zero(), stake_value);
 					if (!transfer)
 						return transfer.error();
+					break;
 				}
-			}
+				case staker::unlock:
+				{
+					if (!stake.is_nan())
+						return layer_exception("invalid stake");
 
-			auto it = new_state.rewards.find(algorithm::asset::native());
-			if (it != new_state.rewards.end())
-			{
-				new_state.stake = std::move(it->second);
-				new_state.rewards.erase(it);
-			}
-			if (type == staker::unlock)
-				new_state.stake = decimal::nan();
+					auto transfer = apply_transfer(algorithm::asset::native(), owner, decimal::zero(), -new_state.stake);
+					if (!transfer)
+						return transfer.error();
 
-			it = new_state.rewards.begin();
-			while (it != new_state.rewards.end())
-			{
-				if (!it->second.is_positive() || type == staker::unlock)
-					it = new_state.rewards.erase(it);
-				else
-					++it;
+					auto count = (size_t)32;
+					auto rewards = vector<states::validator_attestation_reward>();
+					while (true)
+					{
+						auto chunk = get_validator_attestation_rewards(owner, rewards.size(), count);
+						if (chunk)
+							rewards.insert(rewards.end(), chunk->begin(), chunk->end());
+						if (!chunk || chunk->size() != count)
+							break;
+					}
+
+					new_state.stake = stake;
+					for (auto& reward : rewards)
+					{
+						transfer = apply_transfer(algorithm::asset::native(), owner, decimal::zero(), -reward.reward);
+						if (!transfer)
+							return transfer.error();
+
+						auto status = apply_validator_attestation_reward(reward.asset, reward.owner, decimal::zero());
+						if (!status)
+							return status.error();
+					}
+					break;
+				}
+				default:
+					return layer_exception("invalid stake action");
 			}
 
 			auto result = store(&new_state, true);
 			if (!result)
 				return result.error();
+
+			return new_state;
+		}
+		expects_lr<states::validator_attestation_reward> executor_context::apply_validator_attestation_reward(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const decimal& reward)
+		{
+			states::validator_attestation_reward new_state = get_validator_attestation_reward(asset, owner).or_else(states::validator_attestation_reward(owner, asset, block));
+			auto reward_value = reward.is_negative() ? std::max(reward, -new_state.reward) : reward;
+			new_state.reward += reward_value;
+
+			auto transfer = apply_transfer(asset, owner, reward_value, reward_value);
+			if (!transfer)
+				return transfer.error();
+
+			auto status = store(&new_state, true);
+			if (!status)
+				return status.error();
 
 			return new_state;
 		}
@@ -2066,21 +2158,21 @@ namespace tangent
 
 			return new_state;
 		}
-		expects_lr<states::bridge_balance> executor_context::apply_bridge_balance(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const btree_map<algorithm::asset_id, decimal>& balances)
+		expects_lr<states::bridge_balance> executor_context::apply_bridge_balance(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const decimal& balance)
 		{
+			if (balance.is_zero())
+				return get_bridge_balance(asset, owner).or_else(states::bridge_balance(owner, asset, block));
+
 			states::bridge_balance new_state = states::bridge_balance(owner, asset, block);
-			new_state.balances = balances;
+			new_state.supply = balance;
 
 			auto status = store(&new_state, true);
 			if (!status)
 				return status.error();
 
-			for (auto& [token_asset, balance] : balances)
-			{
-				status = emit_event<states::bridge_balance>({ format::variable(token_asset), format::variable(owner.view()), format::variable(balance) });
-				if (!status)
-					return status.error();
-			}
+			status = emit_event<states::bridge_balance>({ format::variable(asset), format::variable(owner.view()), format::variable(balance) });
+			if (!status)
+				return status.error();
 
 			return new_state;
 		}
@@ -2363,6 +2455,38 @@ namespace tangent
 
 			return states::validator_production(std::move(*state->as<states::validator_production>()));
 		}
+		expects_lr<states::validator_production_reward> executor_context::get_validator_production_reward(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner) const
+		{
+			auto chain = storages::chainstate();
+			auto state = chain.get_multiform(states::validator_production_reward::as_instance_type(), changelog, states::validator_production_reward::as_instance_column(owner), states::validator_production_reward::as_instance_row(asset), get_validation_nonce());
+			if (!state)
+				return layer_exception("validator production reward required but not found (" + state.what() + ")");
+
+			auto status = ((executor_context*)this)->load(state->ptr(), !state->cached);
+			if (!status)
+				return status.error();
+
+			return states::validator_production_reward(std::move(*state->as<states::validator_production_reward>()));
+		}
+		expects_lr<vector<states::validator_production_reward>> executor_context::get_validator_production_rewards(const algorithm::pubkeyhash_t& owner, size_t offset, size_t count) const
+		{
+			auto chain = storages::chainstate();
+			auto states = chain.get_multiforms_by_column(states::validator_production_reward::as_instance_type(), changelog, states::validator_production_reward::as_instance_column(owner), get_validation_nonce(), offset, count);
+			if (!states)
+				return layer_exception("validator production reward(s) required but not applicable (" + states.what() + ")");
+
+			vector<states::validator_production_reward> addresses;
+			addresses.reserve(states->size());
+			for (auto& state : *states)
+			{
+				auto status = ((executor_context*)this)->query(state.ptr(), !state.cached);
+				if (!status)
+					return status.error();
+
+				addresses.emplace_back(std::move(*state.as<states::validator_production_reward>()));
+			}
+			return addresses;
+		}
 		expects_lr<states::validator_participation> executor_context::get_validator_participation(const algorithm::pubkeyhash_t& owner) const
 		{
 			auto chain = storages::chainstate();
@@ -2375,6 +2499,57 @@ namespace tangent
 				return status.error();
 
 			return states::validator_participation(std::move(*state->as<states::validator_participation>()));
+		}
+		expects_lr<states::validator_participation_reward> executor_context::get_validator_participation_reward(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner) const
+		{
+			auto chain = storages::chainstate();
+			auto state = chain.get_multiform(states::validator_participation_reward::as_instance_type(), changelog, states::validator_participation_reward::as_instance_column(owner), states::validator_participation_reward::as_instance_row(asset), get_validation_nonce());
+			if (!state)
+				return layer_exception("validator participation reward required but not found (" + state.what() + ")");
+
+			auto status = ((executor_context*)this)->load(state->ptr(), !state->cached);
+			if (!status)
+				return status.error();
+
+			return states::validator_participation_reward(std::move(*state->as<states::validator_participation_reward>()));
+		}
+		expects_lr<vector<states::validator_participation_reward>> executor_context::get_validator_participation_rewards(const algorithm::pubkeyhash_t& owner, size_t offset, size_t count) const
+		{
+			auto chain = storages::chainstate();
+			auto states = chain.get_multiforms_by_column(states::validator_participation_reward::as_instance_type(), changelog, states::validator_participation_reward::as_instance_column(owner), get_validation_nonce(), offset, count);
+			if (!states)
+				return layer_exception("validator participation reward(s) required but not applicable (" + states.what() + ")");
+
+			vector<states::validator_participation_reward> addresses;
+			addresses.reserve(states->size());
+			for (auto& state : *states)
+			{
+				auto status = ((executor_context*)this)->query(state.ptr(), !state.cached);
+				if (!status)
+					return status.error();
+
+				addresses.emplace_back(std::move(*state.as<states::validator_participation_reward>()));
+			}
+			return addresses;
+		}
+		expects_lr<vector<states::validator_participation_ref>> executor_context::get_validator_participation_refs(const algorithm::pubkeyhash_t& owner, size_t offset, size_t count) const
+		{
+			auto chain = storages::chainstate();
+			auto states = chain.get_multiforms_by_column(states::validator_participation_ref::as_instance_type(), changelog, states::validator_participation_ref::as_instance_column(owner), get_validation_nonce(), offset, count);
+			if (!states)
+				return layer_exception("validator participation ref(s) required but not applicable (" + states.what() + ")");
+
+			vector<states::validator_participation_ref> addresses;
+			addresses.reserve(states->size());
+			for (auto& state : *states)
+			{
+				auto status = ((executor_context*)this)->query(state.ptr(), !state.cached);
+				if (!status)
+					return status.error();
+
+				addresses.emplace_back(std::move(*state.as<states::validator_participation_ref>()));
+			}
+			return addresses;
 		}
 		expects_lr<states::validator_attestation> executor_context::get_validator_attestation(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner) const
 		{
@@ -2416,6 +2591,38 @@ namespace tangent
 			}
 			return addresses;
 		}
+		expects_lr<states::validator_attestation_reward> executor_context::get_validator_attestation_reward(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner) const
+		{
+			auto chain = storages::chainstate();
+			auto state = chain.get_multiform(states::validator_attestation_reward::as_instance_type(), changelog, states::validator_attestation_reward::as_instance_column(owner), states::validator_attestation_reward::as_instance_row(asset), get_validation_nonce());
+			if (!state)
+				return layer_exception("validator attestation reward required but not found (" + state.what() + ")");
+
+			auto status = ((executor_context*)this)->load(state->ptr(), !state->cached);
+			if (!status)
+				return status.error();
+
+			return states::validator_attestation_reward(std::move(*state->as<states::validator_attestation_reward>()));
+		}
+		expects_lr<vector<states::validator_attestation_reward>> executor_context::get_validator_attestation_rewards(const algorithm::pubkeyhash_t& owner, size_t offset, size_t count) const
+		{
+			auto chain = storages::chainstate();
+			auto states = chain.get_multiforms_by_column(states::validator_attestation_reward::as_instance_type(), changelog, states::validator_attestation_reward::as_instance_column(owner), get_validation_nonce(), offset, count);
+			if (!states)
+				return layer_exception("validator attestation reward(s) required but not applicable (" + states.what() + ")");
+
+			vector<states::validator_attestation_reward> addresses;
+			addresses.reserve(states->size());
+			for (auto& state : *states)
+			{
+				auto status = ((executor_context*)this)->query(state.ptr(), !state.cached);
+				if (!status)
+					return status.error();
+
+				addresses.emplace_back(std::move(*state.as<states::validator_attestation_reward>()));
+			}
+			return addresses;
+		}
 		expects_lr<states::bridge_balance> executor_context::get_bridge_balance(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner) const
 		{
 			auto chain = storages::chainstate();
@@ -2428,6 +2635,25 @@ namespace tangent
 				return status.error();
 
 			return states::bridge_balance(std::move(*state->as<states::bridge_balance>()));
+		}
+		expects_lr<vector<states::bridge_balance>> executor_context::get_bridge_balances(const algorithm::pubkeyhash_t& owner, size_t offset, size_t count) const
+		{
+			auto chain = storages::chainstate();
+			auto states = chain.get_multiforms_by_column(states::bridge_balance::as_instance_type(), changelog, states::bridge_balance::as_instance_column(owner), get_validation_nonce(), offset, count);
+			if (!states)
+				return layer_exception("validator participation ref(s) required but not applicable (" + states.what() + ")");
+
+			vector<states::bridge_balance> addresses;
+			addresses.reserve(states->size());
+			for (auto& state : *states)
+			{
+				auto status = ((executor_context*)this)->query(state.ptr(), !state.cached);
+				if (!status)
+					return status.error();
+
+				addresses.emplace_back(std::move(*state.as<states::bridge_balance>()));
+			}
+			return addresses;
 		}
 		expects_lr<vector<states::bridge_account>> executor_context::get_bridge_accounts(const algorithm::pubkeyhash_t& manager, size_t offset, size_t count) const
 		{

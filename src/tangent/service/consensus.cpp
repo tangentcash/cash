@@ -870,9 +870,6 @@ namespace tangent
 		{
 			umutex<std::recursive_mutex> unique(sync.account);
 			auto& [node, wallet] = descriptor;
-			candidate_tx->set_optimal_gas(decimal::zero());
-			candidate_tx->gas_limit += 21000;
-
 			auto status = candidate_tx->sign(wallet.secret_key, wallet.get_latest_nonce().or_else(0), decimal::zero());
 			if (!status)
 			{

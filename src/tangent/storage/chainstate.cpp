@@ -246,256 +246,6 @@ namespace tangent
 			return message.data;
 		}
 
-		void account_cache::clear_locations()
-		{
-			umutex<std::mutex> unique(mutex);
-			accounts.clear();
-		}
-		void account_cache::revive_location(const algorithm::pubkeyhash_t& account)
-		{
-			umutex<std::mutex> unique(mutex);
-			auto it = accounts.find(account);
-			if (it != accounts.end() && !it->second)
-				accounts.erase(it);
-		}
-		void account_cache::set_account_location(const algorithm::pubkeyhash_t& account, uint64_t location)
-		{
-			if (!location)
-				return;
-
-			auto size = protocol::now().user.storage.location_cache_size;
-			umutex<std::mutex> unique(mutex);
-			if (accounts.size() >= size)
-				accounts.clear();
-			accounts[account] = location;
-		}
-		option<uint64_t> account_cache::get_account_location(const algorithm::pubkeyhash_t& account)
-		{
-			umutex<std::mutex> unique(mutex);
-			auto it = accounts.find(account);
-			if (it == accounts.end())
-				return optional::none;
-
-			return it->second;
-		}
-
-		void uniform_cache::clear_locations()
-		{
-			umutex<std::mutex> unique(mutex);
-			indices.clear();
-			blocks.clear();
-		}
-		void uniform_cache::revive_location(uint32_t type, const std::string_view& index, uint64_t block_number, bool erase)
-		{
-			umutex<std::mutex> unique(mutex);
-			auto index_iterator = indices.find(key_of_indices(type, index));
-			if (index_iterator != indices.end())
-			{
-				bool requires_erase = erase;
-				auto block_iterator = blocks.find(key_of_blocks(type, index_iterator->second));
-				if (block_iterator != blocks.end())
-				{
-					if (!requires_erase && !block_iterator->second.hidden)
-					{
-						requires_erase = false;
-						block_iterator->second.number = block_number;
-						block_iterator->second.hidden = false;
-					}
-					else
-					{
-						requires_erase = requires_erase || block_iterator->second.hidden;
-						blocks.erase(block_iterator);
-					}
-				}
-				if (!index_iterator->second || requires_erase)
-					indices.erase(index_iterator);
-			}
-		}
-		void uniform_cache::set_index_location(uint32_t type, const std::string_view& index, uint64_t index_location)
-		{
-			if (!index_location)
-				return;
-
-			umutex<std::mutex> unique(mutex);
-			if (indices.size() >= protocol::now().user.storage.location_cache_size)
-				indices.clear();
-			indices[key_of_indices(type, index)] = index_location;
-		}
-		void uniform_cache::set_block_location(uint32_t type, uint64_t index_location, uint64_t block_number, bool hidden)
-		{
-			if (!index_location || !block_number)
-				return;
-
-			umutex<std::mutex> unique(mutex);
-			if (blocks.size() >= protocol::now().user.storage.location_cache_size)
-				blocks.clear();
-
-			blocks[key_of_blocks(type, index_location)] = block_pair(block_number, hidden);
-		}
-		option<uint64_t> uniform_cache::get_index_location(uint32_t type, const std::string_view& index)
-		{
-			umutex<std::mutex> unique(mutex);
-			auto it = indices.find(key_of_indices(type, index));
-			if (it == indices.end())
-				return optional::none;
-
-			return it->second;
-		}
-		option<block_pair> uniform_cache::get_block_location(uint32_t type, uint64_t index_location)
-		{
-			umutex<std::mutex> unique(mutex);
-			auto it = blocks.find(key_of_blocks(type, index_location));
-			if (it == blocks.end())
-				return optional::none;
-
-			return it->second;
-		}
-		string uniform_cache::key_of_indices(uint32_t type, const std::string_view& index)
-		{
-			format::wo_stream message;
-			message.write_typeless(type);
-			message.write_typeless(index.data(), index.size());
-			return message.data;
-		}
-		string uniform_cache::key_of_blocks(uint32_t type, uint64_t location)
-		{
-			format::wo_stream message;
-			message.write_typeless(type);
-			message.write_typeless(location);
-			return message.data;
-		}
-
-		void multiform_cache::clear_locations()
-		{
-			umutex<std::mutex> unique(mutex);
-			columns.clear();
-			rows.clear();
-			blocks.clear();
-		}
-		void multiform_cache::revive_location(uint32_t type, const std::string_view& column, const std::string_view& row, uint64_t block_number, bool erase)
-		{
-			umutex<std::mutex> unique(mutex);
-			bool requires_erase = erase;
-			auto column_iterator = columns.find(key_of_columns(type, column));
-			auto row_iterator = rows.find(key_of_rows(type, row));
-			if (column_iterator != columns.end() && row_iterator != rows.end())
-			{
-				auto block_iterator = blocks.find(key_of_blocks(type, column_iterator->second, row_iterator->second));
-				if (block_iterator != blocks.end())
-				{
-					if (!requires_erase && !block_iterator->second.hidden)
-					{
-						requires_erase = false;
-						block_iterator->second.number = block_number;
-						block_iterator->second.hidden = false;
-					}
-					else
-					{
-						requires_erase = requires_erase || block_iterator->second.hidden;
-						blocks.erase(block_iterator);
-					}
-				}
-			}
-			if (column_iterator != columns.end() && (!column_iterator->second || requires_erase))
-				columns.erase(column_iterator);
-			if (row_iterator != rows.end() && (!row_iterator->second || requires_erase))
-				rows.erase(row_iterator);
-		}
-		void multiform_cache::set_multiform_location(uint32_t type, const std::string_view& column, const std::string_view& row, uint64_t column_location, uint64_t row_location)
-		{
-			if (!column_location && !row_location)
-				return;
-
-			umutex<std::mutex> unique(mutex);
-			if (columns.size() >= protocol::now().user.storage.location_cache_size)
-				columns.clear();
-			if (rows.size() >= protocol::now().user.storage.location_cache_size)
-				rows.clear();
-			if (column_location > 0)
-				columns[key_of_columns(type, column)] = column_location;
-			if (row_location > 0)
-				rows[key_of_rows(type, row)] = row_location;
-		}
-		void multiform_cache::set_column_location(uint32_t type, const std::string_view& column, uint64_t location)
-		{
-			if (!location)
-				return;
-
-			umutex<std::mutex> unique(mutex);
-			if (columns.size() >= protocol::now().user.storage.location_cache_size)
-				columns.clear();
-			columns[key_of_columns(type, column)] = location;
-		}
-		void multiform_cache::set_row_location(uint32_t type, const std::string_view& row, uint64_t location)
-		{
-			if (!location)
-				return;
-
-			umutex<std::mutex> unique(mutex);
-			if (rows.size() >= protocol::now().user.storage.location_cache_size)
-				rows.clear();
-			rows[key_of_rows(type, row)] = location;
-		}
-		void multiform_cache::set_block_location(uint32_t type, uint64_t column_location, uint64_t row_location, uint64_t block_number, bool hidden)
-		{
-			if (!column_location || !row_location || !block_number)
-				return;
-
-			umutex<std::mutex> unique(mutex);
-			if (blocks.size() >= protocol::now().user.storage.location_cache_size)
-				blocks.clear();
-			blocks[key_of_blocks(type, column_location, row_location)] = block_pair(block_number, hidden);
-		}
-		option<uint64_t> multiform_cache::get_column_location(uint32_t type, const std::string_view& column)
-		{
-			umutex<std::mutex> unique(mutex);
-			auto it = columns.find(key_of_columns(type, column));
-			if (it == columns.end())
-				return optional::none;
-
-			return it->second;
-		}
-		option<uint64_t> multiform_cache::get_row_location(uint32_t type, const std::string_view& row)
-		{
-			umutex<std::mutex> unique(mutex);
-			auto it = rows.find(key_of_rows(type, row));
-			if (it == rows.end())
-				return optional::none;
-
-			return it->second;
-		}
-		option<block_pair> multiform_cache::get_block_location(uint32_t type, uint64_t column_location, uint64_t row_location)
-		{
-			umutex<std::mutex> unique(mutex);
-			auto it = blocks.find(key_of_blocks(type, column_location, row_location));
-			if (it == blocks.end())
-				return optional::none;
-
-			return it->second;
-		}
-		string multiform_cache::key_of_columns(uint32_t type, const std::string_view& column)
-		{
-			format::wo_stream message;
-			message.write_typeless(type);
-			message.write_typeless(column.data(), column.size());
-			return message.data;
-		}
-		string multiform_cache::key_of_rows(uint32_t type, const std::string_view& row)
-		{
-			format::wo_stream message;
-			message.write_typeless(type);
-			message.write_typeless(row.data(), row.size());
-			return message.data;
-		}
-		string multiform_cache::key_of_blocks(uint32_t type, uint64_t column_location, uint64_t row_location)
-		{
-			format::wo_stream message;
-			message.write_typeless(type);
-			message.write_typeless(column_location);
-			message.write_typeless(row_location);
-			return message.data;
-		}
-
 		string result_filter::as_value() const
 		{
 			uint8_t data[sizeof(value)];
@@ -687,9 +437,6 @@ namespace tangent
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 
-			account_cache::get()->clear_locations();
-			uniform_cache::get()->clear_locations();
-			multiform_cache::get()->clear_locations();
 			if (checkpoint_number && *checkpoint_number > block_number)
 				return reorganize(block_delta, transaction_delta, state_delta);
 
@@ -1106,29 +853,7 @@ namespace tangent
 					queue.emplace_back(std::move(task));
 			}
 
-			auto* cache_a = account_cache::get();
-			auto* cache_u = uniform_cache::get();
-			auto* cache_m = multiform_cache::get();
 			parallel::wail_all(std::move(queue));
-
-			for (auto& data : transactions)
-			{
-				for (auto& party : data.parties)
-					cache_a->revive_location(party.data);
-			}
-
-			for (auto& [type, writer] : uniform_writers)
-			{
-				for (auto& item : writer.blobs)
-					cache_u->revive_location(type, item.index, evaluation.block.number, item.change->erase);
-			}
-
-			for (auto& [type, writer] : multiform_writers)
-			{
-				for (auto& item : writer.blobs)
-					cache_m->revive_location(type, item.column, item.row, evaluation.block.number, item.change->erase);
-			}
-
 			vector<promise<expects_lr<void>>> expectation_queue;
 			expectation_queue.reserve(8 + uniform_writers.size() * 2 + multiform_writers.size() * 2);
 			for (auto& [type, writer] : uniform_writers)
@@ -1437,115 +1162,90 @@ namespace tangent
 			result.erase(std::remove_if(result.begin(), result.end(), [](const ledger::block_transaction& a) { return !a.transaction; }), result.end());
 			return expectation::met;
 		}
-		expects_lr<chainstate::uniform_location> chainstate::resolve_uniform_location(uint32_t type, const std::string_view& index, uint8_t resolver_flags)
+		expects_lr<uint64_t> chainstate::resolve_uniform_location(uint32_t type, const std::string_view& index)
 		{
-			auto cache = uniform_cache::get();
-			auto index_location = cache->get_index_location(type, index);
-			auto block_location = (resolver_flags & (uint8_t)resolver::find_exact_match) && index_location ? cache->get_block_location(type, *index_location) : option<block_pair>(optional::none);
+			auto& uniform_storage = get_uniform_storage(type);
+			auto find_index = uniform_storage.prepare_statement(__func__, "SELECT index_number FROM indices WHERE index_hash = ?");
+			if (!find_index)
+				return expects_lr<uint64_t>(layer_exception(std::move(find_index.error().message())));
+
+			uniform_storage.ptr()->bind_blob(*find_index, 0, index);
+			auto cursor = uniform_storage.prepared_query(__func__, *find_index);
+			if (!cursor || cursor->error())
+				return expects_lr<uint64_t>(layer_exception(ledger::storage_util::error_of(cursor)));
+
+			uint64_t index_location = (*cursor)["index_number"].get().get_integer();
 			if (!index_location)
-			{
-				auto& uniform_storage = get_uniform_storage(type);
-				auto find_index = uniform_storage.prepare_statement(__func__, "SELECT index_number FROM indices WHERE index_hash = ?");
-				if (!find_index)
-					return expects_lr<uniform_location>(layer_exception(std::move(find_index.error().message())));
+				return layer_exception("uniform state index not found");
 
-				uniform_storage.ptr()->bind_blob(*find_index, 0, index);
-				auto cursor = uniform_storage.prepared_query(__func__, *find_index);
-				if (!cursor || cursor->error())
-					return expects_lr<uniform_location>(layer_exception(ledger::storage_util::error_of(cursor)));
-
-				index_location = (*cursor)["index_number"].get().get_integer();
-				if (!(resolver_flags & (uint8_t)resolver::disable_cache))
-					cache->set_index_location(type, index, *index_location);
-			}
-
-			uniform_location location;
-			location.index = index_location && *index_location > 0 ? std::move(index_location) : option<uint64_t>(optional::none);
-			location.block = block_location && block_location->number > 0 ? std::move(block_location) : option<block_pair>(optional::none);
-			return location;
+			return index_location;
 		}
-		expects_lr<chainstate::multiform_location> chainstate::resolve_multiform_location(uint32_t type, const option<std::string_view>& column, const option<std::string_view>& row, uint8_t resolver_flags)
+		expects_lr<chainstate::multiform_location> chainstate::resolve_multiform_location(uint32_t type, const option<std::string_view>& column, const option<std::string_view>& row)
 		{
 			VI_ASSERT(column || row, "column or row should be set");
-			auto cache = multiform_cache::get();
-			bool update_column = false, update_row = false;
-			auto column_location = column ? cache->get_column_location(type, *column) : option<uint64_t>(optional::none);
-			auto row_location = row ? cache->get_row_location(type, *row) : option<uint64_t>(optional::none);
-			auto block_location = (resolver_flags & (uint8_t)resolver::find_exact_match) && column_location && row_location ? cache->get_block_location(type, *column_location, *row_location) : option<block_pair>(optional::none);
-			if (column && !column_location)
+			uint64_t column_location = 0, row_location = 0;
+			if (!column || !row)
+			{
+				if (column)
+				{
+					auto& multiform_storage = get_multiform_storage(type);
+					auto find_column = multiform_storage.prepare_statement(__func__, "SELECT column_number FROM columns WHERE column_hash = ?");
+					if (!find_column)
+						return expects_lr<multiform_location>(layer_exception(std::move(find_column.error().message())));
+
+					multiform_storage.ptr()->bind_blob(*find_column, 0, *column);
+					auto cursor = multiform_storage.prepared_query(__func__, *find_column);
+					if (!cursor || cursor->error())
+						return expects_lr<multiform_location>(layer_exception(ledger::storage_util::error_of(cursor)));
+
+					column_location = (*cursor)["column_number"].get().get_integer();
+					if (!column_location)
+						return layer_exception("multiform state column not found");
+				}
+
+				if (row)
+				{
+					auto& multiform_storage = get_multiform_storage(type);
+					auto find_row = multiform_storage.prepare_statement(__func__, "SELECT row_number FROM rows WHERE row_hash = ?");
+					if (!find_row)
+						return expects_lr<multiform_location>(layer_exception(std::move(find_row.error().message())));
+
+					multiform_storage.ptr()->bind_blob(*find_row, 0, *row);
+					auto cursor = multiform_storage.prepared_query(__func__, *find_row);
+					if (!cursor || cursor->error())
+						return expects_lr<multiform_location>(layer_exception(ledger::storage_util::error_of(cursor)));
+
+					row_location = (*cursor)["row_number"].get().get_integer();
+					if (!row_location)
+						return layer_exception("multiform state row not found");
+				}
+			}
+			else
 			{
 				auto& multiform_storage = get_multiform_storage(type);
-				auto find_column = multiform_storage.prepare_statement(__func__, "SELECT column_number FROM columns WHERE column_hash = ?");
-				if (!find_column)
-					return expects_lr<multiform_location>(layer_exception(std::move(find_column.error().message())));
+				auto find_column_and_row = multiform_storage.prepare_statement(__func__, "SELECT (SELECT column_number FROM columns WHERE column_hash = ?) AS column_number, (SELECT row_number FROM rows WHERE row_hash = ?) AS row_number");
+				if (!find_column_and_row)
+					return expects_lr<multiform_location>(layer_exception(std::move(find_column_and_row.error().message())));
 
-				multiform_storage.ptr()->bind_blob(*find_column, 0, *column);
-				auto cursor = multiform_storage.prepared_query(__func__, *find_column);
+				multiform_storage.ptr()->bind_blob(*find_column_and_row, 0, *column);
+				multiform_storage.ptr()->bind_blob(*find_column_and_row, 1, *row);
+				auto cursor = multiform_storage.prepared_query(__func__, *find_column_and_row);
 				if (!cursor || cursor->error())
 					return expects_lr<multiform_location>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 				column_location = (*cursor)["column_number"].get().get_integer();
-				if (!(resolver_flags & (uint8_t)resolver::disable_cache))
-					update_column = true;
-			}
-
-			if (row && !row_location)
-			{
-				auto& multiform_storage = get_multiform_storage(type);
-				auto find_row = multiform_storage.prepare_statement(__func__, "SELECT row_number FROM rows WHERE row_hash = ?");
-				if (!find_row)
-					return expects_lr<multiform_location>(layer_exception(std::move(find_row.error().message())));
-
-				multiform_storage.ptr()->bind_blob(*find_row, 0, *row);
-				auto cursor = multiform_storage.prepared_query(__func__, *find_row);
-				if (!cursor || cursor->error())
-					return expects_lr<multiform_location>(layer_exception(ledger::storage_util::error_of(cursor)));
-
 				row_location = (*cursor)["row_number"].get().get_integer();
-				if (!(resolver_flags & (uint8_t)resolver::disable_cache))
-					update_row = true;
-			}
-
-			if (column && row)
-			{
-				if (!column_location.or_else(0) || !row_location.or_else(0))
-					return layer_exception("multiform state location not found");
-				else if (update_column || update_row)
-					cache->set_multiform_location(type, *column, *row, *column_location, *row_location);
-			}
-			else if (column)
-			{
-				if (!column_location.or_else(0))
+				if (!column_location || !row_location)
 					return layer_exception("multiform state column not found");
-				else if (update_column)
-					cache->set_column_location(type, *column, *column_location);
-			}
-			else if (row)
-			{
-				if (!row_location.or_else(0))
-					return layer_exception("multiform state row not found");
-				else if (update_row)
-					cache->set_row_location(type, *row, *row_location);
 			}
 
 			multiform_location location;
-			location.column = column_location && *column_location > 0 ? std::move(column_location) : option<uint64_t>(optional::none);
-			location.row = row_location && *row_location > 0 ? std::move(row_location) : option<uint64_t>(optional::none);
-			location.block = block_location && block_location->number > 0 ? std::move(block_location) : option<block_pair>(optional::none);
+			location.column = column_location > 0 ? std::move(column_location) : option<uint64_t>(optional::none);
+			location.row = row_location > 0 ? std::move(row_location) : option<uint64_t>(optional::none);
 			return location;
 		}
 		expects_lr<uint64_t> chainstate::resolve_account_location(const algorithm::pubkeyhash_t& account)
 		{
-			auto cache = account_cache::get();
-			auto account_number_cache = cache->get_account_location(account);
-			if (account_number_cache)
-			{
-				if (!*account_number_cache)
-					return layer_exception("account not found");
-
-				return account_number_cache.or_else(0);
-			}
-
 			auto& account_storage = get_account_storage();
 			auto find_account = account_storage.prepare_statement(__func__, "SELECT account_number FROM accounts WHERE account_hash = ?");
 			if (!find_account)
@@ -1560,7 +1260,6 @@ namespace tangent
 			if (!account_number)
 				return layer_exception("account not found");
 			
-			cache->set_account_location(account, account_number);
 			return account_number;
 		}
 		expects_lr<uint64_t> chainstate::get_checkpoint_block_number()
@@ -2455,44 +2154,39 @@ namespace tangent
 					return state_result(std::move(*candidate), true);
 			}
 
-			auto location = resolve_uniform_location(type, index, block_number > 0 ? 0 : (uint8_t)resolver::find_exact_match);
+			auto location = resolve_uniform_location(type, index);
 			if (!location)
 				return location.error();
 
-			if (!location->block)
+			auto& uniform_storage = get_uniform_storage(type);
+			auto find_state = uniform_storage.prepare_statement(__func__, !block_number ?
+				"SELECT block_number FROM uniforms WHERE index_number = ?" :
+				"SELECT block_number, hidden FROM snapshots WHERE index_number = ? AND block_number < ? ORDER BY block_number DESC LIMIT 1");
+			if (!find_state)
+				return expects_lr<state_result>(layer_exception(std::move(find_state.error().message())));
+
+			uniform_storage.ptr()->bind_int64(*find_state, 0, location.or_else(0));
+			if (block_number > 0)
+				uniform_storage.ptr()->bind_int64(*find_state, 1, block_number);
+
+			auto cursor = uniform_storage.prepared_query(__func__, *find_state);
+			if (!cursor)
 			{
-				auto& uniform_storage = get_uniform_storage(type);
-				auto find_state = uniform_storage.prepare_statement(__func__, !block_number ?
-					"SELECT block_number FROM uniforms WHERE index_number = ?" :
-					"SELECT block_number, hidden FROM snapshots WHERE index_number = ? AND block_number < ? ORDER BY block_number DESC LIMIT 1");
-				if (!find_state)
-					return expects_lr<state_result>(layer_exception(std::move(find_state.error().message())));
-
-				uniform_storage.ptr()->bind_int64(*find_state, 0, location->index.or_else(0));
-				if (block_number > 0)
-					uniform_storage.ptr()->bind_int64(*find_state, 1, block_number);
-
-				auto cursor = uniform_storage.prepared_query(__func__, *find_state);
-				if (!cursor)
-				{
-					if (changelog != nullptr)
-						((ledger::block_changelog*)changelog)->incoming.erase(type, index);
-					return expects_lr<state_result>(layer_exception(ledger::storage_util::error_of(cursor)));
-				}
-				else if (cursor->empty())
-				{
-					if (changelog != nullptr)
-						((ledger::block_changelog*)changelog)->incoming.erase(type, index);
-					return expects_lr<state_result>(layer_exception("uniform state not found"));
-				}
-
-				location->block = block_pair((*cursor)["block_number"].get().get_integer(), (*cursor)["hidden"].get().get_boolean());
-				if (!block_number)
-					uniform_cache::get()->set_block_location(type, location->index.or_else(0), location->block->number, location->block->hidden);
+				if (changelog != nullptr)
+					((ledger::block_changelog*)changelog)->incoming.erase(type, index);
+				return expects_lr<state_result>(layer_exception(ledger::storage_util::error_of(cursor)));
+			}
+			else if (cursor->empty())
+			{
+				if (changelog != nullptr)
+					((ledger::block_changelog*)changelog)->incoming.erase(type, index);
+				return expects_lr<state_result>(layer_exception("uniform state not found"));
 			}
 
-			auto blob = get_blob_storage().load(__func__, get_uniform_label(type, index, location->block->number)).or_else(string());
-			auto value = state_from_blob(location->block->number, type, index, std::string_view(), blob);
+			uint64_t location_block_number = (*cursor)["block_number"].get().get_integer();
+			bool location_hidden = (*cursor)["hidden"].get().get_boolean();
+			auto blob = get_blob_storage().load(__func__, get_uniform_label(type, index, location_block_number)).or_else(string());
+			auto value = state_from_blob(location_block_number, type, index, std::string_view(), blob);
 			if (!value)
 			{
 				if (changelog != nullptr)
@@ -2501,8 +2195,8 @@ namespace tangent
 			}
 
 			if (changelog != nullptr)
-				((ledger::block_changelog*)changelog)->incoming.push(*value, location->block->hidden);
-			if (location->block->hidden)
+				((ledger::block_changelog*)changelog)->incoming.push(*value, location_hidden);
+			if (location_hidden)
 				return expects_lr<state_result>(layer_exception("uniform state not found"));
 
 			return state_result(std::move(value), false);
@@ -2520,46 +2214,41 @@ namespace tangent
 					return state_result(std::move(*candidate), true);
 			}
 
-			auto location = resolve_multiform_location(type, column, row, block_number > 0 ? 0 : (uint8_t)resolver::find_exact_match);
+			auto location = resolve_multiform_location(type, column, row);
 			if (!location)
 				return location.error();
 
-			if (!location->block)
+			auto& multiform_storage = get_multiform_storage(type);
+			auto find_state = multiform_storage.prepare_statement(__func__, !block_number ?
+				"SELECT block_number FROM multiforms WHERE column_number = ? AND row_number = ?" :
+				"SELECT block_number, hidden FROM snapshots WHERE column_number = ? AND row_number = ? AND block_number < ? ORDER BY block_number DESC LIMIT 1");
+			if (!find_state)
+				return expects_lr<state_result>(layer_exception(std::move(find_state.error().message())));
+
+			auto* multiform_storage_ptr = multiform_storage.ptr();
+			multiform_storage_ptr->bind_int64(*find_state, 0, location->column.or_else(0));
+			multiform_storage_ptr->bind_int64(*find_state, 1, location->row.or_else(0));
+			if (block_number > 0)
+				multiform_storage_ptr->bind_int64(*find_state, 2, block_number);
+
+			auto cursor = multiform_storage.prepared_query(__func__, *find_state);
+			if (!cursor)
 			{
-				auto& multiform_storage = get_multiform_storage(type);
-				auto find_state = multiform_storage.prepare_statement(__func__, !block_number ?
-					"SELECT block_number FROM multiforms WHERE column_number = ? AND row_number = ?" :
-					"SELECT block_number, hidden FROM snapshots WHERE column_number = ? AND row_number = ? AND block_number < ? ORDER BY block_number DESC LIMIT 1");
-				if (!find_state)
-					return expects_lr<state_result>(layer_exception(std::move(find_state.error().message())));
-
-				auto* multiform_storage_ptr = multiform_storage.ptr();
-				multiform_storage_ptr->bind_int64(*find_state, 0, location->column.or_else(0));
-				multiform_storage_ptr->bind_int64(*find_state, 1, location->row.or_else(0));
-				if (block_number > 0)
-					multiform_storage_ptr->bind_int64(*find_state, 2, block_number);
-
-				auto cursor = multiform_storage.prepared_query(__func__, *find_state);
-				if (!cursor)
-				{
-					if (changelog != nullptr)
-						((ledger::block_changelog*)changelog)->incoming.erase(type, column, row);
-					return expects_lr<state_result>(layer_exception(ledger::storage_util::error_of(cursor)));
-				}
-				else if (cursor->empty())
-				{
-					if (changelog != nullptr)
-						((ledger::block_changelog*)changelog)->incoming.erase(type, column, row);
-					return expects_lr<state_result>(layer_exception("multiform state not found"));
-				}
-
-				location->block = block_pair((*cursor)["block_number"].get().get_integer(), (*cursor)["hidden"].get().get_boolean());
-				if (!block_number)
-					multiform_cache::get()->set_block_location(type, location->column.or_else(0), location->row.or_else(0), location->block->number, location->block->hidden);
+				if (changelog != nullptr)
+					((ledger::block_changelog*)changelog)->incoming.erase(type, column, row);
+				return expects_lr<state_result>(layer_exception(ledger::storage_util::error_of(cursor)));
+			}
+			else if (cursor->empty())
+			{
+				if (changelog != nullptr)
+					((ledger::block_changelog*)changelog)->incoming.erase(type, column, row);
+				return expects_lr<state_result>(layer_exception("multiform state not found"));
 			}
 
-			auto blob = get_blob_storage().load(__func__, get_multiform_label(type, column, row, location->block->number)).or_else(string());
-			auto value = state_from_blob(location->block->number, type, column, row, blob);
+			uint64_t location_block_number = (*cursor)["block_number"].get().get_integer();
+			bool location_hidden = (*cursor)["hidden"].get().get_boolean();
+			auto blob = get_blob_storage().load(__func__, get_multiform_label(type, column, row, location_block_number)).or_else(string());
+			auto value = state_from_blob(location_block_number, type, column, row, blob);
 			if (!value)
 			{
 				if (changelog != nullptr)
@@ -2568,9 +2257,9 @@ namespace tangent
 			}
 
 			if (changelog != nullptr)
-				((ledger::block_changelog*)changelog)->incoming.push(*value, location->block->hidden);
-			if (location->block->hidden)
-				return expects_lr<state_result>(layer_exception("uniform state not found"));
+				((ledger::block_changelog*)changelog)->incoming.push(*value, location_hidden);
+			if (location_hidden)
+				return expects_lr<state_result>(layer_exception("multiform state not found"));
 
 			return state_result(std::move(value), false);
 		}
@@ -2580,7 +2269,7 @@ namespace tangent
 			if (!temporary)
 				return temporary.error();
 
-			auto location = resolve_multiform_location(type, column, optional::none, temporary->in_use ? (uint8_t)resolver::disable_cache : 0);
+			auto location = resolve_multiform_location(type, column, optional::none);
 			if (!location)
 				return expects_lr<vector<state_result>>(vector<state_result>());
 
@@ -2644,7 +2333,7 @@ namespace tangent
 			if (!temporary)
 				return temporary.error();
 
-			auto location = resolve_multiform_location(type, column, optional::none, temporary->in_use ? (uint8_t)resolver::disable_cache : 0);
+			auto location = resolve_multiform_location(type, column, optional::none);
 			if (!location)
 				return expects_lr<vector<state_result>>(vector<state_result>());
 
@@ -2735,7 +2424,7 @@ namespace tangent
 			if (!temporary)
 				return temporary.error();
 
-			auto location = resolve_multiform_location(type, optional::none, row, temporary->in_use ? (uint8_t)resolver::disable_cache : 0);
+			auto location = resolve_multiform_location(type, optional::none, row);
 			if (!location)
 				return expects_lr<vector<state_result>>(vector<state_result>());
 
@@ -2799,7 +2488,7 @@ namespace tangent
 			if (!temporary)
 				return temporary.error();
 
-			auto location = resolve_multiform_location(type, optional::none, row, temporary->in_use ? (uint8_t)resolver::disable_cache : 0);
+			auto location = resolve_multiform_location(type, optional::none, row);
 			if (!location)
 				return expects_lr<vector<state_result>>(vector<state_result>());
 
@@ -2890,7 +2579,7 @@ namespace tangent
 			if (!temporary)
 				return temporary.error();
 
-			auto location = resolve_multiform_location(type, column, optional::none, temporary->in_use ? (uint8_t)resolver::disable_cache : 0);
+			auto location = resolve_multiform_location(type, column, optional::none);
 			if (!location)
 				return location.error();
 
@@ -2912,7 +2601,7 @@ namespace tangent
 			if (!temporary)
 				return temporary.error();
 
-			auto location = resolve_multiform_location(type, column, optional::none, temporary->in_use ? (uint8_t)resolver::disable_cache : 0);
+			auto location = resolve_multiform_location(type, column, optional::none);
 			if (!location)
 				return location.error();
 
@@ -2936,7 +2625,7 @@ namespace tangent
 			if (!temporary)
 				return temporary.error();
 
-			auto location = resolve_multiform_location(type, optional::none, row, temporary->in_use ? (uint8_t)resolver::disable_cache : 0);
+			auto location = resolve_multiform_location(type, optional::none, row);
 			if (!location)
 				return location.error();
 
@@ -2958,7 +2647,7 @@ namespace tangent
 			if (!temporary)
 				return temporary.error();
 
-			auto location = resolve_multiform_location(type, optional::none, row, temporary->in_use ? (uint8_t)resolver::disable_cache : 0);
+			auto location = resolve_multiform_location(type, optional::none, row);
 			if (!location)
 				return location.error();
 
@@ -3256,12 +2945,6 @@ namespace tangent
 			result.insert(&party_storage);
 			result.insert(&alias_storage);
 			return result;
-		}
-		void chainstate::clear_indexer_cache()
-		{
-			account_cache::cleanup_instance();
-			uniform_cache::cleanup_instance();
-			multiform_cache::cleanup_instance();
 		}
 		uint32_t chainstate::get_queries() const
 		{
