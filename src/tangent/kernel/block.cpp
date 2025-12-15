@@ -2888,6 +2888,7 @@ namespace tangent
 				return execution.error();
 			}
 
+			execution->receipt.relative_gas_use += 300 * (uint64_t)gas_cost::write_byte;
 			auto gas = execution->receipt.relative_gas_use - (execution->receipt.relative_gas_use % 1000) + 1000;
 			execution->receipt.relative_gas_use = gas;
 			if (out_receipt != nullptr)
