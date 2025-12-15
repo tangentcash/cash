@@ -508,6 +508,7 @@ namespace tangent
 					coreturn expects_rt<computed_fee>(std::move(block_height.error()));
 
 				vector<decimal> fee_rates;
+				auto min_fee_rate = get_min_relay_fee().fee.fee_rate * netdata.divisibility;
 				auto precision = std::max<uint64_t>(1, get_chainparams().sync_latency);
 				for (uint64_t i = 0; i < precision; i++)
 				{
@@ -536,7 +537,6 @@ namespace tangent
 
 								decimal fee = decimal::zero();
 								schema* tx_inputs = transaction_data->get("vin");
-								schema* tx_outputs = transaction_data->get("vout");
 								if (tx_inputs != nullptr)
 								{
 									for (auto& input : tx_inputs->get_childs())
@@ -553,13 +553,29 @@ namespace tangent
 									if (fee.is_nan())
 										continue;
 								}
+
+								schema* tx_outputs = transaction_data->get("vout");
 								if (tx_outputs != nullptr)
 								{
 									for (auto& output : tx_outputs->get_childs())
 										fee -= output->get_var("value").get_decimal();
 								}
-								if (fee.is_zero() || fee.is_positive())
-									fee_rates.push_back(std::move(fee));
+
+								if (!fee.is_zero() && !fee.is_positive())
+									continue;
+
+								if (!transaction_data->has("size"))
+								{
+									if (transaction_data->has("hex"))
+										fee /= decimal(std::max<size_t>(1, transaction_data->get("hex")->value.size())).truncate(protocol::now().message.decimal_precision);
+									else
+										fee /= decimal(virtual_size).truncate(protocol::now().message.decimal_precision);
+								}
+								else
+									fee /= decimal(std::max<int64_t>(1, transaction_data->get("size")->value.get_integer())).truncate(protocol::now().message.decimal_precision);
+
+								fee = std::min(min_fee_rate, fee);
+								fee_rates.push_back(std::move(fee));
 							}
 						}
 					}
@@ -585,9 +601,18 @@ namespace tangent
 						auto block_stats = coawait(execute_rpc(nd_call::get_block_stats(), std::move(map), cache_policy::no_cache_no_throttling));
 						if (block_stats)
 						{
-							auto fee = block_stats->get_var("avgfeerate").get_decimal();
-							if (fee.is_zero() || fee.is_positive())
-								fee_rates.push_back(std::move(fee));
+							auto avg_fee_rate = block_stats->get_var("avgfeerate").get_decimal();
+							if (avg_fee_rate.is_zero() || avg_fee_rate.is_positive())
+								fee_rates.push_back(std::max(min_fee_rate, std::move(avg_fee_rate)));
+
+							auto median_fee = block_stats->get_var("medianfee").get_decimal();
+							auto median_tx_size = block_stats->get_var("mediantxsize").get_decimal();
+							if ((median_fee.is_zero() || median_fee.is_positive()) && (median_tx_size.is_zero() || median_tx_size.is_positive()))
+								fee_rates.push_back(std::max(min_fee_rate, median_fee / median_tx_size.truncate(protocol::now().message.decimal_precision)));
+
+							auto fee_rate_50th_percentile = block_stats->fetch_var("feerate_percentiles.2").get_decimal();
+							if (fee_rate_50th_percentile.is_zero() || fee_rate_50th_percentile.is_positive())
+								fee_rates.push_back(std::max(min_fee_rate, std::move(fee_rate_50th_percentile)));
 						}
 						else if (!legacy.get_block_stats)
 						{
