@@ -191,11 +191,10 @@ namespace tangent
 			auto* value = (states::account_nonce*)(state ? state->ptr() : nullptr);
 			if (value != nullptr)
 			{
-				auto nonce = std::max(value->nonce, next.or_else(0));
-				if (next && nonce >= value->nonce)
+				if (next && *next >= value->nonce)
 				{
 					auto prev = mempool.get_lowest_transaction_nonce(public_key_hash);
-					next = !prev || *prev <= value->nonce ? nonce + 1 : value->nonce;
+					next = !prev || *prev <= value->nonce ? *next + 1 : value->nonce;
 				}
 				else
 					next = value->nonce;

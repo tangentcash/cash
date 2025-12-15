@@ -3761,8 +3761,9 @@ namespace tangent
 				auto chain = storages::chainstate();
 				auto state = chain.get_uniform(states::account_nonce::as_instance_type(), nullptr, states::account_nonce::as_instance_index(item.owner), 0);
 				auto* value = (states::account_nonce*)(state ? state->ptr() : nullptr);
-				if (item.candidate->nonce != (value ? value->nonce : 0))
-					return include_decision::not_includable;
+				auto nonce = (value ? value->nonce : 0);
+				if (item.candidate->nonce != nonce)
+					return item.candidate->nonce < nonce ? include_decision::not_executable : include_decision::not_includable;
 			}
 			else if (item.candidate->nonce != map_nonce->second + 1)
 				return include_decision::not_includable;
