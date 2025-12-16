@@ -320,7 +320,7 @@ namespace tangent
 				netdata.composition = algorithm::composition::type::secp256k1;
 				netdata.routing = routing_policy::account;
 				netdata.tokenization = token_policy::program;
-				netdata.sync_latency = 80;
+				netdata.sync_latency = 64;
 				netdata.divisibility = algorithm::arithmetic::fixed("1000000000000000000");
 				netdata.supports_bulk_transfer = false;
 				netdata.requires_transaction_expiration = false;
