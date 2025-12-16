@@ -764,7 +764,7 @@ namespace tangent
 					coreturn expects_rt<prepared_transaction>(remote_exception("invalid sending token"));
 
 				auto total_value = contract_address ? fee_value : (output.value + fee_value);
-				auto balance = coawait(calculate_balance(output.asset, from_link));
+				auto balance = coawait(calculate_balance(native_asset, from_link));
 				if (!balance || *balance < total_value || total_value.is_negative())
 					coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", (balance ? *balance : decimal(0.0)).to_string().c_str(), total_value.to_string().c_str())));
 

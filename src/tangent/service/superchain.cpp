@@ -852,19 +852,7 @@ namespace tangent
 			if (candidate_link && candidate_link->as_hash() == copy.as_hash())
 				return expectation::met;
 
-			status = state.set_link(copy);
-			if (!status)
-				return status;
-
-			auto block_height = get_latest_known_block_height(asset);
-			if (!block_height || !*block_height)
-				return expectation::met;
-
-			uint64_t latency = implementation->get_chainparams().sync_latency * protocol::now().user.superchain.block_replay_multiplier;
-			if (latency > 0)
-				scan_from_block_height(asset, latency >= *block_height ? 1 : *block_height - latency);
-
-			return expectation::met;
+			return state.set_link(copy);
 		}
 		expects_lr<void> server_node::disable_link(const algorithm::asset_id& asset, const wallet_link& link)
 		{

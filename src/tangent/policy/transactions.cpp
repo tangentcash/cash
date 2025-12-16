@@ -2831,50 +2831,22 @@ namespace tangent
 			if (!witness_account_status)
 				return witness_account_status.error();
 
-			return expectation::met;
-		}
-		expects_promise_rt<void> bind::dispatch(const ledger::executor_context* executor, ledger::dispatcher_context* dispatcher) const
-		{
-			auto parent = executor->get_block_transaction<route>(route_hash);
-			if (!parent)
-				return expects_promise_rt<void>(remote_exception(std::move(parent.error().message())));
-
-			btree_set<string> addresses;
-			for (auto& event : executor->receipt.find_events<states::witness_account>())
-			{
-				for (size_t i = 2; i < event->size(); i++)
-					addresses.insert(event->at(i).as_blob());
-			}
-			if (addresses.empty())
-				return expects_promise_rt<void>(expectation::met);
-
-			auto* server = superchain::server_node::get();
-			auto* chain = server->get_chain(asset);
-			auto* params = server->get_chainparams(asset);
-			if (!chain || !params)
-				return expects_promise_rt<void>(remote_exception("invalid operation"));
-
-			auto encoded_public_key = chain->encode_public_key(std::string_view((char*)group_public_key.data(), group_public_key.size()));
-			if (!encoded_public_key)
-				return expects_promise_rt<void>(remote_exception(std::move(encoded_public_key.error().message())));
-
-			auto* parent_transaction = (route*)*parent->transaction;
-			for (auto& address : addresses)
+			for (auto& [type, address] : *addresses)
 			{
 				auto [base_address, tag] = superchain::address_util::decode_tag_address(address);
 				if (base_address != address)
 				{
 					auto status = server->enable_link(asset, superchain::wallet_link(parent_transaction->manager, *encoded_public_key, base_address));
 					if (!status)
-						return expects_promise_rt<void>(remote_exception(std::move(status.error().message())));
+						return status.error();
 				}
 
 				auto status = server->enable_link(asset, superchain::wallet_link(parent_transaction->manager, *encoded_public_key, address));
 				if (!status)
-					return expects_promise_rt<void>(remote_exception(std::move(status.error().message())));
+					return status.error();
 			}
 
-			return expects_promise_rt<void>(expectation::met);
+			return expectation::met;
 		}
 		void bind::set_witness(const uint256_t& new_route_hash, algorithm::composition::cpubkey_t&& new_group_public_key, algorithm::composition::chashsig_t&& new_group_signature)
 		{
@@ -2918,10 +2890,6 @@ namespace tangent
 			auto* parent_transaction = (route*)*parent->transaction;
 			parties.insert(algorithm::pubkeyhash_t(parent_transaction->manager));
 			parties.insert(algorithm::pubkeyhash_t(parent->receipt.from));
-			return true;
-		}
-		bool bind::is_dispatchable() const
-		{
 			return true;
 		}
 		uptr<schema> bind::as_schema() const
