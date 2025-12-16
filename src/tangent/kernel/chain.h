@@ -276,7 +276,7 @@ namespace tangent
 			{
 				uint64_t max_per_transaction = 32;
 				decimal min_stake_value = std::string_view("120");
-				decimal max_reward_increase = std::string_view("0.05");
+				decimal max_reward_increase = std::string_view("0.80");
 				decimal consensus_threshold = std::string_view("0.80");
 				decimal fee_rate = std::string_view("0.15");
 			} attestation;
