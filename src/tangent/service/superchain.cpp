@@ -436,6 +436,9 @@ namespace tangent
 					coreturn expects_rt<void>(remote_exception(std::move(status.error().message())));
 			}
 
+			if (protocol::now().user.superchain.logging)
+				VI_INFO("%s broadcast transaction: %s (ref: %s)", algorithm::asset::blockchain_of(asset).c_str(), schema::to_json(*finalized.as_schema()).c_str(), algorithm::encoding::encode_0xhex256(external_id).c_str());
+
 			auto result = coawait(implementation->broadcast_transaction(finalized));
 			if (!result)
 				coreturn result;
@@ -480,6 +483,23 @@ namespace tangent
 				coreturn expects_rt<prepared_transaction>(remote_exception("only one receiver allowed"));
 
 			auto normalized_max_fee = normalize_value(implementation, max_fee);
+			if (protocol::now().user.superchain.logging)
+			{
+				string transaction_log = stringify::text(
+					"%s build transaction: %s (fee: %s %s)\n"
+					"  send from %s (%s)\n",
+					blockchain.c_str(),
+					algorithm::signing::encode_address(normalized_from_link->owner).c_str(),
+					normalized_max_fee.to_string().c_str(),
+					blockchain.c_str(),
+					normalized_from_link->public_key.empty() ? "none" : normalized_from_link->public_key.c_str(),
+					normalized_from_link->address.empty() ? "unaddressable"  : normalized_from_link->address.c_str());
+				for (auto& item : normalized_to)
+					transaction_log += stringify::text("  send %s %s to %s\n", item.value.to_string().c_str(), algorithm::asset::name_of(item.asset).c_str(), item.address.c_str());
+				if (transaction_log.back() == '\n')
+					transaction_log.erase(transaction_log.end() - 1);
+				VI_INFO("%s", transaction_log.c_str());
+			}
 			coreturn coawait(implementation->prepare_transaction(*normalized_from_link, normalized_to, normalized_max_fee));
 		}
 		expects_lr<finalized_transaction> server_node::finalize_transaction(const algorithm::asset_id& asset, prepared_transaction&& prepared)
