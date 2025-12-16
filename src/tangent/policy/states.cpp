@@ -1135,10 +1135,11 @@ namespace tangent
 			if (stake.is_nan() && queue_transaction_hash > 0)
 				return layer_exception("transaction queue must be empty before unlocking");
 
+			auto min_stake_value = std::max(protocol::now().policy.attestation.min_stake_value, participation_threshold * security_level);
 			if (stake.is_negative())
 				return layer_exception("invalid stake");
-			else if (!stake.is_nan() && stake < protocol::now().policy.attestation.min_stake_value)
-				return layer_exception(stringify::text("minimum stake requirement not met (%s %s)", protocol::now().policy.attestation.min_stake_value.to_string().c_str(), protocol::now().policy.token.c_str()));
+			else if (!stake.is_nan() && stake < min_stake_value)
+				return layer_exception(stringify::text("minimum stake requirement not met (%s %s)", min_stake_value.to_string().c_str(), protocol::now().policy.token.c_str()));
 
 			if (security_level > (uint8_t)protocol::now().policy.participation.max_per_account)
 				return layer_exception("security level too high");
