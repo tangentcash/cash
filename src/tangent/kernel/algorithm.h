@@ -246,13 +246,21 @@ namespace tangent
 				auto numeric = value.to_string();
 				size_t index = numeric.find('.');
 				size_t size = protocol::now().message.decimal_precision;
+				size_t max_size = size + protocol::now().message.integer_precision;
 				if (index != std::string::npos)
 				{
-					numeric.append(size - (numeric.size() - index - 1), '0');
+					size_t delta = numeric.size() - index - 1;
+					if (delta > size)
+						numeric.resize(numeric.size() - (delta - size));
+					if (delta < size)
+						numeric.append(size - delta, '0');
 					numeric.erase(index, 1);
 				}
 				else
 					numeric.append(size, '0');
+
+				if (numeric.size() > max_size)
+					numeric.erase(0, numeric.size() - max_size);
 
 				return uint256_t(numeric, 10);
 			}
@@ -268,7 +276,8 @@ namespace tangent
 			template <typename a, typename b>
 			inline static decimal divide(const a& a_value, const b& b_value)
 			{
-				return a_value / fixed<b>(b_value);
+				auto result = a_value / fixed<b>(b_value);
+				return result.truncate(protocol::now().message.decimal_precision);
 			}
 			inline static decimal ceil(const decimal& value)
 			{

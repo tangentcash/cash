@@ -1837,6 +1837,7 @@ namespace tangent
 			btree_map<algorithm::asset_id, decimal> penalties;
 			if (!withdrawer.empty())
 			{
+				decimal rebate = fee;
 				for (auto& [hash, input] : proof.inputs)
 				{
 					auto source = executor->get_witness_account(asset, input.link.address, 0);
@@ -1925,7 +1926,9 @@ namespace tangent
 							auto reward = transfer != bridge.transfers.end() && transfer->second.output_supply.is_positive() ? executor->get_verified_validator_attestation(asset, bridge_manager) : expects_lr<states::validator_attestation>(layer_exception());
 							if (reward && reward->outgoing_fee.is_positive())
 							{
-								transfer->second.outgoing_fee += reward->outgoing_fee;
+								auto rebate_adjustment = std::min(rebate, reward->outgoing_fee);
+								transfer->second.outgoing_fee += reward->outgoing_fee - rebate_adjustment;
+								rebate -= rebate_adjustment;
 								break;
 							}
 						}
@@ -1950,23 +1953,6 @@ namespace tangent
 							penalty = penalty.is_nan() ? token.value : (penalty - token.value);
 							route_transfer.output_supply += token.value;
 							route_transfer.output_reserve += token.value;
-						}
-					}
-					else
-					{
-						if (output.value.is_positive())
-						{
-							auto& penalty = penalties[output.get_asset(asset)];
-							penalty = penalty.is_nan() ? -output.value : (penalty - output.value);
-						}
-
-						for (auto& [token_hash, token] : output.tokens)
-						{
-							if (token.value.is_positive())
-							{
-								auto& penalty = penalties[token.get_asset(asset)];
-								penalty = penalty.is_nan() ? token.value : (penalty - token.value);
-							}
 						}
 					}
 				}
