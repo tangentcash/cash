@@ -180,34 +180,24 @@ namespace tangent
 		{
 			struct bridge_transfer
 			{
-				decimal supply = decimal::zero();
+				decimal input_supply = decimal::zero();
+				decimal output_supply = decimal::zero();
 				decimal incoming_fee = decimal::zero();
 				decimal outgoing_fee = decimal::zero();
+			};
+
+			struct route_transfer
+			{
+				decimal input_supply = decimal::zero();
+				decimal input_reserve = decimal::zero();
+				decimal output_supply = decimal::zero();
+				decimal output_reserve = decimal::zero();
 			};
 
 			struct bridge_transfer_batch
 			{
 				btree_set<algorithm::pubkeyhash_t> participants;
 				btree_map<algorithm::asset_id, bridge_transfer> transfers;
-			};
-
-			struct balance_transfer
-			{
-				decimal supply = decimal::zero();
-				decimal reserve = decimal::zero();
-			};
-
-			struct weight_transfer
-			{
-				decimal accountable = decimal::zero();
-				decimal unaccountable = decimal::zero();
-			};
-
-			struct transition
-			{
-				btree_map<algorithm::pubkeyhash_t, bridge_transfer_batch> bridges;
-				btree_map<algorithm::pubkeyhash_t, btree_map<algorithm::asset_id, balance_transfer>> transfers;
-				btree_map<algorithm::asset_id, weight_transfer> weights;
 			};
 
 			btree_map<uint256_t, btree_set<algorithm::hashsig_t>> commitments;

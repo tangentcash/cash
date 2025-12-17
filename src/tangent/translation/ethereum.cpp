@@ -330,7 +330,7 @@ namespace tangent
 				schema_list map;
 				map.emplace_back(var::set::string(format::util::assign_0xhex(transaction_id)));
 
-				auto tx_data = coawait(execute_rpc(nd_call::get_transaction_receipt(), std::move(map), cached ? cache_policy::no_cache_no_throttling : cache_policy::blob_cache));
+				auto tx_data = coawait(execute_rpc(nd_call::get_transaction_receipt(), std::move(map), cached ? cache_policy::blob_cache : cache_policy::no_cache_no_throttling));
 				if (tx_data && (tx_data->value.is(var_type::null) || tx_data->value.is(var_type::undefined)))
 					coreturn remote_exception("receipt not found");
 
@@ -560,7 +560,8 @@ namespace tangent
 							else if (topics->size() == 2)
 								to = encode_eth_address(topics->get_var(1).get_blob());
 
-							auto& token_input = inputs[from][token_asset], token_output = outputs[to][token_asset];
+							auto& token_input = inputs[from][token_asset];
+							auto& token_output = outputs[to][token_asset];
 							token_input = token_input.is_nan() ? token_value : (token_input + token_value);
 							token_output = token_output.is_nan() ? token_value : (token_output + token_value);
 							superchain::server_node::get()->enable_contract_address(token_asset, contract_address);
