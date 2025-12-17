@@ -555,13 +555,13 @@ namespace tangent
 			if (value != nullptr && value->value.is(var_type::integer))
 				user.consensus.transaction_timeout = value->value.get_integer();
 
-			value = config->fetch("consensus.may_reorganize");
+			value = config->fetch("consensus.reorganizable");
 			if (value != nullptr && value->value.is(var_type::boolean))
-				user.consensus.may_reorganize = value->value.get_boolean();
+				user.consensus.reorganizable = value->value.get_boolean();
 
-			value = config->fetch("consensus.may_propose");
+			value = config->fetch("consensus.miner");
 			if (value != nullptr && value->value.is(var_type::boolean))
-				user.consensus.may_propose = value->value.get_boolean();
+				user.consensus.miner = value->value.get_boolean();
 
 			value = config->fetch("consensus.server");
 			if (value != nullptr && value->value.is(var_type::boolean))

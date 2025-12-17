@@ -25,8 +25,8 @@
         "commitment_timeout": 7200000,
         "hashes_per_query": 2048,
         "headers_per_query": 128,
-        "may_reorganize": true,
-        "may_propose": true,
+        "reorganizable": false,
+        "miner": true,
         "server": true,
         "logging": true
     },

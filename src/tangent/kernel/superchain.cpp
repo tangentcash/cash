@@ -1148,7 +1148,7 @@ namespace tangent
 			{
 				auto data = response->content.get_json();
 				if (!data)
-					coreturn expects_rt<schema*>(remote_exception(generate_error_message(response, reporter, "null", "node's response is not JSON compliant")));
+					coreturn expects_rt<schema*>(remote_exception(generate_error_message(response, reporter, "null", "response decoding failed: " + data.error().message())));
 
 				result = *data;
 			}
@@ -1319,7 +1319,7 @@ namespace tangent
 			}
 		}
 
-		relay_backend::relay_backend(const algorithm::asset_id& new_asset) noexcept : native_asset(algorithm::asset::base_id_of(new_asset)), allow_any_token(true), interact(nullptr)
+		relay_backend::relay_backend(const algorithm::asset_id& new_asset) noexcept : native_asset(algorithm::asset::base_id_of(new_asset)), round_robin_index(crypto::random()), allow_any_token(true), interact(nullptr)
 		{
 		}
 		relay_backend::~relay_backend() noexcept
@@ -1331,12 +1331,10 @@ namespace tangent
 			if (!nodes || nodes->empty())
 				coreturn expects_rt<schema*>(remote_exception("node not found"));
 
-			size_t index = crypto::random();
 			while (true)
 			{
 				server_relay::error_reporter reporter;
-				index = (index + 1) % nodes->size();
-				auto* node = *nodes->at(index);
+				auto* node = *nodes->at((++round_robin_index) % nodes->size());
 				auto result = coawait(node->execute_rpc(native_asset, reporter, method, args, cache, path));
 				if (interact) interact(node);
 				if (result || !result.error().is_retry())
@@ -1351,12 +1349,10 @@ namespace tangent
 			if (!nodes || nodes->empty())
 				coreturn expects_rt<schema*>(remote_exception("node not found"));
 
-			size_t index = crypto::random();
 			while (true)
 			{
 				server_relay::error_reporter reporter;
-				index = (index + 1) % nodes->size();
-				auto* node = *nodes->at(index);
+				auto* node = *nodes->at((++round_robin_index) % nodes->size());
 				auto result = coawait(node->execute_rpc3(native_asset, reporter, method, args, cache, path));
 				if (interact) interact(node);
 				if (result || !result.error().is_retry())
@@ -1372,12 +1368,10 @@ namespace tangent
 			if (!nodes || nodes->empty())
 				coreturn expects_rt<schema*>(remote_exception("node not found"));
 
-			size_t index = crypto::random();
 			while (true)
 			{
 				server_relay::error_reporter reporter;
-				index = (index + 1) % nodes->size();
-				auto* node = *nodes->at(index);
+				auto* node = *nodes->at((++round_robin_index) % nodes->size());
 				auto result = coawait(node->execute_rest(native_asset, reporter, method, path, *body, cache));
 				if (interact) interact(node);
 				if (result || !result.error().is_retry())
@@ -1392,12 +1386,10 @@ namespace tangent
 			if (!nodes || nodes->empty())
 				coreturn expects_rt<schema*>(remote_exception("node not found"));
 
-			size_t index = crypto::random();
 			while (true)
 			{
 				server_relay::error_reporter reporter;
-				index = (index + 1) % nodes->size();
-				auto* node = *nodes->at(index);
+				auto* node = *nodes->at((++round_robin_index) % nodes->size());
 				auto result = coawait(node->execute_http(native_asset, reporter, method, path, type, body, cache));
 				if (interact) interact(node);
 				if (result || !result.error().is_retry())

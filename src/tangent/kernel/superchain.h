@@ -355,6 +355,7 @@ namespace tangent
 
 		protected:
 			algorithm::asset_id native_asset;
+			std::atomic<uint64_t> round_robin_index;
 			bool allow_any_token;
 
 		public:

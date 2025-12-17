@@ -85,6 +85,7 @@ namespace tangent
 					static const char* get_block_by_number();
 					static const char* get_transaction_receipt();
 					static const char* get_transaction_count();
+					static const char* get_logs();
 					static const char* get_balance();
 					static const char* get_chain_id();
 					static const char* block_number();
@@ -97,7 +98,6 @@ namespace tangent
 			protected:
 				struct
 				{
-					uint8_t get_logs = 0;
 					uint8_t eip_155 = 0;
 					uint8_t estimate_gas = 0;
 				} legacy;

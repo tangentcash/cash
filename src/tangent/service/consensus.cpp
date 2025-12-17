@@ -3187,7 +3187,7 @@ namespace tangent
 					VI_WARN("block %s rejected: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), validation.error().what());
 				return false;
 			}
-			else if (reorganization && !protocol::now().user.consensus.may_reorganize)
+			else if (reorganization && !protocol::now().user.consensus.reorganizable)
 			{
 				if (protocol::now().user.consensus.logging)
 					VI_WARN("block %s rejected: requires deep chain reorganization (disabled)", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), validation.error().what());
@@ -3288,10 +3288,10 @@ namespace tangent
 		{
 			auto& [node, wallet] = descriptor;
 			auto executor = ledger::executor_context(nullptr);
-			node.services.has_production = protocol::now().user.consensus.may_propose ? executor.get_validator_production(wallet.public_key_hash).or_else(states::validator_production(algorithm::pubkeyhash_t(), nullptr)).is_active() : false;
+			node.services.has_production = protocol::now().user.consensus.miner ? executor.get_validator_production(wallet.public_key_hash).or_else(states::validator_production(algorithm::pubkeyhash_t(), nullptr)).is_active() : false;
 			node.services.has_participation = executor.get_validator_participation(wallet.public_key_hash).or_else(states::validator_participation(algorithm::pubkeyhash_t(), nullptr)).is_active();
 			node.services.has_attestation = false;
-			if (protocol::now().user.consensus.may_propose && !node.services.has_production)
+			if (protocol::now().user.consensus.miner && !node.services.has_production)
 				node.services.has_production = executor.calculate_producers_size().or_else(0) == 0;
 
 			size_t count = 64;

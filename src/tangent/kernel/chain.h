@@ -160,8 +160,8 @@ namespace tangent
 				uint64_t aggregation_attempts = 6;
 				uint64_t aggregation_cooldown = 2000;
 				uint8_t coordination_attempts = 15;
-				bool may_reorganize = false;
-				bool may_propose = true;
+				bool reorganizable = false;
+				bool miner = true;
 				bool server = true;
 				bool logging = true;
 			} consensus;

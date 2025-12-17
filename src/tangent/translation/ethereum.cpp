@@ -286,6 +286,10 @@ namespace tangent
 			{
 				return "eth_getTransactionCount";
 			}
+			const char* ethereum::nd_call::get_logs()
+			{
+				return "eth_getLogs";
+			}
 			const char* ethereum::nd_call::get_balance()
 			{
 				return "eth_getBalance";
@@ -448,45 +452,39 @@ namespace tangent
 					coreturn expects_rt<schema*>(remote_exception("transactions field not found"));
 				}
 
+				auto* query = var::set::object();
+				query->set("fromBlock", var::set::string(uint256_to_hex(block_height)));
+				query->set("toBlock", var::set::string(uint256_to_hex(block_height)));
+				query->set("topics", var::set::array())->push(var::string(get_token_transfer_signature()));
+
+				map.clear();
+				map.emplace_back(query);
+
+				auto logs_data = coawait(execute_rpc(nd_call::get_logs(), std::move(map), cache_policy::temporary_cache));
+				if (logs_data && logs_data->value.is(var_type::array))
+				{
+					hash_map<string, schema*> indices;
+					for (auto& item : transactions->get_childs())
+					{
+						string tx_hash = item->get_var("hash").get_blob();
+						auto* logs = item->get("logs");
+						if (!logs)
+							logs = item->set("logs", var::set::array());
+						indices[tx_hash] = logs;
+					}
+
+					for (auto& item : logs_data->get_childs())
+					{
+						string tx_hash = item->get_var("transactionHash").get_blob();
+						auto it = indices.find(tx_hash);
+						if (it != indices.end())
+							it->second->push(item->copy());
+					}
+					memory::release(*logs_data);
+				}
+
 				transactions->unlink();
 				memory::release(*block_data);
-				if (!legacy.get_logs)
-				{
-					auto* query = var::set::array();
-					auto* cursor = query->push(var::set::object());
-					cursor->set("fromBlock", var::set::string(uint256_to_hex(block_height)));
-					cursor->set("toBlock", var::set::string(uint256_to_hex(block_height)));
-					cursor->set("topics", var::set::array())->push(var::string(get_token_transfer_signature()));
-
-					schema_list map;
-					map.emplace_back(query);
-
-					auto logs_data = coawait(execute_rpc(nd_call::get_block_by_number(), std::move(map), cache_policy::temporary_cache));
-					if (logs_data)
-					{
-						auto* logs = logs_data->get("result");
-						if (logs != nullptr && !logs->empty())
-						{
-							hash_map<string, schema*> indices;
-							for (auto& item : transactions->get_childs())
-							{
-								string tx_hash = item->get_var("hash").get_blob();
-								indices[tx_hash] = item;
-							}
-
-							for (auto& item : logs->get_childs())
-							{
-								string tx_hash = item->get_var("transactionHash").get_blob();
-								auto it = indices.find(tx_hash);
-								if (it != indices.end())
-									it->second->set("logs", item->copy());
-							}
-						}
-						memory::release(*logs_data);
-					}
-					else
-						legacy.get_logs = 1;
-				}
 				coreturn expects_rt<schema*>(transactions);
 			}
 			expects_promise_rt<computed_transaction> ethereum::link_transaction(uint64_t block_height, const std::string_view& block_hash, schema* transaction_data)
@@ -516,6 +514,13 @@ namespace tangent
 					outputs[to][native_asset] = base_value;
 				}
 
+				hash_set<string> addresses;
+				addresses.reserve(inputs.size() + outputs.size());
+				for (auto& next : inputs)
+					addresses.insert(next.first);
+				for (auto& next : outputs)
+					addresses.insert(next.first);
+
 				if (!data.empty())
 				{
 					auto* logs = transaction_data->get("logs");
@@ -541,10 +546,33 @@ namespace tangent
 						for (auto& invocation : logs->get_childs())
 						{
 							auto* topics = invocation->get("topics");
-							auto contract_address = encode_eth_address(invocation->get_var("address").get_blob());
+							if (topics && topics->size() == 3 && is_token_transfer(topics->get_var(0).get_blob()))
+							{
+								addresses.insert(encode_eth_address(normalize_topic_address(topics->get_var(1).get_blob())));
+								addresses.insert(encode_eth_address(normalize_topic_address(topics->get_var(2).get_blob())));
+							}
+							else if (topics && topics->size() == 2 && is_token_transfer(topics->get_var(0).get_blob()))
+								addresses.insert(encode_eth_address(topics->get_var(1).get_blob()));
+						}
+					}
+				}
+
+				auto discovery = find_linked_addresses(addresses);
+				if (!discovery || discovery->empty())
+					coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
+
+				if (!data.empty())
+				{
+					auto* logs = transaction_data->get("logs");
+					if (logs != nullptr && !logs->empty())
+					{
+						for (auto& invocation : logs->get_childs())
+						{
+							auto* topics = invocation->get("topics");
 							if (!topics || (topics->size() != 2 && topics->size() != 3) || !is_token_transfer(topics->get_var(0).get_blob()))
 								continue;
 
+							auto contract_address = encode_eth_address(invocation->get_var("address").get_blob());
 							auto symbol = coawait(get_contract_symbol(contract_address));
 							if (!symbol)
 								continue;
@@ -569,14 +597,13 @@ namespace tangent
 					}
 				}
 
-				hash_set<string> addresses;
-				addresses.reserve(inputs.size() + outputs.size());
+				addresses.clear();
 				for (auto& next : inputs)
 					addresses.insert(next.first);
 				for (auto& next : outputs)
 					addresses.insert(next.first);
-
-				auto discovery = find_linked_addresses(addresses);
+				
+				discovery = find_linked_addresses(addresses);
 				if (!discovery || discovery->empty())
 					coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
 
