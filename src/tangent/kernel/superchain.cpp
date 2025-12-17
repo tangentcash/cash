@@ -768,7 +768,7 @@ namespace tangent
 				return false;
 			
 			stream->write_string(calldata);
-			stream->write_string(hashdata);
+			stream->write_string_raw(hashdata);
 			stream->write_integer(locktime);
 			return true;
 		}
