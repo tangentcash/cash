@@ -158,8 +158,6 @@ namespace tangent
 			if (!control_sys.is_active())
 				return expects_promise_system<http::response_frame>(system_exception("http fetch: shutdown", std::make_error_condition(std::errc::network_down)));
 
-			VI_INFO("SUPERCHAIN RPC %.*s %.*s: %.*s", (int)method.size(), method.data(), (int)location.size(), location.data(), (int)options.content.data.size(), options.content.data.data());
-
 			vitex::network::location origin(location);
 			if (origin.protocol != "http" && origin.protocol != "https")
 				return expects_promise_system<http::response_frame>(system_exception("http fetch: invalid protocol", std::make_error_condition(std::errc::address_family_not_supported)));
