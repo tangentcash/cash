@@ -335,7 +335,11 @@ namespace tangent
 				args->set("value", var::string(tx_hash.starts_with("0x") ? std::string_view(tx_hash).substr(2) : std::string_view(tx_hash)));
 
 				auto info = coawait(execute_rest("POST", trx_nd_call::get_transaction_info_by_id(), *args, cache_policy::blob_cache));
-				if (!info || info->fetch_var("receipt.result").get_blob() != "SUCCESS")
+				if (!info)
+					coreturn expects_rt<computed_transaction>(remote_exception("tx not found"));
+
+				auto receipt_result = info->fetch_var("receipt.result").get_blob(), tx_result = info->get_var("result").get_blob();
+				if ((!receipt_result.empty() && receipt_result != "SUCCESS") || (!tx_result.empty() && tx_result != "SUCCESS"))
 					coreturn expects_rt<computed_transaction>(remote_exception("tx reverted"));
 
 				auto fee_value = to_eth((uint64_t)info->get_var("fee").get_integer(), netdata.divisibility);
