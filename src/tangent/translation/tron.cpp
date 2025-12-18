@@ -70,7 +70,7 @@ namespace tangent
 				pb_varint(message, parent_message.data.size());
 				message.data.append(parent_message.data);
 			}
-			static trx_transaction tx_serialize(const tron::trx_tx_block_header_info& block_header, const std::string_view& contract_address, const string& from_address, const string& to_address, const uint256_t& value)
+			static trx_transaction tx_serialize(const tron::trx_tx_block_header_info& block_header, const std::string_view& contract_address, const string& from_address, const string& to_address, const uint256_t& value, uint64_t fee_limit)
 			{
 				uint64_t contract_type;
 				std::string_view contract_type_name;
@@ -102,7 +102,6 @@ namespace tangent
 						pb_int64(contract_message, 3, (uint64_t)value);
 				}
 
-				const uint64_t fee_limit = 150000000;
 				format::wo_stream tx_message;
 				if (!block_header.ref_block_bytes.empty())
 					pb_bytes(tx_message, 1, block_header.ref_block_bytes);
@@ -327,7 +326,8 @@ namespace tangent
 				auto eth_from_address = decode_non_eth_address_pf(from_link.address);
 				auto eth_to_address = decode_non_eth_address_pf(output.address);
 				auto eth_value = from_eth(output.value, divisibility);
-				auto transaction = tx_serialize(*block_header, eth_contract_address, eth_from_address, eth_to_address, eth_value);
+				auto fee_limit = from_eth(std::max(fee_value, max_fee), netdata.divisibility);
+				auto transaction = tx_serialize(*block_header, eth_contract_address, eth_from_address, eth_to_address, eth_value, fee_limit);
 				prepared_transaction result;
 				if (contract_address)
 					result.requires_account_input(algorithm::composition::type::secp256k1, wallet_link(from_link), *public_key, (uint8_t*)transaction.raw_transaction_id.data(), transaction.raw_transaction_id.size(), { { output.asset, output.value }, { native_asset, fee_value } });
@@ -340,11 +340,12 @@ namespace tangent
 				result.requires_abi(format::variable((uint64_t)block_header->expiration));
 				result.requires_abi(format::variable((uint64_t)block_header->timestamp));
 				result.requires_abi(format::variable(divisibility));
+				result.requires_abi(format::variable(fee_limit));
 				coreturn expects_rt<prepared_transaction>(std::move(result));
 			}
 			expects_lr<finalized_transaction> tron::finalize_transaction(superchain::prepared_transaction&& prepared)
 			{
-				if (prepared.abi.size() != 6)
+				if (prepared.abi.size() != 7)
 					return layer_exception("invalid prepared abi");
 
 				trx_tx_block_header_info block_header;
@@ -361,7 +362,8 @@ namespace tangent
 				auto eth_from_address = decode_non_eth_address_pf(input.utxo.link.address);
 				auto eth_to_address = decode_non_eth_address_pf(output.link.address);
 				auto eth_value = from_eth(output.tokens.empty() ? output.value : output.tokens.begin()->second.value, divisibility);
-				auto transaction = tx_serialize(block_header, eth_contract_address, eth_from_address, eth_to_address, eth_value);
+				auto fee_limit = prepared.abi[6].as_uint64();
+				auto transaction = tx_serialize(block_header, eth_contract_address, eth_from_address, eth_to_address, eth_value, fee_limit);
 				if (input.message.size() != transaction.raw_transaction_id.size() || memcmp(input.message.data(), transaction.raw_transaction_id.data(), transaction.raw_transaction_id.size()))
 					return layer_exception("invalid input message");
 

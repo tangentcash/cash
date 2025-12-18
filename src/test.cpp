@@ -1649,6 +1649,7 @@ struct tests
 			prepared.requires_abi(format::variable((uint64_t)1744587342000));
 			prepared.requires_abi(format::variable((uint64_t)1744587282000));
 			prepared.requires_abi(format::variable((uint32_t)1000000));
+			prepared.requires_abi(format::variable((uint64_t)150000000));
 			validate_transaction(asset, wallet, prepared, "transfer", "78da8d52cb6edc300cfc179d839494443df6da5e7aef2d080c4aa212a3def5c2f6e68120ff5eba6983b4bdd4be48c3d70c352fe6615cc7328939749e56b932dbd3d72fe6604275c02537b42c3e55aa210190739e50ba056cb52688398130a6e8b203e4aa89b635e9ae8ab9320b3f0e8d371eeee5493b0283858c6c2da4e47de14cb1046484543c14489872aae29c25d66109106df0c0b6451f73844056420c5dff186aa0808ae5e814758a35db23441b7af47adb916a85bc221824ba100245eb775ce21beaa247eb542692c7aa5a6a537abd6590aa3d6ac68cd89a8f52a4510b25844c68f76ce142d0152a410972d03912894a256c29d7a2d99843f2981214cd8310a101d7446f0a33002660579d8f1f36650e2fa6cea76de1ba99c3cd8b39f3c247d964d9230f3c5d643f6cf3c0ad2db2aebad6ff27a383e6c7932c7f14ffaf6e2de6e37c39292ff4f0f37b55b33c9f65b82c93b6da8fd777f37c37099fc7f5bacec74fe765dee63a4fd7df163ead5d96cfbfc5fdaad5ba7f43b7ba10e94399e6fa7d28cf9bec4c77e7988f817b5eef15ffdb499a234fe771e16d9c4fca357a4fea4f6f95b0ce1c8fb26e7c3cbf476c7a8b7491611a8fe3ae8fe05de03ade9d78bb2ccaf4c66885ee878bad1d2526921ec9aaf5d54fb46f4d1fb8e7c41ca920546f111abbd2a5abe1256081c8a84fd4212475b125ef441b052a6a714aaa02599a5517b3f35a9bc079c6dc804ab660316035b7af3f00d54e1100");
 
 			auto token_asset = algorithm::asset::id_of("TRX", "GFC", "TUiyUe3uqtiT8cFkfhW6Q28Z99sY7o82Xr");
@@ -1663,6 +1664,7 @@ struct tests
 			prepared.requires_abi(format::variable((uint64_t)1744587102000));
 			prepared.requires_abi(format::variable((uint64_t)1744587042000));
 			prepared.requires_abi(format::variable((uint64_t)1000000));
+			prepared.requires_abi(format::variable((uint64_t)150000000));
 			validate_transaction(asset, wallet, prepared, "trc20 transfer", "78dacd54cb6edc300cfc179d8394a4de7b6d2f3db7b720585012b531ea8d17b6f342907f2fdd24455ab440d05365c09086a4c4e1887a34b7c3329451ccaef3b8c89959ef3f7f323b5363f04e2279aa1ead6dd6a7eca096ae2320386715691553058748e45b6ce473c89e5aaf10cd9999f96edf78e5fd95dceb8ec040902a93fe736b3ed82e2525cb3e8b83022c9d53116bc9330b2024ec489c75c616a38b3942f0242186ae5f0c35f8808ae56815b58a35ea1122851e9dae36a49278a748567f65a47c6c681a455119a85de266c560a343c580d13bac31a7da32726f19a4ea5e3563466ccd4529d27c0b252853a41fdead64171a13927457148b5617a9054ebe8b4bdd06022b44ce291b9f6b29f097e150b878e87a4009c0c42a4294e87d51155ad2503d1b73807f1e9191f40f0d5aeee1b9de19009316b95af75637b37b3475ba5e67aeabd95d3c9a13cf7c9455e6cd72cbe38d6c936757f3bf505302d3ddb5cc7b6e6d9665d1d4deafa806bf32fe35fe9d1a9b276da08793ec6fe65103b7e9f9619a0ea3f06958ceeb74fc709aa775aad378fe751e0e0799bf1c795e3fbe96f9255e63ff6cbe5479a4efcb38d56ffbf2b0ca96dfd655e6ade18a972bc57fef32f591fbd330f33a4cd766a73de57c8aa86d09a0e70e4759563e9e7e5ac03d5bbac87e1c8e83de02f42fc5d64497e170cdebcdacd95e98a84f448aae3039c1add2c2d5b6e4522afa3654a49a0863ecd5390c0e1ce456557da72dac1d5a9d678f924b0db61131d8ec105a4f949c5e9042ba41a2d07ce46e3d41cf1073d06472cfdd4a8582d55c3e7d07fed2526c");
 		});
 	}
@@ -1693,10 +1695,10 @@ struct tests
 			TEST_BLOCK(&generators::migrate_stage_2, "0xf5b469b33e6ab04996d902e17c37c8c69fee9fedc26687448a4f899cfc0db8d8", 18);
 			TEST_BLOCK(&generators::migrate_stage_3, "0xcbc9a9c2f047bd7dd1d3eaf281a812566a98b7619f56457e6367679faa9bf3dd", 20);
 			TEST_BLOCK(&generators::withdraw_stage_1, "0x5892caadb53524c87b2f532fe7055872c2123bcc927bbf828c21d4f6f25b943b", 22);
-			TEST_BLOCK(&generators::withdraw_stage_2, "0x51433040ecd5e22b2ff48e9ffaa63f9472fd43a29985ed1ad9e1cdf3b0d6ed05", 24);
-			TEST_BLOCK(&generators::withdraw_stage_3, "0x2a2184dcf5082c592409c130e8404a7525ede7f18d1151b6dbe711d66c690820", 26);
-			TEST_BLOCK(&generators::withdraw_stage_4, "0x134d32b6901c3270f646d48c00b83e7085f603e9469038fdf3f138310bc99af4", 28);
-			TEST_BLOCK(std::bind(&generators::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 1, 0), "0x95d459268b9530b75b0f12c0221608c409f1e0ac62fb1dcb4deefc54e27176cb", 30);
+			TEST_BLOCK(&generators::withdraw_stage_2, "0x4b60f2226c2723418ec7393132e48fd6174ef2823f603397f4f542e78c78a38e", 24);
+			TEST_BLOCK(&generators::withdraw_stage_3, "0x7f706c36f958a7199aebd00df9435fb361827eabcebb7f04ed1b9a20250ae15e", 26);
+			TEST_BLOCK(&generators::withdraw_stage_4, "0xe308ab435a93aa8e33df703d04efcaddb22a70629451b5c3576f042fbc3c5fed", 28);
+			TEST_BLOCK(std::bind(&generators::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 1, 0), "0x9bc0a9e26a8bf213b90b6fec58ed4782d0b07e3b2c2c4835764ebc88d1f27535", 30);
 			if (userdata != nullptr)
 				*userdata = std::move(users);
 			else
