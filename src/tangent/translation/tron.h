@@ -24,6 +24,7 @@ namespace tangent
 				{
 				public:
 					static const char* broadcast_transaction();
+					static const char* get_transaction_info_by_id();
 					static const char* get_block();
 				};
 
@@ -31,6 +32,7 @@ namespace tangent
 				tron(const algorithm::asset_id& new_asset) noexcept;
 				virtual ~tron() override = default;
 				virtual expects_promise_rt<void> broadcast_transaction(const finalized_transaction& finalized) override;
+				virtual expects_promise_rt<computed_transaction> link_transaction(uint64_t block_height, const std::string_view& block_hash, schema* transaction_data) override;
 				virtual expects_promise_rt<decimal> calculate_balance(const algorithm::asset_id& for_asset, const wallet_link& link) override;
 				virtual expects_promise_rt<prepared_transaction> prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const decimal& max_fee) override;
 				virtual expects_lr<finalized_transaction> finalize_transaction(superchain::prepared_transaction&& prepared) override;

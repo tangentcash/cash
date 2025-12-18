@@ -159,6 +159,10 @@ namespace tangent
 			{
 				return "/wallet/broadcasttransaction";
 			}
+			const char* tron::trx_nd_call::get_transaction_info_by_id()
+			{
+				return "/wallet/gettransactioninfobyid";
+			}
 			const char* tron::trx_nd_call::get_block()
 			{
 				return "/wallet/getblock";
@@ -210,6 +214,153 @@ namespace tangent
 					return layer_exception("trongrid rest node is required (default location http://hostname:18190/)");
 
 				return expectation::met;
+			}
+			expects_promise_rt<computed_transaction> tron::link_transaction(uint64_t block_height, const std::string_view& block_hash, schema* transaction_data)
+			{
+				auto* chain = get_chain();
+				string data = transaction_data->get_var("input").get_blob();
+				if (stringify::starts_with(data, chain->bech32_hrp))
+					data.erase(0, strlen(chain->bech32_hrp));
+
+				string tx_hash = transaction_data->get_var("hash").get_blob();
+				string from = encode_eth_address(transaction_data->get_var("from").get_blob());
+				string to = encode_eth_address(transaction_data->get_var("to").get_blob());
+				decimal base_value = to_eth(hex_to_uint256(transaction_data->get_var("value").get_blob()), netdata.divisibility);
+
+				computed_transaction result;
+				result.transaction_id = tx_hash;
+
+				hash_map<string, hash_map<algorithm::asset_id, decimal>> inputs;
+				hash_map<string, hash_map<algorithm::asset_id, decimal>> outputs;
+				if (base_value.is_positive())
+				{
+					inputs[from][native_asset] = base_value;
+					outputs[to][native_asset] = base_value;
+				}
+
+				hash_set<string> addresses;
+				addresses.reserve(inputs.size() + outputs.size());
+				for (auto& next : inputs)
+					addresses.insert(next.first);
+				for (auto& next : outputs)
+					addresses.insert(next.first);
+
+				if (!data.empty())
+				{
+					auto* logs = transaction_data->get("logs");
+					if (!logs)
+					{
+						auto tx_receipt = coawait(get_transaction_receipt(transaction_data->get_var("hash").get_blob(), true));
+						if (tx_receipt)
+						{
+							logs = tx_receipt->get("logs");
+							if (logs != nullptr)
+							{
+								logs->unlink();
+								transaction_data->set("logs", logs);
+							}
+							transaction_data->set("receipt", *tx_receipt);
+						}
+						else
+							transaction_data->set("receipt", var::set::null());
+					}
+
+					if (logs != nullptr && !logs->empty())
+					{
+						for (auto& invocation : logs->get_childs())
+						{
+							auto* topics = invocation->get("topics");
+							if (topics && topics->size() == 3 && is_token_transfer(topics->get_var(0).get_blob()))
+							{
+								addresses.insert(encode_eth_address(normalize_topic_address(topics->get_var(1).get_blob())));
+								addresses.insert(encode_eth_address(normalize_topic_address(topics->get_var(2).get_blob())));
+							}
+							else if (topics && topics->size() == 2 && is_token_transfer(topics->get_var(0).get_blob()))
+								addresses.insert(encode_eth_address(topics->get_var(1).get_blob()));
+						}
+					}
+				}
+
+				auto discovery = find_linked_addresses(addresses);
+				if (!discovery || discovery->empty())
+					coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
+
+				if (!data.empty())
+				{
+					auto* logs = transaction_data->get("logs");
+					if (logs != nullptr && !logs->empty())
+					{
+						for (auto& invocation : logs->get_childs())
+						{
+							auto* topics = invocation->get("topics");
+							if (!topics || (topics->size() != 2 && topics->size() != 3) || !is_token_transfer(topics->get_var(0).get_blob()))
+								continue;
+
+							auto contract_address = encode_eth_address(invocation->get_var("address").get_blob());
+							auto symbol = coawait(get_contract_symbol(contract_address));
+							if (!symbol)
+								continue;
+
+							auto token_asset = algorithm::asset::id_of(algorithm::asset::blockchain_of(native_asset), *symbol, contract_address);
+							decimal divisibility = coawait(get_contract_divisibility(contract_address)).or_else(netdata.divisibility);
+							decimal token_value = to_eth(hex_to_uint256(invocation->get_var("data").get_blob()), divisibility);
+							if (topics->size() == 3)
+							{
+								from = encode_eth_address(normalize_topic_address(topics->get_var(1).get_blob()));
+								to = encode_eth_address(normalize_topic_address(topics->get_var(2).get_blob()));
+							}
+							else if (topics->size() == 2)
+								to = encode_eth_address(topics->get_var(1).get_blob());
+
+							auto& token_input = inputs[from][token_asset];
+							auto& token_output = outputs[to][token_asset];
+							token_input = token_input.is_nan() ? token_value : (token_input + token_value);
+							token_output = token_output.is_nan() ? token_value : (token_output + token_value);
+							superchain::server_node::get()->enable_contract_address(token_asset, contract_address);
+						}
+					}
+				}
+
+				addresses.clear();
+				for (auto& next : inputs)
+					addresses.insert(next.first);
+				for (auto& next : outputs)
+					addresses.insert(next.first);
+
+				discovery = find_linked_addresses(addresses);
+				if (!discovery || discovery->empty())
+					coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
+
+				auto args = uptr(var::set::object());
+				args->set("value", var::string(tx_hash.starts_with("0x") ? std::string_view(tx_hash).substr(2) : std::string_view(tx_hash)));
+
+				auto info = coawait(execute_rest("POST", trx_nd_call::get_transaction_info_by_id(), *args, cache_policy::blob_cache));
+				if (!info || info->fetch_var("receipt.result").get_blob() != "SUCCESS")
+					coreturn expects_rt<computed_transaction>(remote_exception("tx reverted"));
+
+				auto fee_value = to_eth((uint64_t)info->get_var("fee").get_integer(), netdata.divisibility);
+				if (fee_value.is_positive())
+				{
+					auto& input_value = inputs[from][native_asset];
+					input_value = input_value.is_nan() ? fee_value : (input_value + fee_value);
+				}
+
+				memory::release(*info);
+				for (auto& [address, values] : inputs)
+				{
+					auto target_link = discovery->find(address);
+					auto input = coin_utxo(target_link != discovery->end() ? target_link->second : wallet_link::from_address(address), std::move(values));
+					result.add_input(std::move(input));
+				}
+
+				for (auto& [address, values] : outputs)
+				{
+					auto target_link = discovery->find(address);
+					auto output = coin_utxo(target_link != discovery->end() ? target_link->second : wallet_link::from_address(address), std::move(values));
+					result.add_output(std::move(output));
+				}
+
+				coreturn expects_rt<computed_transaction>(std::move(result));
 			}
 			expects_promise_rt<decimal> tron::calculate_balance(const algorithm::asset_id& for_asset, const wallet_link& link)
 			{
