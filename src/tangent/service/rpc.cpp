@@ -249,7 +249,7 @@ namespace tangent
 				if (!responses->is_list())
 				{
 					auto prev = std::move(*responses);
-					responses = format::tree();
+					responses = format::tree::list();
 					responses->push(std::move(prev));
 					responses->push(std::move(next));
 				}
@@ -286,7 +286,7 @@ namespace tangent
 			auto* result = response.set(status == error_codes::notification ? "notification" : "result", std::move(data));
 			if (status != error_codes::response && status != error_codes::notification && !error_message.empty())
 			{
-				auto* error = response.set("error", format::tree());
+				auto* error = response.set("error", format::tree::map());
 				error->set("message", format::variable(error_message));
 				error->set("code", (int64_t)status < 0 ? format::variable(decimal((int64_t)status)) : format::variable((uint64_t)status));
 			}
@@ -590,7 +590,7 @@ namespace tangent
 		{
 			if (!requests.is_list())
 			{
-				auto array = format::tree();
+				auto array = format::tree::list();
 				array.push(std::move(requests));
 				requests = std::move(array);
 			}
@@ -737,10 +737,10 @@ namespace tangent
 			uint64_t block_number = block.number;
 			cospawn([block_hash, block_number, web_sockets = std::move(web_sockets)]() mutable
 			{
-				auto notification = format::tree();
+				auto notification = format::tree::map();
 				notification.set("type", format::variable("block"));
 
-				auto result = notification.set("result", format::tree());
+				auto result = notification.set("result", format::tree::map());
 				result->set("hash", format::variable(algorithm::encoding::encode_0xhex256(block_hash)));
 				result->set("number", format::variable(block_number));
 
@@ -771,10 +771,10 @@ namespace tangent
 
 			cospawn([transaction_hash, web_sockets = std::move(web_sockets)]() mutable
 			{
-				auto notification = format::tree();
+				auto notification = format::tree::map();
 				notification.set("type", format::variable("transaction"));
 
-				auto result = notification.set("result", format::tree());
+				auto result = notification.set("result", format::tree::map());
 				result->set("hash", format::variable(algorithm::encoding::encode_0xhex256(transaction_hash)));
 
 				auto response = server_response().notification(std::move(notification)).transform(format::tree()).as_json();
@@ -863,7 +863,7 @@ namespace tangent
 
 			algorithm::pubkeyhash_t owner;
 			bool recoverable = candidate_tx->recover_hash(owner);
-			auto result = format::tree();
+			auto result = format::tree::map();
 			result.set("transaction", candidate_tx->as_tree());
 			result.set("signer_message", recoverable ? format::variable(candidate_tx->as_signable().encode()) : format::variable());
 			result.set("signer_address", recoverable ? algorithm::signing::serialize_address(owner) : format::variable());
@@ -871,13 +871,13 @@ namespace tangent
 		}
 		server_response server_node::utility_help(http::connection* base, format::variables&& args)
 		{
-			auto data = format::tree();
-			auto* params = data.set("converters", format::tree());
+			auto data = format::tree::map();
+			auto* params = data.set("converters", format::tree::map());
 			params->set("uint128", format::variable("[\"$uint128\", \"<integer>\"] -> <uint128>"));
 			params->set("uint256", format::variable("[\"$uint256\", \"<integer>\"] -> <uint256>"));
 			params->set("asset", format::variable("[\"$asset256\", \"<chain>|<chain:token:checksum>\"] -> <uint256>"));
 
-			auto* functions = data.set("functions", format::tree());
+			auto* functions = data.set("functions", format::tree::map());
 			for (auto& method : methods)
 			{
 				string inline_decl;
@@ -917,7 +917,7 @@ namespace tangent
 				if (!domain)
 					domain = functions->set(method.second.domain, format::tree::list());
 
-				auto* description = domain->push(format::tree());
+				auto* description = domain->push(format::tree::map());
 				description->set("function", format::variable(method.first));
 				description->set("declaration", format::variable(inline_decl));
 				description->set("description", format::variable(method.second.description));

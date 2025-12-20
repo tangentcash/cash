@@ -1599,7 +1599,7 @@ namespace tangent
 			data.set("manager", algorithm::signing::serialize_address(manager));
 			data.set("asset", algorithm::asset::serialize(asset));
 			data.set("public_key", public_key.empty() ? format::variable() : format::variable(format::util::encode_0xhex(std::string_view((char*)public_key.data(), public_key.size()))));
-			auto* group_data = data.set("group", format::tree());
+			auto* group_data = data.set("group", format::tree::list());
 			for (auto& item : group)
 				group_data->push(item.empty() ? format::variable() : algorithm::signing::serialize_address(item.data));
 			return data;
@@ -1951,7 +1951,7 @@ namespace tangent
 			data.set("owner", algorithm::signing::serialize_address(owner));
 			data.set("manager", algorithm::signing::serialize_address(manager));
 			data.set("asset", algorithm::asset::serialize(asset));
-			auto* addresses_data = data.set("addresses", format::tree());
+			auto* addresses_data = data.set("addresses", format::tree::list());
 			for (auto& address : addresses)
 				addresses_data->push(format::variable(address.second));
 			switch (get_type())

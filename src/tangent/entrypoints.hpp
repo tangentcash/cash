@@ -108,7 +108,7 @@ namespace tangent
 				for (auto& [event, args] : executor->receipt.events)
 				{
 					auto target = tracer.events.find(tracer.log.childs().size());
-					auto* next = tracer.log.push(format::tree());
+					auto* next = tracer.log.push(format::tree::map());
 					next->set("type", format::variable(event));
 					if (target == tracer.events.end())
 					{

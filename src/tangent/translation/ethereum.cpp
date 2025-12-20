@@ -450,7 +450,7 @@ namespace tangent
 					auto transactions_count = transactions->childs().size();
 					auto& log = results.emplace_back();
 					log.block_hash = block.child_var("hash").as_blob();
-					log.transactions = transactions ? std::move(*transactions) : format::tree();
+					log.transactions = transactions ? std::move(*transactions) : format::tree::list();
 					legacy.eip_155 = block.has("baseFeePerGas") ? 0 : 1;
 					if (!transactions_count)
 						continue;

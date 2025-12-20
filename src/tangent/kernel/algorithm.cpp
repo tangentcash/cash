@@ -370,7 +370,7 @@ namespace tangent
 			if (!mpz::wesolowski_deserialize(p, l, signature))
 				return format::tree();
 
-			auto data = format::tree();
+			auto data = format::tree::map();
 			data.set("x", format::variable(format::util::encode_0xhex(mpz::export0(p))));
 			data.set("y", format::variable(format::util::encode_0xhex(mpz::export0(l))));
 			if (scaling.is_positive())

@@ -369,7 +369,7 @@ namespace tangent
 					auto* transactions = (format::tree*)block_data->child("_embedded.records");
 					auto& log = results.emplace_back();
 					log.block_hash = to_string(block_height + i);
-					log.transactions = transactions ? std::move(*transactions) : format::tree();
+					log.transactions = transactions ? std::move(*transactions) : format::tree::list();
 				}
 				coreturn expects_rt<vector<block_log>>(std::move(results));
 			}

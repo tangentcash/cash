@@ -398,8 +398,8 @@ namespace tangent
 			data.set("address", format::variable(address.get_ip_address().or_else("[bad_address]") + ":" + to_string(address.get_ip_port().or_else(0))));
 			data.set("version", format::variable(as_version()));
 
-			auto* availability_data = data.set("availability", format::tree());
-			auto* neighbors_data = availability_data->set("neighbors", format::tree());
+			auto* availability_data = data.set("availability", format::tree::map());
+			auto* neighbors_data = availability_data->set("neighbors", format::tree::list());
 			for (auto& public_key : availability.neighbors)
 				neighbors_data->push(algorithm::signing::serialize_public_key(public_key));
 			availability_data->set("latency", algorithm::encoding::serialize_uint256(availability.latency));
@@ -408,12 +408,12 @@ namespace tangent
 			availability_data->set("errors", algorithm::encoding::serialize_uint256(availability.errors));
 			availability_data->set("reachable", format::variable(availability.reachable));
 
-			auto* ports_data = data.set("ports", format::tree());
+			auto* ports_data = data.set("ports", format::tree::map());
 			ports_data->set("consensus", format::variable(ports.consensus));
 			ports_data->set("discovery", format::variable(ports.discovery));
 			ports_data->set("rpc", format::variable(ports.rpc));
 
-			auto* services_data = data.set("services", format::tree());
+			auto* services_data = data.set("services", format::tree::map());
 			services_data->set("consensus", format::variable(services.has_consensus));
 			services_data->set("discovery", format::variable(services.has_discovery));
 			services_data->set("superchain", format::variable(services.has_superchain));

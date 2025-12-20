@@ -297,10 +297,10 @@ namespace tangent
 			data.set("block_time", algorithm::encoding::serialize_uint256(block_time));
 			data.set("block_number", algorithm::encoding::serialize_uint256(block_number));
 			data.set("successful", format::variable(successful));
-			auto* events_data = data.set("events", format::tree());
+			auto* events_data = data.set("events", format::tree::list());
 			for (auto& item : events)
 			{
-				auto* event_data = events_data->push(format::tree());
+				auto* event_data = events_data->push(format::tree::map());
 				event_data->set("event", format::variable(item.first));
 				event_data->set("args", format::variables_util::serialize(item.second));
 			}

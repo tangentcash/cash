@@ -270,7 +270,7 @@ namespace tangent
 					auto* transactions = (format::tree*)block.child("tx");
 					auto& log = results.emplace_back();
 					log.block_hash = block.child_var("hash").as_blob();
-					log.transactions = transactions ? std::move(*transactions) : format::tree();
+					log.transactions = transactions ? std::move(*transactions) : format::tree::list();
 				}
 				coreturn expects_rt<vector<block_log>>(std::move(results));
 			}

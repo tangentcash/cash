@@ -1510,119 +1510,93 @@ namespace tangent
 		}
 		tree* tree::set(const std::string_view& name, const variable& base)
 		{
-			if (type == structure::flat)
-				type = structure::map;
-
-			if (type == structure::map)
+			type = structure::map;
+			for (auto& child : childs())
 			{
-				for (auto& child : childs())
+				if (child.key == name)
 				{
-					if (child.key == name)
-					{
-						child.type = structure::flat;
-						child.value = base;
-						return &child;
-					}
+					child.type = structure::flat;
+					child.value = base;
+					return &child;
 				}
 			}
 
-			childs().push_back(tree(base));
+			fields->push_back(tree(base));
 			auto& result = fields->back();
 			result.key.assign(name);
 			return &result;
 		}
 		tree* tree::set(const std::string_view& name, variable&& base)
 		{
-			if (type == structure::flat)
-				type = structure::map;
-
-			if (type == structure::map)
+			type = structure::map;
+			for (auto& child : childs())
 			{
-				for (auto& child : childs())
+				if (child.key == name)
 				{
-					if (child.key == name)
-					{
-						child.type = structure::flat;
-						child.value = std::move(base);
-						return &child;
-					}
+					child.type = structure::flat;
+					child.value = std::move(base);
+					return &child;
 				}
 			}
 
-			childs().push_back(tree(std::move(base)));
+			fields->push_back(tree(std::move(base)));
 			auto& result = fields->back();
 			result.key.assign(name);
 			return &result;
 		}
 		tree* tree::set(const std::string_view& name, const tree& base)
 		{
-			if (type == structure::flat)
-				type = structure::map;
-
-			if (type == structure::map)
+			type = structure::map;
+			for (auto& child : childs())
 			{
-				for (auto& child : childs())
+				if (child.key == name)
 				{
-					if (child.key == name)
-					{
-						child = base;
-						child.key.assign(name);
-						return &child;
-					}
+					child = base;
+					child.key.assign(name);
+					return &child;
 				}
 			}
 
-			childs().push_back(base);
+			fields->push_back(base);
 			auto& result = fields->back();
 			result.key.assign(name);
 			return &result;
 		}
 		tree* tree::set(const std::string_view& name, tree&& base)
 		{
-			if (type == structure::flat)
-				type = structure::map;
-
-			if (type == structure::map)
+			type = structure::map;
+			for (auto& child : childs())
 			{
-				for (auto& child : childs())
+				if (child.key == name)
 				{
-					if (child.key == name)
-					{
-						child = std::move(base);
-						child.key.assign(name);
-						return &child;
-					}
+					child = std::move(base);
+					child.key.assign(name);
+					return &child;
 				}
 			}
 
-			childs().push_back(std::move(base));
+			fields->push_back(std::move(base));
 			auto& result = fields->back();
 			result.key.assign(name);
 			return &result;
 		}
 		tree* tree::push(const variable& base)
 		{
-			if (type == structure::flat)
-				type = structure::list;
-
+			type = structure::list;
 			childs().push_back(tree(base));
 			auto& result = fields->back();
 			return &result;
 		}
 		tree* tree::push(variable&& base)
 		{
-			if (type == structure::flat)
-				type = structure::list;
-
+			type = structure::list;
 			childs().push_back(tree(std::move(base)));
 			auto& result = fields->back();
 			return &result;
 		}
 		tree* tree::push(const tree& base)
 		{
-			if (type == structure::flat)
-				type = structure::list;
-
+			type = structure::list;
 			childs().push_back(tree(base));
 			auto& result = fields->back();
 			result.key.clear();
@@ -1630,9 +1604,7 @@ namespace tangent
 		}
 		tree* tree::push(tree&& base)
 		{
-			if (type == structure::flat)
-				type = structure::list;
-
+			type = structure::list;
 			childs().push_back(std::move(base));
 			auto& result = fields->back();
 			result.key.clear();

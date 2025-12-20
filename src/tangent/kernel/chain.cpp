@@ -437,7 +437,7 @@ namespace tangent
 		if (!environment.args.empty())
 		{
 			if (!config)
-				config = format::tree();
+				config = format::tree::map();
 			for (auto& [key, value] : environment.args)
 			{
 				auto* parent = config.address();

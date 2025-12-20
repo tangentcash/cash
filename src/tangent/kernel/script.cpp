@@ -4653,7 +4653,7 @@ namespace tangent
 						auto* array = (array_repr*)value;
 						uint32_t size = (uint32_t)array->size();
 						int type_id = array->get_element_type_id();
-						stream = format::tree();
+						stream = format::tree::list();
 						stream.childs().reserve(size);
 						for (uint32_t i = 0; i < size; i++)
 						{
@@ -4668,7 +4668,7 @@ namespace tangent
 					{
 						auto object = script_object((asIScriptObject*)value);
 						size_t properties = object.get_properties_count();
-						stream = format::tree();
+						stream = format::tree::map();
 						stream.childs().reserve(properties);
 						for (size_t i = 0; i < properties; i++)
 						{

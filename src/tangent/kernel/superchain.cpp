@@ -355,10 +355,10 @@ namespace tangent
 				data.set("asset", algorithm::asset::serialize(get_asset(0)));
 			data.set("value", format::variable(value));
 			data.set("type", format::variable(is_account() ? "account" : "utxo"));
-			auto* tokens_data = data.set("tokens", format::tree());
+			auto* tokens_data = data.set("tokens", format::tree::list());
 			for (auto& [hash, item] : tokens)
 			{
-				auto* token_data = tokens_data->push(format::tree());
+				auto* token_data = tokens_data->push(format::tree::map());
 				if (!item.is_account())
 				{
 					token_data->set("contract_address", format::variable(item.contract_address));
@@ -510,10 +510,10 @@ namespace tangent
 			format::tree data;
 			data.set("transaction_id", format::variable(transaction_id));
 			data.set("block_id", algorithm::encoding::serialize_uint256(block_id));
-			auto* input_data = data.set("inputs", format::tree());
+			auto* input_data = data.set("inputs", format::tree::list());
 			for (auto& [hash, input] : inputs)
 				input_data->push(input.as_tree());
-			auto* output_data = data.set("outputs", format::tree());
+			auto* output_data = data.set("outputs", format::tree::list());
 			for (auto& [hash, output] : outputs)
 				output_data->push(output.as_tree());
 			return data;
@@ -706,10 +706,10 @@ namespace tangent
 			}
 
 			format::tree data;
-			auto* input_data = data.set("inputs", format::tree());
+			auto* input_data = data.set("inputs", format::tree::list());
 			for (auto& input : inputs)
 			{
-				auto* signer = input_data->push(format::tree());
+				auto* signer = input_data->push(format::tree::map());
 				signer->set("utxo", input.utxo.as_tree());
 				switch (input.alg)
 				{
@@ -733,7 +733,7 @@ namespace tangent
 				signer->set("signature", input.signature.empty() ? format::variable() : format::variable(format::util::encode_0xhex(std::string_view((char*)input.signature.data(), input.signature.size()))));
 				signer->set("message", format::variable(format::util::encode_0xhex(std::string_view((char*)input.message.data(), input.message.size()))));
 			}
-			auto* output_data = data.set("outputs", format::tree());
+			auto* output_data = data.set("outputs", format::tree::list());
 			for (auto& output : outputs)
 				output_data->push(output.as_tree());
 			data.set("abi", format::variables_util::serialize(abi));
@@ -984,7 +984,7 @@ namespace tangent
 				reporter.method = method;
 
 			auto priority = get_cache_type(cache);
-			auto setup = format::tree();
+			auto setup = format::tree::map();
 			setup.set("jsonrpc", format::variable("2.0"));
 			setup.set("method", format::variable(method));
 			if (multi && args.fields)

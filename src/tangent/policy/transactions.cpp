@@ -113,10 +113,10 @@ namespace tangent
 		format::tree transfer::as_tree() const
 		{
 			format::tree data = ledger::transaction::as_tree();
-			auto* transfers_data = data.set("to", format::tree());
+			auto* transfers_data = data.set("to", format::tree::list());
 			for (auto& [owner, value] : to)
 			{
-				auto* transfer_data = transfers_data->push(format::tree());
+				auto* transfer_data = transfers_data->push(format::tree::map());
 				transfer_data->set("to", algorithm::signing::serialize_address(owner.data));
 				transfer_data->set("value", format::variable(value));
 			}
@@ -858,7 +858,7 @@ namespace tangent
 		format::tree rollup::as_tree() const
 		{
 			format::tree data = ledger::transaction::as_tree();
-			auto* transactions_data = data.set("transactions", format::tree());
+			auto* transactions_data = data.set("transactions", format::tree::list());
 			for (auto& group : transactions)
 			{
 				for (auto& transaction : group.second)
@@ -1582,20 +1582,20 @@ namespace tangent
 			format::tree data = ledger::transaction::as_tree();
 			if (!migrations.empty())
 			{
-				auto* migrations_data = data.set("bridge_migrations", format::tree());
+				auto* migrations_data = data.set("bridge_migrations", format::tree::list());
 				for (auto& [broadcast_hash, participant] : migrations)
 				{
-					auto* migration_data = migrations_data->push(format::tree());
+					auto* migration_data = migrations_data->push(format::tree::map());
 					migration_data->set("broadcast_hash", format::variable(algorithm::encoding::encode_0xhex256(broadcast_hash)));
 					migration_data->set("participant", algorithm::signing::serialize_address(participant));
 				}
 			}
 			if (!attestations.empty())
 			{
-				auto* attestations_data = data.set("attestations", format::tree());
+				auto* attestations_data = data.set("attestations", format::tree::list());
 				for (auto& [asset, setup] : attestations)
 				{
-					auto* attestation_data = attestations_data->push(format::tree());
+					auto* attestation_data = attestations_data->push(format::tree::map());
 					attestation_data->set("asset", algorithm::asset::serialize(asset));
 					attestation_data->set("accepts_account_requests", setup.accepts_account_requests ? format::variable(*setup.accepts_account_requests) : format::variable());
 					attestation_data->set("accepts_withdrawal_requests", setup.accepts_withdrawal_requests ? format::variable(*setup.accepts_withdrawal_requests) : format::variable());
@@ -2271,10 +2271,10 @@ namespace tangent
 		format::tree attestate::as_tree() const
 		{
 			format::tree data = ledger::commitment::as_tree();
-			auto* commitments_data = data.set("commitments", format::tree());
+			auto* commitments_data = data.set("commitments", format::tree::map());
 			for (auto& [commitment_hash, signatures] : commitments)
 			{
-				auto signatures_data = commitments_data->set(algorithm::encoding::encode_0xhex256(commitment_hash), format::tree());
+				auto signatures_data = commitments_data->set(algorithm::encoding::encode_0xhex256(commitment_hash), format::tree::list());
 				for (auto& signature : signatures)
 					signatures_data->push(signature.empty() ? format::variable() : format::variable(format::util::encode_0xhex(signature.view())));
 			}
@@ -3445,10 +3445,10 @@ namespace tangent
 			data.set("only_if_not_in_queue", format::variable(only_if_not_in_queue));
 			if (!to.empty())
 			{
-				auto* to_data = data.set("to", format::tree());
+				auto* to_data = data.set("to", format::tree::list());
 				for (auto& item : to)
 				{
-					auto* coin_data = to_data->push(format::tree());
+					auto* coin_data = to_data->push(format::tree::map());
 					coin_data->set("address", format::variable(item.first));
 					coin_data->set("value", format::variable(item.second));
 				}

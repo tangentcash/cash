@@ -638,17 +638,17 @@ namespace tangent
 			data.set("number", algorithm::encoding::serialize_uint256(number));
 			data.set("transaction_count", algorithm::encoding::serialize_uint256(transaction_count));
 			data.set("transition_count", algorithm::encoding::serialize_uint256(transition_count));
-			auto* pow_data = data.set("pow", format::tree());
+			auto* pow_data = data.set("pow", format::tree::map());
 			pow_data->set("proof", proof.empty() ? format::variable() : format::variable(format::util::encode_0xhex(proof)));
 			pow_data->set("mdifficulty", format::variable(get_proof_difficulty_multiplier()));
 			pow_data->set("kdifficulty", algorithm::encoding::serialize_uint256(algorithm::wesolowski::kdifficulty(difficulty)));
 			pow_data->set("difficulty", format::variable(difficulty));
 			pow_data->set("security", format::variable(protocol::now().policy.pow.security));
 			pow_data->set("size", format::variable(proof.size()));
-			auto* witnesses_data = data.set("witnesses", format::tree());
+			auto* witnesses_data = data.set("witnesses", format::tree::list());
 			for (auto& item : witnesses)
 			{
-				auto* witness_data = witnesses_data->push(format::tree());
+				auto* witness_data = witnesses_data->push(format::tree::map());
 				witness_data->set("asset", algorithm::asset::serialize(item.first));
 				witness_data->set("number", algorithm::encoding::serialize_uint256(item.second));
 			}
@@ -1050,7 +1050,7 @@ namespace tangent
 		format::tree block::as_tree() const
 		{
 			auto data = block_header::as_tree();
-			auto* transactions_data = data.set("transactions", format::tree());
+			auto* transactions_data = data.set("transactions", format::tree::list());
 			for (auto& item : transactions)
 				transactions_data->push(item.as_tree());
 			return data;
@@ -1208,12 +1208,12 @@ namespace tangent
 			format::tree data;
 			data.childs().reserve(3);
 
-			auto* transactions_data = data.set("transactions", format::tree());
-			auto* receipts_data = data.set("receipts", format::tree());
-			auto* states_data = data.set("states", format::tree());
-			auto* transactions_tree_data = transactions_data->set("tree", format::tree());
-			auto* receipts_tree_data = receipts_data->set("tree", format::tree());
-			auto* states_tree_data = states_data->set("tree", format::tree());
+			auto* transactions_data = data.set("transactions", format::tree::list());
+			auto* receipts_data = data.set("receipts", format::tree::list());
+			auto* states_data = data.set("states", format::tree::list());
+			auto* transactions_tree_data = transactions_data->set("tree", format::tree::list());
+			auto* receipts_tree_data = receipts_data->set("tree", format::tree::list());
+			auto* states_tree_data = states_data->set("tree", format::tree::list());
 			transactions_data->set("root", format::variable(algorithm::encoding::encode_0xhex256(transaction_root)));
 			transactions_data->set("pivot", format::variable(transaction_tree.pivot));
 			receipts_data->set("root", format::variable(algorithm::encoding::encode_0xhex256(receipt_root)));
@@ -1249,7 +1249,7 @@ namespace tangent
 		format::tree block_evaluation::as_tree() const
 		{
 			auto data = block.as_tree();
-			auto* states_data = data.set("changelog", format::tree());
+			auto* states_data = data.set("changelog", format::tree::list());
 			for (auto& [index, change] : state.finalized)
 				states_data->push(change.state->as_tree());
 			return data;
@@ -3060,10 +3060,10 @@ namespace tangent
 			data.set("manager", algorithm::signing::serialize_address(manager));
 			data.set("owner", algorithm::signing::serialize_address(owner));
 			data.set("entropy", format::variable(algorithm::encoding::encode_0xhex256(entropy.view())));
-			auto* shares_data = data.set("shares", format::tree());
+			auto* shares_data = data.set("shares", format::tree::list());
 			for (auto& [participant, share] : shares)
 			{
-				auto* share_data = shares_data->push(format::tree());
+				auto* share_data = shares_data->push(format::tree::map());
 				share_data->set("participant", algorithm::signing::serialize_address(participant));
 				share_data->set("input", format::variable(format::util::encode_0xhex(share.input.optimized_view())));
 				share_data->set("output", format::variable(format::util::encode_0xhex(share.output.optimized_view())));
