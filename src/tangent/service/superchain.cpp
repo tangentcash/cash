@@ -1455,7 +1455,7 @@ namespace tangent
 					{
 						auto* stream = request->get_stream();
 						if (stream != nullptr)
-							stream->shutdown(true);
+							stream->clear_events(true);
 					}
 					yield();
 				}

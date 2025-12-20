@@ -43,6 +43,10 @@ namespace tangent
 			{
 				return "getLatestBlockhash";
 			}
+			const char* solana::nd_call::get_transaction()
+			{
+				return "getTransaction";
+			}
 			const char* solana::nd_call::get_slot()
 			{
 				return "getSlot";
@@ -78,9 +82,9 @@ namespace tangent
 			expects_promise_rt<vector<block_log>> solana::get_block_transactions(uint64_t block_height, uint64_t block_count)
 			{
 				format::tree config = format::tree::map();
-				config.set("encoding", format::variable("jsonParsed"));
+				config.set("encoding", format::variable("json"));
 				config.set("maxSupportedTransactionVersion", format::variable((uint8_t)0));
-				config.set("transactionDetails", format::variable("full"));
+				config.set("transactionDetails", format::variable("accounts"));
 				config.set("rewards", format::variable(false));
 
 				format::tree map;
@@ -110,12 +114,29 @@ namespace tangent
 			{
 				auto* error = transaction_data.child("meta.status.Err");
 				if (error != nullptr)
+					coreturn expects_rt<computed_transaction>(remote_exception("tx reverted"));
+
+				auto signature = transaction_data.child_var("transaction.signatures.0").as_blob();
+				auto* account_keys = transaction_data.child("transaction.accountKeys");
+				if (!account_keys || signature.empty())
+					coreturn expects_rt<computed_transaction>(remote_exception("tx must have one or more signatures and account keys"));
+
+				hash_set<string> addresses;
+				for (auto& account_key : account_keys->childs())
+					addresses.insert(account_key.child_var("pubkey").as_blob());
+
+				auto discovery = find_linked_addresses(addresses);
+				if (!discovery || discovery->empty())
 					coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
 
+				auto transaction_data_postload = coawait(get_transaction(signature));
+				if (!transaction_data_postload)
+					coreturn expects_rt<computed_transaction>(transaction_data_postload.error());
+
+				transaction_data = std::move(*transaction_data_postload);
 				auto* pre_balances = transaction_data.child("meta.preBalances");
 				auto* post_balances = transaction_data.child("meta.postBalances");
-				auto* account_keys = transaction_data.child("transaction.message.accountKeys");
-				if (!pre_balances || !post_balances || pre_balances->childs().size() != post_balances->childs().size() || pre_balances->childs().empty() || !account_keys)
+				if (!pre_balances || !post_balances || pre_balances->childs().size() != post_balances->childs().size() || pre_balances->childs().empty())
 					coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
 
 				bool non_transferring = true;
@@ -129,10 +150,6 @@ namespace tangent
 				}
 				if (non_transferring)
 					coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
-
-				hash_set<string> addresses;
-				for (auto& account_key : account_keys->childs())
-					addresses.insert(account_key.child_var("pubkey").as_blob());
 
 				auto* pre_token_balances = transaction_data.child("meta.preTokenBalances");
 				if (pre_token_balances != nullptr)
@@ -148,15 +165,10 @@ namespace tangent
 						addresses.insert(balance.child_var("owner").as_blob());
 				}
 
-				auto discovery = find_linked_addresses(addresses);
-				if (!discovery || discovery->empty())
-					coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
-
 				auto* instructions = transaction_data.child("transaction.message.instructions");
 				if (!instructions || instructions->childs().empty())
 					coreturn expects_rt<computed_transaction>(remote_exception("tx not valid"));
 
-				auto signature = transaction_data.child_var("transaction.signatures.0").as_blob();
 				auto fee_value = transaction_data.child_var("meta.fee").as_decimal() / netdata.divisibility;
 				bool fee_included = false;
 
@@ -645,6 +657,17 @@ namespace tangent
 
 				value = algorithm::arithmetic::divide(value, netdata.divisibility);
 				coreturn expects_rt<decimal>(std::move(value));
+			}
+			expects_promise_rt<format::tree> solana::get_transaction(const std::string_view& signature)
+			{
+				format::tree config = format::tree::map();
+				config.set("encoding", format::variable("jsonParsed"));
+				config.set("maxSupportedTransactionVersion", format::variable((uint8_t)0));
+
+				format::tree map;
+				map.push(format::variable(signature));
+				map.push(std::move(config));
+				coreturn coawait(execute_rpc(nd_call::get_transaction(), std::move(map), cache_policy::blob_cache));
 			}
 			expects_promise_rt<string> solana::get_recent_block_hash()
 			{

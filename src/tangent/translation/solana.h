@@ -47,6 +47,7 @@ namespace tangent
 					static const char* get_token_balance();
 					static const char* get_balance();
 					static const char* get_block_hash();
+					static const char* get_transaction();
 					static const char* get_slot();
 					static const char* get_block();
 					static const char* send_transaction();
@@ -80,6 +81,7 @@ namespace tangent
 				virtual expects_promise_rt<string> get_token_symbol(const std::string_view& mint);
 				virtual expects_promise_rt<token_account> get_token_balance(const std::string_view& mint, const std::string_view& owner);
 				virtual expects_promise_rt<decimal> get_balance(const std::string_view& owner);
+				virtual expects_promise_rt<format::tree> get_transaction(const std::string_view& signature);
 				virtual expects_promise_rt<string> get_recent_block_hash();
 				virtual vector<uint8_t> tx_message_serialize(sol_transaction* tx_data);
 				virtual vector<uint8_t> tx_result_serialize(const vector<uint8_t>& message_buffer, const uint8_t* signature, size_t signature_size);
