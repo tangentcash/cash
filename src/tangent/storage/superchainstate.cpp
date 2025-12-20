@@ -252,18 +252,14 @@ namespace tangent
 
 			return value;
 		}
-		expects_lr<void> superchainstate::set_property(const std::string_view& key, uptr<schema>&& value)
+		expects_lr<void> superchainstate::set_property(const std::string_view& key, const format::tree& value)
 		{
 			schema_list map;
 			map.push_back(var::set::string(algorithm::asset::blockchain_of(asset) + ":" + string(key)));
 
-			if (value)
+			if (!value.is_none())
 			{
-				auto buffer = schema::to_jsonb(*value);
-				format::wo_stream message;
-				message.write_string(std::string_view(buffer.begin(), buffer.end()));
-				map.push_back(var::set::binary(message.compress()));
-
+				map.push_back(var::set::binary(value.as_message().compress()));
 				auto cursor = get_storage().emplace_query(__func__, "INSERT OR REPLACE INTO properties (key, message) VALUES (?, ?)", &map);
 				if (!cursor || cursor->error())
 					return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
@@ -277,37 +273,31 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<schema*> superchainstate::get_property(const std::string_view& key)
+		expects_lr<format::tree> superchainstate::get_property(const std::string_view& key)
 		{
 			schema_list map;
 			map.push_back(var::set::string(algorithm::asset::blockchain_of(asset) + ":" + string(key)));
 
 			auto cursor = get_storage().emplace_query(__func__, "SELECT message FROM properties WHERE key = ?", &map);
 			if (!cursor || cursor->error_or_empty())
-				return expects_lr<schema*>(layer_exception(ledger::storage_util::error_of(cursor)));
+				return expects_lr<format::tree>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 			string buffer;
 			auto blob = format::util::decompress_stream((*cursor)["message"].get().get_string());
 			auto message = format::ro_stream(blob);
-			if (!message.read_string(message.read_type(), &buffer))
-				return expects_lr<schema*>(layer_exception("state value deserialization error"));
-			
-			auto value = schema::from_jsonb(buffer);
+			auto value = format::tree::from_message(message);
 			if (!value)
-				return expects_lr<schema*>(layer_exception(std::move(value.error().message())));
+				return expects_lr<format::tree>(layer_exception("property deserialization error"));
 
-			return *value;
+			return expects_lr<format::tree>(std::move(*value));
 		}
-		expects_lr<void> superchainstate::set_cache(superchain::cache_policy policy, const std::string_view& key, uptr<schema>&& value)
+		expects_lr<void> superchainstate::set_cache(superchain::cache_policy policy, const std::string_view& key, const format::tree& value)
 		{
 			schema_list map;
 			map.push_back(var::set::binary(format::util::is_hex_encoding(key) ? codec::hex_decode(key) : string(key)));
-			if (value)
+			if (!value.is_none())
 			{
-				auto buffer = schema::to_jsonb(*value);
-				format::wo_stream message;
-				message.write_string(std::string_view(buffer.begin(), buffer.end()));
-				map.push_back(var::set::binary(message.compress()));
+				map.push_back(var::set::binary(value.as_message().compress()));
 
 				auto cursor = get_storage().emplace_query(__func__, stringify::text("INSERT OR REPLACE INTO %s (key, message) VALUES (?, ?)", get_cache_location(policy).data()), &map);
 				if (!cursor || cursor->error())
@@ -322,26 +312,23 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<schema*> superchainstate::get_cache(superchain::cache_policy policy, const std::string_view& key)
+		expects_lr<format::tree> superchainstate::get_cache(superchain::cache_policy policy, const std::string_view& key)
 		{
 			schema_list map;
 			map.push_back(var::set::binary(format::util::is_hex_encoding(key) ? codec::hex_decode(key) : string(key)));
 
 			auto cursor = get_storage().emplace_query(__func__, stringify::text("SELECT message FROM %s WHERE key = ?", get_cache_location(policy).data()), &map);
 			if (!cursor || cursor->error_or_empty())
-				return expects_lr<schema*>(layer_exception(ledger::storage_util::error_of(cursor)));
+				return expects_lr<format::tree>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 			string buffer;
 			auto blob = format::util::decompress_stream((*cursor)["message"].get().get_string());
 			auto message = format::ro_stream(blob);
-			if (!message.read_string(message.read_type(), &buffer))
-				return expects_lr<schema*>(layer_exception("cache value deserialization error"));
-
-			auto value = schema::from_jsonb(buffer);
+			auto value = format::tree::from_message(message);
 			if (!value)
-				return expects_lr<schema*>(layer_exception(std::move(value.error().message())));
+				return expects_lr<format::tree>(layer_exception("property deserialization error"));
 
-			return *value;
+			return expects_lr<format::tree>(std::move(*value));
 		}
 		expects_lr<void> superchainstate::set_link(const superchain::wallet_link& value)
 		{
@@ -426,20 +413,17 @@ namespace tangent
 		}
 		expects_lr<hash_map<string, superchain::wallet_link>> superchainstate::get_links_by_addresses(const hash_set<string>& addresses)
 		{
-			uptr<schema> address_list = var::set::array();
-			address_list->reserve(addresses.size());
+			string address_list;
 			for (auto& item : addresses)
 			{
 				if (!item.empty())
-					address_list->push(var::binary(to_typeless(item)));
+					address_list.append("x\'").append(codec::hex_encode(to_typeless(item))).append("\',");
 			}
-			if (address_list->empty())
+			if (address_list.empty())
 				return expects_lr<hash_map<string, superchain::wallet_link>>(layer_exception("no addresses"));
 
-			schema_list map;
-			map.push_back(var::set::string(*sqlite::utils::inline_array(std::move(address_list))));
-
-			auto cursor = get_storage().emplace_query(__func__, "SELECT * FROM links WHERE typeless_address IN ($?)", &map);
+			address_list.pop_back();
+			auto cursor = get_storage().query(__func__, stringify::text("SELECT * FROM links WHERE typeless_address IN (%s)", address_list.c_str()));
 			if (!cursor || cursor->error())
 				return expects_lr<hash_map<string, superchain::wallet_link>>(layer_exception(ledger::storage_util::error_of(cursor)));
 

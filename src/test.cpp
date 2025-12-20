@@ -4,8 +4,8 @@
 #include "tangent/policy/compositions.h"
 #include <vitex/vitex.h>
 #include <sstream>
-#define TEST_BLOCK(x, y, z) tester::new_block_from_generator(*data, users, x, #x, y, z)
-#define TEST_BLOCK_FAULT(x, y, z) tester::new_block_from_generator(*data, users, x, #x, y, z, true)
+#define TEST_BLOCK(x, y, z) tester::new_block_from_generator(data, users, x, #x, y, z)
+#define TEST_BLOCK_FAULT(x, y, z) tester::new_block_from_generator(data, users, x, #x, y, z, true)
 
 using namespace tangent;
 
@@ -53,7 +53,7 @@ struct participant_ref
 struct tester
 {
 	template <typename t, typename... args>
-	static void new_serialization_comparison(schema* data, args... arguments)
+	static void new_serialization_comparison(format::tree& data, args... arguments)
 	{
 		t instance = t(arguments...); format::wo_stream message;
 		VI_PANIC(instance.store(&message), "failed to store a message");
@@ -66,9 +66,9 @@ struct tester
 		VI_PANIC(instance_copy.store(&message_copy), "failed to store a message");
 		VI_PANIC(message_copy.data == message.data, "serialization inconsistency found");
 
-		data->set(t::as_instance_typename(), var::string(algorithm::encoding::encode_0xhex256(message.hash())));
+		data.set(t::as_instance_typename(), format::variable(algorithm::encoding::encode_0xhex256(message.hash())));
 	}
-	static ledger::block new_block_from_generator(schema* results, vector<account_ref>& users, std::function<void(vector<uptr<ledger::transaction>>&, vector<account_ref>&)>&& test_case, const std::string_view& test_case_call, const std::string_view& state_root_hash, uint64_t block_number, bool causes_fault = false)
+	static ledger::block new_block_from_generator(format::tree* results, vector<account_ref>& users, std::function<void(vector<uptr<ledger::transaction>>&, vector<account_ref>&)>&& test_case, const std::string_view& test_case_call, const std::string_view& state_root_hash, uint64_t block_number, bool causes_fault = false)
 	{
 		for (auto& user : users)
 			user.nonce = user.wallet.get_latest_nonce().or_else(0);
@@ -85,13 +85,13 @@ struct tester
 		VI_PANIC(!block_number || block_number == block.number, "block number deviation");
 		return block;
 	}
-	static ledger::block new_block_from_one(schema* results, vector<account_ref>& users, uptr<ledger::transaction>&& transaction, bool causes_fault = false)
+	static ledger::block new_block_from_one(format::tree* results, vector<account_ref>& users, uptr<ledger::transaction>&& transaction, bool causes_fault = false)
 	{
 		auto transactions = vector<uptr<ledger::transaction>>();
 		transactions.push_back(std::move(transaction));
 		return new_block_from_list(results, users, std::move(transactions), causes_fault);
 	}
-	static ledger::block new_block_from_list(schema* results, vector<account_ref>& users, vector<uptr<ledger::transaction>>&& transactions, bool causes_fault = false)
+	static ledger::block new_block_from_list(format::tree* results, vector<account_ref>& users, vector<uptr<ledger::transaction>>&& transactions, bool causes_fault = false)
 	{
 		ledger::solver_context solver;
 		for (size_t i = 0; i < transactions.size(); i++)
@@ -133,7 +133,7 @@ struct tester
 		transactions = vector<uptr<ledger::transaction>>();
 		solver.checkpoint_block(proposal).expect("block checkpoint failed");
 		if (results != nullptr)
-			results->push(proposal.as_schema().reset());
+			results->push(proposal.as_tree());
 
 		vector<ledger::wallet> validators;
 		validators.reserve(users.size());
@@ -893,63 +893,63 @@ struct tests
 	/* 256bit => decimal conversion */
 	static void generic_message_serialization()
 	{
-		uptr<schema> data = var::set::object();
+		format::tree data = format::tree::map();
 		algorithm::pubkeyhash_t owner;
 		algorithm::hashing::hash160((uint8_t*)"publickeyhash", 13, owner.data);
 		uint256_t asset = algorithm::asset::id_of("BTC");
 		uint64_t block_number = 1;
 
-		tester::new_serialization_comparison<superchain::wallet_link>(*data);
-		tester::new_serialization_comparison<superchain::coin_utxo>(*data);
-		tester::new_serialization_comparison<superchain::computed_transaction>(*data);
-		tester::new_serialization_comparison<superchain::prepared_transaction>(*data);
-		tester::new_serialization_comparison<superchain::finalized_transaction>(*data);
-		tester::new_serialization_comparison<ledger::receipt>(*data);
-		tester::new_serialization_comparison<ledger::wallet>(*data);
-		tester::new_serialization_comparison<ledger::node>(*data);
-		tester::new_serialization_comparison<ledger::block_transaction>(*data);
-		tester::new_serialization_comparison<ledger::block_header>(*data);
-		tester::new_serialization_comparison<ledger::block>(*data);
-		tester::new_serialization_comparison<ledger::block_proof>(*data);
-		tester::new_serialization_comparison<states::account_nonce>(*data, owner, block_number++);
-		tester::new_serialization_comparison<states::account_program>(*data, owner, block_number++);
-		tester::new_serialization_comparison<states::account_uniform>(*data, owner, std::string_view(), block_number++);
-		tester::new_serialization_comparison<states::account_multiform>(*data, owner, std::string_view(), std::string_view(), block_number++);
-		tester::new_serialization_comparison<states::account_balance>(*data, owner, asset, block_number++);
-		tester::new_serialization_comparison<states::validator_production>(*data, owner, block_number++);
-		tester::new_serialization_comparison<states::validator_production_reward>(*data, owner, asset, block_number++);
-		tester::new_serialization_comparison<states::validator_participation>(*data, owner, block_number++);
-		tester::new_serialization_comparison<states::validator_participation_reward>(*data, owner, asset, block_number++);
-		tester::new_serialization_comparison<states::validator_participation_ref>(*data, owner, states::validator_participation_ref::ref_value(), block_number++);
-		tester::new_serialization_comparison<states::validator_attestation>(*data, owner, asset, block_number++);
-		tester::new_serialization_comparison<states::validator_attestation_reward>(*data, owner, asset, block_number++);
-		tester::new_serialization_comparison<states::bridge_balance>(*data, owner, asset, block_number++);
-		tester::new_serialization_comparison<states::bridge_account>(*data, owner, asset, owner, block_number++);
-		tester::new_serialization_comparison<states::witness_program>(*data, std::string_view(), block_number++);
-		tester::new_serialization_comparison<states::witness_event>(*data, asset, block_number++);
-		tester::new_serialization_comparison<states::witness_account>(*data, owner, asset, address_map(), block_number++);
-		tester::new_serialization_comparison<states::witness_transaction>(*data, asset, std::string_view(), block_number++);
-		tester::new_serialization_comparison<transactions::transfer>(*data);
-		tester::new_serialization_comparison<transactions::deploy>(*data);
-		tester::new_serialization_comparison<transactions::call>(*data);
-		tester::new_serialization_comparison<transactions::rollup>(*data);
-		tester::new_serialization_comparison<transactions::setup>(*data);
-		tester::new_serialization_comparison<transactions::migrate>(*data);
-		tester::new_serialization_comparison<transactions::route>(*data);
-		tester::new_serialization_comparison<transactions::bind>(*data);
-		tester::new_serialization_comparison<transactions::withdraw>(*data);
-		tester::new_serialization_comparison<transactions::broadcast>(*data);
-		tester::new_serialization_comparison<transactions::attestate>(*data);
+		tester::new_serialization_comparison<superchain::wallet_link>(data);
+		tester::new_serialization_comparison<superchain::coin_utxo>(data);
+		tester::new_serialization_comparison<superchain::computed_transaction>(data);
+		tester::new_serialization_comparison<superchain::prepared_transaction>(data);
+		tester::new_serialization_comparison<superchain::finalized_transaction>(data);
+		tester::new_serialization_comparison<ledger::receipt>(data);
+		tester::new_serialization_comparison<ledger::wallet>(data);
+		tester::new_serialization_comparison<ledger::node>(data);
+		tester::new_serialization_comparison<ledger::block_transaction>(data);
+		tester::new_serialization_comparison<ledger::block_header>(data);
+		tester::new_serialization_comparison<ledger::block>(data);
+		tester::new_serialization_comparison<ledger::block_proof>(data);
+		tester::new_serialization_comparison<states::account_nonce>(data, owner, block_number++);
+		tester::new_serialization_comparison<states::account_program>(data, owner, block_number++);
+		tester::new_serialization_comparison<states::account_uniform>(data, owner, std::string_view(), block_number++);
+		tester::new_serialization_comparison<states::account_multiform>(data, owner, std::string_view(), std::string_view(), block_number++);
+		tester::new_serialization_comparison<states::account_balance>(data, owner, asset, block_number++);
+		tester::new_serialization_comparison<states::validator_production>(data, owner, block_number++);
+		tester::new_serialization_comparison<states::validator_production_reward>(data, owner, asset, block_number++);
+		tester::new_serialization_comparison<states::validator_participation>(data, owner, block_number++);
+		tester::new_serialization_comparison<states::validator_participation_reward>(data, owner, asset, block_number++);
+		tester::new_serialization_comparison<states::validator_participation_ref>(data, owner, states::validator_participation_ref::ref_value(), block_number++);
+		tester::new_serialization_comparison<states::validator_attestation>(data, owner, asset, block_number++);
+		tester::new_serialization_comparison<states::validator_attestation_reward>(data, owner, asset, block_number++);
+		tester::new_serialization_comparison<states::bridge_balance>(data, owner, asset, block_number++);
+		tester::new_serialization_comparison<states::bridge_account>(data, owner, asset, owner, block_number++);
+		tester::new_serialization_comparison<states::witness_program>(data, std::string_view(), block_number++);
+		tester::new_serialization_comparison<states::witness_event>(data, asset, block_number++);
+		tester::new_serialization_comparison<states::witness_account>(data, owner, asset, address_map(), block_number++);
+		tester::new_serialization_comparison<states::witness_transaction>(data, asset, std::string_view(), block_number++);
+		tester::new_serialization_comparison<transactions::transfer>(data);
+		tester::new_serialization_comparison<transactions::deploy>(data);
+		tester::new_serialization_comparison<transactions::call>(data);
+		tester::new_serialization_comparison<transactions::rollup>(data);
+		tester::new_serialization_comparison<transactions::setup>(data);
+		tester::new_serialization_comparison<transactions::migrate>(data);
+		tester::new_serialization_comparison<transactions::route>(data);
+		tester::new_serialization_comparison<transactions::bind>(data);
+		tester::new_serialization_comparison<transactions::withdraw>(data);
+		tester::new_serialization_comparison<transactions::broadcast>(data);
+		tester::new_serialization_comparison<transactions::attestate>(data);
 
 		auto* term = console::get();
-		term->jwrite_line(*data);
+		term->write_line(data.as_json(true));
 	}
 	/* prove and verify multiple (nearly) linearly more complex wesolowski vdf signatures */
 	static void cryptography_wesolowski()
 	{
 		auto* term = console::get();
 		auto message = "Hello, world!";
-		auto data = uptr<schema>(var::set::array());
+		auto data = format::tree::list();
 		auto prove_and_verify = [&](uint64_t difficulty)
 		{
 			auto evaluation_time_point = date_time();
@@ -964,12 +964,12 @@ struct tests
 			bool not_forged = !algorithm::wesolowski::verify(difficulty, message_copy, proof);
 
 			auto verification_time = verification_time_point.elapsed();
-			auto* target = data->push(var::set::object());
+			auto* target = data.push(format::tree::map());
 			target->set("proof", algorithm::wesolowski::serialize(difficulty, proof));
-			target->set("evaluation_time", var::integer(evaluation_time.milliseconds()));
-			target->set("verification_time", var::integer(verification_time.milliseconds()));
+			target->set("evaluation_time", format::variable((uint64_t)evaluation_time.milliseconds()));
+			target->set("verification_time", format::variable((uint64_t)verification_time.milliseconds()));
 			if (!proven)
-				term->jwrite_line(*data);
+				term->write_line(data.as_json(true));
 			VI_PANIC(proven, "wesolowki proof is not valid");
 			VI_PANIC(not_forged, "wesolowki proof is forged");
 		};
@@ -978,7 +978,7 @@ struct tests
 		prove_and_verify(baseline);
 		for (uint64_t i = 3; i < 7; i++)
 			prove_and_verify(baseline * (2ll << i));
-		term->jwrite_line(*data);
+		term->write_line(data.as_json(true));
 	}
 	/* cryptographic signatures */
 	static void cryptography_signatures()
@@ -1011,17 +1011,17 @@ struct tests
 		algorithm::signing::encode_public_key(recover_public_key, encoded_recover_public_key);
 		algorithm::signing::encode_address(recover_public_key_hash, encoded_recover_public_key_hash);
 
-		auto info = uptr<schema>(var::set::object());
-		info->set("mnemonic", var::string(mnemonic));
-		info->set("secret_key", var::string(encoded_secret_key));
-		info->set("public_key", var::string(encoded_public_key));
-		info->set("address", var::string(encoded_public_key_hash));
-		info->set("message", var::string(message));
-		info->set("message_hash", var::string(encoded_message_hash));
-		info->set("signature", var::string(encoded_message_signature));
-		info->set("recover_public_key", var::string(encoded_recover_public_key));
-		info->set("recover_address", var::string(encoded_recover_public_key_hash));
-		term->jwrite_line(*info);
+		auto info = format::tree::map();
+		info.set("mnemonic", format::variable(mnemonic));
+		info.set("secret_key", format::variable(encoded_secret_key));
+		info.set("public_key", format::variable(encoded_public_key));
+		info.set("address", format::variable(encoded_public_key_hash));
+		info.set("message", format::variable(message));
+		info.set("message_hash", format::variable(encoded_message_hash));
+		info.set("signature", format::variable(encoded_message_signature));
+		info.set("recover_public_key", format::variable(encoded_recover_public_key));
+		info.set("recover_address", format::variable(encoded_recover_public_key_hash));
+		term->write_line(info.as_json(true));
 
 		VI_PANIC(algorithm::signing::verify_mnemonic(mnemonic), "bad mnemonic phrase");
 		VI_PANIC(algorithm::signing::verify_secret_key(secret_key), "bad secret key");
@@ -1036,7 +1036,7 @@ struct tests
 	{
 		auto* term = console::get();
 		auto wallet = ledger::wallet::from_seed();
-		term->jwrite_line(*wallet.as_schema());
+		term->write_line(wallet.as_tree().as_json(true));
 
 		VI_PANIC(algorithm::signing::verify_secret_key(wallet.secret_key), "bad secret key");
 		VI_PANIC(algorithm::signing::verify_public_key(wallet.public_key), "bad public key");
@@ -1055,16 +1055,16 @@ struct tests
 		auto ciphertext2 = user2.seal_message(message_from_user2, user1.public_key, 654321).expect("failed to encrypt the message to user 1");
 		auto plaintext2 = user1.open_message(ciphertext2).expect("failed to decrypt the message from user 2");
 
-		uptr<schema> data = var::set::object();
-		auto* user1_wallet_data = data->set("user1_wallet", user1.as_schema().reset());
-		auto* user1_wallet_message_data = user1_wallet_data->set("message");
-		user1_wallet_message_data->set("ciphertext_to_user2_wallet", var::string(format::util::encode_0xhex(ciphertext1)));
-		user1_wallet_message_data->set("plaintext_from_user2_wallet", var::string(plaintext2));
-		auto* user2_wallet_data = data->set("user2_wallet", user2.as_schema().reset());
-		auto* user2_wallet_message_data = user2_wallet_data->set("message");
-		user2_wallet_message_data->set("ciphertext_to_user2_wallet", var::string(format::util::encode_0xhex(ciphertext2)));
-		user2_wallet_message_data->set("plaintext_from_user2_wallet", var::string(plaintext1));
-		term->jwrite_line(*data);
+		format::tree data = format::tree::map();
+		auto* user1_wallet_data = (format::tree*)data.set("user1_wallet", user1.as_tree());
+		auto* user1_wallet_message_data = user1_wallet_data->set("message", format::tree::map());
+		user1_wallet_message_data->set("ciphertext_to_user2_wallet", format::variable(format::util::encode_0xhex(ciphertext1)));
+		user1_wallet_message_data->set("plaintext_from_user2_wallet", format::variable(plaintext2));
+		auto* user2_wallet_data = (format::tree*)data.set("user2_wallet", user2.as_tree());
+		auto* user2_wallet_message_data = user2_wallet_data->set("message", format::tree::map());
+		user2_wallet_message_data->set("ciphertext_to_user2_wallet", format::variable(format::util::encode_0xhex(ciphertext2)));
+		user2_wallet_message_data->set("plaintext_from_user2_wallet", format::variable(plaintext1));
+		term->write_line(data.as_json(true));
 	}
 	/* transaction cryptography */
 	static void cryptography_transaction()
@@ -1086,17 +1086,17 @@ struct tests
 		auto tx_blob = tx.as_message().data;
 		auto tx_body = format::ro_stream(tx_blob);
 		auto tx_copy = uptr<ledger::transaction>(transactions::resolver::from_stream(tx_body));
-		auto tx_info = tx.as_schema();
+		auto tx_info = tx.as_tree();
 		algorithm::pubkeyhash_t recover_public_key_hash;
-		tx_info->set("raw_data", var::string(format::util::encode_0xhex(tx_blob)));
+		tx_info.set("raw_data", format::variable(format::util::encode_0xhex(tx_blob)));
 
 		auto stream = tx.as_message();
 		auto reader = stream.ro();
 		format::variables vars;
 		format::variables_util::deserialize_flat_from(reader, &vars);
-		tx_info->set("var_data", format::variables_util::serialize(vars));
-		tx_info->set("asset_id", algorithm::asset::serialize(algorithm::asset::id_of("ETH", "USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7")));
-		term->jwrite_line(*tx_info);
+		tx_info.set("var_data", format::variables_util::serialize(vars));
+		tx_info.set("asset_id", algorithm::asset::serialize(algorithm::asset::id_of("ETH", "USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7")));
+		term->write_line(tx_info.as_json(true));
 
 		VI_PANIC(tx.recover_hash(recover_public_key_hash) && wallet.public_key_hash == recover_public_key_hash, "failed to recover the public key hash from signature");
 		VI_PANIC(tx.verify(wallet.public_key), "failed to verify the signature");
@@ -1161,9 +1161,9 @@ struct tests
 		{
 			uint8_t seed[] = "123456";
 			auto wallet = *server->compute_wallet(asset, seed, sizeof(seed) - 1);
-			auto info = wallet.as_schema();
-			info->set("asset", algorithm::asset::serialize(asset));
-			term->jwrite_line(*info);
+			auto info = wallet.as_tree();
+			info.set("asset", algorithm::asset::serialize(asset));
+			term->write_line(info.as_json(true));
 		}
 	}
 	/* multi-party wallet keypair and signature generation */
@@ -1182,7 +1182,7 @@ struct tests
 		};
 		for (auto& [alg, alg_name] : algorithms)
 		{
-			auto mpc_data = uptr(var::set::object());
+			auto mpc_data = format::tree::map();
 			for (size_t i = 0; i < participants.size(); i++)
 			{
 				auto& share = participants[i];
@@ -1190,10 +1190,10 @@ struct tests
 				algorithm::hashing::hash512((uint8_t*)entropy.data(), entropy.size(), share.seed.data);
 				share.keypair = algorithm::composition::derive_keypair(alg, share.seed.data, share.seed.size()).expect("failed to derive a keypair share");
 
-				auto participant_data = mpc_data->set("participant" + to_string(i + 1), var::set::object());
-				participant_data->set("seed", var::string(format::util::encode_0xhex(share.seed.view())));
-				participant_data->set("secret_key", var::string(format::util::encode_0xhex(std::string_view((char*)share.keypair.secret_key.data(), share.keypair.secret_key.size()))));
-				participant_data->set("public_key", var::string(format::util::encode_0xhex(std::string_view((char*)share.keypair.public_key.data(), share.keypair.public_key.size()))));
+				auto participant_data = mpc_data.set("participant" + to_string(i + 1), format::tree::map());
+				participant_data->set("seed", format::variable(format::util::encode_0xhex(share.seed.view())));
+				participant_data->set("secret_key", format::variable(format::util::encode_0xhex(std::string_view((char*)share.keypair.secret_key.data(), share.keypair.secret_key.size()))));
+				participant_data->set("public_key", format::variable(format::util::encode_0xhex(std::string_view((char*)share.keypair.public_key.data(), share.keypair.public_key.size()))));
 			}
 
 			uint8_t message_hash[32];
@@ -1267,22 +1267,22 @@ struct tests
 			mpc_state->to_public_key(&mpc_public_key).expect("failed to extract public key from state");
 			mpc_state->to_signature(&mpc_signature).expect("failed to extract signature from state");
 
-			auto* aggregation_data = mpc_data->set("aggregation", var::set::object());
-			auto* aggregation_timeline_data = aggregation_data->set("timeline", var::set::array());
-			aggregation_data->set("public_key", var::string(format::util::encode_0xhex(std::string_view((char*)mpc_public_key.data(), mpc_public_key.size()))));
-			aggregation_data->set("signature", var::string(format::util::encode_0xhex(std::string_view((char*)mpc_signature.data(), mpc_signature.size()))));
-			aggregation_data->set("network_bytes_required", var::integer(mpc_state_bandwidth));
-			aggregation_data->set("network_communications", var::integer(mpc_steps * 2));
-			aggregation_data->set("step_time_ns", var::integer(mpc_steps > 0 ? mpc_state_time / mpc_steps : 0));
-			aggregation_data->set("total_time_ms", var::integer(mpc_state_time / 1'000'000));
+			auto* aggregation_data = mpc_data.set("aggregation", format::tree::map());
+			auto* aggregation_timeline_data = aggregation_data->set("timeline", format::tree::list());
 			for (auto& item : mpc_timeline)
-				aggregation_timeline_data->push(var::string(item));
+				aggregation_timeline_data->push(format::variable(item));
+			aggregation_data->set("public_key", format::variable(format::util::encode_0xhex(std::string_view((char*)mpc_public_key.data(), mpc_public_key.size()))));
+			aggregation_data->set("signature", format::variable(format::util::encode_0xhex(std::string_view((char*)mpc_signature.data(), mpc_signature.size()))));
+			aggregation_data->set("network_bytes_required", format::variable(mpc_state_bandwidth));
+			aggregation_data->set("network_communications", format::variable(mpc_steps * 2));
+			aggregation_data->set("step_time_ns", format::variable(mpc_steps > 0 ? mpc_state_time / mpc_steps : 0));
+			aggregation_data->set("total_time_ms", format::variable(mpc_state_time / 1'000'000));
 
-			mpc_data->set("message", var::string(message));
-			mpc_data->set("message_hash", var::string(format::util::encode_0xhex(std::string_view((char*)message_hash, sizeof(message_hash)))));
-			mpc_data->set("algorithm", var::string(alg_name));
-			mpc_data->set("participants", var::integer(participants.size()));
-			term->jwrite_line(*mpc_data);
+			mpc_data.set("message", format::variable(message));
+			mpc_data.set("message_hash", format::variable(format::util::encode_0xhex(std::string_view((char*)message_hash, sizeof(message_hash)))));
+			mpc_data.set("algorithm", format::variable(alg_name));
+			mpc_data.set("participants", format::variable(participants.size()));
+			term->write_line(mpc_data.as_json(true));
 		}
 	}
 	/* superchain transaction generation test */
@@ -1320,17 +1320,17 @@ struct tests
 		{
 			auto asset = algorithm::asset::id_of("BTC");
 			auto state = storages::superchainstate(asset);
-			auto options = var::set::array();
-			options->push(var::string("p2pk"));
-			options->push(var::string("p2sh_p2wpkh"));
-			options->push(var::string("p2pkh"));
-			options->push(var::string("p2wsh_p2pkh"));
-			options->push(var::string("p2wpkh"));
-			options->push(var::string("p2tr"));
+			auto options = format::tree::list();
+			options.push(format::variable("p2pk"));
+			options.push(format::variable("p2sh_p2wpkh"));
+			options.push(format::variable("p2pkh"));
+			options.push(format::variable("p2wsh_p2pkh"));
+			options.push(format::variable("p2wpkh"));
+			options.push(format::variable("p2tr"));
 			server->add_specifications(asset, options);
 
 			auto wallet = create_wallet(asset);
-			server->add_specifications(asset, nullptr);
+			server->add_specifications(asset, format::tree());
 
 			auto input_p2pkh_hash = codec::hex_decode("0x57e30b41a6d984cdb763145f32ad9678a9b2bfd0267e12d5d0474e97f7d077d0");
 			superchain::coin_utxo input_p2pkh;
@@ -1677,7 +1677,8 @@ struct tests
 			for (size_t i = 0; i < protocol::now().policy.participation.min_per_account + 1; i++)
 				users.push_back(account_ref(ledger::wallet::from_seed(stringify::text("00000%i", (int)i)), 0));
 
-			uptr<schema> data = userdata ? nullptr : var::set::array();
+			format::tree results;
+			format::tree* data = userdata ? nullptr : &results;
 			TEST_BLOCK(&generators::setup_stage_1, "0xd61bee59131178ed1dd83feebb0440a4b68cfa5b26dab744b69cc3804bc00c77", 1);
 			TEST_BLOCK(std::bind(&generators::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 1, 0), "0xeab031314d8ee5164709ef28cea868770de9afafd7918098fed9ea3eeab962eb", 2);
 			TEST_BLOCK(&generators::route_stage_1, "0x804b9f9abe260985f98974d7a6ea2ac322bc8b38e7f3d3860b235e9a49fd6e9b", 3);
@@ -1702,7 +1703,7 @@ struct tests
 			if (userdata != nullptr)
 				*userdata = std::move(users);
 			else
-				console::get()->jwrite_line(*data);
+				console::get()->write_line(data->as_json(true));
 		});
 	}
 	/* blockchain containing some transaction types (non-zero balance accounts, valid regtest chain) */
@@ -1714,7 +1715,8 @@ struct tests
 			for (size_t i = 0; i < protocol::now().policy.participation.min_per_account; i++)
 				users.push_back(account_ref(ledger::wallet::from_seed(stringify::text("00000%i", (int)i)), 0));
 
-			uptr<schema> data = userdata ? nullptr : var::set::array();
+			format::tree results;
+			format::tree* data = userdata ? nullptr : &results;
 			TEST_BLOCK(&generators::setup_stage_0, "0x6655f98e14a6ac22116987372aee077af7d3900f4b505de16734412abeab6768", 1);
 			TEST_BLOCK(&generators::route_stage_0, "0xd4dc4053429e3ccdce973f34319606e08f584bd43e0678042cfad8e806c3d712", 2);
 			TEST_BLOCK(&generators::attestate_stage_0, "0x91fb5b9a083f52907ba2f9be3cf27f10bdda831c6b36d9d03a63b66386ea152d", 4);
@@ -1723,7 +1725,7 @@ struct tests
 			if (userdata != nullptr)
 				*userdata = std::move(users);
 			else
-				console::get()->jwrite_line(*data);
+				console::get()->write_line(data->as_json(true));
 		});
 	}
 	/* blockchain exclusively for testing bridges of specific networks (possibly non-zero balance accounts, valid regtest chain) */
@@ -1772,7 +1774,7 @@ struct tests
 			auto params = (superchain::relay_backend::chainparams*)server->get_chainparams(asset);
 			auto& options = server->get_options();
 			params->sync_latency = 0;
-			options.polling_frequency_ms = 3000;
+			options.polling_frequency = 3000;
 
 			std::mutex mutex;
 			std::condition_variable condition;
@@ -1892,7 +1894,7 @@ struct tests
 		VI_PANIC(!chain.get_checkpoint_block_number().or_else(0), "blockchain cannot be validated without re-executing entire blockchain");
 		
 		uint64_t current_number = 1;
-		uptr<schema> data = var::set::array();
+		format::tree data = format::tree::list();
 		auto parent_block = chain.get_block_header_by_number(current_number > 0 ? current_number - 1 : 0);
 		while (true)
 		{
@@ -1900,36 +1902,36 @@ struct tests
 			if (!next)
 				break;
 
-			auto* result = data->push(var::set::object());
+			auto* result = data.push(format::tree::map());
 			result->set("block_number", algorithm::encoding::serialize_uint256(next->number));
-			result->set("block_hash", var::string(algorithm::encoding::encode_0xhex256(next->as_hash())));
+			result->set("block_hash", format::variable(algorithm::encoding::encode_0xhex256(next->as_hash())));
 
 			ledger::block_evaluation evaluation;
 			auto validation = next->validate(parent_block.address(), &evaluation);
 			if (!validation)
 			{
-				result->set("status", var::string("block validation test failed"));
-				result->set("detail", var::string(validation.error().message()));
-				term->jwrite_line(*data);
+				result->set("status", format::variable("block validation test failed"));
+				result->set("detail", format::variable(validation.error().message()));
+				term->write_line(data.as_json(true));
 				VI_PANIC(false, "block verification failed");
 			}
 
 			auto proof = next->as_proof(parent_block.address(), &evaluation.state);
 			if (next->transaction_root != proof.transaction_tree.root())
 			{
-				term->jwrite_line(*data);
+				term->write_line(data.as_json(true));
 				VI_PANIC(false, "block verification failed - transaction merkle root deviation");
 			}
 
 			if (next->receipt_root != proof.receipt_tree.root())
 			{
-				term->jwrite_line(*data);
+				term->write_line(data.as_json(true));
 				VI_PANIC(false, "block verification failed - receipt merkle root deviation");
 			}
 
 			if (next->state_root != proof.state_tree.root())
 			{
-				term->jwrite_line(*data);
+				term->write_line(data.as_json(true));
 				VI_PANIC(false, "block verification failed - state merkle root deviation");
 			}
 
@@ -1937,16 +1939,16 @@ struct tests
 			{
 				if (!proof.has_transaction(tx.receipt.transaction_hash))
 				{
-					result->set("transaction_hash", var::string(algorithm::encoding::encode_0xhex256(tx.receipt.transaction_hash)));
-					result->set("status", var::string("transaction merkle test failed"));
-					term->jwrite_line(*data);
+					result->set("transaction_hash", format::variable(algorithm::encoding::encode_0xhex256(tx.receipt.transaction_hash)));
+					result->set("status", format::variable("transaction merkle test failed"));
+					term->write_line(data.as_json(true));
 					VI_PANIC(false, "block verification failed");
 				}
 				else if (!proof.has_receipt(tx.receipt.as_hash()))
 				{
-					result->set("transaction_hash", var::string(algorithm::encoding::encode_0xhex256(tx.receipt.transaction_hash)));
-					result->set("status", var::string("receipt merkle test failed"));
-					term->jwrite_line(*data);
+					result->set("transaction_hash", format::variable(algorithm::encoding::encode_0xhex256(tx.receipt.transaction_hash)));
+					result->set("status", format::variable("receipt merkle test failed"));
+					term->write_line(data.as_json(true));
 					VI_PANIC(false, "block verification failed");
 				}
 			}
@@ -1957,22 +1959,22 @@ struct tests
 				uint256_t hash = change.state->as_hash();
 				if (!proof.has_state(hash))
 				{
-					result->set("state_hash", var::string(algorithm::encoding::encode_0xhex256(hash)));
-					result->set("status", var::string("state merkle test failed"));
-					term->jwrite_line(*data);
+					result->set("state_hash", format::variable(algorithm::encoding::encode_0xhex256(hash)));
+					result->set("status", format::variable("state merkle test failed"));
+					term->write_line(data.as_json(true));
 					VI_PANIC(false, "block verification failed");
 				}
 			}
 
-			result->set("status", var::string("passed"));
+			result->set("status", format::variable("passed"));
 			parent_block = *next;
-			if (data->size() > 32)
+			if (data.childs().size() > 32)
 			{
-				term->jwrite_line(*data);
-				data->clear();
+				term->write_line(data.as_json(true));
+				data.childs().clear();
 			}
 		}
-		term->jwrite_line(*data);
+		term->write_line(data.as_json(true));
 	}
 	/* gas estimation */
 	static void blockchain_gas_estimation()
@@ -1994,14 +1996,14 @@ struct tests
 		transaction.allocate_participation_stake(decimal::zero());
 		VI_PANIC(transaction.sign(from, 1, decimal::zero()), "setup not signed");
 
-		uptr<schema> data = var::set::object();
-		data->set("setup_transaction_gas_limit", algorithm::encoding::serialize_uint256(transaction.gas_limit));
-		data->set("block_commitment_limit", algorithm::encoding::serialize_uint256(ledger::block::get_commitment_limit()));
-		data->set("block_transaction_limit", algorithm::encoding::serialize_uint256(ledger::block::get_transaction_limit()));
-		data->set("block_commitment_gas_limit", algorithm::encoding::serialize_uint256(ledger::block::get_commitment_gas_limit()));
-		data->set("block_transaction_gas_limit", algorithm::encoding::serialize_uint256(ledger::block::get_transaction_gas_limit()));
-		data->set("block_total_gas_limit", algorithm::encoding::serialize_uint256(ledger::block::get_total_gas_limit()));
-		term->jwrite_line(*data);
+		format::tree data = format::tree::map();
+		data.set("setup_transaction_gas_limit", algorithm::encoding::serialize_uint256(transaction.gas_limit));
+		data.set("block_commitment_limit", algorithm::encoding::serialize_uint256(ledger::block::get_commitment_limit()));
+		data.set("block_transaction_limit", algorithm::encoding::serialize_uint256(ledger::block::get_transaction_limit()));
+		data.set("block_commitment_gas_limit", algorithm::encoding::serialize_uint256(ledger::block::get_commitment_gas_limit()));
+		data.set("block_transaction_gas_limit", algorithm::encoding::serialize_uint256(ledger::block::get_transaction_gas_limit()));
+		data.set("block_total_gas_limit", algorithm::encoding::serialize_uint256(ledger::block::get_total_gas_limit()));
+		term->write_line(data.as_json(true));
 	}
 };
 
@@ -2029,9 +2031,7 @@ int main(int argc, char* argv[])
 
 			auto mempool = storages::mempoolstate();
 			mempool.apply_node(std::make_pair(node, wallet));
-
-			auto info = wallet.as_schema();
-			console::get()->jwrite_line(*info);
+			console::get()->write_line(wallet.as_tree().as_json(true));
 		}
 
 		consensus::server_node consensus_service;
@@ -2334,35 +2334,35 @@ int main(int argc, char* argv[])
 		queue->start(schedule::desc());
 
 		auto path = os::path::resolve(args.get("test-file"), *os::directory::get_working(), true).expect("must provide a \"test-file\" with command list");
-		auto list = uptr(*schema::from_json(*os::file::read_as_string(path)));
-		auto execute = [&](const std::string_view& url, schema* requests, const std::string_view& path, std::function<void(string&)>&& replacer) -> string
+		auto list = format::tree::from_json(*os::file::read_as_string(path));
+		auto execute = [&](const std::string_view& url, format::tree* requests, const std::string_view& path, std::function<void(string&)>&& replacer) -> string
 		{
-			if (!requests || requests->empty())
+			if (requests->childs().empty())
 				return string();
 
-			uptr<schema> request = requests->size() > 1 ? var::set::array() : var::set::object();
-			if (requests->size() > 1)
+			format::tree request = requests->childs().size() > 1 ? format::tree::list() : format::tree::map();
+			if (requests->childs().size() > 1)
 			{
 				size_t id = 0;
-				for (auto& subrequest : requests->get_childs())
+				for (auto& subrequest : requests->childs())
 				{
-					auto* data = request->push(var::set::object());
-					data->set("jsonrpc", var::string("2.0"));
-					data->set("method", var::string(subrequest->key));
-					data->set("params", subrequest->copy());
-					data->set("id", var::integer(id++));
+					auto* data = request.push(format::tree::map());
+					data->set("jsonrpc", format::variable("2.0"));
+					data->set("method", format::variable(subrequest.key));
+					data->set("params", subrequest);
+					data->set("id", format::variable(id++));
 				}
 			}
 			else
 			{
-				auto* subrequest = requests->get_childs().front();
-				request->set("jsonrpc", var::string("2.0"));
-				request->set("method", var::string(subrequest->key));
-				request->set("params", subrequest->copy());
-				request->set("id", var::integer(1));
+				auto& subrequest = requests->childs().front();
+				request.set("jsonrpc", format::variable("2.0"));
+				request.set("method", format::variable(subrequest.key));
+				request.set("params", subrequest);
+				request.set("id", format::variable((uint8_t)1));
 			}
 
-			auto escaped_request_content = schema::to_json(*request);
+			auto escaped_request_content = request.as_json();
 			if (replacer)
 				replacer(escaped_request_content);
 			stringify::replace(escaped_request_content, "\"", "\\\"");
@@ -2382,47 +2382,47 @@ int main(int argc, char* argv[])
 			auto response = uptr(schema::from_json(response_content).expect("parsing failed"));
 			return path.empty() ? response->value.get_blob() : response->fetch_var(path).get_blob();
 		};
-		for (auto& node : list->get_childs())
+		for (auto& node : list->childs())
 		{
-			auto& blockchain = node->key;
+			auto& blockchain = node.key;
 			if (blockchain.empty() || blockchain.front() == '#')
 				continue;
 
-			auto deposit_value = node->get_var("deposit_value").get_decimal();
-			auto bridge_fee = node->get_var("bridge_fee").get_decimal();
+			auto deposit_value = node.child_var("deposit_value").as_decimal();
+			auto bridge_fee = node.child_var("bridge_fee").as_decimal();
 			if (!deposit_value.is_positive())
 				deposit_value = 50;
 			if (!bridge_fee.is_positive())
 				bridge_fee = 0.5;
 
 			hash_map<string, string> urls;
-			auto url_bindings = node->get("url");
-			if (url_bindings != nullptr && !url_bindings->value.is(var_type::string))
+			auto url_bindings = node.child("url");
+			if (url_bindings != nullptr && !url_bindings->value.is_string())
 			{
-				for (auto& protocol : url_bindings->get_childs())
-					urls[protocol->key] = protocol->value.get_blob();
+				for (auto& protocol : url_bindings->childs())
+					urls[protocol.key] = protocol.value.as_blob();
 			}
 			else if (url_bindings != nullptr)
-				urls["auto"] = url_bindings->value.get_blob();
+				urls["auto"] = url_bindings->value.as_blob();
 
 			auto auto_url = urls.find("auto"), jrpc_url = urls.find("jrpc");
 			auto url = auto_url == urls.end() ? (jrpc_url == urls.end() ? string() : jrpc_url->second) : auto_url->second;
-			auto block_number = node->has("block_number") ? node->get_var("block_number").get_integer() : 1;
+			auto block_number = node.has("block_number") ? node.child_var("block_number").as_uint64() : 1;
 			tests::blockchain_integration_coverage(algorithm::asset::id_of(blockchain), urls, block_number, deposit_value, bridge_fee, [&]()
 			{
-				auto* account = node->get("account");
-				if (!account || !account->value.is(var_type::string))
-					return execute(url, node->fetch("account.0"), node->fetch_var("account.1").get_blob(), nullptr);
+				auto* account = node.child("account");
+				if (!account || !account->value.is_string())
+					return execute(url, (format::tree*)node.child("account.0"), node.child_var("account.1").as_blob(), nullptr);
 
-				return account->value.get_blob();
+				return account->value.as_blob();
 			}, [&](const std::string_view& from_account, bool confirmation)
 			{
-				auto* reward_block = node->get("block");
-				auto* confirmation_block = node->get("confirmation_block");
+				auto* reward_block = node.child("block");
+				auto* confirmation_block = node.child("confirmation_block");
 				auto* block = confirmation ? (confirmation_block ? confirmation_block : reward_block) : reward_block;
-				if (!block || !block->value.is(var_type::string) || block->value.get_blob() != "#prompt")
+				if (!block || !block->value.is_string() || block->value.as_blob() != "#prompt")
 				{
-					execute(url, block, std::string_view(), [&](string& content)
+					execute(url, (format::tree*)block, std::string_view(), [&](string& content)
 					{
 						stringify::replace(content, "$from", from_account);
 					});
@@ -2434,12 +2434,12 @@ int main(int argc, char* argv[])
 				}
 			}, [&](const std::string_view& from_account, const std::string_view& to_account, const decimal& value)
 			{
-				auto* transaction = node->get("transaction");
+				auto* transaction = node.child("transaction");
 				auto eth_chain = superchain::server_node::get()->get_chain(algorithm::asset::id_of("ETH"));
 				auto eth_value = "0x" + eth_chain->to_baseline_value(value).to_string(16);
-				if (!transaction || !transaction->value.is(var_type::string) || transaction->value.get_blob() != "#prompt")
+				if (!transaction || !transaction->value.is_string() || transaction->value.as_blob() != "#prompt")
 				{
-					execute(url, transaction, std::string_view(), [&](string& content)
+					execute(url, (format::tree*)transaction, std::string_view(), [&](string& content)
 					{
 						stringify::replace(content, "$from", from_account);
 						stringify::replace(content, "$to", to_account);

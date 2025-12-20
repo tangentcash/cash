@@ -66,5 +66,6 @@ add_subdirectory(${VI_DIRECTORY} vitex)
 target_link_libraries(tangentcash PRIVATE vitex)
 target_include_directories(tangentcash PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/deps/vitex/deps/angelscript/sdk/angelscript/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/deps/vitex/deps/angelscript/sdk/angelscript/source)
+    ${CMAKE_CURRENT_SOURCE_DIR}/deps/vitex/deps/angelscript/sdk/angelscript/source
+    ${CMAKE_CURRENT_SOURCE_DIR}/deps/vitex/deps/rapidjson/include)
 include(deps/externals.cmake)

@@ -44,12 +44,12 @@ namespace tangent
 
 			return true;
 		}
-		uptr<schema> wallet_link::as_schema() const
+		format::tree wallet_link::as_tree() const
 		{
-			schema* data = var::set::object();
-			data->set("owner", algorithm::signing::serialize_address(owner));
-			data->set("public_key", public_key.empty() ? var::null() : var::string(public_key));
-			data->set("address", address.empty() ? var::null() : var::string(address));
+			format::tree data;
+			data.set("owner", algorithm::signing::serialize_address(owner));
+			data.set("public_key", public_key.empty() ? format::variable() : format::variable(public_key));
+			data.set("address", address.empty() ? format::variable() : format::variable(address));
 			return data;
 		}
 		uint32_t wallet_link::as_type() const
@@ -341,35 +341,35 @@ namespace tangent
 		{
 			return is_account() ? algorithm::asset::id_of_handle(transaction_id) : base_asset;
 		}
-		uptr<schema> coin_utxo::as_schema() const
+		format::tree coin_utxo::as_tree() const
 		{
 			bool account = is_account();
-			schema* data = var::set::object();
-			data->set("link", link.as_schema().reset());
+			format::tree data;
+			data.set("link", link.as_tree());
 			if (!account)
 			{
-				data->set("transaction_id", var::string(transaction_id));
-				data->set("index", var::integer(index));
+				data.set("transaction_id", format::variable(transaction_id));
+				data.set("index", format::variable(index));
 			}
 			else
-				data->set("asset", algorithm::asset::serialize(get_asset(0)));
-			data->set("value", var::decimal(value));
-			data->set("type", var::string(is_account() ? "account" : "utxo"));
-			auto* tokens_data = data->set("tokens", var::set::array());
+				data.set("asset", algorithm::asset::serialize(get_asset(0)));
+			data.set("value", format::variable(value));
+			data.set("type", format::variable(is_account() ? "account" : "utxo"));
+			auto* tokens_data = data.set("tokens", format::tree());
 			for (auto& [hash, item] : tokens)
 			{
-				auto* token_data = tokens_data->push(var::set::object());
+				auto* token_data = tokens_data->push(format::tree());
 				if (!item.is_account())
 				{
-					token_data->set("contract_address", var::string(item.contract_address));
-					token_data->set("symbol", var::string(item.symbol));
-					token_data->set("value", var::decimal(item.value));
-					token_data->set("decimals", var::integer(item.decimals));
+					token_data->set("contract_address", format::variable(item.contract_address));
+					token_data->set("symbol", format::variable(item.symbol));
+					token_data->set("value", format::variable(item.value));
+					token_data->set("decimals", format::variable(item.decimals));
 				}
 				else
 				{
 					token_data->set("asset", algorithm::asset::serialize(item.get_asset(0)));
-					token_data->set("value", var::decimal(item.value));
+					token_data->set("value", format::variable(item.value));
 				}
 			}
 			return data;
@@ -505,17 +505,17 @@ namespace tangent
 		{
 			return algorithm::hashing::hash256i(transaction_id);
 		}
-		uptr<schema> computed_transaction::as_schema() const
+		format::tree computed_transaction::as_tree() const
 		{
-			schema* data = var::set::object();
-			data->set("transaction_id", var::string(transaction_id));
-			data->set("block_id", algorithm::encoding::serialize_uint256(block_id));
-			schema* input_data = data->set("inputs", var::array());
+			format::tree data;
+			data.set("transaction_id", format::variable(transaction_id));
+			data.set("block_id", algorithm::encoding::serialize_uint256(block_id));
+			auto* input_data = data.set("inputs", format::tree());
 			for (auto& [hash, input] : inputs)
-				input_data->push(input.as_schema().reset());
-			schema* output_data = data->set("outputs", var::array());
+				input_data->push(input.as_tree());
+			auto* output_data = data.set("outputs", format::tree());
 			for (auto& [hash, output] : outputs)
-				output_data->push(output.as_schema().reset());
+				output_data->push(output.as_tree());
 			return data;
 		}
 		uint32_t computed_transaction::as_type() const
@@ -686,7 +686,7 @@ namespace tangent
 
 			return status::requires_finalization;
 		}
-		uptr<schema> prepared_transaction::as_schema() const
+		format::tree prepared_transaction::as_tree() const
 		{
 			std::string_view status;
 			switch (as_status())
@@ -705,39 +705,39 @@ namespace tangent
 					break;
 			}
 
-			schema* data = var::set::object();
-			schema* input_data = data->set("inputs", var::array());
+			format::tree data;
+			auto* input_data = data.set("inputs", format::tree());
 			for (auto& input : inputs)
 			{
-				auto* signer = input_data->push(var::set::object());
-				signer->set("utxo", input.utxo.as_schema().reset());
+				auto* signer = input_data->push(format::tree());
+				signer->set("utxo", input.utxo.as_tree());
 				switch (input.alg)
 				{
 					case algorithm::composition::type::ed25519:
-						signer->set("type", var::string("ed25519"));
+						signer->set("type", format::variable("ed25519"));
 						break;
 					case algorithm::composition::type::ed25519_clsag:
-						signer->set("type", var::string("ed25519_clsag"));
+						signer->set("type", format::variable("ed25519_clsag"));
 						break;
 					case algorithm::composition::type::secp256k1:
-						signer->set("type", var::string("secp256k1"));
+						signer->set("type", format::variable("secp256k1"));
 						break;
 					case algorithm::composition::type::secp256k1_schnorr:
-						signer->set("type", var::string("secp256k1_schnorr"));
+						signer->set("type", format::variable("secp256k1_schnorr"));
 						break;
 					default:
-						signer->set("type", var::null());
+						signer->set("type", format::variable());
 						break;
 				}
-				signer->set("public_key", input.public_key.empty() ? var::null() : var::string(format::util::encode_0xhex(std::string_view((char*)input.public_key.data(), input.public_key.size()))));
-				signer->set("signature", input.signature.empty() ? var::null() : var::string(format::util::encode_0xhex(std::string_view((char*)input.signature.data(), input.signature.size()))));
-				signer->set("message", var::string(format::util::encode_0xhex(std::string_view((char*)input.message.data(), input.message.size()))));
+				signer->set("public_key", input.public_key.empty() ? format::variable() : format::variable(format::util::encode_0xhex(std::string_view((char*)input.public_key.data(), input.public_key.size()))));
+				signer->set("signature", input.signature.empty() ? format::variable() : format::variable(format::util::encode_0xhex(std::string_view((char*)input.signature.data(), input.signature.size()))));
+				signer->set("message", format::variable(format::util::encode_0xhex(std::string_view((char*)input.message.data(), input.message.size()))));
 			}
-			schema* output_data = data->set("outputs", var::array());
+			auto* output_data = data.set("outputs", format::tree());
 			for (auto& output : outputs)
-				output_data->push(output.as_schema().reset());
-			data->set("abi", format::variables_util::serialize(abi));
-			data->set("status", var::string(status));
+				output_data->push(output.as_tree());
+			data.set("abi", format::variables_util::serialize(abi));
+			data.set("status", format::variable(status));
 			return data;
 		}
 		uint32_t prepared_transaction::as_type() const
@@ -803,14 +803,14 @@ namespace tangent
 				computed.inputs[input.utxo.as_hash()] = input.utxo;
 			return computed;
 		}
-		uptr<schema> finalized_transaction::as_schema() const
+		format::tree finalized_transaction::as_tree() const
 		{
-			schema* data = var::set::object();
-			data->set("prepared", prepared.as_schema().reset());
-			data->set("computed", as_computed().as_schema().reset());
-			data->set("calldata", var::string(calldata));
-			data->set("hashdata", var::string(hashdata));
-			data->set("locktime", algorithm::encoding::serialize_uint256(locktime));
+			format::tree data;
+			data.set("prepared", prepared.as_tree());
+			data.set("computed", as_computed().as_tree());
+			data.set("calldata", format::variable(calldata));
+			data.set("hashdata", format::variable(hashdata));
+			data.set("locktime", algorithm::encoding::serialize_uint256(locktime));
 			return data;
 		}
 		uint32_t finalized_transaction::as_type() const
@@ -901,17 +901,21 @@ namespace tangent
 				set_checkpoint_from_block(block_height > 1 ? block_height - 1 : block_height);
 			state.current_block_height = block_height;
 		}
-		uint64_t chain_supervisor_options::get_next_block_height()
+		uint64_t chain_supervisor_options::get_next_block_height(uint64_t block_count)
 		{
-			return state.latest_block_height++;
+			block_count = std::max<uint64_t>(1, block_count);
+			uint64_t result = (state.latest_block_height / block_count) * block_count;
+			state.latest_block_height = result + block_count;
+			return result;
 		}
 		uint64_t chain_supervisor_options::get_time_awaited() const
 		{
 			return state.latest_time_awaited;
 		}
-		bool chain_supervisor_options::has_next_block_height() const
+		bool chain_supervisor_options::has_next_block_height(uint64_t block_count) const
 		{
-			return state.current_block_height >= state.latest_block_height;
+			block_count = std::max<uint64_t>(1, block_count) - 1;
+			return state.current_block_height >= state.latest_block_height + block_count;
 		}
 		bool chain_supervisor_options::has_current_block_height() const
 		{
@@ -923,7 +927,7 @@ namespace tangent
 		}
 		bool chain_supervisor_options::will_wait_for_transactions() const
 		{
-			return has_latest_block_height() && !has_next_block_height();
+			return has_latest_block_height() && !has_next_block_height(0);
 		}
 		double chain_supervisor_options::get_checkpoint_percentage() const
 		{
@@ -972,109 +976,87 @@ namespace tangent
 		{
 			cancel_activities();
 		}
-		expects_promise_rt<schema*> server_relay::execute_rpc(const algorithm::asset_id& asset, error_reporter& reporter, const std::string_view& method, const schema_list& args, cache_policy cache, const std::string_view& path)
+		expects_promise_rt<format::tree> server_relay::execute_rpc(const algorithm::asset_id& asset, error_reporter& reporter, const std::string_view& method, const format::tree& args, cache_policy cache, const std::string_view& path, bool multi)
 		{
 			if (reporter.type.empty())
 				reporter.type = "jrpc";
 			if (reporter.method.empty())
 				reporter.method = method;
 
-			schema* params = var::set::array();
-			params->reserve(args.size());
-			for (auto& item : args)
-				params->push(item->copy());
-
-			uptr<schema> setup = var::set::object();
-			setup->set("jsonrpc", var::string("2.0"));
-			setup->set("id", var::string(get_cache_type(cache)));
-			setup->set("method", var::string(method));
-			setup->set("params", params);
-
-			auto response_status = coawait(execute_rest(asset, reporter, "POST", path, *setup, cache));
-			if (!response_status)
-				coreturn expects_rt<schema*>(std::move(response_status.error()));
-
-			uptr<schema> response = *response_status;
-			if (response->has("error.code"))
+			auto priority = get_cache_type(cache);
+			auto setup = format::tree();
+			setup.set("jsonrpc", format::variable("2.0"));
+			setup.set("method", format::variable(method));
+			if (multi && args.fields)
 			{
-				string code = response->fetch_var("error.code").get_blob();
-				string description = response->has("error.message") ? response->fetch_var("error.message").get_blob() : "no error description";
-				coreturn expects_rt<schema*>(remote_exception(generate_error_message(expects_system<http::response_frame>(system_exception()), reporter, code, description)));
+				auto multi_setup = format::tree::list();
+				for (auto& request : *args.fields)
+				{
+					auto* sub_setup = multi_setup.push(setup);
+					sub_setup->set("params", request);
+					sub_setup->set("id", format::variable(string(priority) + to_string(multi_setup.childs().size())));
+				}
+				setup = std::move(multi_setup);
 			}
-			else if (response->has("result.error_code"))
+			else
 			{
-				string code = response->fetch_var("result.error_code").get_blob();
-				string description = response->has("result.error_message") ? response->fetch_var("result.error_message").get_blob() : "no error description";
-				coreturn expects_rt<schema*>(remote_exception(generate_error_message(expects_system<http::response_frame>(system_exception()), reporter, code, description)));
+				setup.set("params", args);
+				setup.set("id", format::variable(priority));
 			}
 
-			schema* result = response->get("result");
-			if (!result)
-			{
-				string description = response->value.get_type() == var_type::string ? response->value.get_blob() : "no error description";
-				coreturn expects_rt<schema*>(remote_exception(generate_error_message(expects_system<http::response_frame>(system_exception()), reporter, "null", description)));
-			}
+			auto response = coawait(execute_rest(asset, reporter, "POST", path, setup, cache));
+			if (!response)
+				coreturn expects_rt<format::tree>(std::move(response.error()));
 
-			result->unlink();
-			coreturn expects_rt<schema*>(result);
+			auto to_response = [&reporter](format::tree& response) -> expects_rt<format::tree>
+			{
+				if (response.has("error.code"))
+				{
+					string code = response.child_var("error.code").as_blob();
+					string description = response.has("error.message") ? response.child_var("error.message").as_blob() : "no error description";
+					return expects_rt<format::tree>(remote_exception(generate_error_message(expects_system<http::response_frame>(system_exception()), reporter, code, description)));
+				}
+				else if (response.has("result.error_code"))
+				{
+					string code = response.child_var("result.error_code").as_blob();
+					string description = response.has("result.error_message") ? response.child_var("result.error_message").as_blob() : "no error description";
+					return expects_rt<format::tree>(remote_exception(generate_error_message(expects_system<http::response_frame>(system_exception()), reporter, code, description)));
+				}
+
+				auto* result = (format::tree*)response.child("result");
+				if (!result)
+				{
+					string description = response.value.is_string() ? response.value.as_blob() : "no error description";
+					return expects_rt<format::tree>(remote_exception(generate_error_message(expects_system<http::response_frame>(system_exception()), reporter, "null", description)));
+				}
+
+				return expects_rt<format::tree>(std::move(*result));
+			};
+			if (!multi)
+				coreturn to_response(*response);
+
+			format::tree results;
+			for (auto& subresponse : response->childs())
+			{
+				auto subresult = to_response(subresponse);
+				if (!subresult)
+					coreturn subresult;
+
+				results.push(std::move(*subresult));
+			}
+			coreturn expects_rt<format::tree>(std::move(results));
 		}
-		expects_promise_rt<schema*> server_relay::execute_rpc3(const algorithm::asset_id& asset, error_reporter& reporter, const std::string_view& method, const schema_args& args, cache_policy cache, const std::string_view& path)
-		{
-			if (reporter.type.empty())
-				reporter.type = "jrpc";
-			if (reporter.method.empty())
-				reporter.method = method;
-
-			schema* params = var::set::object();
-			params->reserve(args.size());
-			for (auto& item : args)
-				params->set(item.first, item.second->copy());
-
-			uptr<schema> setup = var::set::object();
-			setup->set("jsonrpc", var::string("2.0"));
-			setup->set("id", var::string(get_cache_type(cache)));
-			setup->set("method", var::string(method));
-			setup->set("params", params);
-
-			auto response_status = coawait(execute_rest(asset, reporter, "POST", path, *setup, cache));
-			if (!response_status)
-				coreturn expects_rt<schema*>(std::move(response_status.error()));
-
-			uptr<schema> response = *response_status;
-			if (response->has("error.code"))
-			{
-				string code = response->fetch_var("error.code").get_blob();
-				string description = response->has("error.message") ? response->fetch_var("error.message").get_blob() : "no error description";
-				coreturn expects_rt<schema*>(remote_exception(generate_error_message(expects_system<http::response_frame>(system_exception()), reporter, code, description)));
-			}
-			else if (response->has("result.error_code"))
-			{
-				string code = response->fetch_var("result.error_code").get_blob();
-				string description = response->has("result.error_message") ? response->fetch_var("result.error_message").get_blob() : "no error description";
-				coreturn expects_rt<schema*>(remote_exception(generate_error_message(expects_system<http::response_frame>(system_exception()), reporter, code, description)));
-			}
-
-			schema* result = response->get("result");
-			if (!result)
-			{
-				string description = response->value.get_type() == var_type::string ? response->value.get_blob() : "no error description";
-				coreturn expects_rt<schema*>(remote_exception(generate_error_message(expects_system<http::response_frame>(system_exception()), reporter, "null", description)));
-			}
-
-			result->unlink();
-			coreturn expects_rt<schema*>(result);
-		}
-		expects_promise_rt<schema*> server_relay::execute_rest(const algorithm::asset_id& asset, error_reporter& reporter, const std::string_view& method, const std::string_view& path, schema* args, cache_policy cache)
+		expects_promise_rt<format::tree> server_relay::execute_rest(const algorithm::asset_id& asset, error_reporter& reporter, const std::string_view& method, const std::string_view& path, const format::tree& args, cache_policy cache)
 		{
 			if (reporter.type.empty())
 				reporter.type = "rest";
 			if (reporter.method.empty())
 				reporter.method = location(get_node_url(reporter.type, path)).path.substr(1);
 
-			string body = (args ? schema::to_json(args) : string());
+			string body = (args.is_none() ? string() : args.as_json());
 			coreturn coawait(execute_http(asset, reporter, method, path, "application/json", body, cache));
 		}
-		expects_promise_rt<schema*> server_relay::execute_http(const algorithm::asset_id& asset, error_reporter& reporter, const std::string_view& method, const std::string_view& path, const std::string_view& type, const std::string_view& body, cache_policy cache)
+		expects_promise_rt<format::tree> server_relay::execute_http(const algorithm::asset_id& asset, error_reporter& reporter, const std::string_view& method, const std::string_view& path, const std::string_view& type, const std::string_view& body, cache_policy cache)
 		{
 			if (reporter.type.empty())
 				reporter.type = "http";
@@ -1084,7 +1066,7 @@ namespace tangent
 				reporter.method = location(target_url).path.substr(1);
 
 			if (!allowed)
-				coreturn expects_rt<schema*>(remote_exception(generate_error_message(expects_system<http::response_frame>(system_exception()), reporter, "null", "system shutdown (cancelled)")));
+				coreturn expects_rt<format::tree>(remote_exception(generate_error_message(expects_system<http::response_frame>(system_exception()), reporter, "null", "system shutdown (cancelled)")));
 
 			if (path.empty() && body.empty())
 				cache = cache_policy::no_cache;
@@ -1096,7 +1078,7 @@ namespace tangent
 			{
 				auto data = server->load_cache(asset, cache, hash);
 				if (data)
-					coreturn expects_rt<schema*>(*data);
+					coreturn expects_rt<format::tree>(std::move(*data));
 			}
 
 			if (rps > 0.0 && cache != cache_policy::no_cache_no_throttling)
@@ -1107,9 +1089,9 @@ namespace tangent
 				const uint64_t cooldown = (uint64_t)(limit - timeout);
 				uint64_t retry_timeout = cooldown;
 				if (timeout < limit && !coawait(yield_for_cooldown(retry_timeout, protocol::now().user.superchain.relaying_timeout)))
-					coreturn expects_rt<schema*>(remote_exception::retry());
+					coreturn expects_rt<format::tree>(remote_exception::retry());
 				else if (!allowed)
-					coreturn expects_rt<schema*>(remote_exception::shutdown());
+					coreturn expects_rt<format::tree>(remote_exception::shutdown());
 				latest = (int64_t)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 			}
 
@@ -1132,38 +1114,33 @@ namespace tangent
 			{
 				++retry_responses;
 				if (cache == cache_policy::no_cache_no_throttling)
-					coreturn  response ? expects_rt<schema*>(remote_exception(generate_error_message(response, reporter, "null", "node has rejected the request"))) : expects_rt<schema*>(remote_exception::shutdown());
+					coreturn  response ? expects_rt<format::tree>(remote_exception(generate_error_message(response, reporter, "null", "node has rejected the request"))) : expects_rt<format::tree>(remote_exception::shutdown());
 				else if (retry_responses > 5)
-					coreturn response ? expects_rt<schema*>(remote_exception(generate_error_message(response, reporter, "null", "node has rejected the request too many times"))) : expects_rt<schema*>(remote_exception::shutdown());
+					coreturn response ? expects_rt<format::tree>(remote_exception(generate_error_message(response, reporter, "null", "node has rejected the request too many times"))) : expects_rt<format::tree>(remote_exception::shutdown());
 				else if (!coawait(yield_for_cooldown(retry_timeout, setup.timeout)))
-					coreturn response ? expects_rt<schema*>(remote_exception(generate_error_message(response, reporter, "null", "node has rejected the request after cooldown"))) : expects_rt<schema*>(remote_exception::shutdown());
+					coreturn response ? expects_rt<format::tree>(remote_exception(generate_error_message(response, reporter, "null", "node has rejected the request after cooldown"))) : expects_rt<format::tree>(remote_exception::shutdown());
 				else if (!allowed)
-					coreturn expects_rt<schema*>(remote_exception::shutdown());
+					coreturn expects_rt<format::tree>(remote_exception::shutdown());
 				goto retry;
 			}
 
-			uptr<schema> result;
+			format::tree result;
 			auto content_type = response->get_header("Content-Type");
 			if (stringify::starts_with(content_type, "application/json") || stringify::starts_with(content_type, "application/hal+json"))
 			{
-				auto data = response->content.get_json();
+				auto data = format::tree::from_json(std::string_view(response->content.data.data(), response->content.data.size()));
 				if (!data)
-					coreturn expects_rt<schema*>(remote_exception(generate_error_message(response, reporter, "null", "response decoding failed: " + data.error().message())));
+					coreturn expects_rt<format::tree>(remote_exception(generate_error_message(response, reporter, "null", "response decoding failed: " + data.error().message())));
 
-				result = *data;
+				result = std::move(*data);
 			}
-			else if (stringify::starts_with(content_type, "application/octet-stream"))
-				result = var::set::binary(response->content.get_text());
 			else
-				result = var::set::string(response->content.get_text());
+				result = format::variable::from(std::string_view(response->content.data.data(), response->content.data.size()));
 
 			if (cache != cache_policy::no_cache && cache != cache_policy::no_cache_no_throttling && (response->status_code < 400 || response->status_code == 404))
-			{
-				result->add_ref();
-				server->store_cache(asset, cache, hash, *result);
-			}
+				server->store_cache(asset, cache, hash, result);
 
-			coreturn expects_rt<schema*>(result.reset());
+			coreturn expects_rt<format::tree>(std::move(result));
 		}
 		promise<bool> server_relay::yield_for_cooldown(uint64_t& retry_timeout, uint64_t total_timeout_ms)
 		{
@@ -1189,8 +1166,8 @@ namespace tangent
 				coreturn promise<bool>(false);
 
 			promise<bool> future;
-			options->state.latest_time_awaited += options->polling_frequency_ms;
-			task_id timer_id = enqueue_activity(future, schedule::get()->set_timeout(options->polling_frequency_ms, [future]() mutable
+			options->state.latest_time_awaited += options->polling_frequency;
+			task_id timer_id = enqueue_activity(future, schedule::get()->set_timeout(options->polling_frequency, [future]() mutable
 			{
 				if (future.is_pending())
 					future.set(true);
@@ -1325,66 +1302,65 @@ namespace tangent
 		relay_backend::~relay_backend() noexcept
 		{
 		}
-		expects_promise_rt<schema*> relay_backend::execute_rpc(const std::string_view& method, schema_list&& args, cache_policy cache, const std::string_view& path)
+		expects_promise_rt<format::tree> relay_backend::execute_rpc(const std::string_view& method, const format::tree& args, cache_policy cache, const std::string_view& path)
 		{
 			auto* nodes = superchain::server_node::get()->get_nodes(native_asset);
 			if (!nodes || nodes->empty())
-				coreturn expects_rt<schema*>(remote_exception("node not found"));
+				coreturn expects_rt<format::tree>(remote_exception("node not found"));
 
 			while (true)
 			{
 				server_relay::error_reporter reporter;
 				auto* node = *nodes->at((++round_robin_index) % nodes->size());
-				auto result = coawait(node->execute_rpc(native_asset, reporter, method, args, cache, path));
+				auto result = coawait(node->execute_rpc(native_asset, reporter, method, args, cache, path, false));
 				if (interact) interact(node);
 				if (result || !result.error().is_retry())
 					coreturn result;
 			}
 
-			coreturn expects_rt<schema*>(remote_exception("node not found"));
+			coreturn expects_rt<format::tree>(remote_exception("node not found"));
 		}
-		expects_promise_rt<schema*> relay_backend::execute_rpc3(const std::string_view& method, schema_args&& args, cache_policy cache, const std::string_view& path)
+		expects_promise_rt<format::tree> relay_backend::execute_rpc_multi(const std::string_view& method, const format::tree& args, cache_policy cache, const std::string_view& path)
 		{
 			auto* nodes = superchain::server_node::get()->get_nodes(native_asset);
 			if (!nodes || nodes->empty())
-				coreturn expects_rt<schema*>(remote_exception("node not found"));
+				coreturn expects_rt<format::tree>(remote_exception("node not found"));
 
 			while (true)
 			{
 				server_relay::error_reporter reporter;
 				auto* node = *nodes->at((++round_robin_index) % nodes->size());
-				auto result = coawait(node->execute_rpc3(native_asset, reporter, method, args, cache, path));
+				auto result = coawait(node->execute_rpc(native_asset, reporter, method, args, cache, path, true));
 				if (interact) interact(node);
 				if (result || !result.error().is_retry())
 					coreturn result;
 			}
 
-			coreturn expects_rt<schema*>(remote_exception("node not found"));
+			coreturn expects_rt<format::tree>(remote_exception("node not found"));
 		}
-		expects_promise_rt<schema*> relay_backend::execute_rest(const std::string_view& method, const std::string_view& path, schema* args, cache_policy cache)
+		expects_promise_rt<format::tree> relay_backend::execute_rest(const std::string_view& method, const std::string_view& path, const format::tree& args, cache_policy cache)
 		{
-			uptr<schema> body = args;
 			auto* nodes = superchain::server_node::get()->get_nodes(native_asset);
 			if (!nodes || nodes->empty())
-				coreturn expects_rt<schema*>(remote_exception("node not found"));
+				coreturn expects_rt<format::tree>(remote_exception("node not found"));
 
 			while (true)
 			{
 				server_relay::error_reporter reporter;
 				auto* node = *nodes->at((++round_robin_index) % nodes->size());
-				auto result = coawait(node->execute_rest(native_asset, reporter, method, path, *body, cache));
+				auto result = coawait(node->execute_rest(native_asset, reporter, method, path, args, cache));
 				if (interact) interact(node);
 				if (result || !result.error().is_retry())
 					coreturn result;
 			}
 
-			coreturn expects_rt<schema*>(remote_exception("node not found"));
+			coreturn expects_rt<format::tree>(remote_exception("node not found"));
 		}
-		expects_promise_rt<schema*> relay_backend::execute_http(const std::string_view& method, const std::string_view& path, const std::string_view& type, const std::string_view& body, cache_policy cache)
+		expects_promise_rt<format::tree> relay_backend::execute_http(const std::string_view& method, const std::string_view& path, const std::string_view& type, const std::string_view& body, cache_policy cache)
 		{
 			auto* nodes = superchain::server_node::get()->get_nodes(native_asset);
 			if (!nodes || nodes->empty())
-				coreturn expects_rt<schema*>(remote_exception("node not found"));
+				coreturn expects_rt<format::tree>(remote_exception("node not found"));
 
 			while (true)
 			{
@@ -1396,7 +1372,7 @@ namespace tangent
 					coreturn result;
 			}
 
-			coreturn expects_rt<schema*>(remote_exception("node not found"));
+			coreturn expects_rt<format::tree>(remote_exception("node not found"));
 		}
 		expects_lr<algorithm::composition::cpubkey_t> relay_backend::to_composite_public_key(const std::string_view& public_key)
 		{

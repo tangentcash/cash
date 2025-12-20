@@ -16,7 +16,7 @@ namespace tangent
 			struct trx_transaction
 			{
 				string raw_transaction_id;
-				uptr<schema> transaction_data;
+				format::tree transaction_data;
 			};
 
 			static void pb_varint(format::wo_stream& message, uint64_t value)
@@ -117,37 +117,39 @@ namespace tangent
 
 				string& raw_transaction_data = tx_message.data;
 				string raw_transaction_id = *crypto::hash(digests::sha256(), raw_transaction_data);
-				uptr<schema> transaction_object = var::set::object();
-				transaction_object->set("visible", var::boolean(false));
-				transaction_object->set("txID", var::string(codec::hex_encode(raw_transaction_id)));
-				transaction_object->set("raw_data_hex", var::string(codec::hex_encode(raw_transaction_data)));
+				format::tree transaction_object = format::tree::map();
+				transaction_object.set("visible", format::variable(false));
+				transaction_object.set("txID", format::variable(codec::hex_encode(raw_transaction_id)));
+				transaction_object.set("raw_data_hex", format::variable(codec::hex_encode(raw_transaction_data)));
 
-				schema* raw_data_object = transaction_object->set("raw_data", var::set::object());
-				schema* contract_object = raw_data_object->set("contract", var::set::array())->push(var::set::object());
-				schema* parameter_object = contract_object->set("parameter", var::set::object());
-				schema* value_object = parameter_object->set("value", var::set::object());
-				parameter_object->set("type_url", var::string(contract_type_url));
-				contract_object->set("type", var::string(contract_type_name));
+				auto* raw_data_object = transaction_object.set("raw_data", format::tree::map());
+				auto* contract_object = raw_data_object->set("contract", format::tree::list())->push(format::tree::map());
+				contract_object->childs().reserve(2);
+				auto* parameter_object = contract_object->set("parameter", format::tree::map());
+				parameter_object->childs().reserve(2);
+				auto* value_object = parameter_object->set("value", format::tree::map());
+				parameter_object->set("type_url", format::variable(contract_type_url));
+				contract_object->set("type", format::variable(contract_type_name));
 
 				if (!contract_address.empty())
 				{
-					value_object->set("data", var::string(codec::hex_encode(contract_abi)));
-					value_object->set("owner_address", var::string(from_address));
-					value_object->set("contract_address", var::string(contract_address));
+					value_object->set("data", format::variable(codec::hex_encode(contract_abi)));
+					value_object->set("owner_address", format::variable(from_address));
+					value_object->set("contract_address", format::variable(contract_address));
 				}
 				else
 				{
-					value_object->set("to_address", var::string(to_address));
-					value_object->set("owner_address", var::string(from_address));
-					value_object->set("amount", var::integer((uint64_t)value));
+					value_object->set("to_address", format::variable(to_address));
+					value_object->set("owner_address", format::variable(from_address));
+					value_object->set("amount", format::variable(value));
 				}
 
-				raw_data_object->set("ref_block_bytes", var::string(block_header.ref_block_bytes));
-				raw_data_object->set("ref_block_hash", var::string(block_header.ref_block_hash));
-				raw_data_object->set("expiration", var::integer(block_header.expiration));
-				raw_data_object->set("timestamp", var::integer(block_header.timestamp));
+				raw_data_object->set("ref_block_bytes", format::variable(block_header.ref_block_bytes));
+				raw_data_object->set("ref_block_hash", format::variable(block_header.ref_block_hash));
+				raw_data_object->set("expiration", format::variable((uint64_t)block_header.expiration));
+				raw_data_object->set("timestamp", format::variable((uint64_t)block_header.timestamp));
 				if (fee_limit > 0)
-					raw_data_object->set("fee_limit", var::integer(fee_limit));
+					raw_data_object->set("fee_limit", format::variable(fee_limit));
 
 				trx_transaction result;
 				result.raw_transaction_id = std::move(raw_transaction_id);
@@ -181,28 +183,26 @@ namespace tangent
 			}
 			expects_promise_rt<tron::trx_tx_block_header_info> tron::get_block_header_for_tx()
 			{
-				schema* args = var::set::object();
-				args->set("detail", var::boolean(false));
+				auto args = format::tree::map();
+				args.set("detail", format::variable(false));
 
 				auto block_data = coawait(execute_rest("POST", trx_nd_call::get_block(), args, cache_policy::no_cache));
 				if (!block_data)
 					coreturn expects_rt<tron::trx_tx_block_header_info>(std::move(block_data.error()));
 
-				auto ref_block_bytes = uint128_t(block_data->fetch_var("block_header.raw_data.number").get_integer()).to_string(16);
+				auto ref_block_bytes = block_data->child_var("block_header.raw_data.number").as_uint128().to_string(16);
 				while (ref_block_bytes.size() < 4)
 					ref_block_bytes.insert(ref_block_bytes.begin(), '0');
 
-				auto ref_block_hash = block_data->get_var("blockID").get_blob();
+				auto ref_block_hash = block_data->child_var("blockID").as_blob();
 				if (ref_block_hash.size() < 32)
 					coreturn expects_rt<tron::trx_tx_block_header_info>(remote_exception("invalid ref block hash"));
 
 				trx_tx_block_header_info info;
 				info.ref_block_bytes = ref_block_bytes.substr(ref_block_bytes.size() - 4);
 				info.ref_block_hash = ref_block_hash.substr(16, 16);
-				info.timestamp = block_data->fetch_var("block_header.raw_data.timestamp").get_integer();
+				info.timestamp = block_data->child_var("block_header.raw_data.timestamp").as_uint64();
 				info.expiration = info.timestamp + 60 * 1000;
-				memory::release(*block_data);
-
 				coreturn expects_rt<tron::trx_tx_block_header_info>(std::move(info));
 			}
 			expects_lr<void> tron::verify_node_compatibility(server_relay* node)
@@ -215,17 +215,17 @@ namespace tangent
 
 				return expectation::met;
 			}
-			expects_promise_rt<computed_transaction> tron::link_transaction(uint64_t block_height, const std::string_view& block_hash, schema* transaction_data)
+			expects_promise_rt<computed_transaction> tron::link_transaction(uint64_t block_height, const std::string_view& block_hash, format::tree& transaction_data)
 			{
 				auto* chain = get_chain();
-				string data = transaction_data->get_var("input").get_blob();
+				string data = transaction_data.child_var("input").as_blob();
 				if (stringify::starts_with(data, chain->bech32_hrp))
 					data.erase(0, strlen(chain->bech32_hrp));
 
-				string tx_hash = transaction_data->get_var("hash").get_blob();
-				string from = encode_eth_address(transaction_data->get_var("from").get_blob());
-				string to = encode_eth_address(transaction_data->get_var("to").get_blob());
-				decimal base_value = to_eth(hex_to_uint256(transaction_data->get_var("value").get_blob()), netdata.divisibility);
+				string tx_hash = transaction_data.child_var("hash").as_blob();
+				string from = encode_eth_address(transaction_data.child_var("from").as_blob());
+				string to = encode_eth_address(transaction_data.child_var("to").as_blob());
+				decimal base_value = to_eth(hex_to_uint256(transaction_data.child_var("value").as_blob()), netdata.divisibility);
 
 				computed_transaction result;
 				result.transaction_id = tx_hash;
@@ -247,36 +247,33 @@ namespace tangent
 
 				if (!data.empty())
 				{
-					auto* logs = transaction_data->get("logs");
+					auto* logs = (format::tree*)transaction_data.child("logs");
 					if (!logs)
 					{
-						auto tx_receipt = coawait(get_transaction_receipt(transaction_data->get_var("hash").get_blob(), true));
+						auto tx_receipt = coawait(get_transaction_receipt(transaction_data.child_var("hash").as_blob(), true));
 						if (tx_receipt)
 						{
-							logs = tx_receipt->get("logs");
+							logs = (format::tree*)tx_receipt->child("logs");
 							if (logs != nullptr)
-							{
-								logs->unlink();
-								transaction_data->set("logs", logs);
-							}
-							transaction_data->set("receipt", *tx_receipt);
+								transaction_data.set("logs", std::move(*logs));
+							transaction_data.set("receipt", *tx_receipt);
 						}
 						else
-							transaction_data->set("receipt", var::set::null());
+							transaction_data.set("receipt", format::variable());
 					}
 
-					if (logs != nullptr && !logs->empty())
+					if (logs != nullptr && !logs->childs().empty())
 					{
-						for (auto& invocation : logs->get_childs())
+						for (auto& invocation : logs->childs())
 						{
-							auto* topics = invocation->get("topics");
-							if (topics && topics->size() == 3 && is_token_transfer(topics->get_var(0).get_blob()))
+							auto* topics = invocation.child("topics");
+							if (topics && topics->childs().size() == 3 && is_token_transfer(topics->child_var(0).as_blob()))
 							{
-								addresses.insert(encode_eth_address(normalize_topic_address(topics->get_var(1).get_blob())));
-								addresses.insert(encode_eth_address(normalize_topic_address(topics->get_var(2).get_blob())));
+								addresses.insert(encode_eth_address(normalize_topic_address(topics->child_var(1).as_blob())));
+								addresses.insert(encode_eth_address(normalize_topic_address(topics->child_var(2).as_blob())));
 							}
-							else if (topics && topics->size() == 2 && is_token_transfer(topics->get_var(0).get_blob()))
-								addresses.insert(encode_eth_address(topics->get_var(1).get_blob()));
+							else if (topics && topics->childs().size() == 2 && is_token_transfer(topics->child_var(0).as_blob()))
+								addresses.insert(encode_eth_address(topics->child_var(1).as_blob()));
 						}
 					}
 				}
@@ -287,30 +284,30 @@ namespace tangent
 
 				if (!data.empty())
 				{
-					auto* logs = transaction_data->get("logs");
-					if (logs != nullptr && !logs->empty())
+					auto* logs = transaction_data.child("logs");
+					if (logs != nullptr && !logs->childs().empty())
 					{
-						for (auto& invocation : logs->get_childs())
+						for (auto& invocation : logs->childs())
 						{
-							auto* topics = invocation->get("topics");
-							if (!topics || (topics->size() != 2 && topics->size() != 3) || !is_token_transfer(topics->get_var(0).get_blob()))
+							auto* topics = invocation.child("topics");
+							if (!topics || (topics->childs().size() != 2 && topics->childs().size() != 3) || !is_token_transfer(topics->child_var(0).as_blob()))
 								continue;
 
-							auto contract_address = encode_eth_address(invocation->get_var("address").get_blob());
+							auto contract_address = encode_eth_address(invocation.child_var("address").as_blob());
 							auto symbol = coawait(get_contract_symbol(contract_address));
 							if (!symbol)
 								continue;
 
 							auto token_asset = algorithm::asset::id_of(algorithm::asset::blockchain_of(native_asset), *symbol, contract_address);
 							decimal divisibility = coawait(get_contract_divisibility(contract_address)).or_else(netdata.divisibility);
-							decimal token_value = to_eth(hex_to_uint256(invocation->get_var("data").get_blob()), divisibility);
-							if (topics->size() == 3)
+							decimal token_value = to_eth(hex_to_uint256(invocation.child_var("data").as_blob()), divisibility);
+							if (topics->childs().size() == 3)
 							{
-								from = encode_eth_address(normalize_topic_address(topics->get_var(1).get_blob()));
-								to = encode_eth_address(normalize_topic_address(topics->get_var(2).get_blob()));
+								from = encode_eth_address(normalize_topic_address(topics->child_var(1).as_blob()));
+								to = encode_eth_address(normalize_topic_address(topics->child_var(2).as_blob()));
 							}
-							else if (topics->size() == 2)
-								to = encode_eth_address(topics->get_var(1).get_blob());
+							else if (topics->childs().size() == 2)
+								to = encode_eth_address(topics->child_var(1).as_blob());
 
 							auto& token_input = inputs[from][token_asset];
 							auto& token_output = outputs[to][token_asset];
@@ -331,25 +328,24 @@ namespace tangent
 				if (!discovery || discovery->empty())
 					coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
 
-				auto args = uptr(var::set::object());
-				args->set("value", var::string(tx_hash.starts_with("0x") ? std::string_view(tx_hash).substr(2) : std::string_view(tx_hash)));
+				auto args = format::tree::map();
+				args.set("value", format::variable(tx_hash.starts_with("0x") ? std::string_view(tx_hash).substr(2) : std::string_view(tx_hash)));
 
-				auto info = coawait(execute_rest("POST", trx_nd_call::get_transaction_info_by_id(), *args, cache_policy::blob_cache));
+				auto info = coawait(execute_rest("POST", trx_nd_call::get_transaction_info_by_id(), args, cache_policy::blob_cache));
 				if (!info)
 					coreturn expects_rt<computed_transaction>(remote_exception("tx not found"));
 
-				auto receipt_result = info->fetch_var("receipt.result").get_blob(), tx_result = info->get_var("result").get_blob();
+				auto receipt_result = info->child_var("receipt.result").as_blob(), tx_result = info->child_var("result").as_blob();
 				if ((!receipt_result.empty() && receipt_result != "SUCCESS") || (!tx_result.empty() && tx_result != "SUCCESS"))
 					coreturn expects_rt<computed_transaction>(remote_exception("tx reverted"));
 
-				auto fee_value = to_eth((uint64_t)info->get_var("fee").get_integer(), netdata.divisibility);
+				auto fee_value = to_eth(info->child_var("fee").as_uint64(), netdata.divisibility);
 				if (fee_value.is_positive())
 				{
 					auto& input_value = inputs[from][native_asset];
 					input_value = input_value.is_nan() ? fee_value : (input_value + fee_value);
 				}
 
-				memory::release(*info);
 				for (auto& [address, values] : inputs)
 				{
 					auto target_link = discovery->find(address);
@@ -378,30 +374,29 @@ namespace tangent
 				}
 
 				const char* method = nullptr;
-				schema* params = nullptr;
+				format::tree params;
 				if (contract_address)
 				{
 					method = nd_call::call();
-					params = var::set::object();
-					params->set("to", var::string(decode_non_eth_address(*contract_address)));
-					params->set("data", var::string(encode_0xhex(translations::ethereum::sc_call::balance_of(decode_non_eth_address(link.address)))));
+					params = format::tree::map();
+					params.set("to", format::variable(decode_non_eth_address(*contract_address)));
+					params.set("data", format::variable(encode_0xhex(translations::ethereum::sc_call::balance_of(decode_non_eth_address(link.address)))));
 				}
 				else
 				{
 					method = nd_call::get_balance();
-					params = var::set::string(decode_non_eth_address(link.address));
+					params = format::variable(decode_non_eth_address(link.address));
 				}
 
-				schema_list map;
-				map.emplace_back(params);
-				map.emplace_back(var::set::string("latest"));
+				format::tree map;
+				map.push(params);
+				map.push(format::variable("latest"));
 
 				auto confirmed_balance = coawait(execute_rpc(method, std::move(map), cache_policy::no_cache));
 				if (!confirmed_balance)
 					coreturn expects_rt<decimal>(std::move(confirmed_balance.error()));
 
-				decimal balance = to_eth(hex_to_uint256(confirmed_balance->value.get_blob()), divisibility);
-				memory::release(*confirmed_balance);
+				decimal balance = to_eth(hex_to_uint256(confirmed_balance->value.as_blob()), divisibility);
 				coreturn expects_rt<decimal>(std::move(balance));
 			}
 			expects_promise_rt<void> tron::broadcast_transaction(const finalized_transaction& finalized)
@@ -410,7 +405,7 @@ namespace tangent
 				if (!native_data)
 					coreturn expects_rt<void>(remote_exception(std::move(native_data.error().message())));
 
-				auto transaction_data = schema::from_json(*native_data);
+				auto transaction_data = format::tree::from_json(*native_data);
 				if (!transaction_data)
 					coreturn expects_rt<void>(remote_exception(std::move(transaction_data.error().message())));
 
@@ -418,13 +413,11 @@ namespace tangent
 				if (!hex_data)
 					coreturn expects_rt<void>(std::move(hex_data.error()));
 
-				bool success = hex_data->get_var("result").get_boolean();
-				string code = hex_data->get_var("code").get_blob();
-				string message = hex_data->get_var("message").get_blob();
+				bool success = hex_data->child_var("result").as_boolean();
+				string code = hex_data->child_var("code").as_blob();
+				string message = hex_data->child_var("message").as_blob();
 				if (code.empty())
-					code = hex_data->get_var("Error").get_blob();
-
-				memory::release(*hex_data);
+					code = hex_data->child_var("Error").as_blob();
 				if (!success)
 					coreturn expects_rt<void>(remote_exception(message.empty() ? code : code + ": " + codec::hex_decode(message)));
 
@@ -529,10 +522,10 @@ namespace tangent
 				else
 					raw_signature[64] = 0x1b;
 
-				schema* signature_object = transaction.transaction_data->set("signature", var::array());
-				signature_object->push(var::string(codec::hex_encode(std::string_view((char*)raw_signature, sizeof(raw_signature)))));
+				auto* signature_object = transaction.transaction_data.set("signature", format::tree::list());
+				signature_object->push(format::variable(codec::hex_encode(std::string_view((char*)raw_signature, sizeof(raw_signature)))));
 
-				auto native_data = codec::compress(schema::to_json(*transaction.transaction_data), compression::best_compression);
+				auto native_data = codec::compress(transaction.transaction_data.as_json(), compression::best_compression);
 				if (!native_data)
 					return layer_exception(std::move(native_data.error().message()));
 

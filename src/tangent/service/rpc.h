@@ -44,14 +44,14 @@ namespace tangent
 
 		struct server_response
 		{
-			uptr<schema> data;
+			format::tree data;
 			string error_message;
 			error_codes status = error_codes::response;
 
-			server_response&& success(uptr<schema>&& value);
-			server_response&& notification(uptr<schema>&& value);
+			server_response&& success(format::tree&& value);
+			server_response&& notification(format::tree&& value);
 			server_response&& error(error_codes code, const std::string_view& message);
-			uptr<schema> transform(schema* request);
+			format::tree transform(const format::tree& request);
 		};
 
 		struct server_request
@@ -103,7 +103,7 @@ namespace tangent
 			bool http_request(http::connection* base);
 			bool ws_receive(http::web_socket_frame* web_socket, http::web_socket_op opcode, const std::string_view& buffer);
 			void ws_disconnect(http::web_socket_frame* web_socket);
-			bool dispatch_response(http::connection* base, uptr<schema>&& requests, uptr<schema>&& responses, size_t index, std::function<void(http::connection*, uptr<schema>&&)>&& callback);
+			bool dispatch_response(http::connection* base, format::tree&& requests, option<format::tree>&& responses, size_t index, std::function<void(http::connection*, option<format::tree>&&)>&& callback);
 			void dispatch_accept_block(const uint256_t& hash, const ledger::block& block, const ledger::block_checkpoint& checkpoint);
 			void dispatch_accept_transaction(const uint256_t& hash, const ledger::transaction* transaction, const algorithm::pubkeyhash_t& owner);
 			server_response web_socket_subscribe(http::connection* base, format::variables&& args);

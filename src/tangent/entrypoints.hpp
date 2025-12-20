@@ -44,9 +44,9 @@ namespace tangent
 			{
 				ledger::solver_context solver;
 				uptr<transactions::call> contextual;
-				uptr<schema> returning;
-				uptr<schema> log;
-				hash_map<size_t, uptr<schema>> events;
+				format::tree returning;
+				format::tree log;
+				hash_map<size_t, format::tree> events;
 				script::cmodule pmodule;
 				ledger::block block;
 			} tracer;
@@ -85,15 +85,15 @@ namespace tangent
 			expects_lr<void> call_transaction(script::ccall mutability, const script::function& entrypoint, const format::variables& args)
 			{
 				VI_ASSERT(tracer.contextual, "transaction should be assigned");
-				tracer.returning.destroy();
+				tracer.returning = format::tree();
 				tracer.events.clear();
 				auto execution = execute(mutability, entrypoint, args, [this](void* address, int type_id) -> expects_lr<void>
 				{
-					tracer.returning = var::set::object();
-					auto serialization = script::marshall::store(*tracer.returning, address, type_id);
+					tracer.returning = format::tree::map();
+					auto serialization = script::marshall::store(tracer.returning, address, type_id);
 					if (!serialization)
 					{
-						tracer.returning.destroy();
+						tracer.returning = format::tree();
 						return layer_exception("return value error: " + serialization.error().message());
 					}
 
@@ -104,22 +104,19 @@ namespace tangent
 				if (!executor->receipt.successful)
 					executor->emit_event(0, { format::variable(execution.what()) }, false);
 
-				tracer.log = var::set::array();
+				tracer.log = format::tree::list();
 				for (auto& [event, args] : executor->receipt.events)
 				{
-					auto target = tracer.events.find(tracer.log->size());
-					auto* next = tracer.log->push(var::set::object());
-					next->set("type", var::integer(event));
+					auto target = tracer.events.find(tracer.log.childs().size());
+					auto* next = tracer.log.push(format::tree());
+					next->set("type", format::variable(event));
 					if (target == tracer.events.end())
 					{
 						uptr<ledger::state> temp = states::resolver::from_type(event);
 						next->set(temp ? temp->as_typename() : "__internal__", serialize_event_args(args));
 					}
 					else
-					{
-						auto key = target->second->key;
-						next->set(key, target->second.reset());
-					}
+						next->set(target->second.key, target->second);
 				}
 
 				return execution;
@@ -366,10 +363,10 @@ namespace tangent
 			{
 				if (!executor->receipt.events.empty())
 				{
-					auto data = uptr<schema>(var::set::object());
+					auto data = format::tree();
 					auto type = script::factory::get()->get_vm()->get_type_info_by_id(event_type_id);
-					data->key = type.is_valid() ? type.get_name() : std::string_view("__pod__");
-					if (script::marshall::store(*data, object_value, object_type_id))
+					data.key = type.is_valid() ? type.get_name() : std::string_view("__pod__");
+					if (script::marshall::store(data, object_value, object_type_id))
 						tracer.events[executor->receipt.events.size() - 1] = std::move(data);
 				}
 			}
@@ -394,8 +391,8 @@ namespace tangent
 				program.instructions = false;
 				tracer.solver = ledger::solver_context();
 				tracer.contextual = uptr<transactions::call>();
-				tracer.returning = uptr<schema>();
-				tracer.log = uptr<schema>();
+				tracer.returning = format::tree();
+				tracer.log = format::tree();
 				tracer.events.clear();
 				tracer.pmodule.destroy();
 				tracer.block = ledger::block();
@@ -404,7 +401,7 @@ namespace tangent
 			{
 				return !program.path.empty();
 			}
-			schema* serialize_event_args(const format::variables& value) const
+			format::tree serialize_event_args(const format::variables& value) const
 			{
 				format::variables copy = value;
 				for (auto& item : copy)
@@ -629,8 +626,8 @@ namespace tangent
 					if (!format::variables_util::deserialize_flat_from(message, &function_args))
 						return ok("null");
 
-					uptr<schema> data = format::variables_util::serialize(function_args);
-					terminal->jwrite_line(*data);
+					format::tree data = format::variables_util::serialize(function_args);
+					terminal->write_line(data.as_json(true));
 					return true;
 				}
 				else if (method == "unpack256")
@@ -661,8 +658,7 @@ namespace tangent
 					terminal->fwrite("%s in %" PRIu64 " ms", success ? "OK finalize transaction" : "ERR revert transaction", (uint64_t)(date_time().milliseconds() - time));
 					terminal->clear_color();
 					terminal->write("\n");
-					if (context.tracer.returning)
-						terminal->jwrite_line(*context.tracer.returning);
+					terminal->write_line(context.tracer.returning.as_json(true));
 					return success;
 				}
 				else if (method == "debug")
@@ -686,40 +682,38 @@ namespace tangent
 					terminal->fwrite("%s in %" PRIu64 " ms", success ? "OK finalize transaction" : "ERR revert transaction", (uint64_t)(date_time().milliseconds() - time));
 					terminal->clear_color();
 					terminal->write("\n");
-					if (context.tracer.returning)
-						terminal->jwrite_line(*context.tracer.returning);
+					terminal->write_line(context.tracer.returning.as_json(true));
 					return success;
 				}
 				else if (method == "result")
 				{
-					if (context.tracer.returning)
-						terminal->jwrite_line(*context.tracer.returning);
+					terminal->write_line(context.tracer.returning.as_json(true));
 					return true;
 				}
 				else if (method == "log")
 				{
-					if (context.tracer.log)
-						terminal->jwrite_line(*context.tracer.log);
+					terminal->write_line(context.tracer.log.as_json(true));
 					return true;
 				}
 				else if (method == "changelog")
 				{
-					uptr<schema> changelog = var::set::object();
-					auto* erase = changelog->set("erase", var::set::object());
-					auto* upsert = changelog->set("upsert", var::set::object());
+					format::tree changelog;
+					changelog.childs().reserve(2);
+					auto* erase = changelog.set("erase", format::tree::map());
+					auto* upsert = changelog.set("upsert", format::tree::map());
 					for (auto& [index, change] : context.tracer.solver.state.changelog.outgoing.finalized)
 					{
 						if (change.erase)
-							erase->set(format::util::encode_0xhex(index), change.state->as_schema().reset());
+							erase->set(format::util::encode_0xhex(index), change.state->as_tree());
 						else
-							upsert->set(format::util::encode_0xhex(index), change.state->as_schema().reset());
+							upsert->set(format::util::encode_0xhex(index), change.state->as_tree());
 					}
-					terminal->jwrite_line(*changelog);
+					terminal->write_line(changelog.as_json(true));
 					return true;
 				}
 				else if (method == "receipt")
 				{
-					terminal->jwrite_line(*context.executor->receipt.as_schema());
+					terminal->write_line(context.executor->receipt.as_tree().as_json(true));
 					return true;
 				}
 				else if (method == "abi")

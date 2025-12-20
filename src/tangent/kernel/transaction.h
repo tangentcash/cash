@@ -42,7 +42,7 @@ namespace tangent
 			virtual void set_asset(const std::string_view& blockchain, const std::string_view& token = std::string_view(), const std::string_view& contract_address = std::string_view());
 			virtual bool is_commitment() const;
 			virtual bool is_dispatchable() const;
-			virtual uptr<schema> as_schema() const override;
+			virtual format::tree as_tree() const override;
 			virtual uint32_t as_type() const override = 0;
 			virtual std::string_view as_typename() const override = 0;
 		};
@@ -73,7 +73,7 @@ namespace tangent
 			const format::variables* find_event(uint32_t type, size_t offset = 0) const;
 			const format::variables* reverse_find_event(uint32_t type, size_t offset = 0) const;
 			option<string> get_error_messages() const;
-			uptr<schema> as_schema() const override;
+			format::tree as_tree() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
@@ -126,7 +126,7 @@ namespace tangent
 			virtual bool store_data(format::wo_stream* stream) const = 0;
 			virtual bool load_data(format::ro_stream& stream) = 0;
 			virtual bool is_permanent() const;
-			virtual uptr<schema> as_schema() const override = 0;
+			virtual format::tree as_tree() const override = 0;
 			virtual state_level as_level() const = 0;
 			virtual uint32_t as_type() const override = 0;
 			virtual std::string_view as_typename() const override = 0;
@@ -140,7 +140,7 @@ namespace tangent
 			virtual bool load_payload(format::ro_stream& stream) override;
 			virtual bool store_index(format::wo_stream* stream) const = 0;
 			virtual bool load_index(format::ro_stream& stream) = 0;
-			virtual uptr<schema> as_schema() const override;
+			virtual format::tree as_tree() const override;
 			virtual state_level as_level() const override;
 			virtual string as_index() const;
 		};
@@ -155,7 +155,7 @@ namespace tangent
 			virtual bool load_column(format::ro_stream& stream) = 0;
 			virtual bool store_row(format::wo_stream* stream) const = 0;
 			virtual bool load_row(format::ro_stream& stream) = 0;
-			virtual uptr<schema> as_schema() const override;
+			virtual format::tree as_tree() const override;
 			virtual state_level as_level() const override;
 			virtual string as_column() const;
 			virtual string as_row() const;

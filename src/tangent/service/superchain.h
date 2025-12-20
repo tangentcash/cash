@@ -30,7 +30,7 @@ namespace tangent
 			secret_box encoded_secret_key;
 			string encoded_public_key;
 
-			uptr<schema> as_schema() const;
+			format::tree as_tree() const;
 		};
 
 		class server_node : public singleton<server_node>
@@ -49,7 +49,7 @@ namespace tangent
 			hash_map<string, transaction_callback> callbacks;
 			hash_map<string, vector<uptr<server_relay>>> nodes;
 			hash_map<string, uptr<relay_backend>> chains;
-			hash_map<string, uptr<schema>> specifications;
+			hash_map<string, format::tree> specifications;
 			vector<uptr<transaction_listener>> listeners;
 			multichain_supervisor_options options;
 			system_control control_sys;
@@ -58,11 +58,11 @@ namespace tangent
 			server_node() noexcept;
 			~server_node() noexcept;
 			expects_promise_system<http::response_frame> internal_call(const std::string_view& location, const std::string_view& method, const http::fetch_frame& options);
-			expects_promise_rt<schema*> execute_rpc(const algorithm::asset_id& asset, const std::string_view& method, schema_list&& args, cache_policy cache);
+			expects_promise_rt<format::tree> execute_rpc(const algorithm::asset_id& asset, const std::string_view& method, const format::tree& args, cache_policy cache);
 			expects_promise_rt<uint64_t> get_latest_block_height(const algorithm::asset_id& asset);
-			expects_promise_rt<schema*> get_block_transactions(const algorithm::asset_id& asset, uint64_t block_height, string* block_hash);
-			expects_promise_rt<transaction_logs> link_transactions(const algorithm::asset_id& asset, chain_supervisor_options* options);
-			expects_promise_rt<computed_transaction> link_transaction(const algorithm::asset_id& asset, uint64_t block_height, const std::string_view& block_hash, schema* transaction_data);
+			expects_promise_rt<vector<block_log>> get_block_transactions(const algorithm::asset_id& asset, uint64_t block_height, uint64_t block_count);
+			expects_promise_rt<vector<transaction_logs>> link_transactions(const algorithm::asset_id& asset, chain_supervisor_options* options);
+			expects_promise_rt<computed_transaction> link_transaction(const algorithm::asset_id& asset, uint64_t block_height, const std::string_view& block_hash, format::tree& transaction_data);
 			expects_promise_rt<decimal> calculate_balance(const algorithm::asset_id& asset, const wallet_link& link);
 			expects_promise_rt<void> broadcast_transaction(const algorithm::asset_id& asset, const uint256_t& external_id, const finalized_transaction& finalized);
 			expects_promise_rt<prepared_transaction> prepare_transaction(const algorithm::asset_id& asset, const wallet_link& from_link, const vector<value_transfer>& to, const decimal& max_fee);
@@ -99,8 +99,8 @@ namespace tangent
 			expects_lr<void> remove_utxo(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint64_t index);
 			expects_lr<coin_utxo> get_utxo(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint64_t index);
 			expects_lr<vector<coin_utxo>> get_utxos(const algorithm::asset_id& asset, const wallet_link& link, size_t offset, size_t count);
-			expects_lr<schema*> load_cache(const algorithm::asset_id& asset, cache_policy policy, const std::string_view& key);
-			expects_lr<void> store_cache(const algorithm::asset_id& asset, cache_policy policy, const std::string_view& key, uptr<schema>&& value);
+			expects_lr<format::tree> load_cache(const algorithm::asset_id& asset, cache_policy policy, const std::string_view& key);
+			expects_lr<void> store_cache(const algorithm::asset_id& asset, cache_policy policy, const std::string_view& key, const format::tree& value);
 			option<string> get_contract_address(const algorithm::asset_id& asset);
 			hash_map<algorithm::asset_id, relay_backend::chainparams> get_chains();
 			hash_map<string, invocation_callback>& get_registrations();
@@ -111,8 +111,8 @@ namespace tangent
 			server_relay* add_multi_node(const algorithm::asset_id& asset, hash_map<string, string>&& urls, double rps);
 			server_relay* get_node(const algorithm::asset_id& asset);
 			relay_backend* get_chain(const algorithm::asset_id& asset);
-			schema* get_specifications(const algorithm::asset_id& asset);
-			schema* add_specifications(const algorithm::asset_id& asset, uptr<schema>&& value);
+			format::tree* get_specifications(const algorithm::asset_id& asset);
+			format::tree* add_specifications(const algorithm::asset_id& asset, const format::tree& value);
 			service_control::service_node get_entrypoint();
 			multichain_supervisor_options& get_options();
 			system_control& get_control();

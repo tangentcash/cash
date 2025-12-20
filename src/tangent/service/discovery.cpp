@@ -141,9 +141,9 @@ namespace tangent
 			if (protocol::now().user.discovery.logging)
 				VI_INFO("peer %s discovery: %i nodes returned (time: %" PRId64 " ms, args: %s, services: %i)", base->get_peer_ip_address().or_else("[bad_address]").c_str(), (int)nodes.size(), date_time().milliseconds() - base->info.start, base->request.query.empty() ? "none" : base->request.query.c_str(), (int)services);
 
-			uptr<schema> data = var::set::array();
+			format::tree data;
 			for (auto& [account, address] : nodes)
-				data->push(var::string(system_endpoint::to_uri(address)));
+				data.push(format::variable(system_endpoint::to_uri(address)));
 
 			auto node = mempool.get_local_node();
 			if (node && (storages::mempoolstate::services_of(node->first) & services) == services)
@@ -152,15 +152,15 @@ namespace tangent
 				{
 					case storages::node_ports::consensus:
 						if (protocol::now().user.consensus.server)
-							data->push(var::string("tcp://selfhost:" + to_string(node->first.ports.consensus)));
+							data.push(format::variable("tcp://selfhost:" + to_string(node->first.ports.consensus)));
 						break;
 					case storages::node_ports::discovery:
 						if (protocol::now().user.discovery.server)
-							data->push(var::string("tcp://selfhost:" + to_string(node->first.ports.discovery)));
+							data.push(format::variable("tcp://selfhost:" + to_string(node->first.ports.discovery)));
 						break;
 					case storages::node_ports::rpc:
 						if (protocol::now().user.rpc.server)
-							data->push(var::string("tcp://selfhost:" + to_string(node->first.ports.rpc)));
+							data.push(format::variable("tcp://selfhost:" + to_string(node->first.ports.rpc)));
 						break;
 					default:
 						break;
@@ -168,7 +168,7 @@ namespace tangent
 			}
 
 			base->response.set_header("Content-Type", "application/json");
-			base->response.content.assign(schema::to_json(*data));
+			base->response.content.assign(data.as_json());
 			return base->next(200);
 		}
 		service_control::service_node server_node::get_entrypoint()

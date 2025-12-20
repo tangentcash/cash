@@ -127,7 +127,7 @@ namespace tangent
 			static uint64_t adjustment_interval();
 			static uint64_t adjustment_index(uint64_t index);
 			static decimal adjustment_scaling(uint64_t index);
-			static schema* serialize(uint64_t difficulty, const std::string_view& proof, const decimal& scaling = decimal::nan());
+			static format::tree serialize(uint64_t difficulty, const std::string_view& proof, const decimal& scaling = decimal::nan());
 			static uint128_t kdifficulty(uint64_t difficulty);
 
 		private:
@@ -185,9 +185,9 @@ namespace tangent
 			static bool decode_address(const std::string_view& address, pubkeyhash_t& public_key_hash);
 			static bool encode_address(const pubkeyhash_t& public_key_hash, string& address);
 			static string encode_address(const pubkeyhash_t& public_key_hash);
-			static schema* serialize_secret_key(const seckey_t& secret_key);
-			static schema* serialize_public_key(const pubkey_t& public_key);
-			static schema* serialize_address(const pubkeyhash_t& public_key_hash);
+			static format::tree serialize_secret_key(const seckey_t& secret_key);
+			static format::tree serialize_public_key(const pubkey_t& public_key);
+			static format::tree serialize_address(const pubkeyhash_t& public_key_hash);
 			static secp256k1_context* get_context();
 		};
 
@@ -200,7 +200,7 @@ namespace tangent
 			static string encode_0xhex128(const uint128_t& data);
 			static uint128_t decode_0xhex128(const std::string_view& data);
 			static uint32_t type_of(const std::string_view& name);
-			static schema* serialize_uint256(const uint256_t& data, bool always16 = false);
+			static format::tree serialize_uint256(const uint256_t& data, bool always16 = false);
 			static expects_lr<string> pack_program(const std::string_view& unpacked_code);
 			static expects_lr<string> unpack_program(const std::string_view& packed_code);
 
@@ -333,7 +333,7 @@ namespace tangent
 			static string name_of(const asset_id& value);
 			static bool is_any(const asset_id& value, bool require_no_token = false, bool auxiliary_only = false);
 			static bool is_aux(const asset_id& value, bool require_no_token = false);
-			static schema* serialize(const asset_id& value);
+			static format::tree serialize(const asset_id& value);
 		};
 
 		class composition

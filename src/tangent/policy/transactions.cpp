@@ -110,15 +110,15 @@ namespace tangent
 		{
 			to.push_back(std::make_pair(new_to, new_value));
 		}
-		uptr<schema> transfer::as_schema() const
+		format::tree transfer::as_tree() const
 		{
-			schema* data = ledger::transaction::as_schema().reset();
-			auto* transfers_data = data->set("to", var::set::array());
+			format::tree data = ledger::transaction::as_tree();
+			auto* transfers_data = data.set("to", format::tree());
 			for (auto& [owner, value] : to)
 			{
-				auto* transfer_data = transfers_data->push(var::set::object());
+				auto* transfer_data = transfers_data->push(format::tree());
 				transfer_data->set("to", algorithm::signing::serialize_address(owner.data));
-				transfer_data->set("value", var::decimal(value));
+				transfer_data->set("value", format::variable(value));
 			}
 			return data;
 		}
@@ -287,7 +287,7 @@ namespace tangent
 					return optional::none;
 			}
 		}
-		uptr<schema> deploy::as_schema() const
+		format::tree deploy::as_tree() const
 		{
 			std::string_view name;
 			switch (get_data_type().or_else((data_type)(uint8_t)0))
@@ -302,11 +302,11 @@ namespace tangent
 					break;
 			}
 
-			schema* data = ledger::transaction::as_schema().reset();
-			data->set("callable", algorithm::signing::serialize_address(get_account()));
-			data->set("from", name.empty() ? var::null() : var::string(name));
-			data->set("data", var::string(format::util::encode_0xhex(this->data)));
-			data->set("args", format::variables_util::serialize(args));
+			format::tree data = ledger::transaction::as_tree();
+			data.set("callable", algorithm::signing::serialize_address(get_account()));
+			data.set("from", name.empty() ? format::variable() : format::variable(name));
+			data.set("data", format::variable(format::util::encode_0xhex(this->data)));
+			data.set("args", format::variables_util::serialize(args));
 			return data;
 		}
 		uint32_t deploy::as_type() const
@@ -427,13 +427,13 @@ namespace tangent
 			value = new_value;
 			callable = new_callable;
 		}
-		uptr<schema> call::as_schema() const
+		format::tree call::as_tree() const
 		{
-			schema* data = ledger::transaction::as_schema().reset();
-			data->set("callable", algorithm::signing::serialize_address(callable));
-			data->set("value", var::decimal(value));
-			data->set("function", var::string(function));
-			data->set("args", format::variables_util::serialize(args));
+			format::tree data = ledger::transaction::as_tree();
+			data.set("callable", algorithm::signing::serialize_address(callable));
+			data.set("value", format::variable(value));
+			data.set("function", format::variable(function));
+			data.set("args", format::variables_util::serialize(args));
 			return data;
 		}
 		uint32_t call::as_type() const
@@ -855,14 +855,14 @@ namespace tangent
 
 			return nullptr;
 		}
-		uptr<schema> rollup::as_schema() const
+		format::tree rollup::as_tree() const
 		{
-			schema* data = ledger::transaction::as_schema().reset();
-			schema* transactions_data = data->set("transactions", var::array());
+			format::tree data = ledger::transaction::as_tree();
+			auto* transactions_data = data.set("transactions", format::tree());
 			for (auto& group : transactions)
 			{
 				for (auto& transaction : group.second)
-					transactions_data->push(transaction->as_schema().reset());
+					transactions_data->push(transaction->as_tree());
 			}
 			return data;
 		}
@@ -1577,39 +1577,39 @@ namespace tangent
 				*requires_new_participant = event != nullptr;
 			return new_participant;
 		}
-		uptr<schema> setup::as_schema() const
+		format::tree setup::as_tree() const
 		{
-			schema* data = ledger::transaction::as_schema().reset();
+			format::tree data = ledger::transaction::as_tree();
 			if (!migrations.empty())
 			{
-				auto* migrations_data = data->set("bridge_migrations", var::set::array());
+				auto* migrations_data = data.set("bridge_migrations", format::tree());
 				for (auto& [broadcast_hash, participant] : migrations)
 				{
-					auto* migration_data = migrations_data->push(var::set::object());
-					migration_data->set("broadcast_hash", var::string(algorithm::encoding::encode_0xhex256(broadcast_hash)));
+					auto* migration_data = migrations_data->push(format::tree());
+					migration_data->set("broadcast_hash", format::variable(algorithm::encoding::encode_0xhex256(broadcast_hash)));
 					migration_data->set("participant", algorithm::signing::serialize_address(participant));
 				}
 			}
 			if (!attestations.empty())
 			{
-				auto* attestations_data = data->set("attestations", var::set::array());
+				auto* attestations_data = data.set("attestations", format::tree());
 				for (auto& [asset, setup] : attestations)
 				{
-					auto* attestation_data = attestations_data->push(var::set::object());
+					auto* attestation_data = attestations_data->push(format::tree());
 					attestation_data->set("asset", algorithm::asset::serialize(asset));
-					attestation_data->set("accepts_account_requests", setup.accepts_account_requests ? var::boolean(*setup.accepts_account_requests) : var::null());
-					attestation_data->set("accepts_withdrawal_requests", setup.accepts_withdrawal_requests ? var::boolean(*setup.accepts_withdrawal_requests) : var::null());
-					attestation_data->set("security_level", setup.security_level ? var::integer(*setup.security_level) : var::null());
-					attestation_data->set("incoming_fee", setup.incoming_fee ? var::decimal(*setup.incoming_fee) : var::null());
-					attestation_data->set("outgoing_fee", setup.outgoing_fee ? var::decimal(*setup.outgoing_fee) : var::null());
-					attestation_data->set("participation_threshold", setup.participation_threshold ? var::decimal(*setup.participation_threshold) : var::null());
-					attestation_data->set("stake", var::decimal(setup.stake));
+					attestation_data->set("accepts_account_requests", setup.accepts_account_requests ? format::variable(*setup.accepts_account_requests) : format::variable());
+					attestation_data->set("accepts_withdrawal_requests", setup.accepts_withdrawal_requests ? format::variable(*setup.accepts_withdrawal_requests) : format::variable());
+					attestation_data->set("security_level", setup.security_level ? format::variable(*setup.security_level) : format::variable());
+					attestation_data->set("incoming_fee", setup.incoming_fee ? format::variable(*setup.incoming_fee) : format::variable());
+					attestation_data->set("outgoing_fee", setup.outgoing_fee ? format::variable(*setup.outgoing_fee) : format::variable());
+					attestation_data->set("participation_threshold", setup.participation_threshold ? format::variable(*setup.participation_threshold) : format::variable());
+					attestation_data->set("stake", format::variable(setup.stake));
 				}
 			}
 			if (participation)
-				data->set("bridge_participation", participation->is_zero() || participation->is_positive() ? var::decimal(*participation) : var::boolean(false));
+				data.set("bridge_participation", participation->is_zero() || participation->is_positive() ? format::variable(*participation) : format::variable(false));
 			if (production)
-				data->set("block_production", production->is_zero() || production->is_positive() ? var::decimal(*production) : var::boolean(false));
+				data.set("block_production", production->is_zero() || production->is_positive() ? format::variable(*production) : format::variable(false));
 			return data;
 		}
 		uint32_t setup::as_type() const
@@ -1721,11 +1721,11 @@ namespace tangent
 
 			return true;
 		}
-		uptr<schema> migrate::as_schema() const
+		format::tree migrate::as_tree() const
 		{
-			schema* data = ledger::commitment::as_schema().reset();
-			data->set("setup_hash", var::string(algorithm::encoding::encode_0xhex256(setup_hash)));
-			data->set("proof", proof.empty() ? var::null() : var::string(format::util::encode_0xhex(proof.view())));
+			format::tree data = ledger::commitment::as_tree();
+			data.set("setup_hash", format::variable(algorithm::encoding::encode_0xhex256(setup_hash)));
+			data.set("proof", proof.empty() ? format::variable() : format::variable(format::util::encode_0xhex(proof.view())));
 			return data;
 		}
 		uint32_t migrate::as_type() const
@@ -2268,17 +2268,17 @@ namespace tangent
 			commitments[commitment_hash].insert(commitment_signature);
 			return true;
 		}
-		uptr<schema> attestate::as_schema() const
+		format::tree attestate::as_tree() const
 		{
-			schema* data = ledger::commitment::as_schema().reset();
-			schema* commitments_data = data->set("commitments", var::set::object());
+			format::tree data = ledger::commitment::as_tree();
+			auto* commitments_data = data.set("commitments", format::tree());
 			for (auto& [commitment_hash, signatures] : commitments)
 			{
-				auto signatures_data = commitments_data->set(algorithm::encoding::encode_0xhex256(commitment_hash), var::set::array());
+				auto signatures_data = commitments_data->set(algorithm::encoding::encode_0xhex256(commitment_hash), format::tree());
 				for (auto& signature : signatures)
-					signatures_data->push(signature.empty() ? var::null() : var::string(format::util::encode_0xhex(signature.view())));
+					signatures_data->push(signature.empty() ? format::variable() : format::variable(format::util::encode_0xhex(signature.view())));
 			}
-			data->set("proof", proof.as_schema().reset());
+			data.set("proof", proof.as_tree());
 			return data;
 		}
 		uint32_t attestate::as_type() const
@@ -2778,11 +2778,11 @@ namespace tangent
 			}
 			return result;
 		}
-		uptr<schema> route::as_schema() const
+		format::tree route::as_tree() const
 		{
-			schema* data = ledger::commitment::as_schema().reset();
-			data->set("manager", algorithm::signing::serialize_address(manager));
-			data->set("routing_address", var::string(routing_address));
+			format::tree data = ledger::commitment::as_tree();
+			data.set("manager", algorithm::signing::serialize_address(manager));
+			data.set("routing_address", format::variable(routing_address));
 			return data;
 		}
 		uint32_t route::as_type() const
@@ -2984,12 +2984,12 @@ namespace tangent
 			parties.insert(algorithm::pubkeyhash_t(parent->receipt.from));
 			return true;
 		}
-		uptr<schema> bind::as_schema() const
+		format::tree bind::as_tree() const
 		{
-			schema* data = ledger::commitment::as_schema().reset();
-			data->set("route_hash", route_hash > 0 ? var::string(algorithm::encoding::encode_0xhex256(route_hash)) : var::null());
-			data->set("group_public_key", var::string(format::util::encode_0xhex(std::string_view((char*)group_public_key.data(), group_public_key.size()))));
-			data->set("group_signature", var::string(format::util::encode_0xhex(std::string_view((char*)group_signature.data(), group_signature.size()))));
+			format::tree data = ledger::commitment::as_tree();
+			data.set("route_hash", route_hash > 0 ? format::variable(algorithm::encoding::encode_0xhex256(route_hash)) : format::variable());
+			data.set("group_public_key", format::variable(format::util::encode_0xhex(std::string_view((char*)group_public_key.data(), group_public_key.size()))));
+			data.set("group_signature", format::variable(format::util::encode_0xhex(std::string_view((char*)group_signature.data(), group_signature.size()))));
 			return data;
 		}
 		uint32_t bind::as_type() const
@@ -3438,19 +3438,19 @@ namespace tangent
 			auto reward = executor->get_verified_validator_attestation(algorithm::asset::base_id_of(asset), manager);
 			return reward ? reward->outgoing_fee * std::max<size_t>(1, to.size()) : decimal::zero();
 		}
-		uptr<schema> withdraw::as_schema() const
+		format::tree withdraw::as_tree() const
 		{
-			schema* data = ledger::transaction::as_schema().reset();
-			data->set("manager", algorithm::signing::serialize_address(manager));
-			data->set("only_if_not_in_queue", var::boolean(only_if_not_in_queue));
+			format::tree data = ledger::transaction::as_tree();
+			data.set("manager", algorithm::signing::serialize_address(manager));
+			data.set("only_if_not_in_queue", format::variable(only_if_not_in_queue));
 			if (!to.empty())
 			{
-				auto* to_data = data->set("to", var::set::array());
+				auto* to_data = data.set("to", format::tree());
 				for (auto& item : to)
 				{
-					auto* coin_data = to_data->push(var::set::object());
-					coin_data->set("address", var::string(item.first));
-					coin_data->set("value", var::decimal(item.second));
+					auto* coin_data = to_data->push(format::tree());
+					coin_data->set("address", format::variable(item.first));
+					coin_data->set("value", format::variable(item.second));
 				}
 			}
 			return data;
@@ -3621,19 +3621,19 @@ namespace tangent
 			withdraw_hash = new_withdraw_hash;
 			proof = std::move(new_proof);
 		}
-		uptr<schema> broadcast::as_schema() const
+		format::tree broadcast::as_tree() const
 		{
-			schema* data = ledger::commitment::as_schema().reset();
-			data->set("withdraw_hash", var::string(algorithm::encoding::encode_0xhex256(withdraw_hash)));
+			format::tree data = ledger::commitment::as_tree();
+			data.set("withdraw_hash", format::variable(algorithm::encoding::encode_0xhex256(withdraw_hash)));
 			if (proof)
 			{
-				data->set("prepared", proof->prepared.as_schema().reset());
-				data->set("calldata", var::string(proof->calldata));
-				data->set("hashdata", var::string(proof->hashdata));
-				data->set("locktime", algorithm::encoding::serialize_uint256(proof->locktime));
+				data.set("prepared", proof->prepared.as_tree());
+				data.set("calldata", format::variable(proof->calldata));
+				data.set("hashdata", format::variable(proof->hashdata));
+				data.set("locktime", algorithm::encoding::serialize_uint256(proof->locktime));
 			}
 			else
-				data->set("error", var::string(proof.what()));
+				data.set("error", format::variable(proof.what()));
 			return data;
 		}
 		uint32_t broadcast::as_type() const

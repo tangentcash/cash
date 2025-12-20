@@ -33,8 +33,8 @@ namespace tangent
 			string get_public_key() const;
 			string get_address() const;
 			expects_lr<uint64_t> get_latest_nonce() const;
-			uptr<schema> as_schema() const override;
-			uptr<schema> as_public_schema() const;
+			format::tree as_tree() const override;
+			format::tree as_public_tree() const;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
@@ -86,7 +86,7 @@ namespace tangent
 			bool is_valid() const;
 			uint64_t get_preference() const;
 			string as_version() const;
-			uptr<schema> as_schema() const override;
+			format::tree as_tree() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();

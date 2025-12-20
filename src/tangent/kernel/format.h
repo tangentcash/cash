@@ -6,9 +6,17 @@ namespace tangent
 {
 	namespace format
 	{
+		struct tree;
 		struct ro_stream;
 
 		typedef vector<struct variable> variables;
+
+		enum class structure
+		{
+			flat,
+			list,
+			map
+		};
 
 		enum class viewable : uint8_t
 		{
@@ -143,6 +151,7 @@ namespace tangent
 			bool is_string() const;
 			bool is_decimal() const;
 			bool is_integer() const;
+			bool is_boolean() const;
 			viewable type_of() const;
 			variable& operator= (const variable& other) noexcept;
 			variable& operator= (variable&& other) noexcept;
@@ -161,6 +170,50 @@ namespace tangent
 
 		public:
 			static variable from(const std::string_view& any);
+		};
+
+		struct tree
+		{
+			string key;
+			variable value;
+			option<vector<tree>> fields;
+			structure type;
+
+			tree() noexcept;
+			tree(const variable& base) noexcept;
+			tree(variable&& base) noexcept;
+			tree(const tree& other) noexcept;
+			tree(tree&& other) noexcept;
+			tree& operator=(const tree& other) noexcept;
+			tree& operator=(tree&& other) noexcept;
+			variable child_var(const std::string_view& notation, bool deep = false) const;
+			variable child_var(size_t index) const;
+			tree* child(const std::string_view& notation, bool deep = false) const;
+			tree* child(size_t index) const;
+			tree* at(const std::string_view& name, bool deep = false) const;
+			tree* set(const std::string_view& key, const variable& value);
+			tree* set(const std::string_view& key, variable&& value);
+			tree* set(const std::string_view& key, const tree& value);
+			tree* set(const std::string_view& key, tree&& value);
+			tree* push(const variable& value);
+			tree* push(variable&& value);
+			tree* push(const tree& value);
+			tree* push(tree&& value);
+			tree* pop(const std::string_view& name);
+			vector<tree>& childs();
+			bool has(const std::string_view& name) const;
+			bool is_flat() const;
+			bool is_list() const;
+			bool is_map() const;
+			bool is_none() const;
+			uptr<schema> as_schema() const;
+			wo_stream as_message() const;
+			string as_json(bool pretty = false) const;
+			static tree list();
+			static tree map();
+			static tree from_schema(schema* base);
+			static option<tree> from_message(format::ro_stream& stream);
+			static expects_parser<tree> from_json(const std::string_view& text);
 		};
 
 		class util
@@ -196,7 +249,7 @@ namespace tangent
 			static bool serialize_merge_into(const variables& data, wo_stream* result);
 			static string as_constant(const variables& data);
 			static string as_constant_json(const variables& data, size_t spaces = 2);
-			static schema* serialize(const variables& data);
+			static tree serialize(const variables& data);
 
 		private:
 			static bool deserialize_from(ro_stream& stream, variables* result, bool merging);

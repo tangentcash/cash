@@ -19,7 +19,7 @@ namespace tangent
 			virtual uint256_t as_hash(bool renew = false) const;
 			virtual uint32_t as_type() const = 0;
 			virtual std::string_view as_typename() const = 0;
-			virtual uptr<schema> as_schema() const = 0;
+			virtual format::tree as_tree() const = 0;
 			virtual format::wo_stream as_message() const;
 			virtual format::wo_stream as_signable() const;
 		};
@@ -42,7 +42,7 @@ namespace tangent
 			virtual uint256_t as_hash(bool renew = false) const;
 			virtual uint32_t as_type() const = 0;
 			virtual std::string_view as_typename() const = 0;
-			virtual uptr<schema> as_schema() const = 0;
+			virtual format::tree as_tree() const = 0;
 			virtual format::wo_stream as_message() const;
 			virtual format::wo_stream as_signable() const;
 		};

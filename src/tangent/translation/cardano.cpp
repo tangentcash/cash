@@ -38,45 +38,41 @@ namespace tangent
 			}
 			expects_promise_rt<uint64_t> cardano::get_latest_block_height()
 			{
-				schema* args = var::set::object();
-				schema* network_query = args->set("network_identifier", var::object());
-				network_query->set("blockchain", var::string(get_blockchain()));
-				network_query->set("network", var::string(get_network()));
+				auto args = format::tree::map();
+				auto* network_query = args.set("network_identifier", format::tree::map());
+				network_query->set("blockchain", format::variable(get_blockchain()));
+				network_query->set("network", format::variable(get_network()));
 
 				auto netstat = coawait(execute_rest("POST", nd_call::network_status(), args, cache_policy::no_cache));
 				if (!netstat)
 					coreturn expects_rt<uint64_t>(netstat.error());
 
-				uint64_t block_height = netstat->fetch_var("current_block_identifier.index").get_integer();
-				memory::release(*netstat);
+				uint64_t block_height = netstat->child_var("current_block_identifier.index").as_uint64();
 				coreturn expects_rt<uint64_t>(block_height);
 			}
-			expects_promise_rt<schema*> cardano::get_block_transactions(uint64_t block_height, string* block_hash)
+			expects_promise_rt<vector<block_log>> cardano::get_block_transactions(uint64_t block_height, uint64_t block_count)
 			{
-				schema* args = var::set::object();
-				schema* network_query = args->set("network_identifier", var::object());
-				network_query->set("blockchain", var::string(get_blockchain()));
-				network_query->set("network", var::string(get_network()));
-				schema* block_query = args->set("block_identifier", var::object());
-				block_query->set("index", var::integer(block_height));
-
-				auto block_data = coawait(execute_rest("POST", nd_call::block_data(), args, cache_policy::blob_cache));
-				if (!block_data)
-					coreturn expects_rt<schema*>(block_data.error());
-
-				if (block_hash)
-					*block_hash = block_data->fetch_var("block.block_identifier.hash").get_blob();
-
-				auto* transactions = block_data->fetch("block.transactions");
-				if (!transactions)
+				vector<block_log> results;
+				for (uint64_t i = 0; i < block_count; i++)
 				{
-					memory::release(*block_data);
-					coreturn remote_exception("block.transactions field not found");
-				}
+					auto args = format::tree::map();
+					args.childs().reserve(2);
+					auto* network_query = args.set("network_identifier", format::tree::map());
+					network_query->set("blockchain", format::variable(get_blockchain()));
+					network_query->set("network", format::variable(get_network()));
+					auto* block_query = args.set("block_identifier", format::tree::map());
+					block_query->set("index", format::variable(block_height + i));
 
-				transactions->unlink();
-				memory::release(*block_data);
-				coreturn expects_rt<schema*>(transactions);
+					auto block_data = coawait(execute_rest("POST", nd_call::block_data(), args, cache_policy::blob_cache));
+					if (!block_data)
+						coreturn expects_rt<vector<block_log>>(block_data.error());
+
+					auto* transactions = (format::tree*)block_data->child("block.transactions");
+					auto& log = results.emplace_back();
+					log.block_hash = block_data->child_var("block.block_identifier.hash").as_blob();
+					log.transactions = transactions ? std::move(*transactions) : format::tree();
+				}
+				coreturn expects_rt<vector<block_log>>(std::move(results));
 			}
 			expects_promise_rt<coin_utxo> cardano::get_transaction_output(const std::string_view& transaction_id, uint64_t index)
 			{
@@ -92,26 +88,33 @@ namespace tangent
 				if (!block_height)
 					coreturn expects_rt<uint64_t>(block_height.error());
 
-				auto block_data = coawait(cardano::get_block_transactions(*block_height, nullptr));
+				auto args = format::tree::map();
+				args.childs().reserve(2);
+				auto* network_query = args.set("network_identifier", format::tree::map());
+				network_query->set("blockchain", format::variable(get_blockchain()));
+				network_query->set("network", format::variable(get_network()));
+				auto* block_query = args.set("block_identifier", format::tree::map());
+				block_query->set("index", format::variable(*block_height));
+
+				auto block_data = coawait(execute_rest("POST", nd_call::block_data(), args, cache_policy::blob_cache));
 				if (!block_data)
 					coreturn expects_rt<uint64_t>(block_data.error());
 
-				uint64_t block_slot = block_data->fetch_var("metadata.slotNo").get_integer();
-				memory::release(*block_data);
+				uint64_t block_slot = block_data->child_var("block.metadata.slotNo").as_uint64();
 				coreturn expects_rt<uint64_t>(block_slot);
 			}
-			expects_promise_rt<computed_transaction> cardano::link_transaction(uint64_t block_height, const std::string_view& block_hash, schema* transaction_data)
+			expects_promise_rt<computed_transaction> cardano::link_transaction(uint64_t block_height, const std::string_view& block_hash, format::tree& transaction_data)
 			{
-				auto* operations_data = transaction_data->get("operations");
-				if (!operations_data || operations_data->empty())
+				auto* operations_data = transaction_data.child("operations");
+				if (!operations_data || operations_data->childs().empty())
 					coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
 
 				hash_set<string> addresses;
-				for (auto& tx_operation : operations_data->get_childs())
+				for (auto& tx_operation : operations_data->childs())
 				{
-					string status = tx_operation->get_var("status").get_blob();
+					string status = tx_operation.child_var("status").as_blob();
 					if (status == "success")
-						addresses.insert(tx_operation->fetch_var("account.address").get_blob());
+						addresses.insert(tx_operation.child_var("account.address").as_blob());
 				}
 
 				auto discovery = find_linked_addresses(addresses);
@@ -119,22 +122,22 @@ namespace tangent
 					coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
 
 				computed_transaction tx;
-				tx.transaction_id = transaction_data->fetch_var("transaction_identifier.hash").get_blob();
+				tx.transaction_id = transaction_data.child_var("transaction_identifier.hash").as_blob();
 
-				for (auto& tx_operation : operations_data->get_childs())
+				for (auto& tx_operation : operations_data->childs())
 				{
-					string status = tx_operation->get_var("status").get_blob();
+					string status = tx_operation.child_var("status").as_blob();
 					if (status != "success")
 						continue;
 
-					auto identifier = stringify::split(tx_operation->fetch_var("coin_change.coin_identifier.identifier").get_blob(), ':');
+					auto identifier = stringify::split(tx_operation.child_var("coin_change.coin_identifier.identifier").as_blob(), ':');
 					uint32_t index = from_string<uint32_t>(identifier.back()).or_else(0);
 					string transaction_id = identifier.front();
-					string symbol = tx_operation->fetch_var("amount.currency.symbol").get_blob();
-					string address = tx_operation->fetch_var("account.address").get_blob();
-					string type = tx_operation->get_var("type").get_blob();
-					decimal value = math0::abs(tx_operation->fetch_var("amount.value").get_decimal()) / netdata.divisibility;
-					schema* token_bundle = tx_operation->fetch("metadata.tokenBundle");
+					string symbol = tx_operation.child_var("amount.currency.symbol").as_blob();
+					string address = tx_operation.child_var("account.address").as_blob();
+					string type = tx_operation.child_var("type").as_blob();
+					decimal value = math0::abs(tx_operation.child_var("amount.value").as_decimal()) / netdata.divisibility;
+					auto* token_bundle = tx_operation.child("metadata.tokenBundle");
 					if (type == "output")
 					{
 						auto target_address = discovery->find(address);
@@ -147,22 +150,22 @@ namespace tangent
 						if (token_bundle != nullptr)
 						{
 							auto blockchain = algorithm::asset::blockchain_of(native_asset);
-							for (auto& token_operation : token_bundle->get_childs())
+							for (auto& token_operation : token_bundle->childs())
 							{
-								schema* tokens = token_operation->get("tokens");
+								auto* tokens = token_operation.child("tokens");
 								if (tokens != nullptr)
 								{
-									string contract_address = token_operation->get_var("policyId").get_blob();
-									for (auto& item : tokens->get_childs())
+									string contract_address = token_operation.child_var("policyId").as_blob();
+									for (auto& item : tokens->childs())
 									{
-										string symbol = item->fetch_var("currency.symbol").get_blob();
+										string symbol = item.child_var("currency.symbol").as_blob();
 										if (format::util::is_hex_encoding(symbol))
 											symbol = codec::hex_decode(symbol);
 
 										auto token_asset = algorithm::asset::id_of(blockchain, symbol, contract_address);
-										uint8_t decimals = (uint8_t)item->fetch_var("currency.decimals").get_integer();
+										uint8_t decimals = item.child_var("currency.decimals").as_uint8();
 										decimal divisibility = decimals > 0 ? decimal("1" + string(decimals, '0')) : decimal(1);
-										decimal token_value = algorithm::arithmetic::divide(math0::abs(item->get_var("value").get_decimal()), divisibility);
+										decimal token_value = algorithm::arithmetic::divide(math0::abs(item.child_var("value").as_decimal()), divisibility);
 										new_output.apply_token_value(contract_address, symbol, token_value, decimals);
 										superchain::server_node::get()->enable_contract_address(token_asset, contract_address);
 									}
@@ -184,22 +187,22 @@ namespace tangent
 						if (token_bundle != nullptr)
 						{
 							auto blockchain = algorithm::asset::blockchain_of(native_asset);
-							for (auto& token_operation : token_bundle->get_childs())
+							for (auto& token_operation : token_bundle->childs())
 							{
-								schema* tokens = token_operation->get("tokens");
+								auto* tokens = token_operation.child("tokens");
 								if (tokens != nullptr)
 								{
-									string contract_address = token_operation->get_var("policyId").get_blob();
-									for (auto& item : tokens->get_childs())
+									string contract_address = token_operation.child_var("policyId").as_blob();
+									for (auto& item : tokens->childs())
 									{
-										string symbol = item->fetch_var("currency.symbol").get_blob();
+										string symbol = item.child_var("currency.symbol").as_blob();
 										if (format::util::is_hex_encoding(symbol))
 											symbol = codec::hex_decode(symbol);
 
 										auto token_asset = algorithm::asset::id_of(blockchain, symbol, contract_address);
-										uint8_t decimals = (uint8_t)item->fetch_var("currency.decimals").get_integer();
+										uint8_t decimals = item.child_var("currency.decimals").as_uint8();
 										decimal divisibility = decimals > 0 ? decimal("1" + string(decimals, '0')) : decimal(1);
-										decimal token_value = algorithm::arithmetic::divide(math0::abs(item->get_var("value").get_decimal()), divisibility);
+										decimal token_value = algorithm::arithmetic::divide(math0::abs(item.child_var("value").as_decimal()), divisibility);
 										new_input.apply_token_value(contract_address, symbol, token_value, decimals);
 										superchain::server_node::get()->enable_contract_address(token_asset, contract_address);
 									}
@@ -281,17 +284,16 @@ namespace tangent
 				rosetta_transaction.addString(copy<std::string>(finalized.calldata));
 				
 				auto& rosetta_data = rosetta_transaction.getCbor();
-				schema* args = var::set::object();
-				schema* network_query = args->set("network_identifier", var::object());
-				network_query->set("blockchain", var::string(get_blockchain()));
-				network_query->set("network", var::string(get_network()));
-				args->set("signed_transaction", var::string(codec::hex_encode(std::string_view((char*)rosetta_data.data(), rosetta_data.size()))));
+				format::tree args = format::tree::map();
+				auto* network_query = args.set("network_identifier", format::tree::map());
+				network_query->set("blockchain", format::variable(get_blockchain()));
+				network_query->set("network", format::variable(get_network()));
+				args.set("signed_transaction", format::variable(codec::hex_encode(std::string_view((char*)rosetta_data.data(), rosetta_data.size()))));
 
 				auto tx_hash = coawait(execute_rest("POST", nd_call::submit_transaction(), args, cache_policy::no_cache));
 				if (!tx_hash)
 					coreturn expects_rt<void>(tx_hash.error());
 
-				memory::release(*tx_hash);
 				coreturn expects_rt<void>(expectation::met);
 			}
 			expects_promise_rt<prepared_transaction> cardano::prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const decimal& max_fee)

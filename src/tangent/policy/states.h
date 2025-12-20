@@ -18,7 +18,7 @@ namespace tangent
 			bool load_index(format::ro_stream& stream) override;
 			bool store_data(format::wo_stream* stream) const override;
 			bool load_data(format::ro_stream& stream) override;
-			uptr<schema> as_schema() const override;
+			format::tree as_tree() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
@@ -38,7 +38,7 @@ namespace tangent
 			bool load_index(format::ro_stream& stream) override;
 			bool store_data(format::wo_stream* stream) const override;
 			bool load_data(format::ro_stream& stream) override;
-			uptr<schema> as_schema() const override;
+			format::tree as_tree() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
@@ -59,7 +59,7 @@ namespace tangent
 			bool load_index(format::ro_stream& stream) override;
 			bool store_data(format::wo_stream* stream) const override;
 			bool load_data(format::ro_stream& stream) override;
-			uptr<schema> as_schema() const override;
+			format::tree as_tree() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
@@ -84,7 +84,7 @@ namespace tangent
 			bool load_row(format::ro_stream& stream) override;
 			bool store_data(format::wo_stream* stream) const override;
 			bool load_data(format::ro_stream& stream) override;
-			uptr<schema> as_schema() const override;
+			format::tree as_tree() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			uint256_t as_rank() const override;
@@ -107,7 +107,7 @@ namespace tangent
 			bool store_data(format::wo_stream* stream) const override;
 			bool load_data(format::ro_stream& stream) override;
 			uint64_t get_delegation_zeroing_block(uint64_t current_block_number) const;
-			uptr<schema> as_schema() const override;
+			format::tree as_tree() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
@@ -132,7 +132,7 @@ namespace tangent
 			bool store_data(format::wo_stream* stream) const override;
 			bool load_data(format::ro_stream& stream) override;
 			decimal get_balance() const;
-			uptr<schema> as_schema() const override;
+			format::tree as_tree() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			uint256_t as_rank() const override;
@@ -157,7 +157,7 @@ namespace tangent
 			bool store_data(format::wo_stream* stream) const override;
 			bool load_data(format::ro_stream& stream) override;
 			bool is_active() const;
-			uptr<schema> as_schema() const override;
+			format::tree as_tree() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			uint256_t as_rank() const override;
@@ -183,7 +183,7 @@ namespace tangent
 			bool load_row(format::ro_stream& stream) override;
 			bool store_data(format::wo_stream* stream) const override;
 			bool load_data(format::ro_stream& stream) override;
-			uptr<schema> as_schema() const override;
+			format::tree as_tree() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			uint256_t as_rank() const override;
@@ -208,7 +208,7 @@ namespace tangent
 			bool store_data(format::wo_stream* stream) const override;
 			bool load_data(format::ro_stream& stream) override;
 			bool is_active() const;
-			uptr<schema> as_schema() const override;
+			format::tree as_tree() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			uint256_t as_rank() const override;
@@ -233,7 +233,7 @@ namespace tangent
 			bool load_row(format::ro_stream& stream) override;
 			bool store_data(format::wo_stream* stream) const override;
 			bool load_data(format::ro_stream& stream) override;
-			uptr<schema> as_schema() const override;
+			format::tree as_tree() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			uint256_t as_rank() const override;
@@ -263,7 +263,7 @@ namespace tangent
 			bool load_row(format::ro_stream& stream) override;
 			bool store_data(format::wo_stream* stream) const override;
 			bool load_data(format::ro_stream& stream) override;
-			uptr<schema> as_schema() const override;
+			format::tree as_tree() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			uint256_t as_rank() const override;
@@ -297,7 +297,7 @@ namespace tangent
 			bool store_data(format::wo_stream* stream) const override;
 			bool load_data(format::ro_stream& stream) override;
 			bool is_active() const;
-			uptr<schema> as_schema() const override;
+			format::tree as_tree() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			uint256_t as_rank() const override;
@@ -322,7 +322,7 @@ namespace tangent
 			bool load_row(format::ro_stream& stream) override;
 			bool store_data(format::wo_stream* stream) const override;
 			bool load_data(format::ro_stream& stream) override;
-			uptr<schema> as_schema() const override;
+			format::tree as_tree() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			uint256_t as_rank() const override;
@@ -347,7 +347,7 @@ namespace tangent
 			bool load_row(format::ro_stream& stream) override;
 			bool store_data(format::wo_stream* stream) const override;
 			bool load_data(format::ro_stream& stream) override;
-			uptr<schema> as_schema() const override;
+			format::tree as_tree() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			uint256_t as_rank() const override;
@@ -375,7 +375,7 @@ namespace tangent
 			bool store_data(format::wo_stream* stream) const override;
 			bool load_data(format::ro_stream& stream) override;
 			void set_group(const algorithm::composition::cpubkey_t& new_public_key, btree_set<algorithm::pubkeyhash_t>&& new_group);
-			uptr<schema> as_schema() const override;
+			format::tree as_tree() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			uint256_t as_rank() const override;
@@ -397,7 +397,7 @@ namespace tangent
 			bool load_index(format::ro_stream& stream) override;
 			bool store_data(format::wo_stream* stream) const override;
 			bool load_data(format::ro_stream& stream) override;
-			uptr<schema> as_schema() const override;
+			format::tree as_tree() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			expects_lr<string> as_code() const;
@@ -420,7 +420,7 @@ namespace tangent
 			bool load_index(format::ro_stream& stream) override;
 			bool store_data(format::wo_stream* stream) const override;
 			bool load_data(format::ro_stream& stream) override;
-			uptr<schema> as_schema() const override;
+			format::tree as_tree() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
@@ -457,7 +457,7 @@ namespace tangent
 			bool is_bridge_account() const;
 			bool is_permanent() const override;
 			account_type get_type() const;
-			uptr<schema> as_schema() const override;
+			format::tree as_tree() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			uint256_t as_rank() const override;
@@ -480,7 +480,7 @@ namespace tangent
 			bool store_data(format::wo_stream* stream) const override;
 			bool load_data(format::ro_stream& stream) override;
 			bool is_permanent() const override;
-			uptr<schema> as_schema() const override;
+			format::tree as_tree() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();

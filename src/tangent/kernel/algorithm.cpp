@@ -364,21 +364,21 @@ namespace tangent
 				result *= scale;
 			return result;
 		}
-		schema* wesolowski::serialize(uint64_t difficulty, const std::string_view& signature, const decimal& scaling)
+		format::tree wesolowski::serialize(uint64_t difficulty, const std::string_view& signature, const decimal& scaling)
 		{
 			mpz_t p, l;
 			if (!mpz::wesolowski_deserialize(p, l, signature))
-				return var::set::null();
+				return format::tree();
 
-			auto* data = var::set::object();
-			data->set("x", var::string(format::util::encode_0xhex(mpz::export0(p))));
-			data->set("y", var::string(format::util::encode_0xhex(mpz::export0(l))));
+			auto data = format::tree();
+			data.set("x", format::variable(format::util::encode_0xhex(mpz::export0(p))));
+			data.set("y", format::variable(format::util::encode_0xhex(mpz::export0(l))));
 			if (scaling.is_positive())
-				data->set("scaling", var::decimal(scaling));
-			data->set("kdifficulty", algorithm::encoding::serialize_uint256(kdifficulty(difficulty)));
-			data->set("difficulty", var::integer(difficulty));
-			data->set("security", var::integer(protocol::now().policy.pow.security));
-			data->set("size", var::integer(signature.size()));
+				data.set("scaling", format::variable(scaling));
+			data.set("kdifficulty", algorithm::encoding::serialize_uint256(kdifficulty(difficulty)));
+			data.set("difficulty", format::variable(difficulty));
+			data.set("security", format::variable(protocol::now().policy.pow.security));
+			data.set("size", format::variable(signature.size()));
 			mpz_clear(p);
 			mpz_clear(l);
 			return data;
@@ -992,38 +992,38 @@ namespace tangent
 				address.clear();
 			return address;
 		}
-		schema* signing::serialize_secret_key(const seckey_t& secret_key)
+		format::tree signing::serialize_secret_key(const seckey_t& secret_key)
 		{
 			if (secret_key.empty())
-				return var::set::null();
+				return format::variable();
 
 			string data;
 			if (!encode_secret_key(secret_key, data))
-				return var::set::null();
+				return format::variable();
 
-			return var::set::string(data);
+			return format::variable(data);
 		}
-		schema* signing::serialize_public_key(const pubkey_t& public_key)
+		format::tree signing::serialize_public_key(const pubkey_t& public_key)
 		{
 			if (public_key.empty())
-				return var::set::null();
+				return format::variable();
 
 			string data;
 			if (!encode_public_key(public_key, data))
-				return var::set::null();
+				return format::variable();
 
-			return var::set::string(data);
+			return format::variable(data);
 		}
-		schema* signing::serialize_address(const pubkeyhash_t& public_key_hash)
+		format::tree signing::serialize_address(const pubkeyhash_t& public_key_hash)
 		{
 			if (public_key_hash.empty())
-				return var::set::null();
+				return format::variable();
 
 			string data;
 			if (!encode_address(public_key_hash, data))
-				return var::set::null();
+				return format::variable();
 
-			return var::set::string(data);
+			return format::variable(data);
 		}
 		secp256k1_context* signing::get_context()
 		{
@@ -1073,16 +1073,16 @@ namespace tangent
 		{
 			return hashing::hash32d(name);
 		}
-		schema* encoding::serialize_uint256(const uint256_t& value, bool always16)
+		format::tree encoding::serialize_uint256(const uint256_t& value, bool always16)
 		{
 			if (!always16 && value <= std::numeric_limits<int64_t>::max())
-				return var::set::integer((uint64_t)value);
+				return format::variable((uint64_t)value);
 
 			uint8_t data[32];
 			value.encode(data);
 
 			size_t size = value.bytes();
-			return var::set::string(format::util::encode_0xhex(std::string_view((char*)data + (sizeof(data) - size), size)));
+			return format::variable(format::util::encode_0xhex(std::string_view((char*)data + (sizeof(data) - size), size)));
 		}
 		expects_lr<string> encoding::pack_program(const std::string_view& unpacked_code)
 		{
@@ -1372,19 +1372,19 @@ namespace tangent
 		{
 			return is_any(value, require_no_token, true);
 		}
-		schema* asset::serialize(const asset_id& value)
+		format::tree asset::serialize(const asset_id& value)
 		{
-			schema* data = var::set::object();
-			data->set("id", encoding::serialize_uint256(value, true));
+			format::tree data;
+			data.set("id", encoding::serialize_uint256(value, true));
 			string chain = blockchain_of(value);
 			if (!chain.empty())
-				data->set("chain", var::string(chain));
+				data.set("chain", format::variable(chain));
 			string token = token_of(value);
 			if (!token.empty())
-				data->set("token", var::string(token));
+				data.set("token", format::variable(token));
 			string checksum = checksum_of(value);
 			if (!checksum.empty())
-				data->set("checksum", var::string(checksum));
+				data.set("checksum", format::variable(checksum));
 			return data;
 		}
 

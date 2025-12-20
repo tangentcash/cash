@@ -57,7 +57,7 @@ namespace tangent
 			wallet_link(const algorithm::pubkeyhash_t& new_owner, const std::string_view& new_public_key, const std::string_view& new_address);
 			bool store_payload(format::wo_stream* stream) const override;
 			bool load_payload(format::ro_stream& stream) override;
-			uptr<schema> as_schema() const override;
+			format::tree as_tree() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			search_term as_search_wide() const;
@@ -127,7 +127,7 @@ namespace tangent
 			bool is_valid_input() const;
 			bool is_valid_output() const;
 			algorithm::asset_id get_asset(const algorithm::asset_id& base_asset) const;
-			uptr<schema> as_schema() const override;
+			format::tree as_tree() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
@@ -148,7 +148,7 @@ namespace tangent
 			bool load_payload(format::ro_stream& stream) override;
 			bool is_valid() const;
 			uint256_t as_attestation_hash() const;
-			uptr<schema> as_schema() const override;
+			format::tree as_tree() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
@@ -188,7 +188,7 @@ namespace tangent
 			bool load_payload(format::ro_stream& stream) override;
 			signable_coin_utxo* next_input_for_aggregation();
 			status as_status() const;
-			uptr<schema> as_schema() const override;
+			format::tree as_tree() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
@@ -208,11 +208,17 @@ namespace tangent
 			bool load_payload(format::ro_stream& stream) override;
 			bool is_valid() const;
 			computed_transaction as_computed() const;
-			uptr<schema> as_schema() const override;
+			format::tree as_tree() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
+		};
+
+		struct block_log
+		{
+			string block_hash;
+			format::tree transactions;
 		};
 
 		struct transaction_logs
@@ -254,7 +260,8 @@ namespace tangent
 
 		struct supervisor_options
 		{
-			uint64_t polling_frequency_ms = 70000;
+			uint64_t polling_frequency = 70000;
+			uint64_t blocks_batching = 1;
 		};
 
 		struct chain_supervisor_options : supervisor_options
@@ -270,9 +277,9 @@ namespace tangent
 
 			void set_checkpoint_from_block(uint64_t block_height);
 			void set_checkpoint_to_block(uint64_t block_height);
-			uint64_t get_next_block_height();
+			uint64_t get_next_block_height(uint64_t block_count);
 			uint64_t get_time_awaited() const;
-			bool has_next_block_height() const;
+			bool has_next_block_height(uint64_t block_count) const;
 			bool has_current_block_height() const;
 			bool has_latest_block_height() const;
 			bool will_wait_for_transactions() const;
@@ -284,7 +291,7 @@ namespace tangent
 		struct multichain_supervisor_options : supervisor_options
 		{
 			hash_map<string, chain_supervisor_options> specifics;
-			uint64_t retry_waiting_time_ms = 30000;
+			uint64_t retry_timeout = 30000;
 
 			chain_supervisor_options& add_specific_options(const std::string_view& blockchain);
 		};
@@ -312,10 +319,9 @@ namespace tangent
 		public:
 			server_relay(hash_map<string, string>&& node_urls, double node_rps) noexcept;
 			~server_relay() noexcept;
-			expects_promise_rt<schema*> execute_rpc(const algorithm::asset_id& asset, error_reporter& reporter, const std::string_view& method, const schema_list& args, cache_policy cache, const std::string_view& path);
-			expects_promise_rt<schema*> execute_rpc3(const algorithm::asset_id& asset, error_reporter& reporter, const std::string_view& method, const schema_args& args, cache_policy cache, const std::string_view& path);
-			expects_promise_rt<schema*> execute_rest(const algorithm::asset_id& asset, error_reporter& reporter, const std::string_view& method, const std::string_view& path, schema* args, cache_policy cache);
-			expects_promise_rt<schema*> execute_http(const algorithm::asset_id& asset, error_reporter& reporter, const std::string_view& method, const std::string_view& path, const std::string_view& type, const std::string_view& body, cache_policy cache);
+			expects_promise_rt<format::tree> execute_rpc(const algorithm::asset_id& asset, error_reporter& reporter, const std::string_view& method, const format::tree& args, cache_policy cache, const std::string_view& path, bool multi);
+			expects_promise_rt<format::tree> execute_rest(const algorithm::asset_id& asset, error_reporter& reporter, const std::string_view& method, const std::string_view& path, const format::tree& args, cache_policy cache);
+			expects_promise_rt<format::tree> execute_http(const algorithm::asset_id& asset, error_reporter& reporter, const std::string_view& method, const std::string_view& path, const std::string_view& type, const std::string_view& body, cache_policy cache);
 			promise<bool> yield_for_cooldown(uint64_t& retry_timeout, uint64_t total_timeout_ms);
 			promise<bool> yield_for_discovery(chain_supervisor_options* options);
 			expects_lr<void> verify_compatibility(const algorithm::asset_id& asset);
@@ -364,13 +370,13 @@ namespace tangent
 		public:
 			relay_backend(const algorithm::asset_id& new_asset) noexcept;
 			virtual ~relay_backend() noexcept;
-			virtual expects_promise_rt<schema*> execute_rpc(const std::string_view& method, schema_list&& args, cache_policy cache, const std::string_view& path = std::string_view());
-			virtual expects_promise_rt<schema*> execute_rpc3(const std::string_view& method, schema_args&& args, cache_policy cache, const std::string_view& path = std::string_view());
-			virtual expects_promise_rt<schema*> execute_rest(const std::string_view& method, const std::string_view& path, schema* args, cache_policy cache);
-			virtual expects_promise_rt<schema*> execute_http(const std::string_view& method, const std::string_view& path, const std::string_view& type, const std::string_view& body, cache_policy cache);
+			virtual expects_promise_rt<format::tree> execute_rpc(const std::string_view& method, const format::tree& args, cache_policy cache, const std::string_view& path = std::string_view());
+			virtual expects_promise_rt<format::tree> execute_rpc_multi(const std::string_view& method, const format::tree& args, cache_policy cache, const std::string_view& path = std::string_view());
+			virtual expects_promise_rt<format::tree> execute_rest(const std::string_view& method, const std::string_view& path, const format::tree& args, cache_policy cache);
+			virtual expects_promise_rt<format::tree> execute_http(const std::string_view& method, const std::string_view& path, const std::string_view& type, const std::string_view& body, cache_policy cache);
 			virtual expects_promise_rt<uint64_t> get_latest_block_height() = 0;
-			virtual expects_promise_rt<schema*> get_block_transactions(uint64_t block_height, string* block_hash) = 0;
-			virtual expects_promise_rt<computed_transaction> link_transaction(uint64_t block_height, const std::string_view& block_hash, schema* transaction_data) = 0;
+			virtual expects_promise_rt<vector<block_log>> get_block_transactions(uint64_t block_height, uint64_t block_count) = 0;
+			virtual expects_promise_rt<computed_transaction> link_transaction(uint64_t block_height, const std::string_view& block_hash, format::tree& transaction_data) = 0;
 			virtual expects_promise_rt<decimal> calculate_balance(const algorithm::asset_id& for_asset, const wallet_link& link) = 0;
 			virtual expects_promise_rt<void> broadcast_transaction(const finalized_transaction& finalized) = 0;
 			virtual expects_promise_rt<prepared_transaction> prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const decimal& max_fee) = 0;

@@ -132,16 +132,16 @@ namespace tangent
 		{
 			return false;
 		}
-		uptr<schema> transaction::as_schema() const
+		format::tree transaction::as_tree() const
 		{
-			schema* data = var::set::object();
-			data->set("hash", var::string(algorithm::encoding::encode_0xhex256(as_hash())));
-			data->set("signature", signature.empty() ? var::null() : var::string(format::util::encode_0xhex(signature.view())));
-			data->set("type", var::string(as_typename()));
-			data->set("asset", algorithm::asset::serialize(asset));
-			data->set("nonce", var::integer(nonce));
-			data->set("gas_price", is_commitment() ? var::null() : var::decimal(gas_price));
-			data->set("gas_limit", algorithm::encoding::serialize_uint256(gas_limit));
+			format::tree data;
+			data.set("hash", format::variable(algorithm::encoding::encode_0xhex256(as_hash())));
+			data.set("signature", signature.empty() ? format::variable() : format::variable(format::util::encode_0xhex(signature.view())));
+			data.set("type", format::variable(as_typename()));
+			data.set("asset", algorithm::asset::serialize(asset));
+			data.set("nonce", format::variable(nonce));
+			data.set("gas_price", is_commitment() ? format::variable() : format::variable(gas_price));
+			data.set("gas_limit", algorithm::encoding::serialize_uint256(gas_limit));
 			return data;
 		}
 
@@ -286,22 +286,22 @@ namespace tangent
 			messages.pop_back();
 			return messages;
 		}
-		uptr<schema> receipt::as_schema() const
+		format::tree receipt::as_tree() const
 		{
-			schema* data = var::set::object();
-			data->set("hash", var::string(algorithm::encoding::encode_0xhex256(as_hash())));
-			data->set("transaction_hash", var::string(algorithm::encoding::encode_0xhex256(transaction_hash)));
-			data->set("from", algorithm::signing::serialize_address(from));
-			data->set("absolute_gas_use", algorithm::encoding::serialize_uint256(absolute_gas_use));
-			data->set("relative_gas_use", algorithm::encoding::serialize_uint256(relative_gas_use));
-			data->set("block_time", algorithm::encoding::serialize_uint256(block_time));
-			data->set("block_number", algorithm::encoding::serialize_uint256(block_number));
-			data->set("successful", var::boolean(successful));
-			auto* events_data = data->set("events", var::set::array());
+			format::tree data;
+			data.set("hash", format::variable(algorithm::encoding::encode_0xhex256(as_hash())));
+			data.set("transaction_hash", format::variable(algorithm::encoding::encode_0xhex256(transaction_hash)));
+			data.set("from", algorithm::signing::serialize_address(from));
+			data.set("absolute_gas_use", algorithm::encoding::serialize_uint256(absolute_gas_use));
+			data.set("relative_gas_use", algorithm::encoding::serialize_uint256(relative_gas_use));
+			data.set("block_time", algorithm::encoding::serialize_uint256(block_time));
+			data.set("block_number", algorithm::encoding::serialize_uint256(block_number));
+			data.set("successful", format::variable(successful));
+			auto* events_data = data.set("events", format::tree());
 			for (auto& item : events)
 			{
-				auto* event_data = events_data->push(var::set::object());
-				event_data->set("event", var::integer(item.first));
+				auto* event_data = events_data->push(format::tree());
+				event_data->set("event", format::variable(item.first));
 				event_data->set("args", format::variables_util::serialize(item.second));
 			}
 			return data;
@@ -397,13 +397,13 @@ namespace tangent
 
 			return load_data(stream);
 		}
-		uptr<schema> uniform::as_schema() const
+		format::tree uniform::as_tree() const
 		{
-			schema* data = var::set::object();
-			data->set("hash", var::string(algorithm::encoding::encode_0xhex256(as_hash())));
-			data->set("type", var::string(as_typename()));
-			data->set("block_number", algorithm::encoding::serialize_uint256(block_number));
-			data->set("index", var::string(format::util::encode_0xhex(as_index())));
+			format::tree data;
+			data.set("hash", format::variable(algorithm::encoding::encode_0xhex256(as_hash())));
+			data.set("type", format::variable(as_typename()));
+			data.set("block_number", algorithm::encoding::serialize_uint256(block_number));
+			data.set("index", format::variable(format::util::encode_0xhex(as_index())));
 			return data;
 		}
 		state_level uniform::as_level() const
@@ -443,15 +443,15 @@ namespace tangent
 
 			return load_data(stream);
 		}
-		uptr<schema> multiform::as_schema() const
+		format::tree multiform::as_tree() const
 		{
-			schema* data = var::set::object();
-			data->set("hash", var::string(algorithm::encoding::encode_0xhex256(as_hash())));
-			data->set("type", var::string(as_typename()));
-			data->set("block_number", algorithm::encoding::serialize_uint256(block_number));
-			data->set("column", var::string(format::util::encode_0xhex(as_column())));
-			data->set("row", var::string(format::util::encode_0xhex(as_row())));
-			data->set("rank", algorithm::encoding::serialize_uint256(as_rank()));
+			format::tree data;
+			data.set("hash", format::variable(algorithm::encoding::encode_0xhex256(as_hash())));
+			data.set("type", format::variable(as_typename()));
+			data.set("block_number", algorithm::encoding::serialize_uint256(block_number));
+			data.set("column", format::variable(format::util::encode_0xhex(as_column())));
+			data.set("row", format::variable(format::util::encode_0xhex(as_row())));
+			data.set("rank", algorithm::encoding::serialize_uint256(as_rank()));
 			return data;
 		}
 		state_level multiform::as_level() const

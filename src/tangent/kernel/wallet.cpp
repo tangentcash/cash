@@ -204,21 +204,21 @@ namespace tangent
 
 			return next.or_else(0);
 		}
-		uptr<schema> wallet::as_schema() const
+		format::tree wallet::as_tree() const
 		{
-			schema* data = var::set::object();
-			data->set("secret_key", algorithm::signing::serialize_secret_key(secret_key));
-			data->set("public_key", algorithm::signing::serialize_public_key(public_key));
-			data->set("public_key_hash", var::string(format::util::encode_0xhex(public_key_hash.optimized_view())));
-			data->set("address", algorithm::signing::serialize_address(public_key_hash));
+			format::tree data;
+			data.set("secret_key", algorithm::signing::serialize_secret_key(secret_key));
+			data.set("public_key", algorithm::signing::serialize_public_key(public_key));
+			data.set("public_key_hash", format::variable(format::util::encode_0xhex(public_key_hash.optimized_view())));
+			data.set("address", algorithm::signing::serialize_address(public_key_hash));
 			return data;
 		}
-		uptr<schema> wallet::as_public_schema() const
+		format::tree wallet::as_public_tree() const
 		{
-			schema* data = var::set::object();
-			data->set("public_key", algorithm::signing::serialize_public_key(public_key));
-			data->set("public_key_hash", var::string(format::util::encode_0xhex(public_key_hash.optimized_view())));
-			data->set("address", algorithm::signing::serialize_address(public_key_hash));
+			format::tree data;
+			data.set("public_key", algorithm::signing::serialize_public_key(public_key));
+			data.set("public_key_hash", format::variable(format::util::encode_0xhex(public_key_hash.optimized_view())));
+			data.set("address", algorithm::signing::serialize_address(public_key_hash));
 			return data;
 		}
 		uint32_t wallet::as_type() const
@@ -392,36 +392,36 @@ namespace tangent
 			double index = latency * 0.75 + reliability * 0.25;
 			return (uint64_t)(1000000.0 * index);
 		}
-		uptr<schema> node::as_schema() const
+		format::tree node::as_tree() const
 		{
-			schema* data = var::set::object();
-			data->set("address", var::string(address.get_ip_address().or_else("[bad_address]") + ":" + to_string(address.get_ip_port().or_else(0))));
-			data->set("version", var::string(as_version()));
+			format::tree data;
+			data.set("address", format::variable(address.get_ip_address().or_else("[bad_address]") + ":" + to_string(address.get_ip_port().or_else(0))));
+			data.set("version", format::variable(as_version()));
 
-			auto* availability_data = data->set("availability");
-			auto* neighbors_data = availability_data->set("neighbors", var::set::array());
+			auto* availability_data = data.set("availability", format::tree());
+			auto* neighbors_data = availability_data->set("neighbors", format::tree());
 			for (auto& public_key : availability.neighbors)
 				neighbors_data->push(algorithm::signing::serialize_public_key(public_key));
 			availability_data->set("latency", algorithm::encoding::serialize_uint256(availability.latency));
 			availability_data->set("timestamp", algorithm::encoding::serialize_uint256(availability.timestamp));
 			availability_data->set("calls", algorithm::encoding::serialize_uint256(availability.calls));
 			availability_data->set("errors", algorithm::encoding::serialize_uint256(availability.errors));
-			availability_data->set("reachable", var::boolean(availability.reachable));
+			availability_data->set("reachable", format::variable(availability.reachable));
 
-			auto* ports_data = data->set("ports");
-			ports_data->set("consensus", var::integer(ports.consensus));
-			ports_data->set("discovery", var::integer(ports.discovery));
-			ports_data->set("rpc", var::integer(ports.rpc));
+			auto* ports_data = data.set("ports", format::tree());
+			ports_data->set("consensus", format::variable(ports.consensus));
+			ports_data->set("discovery", format::variable(ports.discovery));
+			ports_data->set("rpc", format::variable(ports.rpc));
 
-			auto* services_data = data->set("services");
-			services_data->set("consensus", var::boolean(services.has_consensus));
-			services_data->set("discovery", var::boolean(services.has_discovery));
-			services_data->set("superchain", var::boolean(services.has_superchain));
-			services_data->set("rpc", var::boolean(services.has_rpc));
-			services_data->set("rpc_web_sockets", var::boolean(services.has_rpc_web_sockets));
-			services_data->set("production", var::boolean(services.has_production));
-			services_data->set("participation", var::boolean(services.has_participation));
-			services_data->set("attestation", var::boolean(services.has_attestation));
+			auto* services_data = data.set("services", format::tree());
+			services_data->set("consensus", format::variable(services.has_consensus));
+			services_data->set("discovery", format::variable(services.has_discovery));
+			services_data->set("superchain", format::variable(services.has_superchain));
+			services_data->set("rpc", format::variable(services.has_rpc));
+			services_data->set("rpc_web_sockets", format::variable(services.has_rpc_web_sockets));
+			services_data->set("production", format::variable(services.has_production));
+			services_data->set("participation", format::variable(services.has_participation));
+			services_data->set("attestation", format::variable(services.has_attestation));
 			return data;
 		}
 		string node::as_version() const

@@ -26,10 +26,10 @@ namespace tangent
 				cardano(const algorithm::asset_id& new_asset) noexcept;
 				virtual ~cardano() noexcept = default;
 				virtual expects_promise_rt<uint64_t> get_latest_block_height() override;
-				virtual expects_promise_rt<schema*> get_block_transactions(uint64_t block_height, string* block_hash) override;
+				virtual expects_promise_rt<vector<block_log>> get_block_transactions(uint64_t block_height, uint64_t block_count) override;
 				virtual expects_promise_rt<coin_utxo> get_transaction_output(const std::string_view& tx_id, uint64_t index) override;
 				virtual expects_promise_rt<uint64_t> get_latest_block_slot();
-				virtual expects_promise_rt<computed_transaction> link_transaction(uint64_t block_height, const std::string_view& block_hash, schema* transaction_data) override;
+				virtual expects_promise_rt<computed_transaction> link_transaction(uint64_t block_height, const std::string_view& block_hash, format::tree& transaction_data) override;
 				virtual expects_promise_rt<void> broadcast_transaction(const finalized_transaction& finalized) override;
 				virtual expects_promise_rt<prepared_transaction> prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const decimal& max_fee) override;
 				virtual expects_lr<finalized_transaction> finalize_transaction(superchain::prepared_transaction&& prepared) override;

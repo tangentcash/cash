@@ -4578,7 +4578,7 @@ namespace tangent
 				}
 			}
 		}
-		expects_lr<void> marshall::store(schema* stream, const void* value, int value_type_id)
+		expects_lr<void> marshall::store(format::tree& stream, const void* value, int value_type_id)
 		{
 			if (!value)
 				return expectation::met;
@@ -4586,34 +4586,34 @@ namespace tangent
 			switch (value_type_id)
 			{
 				case (int)type_id::void_t:
-					stream->value = var::null();
+					stream = format::tree();
 					return expectation::met;
 				case (int)type_id::bool_t:
-					stream->value = var::boolean(*(bool*)value);
+					stream = format::tree(format::variable(*(bool*)value));
 					return expectation::met;
 				case (int)type_id::int8_t:
-					stream->value = var::integer(*(int8_t*)value);
+					stream = format::tree(format::variable(decimal(*(int8_t*)value)));
 					return expectation::met;
 				case (int)type_id::uint8_t:
-					stream->value = var::integer(*(uint8_t*)value);
+					stream = format::tree(format::variable(*(uint8_t*)value));
 					return expectation::met;
 				case (int)type_id::int16_t:
-					stream->value = var::integer(*(int16_t*)value);
+					stream = format::tree(format::variable(decimal(*(int16_t*)value)));
 					return expectation::met;
 				case (int)type_id::uint16_t:
-					stream->value = var::integer(*(uint16_t*)value);
+					stream = format::tree(format::variable(*(uint16_t*)value));
 					return expectation::met;
 				case (int)type_id::int32_t:
-					stream->value = var::integer(*(int32_t*)value);
+					stream = format::tree(format::variable(decimal(*(int32_t*)value)));
 					return expectation::met;
 				case (int)type_id::uint32_t:
-					stream->value = var::integer(*(uint32_t*)value);
+					stream = format::tree(format::variable(*(uint32_t*)value));
 					return expectation::met;
 				case (int)type_id::int64_t:
-					stream->value = var::integer(*(int64_t*)value);
+					stream = format::tree(format::variable(decimal(*(int64_t*)value)));
 					return expectation::met;
 				case (int)type_id::uint64_t:
-					stream->value = var::integer(*(uint64_t*)value);
+					stream = format::tree(format::variable(*(uint64_t*)value));
 					return expectation::met;
 				case (int)type_id::float_t:
 				case (int)type_id::double_t:
@@ -4625,30 +4625,27 @@ namespace tangent
 					value = value_type_id & (int)vitex::scripting::type_id::handle_t ? *(void**)value : value;
 					if (name == SCRIPT_TYPE_ADDRESS)
 					{
-						uptr<schema> data = algorithm::signing::serialize_address(((address_repr*)value)->hash);
-						stream->value = std::move(data->value);
+						stream = algorithm::signing::serialize_address(((address_repr*)value)->hash);
 						return expectation::met;
 					}
 					else if (name == SCRIPT_TYPE_STRING)
 					{
-						stream->value = var::string(((string_repr*)value)->view());
+						stream = format::tree(format::variable(((string_repr*)value)->view()));
 						return expectation::met;
 					}
 					else if (name == SCRIPT_TYPE_UINT128)
 					{
-						auto serializable = uptr<schema>(algorithm::encoding::serialize_uint256(*(uint128_t*)value));
-						stream->value = std::move(serializable->value);
+						stream = algorithm::encoding::serialize_uint256(*(uint128_t*)value);
 						return expectation::met;
 					}
 					else if (name == SCRIPT_TYPE_UINT256)
 					{
-						auto serializable = uptr<schema>(algorithm::encoding::serialize_uint256(*(uint256_t*)value));
-						stream->value = std::move(serializable->value);
+						stream = algorithm::encoding::serialize_uint256(*(uint256_t*)value);
 						return expectation::met;
 					}
 					else if (name == SCRIPT_TYPE_REAL320)
 					{
-						stream->value = var::decimal(*(decimal*)value);
+						stream = format::tree(format::variable(*(decimal*)value));
 						return expectation::met;
 					}
 					else if (name == SCRIPT_TYPE_ARRAY)
@@ -4656,11 +4653,12 @@ namespace tangent
 						auto* array = (array_repr*)value;
 						uint32_t size = (uint32_t)array->size();
 						int type_id = array->get_element_type_id();
-						stream->value = var::array();
+						stream = format::tree();
+						stream.childs().reserve(size);
 						for (uint32_t i = 0; i < size; i++)
 						{
 							void* address = array->at(i);
-							auto status = store(stream->push(var::undefined()), address, type_id);
+							auto status = store(*stream.push(format::tree()), address, type_id);
 							if (!status)
 								return status;
 						}
@@ -4670,13 +4668,14 @@ namespace tangent
 					{
 						auto object = script_object((asIScriptObject*)value);
 						size_t properties = object.get_properties_count();
-						stream->value = var::object();
+						stream = format::tree();
+						stream.childs().reserve(properties);
 						for (size_t i = 0; i < properties; i++)
 						{
 							std::string_view name = object.get_property_name(i);
 							void* address = object.get_address_of_property(i);
 							int type_id = object.get_property_type_id(i);
-							auto status = store(stream->set(name, var::undefined()), address, type_id);
+							auto status = store(*stream.set(name, format::tree()), address, type_id);
 							if (!status)
 								return status;
 						}
@@ -4684,7 +4683,7 @@ namespace tangent
 					}
 					else if (value_type_id & (int)vitex::scripting::type_id::mask_seqnbr_t)
 					{
-						stream->value = var::integer(*(int*)value);
+						stream = format::tree(format::variable((uint32_t)*(int*)value));
 						return expectation::met;
 					}
 					return layer_exception(stringify::text("store not supported for %s type", name.data()));
@@ -4844,7 +4843,7 @@ namespace tangent
 				}
 			}
 		}
-		expects_lr<void> marshall::load(schema* stream, void* value, int value_type_id)
+		expects_lr<void> marshall::load(format::tree& stream, void* value, int value_type_id)
 		{
 			if (!value)
 				return layer_exception("load failed for null type");
@@ -4854,23 +4853,31 @@ namespace tangent
 				case (int)type_id::void_t:
 					return expectation::met;
 				case (int)type_id::bool_t:
-					*(bool*)value = stream->value.get_boolean();
+					*(bool*)value = stream.value.as_boolean();
 					return expectation::met;
 				case (int)type_id::int8_t:
+					*(int8_t*)value = stream.value.as_decimal().to_int8();
+					return expectation::met;
 				case (int)type_id::uint8_t:
-					*(uint8_t*)value = (uint8_t)stream->value.get_integer();
+					*(uint8_t*)value = stream.value.as_uint8();
 					return expectation::met;
 				case (int)type_id::int16_t:
+					*(int16_t*)value = stream.value.as_decimal().to_int16();
+					return expectation::met;
 				case (int)type_id::uint16_t:
-					*(uint16_t*)value = (uint16_t)stream->value.get_integer();
+					*(uint16_t*)value = stream.value.as_uint16();
 					return expectation::met;
 				case (int)type_id::int32_t:
+					*(int32_t*)value = stream.value.as_decimal().to_int32();
+					return expectation::met;
 				case (int)type_id::uint32_t:
-					*(uint32_t*)value = (uint32_t)stream->value.get_integer();
+					*(uint32_t*)value = stream.value.as_uint32();
 					return expectation::met;
 				case (int)type_id::int64_t:
+					*(int64_t*)value = stream.value.as_decimal().to_int64();
+					return expectation::met;
 				case (int)type_id::uint64_t:
-					*(uint64_t*)value = (uint64_t)stream->value.get_integer();
+					*(uint64_t*)value = stream.value.as_uint64();
 					return expectation::met;
 				case (int)type_id::float_t:
 				case (int)type_id::double_t:
@@ -4895,7 +4902,7 @@ namespace tangent
 					auto unique = cobject(vm, type.get_type_info(), managing ? value : nullptr);
 					if (name == SCRIPT_TYPE_ADDRESS)
 					{
-						string data = stream->value.get_blob();
+						string data = stream.value.as_blob();
 						data = format::util::is_hex_encoding(data) ? format::util::decode_0xhex(data) : data;
 						if (data.size() > sizeof(algorithm::pubkeyhash_t))
 						{
@@ -4910,43 +4917,38 @@ namespace tangent
 					}
 					else if (name == SCRIPT_TYPE_STRING)
 					{
-						((string_repr*)value)->assign_view(stream->value.get_blob());
+						((string_repr*)value)->assign_view(stream.value.as_blob());
 						unique.address = nullptr;
 						return expectation::met;
 					}
 					else if (name == SCRIPT_TYPE_UINT128)
 					{
-						*(uint128_t*)value = uint128_t(stream->value.get_decimal().to_string());
+						*(uint128_t*)value = stream.value.as_uint128();
 						unique.address = nullptr;
 						return expectation::met;
 					}
 					else if (name == SCRIPT_TYPE_UINT256)
 					{
-						*(uint256_t*)value = uint256_t(stream->value.get_decimal().to_string());
+						*(uint256_t*)value = stream.value.as_uint256();
 						unique.address = nullptr;
 						return expectation::met;
 					}
 					else if (name == SCRIPT_TYPE_REAL320)
 					{
-						*(decimal*)value = stream->value.get_decimal();
+						*(decimal*)value = stream.value.as_decimal();
 						unique.address = nullptr;
 						return expectation::met;
 					}
 					else if (name == SCRIPT_TYPE_ARRAY)
 					{
-						uint32_t size = (uint32_t)stream->size();
+						uint32_t size = (uint32_t)stream.childs().size();
 						auto* array = (array_repr*)value;
 						int type_id = array->get_element_type_id();
 						array->clear();
 						array->resize(size);
 						for (uint32_t i = 0; i < size; i++)
 						{
-							void* address = array->at(i);
-							auto* substream = stream->get(i);
-							if (!substream)
-								return layer_exception(stringify::text("load failed for %s type while searching for %i index", i));
-
-							auto status = load(substream, address, type_id);
+							auto status = load(stream.childs()[i], array->at(i), type_id);
 							if (!status)
 								return status;
 						}
@@ -4961,13 +4963,11 @@ namespace tangent
 						for (size_t i = 0; i < properties; i++)
 						{
 							std::string_view name = object.get_property_name(i);
-							auto* substream = stream->get(name);
+							auto* substream = (format::tree*)stream.child(name);
 							if (!substream)
 								return layer_exception(stringify::text("load failed for %s type while searching for %s property", name.data(), name.data()));
 
-							void* address = object.get_address_of_property(i);
-							int type_id = object.get_property_type_id(i);
-							auto status = load(substream, address, type_id);
+							auto status = load(*substream, object.get_address_of_property(i), object.get_property_type_id(i));
 							if (!status)
 								return status;
 						}
@@ -4977,7 +4977,7 @@ namespace tangent
 					}
 					else if (value_type_id & (int)vitex::scripting::type_id::mask_seqnbr_t)
 					{
-						*(uint32_t*)value = (uint32_t)stream->value.get_integer();
+						*(int*)value = stream.value.as_decimal().to_int32();
 						return expectation::met;
 					}
 					return layer_exception(stringify::text("load not supported for %s type", name.data()));

@@ -30,10 +30,10 @@ namespace tangent
 			expects_lr<void> add_incoming_transaction(const superchain::computed_transaction& value);
 			expects_lr<void> add_outgoing_transaction(const superchain::computed_transaction& value, const uint256_t& external_id);
 			expects_lr<superchain::computed_transaction> get_computed_transaction(const std::string_view& transaction_id, const uint256_t& external_id, const uint256_t& optimized_id);
-			expects_lr<void> set_property(const std::string_view& key, uptr<schema>&& value);
-			expects_lr<schema*> get_property(const std::string_view& key);
-			expects_lr<void> set_cache(superchain::cache_policy policy, const std::string_view& key, uptr<schema>&& value);
-			expects_lr<schema*> get_cache(superchain::cache_policy policy, const std::string_view& key);
+			expects_lr<void> set_property(const std::string_view& key, const format::tree& value);
+			expects_lr<format::tree> get_property(const std::string_view& key);
+			expects_lr<void> set_cache(superchain::cache_policy policy, const std::string_view& key, const format::tree& value);
+			expects_lr<format::tree> get_cache(superchain::cache_policy policy, const std::string_view& key);
 			expects_lr<void> set_link(const superchain::wallet_link& value);
 			expects_lr<void> clear_link(const superchain::wallet_link& address);
 			expects_lr<superchain::wallet_link> get_link(const std::string_view& address);

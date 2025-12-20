@@ -15,6 +15,11 @@ namespace tangent
 	using namespace vitex::network;
 	using namespace vitex::layer;
 
+	namespace format
+	{
+		struct tree;
+	}
+
 	enum
 	{
 		ELEMENTS_FEW = 32,
@@ -174,7 +179,7 @@ namespace tangent
 			} discovery;
 			struct
 			{
-				uptr<schema> options;
+				uptr<format::tree> options;
 				uint64_t block_replay_multiplier = 4;
 				uint64_t relaying_timeout = 30000;
 				uint64_t relaying_retry_timeout = 300;

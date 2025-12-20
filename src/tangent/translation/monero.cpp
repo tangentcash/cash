@@ -96,7 +96,7 @@ namespace tangent
 
 				auto begin_message = std::string_view("o_indexes");
 				auto end_message = std::string_view("status");
-				auto message = response->value.get_string();
+				auto message = response->value.as_string();
 				auto begin = message.find(begin_message), end = message.find(end_message);
 				if (begin == std::string::npos || end == std::string::npos)
 					coreturn expects_rt<vector<uint64_t>>(vector<uint64_t>());
@@ -128,78 +128,78 @@ namespace tangent
 			}
 			expects_promise_rt<uint64_t> monero::get_latest_block_height()
 			{
-				auto height = coawait(execute_rest("POST", nd_call::get_height(), nullptr, cache_policy::no_cache));
+				auto height = coawait(execute_rest("POST", nd_call::get_height(), format::tree(), cache_policy::no_cache));
 				if (!height)
 					coreturn expects_rt<uint64_t>(height.error());
 
-				uint64_t block_height = height->get_var("height").get_integer();
-				memory::release(*height);
+				uint64_t block_height = height->child_var("height").as_uint64();
 				coreturn expects_rt<uint64_t>(block_height > 1 ? block_height - 1 : 1);
 			}
-			expects_promise_rt<schema*> monero::get_block_transactions(uint64_t block_height, string* block_hash)
+			expects_promise_rt<vector<block_log>> monero::get_block_transactions(uint64_t block_height, uint64_t block_count)
 			{
-				schema_args args;
-				args["height"] = var::set::integer(block_height);
-				args["fill_pow_hash"] = var::set::boolean(true);
-
-				auto block_data = coawait(execute_rpc3(nd_call::get_block(), std::move(args), cache_policy::temporary_cache, nd_call::json_rpc()));
-				if (!block_data)
-					coreturn expects_rt<schema*>(block_data.error());
-
-				auto block_blob = schema::from_json(block_data->get_var("json").get_blob());
-				auto destructor1 = uptr<schema>(*block_data);
-				if (!block_blob)
-					coreturn expects_rt<schema*>(remote_exception(std::move(block_blob.error().message())));
-
-				schema* transaction_data = var::set::array();
-				auto destructor2 = uptr<schema>(*block_blob);
-				auto miner_tx = block_blob->get("miner_tx");
-				if (miner_tx != nullptr)
+				format::tree map;
+				for (uint64_t i = 0; i < block_count; i++)
 				{
-					miner_tx->unlink();
-					miner_tx->set("hash", block_data->fetch_var("block_header.miner_tx_hash"));
-					transaction_data->push(miner_tx);
+					format::tree args;
+					args.set("height", format::variable(block_height));
+					args.set("fill_pow_hash", format::variable(true));
+					map.push(std::move(args));
 				}
 
-				auto transaction_hashes = block_blob->get("tx_hashes");
-				if (transaction_hashes != nullptr && !transaction_hashes->empty())
-				{
-					transaction_hashes->unlink();
-					schema* args = var::set::object();
-					args->set("txs_hashes", transaction_hashes);
-					args->set("decode_as_json", var::boolean(true));
-					args->set("prune", var::boolean(true));
-					transaction_hashes->add_ref();
+				auto block_data = coawait(execute_rpc_multi(nd_call::get_block(), std::move(map), cache_policy::temporary_cache, nd_call::json_rpc()));
+				if (!block_data)
+					coreturn block_data.error();
 
-					auto transactions = uptr<schema>(coawait(execute_rest("POST", nd_call::get_transactions(), args, cache_policy::blob_cache)));
-					if (transactions)
+				vector<block_log> results;
+				for (auto& block : block_data->childs())
+				{
+					auto block_blob = format::tree::from_json(block.child_var("json").as_blob());
+					if (!block_blob)
+						coreturn expects_rt<vector<block_log>>(remote_exception(std::move(block_blob.error().message())));
+
+					auto transaction_data = format::tree::list();
+					auto miner_tx = (format::tree*)block_blob->child("miner_tx");
+					if (miner_tx != nullptr)
 					{
-						auto* list = transactions->get("txs");
-						if (list != nullptr)
+						miner_tx->set("hash", block.child_var("block_header.miner_tx_hash"));
+						transaction_data.push(std::move(*miner_tx));
+					}
+
+					auto transaction_hashes = (format::tree*)block_blob->child("tx_hashes");
+					if (transaction_hashes != nullptr && !transaction_hashes->childs().empty())
+					{
+						auto args = format::tree::map();
+						args.set("txs_hashes", std::move(*transaction_hashes));
+						args.set("decode_as_json", format::variable(true));
+						args.set("prune", format::variable(true));
+
+						auto transactions = coawait(execute_rest("POST", nd_call::get_transactions(), args, cache_policy::blob_cache));
+						if (transactions)
 						{
-							size_t offset = transaction_data->size();
-							for (auto& transaction : list->get_childs())
+							auto* list = transactions->child("txs");
+							if (list != nullptr)
 							{
-								auto transaction_blob = schema::from_json(transaction->get_var("as_json").get_blob());
-								if (transaction_blob)
+								size_t offset = transaction_data.childs().size();
+								for (auto& transaction : list->childs())
 								{
-									transaction_blob->set("hash", transaction_hashes->get_var(transaction_data->size() - offset));
-									transaction_data->push(*transaction_blob);
+									auto transaction_blob = format::tree::from_json(transaction.child_var("as_json").as_blob());
+									if (transaction_blob)
+									{
+										transaction_blob->set("hash", transaction_hashes->child_var(transaction_data.childs().size() - offset));
+										transaction_data.push(*transaction_blob);
+									}
 								}
 							}
 						}
 					}
-					transaction_hashes->release();
-				}
 
-				if (block_hash != nullptr)
-				{
-					auto header_block_hash = block_data->fetch_var("block_header.hash").get_blob();
-					if (!header_block_hash.empty())
-						*block_hash = std::move(header_block_hash);
+					auto& log = results.emplace_back();
+					log.block_hash = block.child_var("block_header.hash").as_blob();
+					log.transactions = std::move(transaction_data);
+					if (log.block_hash.empty())
+						log.block_hash = to_string(block_height + results.size() - 1);
 				}
-
-				coreturn expects_rt<schema*>(transaction_data);
+				coreturn expects_rt<vector<block_log>>(std::move(results));
 			}
 			expects_promise_rt<coin_utxo> monero::get_transaction_output(const std::string_view& transaction_id, uint64_t index)
 			{
@@ -209,7 +209,7 @@ namespace tangent
 
 				return expects_promise_rt<coin_utxo>(std::move(*result));
 			}
-			expects_promise_rt<computed_transaction> monero::link_transaction(uint64_t block_height, const std::string_view& block_hash, schema* transaction_data)
+			expects_promise_rt<computed_transaction> monero::link_transaction(uint64_t block_height, const std::string_view& block_hash, format::tree& transaction_data)
 			{
 				auto info = decode_transaction_info(transaction_data);
 				auto inputs = decode_transaction_inputs(transaction_data);
@@ -434,22 +434,20 @@ namespace tangent
 			}
 			expects_promise_rt<void> monero::broadcast_transaction(const finalized_transaction& finalized)
 			{
-				schema* args = var::set::object();
-				args->set("tx_as_hex", var::string(format::util::clear_0xhex(finalized.calldata)));
+				auto args = format::tree::map();
+				args.set("tx_as_hex", format::variable(format::util::clear_0xhex(finalized.calldata)));
 
 				auto hex_data = coawait(execute_rest("POST", nd_call::send_raw_transaction(), args, cache_policy::no_cache));
 				if (!hex_data)
 					coreturn expects_rt<void>(hex_data.error());
 
-				bool double_spend = hex_data->get_var("double_spend").get_boolean();
-				bool fee_too_low = hex_data->get_var("fee_too_low").get_boolean();
-				bool invalid_input = hex_data->get_var("invalid_input").get_boolean();
-				bool invalid_output = hex_data->get_var("invalid_output").get_boolean();
-				bool low_mixin = hex_data->get_var("low_mixin").get_boolean();
-				bool overspend = hex_data->get_var("overspend").get_boolean();
-				bool too_big = hex_data->get_var("too_big").get_boolean();
-				memory::release(*hex_data);
-
+				bool double_spend = hex_data->child_var("double_spend").as_boolean();
+				bool fee_too_low = hex_data->child_var("fee_too_low").as_boolean();
+				bool invalid_input = hex_data->child_var("invalid_input").as_boolean();
+				bool invalid_output = hex_data->child_var("invalid_output").as_boolean();
+				bool low_mixin = hex_data->child_var("low_mixin").as_boolean();
+				bool overspend = hex_data->child_var("overspend").as_boolean();
+				bool too_big = hex_data->child_var("too_big").as_boolean();
 				if (double_spend)
 					coreturn expects_rt<void>(remote_exception("transaction double spends inputs"));
 				else if (fee_too_low)
@@ -469,14 +467,14 @@ namespace tangent
 			}
 			expects_promise_rt<prepared_transaction> monero::prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const decimal& max_fee)
 			{
-				schema_args args;
-				args["grace_blocks"] = var::set::integer(10);
+				format::tree args;
+				args.set("grace_blocks", format::variable((uint8_t)10));
 
-				auto fee_estimate = coawait(execute_rpc3(nd_call::get_fee_estimate(), std::move(args), cache_policy::no_cache_no_throttling, nd_call::json_rpc()));
+				auto fee_estimate = coawait(execute_rpc(nd_call::get_fee_estimate(), std::move(args), cache_policy::no_cache_no_throttling, nd_call::json_rpc()));
 				if (!fee_estimate)
 					coreturn expects_rt<prepared_transaction>(fee_estimate.error());
 
-				auto fee = computed_fee::fee_per_kilobyte(fee_estimate->get_var("fee").get_integer() / netdata.divisibility);
+				auto fee = computed_fee::fee_per_kilobyte(algorithm::arithmetic::divide(fee_estimate->child_var("fee").as_decimal(), netdata.divisibility));
 				decimal fee_value = fee.get_max_fee();
 				if (fee_value > max_fee)
 					coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
@@ -677,7 +675,7 @@ namespace tangent
 						return 24;
 				}
 			}
-			monero::transaction_info monero::decode_transaction_info(schema* transaction_data)
+			monero::transaction_info monero::decode_transaction_info(const format::tree& transaction_data)
 			{
 				const uint8_t TX_EXTRA_TAG_PADDING = 0x00;
 				const uint8_t TX_EXTRA_TAG_PUBKEY = 0x01;
@@ -690,16 +688,16 @@ namespace tangent
 				const uint8_t TX_EXTRA_PADDING_MAX_COUNT = 255;
 
 				string extra_buffer;
-				auto* extra = transaction_data->get("extra");
+				auto* extra = transaction_data.child("extra");
 				if (extra != nullptr)
 				{
-					extra_buffer.reserve(extra->size());
-					for (auto& byte : extra->get_childs())
-						extra_buffer.push_back((int8_t)byte->value.get_integer());
+					extra_buffer.reserve(extra->childs().size());
+					for (auto& byte : extra->childs())
+						extra_buffer.push_back((int8_t)byte.value.as_uint8());
 				}
 
 				transaction_info result;
-				result.hash = transaction_data->get_var("hash").get_blob();
+				result.hash = transaction_data.child_var("hash").as_blob();
 
 				hash_set<uint8_t> tags =
 				{
@@ -841,30 +839,30 @@ namespace tangent
 				}
 				return result;
 			}
-			vector<monero::transaction_input> monero::decode_transaction_inputs(schema* transaction_data)
+			vector<monero::transaction_input> monero::decode_transaction_inputs(const format::tree& transaction_data)
 			{
 				vector<transaction_input> result;
-				auto* inputs = transaction_data->get("vin");
+				auto* inputs = transaction_data.child("vin");
 				if (inputs != nullptr)
 				{
-					for (auto& item : inputs->get_childs())
+					for (auto& item : inputs->childs())
 					{
-						uint64_t coinbase_height = item->fetch_var("gen.height").get_integer();
+						uint64_t coinbase_height = item.child_var("gen.height").as_uint64();
 						if (!coinbase_height)
 						{
 							transaction_input input;
-							input.amount = item->fetch_var("key.amount").get_integer();
+							input.amount = item.child_var("key.amount").as_uint64();
 							input.is_coinbase = false;
 
-							string key_image = codec::hex_decode(item->fetch_var("key.k_image").get_blob());
+							string key_image = codec::hex_decode(item.child_var("key.k_image").as_blob());
 							memcpy(input.key_image, key_image.data(), std::min(sizeof(input.key_image), key_image.size()));
 
-							auto* key_offsets = item->fetch("key.key_offsets");
+							auto* key_offsets = item.child("key.key_offsets");
 							if (key_offsets != nullptr)
 							{
-								input.key_offsets.reserve(key_offsets->size());
-								for (auto& offset : key_offsets->get_childs())
-									input.key_offsets.push_back((uint64_t)offset->value.get_integer() + (input.key_offsets.empty() ? 0 : input.key_offsets.back()));
+								input.key_offsets.reserve(key_offsets->childs().size());
+								for (auto& offset : key_offsets->childs())
+									input.key_offsets.push_back((uint64_t)offset.value.as_uint64() + (input.key_offsets.empty() ? 0 : input.key_offsets.back()));
 							}
 							result.push_back(std::move(input));
 						}
@@ -880,39 +878,39 @@ namespace tangent
 				}
 				return result;
 			}
-			vector<monero::transaction_output> monero::decode_transaction_outputs(schema* transaction_data)
+			vector<monero::transaction_output> monero::decode_transaction_outputs(const format::tree& transaction_data)
 			{
 				vector<transaction_output> result;
-				auto* outputs = transaction_data->get("vout");
-				auto* ecdh_info = transaction_data->fetch("rct_signatures.ecdhInfo");
-				auto* out_pk = transaction_data->fetch("rct_signatures.outPk");
+				auto* outputs = transaction_data.child("vout");
+				auto* ecdh_info = transaction_data.child("rct_signatures.ecdhInfo");
+				auto* out_pk = transaction_data.child("rct_signatures.outPk");
 				if (outputs != nullptr)
 				{
-					for (auto& item : outputs->get_childs())
+					for (auto& item : outputs->childs())
 					{
 						transaction_output output;
-						output.amount = item->get_var("amount").get_integer();
+						output.amount = item.child_var("amount").as_uint64();
 						if (ecdh_info != nullptr)
 						{
-							auto* ecdh_output_info = ecdh_info->get(result.size());
+							auto* ecdh_output_info = ecdh_info->child(result.size());
 							if (ecdh_output_info != nullptr)
 							{
-								output.ecdh_amount = codec::hex_decode(ecdh_output_info->get_var("amount").get_blob());
-								output.ecdh_mask = codec::hex_decode(ecdh_output_info->get_var("mask").get_blob());
+								output.ecdh_amount = codec::hex_decode(ecdh_output_info->child_var("amount").as_blob());
+								output.ecdh_mask = codec::hex_decode(ecdh_output_info->child_var("mask").as_blob());
 							}
 						}
 						if (out_pk != nullptr)
 						{
-							string ring_out_key = codec::hex_decode(out_pk->get_var(result.size()).get_blob());
+							string ring_out_key = codec::hex_decode(out_pk->child_var(result.size()).as_blob());
 							memcpy(output.ring_out_key, ring_out_key.data(), std::min(sizeof(output.ring_out_key), ring_out_key.size()));
 						}
 
-						string key = codec::hex_decode(item->fetch_var("target.tagged_key.key").get_blob());
+						string key = codec::hex_decode(item.child_var("target.tagged_key.key").as_blob());
 						if (key.empty())
-							key = codec::hex_decode(item->fetch_var("target.key").get_blob());
+							key = codec::hex_decode(item.child_var("target.key").as_blob());
 						memcpy(output.key, key.data(), std::min(sizeof(output.key), key.size()));
 
-						string view_tag = codec::hex_decode(item->fetch_var("target.tagged_key.view_tag").get_blob());
+						string view_tag = codec::hex_decode(item.child_var("target.tagged_key.view_tag").as_blob());
 						memcpy(&output.view_tag, view_tag.data(), std::min(sizeof(output.view_tag), view_tag.size()));
 						result.push_back(std::move(output));
 					}

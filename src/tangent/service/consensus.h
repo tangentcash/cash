@@ -70,7 +70,7 @@ namespace tangent
 			uint32_t as_type() const override;
 			uint256_t as_inventory_hash() const;
 			std::string_view as_typename() const override;
-			uptr<schema> as_schema() const override;
+			format::tree as_tree() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
 		};
@@ -179,7 +179,7 @@ namespace tangent
 			outbound_node* as_outbound_node();
             vitex::network::socket* as_socket();
 			void* as_instance();
-			uptr<schema> as_schema() const;
+			format::tree as_tree() const;
 			relay_descriptor* as_descriptor() const;
 			std::string_view connection_type() const;
 		};

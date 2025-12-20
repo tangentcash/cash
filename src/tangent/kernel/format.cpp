@@ -1,6 +1,7 @@
 #include "format.h"
 #include "algorithm.h"
 #include <bitset>
+#include <rapidjson/document.h>
 
 namespace tangent
 {
@@ -48,6 +49,401 @@ namespace tangent
 			}
 			if (buffer.size() > begin)
 				std::reverse(buffer.begin() + begin, buffer.end());
+		}
+		static void convert_from_schema(schema* from, tree& to)
+		{
+			if (from != nullptr)
+				to.key.assign(from->key);
+
+			auto type = from ? from->value.get_type() : var_type::undefined;
+			switch (type)
+			{
+				case var_type::object:
+					to = tree();
+					to.childs().reserve(from->size());
+					for (auto& child : from->get_childs())
+						to.push(tree::from_schema(child));
+					to.type = structure::map;
+					break;
+				case var_type::array:
+					to = tree();
+					to.childs().reserve(from->size());
+					for (auto& child : from->get_childs())
+						to.push(tree::from_schema(child));
+					break;
+				case var_type::string:
+				case var_type::binary:
+					to = tree(variable(from->value.get_blob()));
+					break;
+				case var_type::integer:
+				{
+					auto integer = from->value.get_integer();
+					to = tree(integer < 0 ? variable(decimal(integer)) : variable(decimal((uint64_t)integer)));
+					break;
+				}
+				case var_type::number:
+				case var_type::decimal:
+					to = tree(variable(from->value.get_decimal()));
+					break;
+				case var_type::boolean:
+					to = tree(variable(from->value.get_boolean()));
+					break;
+				case var_type::null:
+				case var_type::undefined:
+				case var_type::pointer:
+				default:
+					to = tree(variable());
+					break;
+			}
+		}
+		static bool convert_from_message(format::ro_stream& from, tree& to)
+		{
+			if (!from.read_string(from.read_type(), &to.key))
+				return false;
+
+			if (!from.read_integer(from.read_type(), (uint8_t*)&to.type))
+				return false;
+
+			switch (to.type)
+			{
+				case structure::flat:
+				{
+					viewable type;
+					if (!from.read_integer(from.read_type(), (uint8_t*)&type))
+						return false;
+
+					switch (type)
+					{
+						case viewable::string_any10:
+						{
+							string value;
+							if (!from.read_string(from.read_type(), &value))
+								return false;
+
+							to.value = format::variable(value);
+							return true;
+						}
+						case viewable::decimal_zero:
+						{
+							decimal value;
+							if (!from.read_decimal(from.read_type(), &value))
+								return false;
+
+							to.value = format::variable(value);
+							return true;
+						}
+						case viewable::uint_min:
+						{
+							uint256_t value;
+							if (!from.read_integer(from.read_type(), &value))
+								return false;
+
+							to.value = format::variable(value);
+							return true;
+						}
+						case viewable::true_type:
+						case viewable::false_type:
+						{
+							bool value;
+							if (!from.read_boolean(from.read_type(), &value))
+								return false;
+
+							to.value = format::variable(value);
+							return true;
+						}
+						default:
+							return false;
+					}
+				}
+				case structure::list:
+				case structure::map:
+				{
+					uint32_t childs_size;
+					if (!from.read_integer(from.read_type(), &childs_size))
+						return false;
+
+					for (uint32_t i = 0; i < childs_size; i++)
+					{
+						tree child;
+						if (!convert_from_message(from, child))
+							return false;
+
+						to.childs().push_back(std::move(child));
+					}
+
+					return true;
+				}
+				default:
+					return false;
+			}
+		}
+		static void convert_from_json_value(rapidjson::Value* from, tree& to)
+		{
+			if (from->IsObject())
+			{
+				to.type = structure::map;
+				if (!from->MemberCount())
+					return;
+
+				to.childs().reserve((size_t)from->MemberCount());
+				for (auto it = from->MemberBegin(); it != from->MemberEnd(); ++it)
+				{
+					if (!it->name.IsString())
+						continue;
+					
+					auto& child = to.fields->emplace_back();
+					child.key.assign(it->name.GetString(), (size_t)it->name.GetStringLength());
+					convert_from_json_value(&it->value, child);
+				}
+			}
+			else if (from->IsArray())
+			{
+				to.type = structure::list;
+				if (!from->Size())
+					return;
+
+				to.childs().reserve((size_t)from->Size());
+				for (auto it = from->Begin(); it != from->End(); ++it)
+				{
+					auto& child = to.fields->emplace_back();
+					convert_from_json_value(it, child);
+				}
+			}
+			else
+			{
+				switch (from->GetType())
+				{
+					case rapidjson::kFalseType:
+					{
+						to.value = variable(false);
+						break;
+					}
+					case rapidjson::kTrueType:
+					{
+						to.value = variable(true);
+						break;
+					}
+					case rapidjson::kStringType:
+					{
+						std::string_view text(from->GetString(), from->GetStringLength());
+						if (!stringify::has_number(text))
+						{
+							to.value = variable(text);
+							break;
+						}
+						else if (stringify::has_decimal(text))
+						{
+							to.value = variable(decimal(text));
+							break;
+						}
+						else if (stringify::has_integer(text))
+						{
+							auto number = from_string<int64_t>(text);
+							if (number)
+							{
+								if (*number >= 0)
+									to.value = variable((uint64_t)*number);
+								else
+									to.value = variable(decimal(*number));
+								break;
+							}
+						}
+						else
+						{
+							auto number = from_string<double>(text);
+							if (number)
+							{
+								to.value = variable(decimal(*number));
+								break;
+							}
+						}
+
+						to.value = variable(text);
+						break;
+					}
+					default:
+					{
+						to.value = variable();
+						break;
+					}
+				}
+			}
+		}
+		static void convert_to_json(const tree& from, string& to, string* depth, bool has_parent = false)
+		{
+			auto depth_push = [&]()
+			{
+				if (depth != nullptr)
+					depth->append(2, ' ');
+			};
+			auto depth_tab = [&]()
+			{
+				if (depth != nullptr)
+					to.append(*depth);
+			};
+			auto depth_space = [&]()
+			{
+				if (depth != nullptr)
+					to.append(" ");
+			};
+			auto depth_line = [&]()
+			{
+				if (depth != nullptr)
+					to.append("\n");
+			};
+			auto depth_pop = [&]()
+			{
+				if (depth != nullptr)
+					depth->erase(depth->size() - 2);
+			};
+
+			if (from.type == structure::flat)
+			{
+				switch (from.value.type_of())
+				{
+					case viewable::string_any10:
+					{
+						auto value = string(from.value.as_string());
+						if (!variables_util::is_ascii_encoding(value))
+							 value = util::encode_0xhex(value);
+
+						stringify::escape(value);
+						to.append("\"");
+						to.append(value);
+						to.append("\"");
+						return;
+					}
+					case viewable::decimal_zero:
+					{
+						auto value = from.value.as_decimal();
+						bool big_number = !value.is_safe_number();
+						if (big_number)
+							to.append("\"");
+						to.append(value.to_string());
+						if (big_number)
+							to.append("\"");
+						return;
+					}
+					case viewable::uint_min:
+					{
+						string numeric;
+						auto value = from.value.as_uint256();
+						bool big_integer = value > (uint64_t)std::numeric_limits<int64_t>::max();
+						append_uint256_base_10(numeric, value);
+						if (big_integer)
+							to.append("\"");
+						to.append(numeric);
+						if (big_integer)
+							to.append("\"");
+						return;
+					}
+					case viewable::true_type:
+					{
+						to.append("true");
+						return;
+					}
+					case viewable::false_type:
+					{
+						to.append("false");
+						return;
+					}
+					case viewable::invalid:
+					default:
+					{
+						to.append("null");
+						return;
+					}
+				}
+				string value = from.value.as_constant();
+				stringify::escape(value);
+				to.append(value);
+			}
+
+			size_t size = from.fields ? from.fields->size() : 0;
+			bool array = (from.type == structure::list);
+			if (!size)
+			{
+				to.append(array ? "[]" : "{}");
+				return;
+			}
+
+			to.append(array ? "[" : "{");
+			depth_push();
+
+			for (size_t i = 0; i < size; i++)
+			{
+				auto& next = (*from.fields)[i];
+				if (!array)
+				{
+					depth_line();
+					depth_tab();
+					to.append("\"");
+					to.append(next.key);
+					to.append("\":");
+					depth_space();
+				}
+
+				if (array)
+				{
+					depth_line();
+					depth_tab();
+				}
+
+				convert_to_json(next, to, depth, true);
+				if (i + 1 < size)
+					to.append(",");
+			}
+
+			depth_pop();
+			depth_line();
+			if (has_parent)
+				depth_tab();
+			to.append(array ? "]" : "}");
+		}
+		static void convert_to_message(const tree& from, format::wo_stream& to)
+		{
+			to.write_string(from.key);
+			to.write_integer((uint8_t)from.type);
+			switch (from.type)
+			{
+				case structure::flat:
+				{
+					auto type = from.value.type_of();
+					to.write_integer((uint8_t)type);
+					switch (type)
+					{
+						case viewable::string_any10:
+							to.write_string(from.value.as_string());
+							break;
+						case viewable::decimal_zero:
+							to.write_decimal(from.value.as_decimal());
+							break;
+						case viewable::uint_min:
+							to.write_integer(from.value.as_uint256());
+							break;
+						case viewable::true_type:
+						case viewable::false_type:
+							to.write_boolean(from.value.as_boolean());
+							break;
+						default:
+							break;
+					}
+					break;
+				}
+				case structure::list:
+				case structure::map:
+				{
+					to.write_integer((uint32_t)(from.fields ? from.fields->size() : 0));
+					if (from.fields)
+					{
+						for (auto& item : *from.fields)
+							convert_to_message(item, to);
+					}
+					break;
+				}
+				default:
+					break;
+			}
 		}
 
 		wo_stream::wo_stream() : checksum(0)
@@ -631,7 +1027,7 @@ namespace tangent
 				case viewable::decimal_zero:
 					return var::set::decimal(*(decimal*)value.pointer);
 				case viewable::uint_min:
-					return algorithm::encoding::serialize_uint256(value.integer);
+					return algorithm::encoding::serialize_uint256(value.integer).as_schema();
 				case viewable::true_type:
 				case viewable::false_type:
 					return var::set::boolean(value.boolean);
@@ -842,6 +1238,17 @@ namespace tangent
 					return false;
 			}
 		}
+		bool variable::is_boolean() const
+		{
+			switch (type)
+			{
+				case viewable::true_type:
+				case viewable::false_type:
+					return true;
+				default:
+					return false;
+			}
+		}
 		viewable variable::type_of() const
 		{
 			return type;
@@ -998,6 +1405,405 @@ namespace tangent
 			else if (any == "false")
 				return variable(false);
 			return variable(any);
+		}
+
+		tree::tree() noexcept : fields(optional::none), type(structure::flat)
+		{
+		}
+		tree::tree(const variable& base) noexcept : value(base), fields(optional::none), type(structure::flat)
+		{
+		}
+		tree::tree(variable&& base) noexcept : value(std::move(base)), fields(optional::none), type(structure::flat)
+		{
+		}
+		tree::tree(const tree& other) noexcept : key(other.key), value(other.value), fields(other.fields), type(other.type)
+		{
+		}
+		tree::tree(tree&& other) noexcept : key(std::move(other.key)), value(std::move(other.value)), fields(std::move(other.fields)), type(other.type)
+		{
+		}
+		tree& tree::operator=(const tree& other) noexcept
+		{
+			if (this == &other)
+				return *this;
+
+			key = other.key;
+			value = other.value;
+			fields = other.fields;
+			type = other.type;
+			return *this;
+		}
+		tree& tree::operator=(tree&& other) noexcept
+		{
+			if (this == &other)
+				return *this;
+
+			key = std::move(other.key);
+			value = std::move(other.value);
+			fields = std::move(other.fields);
+			type = other.type;
+			return *this;
+		}
+		variable tree::child_var(const std::string_view& notation, bool deep) const
+		{
+			auto* result = child(notation, deep);
+			if (!result)
+				return variable();
+
+			return result->value;
+		}
+		variable tree::child_var(size_t index) const
+		{
+			return fields && index < fields->size() ? (*fields)[index].value : variable();
+		}
+		tree* tree::child(const std::string_view& notation, bool deep) const
+		{
+			if (notation.find('.') == std::string::npos)
+				return at(notation, deep);
+
+			vector<string> names = stringify::split(notation, '.');
+			if (names.empty())
+				return nullptr;
+
+			auto* current = at(*names.begin(), deep);
+			if (!current)
+				return nullptr;
+
+			for (auto it = names.begin() + 1; it != names.end(); ++it)
+			{
+				current = current->at(*it, deep);
+				if (!current)
+					return nullptr;
+			}
+
+			return current;
+		}
+		tree* tree::child(size_t index) const
+		{
+			return fields && index < fields->size() ? (tree*)&(*fields)[index] : nullptr;
+		}
+		tree* tree::at(const std::string_view& name, bool deep) const
+		{
+			if (!fields || fields->empty())
+				return nullptr;
+
+			if (stringify::has_integer(name))
+			{
+				size_t index = (size_t)*from_string<uint64_t>(name);
+				if (index < fields->size())
+					return (tree*)&(*fields)[index];
+			}
+
+			for (auto& k : *fields)
+			{
+				if (k.key == name)
+					return (tree*)&k;
+				else if (!deep)
+					continue;
+
+				auto* v = k.at(name, deep);
+				if (v != nullptr)
+					return v;
+			}
+
+			return nullptr;
+		}
+		tree* tree::set(const std::string_view& name, const variable& base)
+		{
+			if (type == structure::flat)
+				type = structure::map;
+
+			if (type == structure::map)
+			{
+				for (auto& child : childs())
+				{
+					if (child.key == name)
+					{
+						child.type = structure::flat;
+						child.value = base;
+						return &child;
+					}
+				}
+			}
+
+			childs().push_back(tree(base));
+			auto& result = fields->back();
+			result.key.assign(name);
+			return &result;
+		}
+		tree* tree::set(const std::string_view& name, variable&& base)
+		{
+			if (type == structure::flat)
+				type = structure::map;
+
+			if (type == structure::map)
+			{
+				for (auto& child : childs())
+				{
+					if (child.key == name)
+					{
+						child.type = structure::flat;
+						child.value = std::move(base);
+						return &child;
+					}
+				}
+			}
+
+			childs().push_back(tree(std::move(base)));
+			auto& result = fields->back();
+			result.key.assign(name);
+			return &result;
+		}
+		tree* tree::set(const std::string_view& name, const tree& base)
+		{
+			if (type == structure::flat)
+				type = structure::map;
+
+			if (type == structure::map)
+			{
+				for (auto& child : childs())
+				{
+					if (child.key == name)
+					{
+						child = base;
+						child.key.assign(name);
+						return &child;
+					}
+				}
+			}
+
+			childs().push_back(base);
+			auto& result = fields->back();
+			result.key.assign(name);
+			return &result;
+		}
+		tree* tree::set(const std::string_view& name, tree&& base)
+		{
+			if (type == structure::flat)
+				type = structure::map;
+
+			if (type == structure::map)
+			{
+				for (auto& child : childs())
+				{
+					if (child.key == name)
+					{
+						child = std::move(base);
+						child.key.assign(name);
+						return &child;
+					}
+				}
+			}
+
+			childs().push_back(std::move(base));
+			auto& result = fields->back();
+			result.key.assign(name);
+			return &result;
+		}
+		tree* tree::push(const variable& base)
+		{
+			if (type == structure::flat)
+				type = structure::list;
+
+			childs().push_back(tree(base));
+			auto& result = fields->back();
+			return &result;
+		}
+		tree* tree::push(variable&& base)
+		{
+			if (type == structure::flat)
+				type = structure::list;
+
+			childs().push_back(tree(std::move(base)));
+			auto& result = fields->back();
+			return &result;
+		}
+		tree* tree::push(const tree& base)
+		{
+			if (type == structure::flat)
+				type = structure::list;
+
+			childs().push_back(tree(base));
+			auto& result = fields->back();
+			result.key.clear();
+			return &result;
+		}
+		tree* tree::push(tree&& base)
+		{
+			if (type == structure::flat)
+				type = structure::list;
+
+			childs().push_back(std::move(base));
+			auto& result = fields->back();
+			result.key.clear();
+			return &result;
+		}
+		tree* tree::pop(const std::string_view& name)
+		{
+			if (!fields)
+				return this;
+
+			for (auto it = fields->begin(); it != fields->end(); ++it)
+			{
+				if (it->key == name)
+				{
+					fields->erase(it);
+					break;
+				}
+			}
+
+			return this;
+		}
+		vector<tree>& tree::childs()
+		{
+			if (!fields)
+				fields = vector<tree>();
+			return *fields;
+		}
+		bool tree::has(const std::string_view& name) const
+		{
+			return child(name) != nullptr;
+		}
+		bool tree::is_flat() const
+		{
+			return type == structure::flat;
+		}
+		bool tree::is_list() const
+		{
+			return type == structure::list;
+		}
+		bool tree::is_map() const
+		{
+			return type == structure::map;
+		}
+		bool tree::is_none() const
+		{
+			return type == structure::flat && value.type_of() == format::viewable::invalid;
+		}
+		uptr<schema> tree::as_schema() const
+		{
+			switch (type)
+			{
+				case structure::flat:
+					return value.as_schema();
+				case structure::list:
+				{
+					uptr<schema> result = var::set::array();
+					if (fields)
+					{
+						result->reserve(fields->size());
+						for (auto& child : *fields)
+							result->push(child.as_schema().reset());
+					}
+					return result;
+				}
+				case structure::map:
+				{
+					uptr<schema> result = var::set::object();
+					if (fields)
+					{
+						result->reserve(fields->size());
+						for (auto& child : *fields)
+							result->set(child.key, child.as_schema().reset());
+					}
+					return result;
+				}
+				default:
+					return nullptr;
+			}
+		}
+		wo_stream tree::as_message() const
+		{
+			wo_stream result;
+			convert_to_message(*this, result);
+			return result;
+		}
+		string tree::as_json(bool pretty) const
+		{
+			string result, depth;
+			convert_to_json(*this, result, pretty ? &depth : nullptr);
+			return result;
+		}
+		tree tree::list()
+		{
+			tree result;
+			result.type = structure::list;
+			return result;
+		}
+		tree tree::map()
+		{
+			tree result;
+			result.type = structure::map;
+			return result;
+		}
+		tree tree::from_schema(schema* base)
+		{
+			tree result;
+			convert_from_schema(base, result);
+			return result;
+		}
+		option<tree> tree::from_message(format::ro_stream& stream)
+		{
+			tree result;
+			if (!convert_from_message(stream, result))
+				return optional::none;
+
+			return option<tree>(std::move(result));
+		}
+		expects_parser<tree> tree::from_json(const std::string_view& buffer)
+		{
+			if (buffer.empty())
+				return parser_exception(parser_error::json_document_empty, 0);
+
+			rapidjson::Document from;
+			from.Parse<rapidjson::kParseNumbersAsStringsFlag>(buffer.data(), buffer.size());
+			if (from.HasParseError())
+			{
+				size_t offset = from.GetErrorOffset();
+				switch (from.GetParseError())
+				{
+					case rapidjson::kParseErrorDocumentEmpty:
+						return parser_exception(parser_error::json_document_empty, offset);
+					case rapidjson::kParseErrorDocumentRootNotSingular:
+						return parser_exception(parser_error::json_document_root_not_singular, offset);
+					case rapidjson::kParseErrorValueInvalid:
+						return parser_exception(parser_error::json_value_invalid, offset);
+					case rapidjson::kParseErrorObjectMissName:
+						return parser_exception(parser_error::json_object_miss_name, offset);
+					case rapidjson::kParseErrorObjectMissColon:
+						return parser_exception(parser_error::json_object_miss_colon, offset);
+					case rapidjson::kParseErrorObjectMissCommaOrCurlyBracket:
+						return parser_exception(parser_error::json_object_miss_comma_or_curly_bracket, offset);
+					case rapidjson::kParseErrorArrayMissCommaOrSquareBracket:
+						return parser_exception(parser_error::json_array_miss_comma_or_square_bracket, offset);
+					case rapidjson::kParseErrorStringUnicodeEscapeInvalidHex:
+						return parser_exception(parser_error::json_string_unicode_escape_invalid_hex, offset);
+					case rapidjson::kParseErrorStringUnicodeSurrogateInvalid:
+						return parser_exception(parser_error::json_string_unicode_surrogate_invalid, offset);
+					case rapidjson::kParseErrorStringEscapeInvalid:
+						return parser_exception(parser_error::json_string_escape_invalid, offset);
+					case rapidjson::kParseErrorStringMissQuotationMark:
+						return parser_exception(parser_error::json_string_miss_quotation_mark, offset);
+					case rapidjson::kParseErrorStringInvalidEncoding:
+						return parser_exception(parser_error::json_string_invalid_encoding, offset);
+					case rapidjson::kParseErrorNumberTooBig:
+						return parser_exception(parser_error::json_number_too_big, offset);
+					case rapidjson::kParseErrorNumberMissFraction:
+						return parser_exception(parser_error::json_number_miss_fraction, offset);
+					case rapidjson::kParseErrorNumberMissExponent:
+						return parser_exception(parser_error::json_number_miss_exponent, offset);
+					case rapidjson::kParseErrorTermination:
+						return parser_exception(parser_error::json_termination, offset);
+					case rapidjson::kParseErrorUnspecificSyntaxError:
+						return parser_exception(parser_error::json_unspecific_syntax_error, offset);
+					default:
+						return parser_exception(parser_error::bad_value);
+				}
+			}
+
+			auto to = tree();
+			convert_from_json_value(&from, to);
+			return expects_parser<tree>(std::move(to));
 		}
 
 		string util::decompress_stream(const std::string_view& data)
@@ -1277,11 +2083,12 @@ namespace tangent
 			result.append(1, ']');
 			return result;
 		}
-		schema* variables_util::serialize(const variables& value)
+		tree variables_util::serialize(const variables& value)
 		{
-			schema* data = var::set::array();
+			tree data;
+			data.childs().reserve(value.size());
 			for (auto& item : value)
-				data->push(item.as_schema().reset());
+				data.push(item);
 			return data;
 		}
 	}

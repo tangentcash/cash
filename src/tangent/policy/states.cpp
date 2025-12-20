@@ -53,11 +53,11 @@ namespace tangent
 
 			return true;
 		}
-		uptr<schema> account_nonce::as_schema() const
+		format::tree account_nonce::as_tree() const
 		{
-			schema* data = ledger::uniform::as_schema().reset();
-			data->set("owner", algorithm::signing::serialize_address(owner));
-			data->set("nonce", algorithm::encoding::serialize_uint256(nonce));
+			auto data = ledger::uniform::as_tree();
+			data.set("owner", algorithm::signing::serialize_address(owner));
+			data.set("nonce", algorithm::encoding::serialize_uint256(nonce));
 			return data;
 		}
 		uint32_t account_nonce::as_type() const
@@ -124,11 +124,11 @@ namespace tangent
 
 			return true;
 		}
-		uptr<schema> account_program::as_schema() const
+		format::tree account_program::as_tree() const
 		{
-			schema* data = ledger::uniform::as_schema().reset();
-			data->set("owner", algorithm::signing::serialize_address(owner));
-			data->set("hashcode", var::string(format::util::encode_0xhex(hashcode)));
+			auto data = ledger::uniform::as_tree();
+			data.set("owner", algorithm::signing::serialize_address(owner));
+			data.set("hashcode", format::variable(format::util::encode_0xhex(hashcode)));
 			return data;
 		}
 		uint32_t account_program::as_type() const
@@ -205,12 +205,12 @@ namespace tangent
 
 			return true;
 		}
-		uptr<schema> account_uniform::as_schema() const
+		format::tree account_uniform::as_tree() const
 		{
-			schema* data = ledger::uniform::as_schema().reset();
-			data->set("owner", algorithm::signing::serialize_address(owner));
-			data->set("index", var::string(format::util::encode_0xhex(index)));
-			data->set("data", var::string(format::util::encode_0xhex(this->data)));
+			auto data = ledger::uniform::as_tree();
+			data.set("owner", algorithm::signing::serialize_address(owner));
+			data.set("index", format::variable(format::util::encode_0xhex(index)));
+			data.set("data", format::variable(format::util::encode_0xhex(this->data)));
 			return data;
 		}
 		uint32_t account_uniform::as_type() const
@@ -312,13 +312,13 @@ namespace tangent
 
 			return true;
 		}
-		uptr<schema> account_multiform::as_schema() const
+		format::tree account_multiform::as_tree() const
 		{
-			schema* data = ledger::multiform::as_schema().reset();
-			data->set("owner", algorithm::signing::serialize_address(owner));
-			data->set("column", var::string(format::util::encode_0xhex(column)));
-			data->set("row", var::string(format::util::encode_0xhex(row)));
-			data->set("data", var::string(format::util::encode_0xhex(this->data)));
+			auto data = ledger::multiform::as_tree();
+			data.set("owner", algorithm::signing::serialize_address(owner));
+			data.set("column", format::variable(format::util::encode_0xhex(column)));
+			data.set("row", format::variable(format::util::encode_0xhex(row)));
+			data.set("data", format::variable(format::util::encode_0xhex(this->data)));
 			return data;
 		}
 		uint32_t account_multiform::as_type() const
@@ -422,11 +422,11 @@ namespace tangent
 			uint64_t blocks_passed = current_block_number > block_number ? current_block_number - block_number : 0;
 			return blocks_passed < blocks_required ? current_block_number + (blocks_required - blocks_passed) : current_block_number;
 		}
-		uptr<schema> account_delegation::as_schema() const
+		format::tree account_delegation::as_tree() const
 		{
-			schema* data = ledger::uniform::as_schema().reset();
-			data->set("owner", algorithm::signing::serialize_address(owner));
-			data->set("delegations", algorithm::encoding::serialize_uint256(delegations));
+			auto data = ledger::uniform::as_tree();
+			data.set("owner", algorithm::signing::serialize_address(owner));
+			data.set("delegations", algorithm::encoding::serialize_uint256(delegations));
 			return data;
 		}
 		uint32_t account_delegation::as_type() const
@@ -539,14 +539,14 @@ namespace tangent
 
 			return balance;
 		}
-		uptr<schema> account_balance::as_schema() const
+		format::tree account_balance::as_tree() const
 		{
-			schema* data = ledger::multiform::as_schema().reset();
-			data->set("owner", algorithm::signing::serialize_address(owner));
-			data->set("asset", algorithm::asset::serialize(asset));
-			data->set("supply", var::decimal(supply));
-			data->set("reserve", var::decimal(reserve));
-			data->set("balance", var::decimal(get_balance()));
+			auto data = ledger::multiform::as_tree();
+			data.set("owner", algorithm::signing::serialize_address(owner));
+			data.set("asset", algorithm::asset::serialize(asset));
+			data.set("supply", format::variable(supply));
+			data.set("reserve", format::variable(reserve));
+			data.set("balance", format::variable(get_balance()));
 			return data;
 		}
 		uint32_t account_balance::as_type() const
@@ -640,11 +640,11 @@ namespace tangent
 		{
 			return !stake.is_nan();
 		}
-		uptr<schema> validator_production::as_schema() const
+		format::tree validator_production::as_tree() const
 		{
-			schema* data = ledger::multiform::as_schema().reset();
-			data->set("owner", algorithm::signing::serialize_address(owner));
-			data->set("stake", var::decimal(stake));
+			auto data = ledger::multiform::as_tree();
+			data.set("owner", algorithm::signing::serialize_address(owner));
+			data.set("stake", format::variable(stake));
 			return data;
 		}
 		uint32_t validator_production::as_type() const
@@ -747,12 +747,12 @@ namespace tangent
 
 			return true;
 		}
-		uptr<schema> validator_production_reward::as_schema() const
+		format::tree validator_production_reward::as_tree() const
 		{
-			schema* data = ledger::multiform::as_schema().reset();
-			data->set("owner", algorithm::signing::serialize_address(owner));
-			data->set("asset", algorithm::asset::serialize(asset));
-			data->set("reward", var::decimal(reward));
+			auto data = ledger::multiform::as_tree();
+			data.set("owner", algorithm::signing::serialize_address(owner));
+			data.set("asset", algorithm::asset::serialize(asset));
+			data.set("reward", format::variable(reward));
 			return data;
 		}
 		uint32_t validator_production_reward::as_type() const
@@ -846,11 +846,11 @@ namespace tangent
 		{
 			return !stake.is_nan();
 		}
-		uptr<schema> validator_participation::as_schema() const
+		format::tree validator_participation::as_tree() const
 		{
-			schema* data = ledger::multiform::as_schema().reset();
-			data->set("owner", algorithm::signing::serialize_address(owner));
-			data->set("stake", var::decimal(stake));
+			auto data = ledger::multiform::as_tree();
+			data.set("owner", algorithm::signing::serialize_address(owner));
+			data.set("stake", format::variable(stake));
 			return data;
 		}
 		uint32_t validator_participation::as_type() const
@@ -949,12 +949,12 @@ namespace tangent
 
 			return true;
 		}
-		uptr<schema> validator_participation_reward::as_schema() const
+		format::tree validator_participation_reward::as_tree() const
 		{
-			schema* data = ledger::multiform::as_schema().reset();
-			data->set("owner", algorithm::signing::serialize_address(owner));
-			data->set("asset", algorithm::asset::serialize(asset));
-			data->set("reward", var::decimal(reward));
+			auto data = ledger::multiform::as_tree();
+			data.set("owner", algorithm::signing::serialize_address(owner));
+			data.set("asset", algorithm::asset::serialize(asset));
+			data.set("reward", format::variable(reward));
 			return data;
 		}
 		uint32_t validator_participation_reward::as_type() const
@@ -1058,11 +1058,11 @@ namespace tangent
 
 			return true;
 		}
-		uptr<schema> validator_participation_ref::as_schema() const
+		format::tree validator_participation_ref::as_tree() const
 		{
-			schema* data = ledger::multiform::as_schema().reset();
-			data->set("owner", algorithm::signing::serialize_address(owner));
-			schema* ref_data = data->set("ref", var::set::array());
+			auto data = ledger::multiform::as_tree();
+			data.set("owner", algorithm::signing::serialize_address(owner));
+			auto* ref_data = data.set("ref", format::variable());
 			ref_data->set("asset", algorithm::asset::serialize(ref.asset));
 			ref_data->set("manager", algorithm::signing::serialize_address(ref.manager));
 			ref_data->set("owner", algorithm::signing::serialize_address(ref.owner));
@@ -1236,20 +1236,20 @@ namespace tangent
 		{
 			return !stake.is_nan();
 		}
-		uptr<schema> validator_attestation::as_schema() const
+		format::tree validator_attestation::as_tree() const
 		{
-			schema* data = ledger::multiform::as_schema().reset();
-			data->set("owner", algorithm::signing::serialize_address(owner));
-			data->set("asset", algorithm::asset::serialize(asset));
-			data->set("participation_threshold", var::decimal(participation_threshold));
-			data->set("stake", var::decimal(stake));
-			data->set("incoming_fee", var::decimal(incoming_fee));
-			data->set("outgoing_fee", var::decimal(outgoing_fee));
-			data->set("queue_transaction_hash", queue_transaction_hash > 0 ? var::string(algorithm::encoding::encode_0xhex256(queue_transaction_hash)) : var::null());
-			data->set("accounts_under_management", var::integer(accounts_under_management));
-			data->set("security_level", var::integer(security_level));
-			data->set("accepts_account_requests", var::boolean(accepts_account_requests));
-			data->set("accepts_withdrawal_requests", var::boolean(accepts_withdrawal_requests));
+			auto data = ledger::multiform::as_tree();
+			data.set("owner", algorithm::signing::serialize_address(owner));
+			data.set("asset", algorithm::asset::serialize(asset));
+			data.set("participation_threshold", format::variable(participation_threshold));
+			data.set("stake", format::variable(stake));
+			data.set("incoming_fee", format::variable(incoming_fee));
+			data.set("outgoing_fee", format::variable(outgoing_fee));
+			data.set("queue_transaction_hash", queue_transaction_hash > 0 ? format::variable(algorithm::encoding::encode_0xhex256(queue_transaction_hash)) : format::variable());
+			data.set("accounts_under_management", format::variable(accounts_under_management));
+			data.set("security_level", format::variable(security_level));
+			data.set("accepts_account_requests", format::variable(accepts_account_requests));
+			data.set("accepts_withdrawal_requests", format::variable(accepts_withdrawal_requests));
 			return data;
 		}
 		uint32_t validator_attestation::as_type() const
@@ -1348,12 +1348,12 @@ namespace tangent
 
 			return true;
 		}
-		uptr<schema> validator_attestation_reward::as_schema() const
+		format::tree validator_attestation_reward::as_tree() const
 		{
-			schema* data = ledger::multiform::as_schema().reset();
-			data->set("owner", algorithm::signing::serialize_address(owner));
-			data->set("asset", algorithm::asset::serialize(asset));
-			data->set("reward", var::decimal(reward));
+			auto data = ledger::multiform::as_tree();
+			data.set("owner", algorithm::signing::serialize_address(owner));
+			data.set("asset", algorithm::asset::serialize(asset));
+			data.set("reward", format::variable(reward));
 			return data;
 		}
 		uint32_t validator_attestation_reward::as_type() const
@@ -1452,12 +1452,12 @@ namespace tangent
 
 			return true;
 		}
-		uptr<schema> bridge_balance::as_schema() const
+		format::tree bridge_balance::as_tree() const
 		{
-			schema* data = ledger::multiform::as_schema().reset();
-			data->set("owner", algorithm::signing::serialize_address(owner));
-			data->set("asset", algorithm::asset::serialize(asset));
-			data->set("supply", var::decimal(supply));
+			auto data = ledger::multiform::as_tree();
+			data.set("owner", algorithm::signing::serialize_address(owner));
+			data.set("asset", algorithm::asset::serialize(asset));
+			data.set("supply", format::variable(supply));
 			return data;
 		}
 		uint32_t bridge_balance::as_type() const
@@ -1591,17 +1591,17 @@ namespace tangent
 			group = std::move(new_group);
 			public_key = new_public_key;
 		}
-		uptr<schema> bridge_account::as_schema() const
+		format::tree bridge_account::as_tree() const
 		{
 			auto* chain = superchain::server_node::get()->get_chainparams(asset);
-			schema* data = ledger::multiform::as_schema().reset();
-			data->set("owner", algorithm::signing::serialize_address(owner));
-			data->set("manager", algorithm::signing::serialize_address(manager));
-			data->set("asset", algorithm::asset::serialize(asset));
-			data->set("public_key", public_key.empty() ? var::null() : var::string(format::util::encode_0xhex(std::string_view((char*)public_key.data(), public_key.size()))));
-			auto* group_data = data->set("group", var::array());
+			auto data = ledger::multiform::as_tree();
+			data.set("owner", algorithm::signing::serialize_address(owner));
+			data.set("manager", algorithm::signing::serialize_address(manager));
+			data.set("asset", algorithm::asset::serialize(asset));
+			data.set("public_key", public_key.empty() ? format::variable() : format::variable(format::util::encode_0xhex(std::string_view((char*)public_key.data(), public_key.size()))));
+			auto* group_data = data.set("group", format::tree());
 			for (auto& item : group)
-				group_data->push(item.empty() ? var::set::null() : algorithm::signing::serialize_address(item.data));
+				group_data->push(item.empty() ? format::variable() : algorithm::signing::serialize_address(item.data));
 			return data;
 		}
 		uint32_t bridge_account::as_type() const
@@ -1687,11 +1687,11 @@ namespace tangent
 
 			return true;
 		}
-		uptr<schema> witness_program::as_schema() const
+		format::tree witness_program::as_tree() const
 		{
-			schema* data = ledger::uniform::as_schema().reset();
-			data->set("hashcode", var::string(format::util::encode_0xhex(hashcode)));
-			data->set("storage", var::string(format::util::encode_0xhex(storage)));
+			auto data = ledger::uniform::as_tree();
+			data.set("hashcode", format::variable(format::util::encode_0xhex(hashcode)));
+			data.set("storage", format::variable(format::util::encode_0xhex(storage)));
 			return data;
 		}
 		uint32_t witness_program::as_type() const
@@ -1779,11 +1779,11 @@ namespace tangent
 
 			return true;
 		}
-		uptr<schema> witness_event::as_schema() const
+		format::tree witness_event::as_tree() const
 		{
-			schema* data = ledger::uniform::as_schema().reset();
-			data->set("parent_transaction_hash", var::string(algorithm::encoding::encode_0xhex256(parent_transaction_hash)));
-			data->set("child_transaction_hash", var::string(algorithm::encoding::encode_0xhex256(child_transaction_hash)));
+			auto data = ledger::uniform::as_tree();
+			data.set("parent_transaction_hash", format::variable(algorithm::encoding::encode_0xhex256(parent_transaction_hash)));
+			data.set("child_transaction_hash", format::variable(algorithm::encoding::encode_0xhex256(child_transaction_hash)));
 			return data;
 		}
 		uint32_t witness_event::as_type() const
@@ -1945,25 +1945,25 @@ namespace tangent
 				type = account_type::witness;
 			return type;
 		}
-		uptr<schema> witness_account::as_schema() const
+		format::tree witness_account::as_tree() const
 		{
-			schema* data = ledger::multiform::as_schema().reset();
-			data->set("owner", algorithm::signing::serialize_address(owner));
-			data->set("manager", algorithm::signing::serialize_address(manager));
-			data->set("asset", algorithm::asset::serialize(asset));
-			auto* addresses_data = data->set("addresses", var::set::array());
+			auto data = ledger::multiform::as_tree();
+			data.set("owner", algorithm::signing::serialize_address(owner));
+			data.set("manager", algorithm::signing::serialize_address(manager));
+			data.set("asset", algorithm::asset::serialize(asset));
+			auto* addresses_data = data.set("addresses", format::tree());
 			for (auto& address : addresses)
-				addresses_data->push(var::string(address.second));
+				addresses_data->push(format::variable(address.second));
 			switch (get_type())
 			{
 				case account_type::routing:
-					data->set("purpose", var::string("routing"));
+					data.set("purpose", format::variable("routing"));
 					break;
 				case account_type::bridge:
-					data->set("purpose", var::string("bridge"));
+					data.set("purpose", format::variable("bridge"));
 					break;
 				default:
-					data->set("purpose", var::string("witness"));
+					data.set("purpose", format::variable("witness"));
 					break;
 			}
 			return data;
@@ -2048,11 +2048,11 @@ namespace tangent
 		{
 			return true;
 		}
-		uptr<schema> witness_transaction::as_schema() const
+		format::tree witness_transaction::as_tree() const
 		{
-			schema* data = ledger::uniform::as_schema().reset();
-			data->set("asset", algorithm::asset::serialize(asset));
-			data->set("transaction_id", var::string(transaction_id));
+			auto data = ledger::uniform::as_tree();
+			data.set("asset", algorithm::asset::serialize(asset));
+			data.set("transaction_id", format::variable(transaction_id));
 			return data;
 		}
 		uint32_t witness_transaction::as_type() const

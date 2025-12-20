@@ -719,9 +719,9 @@ namespace tangent
 		public:
 			static expects_lr<void> index(format::wo_stream* stream, const void* value, int value_type_id);
 			static expects_lr<void> store(format::wo_stream* stream, const void* value, int value_type_id);
-			static expects_lr<void> store(schema* stream, const void* value, int value_type_id);
+			static expects_lr<void> store(format::tree& stream, const void* value, int value_type_id);
 			static expects_lr<void> load(format::ro_stream& stream, void* value, int value_type_id);
-			static expects_lr<void> load(schema* stream, void* value, int value_type_id);
+			static expects_lr<void> load(format::tree& stream, void* value, int value_type_id);
 		};
 
 		struct cmodule

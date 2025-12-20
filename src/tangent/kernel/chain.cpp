@@ -433,28 +433,28 @@ namespace tangent
 		os::directory::set_working(library->c_str());
 		console::get()->attach();
 
-		auto config = uptr<schema>(path.empty() ? (schema*)nullptr : *schema::from_json(*os::file::read_as_string(path)));
+		option<format::tree> config = path.empty() ? option<format::tree>(optional::none) : option<format::tree>(*format::tree::from_json(*os::file::read_as_string(path)));
 		if (!environment.args.empty())
 		{
 			if (!config)
-				config = var::set::object();
+				config = format::tree();
 			for (auto& [key, value] : environment.args)
 			{
-				auto parent = *config;
+				auto* parent = config.address();
 				for (auto& name : stringify::split(key, '.'))
 				{
-					auto child = parent->get(name);
-					parent = (child ? child : parent->set(name, var::set::object()));
+					auto child = (format::tree*)parent->child(name);
+					parent = (child ? child : parent->set(name, format::tree()));
 				}
-				parent->value = var::any(value);
+				parent->value = format::variable::from(value);
 			}
 		}
 		if (config)
 		{
-			auto* value = config->get("network");
-			if (value != nullptr && value->value.is(var_type::string))
+			auto* value = config->child("network");
+			if (value != nullptr && value->value.is_string())
 			{
-				auto type = value->value.get_blob();
+				auto type = value->value.as_string();
 				if (type == "mainnet")
 					user.network = network_type::mainnet;
 				else if (type == "testnet")
@@ -463,295 +463,295 @@ namespace tangent
 					user.network = network_type::regtest;
 			}
 
-			value = config->get("keystate");
-			if (value != nullptr && value->value.is(var_type::string))
-				user.keystate = value->value.get_blob();
+			value = config->child("keystate");
+			if (value != nullptr && value->value.is_string())
+				user.keystate = value->value.as_blob();
 
-			value = config->get("known_nodes");
-			if (value != nullptr && value->value.get_type() == var_type::array)
+			value = config->child("known_nodes");
+			if (value != nullptr && value->is_list())
 			{
-				for (auto& seed : value->get_childs())
+				for (auto& seed : value->childs())
 				{
-					if (seed->value.is(var_type::string))
-						user.known_nodes.insert(seed->value.get_blob());
+					if (seed.value.is_string())
+						user.known_nodes.insert(seed.value.as_blob());
 				}
 			}
 
-			value = config->get("bootstrap_nodes");
-			if (value != nullptr && value->value.get_type() == var_type::array)
+			value = config->child("bootstrap_nodes");
+			if (value != nullptr && value->is_list())
 			{
-				for (auto& seed : value->get_childs())
+				for (auto& seed : value->childs())
 				{
-					if (seed->value.is(var_type::string))
-						user.bootstrap_nodes.insert(seed->value.get_blob());
+					if (seed.value.is_string())
+						user.bootstrap_nodes.insert(seed.value.as_blob());
 				}
 			}
 
-			value = config->fetch("consensus.account");
-			if (value != nullptr && value->value.is(var_type::string))
-				user.consensus.account = value->value.get_blob();
+			value = config->child("consensus.account");
+			if (value != nullptr && value->value.is_string())
+				user.consensus.account = value->value.as_blob();
 
-			value = config->fetch("consensus.address");
-			if (value != nullptr && value->value.is(var_type::string))
-				user.consensus.address = value->value.get_blob();
+			value = config->child("consensus.address");
+			if (value != nullptr && value->value.is_string())
+				user.consensus.address = value->value.as_blob();
 
-			value = config->fetch("consensus.port");
-			if (value != nullptr && value->value.is(var_type::integer))
-				user.consensus.port = value->value.get_integer();
+			value = config->child("consensus.port");
+			if (value != nullptr && value->value.is_integer())
+				user.consensus.port = value->value.as_uint16();
 
-			value = config->fetch("consensus.time_offset");
-			if (value != nullptr && value->value.is(var_type::integer))
-				user.consensus.time_offset = value->value.get_integer();
+			value = config->child("consensus.time_offset");
+			if (value != nullptr && value->value.is_integer())
+				user.consensus.time_offset = value->value.as_uint64();
 
-			value = config->fetch("consensus.max_inbound_connections");
-			if (value != nullptr && value->value.is(var_type::integer))
-				user.consensus.max_inbound_connections = (uint32_t)value->value.get_integer();
+			value = config->child("consensus.max_inbound_connections");
+			if (value != nullptr && value->value.is_integer())
+				user.consensus.max_inbound_connections = value->value.as_uint32();
 
-			value = config->fetch("consensus.max_outbound_connections");
-			if (value != nullptr && value->value.is(var_type::integer))
-				user.consensus.max_outbound_connections = (uint32_t)value->value.get_integer();
+			value = config->child("consensus.max_outbound_connections");
+			if (value != nullptr && value->value.is_integer())
+				user.consensus.max_outbound_connections = value->value.as_uint32();
 
-			value = config->fetch("consensus.inventory_timeout");
-			if (value != nullptr && value->value.is(var_type::integer))
-				user.consensus.inventory_timeout = (uint64_t)value->value.get_integer();
+			value = config->child("consensus.inventory_timeout");
+			if (value != nullptr && value->value.is_integer())
+				user.consensus.inventory_timeout = value->value.as_uint64();
 
-			value = config->fetch("consensus.inventory_size");
-			if (value != nullptr && value->value.is(var_type::integer))
-				user.consensus.inventory_size = (uint32_t)value->value.get_integer();
+			value = config->child("consensus.inventory_size");
+			if (value != nullptr && value->value.is_integer())
+				user.consensus.inventory_size = value->value.as_uint32();
 
-			value = config->fetch("consensus.topology_timeout");
-			if (value != nullptr && value->value.is(var_type::integer))
-				user.consensus.topology_timeout = (uint32_t)value->value.get_integer();
+			value = config->child("consensus.topology_timeout");
+			if (value != nullptr && value->value.is_integer())
+				user.consensus.topology_timeout = value->value.as_uint32();
 
-			value = config->fetch("consensus.attestation_timeout");
-			if (value != nullptr && value->value.is(var_type::integer))
-				user.consensus.attestation_timeout = (uint32_t)value->value.get_integer();
+			value = config->child("consensus.attestation_timeout");
+			if (value != nullptr && value->value.is_integer())
+				user.consensus.attestation_timeout = value->value.as_uint32();
 			
-			value = config->fetch("consensus.response_timeout");
-			if (value != nullptr && value->value.is(var_type::integer))
-				user.consensus.response_timeout = value->value.get_integer();
+			value = config->child("consensus.response_timeout");
+			if (value != nullptr && value->value.is_integer())
+				user.consensus.response_timeout = value->value.as_uint64();
 
-			value = config->fetch("consensus.aggregation_attempts");
-			if (value != nullptr && value->value.is(var_type::integer))
-				user.consensus.aggregation_attempts = value->value.get_integer();
+			value = config->child("consensus.aggregation_attempts");
+			if (value != nullptr && value->value.is_integer())
+				user.consensus.aggregation_attempts = value->value.as_uint64();
 
-			value = config->fetch("consensus.aggregation_cooldown");
-			if (value != nullptr && value->value.is(var_type::integer))
-				user.consensus.aggregation_cooldown = value->value.get_integer();
+			value = config->child("consensus.aggregation_cooldown");
+			if (value != nullptr && value->value.is_integer())
+				user.consensus.aggregation_cooldown = value->value.as_uint64();
 
-			value = config->fetch("consensus.coordination_attempts");
-			if (value != nullptr && value->value.is(var_type::integer))
-				user.consensus.coordination_attempts = (uint8_t)value->value.get_integer();
+			value = config->child("consensus.coordination_attempts");
+			if (value != nullptr && value->value.is_integer())
+				user.consensus.coordination_attempts = value->value.as_uint8();
 
-			value = config->fetch("consensus.dispatch_retry_interval");
-			if (value != nullptr && value->value.is(var_type::integer))
-				user.consensus.dispatch_retry_interval = value->value.get_integer();
+			value = config->child("consensus.dispatch_retry_interval");
+			if (value != nullptr && value->value.is_integer())
+				user.consensus.dispatch_retry_interval = value->value.as_uint64();
 
-			value = config->fetch("consensus.commitment_timeout");
-			if (value != nullptr && value->value.is(var_type::integer))
-				user.consensus.commitment_timeout = value->value.get_integer();
+			value = config->child("consensus.commitment_timeout");
+			if (value != nullptr && value->value.is_integer())
+				user.consensus.commitment_timeout = value->value.as_uint64();
 
-			value = config->fetch("consensus.transaction_timeout");
-			if (value != nullptr && value->value.is(var_type::integer))
-				user.consensus.transaction_timeout = value->value.get_integer();
+			value = config->child("consensus.transaction_timeout");
+			if (value != nullptr && value->value.is_integer())
+				user.consensus.transaction_timeout = value->value.as_uint64();
 
-			value = config->fetch("consensus.reorganizable");
-			if (value != nullptr && value->value.is(var_type::boolean))
-				user.consensus.reorganizable = value->value.get_boolean();
+			value = config->child("consensus.reorganizable");
+			if (value != nullptr && value->value.is_boolean())
+				user.consensus.reorganizable = value->value.as_boolean();
 
-			value = config->fetch("consensus.miner");
-			if (value != nullptr && value->value.is(var_type::boolean))
-				user.consensus.miner = value->value.get_boolean();
+			value = config->child("consensus.miner");
+			if (value != nullptr && value->value.is_boolean())
+				user.consensus.miner = value->value.as_boolean();
 
-			value = config->fetch("consensus.server");
-			if (value != nullptr && value->value.is(var_type::boolean))
-				user.consensus.server = value->value.get_boolean();
+			value = config->child("consensus.server");
+			if (value != nullptr && value->value.is_boolean())
+				user.consensus.server = value->value.as_boolean();
 
-			value = config->fetch("consensus.logging");
-			if (value != nullptr && value->value.is(var_type::boolean))
-				user.consensus.logging = value->value.get_boolean();
+			value = config->child("consensus.logging");
+			if (value != nullptr && value->value.is_boolean())
+				user.consensus.logging = value->value.as_boolean();
 
-			value = config->fetch("discovery.address");
-			if (value != nullptr && value->value.is(var_type::string))
-				user.discovery.address = value->value.get_blob();
+			value = config->child("discovery.address");
+			if (value != nullptr && value->value.is_string())
+				user.discovery.address = value->value.as_string();
 
-			value = config->fetch("discovery.port");
-			if (value != nullptr && value->value.is(var_type::integer))
-				user.discovery.port = value->value.get_integer();
+			value = config->child("discovery.port");
+			if (value != nullptr && value->value.is_integer())
+				user.discovery.port = value->value.as_uint16();
 
-			value = config->fetch("discovery.server");
-			if (value != nullptr && value->value.is(var_type::boolean))
-				user.discovery.server = value->value.get_boolean();
+			value = config->child("discovery.server");
+			if (value != nullptr && value->value.is_boolean())
+				user.discovery.server = value->value.as_boolean();
 
-			value = config->fetch("discovery.logging");
-			if (value != nullptr && value->value.is(var_type::boolean))
-				user.discovery.logging = value->value.get_boolean();
+			value = config->child("discovery.logging");
+			if (value != nullptr && value->value.is_boolean())
+				user.discovery.logging = value->value.as_boolean();
 
-			value = config->fetch("superchain.block_replay_multiplier");
-			if (value != nullptr && value->value.is(var_type::integer))
-				user.superchain.block_replay_multiplier = value->value.get_integer();
+			value = config->child("superchain.block_replay_multiplier");
+			if (value != nullptr && value->value.is_integer())
+				user.superchain.block_replay_multiplier = value->value.as_uint64();
 
-			value = config->fetch("superchain.relaying_timeout");
-			if (value != nullptr && value->value.is(var_type::integer))
-				user.superchain.relaying_timeout = value->value.get_integer();
+			value = config->child("superchain.relaying_timeout");
+			if (value != nullptr && value->value.is_integer())
+				user.superchain.relaying_timeout = value->value.as_uint64();
 
-			value = config->fetch("superchain.relaying_retry_timeout");
-			if (value != nullptr && value->value.is(var_type::integer))
-				user.superchain.relaying_retry_timeout = value->value.get_integer();
+			value = config->child("superchain.relaying_retry_timeout");
+			if (value != nullptr && value->value.is_integer())
+				user.superchain.relaying_retry_timeout = value->value.as_uint64();
 
-			value = config->fetch("superchain.cache1_size");
-			if (value != nullptr && value->value.is(var_type::integer))
-				user.superchain.cache1_size = (uint32_t)value->value.get_integer();
+			value = config->child("superchain.cache1_size");
+			if (value != nullptr && value->value.is_integer())
+				user.superchain.cache1_size = value->value.as_uint32();
 
-			value = config->fetch("superchain.cache2_size");
-			if (value != nullptr && value->value.is(var_type::integer))
-				user.superchain.cache2_size = (uint32_t)value->value.get_integer();
+			value = config->child("superchain.cache2_size");
+			if (value != nullptr && value->value.is_integer())
+				user.superchain.cache2_size = value->value.as_uint32();
 
-			value = config->fetch("superchain.server");
-			if (value != nullptr && value->value.is(var_type::boolean))
-				user.superchain.server = value->value.get_boolean();
+			value = config->child("superchain.server");
+			if (value != nullptr && value->value.is_boolean())
+				user.superchain.server = value->value.as_boolean();
 
-			value = config->fetch("superchain.logging");
-			if (value != nullptr && value->value.is(var_type::boolean))
-				user.superchain.logging = value->value.get_boolean();
+			value = config->child("superchain.logging");
+			if (value != nullptr && value->value.is_boolean())
+				user.superchain.logging = value->value.as_boolean();
 
-			value = config->fetch("rpc.address");
-			if (value != nullptr && value->value.is(var_type::string))
-				user.rpc.address = value->value.get_blob();
+			value = config->child("rpc.address");
+			if (value != nullptr && value->value.is_string())
+				user.rpc.address = value->value.as_blob();
 
-			value = config->fetch("rpc.port");
-			if (value != nullptr && value->value.is(var_type::integer))
-				user.rpc.port = value->value.get_integer();
+			value = config->child("rpc.port");
+			if (value != nullptr && value->value.is_integer())
+				user.rpc.port = value->value.as_uint16();
 
-			value = config->fetch("rpc.useranme");
-			if (value != nullptr && value->value.is(var_type::string))
-				user.rpc.username = value->value.get_blob();
+			value = config->child("rpc.useranme");
+			if (value != nullptr && value->value.is_string())
+				user.rpc.username = value->value.as_blob();
 
-			value = config->fetch("rpc.password");
-			if (value != nullptr && value->value.is(var_type::string))
-				user.rpc.password = value->value.get_blob();
+			value = config->child("rpc.password");
+			if (value != nullptr && value->value.is_string())
+				user.rpc.password = value->value.as_blob();
 
-			value = config->fetch("rpc.websockets");
-			if (value != nullptr && value->value.is(var_type::boolean))
-				user.rpc.web_sockets = value->value.get_boolean();
+			value = config->child("rpc.websockets");
+			if (value != nullptr && value->value.is_boolean())
+				user.rpc.web_sockets = value->value.as_boolean();
 
-			value = config->fetch("rpc.isolated");
-			if (value != nullptr && value->value.is(var_type::boolean))
-				user.rpc.isolated = value->value.get_boolean();
+			value = config->child("rpc.isolated");
+			if (value != nullptr && value->value.is_boolean())
+				user.rpc.isolated = value->value.as_boolean();
 
-			value = config->fetch("rpc.server");
-			if (value != nullptr && value->value.is(var_type::boolean))
-				user.rpc.server = value->value.get_boolean();
+			value = config->child("rpc.server");
+			if (value != nullptr && value->value.is_boolean())
+				user.rpc.server = value->value.as_boolean();
 
-			value = config->fetch("rpc.logging");
-			if (value != nullptr && value->value.is(var_type::boolean))
-				user.rpc.logging = value->value.get_boolean();
+			value = config->child("rpc.logging");
+			if (value != nullptr && value->value.is_boolean())
+				user.rpc.logging = value->value.as_boolean();
 
-			value = config->fetch("tcp.tls_trusted_peers");
-			if (value != nullptr && value->value.is(var_type::integer))
-				user.tcp.tls_trusted_peers = value->value.get_integer();
+			value = config->child("tcp.tls_trusted_peers");
+			if (value != nullptr && value->value.is_integer())
+				user.tcp.tls_trusted_peers = value->value.as_uint64();
 
-			value = config->fetch("tcp.mbps_per_socket");
-			if (value != nullptr && value->value.is(var_type::integer))
-				user.tcp.mbps_per_socket = value->value.get_integer();
+			value = config->child("tcp.mbps_per_socket");
+			if (value != nullptr && value->value.is_integer())
+				user.tcp.mbps_per_socket = value->value.as_uint64();
 
-			value = config->fetch("tcp.timeout");
-			if (value != nullptr && value->value.is(var_type::integer))
-				user.tcp.timeout = value->value.get_integer();
+			value = config->child("tcp.timeout");
+			if (value != nullptr && value->value.is_integer())
+				user.tcp.timeout = value->value.as_uint64();
 
-			value = config->fetch("tcp.keep_alive");
-			if (value != nullptr && value->value.is(var_type::integer))
-				user.tcp.keep_alive = value->value.get_integer();
+			value = config->child("tcp.keep_alive");
+			if (value != nullptr && value->value.is_integer())
+				user.tcp.keep_alive = value->value.as_uint64();
 
-			value = config->fetch("storage.path");
-			if (value != nullptr && value->value.is(var_type::string))
-				user.storage.path = value->value.get_blob();
+			value = config->child("storage.path");
+			if (value != nullptr && value->value.is_string())
+				user.storage.path = value->value.as_blob();
 
-			value = config->fetch("storage.module_cache_path");
-			if (value != nullptr && value->value.is(var_type::string))
-				user.storage.module_cache_path = value->value.get_blob();
+			value = config->child("storage.module_cache_path");
+			if (value != nullptr && value->value.is_string())
+				user.storage.module_cache_path = value->value.as_blob();
 
-			value = config->fetch("storage.optimization");
-			if (value != nullptr && value->value.is(var_type::string))
+			value = config->child("storage.optimization");
+			if (value != nullptr && value->value.is_string())
 			{
-				auto type = value->value.get_blob();
+				auto type = value->value.as_blob();
 				if (type == "speed")
 					user.storage.optimization = storage_optimization::speed;
 				else if (type == "safety")
 					user.storage.optimization = storage_optimization::safety;
 			}
 
-			value = config->fetch("storage.checkpoint_size");
-			if (value != nullptr && value->value.is(var_type::integer))
-				user.storage.checkpoint_size = value->value.get_integer();
+			value = config->child("storage.checkpoint_size");
+			if (value != nullptr && value->value.is_integer())
+				user.storage.checkpoint_size = value->value.as_uint64();
 
-			value = config->fetch("storage.module_cache_size");
-			if (value != nullptr && value->value.is(var_type::integer))
-				user.storage.module_cache_size = value->value.get_integer();
+			value = config->child("storage.module_cache_size");
+			if (value != nullptr && value->value.is_integer())
+				user.storage.module_cache_size = value->value.as_uint64();
 
-			value = config->fetch("storage.blob_cache_size");
-			if (value != nullptr && value->value.is(var_type::integer))
-				user.storage.blob_cache_size = value->value.get_integer();
+			value = config->child("storage.blob_cache_size");
+			if (value != nullptr && value->value.is_integer())
+				user.storage.blob_cache_size = value->value.as_uint64();
 
-			value = config->fetch("storage.index_page_size");
-			if (value != nullptr && value->value.is(var_type::integer))
-				user.storage.index_page_size = value->value.get_integer();
+			value = config->child("storage.index_page_size");
+			if (value != nullptr && value->value.is_integer())
+				user.storage.index_page_size = value->value.as_uint64();
 
-			value = config->fetch("storage.index_cache_size");
-			if (value != nullptr && value->value.is(var_type::integer))
-				user.storage.index_cache_size = value->value.get_integer();
+			value = config->child("storage.index_cache_size");
+			if (value != nullptr && value->value.is_integer())
+				user.storage.index_cache_size = value->value.as_uint64();
 
-			value = config->fetch("storage.flush_threads_ratio");
-			if (value != nullptr && value->value.is(var_type::number))
-				user.storage.flush_threads_ratio = value->value.get_number();
+			value = config->child("storage.flush_threads_ratio");
+			if (value != nullptr && value->value.is_decimal())
+				user.storage.flush_threads_ratio = value->value.as_uint64();
 
-			value = config->fetch("storage.compaction_threads_ratio");
-			if (value != nullptr && value->value.is(var_type::number))
-				user.storage.compaction_threads_ratio = value->value.get_number();
+			value = config->child("storage.compaction_threads_ratio");
+			if (value != nullptr && value->value.is_decimal())
+				user.storage.compaction_threads_ratio = value->value.as_double();
 
-			value = config->fetch("storage.computation_threads_ratio");
-			if (value != nullptr && value->value.is(var_type::number))
-				user.storage.computation_threads_ratio = value->value.get_number();
+			value = config->child("storage.computation_threads_ratio");
+			if (value != nullptr && value->value.is_decimal())
+				user.storage.computation_threads_ratio = value->value.as_double();
 
-			value = config->fetch("storage.transaction_to_account_index");
-			if (value != nullptr && value->value.is(var_type::boolean))
-				user.storage.transaction_to_account_index = value->value.get_boolean();
+			value = config->child("storage.transaction_to_account_index");
+			if (value != nullptr && value->value.is_boolean())
+				user.storage.transaction_to_account_index = value->value.as_boolean();
 
-			value = config->fetch("storage.transaction_to_rollup_index");
-			if (value != nullptr && value->value.is(var_type::boolean))
-				user.storage.transaction_to_rollup_index = value->value.get_boolean();
+			value = config->child("storage.transaction_to_rollup_index");
+			if (value != nullptr && value->value.is_boolean())
+				user.storage.transaction_to_rollup_index = value->value.as_boolean();
 
-			value = config->fetch("storage.logging");
-			if (value != nullptr && value->value.is(var_type::boolean))
-				user.storage.logging = value->value.get_boolean();
+			value = config->child("storage.logging");
+			if (value != nullptr && value->value.is_boolean())
+				user.storage.logging = value->value.as_boolean();
 
-			value = config->fetch("logs.info");
-			if (value != nullptr && value->value.is(var_type::string))
-				user.logs.info_path = value->value.get_blob();
+			value = config->child("logs.info");
+			if (value != nullptr && value->value.is_string())
+				user.logs.info_path = value->value.as_blob();
 
-			value = config->fetch("logs.error");
-			if (value != nullptr && value->value.is(var_type::string))
-				user.logs.error_path = value->value.get_blob();
+			value = config->child("logs.error");
+			if (value != nullptr && value->value.is_string())
+				user.logs.error_path = value->value.as_blob();
 
-			value = config->fetch("logs.query");
-			if (value != nullptr && value->value.is(var_type::string))
-				user.logs.query_path = value->value.get_blob();
+			value = config->child("logs.query");
+			if (value != nullptr && value->value.is_string())
+				user.logs.query_path = value->value.as_blob();
 
-			value = config->fetch("logs.archive_size");
-			if (value != nullptr && value->value.is(var_type::integer))
-				user.logs.archive_size = value->value.get_integer();
+			value = config->child("logs.archive_size");
+			if (value != nullptr && value->value.is_integer())
+				user.logs.archive_size = value->value.as_uint64();
 
-			value = config->fetch("logs.archive_repack_interval");
-			if (value != nullptr && value->value.is(var_type::integer))
-				user.logs.archive_repack_interval = value->value.get_integer();
+			value = config->child("logs.archive_repack_interval");
+			if (value != nullptr && value->value.is_integer())
+				user.logs.archive_repack_interval = value->value.as_uint64();
 
-			value = config->fetch("logs.control_logging");
-			if (value != nullptr && value->value.is(var_type::boolean))
-				user.logs.control_logging = value->value.get_boolean();
+			value = config->child("logs.control_logging");
+			if (value != nullptr && value->value.is_boolean())
+				user.logs.control_logging = value->value.as_boolean();
 
-			user.superchain.options = config->get("superchain");
-			if (user.superchain.options)
-				user.superchain.options->unlink();
+			auto superchain_options = config->child("superchain");
+			if (superchain_options)
+				user.superchain.options = memory::init<format::tree>(std::move(*superchain_options));
 		}
 		else
 			path.clear();

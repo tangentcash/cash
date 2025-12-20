@@ -329,38 +329,36 @@ namespace tangent
 				netdata.supports_bulk_transfer = false;
 				netdata.requires_transaction_expiration = false;
 			}
-			expects_promise_rt<schema*> ethereum::get_transaction_receipt(const std::string_view& transaction_id, bool cached)
+			expects_promise_rt<format::tree> ethereum::get_transaction_receipt(const std::string_view& transaction_id, bool cached)
 			{
-				schema_list map;
-				map.emplace_back(var::set::string(format::util::assign_0xhex(transaction_id)));
+				format::tree map;
+				map.push(format::variable(format::util::assign_0xhex(transaction_id)));
 
 				auto tx_data = coawait(execute_rpc(nd_call::get_transaction_receipt(), std::move(map), cached ? cache_policy::blob_cache : cache_policy::no_cache_no_throttling));
-				if (tx_data && (tx_data->value.is(var_type::null) || tx_data->value.is(var_type::undefined)))
+				if (tx_data && tx_data.is_none())
 					coreturn remote_exception("receipt not found");
 
 				coreturn tx_data;
 			}
 			expects_promise_rt<uint256_t> ethereum::get_transactions_count(const std::string_view& address)
 			{
-				schema_list latest_map;
-				latest_map.emplace_back(var::set::string(decode_non_eth_address(address)));
-				latest_map.emplace_back(var::set::string("latest"));
+				format::tree latest_map;
+				latest_map.push(format::variable(decode_non_eth_address(address)));
+				latest_map.push(format::variable("latest"));
 
 				auto latest_transaction_count = coawait(execute_rpc(nd_call::get_transaction_count(), std::move(latest_map), cache_policy::no_cache));
 				if (!latest_transaction_count)
 					coreturn expects_rt<uint256_t>(std::move(latest_transaction_count.error()));
 
-				uint256_t transactions_count = hex_to_uint256(latest_transaction_count->value.get_blob());
-				memory::release(*latest_transaction_count);
+				uint256_t transactions_count = hex_to_uint256(latest_transaction_count->value.as_blob());
+				format::tree pending_map;
+				pending_map.push(format::variable(decode_non_eth_address(address)));
+				pending_map.push(format::variable("pending"));
 
-				schema_list pending_map;
-				pending_map.emplace_back(var::set::string(decode_non_eth_address(address)));
-				pending_map.emplace_back(var::set::string("pending"));
-
-				auto pending_transaction_count = uptr<schema>(coawait(execute_rpc(nd_call::get_transaction_count(), std::move(pending_map), cache_policy::no_cache)));
+				auto pending_transaction_count = coawait(execute_rpc(nd_call::get_transaction_count(), std::move(pending_map), cache_policy::no_cache));
 				if (pending_transaction_count)
 				{
-					uint256_t pending_transactions_count = hex_to_uint256(pending_transaction_count->value.get_blob());
+					uint256_t pending_transactions_count = hex_to_uint256(pending_transaction_count->value.as_blob());
 					if (pending_transactions_count > transactions_count)
 						transactions_count = pending_transactions_count;
 				}
@@ -373,19 +371,18 @@ namespace tangent
 				if (!hex_chain_id)
 					coreturn expects_rt<uint256_t>(std::move(hex_chain_id.error()));
 
-				uint256_t chain_id = hex_to_uint256(hex_chain_id->value.get_blob());
-				memory::release(*hex_chain_id);
+				uint256_t chain_id = hex_to_uint256(hex_chain_id->value.as_blob());
 				coreturn expects_rt<uint256_t>(std::move(chain_id));
 			}
 			expects_promise_rt<string> ethereum::get_contract_symbol(const std::string_view& contract_address)
 			{
-				uptr<schema> params = var::set::object();
-				params->set("to", var::string(decode_non_eth_address(contract_address)));
-				params->set("data", var::string(encode_0xhex(translations::ethereum::sc_call::symbol())));
+				format::tree params = format::tree::map();
+				params.set("to", format::variable(decode_non_eth_address(contract_address)));
+				params.set("data", format::variable(encode_0xhex(translations::ethereum::sc_call::symbol())));
 
-				schema_list map;
-				map.emplace_back(std::move(params));
-				map.emplace_back(var::set::string("latest"));
+				format::tree map;
+				map.push(std::move(params));
+				map.push(format::variable("latest"));
 
 				auto symbol = coawait(execute_rpc(nd_call::call(), std::move(map), cache_policy::lifetime_cache));
 				if (!symbol)
@@ -393,13 +390,13 @@ namespace tangent
 
 				struct eth_abi evm;
 				eth_abi_init(&evm, ETH_ABI_DECODE);
-				eth_abi_from_hex(&evm, (char*)symbol->value.get_string().data(), (int)symbol->value.get_string().size());
+				eth_abi_from_hex(&evm, (char*)symbol->value.as_string().data(), (int)symbol->value.as_string().size());
 
 				uint8_t* bytes; size_t bytes_size;
 				bool has_bytes = eth_abi_bytes(&evm, &bytes, &bytes_size) == 1;
 				eth_abi_free(&evm);
 				if (!has_bytes)
-					coreturn expects_rt<string>(symbol->value.get_blob());
+					coreturn expects_rt<string>(symbol->value.as_blob());
 
 				string result = string((char*)bytes, bytes_size);
 				free(bytes);
@@ -407,19 +404,19 @@ namespace tangent
 			}
 			expects_promise_rt<decimal> ethereum::get_contract_divisibility(const std::string_view& contract_address)
 			{
-				uptr<schema> params = var::set::object();
-				params->set("to", var::string(decode_non_eth_address(contract_address)));
-				params->set("data", var::string(encode_0xhex(translations::ethereum::sc_call::decimals())));
+				format::tree params = format::tree::map();
+				params.set("to", format::variable(decode_non_eth_address(contract_address)));
+				params.set("data", format::variable(encode_0xhex(translations::ethereum::sc_call::decimals())));
 
-				schema_list map;
-				map.emplace_back(std::move(params));
-				map.emplace_back(var::set::string("latest"));
+				format::tree map;
+				map.push(std::move(params));
+				map.push(format::variable("latest"));
 
 				auto decimals = coawait(execute_rpc(nd_call::call(), std::move(map), cache_policy::lifetime_cache));
 				if (!decimals)
 					coreturn expects_rt<decimal>(std::move(decimals.error()));
 
-				coreturn expects_rt<decimal>(algorithm::arithmetic::range((uint64_t)hex_to_uint256(decimals->value.get_blob())));
+				coreturn expects_rt<decimal>(algorithm::arithmetic::range((uint64_t)hex_to_uint256(decimals->value.as_blob())));
 			}
 			expects_promise_rt<uint64_t> ethereum::get_latest_block_height()
 			{
@@ -427,79 +424,88 @@ namespace tangent
 				if (!block_count)
 					coreturn expects_rt<uint64_t>(std::move(block_count.error()));
 
-				uint64_t block_height = (uint64_t)hex_to_uint256(block_count->value.get_blob());
-				memory::release(*block_count);
+				uint64_t block_height = (uint64_t)hex_to_uint256(block_count->value.as_blob());
 				coreturn expects_rt<uint64_t>(block_height);
 			}
-			expects_promise_rt<schema*> ethereum::get_block_transactions(uint64_t block_height, string* block_hash)
+			expects_promise_rt<vector<block_log>> ethereum::get_block_transactions(uint64_t block_height, uint64_t block_count)
 			{
-				schema_list map;
-				map.emplace_back(var::set::string(uint256_to_hex(block_height)));
-				map.emplace_back(var::set::boolean(true));
+				format::tree map;
+				for (uint64_t i = 0; i < block_count; i++)
+				{
+					format::tree block_map;
+					block_map.push(format::variable(uint256_to_hex(block_height + i)));
+					block_map.push(format::variable(true));
+					map.push(std::move(block_map));
+				}
 
-				auto block_data = coawait(execute_rpc(nd_call::get_block_by_number(), std::move(map), cache_policy::temporary_cache));
+				auto block_data = coawait(execute_rpc_multi(nd_call::get_block_by_number(), std::move(map), cache_policy::temporary_cache));
 				if (!block_data)
-					coreturn block_data;
+					coreturn block_data.error();
 
-				legacy.eip_155 = block_data->has("baseFeePerGas") ? 0 : 1;
-				if (block_hash != nullptr)
-					*block_hash = block_data->get_var("hash").get_blob();
-
-				auto* transactions = block_data->get("transactions");
-				if (!transactions)
+				map.childs().clear();
+				vector<block_log> results;
+				for (auto& block : block_data->childs())
 				{
-					memory::release(*block_data);
-					coreturn expects_rt<schema*>(remote_exception("transactions field not found"));
+					auto* transactions = (format::tree*)block.child("transactions");
+					auto transactions_count = transactions->childs().size();
+					auto& log = results.emplace_back();
+					log.block_hash = block.child_var("hash").as_blob();
+					log.transactions = transactions ? std::move(*transactions) : format::tree();
+					legacy.eip_155 = block.has("baseFeePerGas") ? 0 : 1;
+					if (!transactions_count)
+						continue;
+
+					auto logs_map = format::tree::list();
+					auto query = format::tree::map();
+					query.set("fromBlock", format::variable(uint256_to_hex(block_height)));
+					query.set("toBlock", format::variable(uint256_to_hex(block_height)));
+					query.set("topics", format::tree::list())->push(format::variable(get_token_transfer_signature()));
+					logs_map.push(std::move(query));
+					map.push(std::move(logs_map));
 				}
 
-				auto* query = var::set::object();
-				query->set("fromBlock", var::set::string(uint256_to_hex(block_height)));
-				query->set("toBlock", var::set::string(uint256_to_hex(block_height)));
-				query->set("topics", var::set::array())->push(var::string(get_token_transfer_signature()));
-
-				map.clear();
-				map.emplace_back(query);
-
-				auto logs_data = coawait(execute_rpc(nd_call::get_logs(), std::move(map), cache_policy::temporary_cache));
-				if (logs_data && logs_data->value.is(var_type::array))
+				auto logs_data = map.childs().empty() ? expects_rt<format::tree>(remote_exception::shutdown()) : coawait(execute_rpc_multi(nd_call::get_logs(), std::move(map), cache_policy::temporary_cache));
+				if (logs_data)
 				{
-					hash_map<string, schema*> indices;
-					for (auto& item : transactions->get_childs())
+					hash_map<string, format::tree*> indices;
+					for (auto& [block, transactions] : results)
 					{
-						string tx_hash = item->get_var("hash").get_blob();
-						auto* logs = item->get("logs");
-						if (!logs)
-							logs = item->set("logs", var::set::array());
-						indices[tx_hash] = logs;
+						for (auto& item : transactions.childs())
+						{
+							string tx_hash = item.child_var("hash").as_blob();
+							auto* logs = (format::tree*)item.child("logs");
+							if (!logs)
+								logs = item.set("logs", format::tree::list());
+							indices[tx_hash] = logs;
+						}
 					}
 
-					for (auto& item : logs_data->get_childs())
+					for (auto& logs_list : logs_data->childs())
 					{
-						string tx_hash = item->get_var("transactionHash").get_blob();
-						auto it = indices.find(tx_hash);
-						if (it != indices.end())
-							it->second->push(item->copy());
+						for (auto& item : logs_list.childs())
+						{
+							string tx_hash = item.child_var("transactionHash").as_blob();
+							auto it = indices.find(tx_hash);
+							if (it != indices.end())
+								it->second->push(item);
+						}
 					}
-					memory::release(*logs_data);
 				}
-
-				transactions->unlink();
-				memory::release(*block_data);
-				coreturn expects_rt<schema*>(transactions);
+				coreturn expects_rt<vector<block_log>>(std::move(results));
 			}
-			expects_promise_rt<computed_transaction> ethereum::link_transaction(uint64_t block_height, const std::string_view& block_hash, schema* transaction_data)
+			expects_promise_rt<computed_transaction> ethereum::link_transaction(uint64_t block_height, const std::string_view& block_hash, format::tree& transaction_data)
 			{
 				auto* chain = get_chain();
-				string data = transaction_data->get_var("input").get_blob();
+				string data = transaction_data.child_var("input").as_blob();
 				if (stringify::starts_with(data, chain->bech32_hrp))
 					data.erase(0, strlen(chain->bech32_hrp));
 
-				string tx_hash = transaction_data->get_var("hash").get_blob();
-				string from = encode_eth_address(transaction_data->get_var("from").get_blob());
-				string to = encode_eth_address(transaction_data->get_var("to").get_blob());
-				decimal gas_price = to_eth(hex_to_uint256(transaction_data->get_var("gasPrice").get_blob()), get_divisibility_gwei());
+				string tx_hash = transaction_data.child_var("hash").as_blob();
+				string from = encode_eth_address(transaction_data.child_var("from").as_blob());
+				string to = encode_eth_address(transaction_data.child_var("to").as_blob());
+				decimal gas_price = to_eth(hex_to_uint256(transaction_data.child_var("gasPrice").as_blob()), get_divisibility_gwei());
 				decimal gas_limit = to_eth(hex_to_uint256(get_raw_gas_limit(transaction_data)), get_divisibility_gwei());
-				decimal base_value = to_eth(hex_to_uint256(transaction_data->get_var("value").get_blob()), netdata.divisibility);
+				decimal base_value = to_eth(hex_to_uint256(transaction_data.child_var("value").as_blob()), netdata.divisibility);
 				decimal fee_value = gas_price * gas_limit;
 				decimal total_value = base_value + fee_value;
 
@@ -523,36 +529,33 @@ namespace tangent
 
 				if (!data.empty())
 				{
-					auto* logs = transaction_data->get("logs");
+					auto* logs = (format::tree*)transaction_data.child("logs");
 					if (!logs)
 					{
-						auto tx_receipt = coawait(get_transaction_receipt(transaction_data->get_var("hash").get_blob(), true));
+						auto tx_receipt = coawait(get_transaction_receipt(transaction_data.child_var("hash").as_blob(), true));
 						if (tx_receipt)
 						{
-							logs = tx_receipt->get("logs");
+							logs = (format::tree*)tx_receipt->child("logs");
 							if (logs != nullptr)
-							{
-								logs->unlink();
-								transaction_data->set("logs", logs);
-							}
-							transaction_data->set("receipt", *tx_receipt);
+								transaction_data.set("logs", std::move(*logs));
+							transaction_data.set("receipt", *tx_receipt);
 						}
 						else
-							transaction_data->set("receipt", var::set::null());
+							transaction_data.set("receipt", format::variable());
 					}
 
-					if (logs != nullptr && !logs->empty())
+					if (logs != nullptr && !logs->childs().empty())
 					{
-						for (auto& invocation : logs->get_childs())
+						for (auto& invocation : logs->childs())
 						{
-							auto* topics = invocation->get("topics");
-							if (topics && topics->size() == 3 && is_token_transfer(topics->get_var(0).get_blob()))
+							auto* topics = invocation.child("topics");
+							if (topics && topics->childs().size() == 3 && is_token_transfer(topics->child_var(0).as_blob()))
 							{
-								addresses.insert(encode_eth_address(normalize_topic_address(topics->get_var(1).get_blob())));
-								addresses.insert(encode_eth_address(normalize_topic_address(topics->get_var(2).get_blob())));
+								addresses.insert(encode_eth_address(normalize_topic_address(topics->child_var(1).as_blob())));
+								addresses.insert(encode_eth_address(normalize_topic_address(topics->child_var(2).as_blob())));
 							}
-							else if (topics && topics->size() == 2 && is_token_transfer(topics->get_var(0).get_blob()))
-								addresses.insert(encode_eth_address(topics->get_var(1).get_blob()));
+							else if (topics && topics->childs().size() == 2 && is_token_transfer(topics->child_var(0).as_blob()))
+								addresses.insert(encode_eth_address(topics->child_var(1).as_blob()));
 						}
 					}
 				}
@@ -563,30 +566,30 @@ namespace tangent
 
 				if (!data.empty())
 				{
-					auto* logs = transaction_data->get("logs");
-					if (logs != nullptr && !logs->empty())
+					auto* logs = transaction_data.child("logs");
+					if (logs != nullptr && !logs->childs().empty())
 					{
-						for (auto& invocation : logs->get_childs())
+						for (auto& invocation : logs->childs())
 						{
-							auto* topics = invocation->get("topics");
-							if (!topics || (topics->size() != 2 && topics->size() != 3) || !is_token_transfer(topics->get_var(0).get_blob()))
+							auto* topics = invocation.child("topics");
+							if (!topics || (topics->childs().size() != 2 && topics->childs().size() != 3) || !is_token_transfer(topics->child_var(0).as_blob()))
 								continue;
 
-							auto contract_address = encode_eth_address(invocation->get_var("address").get_blob());
+							auto contract_address = encode_eth_address(invocation.child_var("address").as_blob());
 							auto symbol = coawait(get_contract_symbol(contract_address));
 							if (!symbol)
 								continue;
 
 							auto token_asset = algorithm::asset::id_of(algorithm::asset::blockchain_of(native_asset), *symbol, contract_address);
 							decimal divisibility = coawait(get_contract_divisibility(contract_address)).or_else(netdata.divisibility);
-							decimal token_value = to_eth(hex_to_uint256(invocation->get_var("data").get_blob()), divisibility);
-							if (topics->size() == 3)
+							decimal token_value = to_eth(hex_to_uint256(invocation.child_var("data").as_blob()), divisibility);
+							if (topics->childs().size() == 3)
 							{
-								from = encode_eth_address(normalize_topic_address(topics->get_var(1).get_blob()));
-								to = encode_eth_address(normalize_topic_address(topics->get_var(2).get_blob()));
+								from = encode_eth_address(normalize_topic_address(topics->child_var(1).as_blob()));
+								to = encode_eth_address(normalize_topic_address(topics->child_var(2).as_blob()));
 							}
-							else if (topics->size() == 2)
-								to = encode_eth_address(topics->get_var(1).get_blob());
+							else if (topics->childs().size() == 2)
+								to = encode_eth_address(topics->child_var(1).as_blob());
 
 							auto& token_input = inputs[from][token_asset];
 							auto& token_output = outputs[to][token_asset];
@@ -607,9 +610,15 @@ namespace tangent
 				if (!discovery || discovery->empty())
 					coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
 
-				schema* tx_receipt_cache = transaction_data->get("receipt");
-				schema* tx_receipt = tx_receipt_cache ? tx_receipt_cache : coawait(get_transaction_receipt(tx_hash, true)).or_else(nullptr);
-				bool is_reverted = tx_receipt && tx_receipt->value.is_object() ? hex_to_uint256(tx_receipt->get_var("status").get_blob()) < 1 : true;
+				auto* tx_receipt = (format::tree*)transaction_data.child("receipt");
+				if (!tx_receipt)
+				{
+					auto result = coawait(get_transaction_receipt(tx_hash, true));
+					if (result)
+						tx_receipt = transaction_data.set("receipt", std::move(*result));
+				}
+
+				bool is_reverted = tx_receipt && tx_receipt->is_map() ? hex_to_uint256(tx_receipt->child_var("status").as_blob()) < 1 : true;
 				if (is_reverted)
 					coreturn expects_rt<computed_transaction>(remote_exception("tx reverted"));
 
@@ -638,17 +647,17 @@ namespace tangent
 					if (!block_number)
 						coreturn expects_rt<computed_fee>(std::move(block_number.error()));
 
-					schema_list map;
-					map.emplace_back(var::set::string(uint256_to_hex(*block_number)));
-					map.emplace_back(var::set::boolean(false));
+					format::tree map;
+					map.push(format::variable(uint256_to_hex(*block_number)));
+					map.push(format::variable(false));
 
 					auto block_data = coawait(execute_rpc(nd_call::get_block_by_number(), std::move(map), cache_policy::temporary_cache));
 					if (!block_data)
 						coreturn expects_rt<computed_fee>(std::move(block_data.error()));
 
-					auto value = block_data->get("baseFeePerGas");
+					auto value = block_data->child("baseFeePerGas");
 					if (value)
-						vgas_base_price = hex_to_uint256(value->value.get_blob());
+						vgas_base_price = hex_to_uint256(value->value.as_blob());
 					else
 						legacy.eip_155 = 1;
 				}
@@ -657,13 +666,12 @@ namespace tangent
 				if (!gas_price_estimate)
 					coreturn expects_rt<computed_fee>(std::move(gas_price_estimate.error()));
 					
-				uint256_t vgas_price = hex_to_uint256(gas_price_estimate->value.get_blob());
-				memory::release(*gas_price_estimate);
+				uint256_t vgas_price = hex_to_uint256(gas_price_estimate->value.as_blob());
 
 				auto& output = to.front();
-				uptr<schema> params = var::set::object();
-				params->set("gasPrice", var::string(uint256_to_hex(vgas_price)));
-				params->set("from", var::string(decode_non_eth_address(from_link.address)));
+				format::tree params = format::tree::map();
+				params.set("gasPrice", format::variable(uint256_to_hex(vgas_price)));
+				params.set("from", format::variable(decode_non_eth_address(from_link.address)));
 
 				auto contract_address = superchain::server_node::get()->get_contract_address(output.asset);
 				decimal divisibility = netdata.divisibility;
@@ -679,33 +687,33 @@ namespace tangent
 				if (contract_address)
 				{
 					default_gas_limit = get_erc20_transfer_gas_limit_gwei();
-					params->set("to", var::string(decode_non_eth_address(*contract_address)));
-					params->set("value", var::string(uint256_to_hex(0)));
-					params->set("gas", var::string(uint256_to_hex(default_gas_limit)));
-					params->set("data", var::string(encode_0xhex(translations::ethereum::sc_call::transfer(decode_non_eth_address(output.address), value))));
+					params.set("to", format::variable(decode_non_eth_address(*contract_address)));
+					params.set("value", format::variable(uint256_to_hex(0)));
+					params.set("gas", format::variable(uint256_to_hex(default_gas_limit)));
+					params.set("data", format::variable(encode_0xhex(translations::ethereum::sc_call::transfer(decode_non_eth_address(output.address), value))));
 				}
 				else
 				{
 					default_gas_limit = get_eth_transfer_gas_limit_gwei();
-					params->set("to", var::string(decode_non_eth_address(output.address)));
-					params->set("value", var::string(uint256_to_hex(value)));
-					params->set("gas", var::string(uint256_to_hex(default_gas_limit)));
+					params.set("to", format::variable(decode_non_eth_address(output.address)));
+					params.set("value", format::variable(uint256_to_hex(value)));
+					params.set("gas", format::variable(uint256_to_hex(default_gas_limit)));
 				}
 
-				schema_list map;
-				map.emplace_back(std::move(params));
+				format::tree map;
+				map.push(std::move(params));
 				if (!legacy.estimate_gas)
-					map.emplace_back(var::set::string("latest"));
+					map.push(format::variable("latest"));
 
 				decimal gas_base_price = to_eth(vgas_base_price, netdata.divisibility);
-				auto gas_limit_estimate = uptr<schema>(coawait(execute_rpc(nd_call::estimate_gas(), std::move(map), cache_policy::no_cache_no_throttling)));
+				auto gas_limit_estimate = coawait(execute_rpc(nd_call::estimate_gas(), std::move(map), cache_policy::no_cache_no_throttling));
 				if (!gas_limit_estimate)
 				{
 					decimal gas_price = to_eth(vgas_price, netdata.divisibility);
 					coreturn expects_rt<computed_fee>(computed_fee::fee_per_gas_priority(gas_base_price, gas_price, default_gas_limit));
 				}
 
-				uint256_t vgas_limit = hex_to_uint256(gas_limit_estimate->value.get_blob());
+				uint256_t vgas_limit = hex_to_uint256(gas_limit_estimate->value.as_blob());
 				decimal gas_price = to_eth(vgas_price, netdata.divisibility);
 				coreturn expects_rt<computed_fee>(computed_fee::fee_per_gas_priority(gas_base_price, gas_price, vgas_limit > 0 ? vgas_limit : uint256_t(default_gas_limit)));
 			}
@@ -721,49 +729,44 @@ namespace tangent
 				}
 
 				const char* method = nullptr;
-				schema* params = nullptr;
+				format::tree params;
 				if (contract_address)
 				{
 					method = nd_call::call();
-					params = var::set::object();
-					params->set("to", var::string(decode_non_eth_address(*contract_address)));
-					params->set("data", var::string(encode_0xhex(translations::ethereum::sc_call::balance_of(decode_non_eth_address(link.address)))));
+					params = format::tree::map();
+					params.set("to", format::variable(decode_non_eth_address(*contract_address)));
+					params.set("data", format::variable(encode_0xhex(translations::ethereum::sc_call::balance_of(decode_non_eth_address(link.address)))));
 				}
 				else
 				{
 					method = nd_call::get_balance();
-					params = var::set::string(decode_non_eth_address(link.address));
+					params = format::variable(decode_non_eth_address(link.address));
 				}
 
-				schema_list map;
-				map.emplace_back(params);
-				map.emplace_back(var::set::string("latest"));
+				format::tree map;
+				map.push(params);
+				map.push(format::variable("latest"));
 
 				auto confirmed_balance = coawait(execute_rpc(method, std::move(map), cache_policy::no_cache));
 				if (!confirmed_balance)
 					coreturn expects_rt<decimal>(std::move(confirmed_balance.error()));
 
-				decimal balance = to_eth(hex_to_uint256(confirmed_balance->value.get_blob()), divisibility);
-				memory::release(*confirmed_balance);
+				decimal balance = to_eth(hex_to_uint256(confirmed_balance->value.as_blob()), divisibility);
 				coreturn expects_rt<decimal>(std::move(balance));
 			}
 			expects_promise_rt<void> ethereum::broadcast_transaction(const finalized_transaction& finalized)
 			{
 				auto duplicate = coawait(get_transaction_receipt(format::util::assign_0xhex(finalized.hashdata), false));
 				if (duplicate)
-				{
-					memory::release(*duplicate);
 					coreturn expects_rt<void>(expectation::met);
-				}
 
-				schema_list map;
-				map.emplace_back(var::set::string(format::util::assign_0xhex(finalized.calldata)));
+				format::tree map;
+				map.push(format::variable(format::util::assign_0xhex(finalized.calldata)));
 
 				auto hex_data = coawait(execute_rpc(nd_call::send_raw_transaction(), std::move(map), cache_policy::no_cache_no_throttling));
 				if (!hex_data)
 					coreturn expects_rt<void>(std::move(hex_data.error()));
 
-				memory::release(*hex_data);
 				coreturn expects_rt<void>(expectation::met);
 			}
 			expects_promise_rt<prepared_transaction> ethereum::prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const decimal& max_fee)
@@ -1086,19 +1089,19 @@ namespace tangent
 				auto* chain = get_chain();
 				return chain->bech32_hrp + data.to_string(16);
 			}
-			string ethereum::get_raw_gas_limit(schema* tx_data)
+			string ethereum::get_raw_gas_limit(const format::tree& tx_data)
 			{
-				if (tx_data->has("receipt.gasUsed"))
-					return tx_data->fetch_var("receipt.gasUsed").get_blob();
+				if (tx_data.has("receipt.gasUsed"))
+					return tx_data.child_var("receipt.gasUsed").as_blob();
 
-				if (tx_data->has("gasUsed"))
-					return tx_data->get_var("gasUsed").get_blob();
+				if (tx_data.has("gasUsed"))
+					return tx_data.child_var("gasUsed").as_blob();
 
-				if (tx_data->has("gas"))
-					return tx_data->get_var("gas").get_blob();
+				if (tx_data.has("gas"))
+					return tx_data.child_var("gas").as_blob();
 
-				if (tx_data->has("gasLimit"))
-					return tx_data->get_var("gasLimit").get_blob();
+				if (tx_data.has("gasLimit"))
+					return tx_data.child_var("gasLimit").as_blob();
 
 				return "0";
 			}

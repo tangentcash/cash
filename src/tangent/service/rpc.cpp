@@ -228,45 +228,45 @@ namespace tangent
 
 			return layer_exception("invalid multiform type");
 		}
-		static void form_response(http::connection* base, schema* request, uptr<schema>& responses, server_response&& response)
+		static void form_response(http::connection* base, format::tree& request, option<format::tree>& responses, server_response&& response)
 		{
 			if (protocol::now().user.rpc.logging)
 			{
-				auto* params = request->get("params");
-				string method = request->get_var("method").get_blob();
-				string id = request->get_var("id").get_blob();
+				auto* params = request.child("params");
+				string method = request.child_var("method").as_blob();
+				string id = request.child_var("id").as_blob();
 				VI_INFO("rpc %s call %s: %s (params: %" PRIu64 ", time: %" PRId64 " ms)",
 					base->get_peer_ip_address().or_else("[bad_address]").c_str(),
 					method.empty() ? "[bad_method]" : method.c_str(),
-					response.error_message.empty() ? (response.data ? (response.data->value.is_object() ? stringify::text("%" PRIu64 " rows", (uint64_t)response.data->size()).c_str() : "[value]") : "[null]") : response.error_message.c_str(),
-					(uint64_t)(params ? (params->value.is_object() ? params->size() : 1) : 0),
+					response.error_message.empty() ? (response.data.is_flat() ? "[value]" : stringify::text("%" PRIu64 " rows", (uint64_t)response.data.childs().size()).c_str()) : response.error_message.c_str(),
+					(uint64_t)(params ? (params->is_flat() ? 1 : params->childs().size()) : 0),
 					date_time().milliseconds() - base->info.start);
 			}
 
 			auto next = response.transform(request);
 			if (responses)
 			{
-				if (!responses->value.is(var_type::array))
+				if (!responses->is_list())
 				{
-					auto* prev = responses.reset();
-					responses = var::set::array();
-					responses->push(prev);
-					responses->push(next.reset());
+					auto prev = std::move(*responses);
+					responses = format::tree();
+					responses->push(std::move(prev));
+					responses->push(std::move(next));
 				}
 				else
-					responses->push(next.reset());
+					responses->push(std::move(next));
 			}
 			else
 				responses = std::move(next);
 		};
 
-		server_response&& server_response::success(uptr<schema>&& value)
+		server_response&& server_response::success(format::tree&& value)
 		{
 			data = std::move(value);
 			status = error_codes::response;
 			return std::move(*this);
 		}
-		server_response&& server_response::notification(uptr<schema>&& value)
+		server_response&& server_response::notification(format::tree&& value)
 		{
 			data = std::move(value);
 			status = error_codes::notification;
@@ -278,18 +278,17 @@ namespace tangent
 			status = code;
 			return std::move(*this);
 		}
-		uptr<schema> server_response::transform(schema* request)
+		format::tree server_response::transform(const format::tree& request)
 		{
-			auto* id = request ? request->get("id") : nullptr;
-			uptr<schema> response = var::set::object();
-			response->set("id", id ? id : var::set::null());
+			format::tree response;
+			response.set("id", request.child_var("id"));
 
-			auto* result = response->set(status == error_codes::notification ? "notification" : "result", data.reset());
+			auto* result = response.set(status == error_codes::notification ? "notification" : "result", std::move(data));
 			if (status != error_codes::response && status != error_codes::notification && !error_message.empty())
 			{
-				auto* error = response->set("error", var::object());
-				error->set("message", var::string(error_message));
-				error->set("code", var::integer((int64_t)status));
+				auto* error = response.set("error", format::tree());
+				error->set("message", format::variable(error_message));
+				error->set("code", (int64_t)status < 0 ? format::variable(decimal((int64_t)status)) : format::variable((uint64_t)status));
 			}
 			return response;
 		}
@@ -536,19 +535,21 @@ namespace tangent
 				if (!packet::is_done(event))
 					return true;
 
-				auto request = base->request.content.get_json();
+				auto request = format::tree::from_json(std::string_view(base->request.content.data.data(), base->request.content.data.size()));
 				if (request)
 				{
-					cospawn(std::bind(&server_node::dispatch_response, this, base, *request, nullptr, 0, [](http::connection* base, uptr<schema>&& responses)
+					cospawn([this, base, request = std::move(request)]() mutable
 					{
-						auto response = schema::to_json(responses ? *responses : *server_response().error(error_codes::bad_request, "request is empty").transform(nullptr));
-						base->response.content.assign(response);
-						base->next(200);
-					}));
+						dispatch_response(base, std::move(*request), optional::none, 0, [](http::connection* base, option<format::tree>&& responses)
+						{
+							base->response.content.assign((responses ? *responses : server_response().error(error_codes::bad_request, "request is empty").transform(format::tree())).as_json());
+							base->next(200);
+						});
+					});
 				}
 				else
 				{
-					base->response.content.assign(schema::to_json(*server_response().error(error_codes::bad_request, request.error().message()).transform(nullptr)));
+					base->response.content.assign(server_response().error(error_codes::bad_request, request.error().message()).transform(format::tree()).as_json());
 					base->next(200);
 				}
 				return true;
@@ -559,19 +560,22 @@ namespace tangent
 			if (opcode != http::web_socket_op::binary && opcode != http::web_socket_op::text)
 				return false;
 
-			auto request = schema::from_json(buffer);
+			auto request = format::tree::from_json(buffer);
 			if (request)
 			{
 				auto* base = web_socket->get_connection();
 				base->info.start = vitex::network::utils::clock();
-				cospawn(std::bind(&server_node::dispatch_response, this, base, *request, nullptr, 0, [](http::connection* base, uptr<schema>&& responses)
+				cospawn([this, base, request = std::move(request)]() mutable
 				{
-					auto response = schema::to_json(responses ? *responses : *server_response().error(error_codes::bad_request, "request is empty").transform(nullptr));
-					base->web_socket->send(response, http::web_socket_op::text, [](http::web_socket_frame* web_socket) { web_socket->next(); });
-				}));
+					dispatch_response(base, std::move(*request), optional::none, 0, [](http::connection* base, option<format::tree>&& responses)
+					{
+						auto response = (responses ? *responses : server_response().error(error_codes::bad_request, "request is empty").transform(format::tree())).as_json();
+						base->web_socket->send(response, http::web_socket_op::text, [](http::web_socket_frame* web_socket) { web_socket->next(); });
+					});
+				});
 			}
 			else
-				web_socket->send(schema::to_json(*server_response().error(error_codes::bad_request, request.error().message()).transform(nullptr)), http::web_socket_op::text, [](http::web_socket_frame* web_socket) { web_socket->next(); });
+				web_socket->send(server_response().error(error_codes::bad_request, request.error().message()).transform(format::tree()).as_json(), http::web_socket_op::text, [](http::web_socket_frame* web_socket) { web_socket->next(); });
 
 			return true;
 		}
@@ -582,144 +586,108 @@ namespace tangent
 			unique.unlock();
 			web_socket->next();
 		}
-		bool server_node::dispatch_response(http::connection* base, uptr<schema>&& requests, uptr<schema>&& responses, size_t index, std::function<void(http::connection*, uptr<schema>&&)>&& callback)
+		bool server_node::dispatch_response(http::connection* base, format::tree&& requests, option<format::tree>&& responses, size_t index, std::function<void(http::connection*, option<format::tree>&&)>&& callback)
 		{
-			if (!requests->value.is(var_type::array))
+			if (!requests.is_list())
 			{
-				auto* array = var::set::array();
-				array->push(requests.reset());
-				requests = array;
+				auto array = format::tree();
+				array.push(std::move(requests));
+				requests = std::move(array);
 			}
 
 		next_request:
-			auto* request = index < requests->size() ? requests->get(index++) : (schema*)nullptr;
+			auto* request = index < requests.childs().size() ? &requests.childs()[index++] : (format::tree*)nullptr;
 			if (!request)
 			{
 				callback(base, std::move(responses));
 				return true;
 			}
 
-			auto* version = request->get("jsonrpc");
-			if (!version || version->value.get_integer() != 2)
+			auto* version = request->child("jsonrpc");
+			if (!version || version->value.as_uint8() != 2)
 			{
-				form_response(base, request, responses, server_response().error(error_codes::bad_version, "only version 2.0 is supported"));
+				form_response(base, *request, responses, server_response().error(error_codes::bad_version, "only version 2.0 is supported"));
 				goto next_request;
 			}
 
-			auto* method = request->get("method");
-			if (!method || !method->value.is(var_type::string))
+			auto* method = request->child("method");
+			if (!method || !method->value.is_string())
 			{
-				form_response(base, request, responses, server_response().error(error_codes::bad_method, "method is not a string"));
+				form_response(base, *request, responses, server_response().error(error_codes::bad_method, "method is not a string"));
 				goto next_request;
 			}
 
-			auto context = methods.find(method->value.get_blob());
+			auto context = methods.find(method->value.as_string());
 			if (context == methods.end())
 			{
-				form_response(base, request, responses, server_response().error(error_codes::bad_method, "method \"" + method->value.get_blob() + "\" not found"));
+				form_response(base, *request, responses, server_response().error(error_codes::bad_method, "method \"" + method->value.as_blob() + "\" not found"));
 				goto next_request;
 			}
 
 			if (protocol::now().user.rpc.isolated && context->second.access_types & (uint32_t)access_type::a)
 			{
-				form_response(base, request, responses, server_response().error(error_codes::bad_method, "access to admin level functionality requires trusted environment"));
+				form_response(base, *request, responses, server_response().error(error_codes::bad_method, "access to admin level functionality requires trusted environment"));
 				goto next_request;
 			}
 
-			auto* params = request->get("params");
-			if (!params || !params->value.is(var_type::array))
+			auto* params = request->child("params");
+			if (!params || !params->is_list())
 			{
-				form_response(base, request, responses, server_response().error(error_codes::bad_method, "params is not an array"));
+				form_response(base, *request, responses, server_response().error(error_codes::bad_method, "params is not an array"));
 				goto next_request;
 			}
 
-			if (params->size() < context->second.min_params || params->size() > context->second.max_params)
+			if (params->childs().size() < context->second.min_params || params->childs().size() > context->second.max_params)
 			{
-				form_response(base, request, responses, server_response().error(error_codes::bad_method, "params is not an array[" + to_string(context->second.min_params) + ".." + to_string(context->second.min_params) + "]"));
+				form_response(base, *request, responses, server_response().error(error_codes::bad_method, "params is not an array[" + to_string(context->second.min_params) + ".." + to_string(context->second.min_params) + "]"));
 				goto next_request;
 			}
 
 			format::variables args;
-			args.reserve(params->size());
-			for (auto& param : params->get_childs())
+			args.reserve(params->childs().size());
+			for (auto& param : params->childs())
 			{
-				switch (param->value.get_type())
+				if (param.is_list())
 				{
-					case var_type::object:
+					if (param.childs().size() == 2)
 					{
-						args.push_back(format::variable(schema::to_json(param)));
-						break;
-					}
-					case var_type::array:
-					{
-						if (param->size() == 2)
+						auto& type_ref = param.childs()[0];
+						auto& value_ref = param.childs()[1];
+						if (type_ref.value.is_string() && value_ref.value.is_string())
 						{
-							auto* type_ref = param->get(0);
-							auto* value_ref = param->get(1);
-							if (type_ref != nullptr && type_ref->value.is(var_type::string) && value_ref != nullptr && value_ref->value.is(var_type::string))
+							auto type = type_ref.value.as_string();
+							auto value = value_ref.value.as_string();
+							if (type == "$uint128")
 							{
-								auto type = param->get_var(0).get_blob();
-								auto value = param->get_var(1).get_blob();
-								if (type == "$uint128")
-								{
-									args.push_back(format::variable(format::util::is_hex_encoding(value) ? algorithm::encoding::decode_0xhex128(value) : uint128_t(value, 10)));
-									break;
-								}
-								else if (type == "$uint256")
-								{
-									args.push_back(format::variable(format::util::is_hex_encoding(value) ? algorithm::encoding::decode_0xhex256(value) : uint256_t(value, 10)));
-									break;
-								}
-								else if (type == "$asset256")
-								{
-									args.push_back(format::variable(algorithm::asset::id_of_handle(value)));
-									break;
-								}
+								args.push_back(format::variable(format::util::is_hex_encoding(value) ? algorithm::encoding::decode_0xhex128(value) : uint128_t(value, 10)));
+								continue;
+							}
+							else if (type == "$uint256")
+							{
+								args.push_back(format::variable(format::util::is_hex_encoding(value) ? algorithm::encoding::decode_0xhex256(value) : uint256_t(value, 10)));
+								continue;
+							}
+							else if (type == "$asset256")
+							{
+								args.push_back(format::variable(algorithm::asset::id_of_handle(value)));
+								continue;
 							}
 						}
-						args.push_back(format::variable(schema::to_json(param)));
-						break;
 					}
-					case var_type::string:
-					case var_type::binary:
-						args.push_back(format::variable(param->value.get_blob()));
-						break;
-					case var_type::integer:
-					{
-						int64_t value = param->value.get_integer();
-						if (value >= 0)
-							args.push_back(format::variable((uint64_t)value));
-						else
-							args.push_back(format::variable(decimal(value)));
-						break;
-					}
-					case var_type::number:
-						args.push_back(format::variable(decimal(param->value.get_number())));
-						break;
-					case var_type::decimal:
-						args.push_back(format::variable(param->value.get_decimal()));
-						break;
-					case var_type::boolean:
-						args.push_back(format::variable(param->value.get_boolean()));
-						break;
-					case var_type::null:
-					case var_type::undefined:
-					case var_type::pointer:
-					default:
-						args.push_back(format::variable((uint8_t)0));
-						break;
+					args.push_back(format::variable(param.as_json()));
+
 				}
+				else if (param.is_map())
+					args.push_back(format::variable(param.as_json()));
+				else
+					args.push_back(param.value);
 			}
 
-			auto* requests_ref = requests.reset();
-			auto* responses_ref = responses.reset();
-			cospawn([this, base, requests_ref, responses_ref, index, callback = std::move(callback), request, context, args = std::move(args)]() mutable
+			cospawn([this, request, context, base, index, requests = std::move(requests), responses = std::move(responses), callback = std::move(callback), args = std::move(args)]() mutable
 			{
-				uptr<schema> requests = requests_ref;
-				uptr<schema> responses = responses_ref;
 				auto response = context->second.function(base, std::move(args));
-				form_response(base, request, responses, std::move(response));
-				if (index < requests->size())
+				form_response(base, *request, responses, std::move(response));
+				if (index < requests.childs().size())
 					dispatch_response(base, std::move(requests), std::move(responses), index, std::move(callback));
 				else
 					callback(base, std::move(responses));
@@ -769,14 +737,14 @@ namespace tangent
 			uint64_t block_number = block.number;
 			cospawn([block_hash, block_number, web_sockets = std::move(web_sockets)]() mutable
 			{
-				auto notification = var::set::object();
-				notification->set("type", var::string("block"));
+				auto notification = format::tree();
+				notification.set("type", format::variable("block"));
 
-				auto result = notification->set("result");
-				result->set("hash", var::string(algorithm::encoding::encode_0xhex256(block_hash)));
-				result->set("number", var::integer(block_number));
+				auto result = notification.set("result", format::tree());
+				result->set("hash", format::variable(algorithm::encoding::encode_0xhex256(block_hash)));
+				result->set("number", format::variable(block_number));
 
-				auto response = schema::to_json(*server_response().notification(notification).transform(nullptr));
+				auto response = server_response().notification(std::move(notification)).transform(format::tree()).as_json();
 				for (auto& web_socket : web_sockets)
 					web_socket->send(response, http::web_socket_op::text, nullptr);
 			});
@@ -803,13 +771,13 @@ namespace tangent
 
 			cospawn([transaction_hash, web_sockets = std::move(web_sockets)]() mutable
 			{
-				auto notification = var::set::object();
-				notification->set("type", var::string("transaction"));
+				auto notification = format::tree();
+				notification.set("type", format::variable("transaction"));
 
-				auto result = notification->set("result");
-				result->set("hash", var::string(algorithm::encoding::encode_0xhex256(transaction_hash)));
+				auto result = notification.set("result", format::tree());
+				result->set("hash", format::variable(algorithm::encoding::encode_0xhex256(transaction_hash)));
 
-				auto response = schema::to_json(*server_response().notification(notification).transform(nullptr));
+				auto response = server_response().notification(std::move(notification)).transform(format::tree()).as_json();
 				for (auto& web_socket : web_sockets)
 					web_socket->send(response, http::web_socket_op::text, nullptr);
 			});
@@ -847,7 +815,7 @@ namespace tangent
 			umutex<std::mutex> unique(mutex);
 			listeners[base] = std::move(listener);
 			unique.unlock();
-			return server_response().success(var::set::integer(address_index + (listener.blocks || listener.transactions ? 1 : 0)));
+			return server_response().success(format::variable(address_index + (listener.blocks || listener.transactions ? 1 : 0)));
 		}
 		server_response server_node::web_socket_unsubscribe(http::connection* base, format::variables&& args)
 		{
@@ -857,13 +825,13 @@ namespace tangent
 			umutex<std::mutex> unique(mutex);
 			listeners.erase(base);
 			unique.unlock();
-			return server_response().success(var::set::null());
+			return server_response().success(format::variable());
 		}
 		server_response server_node::utility_encode_address(http::connection* base, format::variables&& args)
 		{
 			auto owner = format::util::decode_0xhex(args[0].as_string());
 			if (owner.size() == sizeof(algorithm::pubkeyhash_t))
-				return server_response().success(var::set::string(algorithm::signing::encode_address((uint8_t*)owner.data())));
+				return server_response().success(format::variable(algorithm::signing::encode_address((uint8_t*)owner.data())));
 
 			return server_response().error(error_codes::bad_params, "raw address not valid");
 		}
@@ -873,7 +841,7 @@ namespace tangent
 			if (!algorithm::signing::decode_address(args[0].as_string(), data))
 				return server_response().error(error_codes::bad_params, "address not valid");
 
-			return server_response().success(var::set::string(format::util::encode_0xhex(data.view())));
+			return server_response().success(format::variable(format::util::encode_0xhex(data.view())));
 		}
 		server_response server_node::utility_decode_message(http::connection* base, format::variables&& args)
 		{
@@ -895,21 +863,21 @@ namespace tangent
 
 			algorithm::pubkeyhash_t owner;
 			bool recoverable = candidate_tx->recover_hash(owner);
-			uptr<schema> result = var::set::object();
-			result->set("transaction", candidate_tx->as_schema().reset());
-			result->set("signer_message", recoverable ? var::string(candidate_tx->as_signable().encode()) : var::null());
-			result->set("signer_address", recoverable ? algorithm::signing::serialize_address(owner) : var::set::null());
+			auto result = format::tree();
+			result.set("transaction", candidate_tx->as_tree());
+			result.set("signer_message", recoverable ? format::variable(candidate_tx->as_signable().encode()) : format::variable());
+			result.set("signer_address", recoverable ? algorithm::signing::serialize_address(owner) : format::variable());
 			return server_response().success(std::move(result));
 		}
 		server_response server_node::utility_help(http::connection* base, format::variables&& args)
 		{
-			uptr<schema> data = var::set::object();
-			auto* params = data->set("converters", var::set::object());
-			params->set("uint128", var::string("[\"$uint128\", \"<integer>\"] -> <uint128>"));
-			params->set("uint256", var::string("[\"$uint256\", \"<integer>\"] -> <uint256>"));
-			params->set("asset", var::string("[\"$asset256\", \"<chain>|<chain:token:checksum>\"] -> <uint256>"));
+			auto data = format::tree();
+			auto* params = data.set("converters", format::tree());
+			params->set("uint128", format::variable("[\"$uint128\", \"<integer>\"] -> <uint128>"));
+			params->set("uint256", format::variable("[\"$uint256\", \"<integer>\"] -> <uint256>"));
+			params->set("asset", format::variable("[\"$asset256\", \"<chain>|<chain:token:checksum>\"] -> <uint256>"));
 
-			auto* functions = data->set("functions", var::set::object());
+			auto* functions = data.set("functions", format::tree());
 			for (auto& method : methods)
 			{
 				string inline_decl;
@@ -945,14 +913,14 @@ namespace tangent
 				else
 					inline_decl += "null";
 
-				auto* domain = functions->get(method.second.domain);
+				auto* domain = (format::tree*)functions->child(method.second.domain);
 				if (!domain)
-					domain = functions->set(method.second.domain, var::set::array());
+					domain = functions->set(method.second.domain, format::tree::list());
 
-				auto* description = domain->push(var::set::object());
-				description->set("function", var::string(method.first));
-				description->set("declaration", var::string(inline_decl));
-				description->set("description", var::string(method.second.description));
+				auto* description = domain->push(format::tree());
+				description->set("function", format::variable(method.first));
+				description->set("declaration", format::variable(inline_decl));
+				description->set("description", format::variable(method.second.description));
 			}
 			return server_response().success(std::move(data));
 		}
@@ -968,9 +936,9 @@ namespace tangent
 			if (!hashes)
 				return server_response().error(error_codes::not_found, "blocks not found");
 
-			uptr<schema> data = var::set::array();
+			auto data = format::tree::list();
 			for (auto& item : *hashes)
-				data->push(var::set::string(algorithm::encoding::encode_0xhex256(item)));
+				data.push(format::variable(algorithm::encoding::encode_0xhex256(item)));
 			return server_response().success(std::move(data));
 		}
 		server_response server_node::blockstate_get_block_checkpoint_hash(http::connection* base, format::variables&& args)
@@ -984,7 +952,7 @@ namespace tangent
 			if (!block_hash)
 				return server_response().error(error_codes::not_found, "checkpoint block not found");
 
-			return server_response().success(var::set::string(algorithm::encoding::encode_0xhex256(*block_hash)));
+			return server_response().success(format::variable(algorithm::encoding::encode_0xhex256(*block_hash)));
 		}
 		server_response server_node::blockstate_get_block_checkpoint_number(http::connection* base, format::variables&& args)
 		{
@@ -1002,7 +970,7 @@ namespace tangent
 			if (!block_header)
 				return server_response().error(error_codes::not_found, "tip block not found");
 
-			return server_response().success(var::set::string(algorithm::encoding::encode_0xhex256(block_header->as_hash())));
+			return server_response().success(format::variable(algorithm::encoding::encode_0xhex256(block_header->as_hash())));
 		}
 		server_response server_node::blockstate_get_block_tip_number(http::connection* base, format::variables&& args)
 		{
@@ -1024,7 +992,7 @@ namespace tangent
 				if (!block_header)
 					return server_response().error(error_codes::not_found, "block not found");
 
-				return server_response().success(block_header->as_schema());
+				return server_response().success(block_header->as_tree());
 			}
 			else if (unrolling == 1)
 			{
@@ -1032,13 +1000,13 @@ namespace tangent
 				if (!block_header)
 					return server_response().error(error_codes::not_found, "block not found");
 
-				auto data = block_header->as_schema();
-				auto* transactions = data->set("transactions", var::set::array());
+				auto data = block_header->as_tree();
+				auto* transactions = data.set("transactions", format::tree::list());
 				auto transaction_hashset = chain.get_block_transaction_hashset(block_header->number);
 				if (transaction_hashset)
 				{
 					for (auto& item : *transaction_hashset)
-						transactions->push(var::set::string(algorithm::encoding::encode_0xhex256(item)));
+						transactions->push(format::variable(algorithm::encoding::encode_0xhex256(item)));
 				}
 
 				return server_response().success(std::move(data));
@@ -1049,16 +1017,16 @@ namespace tangent
 				if (!block_header)
 					return server_response().error(error_codes::not_found, "block not found");
 
-				auto data = block_header->as_schema();
-				auto* transactions = data->set("transactions", var::set::array());
+				auto data = block_header->as_tree();
+				auto* transactions = data.set("transactions", format::tree::list());
 				while (true)
 				{
-					auto list = chain.get_transactions_by_number(block_header->number, transactions->size(), protocol::now().message.items_per_query);
+					auto list = chain.get_transactions_by_number(block_header->number, transactions->childs().size(), protocol::now().message.items_per_query);
 					if (!list)
 						return server_response().error(error_codes::not_found, "block not found");
 
 					for (auto& item : *list)
-						transactions->push(item->as_schema().reset());
+						transactions->push(item->as_tree());
 					if (list->size() < protocol::now().message.items_per_query)
 						break;
 				}
@@ -1071,16 +1039,16 @@ namespace tangent
 				if (!block_header)
 					return server_response().error(error_codes::not_found, "block not found");
 
-				auto data = block_header->as_schema();
-				auto* transactions = data->set("transactions", var::set::array());
+				auto data = block_header->as_tree();
+				auto* transactions = data.set("transactions", format::tree::list());
 				while (true)
 				{
-					auto list = chain.get_block_transactions_by_number(block_header->number, transactions->size(), protocol::now().message.items_per_query);
+					auto list = chain.get_block_transactions_by_number(block_header->number, transactions->childs().size(), protocol::now().message.items_per_query);
 					if (!list)
 						return server_response().error(error_codes::not_found, "block not found");
 
 					for (auto& item : *list)
-						transactions->push(item.as_schema().reset());
+						transactions->push(item.as_tree());
 					if (list->size() < protocol::now().message.items_per_query)
 						break;
 				}
@@ -1093,7 +1061,7 @@ namespace tangent
 				if (!block)
 					return server_response().error(error_codes::not_found, "block not found");
 
-				return server_response().success(block->as_schema());
+				return server_response().success(block->as_tree());
 			}
 		}
 		server_response server_node::blockstate_get_block_by_number(http::connection* base, format::variables&& args)
@@ -1107,7 +1075,7 @@ namespace tangent
 				if (!block_header)
 					return server_response().error(error_codes::not_found, "block not found");
 
-				return server_response().success(block_header->as_schema());
+				return server_response().success(block_header->as_tree());
 			}
 			else if (unrolling == 1)
 			{
@@ -1115,13 +1083,13 @@ namespace tangent
 				if (!block_header)
 					return server_response().error(error_codes::not_found, "block not found");
 
-				auto data = block_header->as_schema();
-				auto* transactions = data->set("transactions", var::set::array());
+				auto data = block_header->as_tree();
+				auto* transactions = data.set("transactions", format::tree::list());
 				auto transaction_hashset = chain.get_block_transaction_hashset(block_header->number);
 				if (transaction_hashset)
 				{
 					for (auto& item : *transaction_hashset)
-						transactions->push(var::set::string(algorithm::encoding::encode_0xhex256(item)));
+						transactions->push(format::variable(algorithm::encoding::encode_0xhex256(item)));
 				}
 
 				return server_response().success(std::move(data));
@@ -1132,16 +1100,16 @@ namespace tangent
 				if (!block_header)
 					return server_response().error(error_codes::not_found, "block not found");
 
-				auto data = block_header->as_schema();
-				auto* transactions = data->set("transactions", var::set::array());
+				auto data = block_header->as_tree();
+				auto* transactions = data.set("transactions", format::tree::list());
 				while (true)
 				{
-					auto list = chain.get_transactions_by_number(block_header->number, transactions->size(), protocol::now().message.items_per_query);
+					auto list = chain.get_transactions_by_number(block_header->number, transactions->childs().size(), protocol::now().message.items_per_query);
 					if (!list)
 						return server_response().error(error_codes::not_found, "block not found");
 
 					for (auto& item : *list)
-						transactions->push(item->as_schema().reset());
+						transactions->push(item->as_tree());
 					if (list->size() < protocol::now().message.items_per_query)
 						break;
 				}
@@ -1154,16 +1122,16 @@ namespace tangent
 				if (!block_header)
 					return server_response().error(error_codes::not_found, "block not found");
 
-				auto data = block_header->as_schema();
-				auto* transactions = data->set("transactions", var::set::array());
+				auto data = block_header->as_tree();
+				auto* transactions = data.set("transactions", format::tree::list());
 				while (true)
 				{
-					auto list = chain.get_block_transactions_by_number(block_header->number, transactions->size(), protocol::now().message.items_per_query);
+					auto list = chain.get_block_transactions_by_number(block_header->number, transactions->childs().size(), protocol::now().message.items_per_query);
 					if (!list)
 						return server_response().error(error_codes::not_found, "block not found");
 
 					for (auto& item : *list)
-						transactions->push(item.as_schema().reset());
+						transactions->push(item.as_tree());
 					if (list->size() < protocol::now().message.items_per_query)
 						break;
 				}
@@ -1176,7 +1144,7 @@ namespace tangent
 				if (!block)
 					return server_response().error(error_codes::not_found, "block not found");
 
-				return server_response().success(block->as_schema());
+				return server_response().success(block->as_tree());
 			}
 		}
 		server_response server_node::blockstate_get_raw_block_by_hash(http::connection* base, format::variables&& args)
@@ -1187,7 +1155,7 @@ namespace tangent
 			if (!block)
 				return server_response().error(error_codes::not_found, "block not found");
 
-			return server_response().success(var::set::string(block->as_message().encode()));
+			return server_response().success(format::variable(block->as_message().encode()));
 		}
 		server_response server_node::blockstate_get_raw_block_by_number(http::connection* base, format::variables&& args)
 		{
@@ -1197,7 +1165,7 @@ namespace tangent
 			if (!block)
 				return server_response().error(error_codes::not_found, "block not found");
 
-			return server_response().success(var::set::string(block->as_message().encode()));
+			return server_response().success(format::variable(block->as_message().encode()));
 		}
 		server_response server_node::blockstate_get_block_proof_by_hash(http::connection* base, format::variables&& args)
 		{
@@ -1210,19 +1178,18 @@ namespace tangent
 			bool transactions = args[1].as_boolean();
 			bool receipts = args[2].as_boolean();
 			bool states = args[3].as_boolean();
-			auto data = block_proof->as_schema();
+			auto data = block_proof->as_tree();
 			if (!transactions)
-				data->pop("transactions");
+				data.pop("transactions");
 			if (!receipts)
-				data->pop("receipts");
+				data.pop("receipts");
 			if (!states)
-				data->pop("states");
+				data.pop("states");
 
-			if (data->size() == 1)
+			if (data.childs().size() == 1)
 			{
-				uptr<schema> root = std::move(data);
-				data = root->get(0);
-				data->unlink();
+				auto root = std::move(data);
+				data = std::move(root.childs()[0]);
 			}
 
 			return server_response().success(std::move(data));
@@ -1238,19 +1205,18 @@ namespace tangent
 			bool transactions = args[1].as_boolean();
 			bool receipts = args[2].as_boolean();
 			bool states = args[3].as_boolean();
-			auto data = block_proof->as_schema();
+			auto data = block_proof->as_tree();
 			if (!transactions)
-				data->pop("transactions");
+				data.pop("transactions");
 			if (!receipts)
-				data->pop("receipts");
+				data.pop("receipts");
 			if (!states)
-				data->pop("states");
+				data.pop("states");
 
-			if (data->size() == 1)
+			if (data.childs().size() == 1)
 			{
-				uptr<schema> root = std::move(data);
-				data = root->get(0);
-				data->unlink();
+				auto root = std::move(data);
+				data = std::move(root.childs()[0]);
 			}
 
 			return server_response().success(std::move(data));
@@ -1263,7 +1229,7 @@ namespace tangent
 			if (!block_hash)
 				return server_response().error(error_codes::not_found, "block not found");
 
-			return server_response().success(var::set::string(algorithm::encoding::encode_0xhex256(*block_hash)));
+			return server_response().success(format::variable(algorithm::encoding::encode_0xhex256(*block_hash)));
 		}
 		server_response server_node::blockstate_get_block_hash_by_number(http::connection* base, format::variables&& args)
 		{
@@ -1290,9 +1256,9 @@ namespace tangent
 				if (!hashes)
 					return server_response().error(error_codes::not_found, "block not found");
 
-				uptr<schema> data = var::set::array();
+				auto data = format::tree::list();
 				for (auto& item : *hashes)
-					data->push(var::set::string(algorithm::encoding::encode_0xhex256(item)));
+					data.push(format::variable(algorithm::encoding::encode_0xhex256(item)));
 				return server_response().success(std::move(data));
 			}
 			else if (unrolling == 1)
@@ -1301,15 +1267,15 @@ namespace tangent
 				if (!block_number)
 					return server_response().error(error_codes::not_found, "block not found");
 
-				uptr<schema> data = var::set::array();
+				auto data = format::tree::list();
 				while (true)
 				{
-					auto list = chain.get_transactions_by_number(*block_number, data->size(), protocol::now().message.items_per_query);
+					auto list = chain.get_transactions_by_number(*block_number, data.childs().size(), protocol::now().message.items_per_query);
 					if (!list)
 						return server_response().error(error_codes::not_found, "block not found");
 
 					for (auto& item : *list)
-						data->push(item->as_schema().reset());
+						data.push(item->as_tree());
 					if (list->size() < protocol::now().message.items_per_query)
 						break;
 				}
@@ -1322,15 +1288,15 @@ namespace tangent
 				if (!block_number)
 					return server_response().error(error_codes::not_found, "block not found");
 
-				uptr<schema> data = var::set::array();
+				auto data = format::tree::list();
 				while (true)
 				{
-					auto list = chain.get_block_transactions_by_number(*block_number, data->size(), protocol::now().message.items_per_query);
+					auto list = chain.get_block_transactions_by_number(*block_number, data.childs().size(), protocol::now().message.items_per_query);
 					if (!list)
 						return server_response().error(error_codes::not_found, "block not found");
 
 					for (auto& item : *list)
-						data->push(item.as_schema().reset());
+						data.push(item.as_tree());
 					if (list->size() < protocol::now().message.items_per_query)
 						break;
 				}
@@ -1346,27 +1312,29 @@ namespace tangent
 				auto parties = btree_set<algorithm::pubkeyhash_t>();
 				auto aliases = btree_set<uint256_t>();
 				auto executor = ledger::executor_context(nullptr);
-				uptr<schema> data = var::set::array();
+				auto data = format::tree::list();
 				while (true)
 				{
-					auto list = chain.get_block_transactions_by_number(*block_number, data->size(), protocol::now().message.items_per_query);
+					auto list = chain.get_block_transactions_by_number(*block_number, data.childs().size(), protocol::now().message.items_per_query);
 					if (!list)
 						return server_response().error(error_codes::not_found, "block not found");
 
 					for (auto& item : *list)
 					{
-						auto tx_data = item.as_schema();
-						auto affected_data = tx_data->set("affected", var::set::object());
-						auto accounts_data = affected_data->set("accounts", var::set::array());
-						auto aliases_data = affected_data->set("aliases", var::set::array());
+						auto tx_data = item.as_tree();
+						auto affected_data = tx_data.set("affected", format::tree::map());
+						affected_data->childs().reserve(2);
+
+						auto accounts_data = affected_data->set("accounts", format::tree::list());
+						auto aliases_data = affected_data->set("aliases", format::tree::list());
 						item.transaction->recover_many(&executor, item.receipt, parties);
 						item.transaction->recover_aliases(aliases);
 						accounts_data->push(algorithm::signing::serialize_address(item.receipt.from));
 						for (auto& party : parties)
 							accounts_data->push(algorithm::signing::serialize_address(party));
 						for (auto& hash : aliases)
-							aliases_data->push(var::string(algorithm::encoding::encode_0xhex256(hash)));
-						data->push(tx_data.reset());
+							aliases_data->push(format::variable(algorithm::encoding::encode_0xhex256(hash)));
+						data.push(std::move(tx_data));
 						parties.clear();
 						aliases.clear();
 					}
@@ -1388,22 +1356,22 @@ namespace tangent
 				if (!hashes)
 					return server_response().error(error_codes::not_found, "block not found");
 
-				uptr<schema> data = var::set::array();
+				auto data = format::tree::list();
 				for (auto& item : *hashes)
-					data->push(var::set::string(algorithm::encoding::encode_0xhex256(item)));
+					data.push(format::variable(algorithm::encoding::encode_0xhex256(item)));
 				return server_response().success(std::move(data));
 			}
 			else if (unrolling == 1)
 			{
-				uptr<schema> data = var::set::array();
+				auto data = format::tree::list();
 				while (true)
 				{
-					auto list = chain.get_transactions_by_number(number, data->size(), protocol::now().message.items_per_query);
+					auto list = chain.get_transactions_by_number(number, data.childs().size(), protocol::now().message.items_per_query);
 					if (!list)
 						return server_response().error(error_codes::not_found, "block not found");
 
 					for (auto& item : *list)
-						data->push(item->as_schema().reset());
+						data.push(item->as_tree());
 					if (list->size() < protocol::now().message.items_per_query)
 						break;
 				}
@@ -1412,15 +1380,15 @@ namespace tangent
 			}
 			else if (unrolling == 2)
 			{
-				uptr<schema> data = var::set::array();
+				auto data = format::tree::list();
 				while (true)
 				{
-					auto list = chain.get_block_transactions_by_number(number, data->size(), protocol::now().message.items_per_query);
+					auto list = chain.get_block_transactions_by_number(number, data.childs().size(), protocol::now().message.items_per_query);
 					if (!list)
 						return server_response().error(error_codes::not_found, "block not found");
 
 					for (auto& item : *list)
-						data->push(item.as_schema().reset());
+						data.push(item.as_tree());
 					if (list->size() < protocol::now().message.items_per_query)
 						break;
 				}
@@ -1432,27 +1400,29 @@ namespace tangent
 				auto parties = btree_set<algorithm::pubkeyhash_t>();
 				auto aliases = btree_set<uint256_t>();
 				auto executor = ledger::executor_context(nullptr);
-				uptr<schema> data = var::set::array();
+				auto data = format::tree::list();
 				while (true)
 				{
-					auto list = chain.get_block_transactions_by_number(number, data->size(), protocol::now().message.items_per_query);
+					auto list = chain.get_block_transactions_by_number(number, data.childs().size(), protocol::now().message.items_per_query);
 					if (!list)
 						return server_response().error(error_codes::not_found, "block not found");
 
 					for (auto& item : *list)
 					{
-						auto tx_data = item.as_schema();
-						auto affected_data = tx_data->set("affected", var::set::object());
-						auto accounts_data = affected_data->set("accounts", var::set::array());
-						auto aliases_data = affected_data->set("aliases", var::set::array());
+						auto tx_data = item.as_tree();
+						auto affected_data = tx_data.set("affected", format::tree::map());
+						affected_data->childs().reserve(2);
+
+						auto accounts_data = affected_data->set("accounts", format::tree::list());
+						auto aliases_data = affected_data->set("aliases", format::tree::list());
 						item.transaction->recover_many(&executor, item.receipt, parties);
 						item.transaction->recover_aliases(aliases);
 						accounts_data->push(algorithm::signing::serialize_address(item.receipt.from));
 						for (auto& party : parties)
 							accounts_data->push(algorithm::signing::serialize_address(party));
 						for (auto& hash : aliases)
-							aliases_data->push(var::string(algorithm::encoding::encode_0xhex256(hash)));
-						data->push(tx_data.reset());
+							aliases_data->push(format::variable(algorithm::encoding::encode_0xhex256(hash)));
+						data.push(std::move(tx_data));
 						parties.clear();
 						aliases.clear();
 					}
@@ -1474,15 +1444,15 @@ namespace tangent
 
 			if (unrolling == 0)
 			{
-				uptr<schema> data = var::set::array();
+				auto data = format::tree::list();
 				while (true)
 				{
-					auto list = chain.get_block_receipts_by_number(*block_number, data->size(), protocol::now().message.items_per_query);
+					auto list = chain.get_block_receipts_by_number(*block_number, data.childs().size(), protocol::now().message.items_per_query);
 					if (!list)
 						return server_response().error(error_codes::not_found, "block not found");
 
 					for (auto& item : *list)
-						data->push(var::set::string(algorithm::encoding::encode_0xhex256(item.as_hash())));
+						data.push(format::variable(algorithm::encoding::encode_0xhex256(item.as_hash())));
 					if (list->size() < protocol::now().message.items_per_query)
 						break;
 				}
@@ -1491,15 +1461,15 @@ namespace tangent
 			}
 			else
 			{
-				uptr<schema> data = var::set::array();
+				auto data = format::tree::list();
 				while (true)
 				{
-					auto list = chain.get_block_receipts_by_number(*block_number, data->size(), protocol::now().message.items_per_query);
+					auto list = chain.get_block_receipts_by_number(*block_number, data.childs().size(), protocol::now().message.items_per_query);
 					if (!list)
 						return server_response().error(error_codes::not_found, "block not found");
 
 					for (auto& item : *list)
-						data->push(item.as_schema().reset());
+						data.push(item.as_tree());
 					if (list->size() < protocol::now().message.items_per_query)
 						break;
 				}
@@ -1514,15 +1484,15 @@ namespace tangent
 			auto chain = storages::chainstate();
 			if (unrolling == 0)
 			{
-				uptr<schema> data = var::set::array();
+				auto data = format::tree::list();
 				while (true)
 				{
-					auto list = chain.get_block_receipts_by_number(number, data->size(), protocol::now().message.items_per_query);
+					auto list = chain.get_block_receipts_by_number(number, data.childs().size(), protocol::now().message.items_per_query);
 					if (!list)
 						return server_response().error(error_codes::not_found, "block not found");
 
 					for (auto& item : *list)
-						data->push(var::set::string(algorithm::encoding::encode_0xhex256(item.as_hash())));
+						data.push(format::variable(algorithm::encoding::encode_0xhex256(item.as_hash())));
 					if (list->size() < protocol::now().message.items_per_query)
 						break;
 				}
@@ -1531,15 +1501,15 @@ namespace tangent
 			}
 			else
 			{
-				uptr<schema> data = var::set::array();
+				auto data = format::tree::list();
 				while (true)
 				{
-					auto list = chain.get_block_receipts_by_number(number, data->size(), protocol::now().message.items_per_query);
+					auto list = chain.get_block_receipts_by_number(number, data.childs().size(), protocol::now().message.items_per_query);
 					if (!list)
 						return server_response().error(error_codes::not_found, "block not found");
 
 					for (auto& item : *list)
-						data->push(item.as_schema().reset());
+						data.push(item.as_tree());
 					if (list->size() < protocol::now().message.items_per_query)
 						break;
 				}
@@ -1561,9 +1531,9 @@ namespace tangent
 				if (!list)
 					return server_response().error(error_codes::not_found, "block not found");
 
-				uptr<schema> data = var::set::array();
+				auto data = format::tree::list();
 				for (auto& item : *list)
-					data->push(var::set::string(algorithm::encoding::encode_0xhex256(item.receipt.transaction_hash)));
+					data.push(format::variable(algorithm::encoding::encode_0xhex256(item.receipt.transaction_hash)));
 				return server_response().success(std::move(data));
 			}
 			else if (unrolling == 1)
@@ -1572,9 +1542,9 @@ namespace tangent
 				if (!list)
 					return server_response().error(error_codes::not_found, "block not found");
 
-				uptr<schema> data = var::set::array();
+				auto data = format::tree::list();
 				for (auto& item : *list)
-					data->push(item.transaction->as_schema().reset());
+					data.push(item.transaction->as_tree());
 				return server_response().success(std::move(data));
 			}
 			else
@@ -1583,9 +1553,9 @@ namespace tangent
 				if (!list)
 					return server_response().error(error_codes::not_found, "block not found");
 
-				uptr<schema> data = var::set::array();
+				auto data = format::tree::list();
 				for (auto& item : *list)
-					data->push(item.as_schema().reset());
+					data.push(item.as_tree());
 				return server_response().success(std::move(data));
 			}
 		}
@@ -1604,35 +1574,35 @@ namespace tangent
 			auto chain = storages::chainstate();
 			if (unrolling == 0)
 			{
-				uptr<schema> data = var::set::array();
+				auto data = format::tree::list();
 				auto list = chain.get_transactions_by_owner(std::numeric_limits<int64_t>::max(), owner, direction >= 1 ? 1 : -1, offset, count);
 				if (!list)
 					return server_response().error(error_codes::not_found, "transactions not found");
 
 				for (auto& item : *list)
-					data->push(var::set::string(algorithm::encoding::encode_0xhex256(item->as_hash())));
+					data.push(format::variable(algorithm::encoding::encode_0xhex256(item->as_hash())));
 				return server_response().success(std::move(data));
 			}
 			else if (unrolling == 1)
 			{
-				uptr<schema> data = var::set::array();
+				auto data = format::tree::list();
 				auto list = chain.get_transactions_by_owner(std::numeric_limits<int64_t>::max(), owner, direction >= 1 ? 1 : -1, offset, count);
 				if (!list)
 					return server_response().error(error_codes::not_found, "transactions not found");
 
 				for (auto& item : *list)
-					data->push(item->as_schema().reset());
+					data.push(item->as_tree());
 				return server_response().success(std::move(data));
 			}
 			else
 			{
-				uptr<schema> data = var::set::array();
+				auto data = format::tree::list();
 				auto list = chain.get_block_transactions_by_owner(std::numeric_limits<int64_t>::max(), owner, direction >= 1 ? 1 : -1, offset, count);
 				if (!list)
 					return server_response().error(error_codes::not_found, "transactions not found");
 
 				for (auto& item : *list)
-					data->push(item.as_schema().reset());
+					data.push(item.as_tree());
 				return server_response().success(std::move(data));
 			}
 		}
@@ -1647,7 +1617,7 @@ namespace tangent
 				if (!transaction)
 					return server_response().error(error_codes::not_found, "transaction not found");
 
-				return server_response().success((*transaction)->as_schema());
+				return server_response().success((*transaction)->as_tree());
 			}
 			else
 			{
@@ -1655,7 +1625,7 @@ namespace tangent
 				if (!transaction)
 					return server_response().error(error_codes::not_found, "transaction not found");
 
-				return server_response().success(transaction->as_schema());
+				return server_response().success(transaction->as_tree());
 			}
 		}
 		server_response server_node::txnstate_get_raw_transaction_by_hash(http::connection* base, format::variables&& args)
@@ -1666,7 +1636,7 @@ namespace tangent
 			if (!transaction)
 				return server_response().error(error_codes::not_found, "transaction not found");
 
-			return server_response().success(var::set::string((*transaction)->as_message().encode()));
+			return server_response().success(format::variable((*transaction)->as_message().encode()));
 		}
 		server_response server_node::txnstate_get_receipt_by_transaction_hash(http::connection* base, format::variables&& args)
 		{
@@ -1676,7 +1646,7 @@ namespace tangent
 			if (!receipt)
 				return server_response().error(error_codes::not_found, "receipt not found");
 
-			return server_response().success(receipt->as_schema());
+			return server_response().success(receipt->as_tree());
 		}
 		server_response server_node::chainstate_call_transaction(http::connection* base, format::variables&& args)
 		{
@@ -1709,17 +1679,17 @@ namespace tangent
 			ledger::block temp_block;
 			temp_solver.apply_temporary_state(&temp_block, &temp_transaction, std::move(temp_receipt));
 
-			auto returning = uptr<schema>();
+			auto returning = format::tree();
 			auto execution = temp_transaction.subexecute(&temp_solver.state.executor, [&](void* module_ptr)
 			{
 				auto script = script::program(&temp_solver.state.executor, (asIScriptModule*)module_ptr);
 				return script.execute(script::ccall::const_call, temp_transaction.function, temp_transaction.args, [&](void* address, int type_id) -> expects_lr<void>
 				{
-					returning = var::set::object();
-					auto serialization = script::marshall::store(*returning, address, type_id);
+					returning = format::tree::map();
+					auto serialization = script::marshall::store(returning, address, type_id);
 					if (!serialization)
 					{
-						returning.destroy();
+						returning = format::tree();
 						return layer_exception("return value error: " + serialization.error().message());
 					}
 					return expectation::met;
@@ -1733,9 +1703,9 @@ namespace tangent
 			if (!temp_solver.state.executor.receipt.successful)
 				temp_solver.state.executor.emit_event(0, { format::variable(execution.what()) }, false);
 
-			auto data = temp_solver.state.executor.receipt.as_schema();
-			data->set("to", algorithm::signing::serialize_address(to));
-			data->set("result", returning ? returning->copy() : var::set::null());
+			auto data = temp_solver.state.executor.receipt.as_tree();
+			data.set("to", algorithm::signing::serialize_address(to));
+			data.set("result", std::move(returning));
 			return server_response().success(std::move(data));
 		}
 		server_response server_node::chainstate_get_block_state_by_hash(http::connection* base, format::variables&& args)
@@ -1753,9 +1723,9 @@ namespace tangent
 				if (!hashes)
 					return server_response().error(error_codes::not_found, "block not found");
 
-				uptr<schema> data = var::set::array();
+				auto data = format::tree::list();
 				for (auto& item : *hashes)
-					data->push(var::set::string(algorithm::encoding::encode_0xhex256(item)));
+					data.push(format::variable(algorithm::encoding::encode_0xhex256(item)));
 				return server_response().success(std::move(data));
 			}
 			else
@@ -1768,9 +1738,9 @@ namespace tangent
 				if (!list)
 					return server_response().error(error_codes::not_found, "block not found");
 
-				uptr<schema> data = var::set::array();
+				auto data = format::tree::list();
 				for (auto& [index, change] : list->finalized)
-					data->push(change.as_schema().reset());
+					data.push(change.as_tree());
 
 				return server_response().success(std::move(data));
 			}
@@ -1786,9 +1756,9 @@ namespace tangent
 				if (!hashes)
 					return server_response().error(error_codes::not_found, "block not found");
 
-				uptr<schema> data = var::set::array();
+				auto data = format::tree::list();
 				for (auto& item : *hashes)
-					data->push(var::set::string(algorithm::encoding::encode_0xhex256(item)));
+					data.push(format::variable(algorithm::encoding::encode_0xhex256(item)));
 				return server_response().success(std::move(data));
 			}
 			else
@@ -1797,9 +1767,9 @@ namespace tangent
 				if (!list)
 					return server_response().error(error_codes::not_found, "block not found");
 
-				uptr<schema> data = var::set::array();
+				auto data = format::tree::list();
 				for (auto& [index, change] : list->finalized)
-					data->push(change.as_schema().reset());
+					data.push(change.as_tree());
 
 				return server_response().success(std::move(data));
 			}
@@ -1818,7 +1788,7 @@ namespace tangent
 			if (!price)
 				return server_response().error(error_codes::not_found, "gas price not found");
 
-			return server_response().success(var::set::decimal(*price));
+			return server_response().success(format::variable(*price));
 		}
 		server_response server_node::chainstate_get_block_gas_price_by_number(http::connection* base, format::variables&& args)
 		{
@@ -1830,7 +1800,7 @@ namespace tangent
 			if (!price)
 				return server_response().error(error_codes::not_found, "gas price not found");
 
-			return server_response().success(var::set::decimal(*price));
+			return server_response().success(format::variable(*price));
 		}
 		server_response server_node::chainstate_get_block_asset_price_by_hash(http::connection* base, format::variables&& args)
 		{
@@ -1847,7 +1817,7 @@ namespace tangent
 			if (!price)
 				return server_response().error(error_codes::not_found, "asset price not found");
 
-			return server_response().success(var::set::decimal(*price));
+			return server_response().success(format::variable(*price));
 		}
 		server_response server_node::chainstate_get_block_asset_price_by_number(http::connection* base, format::variables&& args)
 		{
@@ -1860,7 +1830,7 @@ namespace tangent
 			if (!price)
 				return server_response().error(error_codes::not_found, "asset price not found");
 
-			return server_response().success(var::set::decimal(*price));
+			return server_response().success(format::variable(*price));
 		}
 		server_response server_node::chainstate_get_uniform(http::connection* base, format::variables&& args)
 		{
@@ -1873,7 +1843,7 @@ namespace tangent
 			if (!uniform)
 				return server_response().error(error_codes::not_found, "uniform not found");
 
-			return server_response().success(uniform->value->as_schema());
+			return server_response().success(uniform->value->as_tree());
 		}
 		server_response server_node::chainstate_get_multiform(http::connection* base, format::variables&& args)
 		{
@@ -1886,7 +1856,7 @@ namespace tangent
 			if (!multiform)
 				return server_response().error(error_codes::not_found, "multiform not found");
 
-			return server_response().success(multiform->value->as_schema());
+			return server_response().success(multiform->value->as_tree());
 		}
 		server_response server_node::chainstate_get_multiforms_by_column(http::connection* base, format::variables&& args)
 		{
@@ -1903,9 +1873,9 @@ namespace tangent
 			if (!list)
 				return server_response().error(error_codes::not_found, "multiform not found");
 
-			uptr<schema> data = var::set::array();
+			auto data = format::tree::list();
 			for (auto& item : *list)
-				data->push(item.value->as_schema().reset());
+				data.push(item.value->as_tree());
 			return server_response().success(std::move(data));
 		}
 		server_response server_node::chainstate_get_multiforms_by_column_filter(http::connection* base, format::variables&& args)
@@ -1924,9 +1894,9 @@ namespace tangent
 			if (!list)
 				return server_response().error(error_codes::not_found, "multiform not found");
 
-			uptr<schema> data = var::set::array();
+			auto data = format::tree::list();
 			for (auto& item : *list)
-				data->push(item.value->as_schema().reset());
+				data.push(item.value->as_tree());
 			return server_response().success(std::move(data));
 		}
 		server_response server_node::chainstate_get_multiforms_by_row(http::connection* base, format::variables&& args)
@@ -1944,9 +1914,9 @@ namespace tangent
 			if (!list)
 				return server_response().error(error_codes::not_found, "multiform not found");
 
-			uptr<schema> data = var::set::array();
+			auto data = format::tree::list();
 			for (auto& item : *list)
-				data->push(item.value->as_schema().reset());
+				data.push(item.value->as_tree());
 			return server_response().success(std::move(data));
 		}
 		server_response server_node::chainstate_get_multiforms_by_row_filter(http::connection* base, format::variables&& args)
@@ -1965,9 +1935,9 @@ namespace tangent
 			if (!list)
 				return server_response().error(error_codes::not_found, "multiform not found");
 
-			uptr<schema> data = var::set::array();
+			auto data = format::tree::list();
 			for (auto& item : *list)
-				data->push(item.value->as_schema().reset());
+				data.push(item.value->as_tree());
 			return server_response().success(std::move(data));
 		}
 		server_response server_node::chainstate_get_multiforms_count_by_column(http::connection* base, format::variables&& args)
@@ -2043,7 +2013,7 @@ namespace tangent
 
 			auto chain = storages::chainstate();
 			auto state = chain.get_uniform(states::account_program::as_instance_type(), nullptr, states::account_program::as_instance_index(owner), 0);
-			return server_response().success(state ? state->value->as_schema().reset() : var::set::null());
+			return server_response().success(state ? state->value->as_tree() : format::variable());
 		}
 		server_response server_node::chainstate_get_account_uniform(http::connection* base, format::variables&& args)
 		{
@@ -2053,7 +2023,7 @@ namespace tangent
 
 			auto chain = storages::chainstate();
 			auto state = chain.get_uniform(states::account_uniform::as_instance_type(), nullptr, states::account_uniform::as_instance_index(owner, args[1].as_string()), 0);
-			return server_response().success(state ? state->value->as_schema().reset() : var::set::null());
+			return server_response().success(state ? state->value->as_tree() : format::variable());
 		}
 		server_response server_node::chainstate_get_account_multiform(http::connection* base, format::variables&& args)
 		{
@@ -2063,7 +2033,7 @@ namespace tangent
 
 			auto chain = storages::chainstate();
 			auto state = chain.get_multiform(states::account_multiform::as_instance_type(), nullptr, states::account_multiform::as_instance_column(owner, args[1].as_string()), states::account_multiform::as_instance_row(owner, args[2].as_string()), 0);
-			return server_response().success(state ? state->value->as_schema().reset() : var::set::null());
+			return server_response().success(state ? state->value->as_tree() : format::variable());
 		}
 		server_response server_node::chainstate_get_account_multiforms(http::connection* base, format::variables&& args)
 		{
@@ -2080,9 +2050,9 @@ namespace tangent
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
 
-			uptr<schema> data = var::set::array();
+			auto data = format::tree::list();
 			for (auto& item : *list)
-				data->push(item.value->as_schema().reset());
+				data.push(item.value->as_tree());
 			return server_response().success(std::move(data));
 		}
 		server_response server_node::chainstate_get_account_delegation(http::connection* base, format::variables&& args)
@@ -2094,15 +2064,15 @@ namespace tangent
 			auto chain = storages::chainstate();
 			auto state = chain.get_uniform(states::account_delegation::as_instance_type(), nullptr, states::account_delegation::as_instance_index(owner), 0);
 			auto* value = (states::account_delegation*)(state ? state->ptr() : nullptr);
-			auto result = value ? value->as_schema().reset() : var::set::null();
+			auto result = value ? value->as_tree() : format::tree::map();
 			if (value != nullptr)
 			{
 				uint64_t block_number = chain.get_latest_block_number().or_else(value->block_number);
 				uint64_t zeroing_block_number = value->get_delegation_zeroing_block(block_number);
-				result->set("zeroing_block_number", var::integer(zeroing_block_number));
-				result->set("requires_zeroing", var::boolean(block_number < zeroing_block_number));
+				result.set("zeroing_block_number", format::variable(zeroing_block_number));
+				result.set("requires_zeroing", format::variable(block_number < zeroing_block_number));
 			}
-			return server_response().success(result);
+			return server_response().success(std::move(result));
 		}
 		server_response server_node::chainstate_get_account_balance(http::connection* base, format::variables&& args)
 		{
@@ -2113,7 +2083,7 @@ namespace tangent
 			auto chain = storages::chainstate();
 			auto asset = algorithm::asset::id_of_handle(args[1].as_string());
 			auto state = chain.get_multiform(states::account_balance::as_instance_type(), nullptr, states::account_balance::as_instance_column(owner), states::account_balance::as_instance_row(asset), 0);
-			return server_response().success(state ? state->value->as_schema().reset() : var::set::null());
+			return server_response().success(state ? state->value->as_tree() : format::variable());
 		}
 		server_response server_node::chainstate_get_account_balances(http::connection* base, format::variables&& args)
 		{
@@ -2130,9 +2100,9 @@ namespace tangent
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
 
-			uptr<schema> data = var::set::array();
+			auto data = format::tree::list();
 			for (auto& item : *list)
-				data->push(item.value->as_schema().reset());
+				data.push(item.value->as_tree());
 			return server_response().success(std::move(data));
 		}
 		server_response server_node::chainstate_get_validator_production(http::connection* base, format::variables&& args)
@@ -2143,7 +2113,7 @@ namespace tangent
 
 			auto chain = storages::chainstate();
 			auto state = chain.get_multiform(states::validator_production::as_instance_type(), nullptr, states::validator_production::as_instance_column(owner), states::validator_production::as_instance_row(), 0);
-			return server_response().success(state ? state->value->as_schema().reset() : var::set::null());
+			return server_response().success(state ? state->value->as_tree() : format::variable());
 		}
 		server_response server_node::chainstate_get_validator_production_with_rewards(http::connection* base, format::variables&& args)
 		{
@@ -2154,20 +2124,20 @@ namespace tangent
 			auto chain = storages::chainstate();
 			auto state = chain.get_multiform(states::validator_production::as_instance_type(), nullptr, states::validator_production::as_instance_column(owner), states::validator_production::as_instance_row(), 0);
 			if (!state)
-				return server_response().success(var::set::null());
+				return server_response().success(format::variable());
 
 			size_t count = 512;
-			auto result = state->value->as_schema();
-			auto rewards = result->set("rewards", var::set::array());
+			auto result = state->value->as_tree();
+			auto rewards = result.set("rewards", format::tree::list());
 			auto stride = states::validator_production_reward::as_instance_column(owner);
 			while (true)
 			{
-				auto states = chain.get_multiforms_by_column(states::validator_production_reward::as_instance_type(), nullptr, stride, 0, rewards->size(), count);
+				auto states = chain.get_multiforms_by_column(states::validator_production_reward::as_instance_type(), nullptr, stride, 0, rewards->childs().size(), count);
 				if (!states)
 					break;
 
 				for (auto& state : *states)
-					rewards->push(state.ptr()->as_schema().reset());
+					rewards->push(state.ptr()->as_tree());
 
 				if (states->size() != count)
 					break;
@@ -2187,9 +2157,9 @@ namespace tangent
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
 
-			uptr<schema> data = var::set::array();
+			auto data = format::tree::list();
 			for (auto& item : *list)
-				data->push(item.value->as_schema().reset());
+				data.push(item.value->as_tree());
 			return server_response().success(std::move(data));
 		}
 		server_response server_node::chainstate_get_validator_production_reward(http::connection* base, format::variables&& args)
@@ -2201,7 +2171,7 @@ namespace tangent
 			auto chain = storages::chainstate();
 			auto asset = algorithm::asset::id_of_handle(args[1].as_string());
 			auto state = chain.get_multiform(states::validator_production_reward::as_instance_type(), nullptr, states::validator_production_reward::as_instance_column(owner), states::validator_production_reward::as_instance_row(asset), 0);
-			return server_response().success(state ? state->value->as_schema().reset() : var::set::null());
+			return server_response().success(state ? state->value->as_tree() : format::variable());
 		}
 		server_response server_node::chainstate_get_validator_production_rewards(http::connection* base, format::variables&& args)
 		{
@@ -2218,9 +2188,9 @@ namespace tangent
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
 
-			uptr<schema> data = var::set::array();
+			auto data = format::tree::list();
 			for (auto& item : *list)
-				data->push(item.value->as_schema().reset());
+				data.push(item.value->as_tree());
 			return server_response().success(std::move(data));
 		}
 		server_response server_node::chainstate_get_validator_participation(http::connection* base, format::variables&& args)
@@ -2231,7 +2201,7 @@ namespace tangent
 
 			auto chain = storages::chainstate();
 			auto state = chain.get_multiform(states::validator_participation::as_instance_type(), nullptr, states::validator_participation::as_instance_column(owner), states::validator_participation::as_instance_row(), 0);
-			return server_response().success(state ? state->value->as_schema().reset() : var::set::null());
+			return server_response().success(state ? state->value->as_tree() : format::variable());
 		}
 		server_response server_node::chainstate_get_validator_participation_with_rewards(http::connection* base, format::variables&& args)
 		{
@@ -2242,20 +2212,20 @@ namespace tangent
 			auto chain = storages::chainstate();
 			auto state = chain.get_multiform(states::validator_participation::as_instance_type(), nullptr, states::validator_participation::as_instance_column(owner), states::validator_participation::as_instance_row(), 0);
 			if (!state)
-				return server_response().success(var::set::null());
+				return server_response().success(format::variable());
 
 			size_t count = 512;
-			auto result = state->value->as_schema();
-			auto rewards = result->set("rewards", var::set::array());
+			auto result = state->value->as_tree();
+			auto rewards = result.set("rewards", format::tree::list());
 			auto stride = states::validator_participation_reward::as_instance_column(owner);
 			while (true)
 			{
-				auto states = chain.get_multiforms_by_column(states::validator_participation_reward::as_instance_type(), nullptr, stride, 0, rewards->size(), count);
+				auto states = chain.get_multiforms_by_column(states::validator_participation_reward::as_instance_type(), nullptr, stride, 0, rewards->childs().size(), count);
 				if (!states)
 					break;
 
 				for (auto& state : *states)
-					rewards->push(state.ptr()->as_schema().reset());
+					rewards->push(state.ptr()->as_tree());
 
 				if (states->size() != count)
 					break;
@@ -2277,9 +2247,9 @@ namespace tangent
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
 
-			uptr<schema> data = var::set::array();
+			auto data = format::tree::list();
 			for (auto& item : *list)
-				data->push(item.value->as_schema().reset());
+				data.push(item.value->as_tree());
 			return server_response().success(std::move(data));
 		}
 		server_response server_node::chainstate_get_best_validator_participations(http::connection* base, format::variables&& args)
@@ -2295,9 +2265,9 @@ namespace tangent
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
 
-			uptr<schema> data = var::set::array();
+			auto data = format::tree::list();
 			for (auto& item : *list)
-				data->push(item.value->as_schema().reset());
+				data.push(item.value->as_tree());
 			return server_response().success(std::move(data));
 		}
 		server_response server_node::chainstate_get_validator_participation_reward(http::connection* base, format::variables&& args)
@@ -2309,7 +2279,7 @@ namespace tangent
 			auto chain = storages::chainstate();
 			auto asset = algorithm::asset::id_of_handle(args[1].as_string());
 			auto state = chain.get_multiform(states::validator_participation_reward::as_instance_type(), nullptr, states::validator_participation_reward::as_instance_column(owner), states::validator_participation_reward::as_instance_row(asset), 0);
-			return server_response().success(state ? state->value->as_schema().reset() : var::set::null());
+			return server_response().success(state ? state->value->as_tree() : format::variable());
 		}
 		server_response server_node::chainstate_get_validator_participation_rewards(http::connection* base, format::variables&& args)
 		{
@@ -2326,9 +2296,9 @@ namespace tangent
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
 
-			uptr<schema> data = var::set::array();
+			auto data = format::tree::list();
 			for (auto& item : *list)
-				data->push(item.value->as_schema().reset());
+				data.push(item.value->as_tree());
 			return server_response().success(std::move(data));
 		}
 		server_response server_node::chainstate_get_validator_participation_ref(http::connection* base, format::variables&& args)
@@ -2347,7 +2317,7 @@ namespace tangent
 			
 			auto chain = storages::chainstate();
 			auto state = chain.get_multiform(states::validator_participation_ref::as_instance_type(), nullptr, states::validator_participation_ref::as_instance_column(owner), states::validator_participation_ref::as_instance_row(ref), 0);
-			return server_response().success(state ? state->value->as_schema().reset() : var::set::null());
+			return server_response().success(state ? state->value->as_tree() : format::variable());
 		}
 		server_response server_node::chainstate_get_validator_participation_refs(http::connection* base, format::variables&& args)
 		{
@@ -2364,9 +2334,9 @@ namespace tangent
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
 
-			uptr<schema> data = var::set::array();
+			auto data = format::tree::list();
 			for (auto& item : *list)
-				data->push(item.value->as_schema().reset());
+				data.push(item.value->as_tree());
 			return server_response().success(std::move(data));
 		}
 		server_response server_node::chainstate_get_validator_attestation(http::connection* base, format::variables&& args)
@@ -2378,7 +2348,7 @@ namespace tangent
 
 			auto chain = storages::chainstate();
 			auto state = chain.get_multiform(states::validator_attestation::as_instance_type(), nullptr, states::validator_attestation::as_instance_column(owner), states::validator_attestation::as_instance_row(asset), 0);
-			return server_response().success(state ? state->value->as_schema().reset() : var::set::null());
+			return server_response().success(state ? state->value->as_tree() : format::variable());
 		}
 		server_response server_node::chainstate_get_validator_attestation_with_rewards(http::connection* base, format::variables&& args)
 		{
@@ -2390,11 +2360,11 @@ namespace tangent
 			auto chain = storages::chainstate();
 			auto state = chain.get_multiform(states::validator_attestation::as_instance_type(), nullptr, states::validator_attestation::as_instance_column(owner), states::validator_attestation::as_instance_row(asset), 0);
 			if (!state)
-				return server_response().success(var::set::null());
+				return server_response().success(format::variable());
 
 			size_t offset = 0, count = 512;
-			auto result = state->value->as_schema();
-			auto rewards = result->set("rewards", var::set::array());
+			auto result = state->value->as_tree();
+			auto rewards = result.set("rewards", format::tree::list());
 			auto stride = states::validator_attestation_reward::as_instance_column(owner);
 			while (true)
 			{
@@ -2406,7 +2376,7 @@ namespace tangent
 				{
 					auto* ref = state.as<states::validator_attestation_reward>();
 					if (asset == algorithm::asset::base_id_of(ref->asset))
-						rewards->push(state.ptr()->as_schema().reset());
+						rewards->push(state.ptr()->as_tree());
 				}
 
 				offset += states->size();
@@ -2430,9 +2400,9 @@ namespace tangent
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
 
-			uptr<schema> data = var::set::array();
+			auto data = format::tree::list();
 			for (auto& item : *list)
-				data->push(item.value->as_schema().reset());
+				data.push(item.value->as_tree());
 			return server_response().success(std::move(data));
 		}
 		server_response server_node::chainstate_get_validator_attestations_with_rewards(http::connection* base, format::variables&& args)
@@ -2459,7 +2429,7 @@ namespace tangent
 			}
 
 			if (attestations.empty())
-				return server_response().success(var::set::array());
+				return server_response().success(format::tree::list());
 
 			auto rewards = vector<states::validator_attestation_reward>();
 			stride = states::validator_attestation_reward::as_instance_column(owner);
@@ -2476,15 +2446,15 @@ namespace tangent
 					break;
 			}
 
-			uptr<schema> data = var::set::array();
+			auto data = format::tree::list();
 			for (auto& attestation : attestations)
 			{
-				auto* result = data->push(attestation.as_schema().reset());
-				auto childs = result->set("rewards", var::set::array());
+				auto* result = data.push(attestation.as_tree());
+				auto childs = result->set("rewards", format::tree::list());
 				for (auto& reward : rewards)
 				{
 					if (attestation.asset == algorithm::asset::base_id_of(reward.asset))
-						childs->push(reward.as_schema().reset());
+						childs->push(reward.as_tree());
 				}
 			}
 			return server_response().success(std::move(data));
@@ -2503,9 +2473,9 @@ namespace tangent
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
 
-			uptr<schema> data = var::set::array();
+			auto data = format::tree::list();
 			for (auto& item : *list)
-				data->push(item.value->as_schema().reset());
+				data.push(item.value->as_tree());
 			return server_response().success(std::move(data));
 		}
 		server_response server_node::chainstate_get_best_validator_attestations_for_selection(http::connection* base, format::variables&& args)
@@ -2521,19 +2491,19 @@ namespace tangent
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
 
-			uptr<schema> data = var::set::array();
+			auto data = format::tree::list();
 			for (auto& item : *list)
 			{
 				auto* attestation_state = (states::validator_attestation*)item.ptr();
 				auto balance_stride = states::bridge_balance::as_instance_column(attestation_state->owner);
-				auto* next = data->push(var::set::object());
-				next->set("attestation", attestation_state->as_schema().reset());
+				auto* next = data.push(format::tree::map());
+				next->set("attestation", attestation_state->as_tree());
 
 				size_t offset = 0, count = 512;
-				auto tokens = next->set("balances", var::set::array());
+				auto tokens = next->set("balances", format::tree::list());
 				while (true)
 				{
-					auto states = chain.get_multiforms_by_column(states::bridge_balance::as_instance_type(), nullptr, balance_stride, 0, tokens->size(), count);
+					auto states = chain.get_multiforms_by_column(states::bridge_balance::as_instance_type(), nullptr, balance_stride, 0, tokens->childs().size(), count);
 					if (!states)
 						break;
 
@@ -2541,7 +2511,7 @@ namespace tangent
 					{
 						auto* ref = state.as<states::bridge_balance>();
 						if (asset == algorithm::asset::base_id_of(ref->asset))
-							tokens->push(state.ptr()->as_schema().reset());
+							tokens->push(state.ptr()->as_tree());
 					}
 
 					if (states->size() != count)
@@ -2559,7 +2529,7 @@ namespace tangent
 			auto chain = storages::chainstate();
 			auto asset = algorithm::asset::id_of_handle(args[1].as_string());
 			auto state = chain.get_multiform(states::validator_attestation_reward::as_instance_type(), nullptr, states::validator_attestation_reward::as_instance_column(owner), states::validator_attestation_reward::as_instance_row(asset), 0);
-			return server_response().success(state ? state->value->as_schema().reset() : var::set::null());
+			return server_response().success(state ? state->value->as_tree() : format::variable());
 		}
 		server_response server_node::chainstate_get_validator_attestation_rewards(http::connection* base, format::variables&& args)
 		{
@@ -2576,9 +2546,9 @@ namespace tangent
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
 
-			uptr<schema> data = var::set::array();
+			auto data = format::tree::list();
 			for (auto& item : *list)
-				data->push(item.value->as_schema().reset());
+				data.push(item.value->as_tree());
 			return server_response().success(std::move(data));
 		}
 		server_response server_node::chainstate_get_bridge_balance(http::connection* base, format::variables&& args)
@@ -2590,7 +2560,7 @@ namespace tangent
 			auto chain = storages::chainstate();
 			auto asset = algorithm::asset::id_of_handle(args[1].as_string());
 			auto state = chain.get_multiform(states::bridge_balance::as_instance_type(), nullptr, states::bridge_balance::as_instance_column(owner), states::bridge_balance::as_instance_row(asset), 0);
-			return server_response().success(state ? state->value->as_schema().reset() : var::set::null());
+			return server_response().success(state ? state->value->as_tree() : format::variable());
 		}
 		server_response server_node::chainstate_get_bridge_balances(http::connection* base, format::variables&& args)
 		{
@@ -2607,9 +2577,9 @@ namespace tangent
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
 
-			uptr<schema> data = var::set::array();
+			auto data = format::tree::list();
 			for (auto& item : *list)
-				data->push(item.value->as_schema().reset());
+				data.push(item.value->as_tree());
 			return server_response().success(std::move(data));
 		}
 		server_response server_node::chainstate_get_best_bridge_balances(http::connection* base, format::variables&& args)
@@ -2625,9 +2595,9 @@ namespace tangent
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
 
-			uptr<schema> data = var::set::array();
+			auto data = format::tree::list();
 			for (auto& item : *list)
-				data->push(item.value->as_schema().reset());
+				data.push(item.value->as_tree());
 			return server_response().success(std::move(data));
 		}
 		server_response server_node::chainstate_get_best_bridge_balances_for_selection(http::connection* base, format::variables&& args)
@@ -2644,20 +2614,20 @@ namespace tangent
 				return server_response().error(error_codes::not_found, "data not found");
 
 			auto attestation_stride = states::validator_attestation::as_instance_row(asset);
-			uptr<schema> data = var::set::array();
+			auto data = format::tree::list();
 			for (auto& item : *list)
 			{
 				auto* balance_state = (states::bridge_balance*)item.ptr();
 				auto balance_stride = states::bridge_balance::as_instance_column(balance_state->owner);
 				auto attestation_state = chain.get_multiform(states::validator_attestation::as_instance_type(), nullptr, states::validator_attestation::as_instance_column(balance_state->owner), attestation_stride, 0);
-				auto* next = data->push(var::set::object());
-				next->set("attestation", attestation_state ? attestation_state->value->as_schema().reset() : var::set::null());
+				auto* next = data.push(format::tree::map());
+				next->set("attestation", attestation_state ? attestation_state->value->as_tree() : format::variable());
 
 				size_t offset = 0, count = 512;
-				auto tokens = next->set("balances", var::set::array());
+				auto tokens = next->set("balances", format::tree::list());
 				while (true)
 				{
-					auto states = chain.get_multiforms_by_column(states::bridge_balance::as_instance_type(), nullptr, balance_stride, 0, tokens->size(), count);
+					auto states = chain.get_multiforms_by_column(states::bridge_balance::as_instance_type(), nullptr, balance_stride, 0, tokens->childs().size(), count);
 					if (!states)
 						break;
 
@@ -2665,7 +2635,7 @@ namespace tangent
 					{
 						auto* ref = state.as<states::bridge_balance>();
 						if (asset == algorithm::asset::base_id_of(ref->asset))
-							tokens->push(state.ptr()->as_schema().reset());
+							tokens->push(state.ptr()->as_tree());
 					}
 
 					if (states->size() != count)
@@ -2688,7 +2658,7 @@ namespace tangent
 			auto asset = algorithm::asset::id_of_handle(args[0].as_string());
 			auto state = chain.get_multiform(states::bridge_account::as_instance_type(), nullptr, states::bridge_account::as_instance_column(proposer), states::bridge_account::as_instance_row(asset, owner), 0);
 			auto* value = (states::bridge_account*)(state ? state->ptr() : nullptr);
-			return server_response().success(value ? value->as_schema().reset() : nullptr);
+			return server_response().success(value ? value->as_tree() : format::tree());
 		}
 		server_response server_node::chainstate_get_bridge_accounts(http::connection* base, format::variables&& args)
 		{
@@ -2706,9 +2676,9 @@ namespace tangent
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
 
-			uptr<schema> data = var::set::array();
+			auto data = format::tree::list();
 			for (auto& item : *list)
-				data->push(item.value->as_schema().reset());
+				data.push(item.value->as_tree());
 			return server_response().success(std::move(data));
 		}
 		server_response server_node::chainstate_get_witness_program(http::connection* base, format::variables&& args)
@@ -2716,18 +2686,18 @@ namespace tangent
 			auto chain = storages::chainstate();
 			auto state = chain.get_uniform(states::witness_program::as_instance_type(), nullptr, states::witness_program::as_instance_index(format::util::decode_0xhex(args[0].as_string())), 0);
 			if (!state)
-				return server_response().success(var::set::null());
+				return server_response().success(format::variable());
 
 			auto code = ((states::witness_program*)(state->ptr()))->as_code();
-			auto* data = state->value->as_schema().reset();
-			data->set("storage", code ? var::string(*code) : var::null());
-			return server_response().success(data);
+			auto data = state->value->as_tree();
+			data.set("storage", code ? format::variable(*code) : format::variable());
+			return server_response().success(std::move(data));
 		}
 		server_response server_node::chainstate_get_witness_event(http::connection* base, format::variables&& args)
 		{
 			auto chain = storages::chainstate();
 			auto state = chain.get_uniform(states::witness_event::as_instance_type(), nullptr, states::witness_event::as_instance_index(args[0].as_uint256()), 0);
-			return server_response().success(state ? state->value->as_schema().reset() : var::set::null());
+			return server_response().success(state ? state->value->as_tree() : format::variable());
 		}
 		server_response server_node::chainstate_get_witness_account(http::connection* base, format::variables&& args)
 		{
@@ -2738,7 +2708,7 @@ namespace tangent
 			auto asset = algorithm::asset::id_of_handle(args[1].as_string());
 			auto chain = storages::chainstate();
 			auto state = chain.get_multiform(states::witness_account::as_instance_type(), nullptr, states::witness_account::as_instance_column(owner), states::witness_account::as_instance_row(asset, args[2].as_string()), 0);
-			return server_response().success(state ? state->value->as_schema().reset() : var::set::null());
+			return server_response().success(state ? state->value->as_tree() : format::variable());
 		}
 		server_response server_node::chainstate_get_witness_account_tagged(http::connection* base, format::variables&& args)
 		{
@@ -2748,7 +2718,7 @@ namespace tangent
 			if (!result)
 				return server_response().error(error_codes::not_found, result.error().message());
 
-			return server_response().success(result->as_schema());
+			return server_response().success(result->as_tree());
 		}
 		server_response server_node::chainstate_get_witness_accounts(http::connection* base, format::variables&& args)
 		{
@@ -2765,9 +2735,9 @@ namespace tangent
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
 
-			uptr<schema> data = var::set::array();
+			auto data = format::tree::list();
 			for (auto& item : *list)
-				data->push(item.value->as_schema().reset());
+				data.push(item.value->as_tree());
 			return server_response().success(std::move(data));
 		}
 		server_response server_node::chainstate_get_witness_accounts_by_purpose(http::connection* base, format::variables&& args)
@@ -2797,9 +2767,9 @@ namespace tangent
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
 
-			uptr<schema> data = var::set::array();
+			auto data = format::tree::list();
 			for (auto& item : *list)
-				data->push(item.value->as_schema().reset());
+				data.push(item.value->as_tree());
 			return server_response().success(std::move(data));
 		}
 		server_response server_node::chainstate_get_witness_transaction(http::connection* base, format::variables&& args)
@@ -2807,14 +2777,14 @@ namespace tangent
 			auto asset = algorithm::asset::id_of_handle(args[0].as_string());
 			auto chain = storages::chainstate();
 			auto state = chain.get_uniform(states::witness_transaction::as_instance_type(), nullptr, states::witness_transaction::as_instance_index(asset, args[1].as_string()), 0);
-			return server_response().success(state ? state->value->as_schema().reset() : var::set::null());
+			return server_response().success(state ? state->value->as_tree() : format::variable());
 		}
 		server_response server_node::chainstate_get_asset_holders(http::connection* base, format::variables&& args)
 		{
 			auto chain = storages::chainstate();
 			auto asset = algorithm::asset::id_of_handle(args[0].as_string());
 			auto count = chain.get_multiforms_count_by_row_filter(states::account_balance::as_instance_type(), nullptr, states::account_balance::as_instance_row(asset), storages::result_filter::greater_equal(args[1].as_uint256(), -1), 0);
-			return server_response().success(var::set::integer(count.or_else(0)));
+			return server_response().success(format::variable(count.or_else(0)));
 		}
 		server_response server_node::mempoolstate_add_node(http::connection* base, format::variables&& args)
 		{
@@ -2827,7 +2797,7 @@ namespace tangent
 			if (!status)
 				return server_response().error(error_codes::bad_request, status.error().message());
 
-			return server_response().success(var::set::null());
+			return server_response().success(format::variable());
 		}
 		server_response server_node::mempoolstate_clear_node(http::connection* base, format::variables&& args)
 		{
@@ -2840,7 +2810,7 @@ namespace tangent
 			if (!status)
 				return server_response().error(error_codes::bad_request, status.error().message());
 
-			return server_response().success(var::set::null());
+			return server_response().success(format::variable());
 		}
 		server_response server_node::mempoolstate_get_closest_node(http::connection* base, format::variables&& args)
 		{
@@ -2850,9 +2820,9 @@ namespace tangent
 			if (!validator)
 				return server_response().error(error_codes::bad_request, "node not found");
 
-			auto result = uptr(var::set::object());
-			result->set("validator", validator->first.as_schema().reset());
-			result->set("wallet", validator->second.as_public_schema().reset());
+			auto result = format::tree::map();
+			result.set("validator", validator->first.as_tree());
+			result.set("wallet", validator->second.as_public_tree());
 			return server_response().success(std::move(result));
 		}
 		server_response server_node::mempoolstate_get_closest_node_counter(http::connection* base, format::variables&& args)
@@ -2875,9 +2845,9 @@ namespace tangent
 			if (!validator)
 				return server_response().error(error_codes::bad_request, "node not found");
 
-			auto result = uptr(var::set::object());
-			result->set("validator", validator->first.as_schema().reset());
-			result->set("wallet", validator->second.as_public_schema().reset());
+			auto result = format::tree::map();
+			result.set("validator", validator->first.as_tree());
+			result.set("wallet", validator->second.as_public_tree());
 			return server_response().success(std::move(result));
 		}
 		server_response server_node::mempoolstate_get_addresses(http::connection* base, format::variables&& args)
@@ -2916,9 +2886,9 @@ namespace tangent
 			if (!nodes)
 				return server_response().error(error_codes::bad_request, "node not found");
 
-			uptr<schema> data = var::set::array();
+			auto data = format::tree::list();
 			for (auto& [account, address] : *nodes)
-				data->push(var::string(system_endpoint::to_uri(address)));
+				data.push(format::variable(system_endpoint::to_uri(address)));
 			return server_response().success(std::move(data));
 		}
 		server_response server_node::mempoolstate_get_gas_price(http::connection* base, format::variables&& args)
@@ -2940,9 +2910,9 @@ namespace tangent
 					return server_response().error(error_codes::not_found, "gas price not found");
 			}
 			else if (!price)
-				return server_response().success(var::set::decimal(decimal::zero()));
+				return server_response().success(format::variable(decimal::zero()));
 
-			return server_response().success(var::set::decimal(*price));
+			return server_response().success(format::variable(*price));
 		}
 		server_response server_node::mempoolstate_get_asset_price(http::connection* base, format::variables&& args)
 		{
@@ -2954,7 +2924,7 @@ namespace tangent
 			if (!price)
 				return server_response().error(error_codes::not_found, "asset price not found");
 
-			return server_response().success(var::set::decimal(*price));
+			return server_response().success(format::variable(*price));
 		}
 		server_response server_node::mempoolstate_simulate_transaction(http::connection* base, format::variables&& args)
 		{
@@ -2969,7 +2939,7 @@ namespace tangent
 			if (!gas_limit)
 				return server_response().error(error_codes::bad_params, gas_limit.error().message());
 
-			return server_response().success(receipt.as_schema());
+			return server_response().success(receipt.as_tree());
 		}
 		server_response server_node::mempoolstate_submit_transaction(http::connection* base, format::variables&& args, ledger::transaction* prebuilt)
 		{
@@ -2990,7 +2960,7 @@ namespace tangent
 			if (!status)
 				return server_response().error(error_codes::bad_request, status.error().message());
 
-			return server_response().success(var::set::string(algorithm::encoding::encode_0xhex256(candidate_hash)));
+			return server_response().success(format::variable(algorithm::encoding::encode_0xhex256(candidate_hash)));
 		}
 		server_response server_node::mempoolstate_reject_transaction(http::connection* base, format::variables&& args)
 		{
@@ -3000,7 +2970,7 @@ namespace tangent
 			if (!status)
 				return server_response().error(error_codes::bad_request, status.error().message());
 
-			return server_response().success(var::set::null());
+			return server_response().success(format::variable());
 		}
 		server_response server_node::mempoolstate_get_transaction_by_hash(http::connection* base, format::variables&& args)
 		{
@@ -3010,7 +2980,7 @@ namespace tangent
 			if (!transaction)
 				return server_response().error(error_codes::not_found, "transaction not found");
 
-			return server_response().success((*transaction)->as_schema());
+			return server_response().success((*transaction)->as_tree());
 		}
 		server_response server_node::mempoolstate_get_raw_transaction_by_hash(http::connection* base, format::variables&& args)
 		{
@@ -3020,7 +2990,7 @@ namespace tangent
 			if (!transaction)
 				return server_response().error(error_codes::not_found, "transaction not found");
 
-			return server_response().success(var::set::string((*transaction)->as_message().encode()));
+			return server_response().success(format::variable((*transaction)->as_message().encode()));
 		}
 		server_response server_node::mempoolstate_get_next_account_nonce(http::connection* base, format::variables&& args)
 		{
@@ -3029,7 +2999,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "owner address not valid");
 			
 			auto wallet = ledger::wallet::from_public_key_hash(owner);
-			return server_response().success(var::set::integer(wallet.get_latest_nonce().or_else(0)));
+			return server_response().success(format::variable(wallet.get_latest_nonce().or_else(0)));
 		}
 		server_response server_node::mempoolstate_get_transactions(http::connection* base, format::variables&& args)
 		{
@@ -3042,24 +3012,24 @@ namespace tangent
 			auto mempool = storages::mempoolstate();
 			if (unrolling == 0)
 			{
-				uptr<schema> data = var::set::array();
+				auto data = format::tree::list();
 				auto list = mempool.get_transactions(commitment, offset, count);
 				if (!list)
 					return server_response().error(error_codes::not_found, "transactions not found");
 
 				for (auto& item : *list)
-					data->push(var::set::string(algorithm::encoding::encode_0xhex256(item->as_hash())));
+					data.push(format::variable(algorithm::encoding::encode_0xhex256(item->as_hash())));
 				return server_response().success(std::move(data));
 			}
 			else
 			{
-				uptr<schema> data = var::set::array();
+				auto data = format::tree::list();
 				auto list = mempool.get_transactions(commitment, offset, count);
 				if (!list)
 					return server_response().error(error_codes::not_found, "transactions not found");
 
 				for (auto& item : *list)
-					data->push(item->as_schema().reset());
+					data.push(item->as_tree());
 				return server_response().success(std::move(data));
 			}
 		}
@@ -3078,24 +3048,24 @@ namespace tangent
 			auto mempool = storages::mempoolstate();
 			if (unrolling == 0)
 			{
-				uptr<schema> data = var::set::array();
+				auto data = format::tree::list();
 				auto list = mempool.get_transactions_by_owner(owner, direction >= 1 ? 1 : -1, offset, count);
 				if (!list)
 					return server_response().error(error_codes::not_found, "transactions not found");
 
 				for (auto& item : *list)
-					data->push(var::set::string(algorithm::encoding::encode_0xhex256(item->as_hash())));
+					data.push(format::variable(algorithm::encoding::encode_0xhex256(item->as_hash())));
 				return server_response().success(std::move(data));
 			}
 			else
 			{
-				uptr<schema> data = var::set::array();
+				auto data = format::tree::list();
 				auto list = mempool.get_transactions_by_owner(owner, direction >= 1 ? 1 : -1, offset, count);
 				if (!list)
 					return server_response().error(error_codes::not_found, "transactions not found");
 
 				for (auto& item : *list)
-					data->push(item->as_schema().reset());
+					data.push(item->as_tree());
 				return server_response().success(std::move(data));
 			}
 		}
@@ -3106,7 +3076,7 @@ namespace tangent
 			if (!status)
 				return server_response().error(error_codes::not_found, status.error().message());
 
-			return server_response().success(var::set::null());
+			return server_response().success(format::variable());
 		}
 		server_response server_node::validatorstate_revert(http::connection* base, format::variables&& args)
 		{
@@ -3133,15 +3103,15 @@ namespace tangent
 			if (!checkpoint)
 				return server_response().error(error_codes::bad_params, checkpoint.error().message());
 
-			auto* result = var::set::object();
-			result->set("new_tip_block_number", var::integer(checkpoint->new_tip_block_number));
-			result->set("old_tip_block_number", var::integer(checkpoint->old_tip_block_number));
-			result->set("mempool_transactions", var::integer(checkpoint->mempool_transactions));
-			result->set("transaction_delta", var::integer(checkpoint->transaction_delta));
-			result->set("block_delta", var::integer(checkpoint->block_delta));
-			result->set("state_delta", var::integer(checkpoint->state_delta));
-			result->set("is_fork", var::integer(checkpoint->is_fork));
-			return server_response().success(result);
+			auto result = format::tree::map();
+			result.set("new_tip_block_number", format::variable(checkpoint->new_tip_block_number));
+			result.set("old_tip_block_number", format::variable(checkpoint->old_tip_block_number));
+			result.set("mempool_transactions", format::variable(checkpoint->mempool_transactions));
+			result.set("transaction_delta", format::variable(decimal(checkpoint->transaction_delta)));
+			result.set("block_delta", format::variable(decimal(checkpoint->block_delta)));
+			result.set("state_delta", format::variable(decimal(checkpoint->state_delta)));
+			result.set("is_fork", format::variable(checkpoint->is_fork));
+			return server_response().success(std::move(result));
 		}
 		server_response server_node::validatorstate_reorganize(http::connection* base, format::variables&& args)
 		{
@@ -3156,15 +3126,15 @@ namespace tangent
 			if (!reorganization)
 				return server_response().error(error_codes::bad_params, reorganization.error().message());
 
-			auto* result = var::set::object();
-			result->set("new_tip_block_number", var::integer(checkpoint.new_tip_block_number));
-			result->set("old_tip_block_number", var::integer(checkpoint.old_tip_block_number));
-			result->set("mempool_transactions", var::integer(checkpoint.mempool_transactions));
-			result->set("transaction_delta", var::integer(checkpoint.transaction_delta));
-			result->set("block_delta", var::integer(checkpoint.block_delta));
-			result->set("state_delta", var::integer(checkpoint.state_delta));
-			result->set("is_fork", var::integer(checkpoint.is_fork));
-			return server_response().success(result);
+			auto result = format::tree::map();
+			result.set("new_tip_block_number", format::variable(checkpoint.new_tip_block_number));
+			result.set("old_tip_block_number", format::variable(checkpoint.old_tip_block_number));
+			result.set("mempool_transactions", format::variable(checkpoint.mempool_transactions));
+			result.set("transaction_delta", format::variable(decimal(checkpoint.transaction_delta)));
+			result.set("block_delta", format::variable(decimal(checkpoint.block_delta)));
+			result.set("state_delta", format::variable(decimal(checkpoint.state_delta)));
+			result.set("is_fork", format::variable(checkpoint.is_fork));
+			return server_response().success(std::move(result));
 		}
 		server_response server_node::validatorstate_verify(http::connection* base, format::variables&& args)
 		{
@@ -3176,7 +3146,7 @@ namespace tangent
 			auto checkpoint_number = chain.get_checkpoint_block_number().or_else(0);
 			auto tip_number = chain.get_latest_block_number().or_else(0);
 			auto parent_block = current_number > 1 ? chain.get_block_header_by_number(current_number - 1) : expects_lr<ledger::block_header>(layer_exception());
-			uptr<schema> data = var::set::array();
+			auto data = format::tree::list();
 			while (current_number < target_number)
 			{
 				auto next = chain.get_block_by_number(current_number);
@@ -3203,7 +3173,7 @@ namespace tangent
 						return server_response().error(error_codes::not_found, "block " + to_string(current_number) + " integrity verification failed: " + verification.error().message());
 				}
 
-				data->push(var::string(algorithm::encoding::encode_0xhex256(next->as_hash())));
+				data.push(format::variable(algorithm::encoding::encode_0xhex256(next->as_hash())));
 				parent_block = *next;
 				++current_number;
 			}
@@ -3222,7 +3192,7 @@ namespace tangent
 			if (!result)
 				return server_response().error(error_codes::bad_request, result.what());
 
-			return server_response().success(var::set::null());
+			return server_response().success(format::variable());
 		}
 		server_response server_node::validatorstate_reject_node(http::connection* base, format::variables&& args)
 		{
@@ -3239,7 +3209,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_request, "node not found");
 
 			node->abort("manually closed");
-			return server_response().success(var::set::null());
+			return server_response().success(format::variable());
 		}
 		server_response server_node::validatorstate_get_node(http::connection* base, format::variables&& args)
 		{
@@ -3256,69 +3226,69 @@ namespace tangent
 				return server_response().error(error_codes::bad_request, "node not found");
 
 			auto* descriptor = node->as_descriptor();
-			auto result = uptr(var::set::object());
-			result->set("validator", descriptor ? descriptor->first.as_schema().reset() : var::set::null());
-			result->set("wallet", descriptor ? descriptor->second.as_public_schema().reset() : var::set::null());
-			result->set("network", node->as_schema().reset());
+			auto result = format::tree::map();
+			result.set("validator", descriptor ? descriptor->first.as_tree() : format::variable());
+			result.set("wallet", descriptor ? descriptor->second.as_public_tree() : format::variable());
+			result.set("network", node->as_tree());
 			return server_response().success(std::move(result));
 		}
 		server_response server_node::validatorstate_get_blockchains(http::connection* base, format::variables&& args)
 		{
 			auto* server = superchain::server_node::get();
-			uptr<schema> data = var::set::array();
+			auto data = format::tree::list();
 			for (auto& asset : server->get_chains())
 			{
-				auto* next = data->push(algorithm::asset::serialize(asset.first));
-				next->set("divisibility", var::decimal(asset.second.divisibility));
-				next->set("sync_latency", var::integer(asset.second.sync_latency));
-				next->set("slow_transfer", var::boolean(asset.second.requires_transaction_expiration));
-				next->set("bulk_transfer", var::boolean(asset.second.supports_bulk_transfer));
+				auto* next = data.push(algorithm::asset::serialize(asset.first));
+				next->set("divisibility", format::variable(asset.second.divisibility));
+				next->set("sync_latency", format::variable(asset.second.sync_latency));
+				next->set("slow_transfer", format::variable(asset.second.requires_transaction_expiration));
+				next->set("bulk_transfer", format::variable(asset.second.supports_bulk_transfer));
 				switch (asset.second.composition)
 				{
 					case algorithm::composition::type::ed25519:
-						next->set("composition_policy", var::string("ed25519"));
+						next->set("composition_policy", format::variable("ed25519"));
 						break;
 					case algorithm::composition::type::ed25519_clsag:
-						next->set("composition_policy", var::string("ed25519_clsag"));
+						next->set("composition_policy", format::variable("ed25519_clsag"));
 						break;
 					case algorithm::composition::type::secp256k1:
-						next->set("composition_policy", var::string("secp256k1"));
+						next->set("composition_policy", format::variable("secp256k1"));
 						break;
 					case algorithm::composition::type::secp256k1_schnorr:
-						next->set("composition_policy", var::string("secp256k1_schnorr"));
+						next->set("composition_policy", format::variable("secp256k1_schnorr"));
 						break;
 					default:
-						next->set("composition_policy", var::null());
+						next->set("composition_policy", format::variable());
 						break;
 				}
 				switch (asset.second.tokenization)
 				{
 					case tangent::superchain::token_policy::none:
-						next->set("token_policy", var::string("none"));
+						next->set("token_policy", format::variable("none"));
 						break;
 					case tangent::superchain::token_policy::native:
-						next->set("token_policy", var::string("native"));
+						next->set("token_policy", format::variable("native"));
 						break;
 					case tangent::superchain::token_policy::program:
-						next->set("token_policy", var::string("program"));
+						next->set("token_policy", format::variable("program"));
 						break;
 					default:
-						next->set("token_policy", var::null());
+						next->set("token_policy", format::variable());
 						break;
 				}
 				switch (asset.second.routing)
 				{
 					case tangent::superchain::routing_policy::account:
-						next->set("routing_policy", var::string("account"));
+						next->set("routing_policy", format::variable("account"));
 						break;
 					case tangent::superchain::routing_policy::memo:
-						next->set("routing_policy", var::string("memo"));
+						next->set("routing_policy", format::variable("memo"));
 						break;
 					case tangent::superchain::routing_policy::utxo:
-						next->set("routing_policy", var::string("utxo"));
+						next->set("routing_policy", format::variable("utxo"));
 						break;
 					default:
-						next->set("routing_policy", var::null());
+						next->set("routing_policy", format::variable());
 						break;
 				}
 			}
@@ -3330,7 +3300,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_request, "validator node disabled");
 
 			auto& [validator, wallet] = consensus_service->descriptor;
-			return server_response().success(wallet.as_schema());
+			return server_response().success(wallet.as_tree());
 		}
 		server_response server_node::validatorstate_set_wallet(http::connection* base, format::variables&& args)
 		{
@@ -3360,7 +3330,7 @@ namespace tangent
 			if (!result)
 				return server_response().error(error_codes::bad_request, result.error().message());
 
-			return server_response().success(wallet.as_schema());
+			return server_response().success(wallet.as_tree());
 		}
 		server_response server_node::validatorstate_status(http::connection* base, format::variables&& args)
 		{
@@ -3370,103 +3340,103 @@ namespace tangent
 			auto chain = storages::chainstate();
 			auto block_header = chain.get_latest_block_header();
 			umutex<std::recursive_mutex> unique(consensus_service->get_mutex());
-			uptr<schema> data = var::set::object();
+			auto data = format::tree::map();
 			if (protocol::now().user.consensus.server)
 			{
-				auto* consensus = data->set("consensus", var::set::object());
-				consensus->set("port", var::integer(protocol::now().user.consensus.port));
-				consensus->set("time_offset", var::integer(protocol::now().user.consensus.time_offset));
-				consensus->set("max_inbound_connection", var::integer(protocol::now().user.consensus.max_inbound_connections));
-				consensus->set("max_outbound_connection", var::integer(protocol::now().user.consensus.max_outbound_connections));
+				auto* consensus = data.set("consensus", format::tree::map());
+				consensus->set("port", format::variable(protocol::now().user.consensus.port));
+				consensus->set("time_offset", format::variable(protocol::now().user.consensus.time_offset));
+				consensus->set("max_inbound_connection", format::variable(protocol::now().user.consensus.max_inbound_connections));
+				consensus->set("max_outbound_connection", format::variable(protocol::now().user.consensus.max_outbound_connections));
 			}
 
 			if (protocol::now().user.discovery.server)
 			{
-				auto* discovery = data->set("discovery", var::set::object());
-				discovery->set("port", var::integer(protocol::now().user.discovery.port));
+				auto* discovery = data.set("discovery", format::tree::map());
+				discovery->set("port", format::variable(protocol::now().user.discovery.port));
 			}
 
 			if (protocol::now().user.superchain.server)
 			{
-				auto* superchain = data->set("superchain", var::set::object());
-				superchain->set("block_relay_multiplier", var::integer(protocol::now().user.superchain.block_replay_multiplier));
-				superchain->set("relaying_timeout", var::integer(protocol::now().user.superchain.relaying_timeout));
-				superchain->set("relaying_retry_timeout", var::integer(protocol::now().user.superchain.relaying_retry_timeout));
-				auto array = superchain->set("nodes", var::set::array());
+				auto* superchain = data.set("superchain", format::tree::map());
+				superchain->set("block_relay_multiplier", format::variable(protocol::now().user.superchain.block_replay_multiplier));
+				superchain->set("relaying_timeout", format::variable(protocol::now().user.superchain.relaying_timeout));
+				superchain->set("relaying_retry_timeout", format::variable(protocol::now().user.superchain.relaying_retry_timeout));
+				auto array = superchain->set("nodes", format::tree::list());
 				for (auto& asset : superchain::server_node::get()->get_assets())
 					array->push(algorithm::asset::serialize(asset));
 			}
 
 			if (protocol::now().user.rpc.server)
 			{
-				auto* rpc = data->set("rpc", var::set::object());
-				rpc->set("port", var::integer(protocol::now().user.rpc.port));
-				rpc->set("cursor_size", var::integer(protocol::now().message.items_per_query));
-				rpc->set("page_size", var::integer(protocol::now().message.pages_per_query));
-				rpc->set("websockets", var::boolean(protocol::now().user.rpc.web_sockets));
-				rpc->set("isolated", var::boolean(protocol::now().user.rpc.isolated));
-				rpc->set("restricted", var::boolean(!protocol::now().user.rpc.username.empty()));
+				auto* rpc = data.set("rpc", format::tree::map());
+				rpc->set("port", format::variable(protocol::now().user.rpc.port));
+				rpc->set("cursor_size", format::variable(protocol::now().message.items_per_query));
+				rpc->set("page_size", format::variable(protocol::now().message.pages_per_query));
+				rpc->set("websockets", format::variable(protocol::now().user.rpc.web_sockets));
+				rpc->set("isolated", format::variable(protocol::now().user.rpc.isolated));
+				rpc->set("restricted", format::variable(!protocol::now().user.rpc.username.empty()));
 			}
 
-			auto* tcp = data->set("tcp", var::set::object());
-			tcp->set("timeout", var::integer(protocol::now().user.tcp.timeout));
+			auto* tcp = data.set("tcp", format::tree::map());
+			tcp->set("timeout", format::variable(protocol::now().user.tcp.timeout));
 
-			auto* storage = data->set("storage", var::set::object());
-			storage->set("checkpoint_size", var::integer(protocol::now().user.storage.checkpoint_size));
-			storage->set("transaction_to_account_index", var::boolean(protocol::now().user.storage.transaction_to_account_index));
-			storage->set("transaction_to_rollup_index", var::boolean(protocol::now().user.storage.transaction_to_rollup_index));
+			auto* storage = data.set("storage", format::tree::map());
+			storage->set("checkpoint_size", format::variable(protocol::now().user.storage.checkpoint_size));
+			storage->set("transaction_to_account_index", format::variable(protocol::now().user.storage.transaction_to_account_index));
+			storage->set("transaction_to_rollup_index", format::variable(protocol::now().user.storage.transaction_to_rollup_index));
 
 			if (block_header)
 			{
 				auto block_hash = block_header->as_hash();
-				schema* tip = data->set("tip", var::object());
-				tip->set("hash", var::string(algorithm::encoding::encode_0xhex256(block_hash)));
+				auto* tip = data.set("tip", format::tree::map());
+				tip->set("hash", format::variable(algorithm::encoding::encode_0xhex256(block_hash)));
 				tip->set("number", algorithm::encoding::serialize_uint256(block_header->number));
-				tip->set("sync", var::number(consensus_service->get_sync_progress(block_header ? block_header->number : 0)));
+				tip->set("sync", format::variable(decimal(consensus_service->get_sync_progress(block_header ? block_header->number : 0))));
 			}
 			else
-				data->set("tip", var::null());
+				data.set("tip", format::variable());
 
-			auto* connections = data->set("connections", var::set::array());
+			auto* connections = data.set("connections", format::tree::list());
 			for (auto& node : consensus_service->get_nodes())
 			{
 				auto* descriptor = node.second->as_descriptor();
-				auto data = uptr(var::set::object());
-				data->set("validator", descriptor ? descriptor->first.as_schema().reset() : var::set::null());
-				data->set("wallet", descriptor ? descriptor->second.as_public_schema().reset() : var::set::null());
-				data->set("network", node.second->as_schema().reset());
-				connections->push(data.reset());
+				auto node_data = format::tree::map();
+				node_data.set("validator", descriptor ? descriptor->first.as_tree() : format::variable());
+				node_data.set("wallet", descriptor ? descriptor->second.as_public_tree() : format::variable());
+				node_data.set("network", node.second->as_tree());
+				connections->push(std::move(node_data));
 			}
 
-			auto* forks = data->set("forks", var::set::array());
+			auto* forks = data.set("forks", format::tree::list());
 			for (auto& fork : consensus_service->forks)
 			{
-				schema* item = forks->push(var::set::object());
-				item->set("fork_hash", var::string(algorithm::encoding::encode_0xhex256(fork.first)));
+				auto* item = forks->push(format::tree::map());
+				item->set("fork_hash", format::variable(algorithm::encoding::encode_0xhex256(fork.first)));
 				item->set("tip_hash", algorithm::encoding::serialize_uint256(fork.second.header.as_hash()));
 				item->set("tip_number", algorithm::encoding::serialize_uint256(fork.second.header.number));
-				item->set("progress", var::number(consensus_service->get_sync_progress(block_header ? block_header->number : 0, *fork.second.state)));
+				item->set("progress", format::variable(decimal(consensus_service->get_sync_progress(block_header ? block_header->number : 0, *fork.second.state))));
 			}
 
 			switch (protocol::now().user.network)
 			{
 				case network_type::mainnet:
-					data->set("network", var::set::string("mainnet"));
+					data.set("network", format::variable("mainnet"));
 					break;
 				case network_type::testnet:
-					data->set("network", var::set::string("testnet"));
+					data.set("network", format::variable("testnet"));
 					break;
 				case network_type::regtest:
-					data->set("network", var::set::string("regtest"));
+					data.set("network", format::variable("regtest"));
 					break;
 				default:
-					data->set("network", var::set::null());
+					data.set("network", format::variable());
 					break;
 			}
 
-			data->set("version", var::string(algorithm::encoding::encode_0xhex128(protocol::now().message.protocol_version)));
-			data->set("checkpoint", algorithm::encoding::serialize_uint256(chain.get_checkpoint_block_number().or_else(0)));
-			return server_response().success(data.reset());
+			data.set("version", format::variable(algorithm::encoding::encode_0xhex128(protocol::now().message.protocol_version)));
+			data.set("checkpoint", algorithm::encoding::serialize_uint256(chain.get_checkpoint_block_number().or_else(0)));
+			return server_response().success(std::move(data));
 		}
 		server_response server_node::validatorstate_submit_block(http::connection* base, format::variables&& args)
 		{
@@ -3474,7 +3444,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_request, "validator node disabled");
 
 			consensus_service->run_block_production();
-			return server_response().success(var::set::null());
+			return server_response().success(format::variable());
 		}
 	}
 }

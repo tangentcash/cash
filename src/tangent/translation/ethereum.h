@@ -107,8 +107,8 @@ namespace tangent
 				ethereum(const algorithm::asset_id& new_asset) noexcept;
 				virtual ~ethereum() override = default;
 				virtual expects_promise_rt<uint64_t> get_latest_block_height() override;
-				virtual expects_promise_rt<schema*> get_block_transactions(uint64_t block_height, string* block_hash) override;
-				virtual expects_promise_rt<computed_transaction> link_transaction(uint64_t block_height, const std::string_view& block_hash, schema* transaction_data) override;
+				virtual expects_promise_rt<vector<block_log>> get_block_transactions(uint64_t block_height, uint64_t block_count) override;
+				virtual expects_promise_rt<computed_transaction> link_transaction(uint64_t block_height, const std::string_view& block_hash, format::tree& transaction_data) override;
 				virtual expects_promise_rt<computed_fee> estimate_transaction_fee(const wallet_link& from_link, const vector<value_transfer>& to);
 				virtual expects_promise_rt<decimal> calculate_balance(const algorithm::asset_id& for_asset, const wallet_link& link) override;
 				virtual expects_promise_rt<void> broadcast_transaction(const finalized_transaction& finalized) override;
@@ -127,7 +127,7 @@ namespace tangent
 				virtual const chainparams& get_chainparams() const override;
 
 			public:
-				virtual expects_promise_rt<schema*> get_transaction_receipt(const std::string_view& tx_id, bool cached);
+				virtual expects_promise_rt<format::tree> get_transaction_receipt(const std::string_view& tx_id, bool cached);
 				virtual expects_promise_rt<uint256_t> get_transactions_count(const std::string_view& address);
 				virtual expects_promise_rt<uint256_t> get_chain_id();
 				virtual expects_promise_rt<string> get_contract_symbol(const std::string_view& contract_address);
@@ -140,7 +140,7 @@ namespace tangent
 				virtual string decode_non_eth_address(const std::string_view& non_eth_address);
 				virtual string normalize_topic_address(const std::string_view& address);
 				virtual string uint256_to_hex(const uint256_t& data);
-				virtual string get_raw_gas_limit(schema* tx_data);
+				virtual string get_raw_gas_limit(const format::tree& tx_data);
 				virtual uint256_t hex_to_uint256(const std::string_view& data);
 				virtual uint256_t from_eth(const decimal& value, const decimal& divisibility = 1);
 				virtual decimal to_eth(const uint256_t& value, const decimal& divisibility = 1);

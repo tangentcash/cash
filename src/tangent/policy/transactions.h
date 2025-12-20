@@ -22,7 +22,7 @@ namespace tangent
 			bool load_body(format::ro_stream& stream) override;
 			bool recover_many(const ledger::executor_context* executor, const ledger::receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const override;
 			void set_to(const algorithm::pubkeyhash_t& new_to, const decimal& new_value);
-			uptr<schema> as_schema() const override;
+			format::tree as_tree() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
@@ -48,7 +48,7 @@ namespace tangent
 			void from_hashcode(const std::string_view& new_data, format::variables&& new_args);
 			algorithm::pubkeyhash_t get_account() const;
 			option<data_type> get_data_type() const;
-			uptr<schema> as_schema() const override;
+			format::tree as_tree() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
@@ -69,7 +69,7 @@ namespace tangent
 			bool load_body(format::ro_stream& stream) override;
 			bool recover_many(const ledger::executor_context* executor, const ledger::receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const override;
 			void program_call(const algorithm::pubkeyhash_t& new_callable, const decimal& new_value, const std::string_view& new_function, format::variables&& new_args);
-			uptr<schema> as_schema() const override;
+			format::tree as_tree() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
@@ -98,7 +98,7 @@ namespace tangent
 			bool is_dispatchable() const override;
 			expects_lr<ledger::block_transaction> resolve_block_transaction(const ledger::receipt& receipt, const uint256_t& transaction_hash) const;
 			const ledger::transaction* resolve_transaction(const uint256_t& transaction_hash) const;
-			uptr<schema> as_schema() const override;
+			format::tree as_tree() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
@@ -153,7 +153,7 @@ namespace tangent
 			bool is_dispatchable() const override;
 			expects_lr<vector<migration_ref>> get_migration_refs(const ledger::executor_context* executor, const ledger::receipt& receipt) const;
 			algorithm::pubkeyhash_t get_new_participant(const ledger::receipt& receipt, bool* requires_new_participant = nullptr) const;
-			uptr<schema> as_schema() const override;
+			format::tree as_tree() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
@@ -169,7 +169,7 @@ namespace tangent
 			expects_lr<void> execute(ledger::executor_context* executor) const override;
 			bool store_body(format::wo_stream* stream) const override;
 			bool load_body(format::ro_stream& stream) override;
-			uptr<schema> as_schema() const override;
+			format::tree as_tree() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
@@ -211,7 +211,7 @@ namespace tangent
 			void set_finalized_proof(uint64_t block_id, const std::string_view& transaction_id, const vector<superchain::value_transfer>& inputs, const vector<superchain::value_transfer>& outputs);
 			void set_computed_proof(superchain::computed_transaction&& new_proof, btree_map<uint256_t, btree_set<algorithm::hashsig_t>>&& new_commitments);
 			bool add_commitment(const algorithm::seckey_t& secret_key);
-			uptr<schema> as_schema() const override;
+			format::tree as_tree() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
@@ -236,7 +236,7 @@ namespace tangent
 			void set_routing_address(const std::string_view& new_address);
 			void set_manager(const algorithm::pubkeyhash_t& new_manager);
 			btree_set<algorithm::pubkeyhash_t> get_group(const ledger::receipt& receipt) const;
-			uptr<schema> as_schema() const override;
+			format::tree as_tree() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
@@ -256,7 +256,7 @@ namespace tangent
 			bool store_body(format::wo_stream* stream) const override;
 			bool load_body(format::ro_stream& stream) override;
 			bool recover_many(const ledger::executor_context* executor, const ledger::receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const override;
-			uptr<schema> as_schema() const override;
+			format::tree as_tree() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
@@ -281,7 +281,7 @@ namespace tangent
 			algorithm::pubkeyhash_t get_new_manager(const ledger::receipt& receipt) const;
 			decimal get_token_value(const ledger::executor_context* executor, const ledger::receipt& receipt) const;
 			decimal get_fee_value(const ledger::executor_context* executor) const;
-			uptr<schema> as_schema() const override;
+			format::tree as_tree() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
@@ -300,7 +300,7 @@ namespace tangent
 			bool load_body(format::ro_stream& stream) override;
 			bool recover_many(const ledger::executor_context* executor, const ledger::receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const override;
 			void set_proof(const uint256_t& new_withdraw_hash, expects_lr<superchain::finalized_transaction>&& new_proof);
-			uptr<schema> as_schema() const override;
+			format::tree as_tree() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();

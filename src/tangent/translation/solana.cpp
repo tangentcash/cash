@@ -72,56 +72,56 @@ namespace tangent
 				if (!block_height)
 					coreturn expects_rt<uint64_t>(std::move(block_height.error()));
 
-				uint64_t value = (uint64_t)block_height->value.get_integer();
-				memory::release(*block_height);
+				uint64_t value = block_height->value.as_uint64();
 				coreturn expects_rt<uint64_t>(value);
 			}
-			expects_promise_rt<schema*> solana::get_block_transactions(uint64_t block_height, string* block_hash)
+			expects_promise_rt<vector<block_log>> solana::get_block_transactions(uint64_t block_height, uint64_t block_count)
 			{
-				uptr<schema> config = var::set::object();
-				config->set("encoding", var::string("jsonParsed"));
-				config->set("maxSupportedTransactionVersion", var::integer(0));
-				config->set("transactionDetails", var::string("full"));
-				config->set("rewards", var::boolean(false));
+				format::tree config = format::tree::map();
+				config.set("encoding", format::variable("jsonParsed"));
+				config.set("maxSupportedTransactionVersion", format::variable((uint8_t)0));
+				config.set("transactionDetails", format::variable("full"));
+				config.set("rewards", format::variable(false));
 
-				schema_list map;
-				map.emplace_back(var::set::integer(block_height));
-				map.emplace_back(std::move(config));
-
-				auto block_data = coawait(execute_rpc(nd_call::get_block(), std::move(map), cache_policy::blob_cache));
-				if (!block_data)
-					coreturn block_data;
-
-				if (block_hash != nullptr)
-					*block_hash = block_data->get_var("blockhash").get_blob();
-
-				auto* transactions = block_data->get("transactions");
-				if (!transactions)
+				format::tree map;
+				for (uint64_t i = 0; i < block_count; i++)
 				{
-					memory::release(*block_data);
-					coreturn expects_rt<schema*>(remote_exception("transactions field not found"));
+					format::tree submap;
+					submap.push(format::variable(block_height + i));
+					submap.push(config);
+					map.push(std::move(submap));
 				}
 
-				transactions->unlink();
-				memory::release(*block_data);
-				coreturn expects_rt<schema*>(transactions);
+				auto block_data = coawait(execute_rpc_multi(nd_call::get_block(), std::move(map), cache_policy::blob_cache));
+				if (!block_data)
+					coreturn block_data.error();
+
+				vector<block_log> results;
+				for (auto& block : block_data->childs())
+				{
+					auto* transactions = (format::tree*)block.child("transactions");
+					auto& log = results.emplace_back();
+					log.block_hash = block.child_var("blockhash").as_blob();
+					log.transactions = transactions ? std::move(*transactions) : format::tree();
+				}
+				coreturn expects_rt<vector<block_log>>(std::move(results));
 			}
-			expects_promise_rt<computed_transaction> solana::link_transaction(uint64_t block_height, const std::string_view& block_hash, schema* transaction_data)
+			expects_promise_rt<computed_transaction> solana::link_transaction(uint64_t block_height, const std::string_view& block_hash, format::tree& transaction_data)
 			{
-				auto* error = transaction_data->fetch("meta.status.Err");
+				auto* error = transaction_data.child("meta.status.Err");
 				if (error != nullptr)
 					coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
 
-				auto* pre_balances = transaction_data->fetch("meta.preBalances");
-				auto* post_balances = transaction_data->fetch("meta.postBalances");
-				auto* account_keys = transaction_data->fetch("transaction.message.accountKeys");
-				if (!pre_balances || !post_balances || pre_balances->size() != post_balances->size() || pre_balances->empty() || !account_keys)
+				auto* pre_balances = transaction_data.child("meta.preBalances");
+				auto* post_balances = transaction_data.child("meta.postBalances");
+				auto* account_keys = transaction_data.child("transaction.message.accountKeys");
+				if (!pre_balances || !post_balances || pre_balances->childs().size() != post_balances->childs().size() || pre_balances->childs().empty() || !account_keys)
 					coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
 
 				bool non_transferring = true;
-				for (size_t i = 0; i < pre_balances->size(); i++)
+				for (size_t i = 0; i < pre_balances->childs().size(); i++)
 				{
-					if (pre_balances->get(i)->value.get_decimal() != post_balances->get(i)->value.get_decimal())
+					if (pre_balances->childs()[i].value.as_decimal() != post_balances->childs()[i].value.as_decimal())
 					{
 						non_transferring = false;
 						break;
@@ -131,33 +131,33 @@ namespace tangent
 					coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
 
 				hash_set<string> addresses;
-				for (auto& account_key : account_keys->get_childs())
-					addresses.insert(account_key->get_var("pubkey").get_blob());
+				for (auto& account_key : account_keys->childs())
+					addresses.insert(account_key.child_var("pubkey").as_blob());
 
-				auto* pre_token_balances = transaction_data->fetch("meta.preTokenBalances");
+				auto* pre_token_balances = transaction_data.child("meta.preTokenBalances");
 				if (pre_token_balances != nullptr)
 				{
-					for (auto& balance : pre_token_balances->get_childs())
-						addresses.insert(balance->get_var("owner").get_blob());
+					for (auto& balance : pre_token_balances->childs())
+						addresses.insert(balance.child_var("owner").as_blob());
 				}
 
-				auto* post_token_balances = transaction_data->fetch("meta.postTokenBalances");
+				auto* post_token_balances = transaction_data.child("meta.postTokenBalances");
 				if (post_token_balances != nullptr)
 				{
-					for (auto& balance : post_token_balances->get_childs())
-						addresses.insert(balance->get_var("owner").get_blob());
+					for (auto& balance : post_token_balances->childs())
+						addresses.insert(balance.child_var("owner").as_blob());
 				}
 
 				auto discovery = find_linked_addresses(addresses);
 				if (!discovery || discovery->empty())
 					coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
 
-				auto* instructions = transaction_data->fetch("transaction.message.instructions");
-				if (!instructions || instructions->empty())
+				auto* instructions = transaction_data.child("transaction.message.instructions");
+				if (!instructions || instructions->childs().empty())
 					coreturn expects_rt<computed_transaction>(remote_exception("tx not valid"));
 
-				auto signature = transaction_data->fetch_var("transaction.signatures.0").get_blob();
-				auto fee_value = transaction_data->fetch_var("meta.fee").get_decimal() / netdata.divisibility;
+				auto signature = transaction_data.child_var("transaction.signatures.0").as_blob();
+				auto fee_value = transaction_data.child_var("meta.fee").as_decimal() / netdata.divisibility;
 				bool fee_included = false;
 
 				computed_transaction tx;
@@ -165,18 +165,18 @@ namespace tangent
 
 				hash_map<string, hash_map<algorithm::asset_id, decimal>> inputs;
 				hash_map<string, hash_map<algorithm::asset_id, decimal>> outputs;
-				for (auto& instruction : instructions->get_childs())
+				for (auto& instruction : instructions->childs())
 				{
-					auto* info = instruction->fetch("parsed.info");
-					auto type = instruction->fetch_var("parsed.type").get_blob();
+					auto* info = instruction.child("parsed.info");
+					auto type = instruction.child_var("parsed.type").as_blob();
 					if (!info || type.empty())
 						continue;
 
 					if (type == "transfer" || type == "transferWithSeed")
 					{
-						auto from = info->get_var("source").get_blob();
-						auto to = info->get_var("destination").get_blob();
-						auto value = info->get_var("lamports").get_decimal() / netdata.divisibility;
+						auto from = info->child_var("source").as_blob();
+						auto to = info->child_var("destination").as_blob();
+						auto value = info->child_var("lamports").as_decimal() / netdata.divisibility;
 						if (!addresses.count(from) && !addresses.count(to))
 							continue;
 						else if (value.is_nan())
@@ -190,9 +190,9 @@ namespace tangent
 					}
 					else if (type == "createAccount" || type == "createAccountWithSeed")
 					{
-						auto from = info->get_var("source").get_blob();
-						auto to = info->get_var("newAccount").get_blob();
-						auto value = info->get_var("lamports").get_decimal() / netdata.divisibility;
+						auto from = info->child_var("source").as_blob();
+						auto to = info->child_var("newAccount").as_blob();
+						auto value = info->child_var("lamports").as_decimal() / netdata.divisibility;
 						if (!addresses.count(from) && !addresses.count(to))
 							continue;
 						else if (value.is_nan())
@@ -206,9 +206,9 @@ namespace tangent
 					}
 					else if (type == "withdrawFromNonce")
 					{
-						auto from = info->get_var("nonceAccount").get_blob();
-						auto to = info->get_var("destination").get_blob();
-						auto value = info->get_var("lamports").get_decimal() / netdata.divisibility;
+						auto from = info->child_var("nonceAccount").as_blob();
+						auto to = info->child_var("destination").as_blob();
+						auto value = info->child_var("lamports").as_decimal() / netdata.divisibility;
 						if (!addresses.count(from) && !addresses.count(to))
 							continue;
 						else if (value.is_nan())
@@ -222,9 +222,9 @@ namespace tangent
 					}
 					else if (type == "withdraw")
 					{
-						auto from = info->get_var("stakeAccount").get_blob();
-						auto to = info->get_var("destination").get_blob();
-						auto value = info->get_var("lamports").get_decimal() / netdata.divisibility;
+						auto from = info->child_var("stakeAccount").as_blob();
+						auto to = info->child_var("destination").as_blob();
+						auto value = info->child_var("lamports").as_decimal() / netdata.divisibility;
 						if (!addresses.count(from) && !addresses.count(to))
 							continue;
 						else if (value.is_nan())
@@ -238,9 +238,9 @@ namespace tangent
 					}
 					else if (type == "split")
 					{
-						auto from = info->get_var("stakeAccount").get_blob();
-						auto to = info->get_var("newSplitAccount").get_blob();
-						auto value = info->get_var("lamports").get_decimal() / netdata.divisibility;
+						auto from = info->child_var("stakeAccount").as_blob();
+						auto to = info->child_var("newSplitAccount").as_blob();
+						auto value = info->child_var("lamports").as_decimal() / netdata.divisibility;
 						if (!addresses.count(from) && !addresses.count(to))
 							continue;
 						else if (value.is_nan())
@@ -255,35 +255,35 @@ namespace tangent
 				}
 
 				hash_map<string, hash_map<string, decimal>> prev_token_state;
-				if (pre_token_balances != nullptr && !pre_token_balances->empty())
+				if (pre_token_balances != nullptr && !pre_token_balances->childs().empty())
 				{
-					for (auto& balance : pre_token_balances->get_childs())
+					for (auto& balance : pre_token_balances->childs())
 					{
-						decimal value = balance->fetch_var("uiTokenAmount.amount").get_decimal();
+						decimal value = balance.child_var("uiTokenAmount.amount").as_decimal();
 						if (!value.is_positive())
 							continue;
 
-						string mint = balance->get_var("mint").get_blob();
-						string owner = balance->get_var("owner").get_blob();
+						string mint = balance.child_var("mint").as_blob();
+						string owner = balance.child_var("owner").as_blob();
 						auto& change = prev_token_state[mint][owner];
-						value = algorithm::arithmetic::divide(value, algorithm::arithmetic::range(balance->fetch_var("uiTokenAmount.decimals").get_integer()));
+						value = algorithm::arithmetic::divide(value, algorithm::arithmetic::range(balance.child_var("uiTokenAmount.decimals").as_uint64()));
 						change = change.is_nan() ? value : (change + value);
 					}
 				}
 
 				hash_map<string, hash_map<string, decimal>> next_token_state;
-				if (post_token_balances != nullptr && !post_token_balances->empty())
+				if (post_token_balances != nullptr && !post_token_balances->childs().empty())
 				{
-					for (auto& balance : post_token_balances->get_childs())
+					for (auto& balance : post_token_balances->childs())
 					{
-						decimal value = balance->fetch_var("uiTokenAmount.amount").get_decimal();
+						decimal value = balance.child_var("uiTokenAmount.amount").as_decimal();
 						if (value.is_nan() || value.is_negative())
 							continue;
 
-						string mint = balance->get_var("mint").get_blob();
-						string owner = balance->get_var("owner").get_blob();
+						string mint = balance.child_var("mint").as_blob();
+						string owner = balance.child_var("owner").as_blob();
 						auto& change = next_token_state[mint][owner];
-						value = algorithm::arithmetic::divide(value, algorithm::arithmetic::range(balance->fetch_var("uiTokenAmount.decimals").get_integer()));
+						value = algorithm::arithmetic::divide(value, algorithm::arithmetic::range(balance.child_var("uiTokenAmount.decimals").as_uint64()));
 						change = change.is_nan() ? value : (value + change);
 					}
 				}
@@ -352,16 +352,15 @@ namespace tangent
 			{
 				if (algorithm::asset::token_of(asset).empty())
 				{
-					schema_list map;
-					map.emplace_back(var::set::string(link.address));
-					map.emplace_back(var::set::null());
+					format::tree map;
+					map.push(format::variable(link.address));
+					map.push(format::variable());
 
 					auto balance = coawait(execute_rpc(nd_call::get_balance(), std::move(map), cache_policy::no_cache));
 					if (!balance)
 						coreturn expects_rt<decimal>(std::move(balance.error()));
 
-					decimal value = algorithm::arithmetic::divide(balance->get_var("value").get_decimal(), netdata.divisibility);
-					memory::release(*balance);
+					decimal value = algorithm::arithmetic::divide(balance->child_var("value").as_decimal(), netdata.divisibility);
 					coreturn expects_rt<decimal>(to_value(value));
 				}
 				else
@@ -379,15 +378,14 @@ namespace tangent
 			}
 			expects_promise_rt<void> solana::broadcast_transaction(const finalized_transaction& finalized)
 			{
-				schema_list map;
-				map.emplace_back(var::set::string(finalized.calldata));
-				map.emplace_back(var::set::null());
+				format::tree map;
+				map.push(format::variable(finalized.calldata));
+				map.push(format::variable());
 
 				auto status = coawait(execute_rpc(nd_call::send_transaction(), std::move(map), cache_policy::no_cache_no_throttling));
 				if (!status)
 					coreturn expects_rt<void>(std::move(status.error()));
 
-				memory::release(*status);
 				coreturn expects_rt<void>(expectation::met);
 			}
 			expects_promise_rt<prepared_transaction> solana::prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const decimal& max_fee)
@@ -593,9 +591,8 @@ namespace tangent
 				if (!metadata)
 					coreturn expects_rt<string>(std::move(metadata.error()));
 
-				string symbol1 = metadata->fetch_var("tokenList.symbol").get_blob();
-				string symbol2 = metadata->fetch_var("tokenMetadata.onChainInfo.symbol").get_blob();
-				memory::release(*metadata);
+				string symbol1 = metadata->child_var("tokenList.symbol").as_blob();
+				string symbol2 = metadata->child_var("tokenMetadata.onChainInfo.symbol").as_blob();
 				if (!symbol2.empty())
 					coreturn expects_rt<string>(std::move(symbol2));
 
@@ -606,29 +603,23 @@ namespace tangent
 			}
 			expects_promise_rt<solana::token_account> solana::get_token_balance(const std::string_view& mint, const std::string_view& owner)
 			{
-				schema_list map;
-				map.emplace_back(var::set::string(owner));
-				map.emplace_back(var::set::object());
-				map.back()->set("mint", var::string(mint));
-				map.emplace_back(var::set::object());
-				map.back()->set("encoding", var::string("jsonParsed"));
+				format::tree map;
+				map.push(format::variable(owner));
+				map.push(format::tree::map())->set("mint", format::variable(mint));
+				map.push(format::tree::map())->set("encoding", format::variable("jsonParsed"));
 
 				auto balance = coawait(execute_rpc(nd_call::get_token_balance(), std::move(map), cache_policy::no_cache_no_throttling));
 				if (!balance)
 					coreturn expects_rt<token_account>(std::move(balance.error()));
 
-				auto* info = balance->fetch("value.0.account.data.parsed.info.tokenAmount");
+				auto* info = balance->child("value.0.account.data.parsed.info.tokenAmount");
 				if (!info)
-				{
-					memory::release(*balance);
 					coreturn expects_rt<token_account>(remote_exception("invalid account"));
-				}
 
-				string program_id = balance->fetch_var("value.0.account.owner").get_blob();
-				string account = balance->fetch_var("value.0.pubkey").get_blob();
-				decimal value = info->get_var("amount").get_decimal();
-				decimal divisibility = algorithm::arithmetic::range(info->get_var("decimals").get_integer());
-				memory::release(*balance);
+				string program_id = balance->child_var("value.0.account.owner").as_blob();
+				string account = balance->child_var("value.0.pubkey").as_blob();
+				decimal value = info->child_var("amount").as_decimal();
+				decimal divisibility = algorithm::arithmetic::range(info->child_var("decimals").as_uint64());
 				if (value.is_nan())
 					coreturn expects_rt<token_account>(remote_exception("invalid account"));
 
@@ -641,19 +632,18 @@ namespace tangent
 			}
 			expects_promise_rt<decimal> solana::get_balance(const std::string_view& owner)
 			{
-				schema_list map;
-				map.emplace_back(var::set::string(owner));
+				format::tree map;
+				map.push(format::variable(owner));
 
 				auto balance = coawait(execute_rpc(nd_call::get_balance(), std::move(map), cache_policy::no_cache_no_throttling));
 				if (!balance)
 					coreturn expects_rt<decimal>(std::move(balance.error()));
 
-				decimal value = balance->get_var("value").get_decimal();
-				memory::release(*balance);
+				decimal value = balance->child_var("value").as_decimal();
 				if (value.is_nan())
 					coreturn expects_rt<decimal>(remote_exception("invalid account"));
 
-				value /= netdata.divisibility;
+				value = algorithm::arithmetic::divide(value, netdata.divisibility);
 				coreturn expects_rt<decimal>(std::move(value));
 			}
 			expects_promise_rt<string> solana::get_recent_block_hash()
@@ -662,8 +652,7 @@ namespace tangent
 				if (!hash)
 					coreturn expects_rt<string>(std::move(hash.error()));
 
-				string value = hash->fetch_var("value.blockhash").get_blob();
-				memory::release(*hash);
+				string value = hash->child_var("value.blockhash").as_blob();
 				if (value.empty())
 					coreturn expects_rt<string>(remote_exception("invalid hash"));
 

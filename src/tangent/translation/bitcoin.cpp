@@ -133,15 +133,15 @@ namespace tangent
 				}
 				return false;
 			}
-			static size_t resolve_address_types(schema* options)
+			static size_t resolve_address_types(format::tree* options)
 			{
 				size_t types = 0;
-				if (options != nullptr && options->value.is(var_type::array))
+				if (options != nullptr && options->is_list())
 				{
 					types = 0;
-					for (auto& type : options->get_childs())
+					for (auto& type : options->childs())
 					{
-						std::string_view name = type->value.get_string();
+						std::string_view name = type.value.as_string();
 						if (name == "p2pk")
 							types |= (size_t)bitcoin::address_format::pay2_public_key;
 						else if (name == "p2sh_p2wpkh")
@@ -223,87 +223,87 @@ namespace tangent
 				if (!block_count)
 					coreturn expects_rt<uint64_t>(std::move(block_count.error()));
 
-				uint64_t block_height = (uint64_t)block_count->value.get_integer();
-				memory::release(*block_count);
+				uint64_t block_height = (uint64_t)block_count->value.as_uint64();
 				coreturn expects_rt<uint64_t>(block_height);
 			}
-			expects_promise_rt<schema*> bitcoin::get_block_transactions(uint64_t block_height, string* block_hash)
+			expects_promise_rt<vector<block_log>> bitcoin::get_block_transactions(uint64_t block_height, uint64_t block_count)
 			{
-				schema_list hash_map;
-				hash_map.emplace_back(var::set::integer(block_height));
+				format::tree hashes_map;
+				for (uint64_t i = 0; i < block_count; i++)
+					hashes_map.push(format::variable(block_height + 1));
 
-				auto block_id = coawait(execute_rpc(nd_call::get_block_hash(), std::move(hash_map), cache_policy::blob_cache));
-				if (!block_id)
-					coreturn block_id;
+				auto block_ids = coawait(execute_rpc_multi(nd_call::get_block_hash(), std::move(hashes_map), cache_policy::blob_cache));
+				if (!block_ids)
+					coreturn block_ids.error();
 
-				if (block_hash != nullptr)
-					*block_hash = block_id->value.get_blob();
+				format::tree map;
+				for (auto& block_hash : block_ids->childs())
+				{
+					format::tree block_map;
+					block_map.push(format::variable(block_hash.value.as_blob()));
+					block_map.push(legacy.get_block ? format::variable(true) : format::variable(legacy.enormous_block_size ? (uint8_t)1 : (uint8_t)2));
+					map.push(std::move(block_map));
+				}
 
-				schema_list block_map;
-				block_map.emplace_back(var::set::string(block_id->value.get_blob()));
-				block_map.emplace_back(legacy.get_block ? var::set::boolean(true) : var::set::integer(legacy.enormous_block_size ? 1 : 2));
-
-				auto block_data = coawait(execute_rpc(nd_call::get_block(), std::move(block_map), cache_policy::temporary_cache));
+				auto block_data = coawait(execute_rpc_multi(nd_call::get_block(), std::move(map), cache_policy::temporary_cache));
 				if (!block_data)
 				{
-					schema_list legacy_block_map;
-					legacy_block_map.emplace_back(var::set::string(block_id->value.get_blob()));
-					legacy_block_map.emplace_back(var::set::boolean(true));
-
-					block_data = coawait(execute_rpc(nd_call::get_block(), std::move(legacy_block_map), cache_policy::temporary_cache));
-					if (!block_data)
+					map.childs().clear();
+					for (auto& block_hash : block_ids->childs())
 					{
-						memory::release(*block_id);
-						coreturn block_data;
+						format::tree legacy_block_map;
+						legacy_block_map.push(format::variable(block_hash.value.as_blob()));
+						legacy_block_map.push(format::variable(true));
+						map.push(std::move(legacy_block_map));
 					}
-					else
-						legacy.get_block = 1;
+
+					block_data = coawait(execute_rpc(nd_call::get_block(), std::move(map), cache_policy::temporary_cache));
+					if (!block_data)
+						coreturn block_data.error();
+					
+					legacy.get_block = 1;
 				}
 
-				memory::release(*block_id);
-				auto* transactions = block_data->get("tx");
-				if (!transactions)
+				vector<block_log> results;
+				for (auto& block : block_data->childs())
 				{
-					memory::release(*block_data);
-					coreturn expects_rt<schema*>(remote_exception("tx field not found"));
+					auto* transactions = (format::tree*)block.child("tx");
+					auto& log = results.emplace_back();
+					log.block_hash = block.child_var("hash").as_blob();
+					log.transactions = transactions ? std::move(*transactions) : format::tree();
 				}
-
-				transactions->unlink();
-				memory::release(*block_data);
-				coreturn expects_rt<schema*>(transactions);
+				coreturn expects_rt<vector<block_log>>(std::move(results));
 			}
-			expects_promise_rt<computed_transaction> bitcoin::link_transaction(uint64_t block_height, const std::string_view& block_hash, schema* transaction_data)
+			expects_promise_rt<computed_transaction> bitcoin::link_transaction(uint64_t block_height, const std::string_view& block_hash, format::tree& transaction_data)
 			{
-				uptr<schema> transaction_data_postload;
-				if (!transaction_data->value.is_object())
+				if (!transaction_data.is_map())
 				{
-					auto transaction_data_result = coawait(get_transaction(transaction_data->value.get_blob()));
-					if (!transaction_data_result)
-						coreturn expects_rt<computed_transaction>(std::move(transaction_data_result.error()));
+					auto transaction_data_postload = coawait(get_transaction(transaction_data.value.as_blob()));
+					if (!transaction_data_postload)
+						coreturn expects_rt<computed_transaction>(std::move(transaction_data_postload.error()));
 
-					transaction_data_postload = *transaction_data_result;
-					transaction_data = *transaction_data_postload;
+					transaction_data = std::move(*transaction_data_postload);
 				}
 
 				hash_set<string> addresses;
-				schema* tx_inputs = transaction_data->get("vin");
+				auto* tx_inputs = transaction_data.child("vin");
 				if (tx_inputs != nullptr)
 				{
-					for (auto& input : tx_inputs->get_childs())
+					for (auto& input : tx_inputs->childs())
 					{
-						if (input->has("txid") && input->has("vout"))
+						if (input.has("txid") && input.has("vout"))
 						{
-							auto output = get_utxo(input->get_var("txid").get_blob(), (uint32_t)input->get_var("vout").get_integer());
+							auto output = get_utxo(input.child_var("txid").as_blob(), input.child_var("vout").as_uint64());
 							if (output && output->link.has_all())
 								addresses.insert(output->link.address);
 						}
 					}
 				}
 
-				schema* tx_outputs = transaction_data->get("vout");
+				auto* tx_outputs = transaction_data.child("vout");
 				if (tx_outputs != nullptr)
 				{
-					for (auto& output : tx_outputs->get_childs())
+					for (auto& output : tx_outputs->childs())
 					{
 						bool is_allowed = true;
 						auto input = get_output_addresses(output, &is_allowed);
@@ -320,11 +320,11 @@ namespace tangent
 
 				if (tx_inputs != nullptr)
 				{
-					for (auto& input : tx_inputs->get_childs())
+					for (auto& input : tx_inputs->childs())
 					{
-						if (input->has("txid") && input->has("vout"))
+						if (input.has("txid") && input.has("vout"))
 						{
-							auto output = coawait(get_transaction_output(input->get_var("txid").get_blob(), input->get_var("vout").get_integer()));
+							auto output = coawait(get_transaction_output(input.child_var("txid").as_blob(), input.child_var("vout").as_uint64()));
 							if (output && output->link.has_all())
 								addresses.insert(output->link.address);
 						}
@@ -336,16 +336,16 @@ namespace tangent
 					coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
 
 				computed_transaction tx;
-				tx.transaction_id = transaction_data->get_var("txid").get_blob();
+				tx.transaction_id = transaction_data.child_var("txid").as_blob();
 
 				bool is_coinbase = false;
 				if (tx_inputs != nullptr)
 				{
-					for (auto& input : tx_inputs->get_childs())
+					for (auto& input : tx_inputs->childs())
 					{
-						if (!input->has("coinbase"))
+						if (!input.has("coinbase"))
 						{
-							auto output = coawait(get_transaction_output(input->get_var("txid").get_blob(), input->get_var("vout").get_integer()));
+							auto output = coawait(get_transaction_output(input.child_var("txid").as_blob(), input.child_var("vout").as_uint64()));
 							if (output)
 								tx.add_input(std::move(*output));
 						}
@@ -357,12 +357,12 @@ namespace tangent
 				if (tx_outputs != nullptr)
 				{
 					uint64_t output_index = 0;
-					for (auto& output : tx_outputs->get_childs())
+					for (auto& output : tx_outputs->childs())
 					{
 						coin_utxo new_output;
 						new_output.transaction_id = tx.transaction_id;
-						new_output.value = output->get_var("value").get_decimal();
-						new_output.index = (uint64_t)(output->has("n") ? output->get_var("n").get_integer() : output_index);
+						new_output.value = output.child_var("value").as_decimal();
+						new_output.index = output.has("n") ? output.child_var("n").as_uint64() : output_index;
 						if (new_output.index > (uint64_t)tx.outputs.size())
 							new_output.index = output_index;
 
@@ -404,8 +404,8 @@ namespace tangent
 			}
 			expects_promise_rt<void> bitcoin::broadcast_transaction(const finalized_transaction& finalized)
 			{
-				schema_list map;
-				map.emplace_back(var::set::string(format::util::clear_0xhex(finalized.calldata)));
+				format::tree map;
+				map.push(format::variable(format::util::clear_0xhex(finalized.calldata)));
 
 				auto hex_data = coawait(execute_rpc(nd_call::send_raw_transaction(), std::move(map), cache_policy::no_cache_no_throttling));
 				if (!hex_data)
@@ -417,7 +417,6 @@ namespace tangent
 					coreturn expects_rt<void>(std::move(hex_data.error()));
 				}
 
-				memory::release(*hex_data);
 				coreturn expects_rt<void>(expectation::met);
 			}
 			expects_promise_rt<computed_fee> bitcoin::estimate_transaction_fee(const wallet_link& from_link, const vector<value_transfer>& to)
@@ -518,32 +517,29 @@ namespace tangent
 
 					if (legacy.get_block_stats == 1)
 					{
-						auto transactions = uptr(coawait(get_block_transactions(prev_block_height, nullptr)).or_else(nullptr));
-						if (transactions)
+						auto blocks = coawait(get_block_transactions(prev_block_height, 1));
+						if (blocks && !blocks->empty())
 						{
-							for (auto& transaction : transactions->get_childs())
+							for (auto& transaction : blocks->begin()->transactions.childs())
 							{
-								auto* transaction_data = transaction;
-								uptr<schema> transaction_data_postload;
-								if (!transaction_data->value.is_object())
+								if (!transaction.is_map())
 								{
-									auto transaction_data_result = coawait(get_transaction(transaction_data->value.get_blob()));
-									if (!transaction_data_result)
+									auto transaction_data_postload = coawait(get_transaction(transaction.value.as_blob()));
+									if (!transaction_data_postload)
 										continue;
 
-									transaction_data_postload = *transaction_data_result;
-									transaction_data = *transaction_data_postload;
+									transaction = std::move(*transaction_data_postload);
 								}
 
 								decimal fee = decimal::zero();
-								schema* tx_inputs = transaction_data->get("vin");
+								auto* tx_inputs = transaction.child("vin");
 								if (tx_inputs != nullptr)
 								{
-									for (auto& input : tx_inputs->get_childs())
+									for (auto& input : tx_inputs->childs())
 									{
-										if (!input->has("coinbase") && input->has("txid") && input->has("vout"))
+										if (!input.has("coinbase") && input.has("txid") && input.has("vout"))
 										{
-											auto output = coawait(get_transaction_output(input->get_var("txid").get_blob(), input->get_var("vout").get_integer()));
+											auto output = coawait(get_transaction_output(input.child_var("txid").as_blob(), input.child_var("vout").as_uint64()));
 											if (output)
 												fee += output->value;
 										}
@@ -554,25 +550,25 @@ namespace tangent
 										continue;
 								}
 
-								schema* tx_outputs = transaction_data->get("vout");
+								auto* tx_outputs = transaction.child("vout");
 								if (tx_outputs != nullptr)
 								{
-									for (auto& output : tx_outputs->get_childs())
-										fee -= output->get_var("value").get_decimal();
+									for (auto& output : tx_outputs->childs())
+										fee -= output.child_var("value").as_decimal();
 								}
 
 								if (!fee.is_zero() && !fee.is_positive())
 									continue;
 
-								if (!transaction_data->has("size"))
+								if (!transaction.has("size"))
 								{
-									if (transaction_data->has("hex"))
-										fee /= decimal(std::max<size_t>(1, transaction_data->get("hex")->value.size())).truncate(protocol::now().message.decimal_precision);
+									if (transaction.has("hex"))
+										fee /= decimal(std::max<size_t>(1, transaction.child("hex")->value.as_string().size())).truncate(protocol::now().message.decimal_precision);
 									else
 										fee /= decimal(virtual_size).truncate(protocol::now().message.decimal_precision);
 								}
 								else
-									fee /= decimal(std::max<int64_t>(1, transaction_data->get("size")->value.get_integer())).truncate(protocol::now().message.decimal_precision);
+									fee /= decimal(std::max<int64_t>(1, transaction.child("size")->value.as_uint64())).truncate(protocol::now().message.decimal_precision);
 
 								fee = std::min(min_fee_rate, fee);
 								fee_rates.push_back(std::move(fee));
@@ -582,35 +578,35 @@ namespace tangent
 					else
 					{
 					retry:
-						schema_list map;
+						format::tree map;
 						if (legacy.get_block_stats)
 						{
-							schema_list hash_map;
-							hash_map.emplace_back(var::set::integer(prev_block_height));
+							format::tree hash_map;
+							hash_map.push(format::variable(prev_block_height));
 
 							auto block_id = coawait(execute_rpc(nd_call::get_block_hash(), std::move(hash_map), cache_policy::blob_cache));
 							if (!block_id)
 								continue;
 
-							map.emplace_back(*block_id);
+							map.push(*block_id);
 						}
 						else
-							map.emplace_back(var::set::integer(prev_block_height));
-						map.emplace_back(var::set::null());
+							map.push(format::variable(prev_block_height));
+						map.push(format::variable());
 
 						auto block_stats = coawait(execute_rpc(nd_call::get_block_stats(), std::move(map), cache_policy::no_cache_no_throttling));
 						if (block_stats)
 						{
-							auto avg_fee_rate = block_stats->get_var("avgfeerate").get_decimal();
+							auto avg_fee_rate = block_stats->child_var("avgfeerate").as_decimal();
 							if (avg_fee_rate.is_zero() || avg_fee_rate.is_positive())
 								fee_rates.push_back(std::max(min_fee_rate, std::move(avg_fee_rate)));
 
-							auto median_fee = block_stats->get_var("medianfee").get_decimal();
-							auto median_tx_size = block_stats->get_var("mediantxsize").get_decimal();
+							auto median_fee = block_stats->child_var("medianfee").as_decimal();
+							auto median_tx_size = block_stats->child_var("mediantxsize").as_decimal();
 							if ((median_fee.is_zero() || median_fee.is_positive()) && (median_tx_size.is_zero() || median_tx_size.is_positive()))
 								fee_rates.push_back(std::max(min_fee_rate, median_fee / median_tx_size.truncate(protocol::now().message.decimal_precision)));
 
-							auto fee_rate_50th_percentile = block_stats->fetch_var("feerate_percentiles.2").get_decimal();
+							auto fee_rate_50th_percentile = block_stats->child_var("feerate_percentiles.2").as_decimal();
 							if (fee_rate_50th_percentile.is_zero() || fee_rate_50th_percentile.is_positive())
 								fee_rates.push_back(std::max(min_fee_rate, std::move(fee_rate_50th_percentile)));
 						}
@@ -1282,25 +1278,25 @@ namespace tangent
 
 				return expectation::met;
 			}
-			expects_promise_rt<schema*> bitcoin::get_transaction(const std::string_view& transaction_id)
+			expects_promise_rt<format::tree> bitcoin::get_transaction(const std::string_view& transaction_id)
 			{
-				schema_list transaction_map;
-				transaction_map.emplace_back(var::set::string(format::util::clear_0xhex(transaction_id)));
-				transaction_map.emplace_back(legacy.get_raw_transaction ? var::set::boolean(true) : var::set::integer(2));
+				format::tree transaction_map;
+				transaction_map.push(format::variable(format::util::clear_0xhex(transaction_id)));
+				transaction_map.push(legacy.get_raw_transaction ? format::variable(true) : format::variable((uint8_t)2));
 
 				auto tx_data = coawait(execute_rpc(nd_call::get_raw_transaction(), std::move(transaction_map), cache_policy::blob_cache));
 				if (!tx_data)
 				{
-					schema_list legacy_transaction_map;
-					legacy_transaction_map.emplace_back(var::set::string(format::util::clear_0xhex(transaction_id)));
-					legacy_transaction_map.emplace_back(var::set::boolean(true));
+					format::tree legacy_transaction_map;
+					legacy_transaction_map.push(format::variable(format::util::clear_0xhex(transaction_id)));
+					legacy_transaction_map.push(format::variable(true));
 
 					tx_data = coawait(execute_rpc(nd_call::get_raw_transaction(), std::move(legacy_transaction_map), cache_policy::blob_cache));
 					if (tx_data)
 						legacy.get_raw_transaction = 1;
 				}
-				if (!*tx_data)
-					coreturn expects_rt<schema*>(remote_exception("tx not found"));
+				if (!tx_data)
+					coreturn expects_rt<format::tree>(remote_exception("tx not found"));
 
 				coreturn tx_data;
 			}
@@ -1312,25 +1308,19 @@ namespace tangent
 
 				auto tx_data = coawait(get_transaction(transaction_id));
 				if (!tx_data->has("vout"))
-				{
-					memory::release(*tx_data);
 					coreturn expects_rt<coin_utxo>(remote_exception("transaction does not have any utxo"));
-				}
 
-				auto* vout = tx_data->fetch("vout." + to_string(index));
+				auto* vout = tx_data->child("vout." + to_string(index));
 				if (!vout)
-				{
-					memory::release(*tx_data);
 					coreturn expects_rt<coin_utxo>(remote_exception("transaction does not have specified utxo"));
-				}
 
 				coin_utxo input;
 				input.transaction_id = transaction_id;
-				input.value = vout->get_var("value").get_decimal();
+				input.value = vout->child_var("value").as_decimal();
 				input.index = index;
 
 				bool is_allowed = true;
-				auto addresses = get_output_addresses(vout, &is_allowed);
+				auto addresses = get_output_addresses(*vout, &is_allowed);
 				if (is_allowed && !addresses.empty())
 				{
 					auto discovery = find_linked_addresses(addresses);
@@ -1340,28 +1330,27 @@ namespace tangent
 						input.link = wallet_link::from_address(*addresses.begin());
 				}
 
-				memory::release(*tx_data);
 				coreturn expects_rt<coin_utxo>(std::move(input));
 			}
-			hash_set<string> bitcoin::get_output_addresses(schema* tx_output, bool* is_allowed)
+			hash_set<string> bitcoin::get_output_addresses(const format::tree& tx_output, bool* is_allowed)
 			{
 				bool allowance = true;
 				hash_set<string> addresses;
-				auto* script_pub_key = tx_output->get("scriptPubKey");
+				auto* script_pub_key = tx_output.child("scriptPubKey");
 				if (script_pub_key != nullptr)
 				{
 					if (script_pub_key->has("address"))
 					{
-						string value = script_pub_key->get_var("address").get_blob();
+						string value = script_pub_key->child_var("address").as_blob();
 						if (!value.empty())
 							addresses.insert(value);
 					}
 
 					if (script_pub_key->has("addresses"))
 					{
-						for (auto& item : script_pub_key->get("addresses")->get_childs())
+						for (auto& item : script_pub_key->child("addresses")->childs())
 						{
-							string value = item->value.get_blob();
+							string value = item.value.as_blob();
 							if (!value.empty())
 								addresses.insert(value);
 						}
@@ -1369,10 +1358,10 @@ namespace tangent
 
 					if (script_pub_key->has("type"))
 					{
-						string type = script_pub_key->get_var("type").get_blob();
+						string type = script_pub_key->child_var("type").as_blob();
 						if (type == "pubkey")
 						{
-							string raw = script_pub_key->get_var("asm").get_blob();
+							string raw = script_pub_key->child_var("asm").as_blob();
 							size_t index = raw.find(' ');
 							allowance = index != std::string::npos;
 							if (allowance)

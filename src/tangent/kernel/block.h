@@ -62,7 +62,7 @@ namespace tangent
 			block_transaction& operator= (const block_transaction& other);
 			bool store_payload(format::wo_stream* stream) const override;
 			bool load_payload(format::ro_stream& stream) override;
-			uptr<schema> as_schema() const override;
+			format::tree as_tree() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
@@ -82,7 +82,7 @@ namespace tangent
 				state_change(state_change&& other) noexcept;
 				state_change& operator=(const state_change& other) noexcept;
 				state_change& operator=(state_change&& other) noexcept;
-				uptr<schema> as_schema() const;
+				format::tree as_tree() const;
 				bool empty() const;
 			};
 
@@ -190,7 +190,7 @@ namespace tangent
 			virtual decimal get_proof_difficulty_multiplier() const;
 			virtual uint64_t get_proof_slot_target(const block_header* parent_block) const;
 			virtual uint256_t as_hash(bool renew = false) const override;
-			virtual uptr<schema> as_schema() const override;
+			virtual format::tree as_tree() const override;
 			virtual format::wo_stream as_signable() const override;
 			virtual format::wo_stream as_solution(const algorithm::pubkeyhash_t& public_key_hash) const;
 			uint32_t as_type() const override;
@@ -227,7 +227,7 @@ namespace tangent
 			bool store_body_payload(format::wo_stream* stream) const;
 			bool load_body_payload(format::ro_stream& stream);
 			void recalculate(const block_header* parent_block, const block_state* state);
-			uptr<schema> as_schema() const override;
+			format::tree as_tree() const override;
 			block_header as_header() const;
 			block_proof as_proof(const block_header* parent_block, const block_state* state) const;
 			uint256_t as_hash(bool renew = false) const override;
@@ -250,7 +250,7 @@ namespace tangent
 			bool has_transaction(const uint256_t& hash);
 			bool has_receipt(const uint256_t& hash);
 			bool has_state(const uint256_t& hash);
-			uptr<schema> as_schema() const override;
+			format::tree as_tree() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
@@ -262,7 +262,7 @@ namespace tangent
 			block block;
 			block_state state;
 
-			uptr<schema> as_schema() const;
+			format::tree as_tree() const;
 		};
 
 		struct executor_context
@@ -428,7 +428,7 @@ namespace tangent
 
 				bool store_payload(format::wo_stream* stream) const override;
 				bool load_payload(format::ro_stream& stream) override;
-				uptr<schema> as_schema() const override;
+				format::tree as_tree() const override;
 				uint32_t as_type() const override;
 				std::string_view as_typename() const override;
 				uint256_t as_ref_hash() const;

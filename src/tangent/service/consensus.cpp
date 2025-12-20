@@ -195,14 +195,14 @@ namespace tangent
 		{
 			return as_instance_typename();
 		}
-		uptr<schema> exchange::as_schema() const
+		format::tree exchange::as_tree() const
 		{
-			schema* data = var::set::object();
-			data->set("descriptor", var::integer(descriptor));
-			data->set("session", session > 0 ? var::integer(session) : var::null());
-			data->set("time", var::integer(time));
-			data->set("type", var::string(type == side::query ? "query" : (type == side::forward ? "forwarded_query" : "event")));
-			data->set("args", format::variables_util::serialize(args));
+			format::tree data;
+			data.set("descriptor", format::variable(descriptor));
+			data.set("session", session > 0 ? format::variable(session) : format::variable());
+			data.set("time", format::variable(time));
+			data.set("type", format::variable(type == side::query ? "query" : (type == side::forward ? "forwarded_query" : "event")));
+			data.set("args", format::variables_util::serialize(args));
 			return data;
 		}
 		uint32_t exchange::as_instance_type()
@@ -362,7 +362,7 @@ namespace tangent
 		void relay::push_outgoing(exchange&& message)
 		{
 			if (protocol::now().user.consensus.logging)
-				VI_DEBUG("node %s message out: %s", peer_address().c_str(), schema::to_json(*message.as_schema()).substr(0, 2048).c_str());
+				VI_DEBUG("node %s message out: %s", peer_address().c_str(), message.as_tree().as_json().substr(0, 2048).c_str());
 
 			umutex<std::recursive_mutex> unique(mutex);
 			outgoing_messages.push(std::move(message));
@@ -639,23 +639,23 @@ namespace tangent
 		{
 			return instance;
 		}
-		uptr<schema> relay::as_schema() const
+		format::tree relay::as_tree() const
 		{
-			schema* data = var::set::object();
+			format::tree data;
 			switch (type)
 			{
 				case node_type::inbound:
-					data->set("type", var::string("inbound"));
+					data.set("type", format::variable("inbound"));
 					break;
 				case node_type::outbound:
-					data->set("type", var::string("outbound"));
+					data.set("type", format::variable("outbound"));
 					break;
 				default:
-					data->set("type", var::string("unknown"));
+					data.set("type", format::variable("unknown"));
 					break;
 			}
-			data->set("incoming_bytes", algorithm::encoding::serialize_uint256(incoming_data.size()));
-			data->set("outgoing_bytes", algorithm::encoding::serialize_uint256(outgoing_data.size()));
+			data.set("incoming_bytes", algorithm::encoding::serialize_uint256(incoming_data.size()));
+			data.set("outgoing_bytes", algorithm::encoding::serialize_uint256(outgoing_data.size()));
 			return data;
 		}
 		relay_descriptor* relay::as_descriptor() const
@@ -1727,13 +1727,13 @@ namespace tangent
 					auto response = coawait(http::fetch(bootstrap_url));
 					if (response)
 					{
-						auto addresses = uptr<schema>(response->content.get_json());
+						auto addresses = format::tree::from_json(std::string_view(response->content.data.data(), response->content.data.size()));
 						if (addresses)
 						{
 							auto mempool = storages::mempoolstate(); results = 0;
-							for (auto* address : addresses->get_childs())
+							for (auto& address : addresses->childs())
 							{
-								auto endpoint = system_endpoint(address->value.get_blob(), bootstrap_url);
+								auto endpoint = system_endpoint(address.value.as_blob(), bootstrap_url);
 								if (endpoint.is_valid() && !connected_to_ip_address(endpoint.address) && mempool.apply_unknown_node(endpoint.address, false))
 									++results;
 							}
@@ -2351,7 +2351,7 @@ namespace tangent
 
 					message_latency = message.calculate_latency();
 					if (protocol::now().user.consensus.logging)
-						VI_DEBUG("node %s message in: %s", state->peer_address().c_str(), schema::to_json(*message.as_schema()).substr(0, 2048).c_str());
+						VI_DEBUG("node %s message in: %s", state->peer_address().c_str(), message.as_tree().as_json().substr(0, 2048).c_str());
 
 					switch (message.type)
 					{

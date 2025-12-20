@@ -63,11 +63,11 @@ namespace tangent
 
 			return true;
 		}
-		uptr<schema> block_transaction::as_schema() const
+		format::tree block_transaction::as_tree() const
 		{
-			schema* data = var::set::object();
-			data->set("transaction", transaction ? transaction->as_schema().reset() : var::set::null());
-			data->set("receipt", receipt.as_schema().reset());
+			format::tree data;
+			data.set("transaction", transaction ? transaction->as_tree() : format::tree());
+			data.set("receipt", receipt.as_tree());
 			return data;
 		}
 		uint32_t block_transaction::as_type() const
@@ -118,12 +118,12 @@ namespace tangent
 			erase = other.erase;
 			return *this;
 		}
-		uptr<schema> block_state::state_change::as_schema() const
+		format::tree block_state::state_change::as_tree() const
 		{
 			VI_ASSERT(state, "state should be set");
-			auto result = state->as_schema();
-			result->set("__erase__", var::boolean(erase));
-			return result;
+			auto data = state->as_tree();
+			data.set("__erase__", format::variable(erase));
+			return data;
 		}
 		bool block_state::state_change::empty() const
 		{
@@ -611,44 +611,44 @@ namespace tangent
 
 			return algorithm::wesolowski::adjust(prev_target, prev_duration, number);
 		}
-		uptr<schema> block_header::as_schema() const
+		format::tree block_header::as_tree() const
 		{
 			algorithm::pubkeyhash_t producer;
 			recover_hash(producer);
 
-			schema* data = var::set::object();
-			data->set("signature", signature.empty() ? var::null() : var::string(format::util::encode_0xhex(signature.optimized_view())));
-			data->set("producer", algorithm::signing::serialize_address(producer));
-			data->set("hash", var::string(algorithm::encoding::encode_0xhex256(as_hash())));
-			data->set("parent_hash", var::string(algorithm::encoding::encode_0xhex256(parent_hash)));
-			data->set("transaction_root", var::string(algorithm::encoding::encode_0xhex256(transaction_root)));
-			data->set("receipt_root", var::string(algorithm::encoding::encode_0xhex256(receipt_root)));
-			data->set("state_root", var::string(algorithm::encoding::encode_0xhex256(state_root)));
-			data->set("absolute_work", algorithm::encoding::serialize_uint256(absolute_work));
-			data->set("coinbase", var::decimal(get_reward_value()));
-			data->set("gas_use", algorithm::encoding::serialize_uint256(gas_use));
-			data->set("gas_limit", algorithm::encoding::serialize_uint256(gas_limit));
-			data->set("slot_duration", algorithm::encoding::serialize_uint256(slot_duration));
-			data->set("slot_duration_average", algorithm::encoding::serialize_uint256(get_slot_proof_duration_average()));
-			data->set("slot_length", algorithm::encoding::serialize_uint256(get_slot_length()));
-			data->set("generation_time", algorithm::encoding::serialize_uint256(generation_time));
-			data->set("evaluation_time", algorithm::encoding::serialize_uint256(evaluation_time));
-			data->set("proof_duration", algorithm::encoding::serialize_uint256(get_proof_duration()));
-			data->set("priority", algorithm::encoding::serialize_uint256(priority));
-			data->set("number", algorithm::encoding::serialize_uint256(number));
-			data->set("transaction_count", algorithm::encoding::serialize_uint256(transaction_count));
-			data->set("transition_count", algorithm::encoding::serialize_uint256(transition_count));
-			auto* pow_data = data->set("pow");
-			pow_data->set("proof", proof.empty() ? var::null() : var::string(format::util::encode_0xhex(proof)));
-			pow_data->set("mdifficulty", var::decimal(get_proof_difficulty_multiplier()));
+			format::tree data;
+			data.set("signature", signature.empty() ? format::variable() : format::variable(format::util::encode_0xhex(signature.optimized_view())));
+			data.set("producer", algorithm::signing::serialize_address(producer));
+			data.set("hash", format::variable(algorithm::encoding::encode_0xhex256(as_hash())));
+			data.set("parent_hash", format::variable(algorithm::encoding::encode_0xhex256(parent_hash)));
+			data.set("transaction_root", format::variable(algorithm::encoding::encode_0xhex256(transaction_root)));
+			data.set("receipt_root", format::variable(algorithm::encoding::encode_0xhex256(receipt_root)));
+			data.set("state_root", format::variable(algorithm::encoding::encode_0xhex256(state_root)));
+			data.set("absolute_work", algorithm::encoding::serialize_uint256(absolute_work));
+			data.set("coinbase", format::variable(get_reward_value()));
+			data.set("gas_use", algorithm::encoding::serialize_uint256(gas_use));
+			data.set("gas_limit", algorithm::encoding::serialize_uint256(gas_limit));
+			data.set("slot_duration", algorithm::encoding::serialize_uint256(slot_duration));
+			data.set("slot_duration_average", algorithm::encoding::serialize_uint256(get_slot_proof_duration_average()));
+			data.set("slot_length", algorithm::encoding::serialize_uint256(get_slot_length()));
+			data.set("generation_time", algorithm::encoding::serialize_uint256(generation_time));
+			data.set("evaluation_time", algorithm::encoding::serialize_uint256(evaluation_time));
+			data.set("proof_duration", algorithm::encoding::serialize_uint256(get_proof_duration()));
+			data.set("priority", algorithm::encoding::serialize_uint256(priority));
+			data.set("number", algorithm::encoding::serialize_uint256(number));
+			data.set("transaction_count", algorithm::encoding::serialize_uint256(transaction_count));
+			data.set("transition_count", algorithm::encoding::serialize_uint256(transition_count));
+			auto* pow_data = data.set("pow", format::tree());
+			pow_data->set("proof", proof.empty() ? format::variable() : format::variable(format::util::encode_0xhex(proof)));
+			pow_data->set("mdifficulty", format::variable(get_proof_difficulty_multiplier()));
 			pow_data->set("kdifficulty", algorithm::encoding::serialize_uint256(algorithm::wesolowski::kdifficulty(difficulty)));
-			pow_data->set("difficulty", var::integer(difficulty));
-			pow_data->set("security", var::integer(protocol::now().policy.pow.security));
-			pow_data->set("size", var::integer(proof.size()));
-			auto* witnesses_data = data->set("witnesses", var::set::array());
+			pow_data->set("difficulty", format::variable(difficulty));
+			pow_data->set("security", format::variable(protocol::now().policy.pow.security));
+			pow_data->set("size", format::variable(proof.size()));
+			auto* witnesses_data = data.set("witnesses", format::tree());
 			for (auto& item : witnesses)
 			{
-				auto* witness_data = witnesses_data->push(var::set::object());
+				auto* witness_data = witnesses_data->push(format::tree());
 				witness_data->set("asset", algorithm::asset::serialize(item.first));
 				witness_data->set("number", algorithm::encoding::serialize_uint256(item.second));
 			}
@@ -1047,12 +1047,12 @@ namespace tangent
 			slot_duration = (parent_block ? parent_block->slot_duration + parent_block->get_proof_accounted_duration() : uint256_t(0)) * cumulative;
 			transaction_count = (uint32_t)transactions.size();
 		}
-		uptr<schema> block::as_schema() const
+		format::tree block::as_tree() const
 		{
-			schema* data = block_header::as_schema().reset();
-			auto* transactions_data = data->set("transactions", var::set::array());
+			auto data = block_header::as_tree();
+			auto* transactions_data = data.set("transactions", format::tree());
 			for (auto& item : transactions)
-				transactions_data->push(item.as_schema().reset());
+				transactions_data->push(item.as_tree());
 			return data;
 		}
 		block_header block::as_header() const
@@ -1203,29 +1203,29 @@ namespace tangent
 			auto path = find_state(hash);
 			return path && path->root(hash) == state_root;
 		}
-		uptr<schema> block_proof::as_schema() const
+		format::tree block_proof::as_tree() const
 		{
-			schema* data = var::set::object();
-			auto* transactions_data = data->set("transactions", var::set::object());
-			auto* transactions_tree_data = transactions_data->set("tree", var::set::array());
-			transactions_data->set("root", var::string(algorithm::encoding::encode_0xhex256(transaction_root)));
-			transactions_data->set("pivot", var::integer(transaction_tree.pivot));
+			format::tree data;
+			data.childs().reserve(3);
+
+			auto* transactions_data = data.set("transactions", format::tree());
+			auto* receipts_data = data.set("receipts", format::tree());
+			auto* states_data = data.set("states", format::tree());
+			auto* transactions_tree_data = transactions_data->set("tree", format::tree());
+			auto* receipts_tree_data = receipts_data->set("tree", format::tree());
+			auto* states_tree_data = states_data->set("tree", format::tree());
+			transactions_data->set("root", format::variable(algorithm::encoding::encode_0xhex256(transaction_root)));
+			transactions_data->set("pivot", format::variable(transaction_tree.pivot));
+			receipts_data->set("root", format::variable(algorithm::encoding::encode_0xhex256(receipt_root)));
+			receipts_data->set("pivot", format::variable(receipt_tree.pivot));
+			states_data->set("root", format::variable(algorithm::encoding::encode_0xhex256(state_root)));
+			states_data->set("pivot", format::variable(state_tree.pivot));
 			for (auto& item : transaction_tree.nodes)
-				transactions_tree_data->push(var::string(algorithm::encoding::encode_0xhex256(item)));
-
-			auto* receipts_data = data->set("receipts", var::set::object());
-			auto* receipts_tree_data = receipts_data->set("tree", var::set::array());
-			receipts_data->set("root", var::string(algorithm::encoding::encode_0xhex256(receipt_root)));
-			receipts_data->set("pivot", var::integer(receipt_tree.pivot));
+				transactions_tree_data->push(format::variable(algorithm::encoding::encode_0xhex256(item)));
 			for (auto& item : receipt_tree.nodes)
-				receipts_tree_data->push(var::string(algorithm::encoding::encode_0xhex256(item)));
-
-			auto* states_data = data->set("states", var::set::object());
-			auto* states_tree_data = states_data->set("tree", var::set::array());
-			states_data->set("root", var::string(algorithm::encoding::encode_0xhex256(state_root)));
-			states_data->set("pivot", var::integer(state_tree.pivot));
+				receipts_tree_data->push(format::variable(algorithm::encoding::encode_0xhex256(item)));
 			for (auto& item : state_tree.nodes)
-				states_tree_data->push(var::string(algorithm::encoding::encode_0xhex256(item)));
+				states_tree_data->push(format::variable(algorithm::encoding::encode_0xhex256(item)));
 			return data;
 		}
 		uint32_t block_proof::as_type() const
@@ -1246,12 +1246,12 @@ namespace tangent
 			return "block_proof";
 		}
 
-		uptr<schema> block_evaluation::as_schema() const
+		format::tree block_evaluation::as_tree() const
 		{
-			auto data = block.as_schema();
-			auto* states_data = data->set("changelog", var::set::array());
+			auto data = block.as_tree();
+			auto* states_data = data.set("changelog", format::tree());
 			for (auto& [index, change] : state.finalized)
-				states_data->push(change.state->as_schema().reset());
+				states_data->push(change.state->as_tree());
 			return data;
 		}
 
@@ -3053,20 +3053,20 @@ namespace tangent
 			}
 			return true;
 		}
-		uptr<schema> dispatcher_context::secret_entropy::as_schema() const
+		format::tree dispatcher_context::secret_entropy::as_tree() const
 		{
-			schema* data = var::set::object();
-			data->set("asset", algorithm::asset::serialize(asset));
-			data->set("manager", algorithm::signing::serialize_address(manager));
-			data->set("owner", algorithm::signing::serialize_address(owner));
-			data->set("entropy", var::string(algorithm::encoding::encode_0xhex256(entropy.view())));
-			auto* shares_data = data->set("shares", var::set::array());
+			format::tree data;
+			data.set("asset", algorithm::asset::serialize(asset));
+			data.set("manager", algorithm::signing::serialize_address(manager));
+			data.set("owner", algorithm::signing::serialize_address(owner));
+			data.set("entropy", format::variable(algorithm::encoding::encode_0xhex256(entropy.view())));
+			auto* shares_data = data.set("shares", format::tree());
 			for (auto& [participant, share] : shares)
 			{
-				auto* share_data = shares_data->push(var::set::object());
+				auto* share_data = shares_data->push(format::tree());
 				share_data->set("participant", algorithm::signing::serialize_address(participant));
-				share_data->set("input", var::string(format::util::encode_0xhex(share.input.optimized_view())));
-				share_data->set("output", var::string(format::util::encode_0xhex(share.output.optimized_view())));
+				share_data->set("input", format::variable(format::util::encode_0xhex(share.input.optimized_view())));
+				share_data->set("output", format::variable(format::util::encode_0xhex(share.output.optimized_view())));
 			}
 			return data;
 		}
@@ -3626,13 +3626,13 @@ namespace tangent
 			auto* server = superchain::server_node::get();
 			auto location = stringify::text("dispatch_cache_%s", algorithm::encoding::encode_0xhex256(executor->receipt.transaction_hash).c_str());
 			auto cache = server->load_cache(executor->transaction->asset, superchain::cache_policy::lifetime_cache, location);
-			server->store_cache(executor->transaction->asset, superchain::cache_policy::lifetime_cache, location, nullptr);
-			return format::ro_stream(cache ? cache->value.get_string() : std::string_view());
+			server->store_cache(executor->transaction->asset, superchain::cache_policy::lifetime_cache, location, format::tree());
+			return format::ro_stream(cache ? cache->value.as_string() : std::string_view());
 		}
 		void dispatcher_context::push_cache(const executor_context* executor, const format::wo_stream& message) const
 		{
 			auto location = stringify::text("dispatch_cache_%s", algorithm::encoding::encode_0xhex256(executor->receipt.transaction_hash).c_str());
-			superchain::server_node::get()->store_cache(executor->transaction->asset, superchain::cache_policy::lifetime_cache, location, var::set::string(message.data));
+			superchain::server_node::get()->store_cache(executor->transaction->asset, superchain::cache_policy::lifetime_cache, location, format::variable(message.data));
 		}
 
 		void solver_context::apply_temporary_state(block_header* abstract_block, const transaction* abstract_transaction, receipt&& abstract_receipt)

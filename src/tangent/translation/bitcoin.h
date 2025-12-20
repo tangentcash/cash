@@ -77,10 +77,10 @@ namespace tangent
 				bitcoin(const algorithm::asset_id& new_asset) noexcept;
 				virtual ~bitcoin() override;
 				virtual expects_promise_rt<uint64_t> get_latest_block_height() override;
-				virtual expects_promise_rt<schema*> get_block_transactions(uint64_t block_height, string* block_hash) override;
-				virtual expects_promise_rt<schema*> get_transaction(const std::string_view& tx_id);
+				virtual expects_promise_rt<vector<block_log>> get_block_transactions(uint64_t block_height, uint64_t block_count) override;
+				virtual expects_promise_rt<format::tree> get_transaction(const std::string_view& tx_id);
 				virtual expects_promise_rt<coin_utxo> get_transaction_output(const std::string_view& tx_id, uint64_t index) override;
-				virtual expects_promise_rt<computed_transaction> link_transaction(uint64_t block_height, const std::string_view& block_hash, schema* transaction_data) override;
+				virtual expects_promise_rt<computed_transaction> link_transaction(uint64_t block_height, const std::string_view& block_hash, format::tree& transaction_data) override;
 				virtual expects_promise_rt<void> broadcast_transaction(const finalized_transaction& finalized) override;
 				virtual expects_promise_rt<computed_fee> estimate_transaction_fee(const wallet_link& from_link, const vector<value_transfer>& to);
 				virtual expects_promise_rt<prepared_transaction> prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const decimal& max_fee) override;
@@ -99,7 +99,7 @@ namespace tangent
 				virtual expects_lr<void> finalize_transaction_input(btc_tx_context& context, const prepared_transaction::signable_coin_utxo& output, size_t index);
 				virtual expects_lr<void> add_transaction_input(btc_tx_context& context, const coin_utxo& output, const std::string_view& public_key);
 				virtual expects_lr<void> add_transaction_output(btc_tx_context& context, const std::string_view& address, const decimal& value);
-				virtual hash_set<string> get_output_addresses(schema* tx_output, bool* is_allowed);
+				virtual hash_set<string> get_output_addresses(const format::tree& tx_output, bool* is_allowed);
 				virtual string serialize_transaction_data(btc_tx_context& context);
 				virtual string serialize_transaction_id(btc_tx_context& context);
 				virtual address_format parse_address(const std::string_view& address, uint8_t* data_out = nullptr, size_t* data_size_out = nullptr);

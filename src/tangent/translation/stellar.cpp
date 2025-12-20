@@ -275,21 +275,20 @@ namespace tangent
 			}
 			expects_promise_rt<stellar::asset_info> stellar::get_asset_info(const std::string_view& address, const std::string_view& code)
 			{
-				auto asset_data = coawait(execute_rest("GET", nd_call::get_assets(address, code), nullptr, cache_policy::lifetime_cache));
+				auto asset_data = coawait(execute_rest("GET", nd_call::get_assets(address, code), format::tree(), cache_policy::lifetime_cache));
 				if (!asset_data)
 					coreturn expects_rt<stellar::asset_info>(std::move(asset_data.error()));
 
-				uptr<schema> asset_wrap = *asset_data;
-				schema* records = asset_wrap->fetch("_embedded.records");
+				auto* records = asset_data->child("_embedded.records");
 				if (!records)
 					coreturn expects_rt<stellar::asset_info>(remote_exception("contract address not found"));
 
-				for (auto& asset : records->get_childs())
+				for (auto& asset : records->childs())
 				{
 					asset_info info;
-					info.code = asset->get_var("asset_code").get_blob();
-					info.issuer = asset->get_var("asset_isser").get_blob();
-					info.type = asset->get_var("asset_type").get_blob();
+					info.code = asset.child_var("asset_code").as_blob();
+					info.issuer = asset.child_var("asset_isser").as_blob();
+					info.type = asset.child_var("asset_type").as_blob();
 					if (info.issuer == address)
 						coreturn expects_rt<stellar::asset_info>(std::move(info));
 				}
@@ -298,22 +297,22 @@ namespace tangent
 			}
 			expects_promise_rt<stellar::account_info> stellar::get_account_info(const std::string_view& address)
 			{
-				auto account_data = coawait(execute_rest("GET", nd_call::get_accounts(address), nullptr, cache_policy::no_cache));
+				auto account_data = coawait(execute_rest("GET", nd_call::get_accounts(address), format::tree(), cache_policy::no_cache));
 				if (!account_data)
 					coreturn expects_rt<stellar::account_info>(std::move(account_data.error()));
 
 				account_info info;
-				info.sequence = account_data->get_var("sequence").get_integer();
+				info.sequence = account_data->child_var("sequence").as_uint64();
 				if (account_data->has("balances"))
 				{
 					auto blockchain = algorithm::asset::blockchain_of(native_asset);
-					for (auto& item : account_data->get("balances")->get_childs())
+					for (auto& item : account_data->child("balances")->childs())
 					{
 						asset_balance balance;
-						balance.info.type = item->get_var("asset_type").get_blob();
-						balance.info.code = item->get_var("asset_code").get_blob();
-						balance.info.issuer = item->get_var("asset_issuer").get_blob();
-						balance.balance = item->get_var("balance").get_decimal();
+						balance.info.type = item.child_var("asset_type").as_blob();
+						balance.info.code = item.child_var("asset_code").as_blob();
+						balance.info.issuer = item.child_var("asset_issuer").as_blob();
+						balance.balance = item.child_var("balance").as_decimal();
 						if (balance.info.code.empty())
 						{
 							if (balance.info.type == "native")
@@ -327,16 +326,15 @@ namespace tangent
 					}
 				}
 
-				memory::release(*account_data);
 				coreturn expects_rt<stellar::account_info>(std::move(info));
 			}
 			expects_promise_rt<string> stellar::get_transaction_memo(const std::string_view& tx_id)
 			{
-				auto tx_data = coawait(execute_rest("GET", nd_call::get_transactions(format::util::clear_0xhex(tx_id)), nullptr, cache_policy::blob_cache));
+				auto tx_data = coawait(execute_rest("GET", nd_call::get_transactions(format::util::clear_0xhex(tx_id)), format::tree(), cache_policy::blob_cache));
 				if (!tx_data)
 					coreturn expects_rt<string>(std::move(tx_data.error()));
 
-				string memo = tx_data->get_var("memo").get_blob();
+				string memo = tx_data->child_var("memo").as_blob();
 				if (memo.empty())
 					coreturn expects_rt<string>(remote_exception("transaction memo not found"));
 
@@ -344,63 +342,57 @@ namespace tangent
 			}
 			expects_promise_rt<bool> stellar::is_account_exists(const std::string_view& address)
 			{
-				auto account_data = coawait(execute_rest("GET", nd_call::get_accounts(address), nullptr, cache_policy::no_cache));
+				auto account_data = coawait(execute_rest("GET", nd_call::get_accounts(address), format::tree(), cache_policy::no_cache));
 				if (!account_data && (account_data.error().is_retry() || account_data.error().is_shutdown()))
 					coreturn expects_rt<bool>(account_data.error());
 
-				auto account = uptr<schema>(account_data.or_else(nullptr));
-				coreturn expects_rt<bool>(account && account->has("account_id"));
+				coreturn expects_rt<bool>(account_data && account_data->has("account_id"));
 			}
 			expects_promise_rt<uint64_t> stellar::get_latest_block_height()
 			{
-				auto last_block_data = coawait(execute_rest("GET", nd_call::get_last_ledger(), nullptr, cache_policy::no_cache));
+				auto last_block_data = coawait(execute_rest("GET", nd_call::get_last_ledger(), format::tree(), cache_policy::no_cache));
 				if (!last_block_data)
 					coreturn expects_rt<uint64_t>(std::move(last_block_data.error()));
 
-				uint64_t block_height = (uint64_t)last_block_data->fetch_var("_embedded.records.0.sequence").get_integer();
-				memory::release(*last_block_data);
+				uint64_t block_height = (uint64_t)last_block_data->child_var("_embedded.records.0.sequence").as_uint64();
 				coreturn expects_rt<uint64_t>(block_height);
 			}
-			expects_promise_rt<schema*> stellar::get_block_transactions(uint64_t block_height, string* block_hash)
+			expects_promise_rt<vector<block_log>> stellar::get_block_transactions(uint64_t block_height, uint64_t block_count)
 			{
-				auto block_data = coawait(execute_rest("GET", nd_call::get_ledger_operations(block_height), nullptr, cache_policy::blob_cache));
-				if (!block_data)
-					coreturn expects_rt<schema*>(std::move(block_data.error()));
-
-				if (block_hash != nullptr)
-					*block_hash = to_string(block_height);
-
-				schema* data = block_data->fetch("_embedded.records");
-				if (!data)
+				vector<block_log> results;
+				for (uint64_t i = 0; i < block_count; i++)
 				{
-					memory::release(*block_data);
-					coreturn expects_rt<schema*>(remote_exception("block not found"));
-				}
+					auto block_data = coawait(execute_rest("GET", nd_call::get_ledger_operations(block_height + i), format::tree(), cache_policy::blob_cache));
+					if (!block_data)
+						coreturn block_data.error();
 
-				data->unlink();
-				memory::release(*block_data);
-				coreturn expects_rt<schema*>(data);
+					auto* transactions = (format::tree*)block_data->child("_embedded.records");
+					auto& log = results.emplace_back();
+					log.block_hash = to_string(block_height + i);
+					log.transactions = transactions ? std::move(*transactions) : format::tree();
+				}
+				coreturn expects_rt<vector<block_log>>(std::move(results));
 			}
-			expects_promise_rt<computed_transaction> stellar::link_transaction(uint64_t block_height, const std::string_view& block_hash, schema* transaction_data)
+			expects_promise_rt<computed_transaction> stellar::link_transaction(uint64_t block_height, const std::string_view& block_hash, format::tree& transaction_data)
 			{
 				algorithm::asset_id token_asset = native_asset;
-				string tx_hash = transaction_data->get_var("transaction_hash").get_blob();
-				string tx_type = transaction_data->get_var("type").get_blob();
+				string tx_hash = transaction_data.child_var("transaction_hash").as_blob();
+				string tx_type = transaction_data.child_var("type").as_blob();
 				decimal fee_value = from_stroop(get_base_stroop_fee());
 				decimal base_value = 0.0, token_value = 0.0;
 				string from = string(), to = string();
 				bool is_payment = (tx_type == "payment");
 				bool is_create_account = (!is_payment && tx_type == "create_account");
-				bool is_native_token = (transaction_data->get_var("asset_type").get_blob() != "native");
+				bool is_native_token = (transaction_data.child_var("asset_type").as_blob() != "native");
 				if (is_payment)
 				{
-					from = transaction_data->get_var("from").get_blob();
-					to = transaction_data->get_var("to").get_blob();
-					token_value = transaction_data->get_var("amount").get_decimal();
+					from = transaction_data.child_var("from").as_blob();
+					to = transaction_data.child_var("to").as_blob();
+					token_value = transaction_data.child_var("amount").as_decimal();
 					if (is_native_token)
 					{
-						string token = transaction_data->get_var("asset_code").get_blob();
-						string issuer = transaction_data->get_var("asset_issuer").get_blob();
+						string token = transaction_data.child_var("asset_code").as_blob();
+						string issuer = transaction_data.child_var("asset_issuer").as_blob();
 						token_asset = algorithm::asset::id_of(algorithm::asset::blockchain_of(native_asset), token, issuer);
 						superchain::server_node::get()->enable_contract_address(token_asset, issuer);
 					}
@@ -412,9 +404,9 @@ namespace tangent
 				}
 				else if (is_create_account)
 				{
-					from = transaction_data->get_var("funder").get_blob();
-					to = transaction_data->get_var("account").get_blob();
-					base_value = transaction_data->get_var("starting_balance").get_decimal();
+					from = transaction_data.child_var("funder").as_blob();
+					to = transaction_data.child_var("account").as_blob();
+					base_value = transaction_data.child_var("starting_balance").as_decimal();
 				}
 
 				auto discovery = find_linked_addresses({ from, to });
@@ -480,14 +472,13 @@ namespace tangent
 				if (!hex_data)
 					coreturn expects_rt<void>(std::move(hex_data.error()));
 
-				string detail = hex_data->get_var("detail").get_blob();
+				string detail = hex_data->child_var("detail").as_blob();
 				if (!detail.empty())
 				{
-					string code = hex_data->fetch_var("extras.result_codes.transaction").get_blob();
+					string code = hex_data->child_var("extras.result_codes.transaction").as_blob();
 					coreturn expects_rt<void>(remote_exception(std::move(code.empty() ? detail : code)));
 				}
 
-				memory::release(*hex_data);
 				coreturn expects_rt<void>(expectation::met);
 			}
 			expects_promise_rt<prepared_transaction> stellar::prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const decimal& max_fee)
