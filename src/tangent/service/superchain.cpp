@@ -341,6 +341,7 @@ namespace tangent
 				else if (!coawait(provider->yield_for_discovery(options)))
 					coreturn expects_rt<vector<transaction_logs>>(remote_exception::retry());
 
+				options->state.starting_block_height = options->state.latest_block_height;
 				goto retry;
 			}
 
