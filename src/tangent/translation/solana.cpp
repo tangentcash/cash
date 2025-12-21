@@ -457,7 +457,7 @@ namespace tangent
 					result.requires_account_input(algorithm::composition::type::ed25519, wallet_link(from_link), public_key, message_buffer.data(), message_buffer.size(), { { native_asset, total_value } });
 				result.requires_account_output(output.address, { { output.asset, output.value } });
 				result.requires_abi(format::variable(from_token ? from_token->divisibility : netdata.divisibility));
-				result.requires_abi(format::variable(*contract_address));
+				result.requires_abi(format::variable(contract_address ? *contract_address : string()));
 				result.requires_abi(format::variable(transaction.token_program_address));
 				result.requires_abi(format::variable(transaction.from_token_address));
 				result.requires_abi(format::variable(transaction.to_token_address));
