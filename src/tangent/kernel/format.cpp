@@ -2065,7 +2065,7 @@ namespace tangent
 			tree data;
 			data.childs().reserve(value.size());
 			for (auto& item : value)
-				data.push(item);
+				data.push(item.is_integer() ? algorithm::encoding::serialize_uint256(item.as_uint256()) : tree(item));
 			return data;
 		}
 	}
