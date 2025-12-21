@@ -413,17 +413,21 @@ namespace tangent
 		}
 		expects_lr<hash_map<string, superchain::wallet_link>> superchainstate::get_links_by_addresses(const hash_set<string>& addresses)
 		{
-			string address_list;
+			size_t address_count = 0;
+			string query = "SELECT * FROM links WHERE typeless_address IN (";
 			for (auto& item : addresses)
 			{
 				if (!item.empty())
-					address_list.append("x\'").append(codec::hex_encode(to_typeless(item))).append("\',");
+				{
+					query.append("x\'").append(codec::hex_encode(to_typeless(item))).append("\',");
+					++address_count;
+				}
 			}
-			if (addresses.empty() || address_list.empty())
+			if (addresses.empty() || !address_count)
 				return expects_lr<hash_map<string, superchain::wallet_link>>(layer_exception("no addresses"));
 
-			address_list.pop_back();
-			auto cursor = get_storage().query(__func__, stringify::text("SELECT * FROM links WHERE typeless_address IN (%s)", address_list.c_str()));
+			query.back() = ')';
+			auto cursor = get_storage().query(__func__, query);
 			if (!cursor || cursor->error())
 				return expects_lr<hash_map<string, superchain::wallet_link>>(layer_exception(ledger::storage_util::error_of(cursor)));
 

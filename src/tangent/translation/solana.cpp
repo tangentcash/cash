@@ -125,6 +125,19 @@ namespace tangent
 				for (auto& account_key : account_keys->childs())
 					addresses.insert(account_key.child_var("pubkey").as_blob());
 
+				auto* pre_token_balances = transaction_data.child("meta.preTokenBalances");
+				auto* post_token_balances = transaction_data.child("meta.postTokenBalances");
+				if (pre_token_balances != nullptr)
+				{
+					for (auto& balance : pre_token_balances->childs())
+						addresses.insert(balance.child_var("owner").as_blob());
+				}
+				if (post_token_balances != nullptr)
+				{
+					for (auto& balance : post_token_balances->childs())
+						addresses.insert(balance.child_var("owner").as_blob());
+				}
+
 				auto discovery = find_linked_addresses(addresses);
 				if (!discovery || discovery->empty())
 					coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
@@ -150,20 +163,6 @@ namespace tangent
 				}
 				if (non_transferring)
 					coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
-
-				auto* pre_token_balances = transaction_data.child("meta.preTokenBalances");
-				if (pre_token_balances != nullptr)
-				{
-					for (auto& balance : pre_token_balances->childs())
-						addresses.insert(balance.child_var("owner").as_blob());
-				}
-
-				auto* post_token_balances = transaction_data.child("meta.postTokenBalances");
-				if (post_token_balances != nullptr)
-				{
-					for (auto& balance : post_token_balances->childs())
-						addresses.insert(balance.child_var("owner").as_blob());
-				}
 
 				auto* instructions = transaction_data.child("transaction.message.instructions");
 				if (!instructions || instructions->childs().empty())
@@ -267,6 +266,7 @@ namespace tangent
 				}
 
 				hash_map<string, hash_map<string, decimal>> prev_token_state;
+				pre_token_balances = transaction_data.child("meta.preTokenBalances");
 				if (pre_token_balances != nullptr && !pre_token_balances->childs().empty())
 				{
 					for (auto& balance : pre_token_balances->childs())
@@ -284,6 +284,7 @@ namespace tangent
 				}
 
 				hash_map<string, hash_map<string, decimal>> next_token_state;
+				post_token_balances = transaction_data.child("meta.postTokenBalances");
 				if (post_token_balances != nullptr && !post_token_balances->childs().empty())
 				{
 					for (auto& balance : post_token_balances->childs())
@@ -328,17 +329,6 @@ namespace tangent
 						}
 					}
 				}
-
-				addresses.clear();
-				addresses.reserve(inputs.size() + outputs.size());
-				for (auto& next : inputs)
-					addresses.insert(next.first);
-				for (auto& next : outputs)
-					addresses.insert(next.first);
-
-				discovery = find_linked_addresses(addresses);
-				if (!discovery || discovery->empty())
-					coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
 
 				if (!fee_included && !inputs.empty())
 				{
