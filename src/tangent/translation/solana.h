@@ -30,6 +30,7 @@ namespace tangent
 
 				struct sol_transaction
 				{
+					string mint_address;
 					string token_program_address;
 					string from_token_address;
 					string to_token_address;
@@ -37,6 +38,7 @@ namespace tangent
 					string to_address;
 					string recent_block_hash;
 					uint64_t value = 0;
+					uint8_t decimals = 0;
 				};
 
 			public:

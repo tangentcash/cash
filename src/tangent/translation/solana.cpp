@@ -431,6 +431,7 @@ namespace tangent
 					coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", native_balance->to_string().c_str(), total_value.to_string().c_str())));
 
 				sol_transaction transaction;
+				transaction.mint_address = contract_address ? *contract_address : string();
 				transaction.token_program_address = from_token ? from_token->program_id : string();
 				transaction.from_token_address = from_token ? from_token->account : string();
 				transaction.to_token_address = to_token ? to_token->account : string();
@@ -438,6 +439,7 @@ namespace tangent
 				transaction.to_address = output.address;
 				transaction.recent_block_hash = *recent_block_hash;
 				transaction.value = (output.value * (from_token ? from_token->divisibility : netdata.divisibility)).to_uint64();
+				transaction.decimals = (uint8_t)((from_token ? from_token->divisibility : netdata.divisibility).to_string().size() - 1);
 
 				vector<uint8_t> message_buffer = tx_message_serialize(&transaction);
 				if (message_buffer.empty())
@@ -455,6 +457,7 @@ namespace tangent
 					result.requires_account_input(algorithm::composition::type::ed25519, wallet_link(from_link), public_key, message_buffer.data(), message_buffer.size(), { { native_asset, total_value } });
 				result.requires_account_output(output.address, { { output.asset, output.value } });
 				result.requires_abi(format::variable(from_token ? from_token->divisibility : netdata.divisibility));
+				result.requires_abi(format::variable(*contract_address));
 				result.requires_abi(format::variable(transaction.token_program_address));
 				result.requires_abi(format::variable(transaction.from_token_address));
 				result.requires_abi(format::variable(transaction.to_token_address));
@@ -463,20 +466,22 @@ namespace tangent
 			}
 			expects_lr<finalized_transaction> solana::finalize_transaction(superchain::prepared_transaction&& prepared)
 			{
-				if (prepared.abi.size() != 5)
+				if (prepared.abi.size() != 6)
 					return layer_exception("invalid prepared abi");
 
 				auto& input = prepared.inputs.front();
 				auto& output = prepared.outputs.front();
 				auto divisibility = prepared.abi[0].as_decimal();
 				sol_transaction transaction;
-				transaction.token_program_address = prepared.abi[1].as_blob();
-				transaction.from_token_address = prepared.abi[2].as_blob();
-				transaction.to_token_address = prepared.abi[3].as_blob();
+				transaction.mint_address = prepared.abi[1].as_blob();
+				transaction.token_program_address = prepared.abi[2].as_blob();
+				transaction.from_token_address = prepared.abi[3].as_blob();
+				transaction.to_token_address = prepared.abi[4].as_blob();
 				transaction.from_address = input.utxo.link.address;
 				transaction.to_address = output.link.address;
-				transaction.recent_block_hash = prepared.abi[4].as_blob();
+				transaction.recent_block_hash = prepared.abi[5].as_blob();
 				transaction.value = ((output.tokens.empty() ? output.value : output.tokens.begin()->second.value) * divisibility).to_uint64();
+				transaction.decimals = (uint8_t)(divisibility.to_string().size() - 1);
 
 				vector<uint8_t> message_buffer = tx_message_serialize(&transaction);
 				if (input.message.size() != message_buffer.size() || memcmp(input.message.data(), message_buffer.data(), message_buffer.size()))
@@ -735,6 +740,10 @@ namespace tangent
 			}
 			vector<uint8_t> solana::tx_message_serialize(sol_transaction* tx_data)
 			{
+				uint8_t mint_buffer[32]; size_t mint_buffer_size = sizeof(mint_buffer);
+				if (!tx_data->mint_address.empty() && !b58dec(mint_buffer, &mint_buffer_size, tx_data->mint_address.c_str(), tx_data->mint_address.size()))
+					return vector<uint8_t>();
+
 				uint8_t from_token_buffer[32]; size_t from_token_buffer_size = sizeof(from_token_buffer);
 				if (!tx_data->from_token_address.empty() && !b58dec(from_token_buffer, &from_token_buffer_size, tx_data->from_token_address.c_str(), tx_data->from_token_address.size()))
 					return vector<uint8_t>();
@@ -760,9 +769,9 @@ namespace tangent
 				if (!b58dec(block_hash, &block_hash_size, tx_data->recent_block_hash.c_str(), tx_data->recent_block_hash.size()))
 					return vector<uint8_t>();
 
-				bool is_token_transfer = !tx_data->from_token_address.empty() || !tx_data->to_token_address.empty() || !tx_data->token_program_address.empty();
+				bool is_token_transfer = !tx_data->mint_address.empty() || !tx_data->from_token_address.empty() || !tx_data->to_token_address.empty() || !tx_data->token_program_address.empty();
 				uint8_t prefix = 1 << 7;
-				uint8_t account_keys = is_token_transfer ? 4 : 3;
+				uint8_t account_keys = is_token_transfer ? 5 : 3;
 				uint8_t instructions = 1;
 				uint8_t lookups = 0;
 
@@ -780,6 +789,7 @@ namespace tangent
 				{
 					tx_append(message_buffer, from_token_buffer, from_token_buffer_size);
 					tx_append(message_buffer, to_token_buffer, to_token_buffer_size);
+					tx_append(message_buffer, mint_buffer, mint_buffer_size);
 				}
 				else
 					tx_append(message_buffer, to_buffer, to_buffer_size);
@@ -788,16 +798,18 @@ namespace tangent
 				tx_append(message_buffer, (uint8_t*)&instructions, sizeof(instructions));
 				if (is_token_transfer)
 				{
-					uint8_t indices = 3, size = 9, instruction = 3;
-					uint8_t program_id_index = 3, from_index = 0, to_index = 1, owner_index = 2;
+					uint8_t indices = 4, size = 10, instruction = 12;
+					uint8_t program_id_index = 4, from_index = 0, to_index = 1, owner_index = 2, mint_index = 3;
 					tx_append(message_buffer, (uint8_t*)&program_id_index, sizeof(program_id_index));
 					tx_append(message_buffer, (uint8_t*)&indices, sizeof(indices));
 					tx_append(message_buffer, (uint8_t*)&to_index, sizeof(to_index));
 					tx_append(message_buffer, (uint8_t*)&owner_index, sizeof(owner_index));
 					tx_append(message_buffer, (uint8_t*)&from_index, sizeof(from_index));
+					tx_append(message_buffer, (uint8_t*)&mint_index, sizeof(mint_index));
 					tx_append(message_buffer, (uint8_t*)&size, sizeof(size));
 					tx_append(message_buffer, (uint8_t*)&instruction, sizeof(instruction));
 					tx_append(message_buffer, (uint8_t*)&tx_data->value, sizeof(tx_data->value));
+					tx_append(message_buffer, (uint8_t*)&tx_data->decimals, sizeof(tx_data->decimals));
 				}
 				else
 				{
