@@ -316,12 +316,17 @@ namespace tangent
 					case viewable::decimal_zero:
 					{
 						auto value = from.value.as_decimal();
-						bool big_number = !value.is_safe_number();
-						if (big_number)
-							to.append("\"");
-						to.append(value.to_string());
-						if (big_number)
-							to.append("\"");
+						if (!value.is_nan())
+						{
+							bool big_number = !value.is_safe_number();
+							if (big_number)
+								to.append("\"");
+							to.append(value.to_string());
+							if (big_number)
+								to.append("\"");
+						}
+						else
+							to.append("null");
 						return;
 					}
 					case viewable::uint_min:
