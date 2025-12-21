@@ -15,6 +15,7 @@ namespace tangent
 			public:
 				struct token_account
 				{
+					string mint;
 					string program_id;
 					string account;
 					decimal balance;

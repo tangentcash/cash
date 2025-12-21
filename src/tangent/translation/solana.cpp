@@ -395,10 +395,6 @@ namespace tangent
 				if (!native_balance)
 					coreturn expects_rt<prepared_transaction>(std::move(native_balance.error()));
 
-				auto recent_block_hash = coawait(get_recent_block_hash());
-				if (!recent_block_hash)
-					coreturn expects_rt<prepared_transaction>(std::move(recent_block_hash.error()));
-
 				uint64_t fee_constant = 5000;
 				if (!algorithm::asset::token_of(to.front().asset).empty())
 					fee_constant += fee_constant * 2;
@@ -417,6 +413,8 @@ namespace tangent
 					auto from_token_balance = coawait(get_token_balance(*contract_address, from_link.address));
 					if (!from_token_balance || from_token_balance->balance < output.value)
 						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", (from_token_balance ? from_token_balance->balance : decimal(0.0)).to_string().c_str(), output.value.to_string().c_str())));
+					else if (from_token_balance->mint.empty())
+						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("account %s does not have associated token account (must not happen)", from_link.address.c_str())));
 
 					auto to_token_balance = coawait(get_token_balance(*contract_address, output.address));
 					if (!to_token_balance)
@@ -430,8 +428,12 @@ namespace tangent
 				if (*native_balance < total_value || total_value.is_negative())
 					coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", native_balance->to_string().c_str(), total_value.to_string().c_str())));
 
+				auto recent_block_hash = coawait(get_recent_block_hash());
+				if (!recent_block_hash)
+					coreturn expects_rt<prepared_transaction>(std::move(recent_block_hash.error()));
+
 				sol_transaction transaction;
-				transaction.mint_address = contract_address ? *contract_address : string();
+				transaction.mint_address = from_token ? from_token->mint : string();
 				transaction.token_program_address = from_token ? from_token->program_id : string();
 				transaction.from_token_address = from_token ? from_token->account : string();
 				transaction.to_token_address = to_token ? to_token->account : string();
@@ -457,7 +459,7 @@ namespace tangent
 					result.requires_account_input(algorithm::composition::type::ed25519, wallet_link(from_link), public_key, message_buffer.data(), message_buffer.size(), { { native_asset, total_value } });
 				result.requires_account_output(output.address, { { output.asset, output.value } });
 				result.requires_abi(format::variable(from_token ? from_token->divisibility : netdata.divisibility));
-				result.requires_abi(format::variable(contract_address ? *contract_address : string()));
+				result.requires_abi(format::variable(from_token ? from_token->mint : string()));
 				result.requires_abi(format::variable(transaction.token_program_address));
 				result.requires_abi(format::variable(transaction.from_token_address));
 				result.requires_abi(format::variable(transaction.to_token_address));
@@ -681,18 +683,20 @@ namespace tangent
 				if (!balance)
 					coreturn expects_rt<token_account>(std::move(balance.error()));
 
-				auto* info = balance->child("value.0.account.data.parsed.info.tokenAmount");
+				auto* info = balance->child("value.0.account.data.parsed.info");
 				if (!info)
 					coreturn expects_rt<token_account>(remote_exception("invalid account"));
 
-				string program_id = balance->child_var("value.0.account.owner").as_blob();
 				string account = balance->child_var("value.0.pubkey").as_blob();
-				decimal value = info->child_var("amount").as_decimal();
-				decimal divisibility = algorithm::arithmetic::range(info->child_var("decimals").as_uint64());
+				string program_id = balance->child_var("value.0.account.owner").as_blob();
+				string mint_id = info->child_var("mint").as_blob();
+				decimal value = info->child_var("tokenAmount.amount").as_decimal();
+				decimal divisibility = algorithm::arithmetic::range(info->child_var("tokenAmount.decimals").as_uint64());
 				if (value.is_nan())
 					coreturn expects_rt<token_account>(remote_exception("invalid account"));
 
 				token_account result;
+				result.mint = std::move(mint_id);
 				result.program_id = std::move(program_id);
 				result.account = std::move(account);
 				result.divisibility = std::move(divisibility);
@@ -799,13 +803,13 @@ namespace tangent
 				if (is_token_transfer)
 				{
 					uint8_t indices = 4, size = 10, instruction = 12;
-					uint8_t program_id_index = 4, from_index = 0, to_index = 1, owner_index = 2, mint_index = 3;
+					uint8_t program_id_index = 4, from_index = 1, to_index = 2, owner_index = 0, mint_index = 3;
 					tx_append(message_buffer, (uint8_t*)&program_id_index, sizeof(program_id_index));
 					tx_append(message_buffer, (uint8_t*)&indices, sizeof(indices));
-					tx_append(message_buffer, (uint8_t*)&to_index, sizeof(to_index));
-					tx_append(message_buffer, (uint8_t*)&owner_index, sizeof(owner_index));
 					tx_append(message_buffer, (uint8_t*)&from_index, sizeof(from_index));
 					tx_append(message_buffer, (uint8_t*)&mint_index, sizeof(mint_index));
+					tx_append(message_buffer, (uint8_t*)&to_index, sizeof(to_index));
+					tx_append(message_buffer, (uint8_t*)&owner_index, sizeof(owner_index));
 					tx_append(message_buffer, (uint8_t*)&size, sizeof(size));
 					tx_append(message_buffer, (uint8_t*)&instruction, sizeof(instruction));
 					tx_append(message_buffer, (uint8_t*)&tx_data->value, sizeof(tx_data->value));
