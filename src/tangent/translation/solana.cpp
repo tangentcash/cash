@@ -392,7 +392,6 @@ namespace tangent
 			{
 				format::tree map;
 				map.push(format::variable(finalized.calldata));
-				map.push(format::variable());
 
 				auto status = coawait(execute_rpc(nd_call::send_transaction(), std::move(map), cache_policy::no_cache_no_throttling));
 				if (!status)

@@ -112,14 +112,7 @@ struct tester
 			attestation->sign(submitter.wallet.secret_key, submitter.nonce++, decimal::zero()).expect("pre-validation failed");
 		}
 
-		uint64_t priority = std::numeric_limits<uint64_t>::max();
-		for (auto& user : users)
-		{
-			priority = solver.apply_validator_state(user.wallet.public_key_hash, user.wallet.secret_key).or_else(std::numeric_limits<uint64_t>::max());
-			if (!priority)
-				break;
-		}
-
+		uint64_t priority = solver.apply_validator_state([&users](size_t index) { return index < users.size() ? &users[index].wallet : nullptr; }).or_else(std::numeric_limits<uint64_t>::max());
 		VI_PANIC(priority == 0, "block proposal not allowed");
 		ledger::solver_context::sort_transaction_list(transactions);
 		if (!solver.try_include_transactions(std::move(transactions)))
@@ -141,28 +134,24 @@ struct tester
 			validators.push_back(user);
 
 		auto dispatcher = consensus::local_dispatcher_context(validators);
-		for (auto& [user, user_nonce] : users)
+		dispatcher.dispatch_sync(proposal.block.number);
+		for (auto& [runner_wallet, transaction] : dispatcher.outputs)
 		{
-			dispatcher.set_running_validator(user.public_key_hash);
-			dispatcher.dispatch_sync(proposal.block.number);
-			if (!dispatcher.outputs.empty())
+			for (auto& [user, user_nonce] : users)
 			{
-				for (auto& transaction : dispatcher.outputs)
+				bool attestation = transaction->as_type() == transactions::attestate::as_instance_type();
+				if (attestation || user.public_key_hash == runner_wallet->public_key_hash)
 				{
-					if (transaction->as_type() != transactions::attestate::as_instance_type())
+					if (!attestation)
 						transaction->sign(user.secret_key, user_nonce++, decimal::zero()).expect("pre-validation failed");
+					transactions.push_back(std::move(transaction));
+					break;
 				}
-				transactions.insert(transactions.end(), std::make_move_iterator(dispatcher.outputs.begin()), std::make_move_iterator(dispatcher.outputs.end()));
-				dispatcher.outputs.clear();
-			}
-			if (!causes_fault && !dispatcher.errors.empty())
-			{
-				for (auto& transaction : dispatcher.errors)
-					VI_PANIC(false, "%s", transaction.second.c_str());
-				dispatcher.errors.clear();
 			}
 		}
-
+		for (auto& transaction : dispatcher.errors)
+			VI_PANIC(causes_fault, "%s", transaction.second.c_str());
+		
 		dispatcher.checkpoint().expect("dispatcher checkpoint error");
 		if (!transactions.empty())
 			new_block_from_list(results, users, std::move(transactions));
@@ -2028,9 +2017,7 @@ int main(int argc, char* argv[])
 			ledger::node node;
 			node.address = socket_address(params.user.consensus.address, params.user.consensus.port);
 			node.version = protocol::now().message.protocol_version;
-
-			auto mempool = storages::mempoolstate();
-			mempool.apply_node(std::make_pair(node, wallet));
+			storages::mempoolstate().apply_runner_node(std::make_pair(node, wallet));
 			console::get()->write_line(wallet.as_tree().as_json(true));
 		}
 

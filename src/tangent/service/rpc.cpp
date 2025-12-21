@@ -3299,7 +3299,7 @@ namespace tangent
 			if (!consensus_service)
 				return server_response().error(error_codes::bad_request, "validator node disabled");
 
-			auto& [validator, wallet] = consensus_service->descriptor;
+			auto& [validator, wallet] = *consensus_service->runner_descriptor;
 			return server_response().success(wallet.as_tree());
 		}
 		server_response server_node::validatorstate_set_wallet(http::connection* base, format::variables&& args)
@@ -3326,7 +3326,7 @@ namespace tangent
 			else if (type == "seed")
 				wallet = ledger::wallet::from_seed(format::util::decode_0xhex(entropy));
 
-			auto result = consensus_service->accept_local_wallet(wallet);
+			auto result = consensus_service->accept_local_accounts({ wallet });
 			if (!result)
 				return server_response().error(error_codes::bad_request, result.error().message());
 

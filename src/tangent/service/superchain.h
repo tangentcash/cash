@@ -83,7 +83,7 @@ namespace tangent
 			expects_lr<void> normalize_transaction_id(const algorithm::asset_id& asset, string* transaction_id);
 			expects_lr<algorithm::composition::cpubkey_t> to_composite_public_key(const algorithm::asset_id& asset, const std::string_view& public_key);
 			expects_lr<address_map> to_addresses(const algorithm::asset_id& asset, const std::string_view& public_key);
-			expects_lr<void> scan_from_block_height(const algorithm::asset_id& asset, uint64_t block_height);
+			expects_lr<void> scan_from_block_height(const algorithm::asset_id& asset, option<uint64_t>&& block_height);
 			expects_lr<void> trigger_node_activity(const algorithm::asset_id& asset);
 			expects_lr<void> enable_contract_address(const algorithm::asset_id& asset, const std::string_view& contract_address);
 			expects_lr<void> enable_link(const algorithm::asset_id& asset, const wallet_link& link);

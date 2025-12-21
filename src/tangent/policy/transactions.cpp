@@ -1123,7 +1123,8 @@ namespace tangent
 		}
 		expects_promise_rt<void> setup::dispatch(const ledger::executor_context* executor, ledger::dispatcher_context* dispatcher) const
 		{
-			if (!dispatcher->is_running_on(executor->receipt.from))
+			auto* runner_wallet = dispatcher->get_runner_wallet(executor->receipt.from);
+			if (!runner_wallet)
 				return expects_promise_rt<void>(expectation::met);
 
 			bool requires_new_participant = false;
@@ -1133,7 +1134,7 @@ namespace tangent
 			else if (new_participant.empty() || executor->get_witness_event(executor->receipt.transaction_hash))
 				return expects_promise_rt<void>(remote_exception("invalid new participant"));
 
-			return coasync<expects_rt<void>>([this, executor, dispatcher, new_participant]() -> expects_promise_rt<void>
+			return coasync<expects_rt<void>>([this, executor, dispatcher, runner_wallet, new_participant]() -> expects_promise_rt<void>
 			{
 				auto migrations = expects_lr<vector<migration_ref>>(layer_exception());
 				auto cache = dispatcher->pull_cache(executor);
@@ -1217,7 +1218,7 @@ namespace tangent
 					if (!migration.must_have_locally)
 						continue;
 
-					auto secret = dispatcher->recover_secret_entropy(migration.account.asset, migration.account.manager, migration.account.owner);
+					auto secret = dispatcher->recover_secret_entropy(runner_wallet, migration.account.asset, migration.account.manager, migration.account.owner);
 					if (!secret)
 						coreturn remote_exception(std::move(secret.error().message()));
 
@@ -1239,7 +1240,7 @@ namespace tangent
 				transaction->asset = asset;
 				transaction->setup_hash = executor->receipt.transaction_hash;
 				transaction->proof = recovery_state.proof;
-				dispatcher->emit_transaction(transaction);
+				dispatcher->emit_transaction(runner_wallet, transaction);
 				coreturn expects_promise_rt<void>(expectation::met);
 			});
 		}
@@ -2576,14 +2577,15 @@ namespace tangent
 		}
 		expects_promise_rt<void> route::dispatch(const ledger::executor_context* executor, ledger::dispatcher_context* dispatcher) const
 		{
-			if (!dispatcher->is_running_on(manager))
+			auto* runner_wallet = dispatcher->get_runner_wallet(manager);
+			if (!runner_wallet)
 				return expects_promise_rt<void>(expectation::met);
 
 			auto* event = executor->receipt.find_event<route>();
 			if (!event || executor->get_witness_event(executor->receipt.transaction_hash))
 				return expects_promise_rt<void>(expectation::met);
 
-			return coasync<expects_rt<void>>([this, executor, dispatcher]() -> expects_promise_rt<void>
+			return coasync<expects_rt<void>>([this, executor, dispatcher, runner_wallet]() -> expects_promise_rt<void>
 			{
 				auto* chain = superchain::server_node::get()->get_chainparams(asset);
 				if (!chain)
@@ -2727,7 +2729,7 @@ namespace tangent
 				auto* transaction = memory::init<bind>();
 				transaction->asset = asset;
 				transaction->set_witness(executor->receipt.transaction_hash, std::move(aggregated_public_key), std::move(aggregated_signature));
-				dispatcher->emit_transaction(transaction);
+				dispatcher->emit_transaction(runner_wallet, transaction);
 				coreturn expectation::met;
 			});
 		}
@@ -3169,7 +3171,8 @@ namespace tangent
 		}
 		expects_promise_rt<void> withdraw::dispatch(const ledger::executor_context* executor, ledger::dispatcher_context* dispatcher) const
 		{
-			if (!dispatcher->is_running_on(manager))
+			auto* runner_wallet = dispatcher->get_runner_wallet(manager);
+			if (!runner_wallet)
 				return expects_promise_rt<void>(expectation::met);
 
 			if (executor->get_witness_event(executor->receipt.transaction_hash))
@@ -3179,16 +3182,16 @@ namespace tangent
 			if (policy && policy->queue_transaction_hash != executor->receipt.transaction_hash)
 				return expects_promise_rt<void>(remote_exception::retry());
 
-			return coasync<expects_rt<void>>([this, executor, dispatcher]() mutable -> expects_promise_rt<void>
+			return coasync<expects_rt<void>>([this, executor, dispatcher, runner_wallet]() mutable -> expects_promise_rt<void>
 			{
 				auto* server = superchain::server_node::get();
 				auto* chain = server->get_chainparams(asset);
-				auto cancel = [this, executor, dispatcher](remote_exception&& error) -> expects_rt<void>
+				auto cancel = [this, executor, dispatcher, runner_wallet](remote_exception&& error) -> expects_rt<void>
 				{
 					auto* transaction = memory::init<broadcast>();
 					transaction->asset = asset;
 					transaction->set_proof(executor->receipt.transaction_hash, layer_exception(std::move(remote_exception(error).message())));
-					dispatcher->emit_transaction(transaction);
+					dispatcher->emit_transaction(runner_wallet, transaction);
 					return expects_rt<void>(std::move(error));
 				};
 
@@ -3307,7 +3310,7 @@ namespace tangent
 				if (!finalization)
 					coreturn cancel(remote_exception(std::move(finalization.error().message())));
 
-				result = coawait(resolver::broadcast_transaction(algorithm::asset::base_id_of(asset), executor->receipt.transaction_hash, superchain::finalized_transaction(*finalization), dispatcher));
+				result = coawait(resolver::broadcast_transaction(algorithm::asset::base_id_of(asset), executor->receipt.transaction_hash, superchain::finalized_transaction(*finalization), dispatcher, runner_wallet));
 				if (!result && (result.error().is_retry() || result.error().is_shutdown()))
 				{
 				postpone:
@@ -3323,7 +3326,7 @@ namespace tangent
 				auto* transaction = memory::init<broadcast>();
 				transaction->asset = asset;
 				transaction->set_proof(executor->receipt.transaction_hash, std::move(*finalization));
-				dispatcher->emit_transaction(transaction);
+				dispatcher->emit_transaction(runner_wallet, transaction);
 				coreturn expectation::met;
 			});
 		}
@@ -3957,7 +3960,7 @@ namespace tangent
 			regtest_finalized.calldata = regtest_finalized.as_message().encode();
 			return expects_lr<superchain::finalized_transaction>(std::move(regtest_finalized));
 		}
-		expects_promise_rt<void> resolver::broadcast_transaction(const algorithm::asset_id& asset, const uint256_t& external_id, superchain::finalized_transaction&& finalized, ledger::dispatcher_context* dispatcher)
+		expects_promise_rt<void> resolver::broadcast_transaction(const algorithm::asset_id& asset, const uint256_t& external_id, superchain::finalized_transaction&& finalized, ledger::dispatcher_context* dispatcher, const ledger::wallet* runner_wallet)
 		{
 			auto* server = superchain::server_node::get();
 			bool may_mock_up = protocol::now().is(network_type::regtest);
@@ -3980,7 +3983,7 @@ namespace tangent
 				transaction->asset = asset;
 				transaction->set_gas(decimal::zero(), 0);
 				transaction->set_computed_proof(finalized.as_computed(), { });
-				dispatcher->emit_transaction(transaction);
+				dispatcher->emit_transaction(runner_wallet, transaction);
 			}
 			return expects_promise_rt<void>(expectation::met);
 		}

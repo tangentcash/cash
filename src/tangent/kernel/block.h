@@ -494,7 +494,7 @@ namespace tangent
 			};
 
 			btree_map<uint256_t, string> errors;
-			vector<uptr<transaction>> outputs;
+			vector<std::pair<const ledger::wallet*, uptr<transaction>>> outputs;
 			vector<uint256_t> inputs;
 			vector<uint256_t> repeaters;
 
@@ -503,8 +503,8 @@ namespace tangent
 			dispatcher_context(dispatcher_context&&) noexcept = default;
 			dispatcher_context& operator=(const dispatcher_context& other) noexcept;
 			dispatcher_context& operator=(dispatcher_context&&) noexcept = default;
-			virtual expects_lr<secret_entropy> apply_secret_entropy(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner, const algorithm::storage_type<uint8_t, 64>& entropy, btree_map<algorithm::pubkeyhash_t, secret_entropy::share_pair>&& shares);
-			virtual expects_lr<secret_entropy> recover_secret_entropy(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner);
+			virtual expects_lr<secret_entropy> apply_secret_entropy(const wallet* runner_wallet, const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner, const algorithm::storage_type<uint8_t, 64>& entropy, btree_map<algorithm::pubkeyhash_t, secret_entropy::share_pair>&& shares);
+			virtual expects_lr<secret_entropy> recover_secret_entropy(const wallet* runner_wallet, const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner);
 			virtual expects_promise_rt<void> aggregate_validators(const btree_set<algorithm::pubkeyhash_t>& validators) = 0;
 			virtual expects_promise_rt<void> distribute_entropy_shares(const executor_context* executor, entropy_distribution_state& state, const algorithm::pubkeyhash_t& validator) = 0;
 			virtual expects_promise_rt<void> aggregate_entropy_shares(const executor_context* executor, entropy_aggregation_state& state, const algorithm::pubkeyhash_t& validator) = 0;
@@ -515,16 +515,15 @@ namespace tangent
 			virtual promise<void> dispatch_async(uint64_t block_number);
 			virtual void dispatch_sync(uint64_t block_number);
 			virtual void reset_for_checkpoint();
-			virtual void emit_transaction(uptr<transaction>&& value);
+			virtual void emit_transaction(const wallet* runner_wallet, uptr<transaction>&& value);
 			virtual void retry_later(const uint256_t& transaction_hash);
 			virtual void report_trial(const uint256_t& transaction_hash);
 			virtual void report_error(const uint256_t& transaction_hash, const std::string_view& error_message);
-			virtual bool is_running_on(const algorithm::pubkeyhash_t& validator) const;
-			virtual vector<uptr<transaction>>& get_sendable_transactions();
+			virtual vector<std::pair<const ledger::wallet*, uptr<transaction>>>& get_sendable_transactions();
 			virtual format::ro_stream pull_cache(const executor_context* executor);
 			virtual void push_cache(const executor_context* executor, const format::wo_stream& message) const;
 			virtual algorithm::pubkey_t get_public_key(const algorithm::pubkeyhash_t& validator) const = 0;
-			virtual const wallet& get_runner_wallet() const = 0;
+			virtual const wallet* get_runner_wallet(const algorithm::pubkeyhash_t& validator) const = 0;
 		};
 
 		struct solver_context
@@ -578,7 +577,7 @@ namespace tangent
 			vector<states::validator_production> producers;
 
 			void apply_temporary_state(block_header* abstract_block, const transaction* abstract_transaction, receipt&& abstract_receipt);
-			option<uint64_t> apply_validator_state(const algorithm::pubkeyhash_t& public_key_hash, const algorithm::seckey_t& secret_key, option<const block_header*>&& parent_block = optional::none);
+			option<uint64_t> apply_validator_state(const std::function<ledger::wallet*(size_t)>& try_producer, option<const block_header*>&& parent_block = optional::none);
 			size_t try_include_transactions(vector<uptr<transaction>>&& candidates);
 			queued_transaction& force_include_transaction(uptr<transaction>&& candidate);
 			include_decision decide_on_inclusion(const queued_transaction& candidate, const uint256_t& current_gas_limit, const uint256_t& max_gas_limit) const;

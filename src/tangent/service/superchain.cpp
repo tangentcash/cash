@@ -139,6 +139,8 @@ namespace tangent
 						auto* tip = root.child("server.tip");
 						if (tip != nullptr && tip->value.is_integer())
 							scan_from_block_height(asset, tip->value.as_uint64());
+						else if (tip != nullptr)
+							scan_from_block_height(asset, optional::none);
 
 						auto* strategy = root.child("strategy");
 						if (strategy != nullptr)
@@ -291,7 +293,7 @@ namespace tangent
 			if (!provider)
 				coreturn expects_rt<vector<transaction_logs>>(remote_exception("node not found"));
 
-			format::tree tip_checkpoint, tip_earliest, tip_latest, tip_override;
+			format::tree tip_checkpoint, tip_earliest, tip_latest;
 			bool is_dry_run = !options->has_latest_block_height();
 			auto to_delayed_block_height = [&](uint64_t block_height, bool zero_as_min)
 			{
@@ -302,21 +304,25 @@ namespace tangent
 			options->state.interactions.clear();
 			{
 				storages::superchainstate state = storages::superchainstate(asset);
-				tip_checkpoint = state.get_property("TIP:CHECKPOINT").or_else(format::tree());
-				if (tip_checkpoint.value.is_integer())
-					options->set_checkpoint_from_block((uint64_t)std::max<int64_t>(1, (int64_t)tip_checkpoint.value.as_uint64()) - 1);
-
+				auto tip_override = state.get_property("TIP:OVERRIDE").or_else(format::tree());
 				tip_earliest = state.get_property("TIP:EARLIEST").or_else(format::tree());
-				tip_latest = state.get_property("TIP:LATEST").or_else(format::tree());
-				if (tip_latest.value.is_integer() && tip_latest.value.as_uint64() > options->state.latest_block_height)
-					options->set_checkpoint_from_block(tip_latest.value.as_uint64());
-
-				tip_override = state.get_property("TIP:OVERRIDE").or_else(format::tree());
 				if (tip_override.value.is_integer())
 				{
-					uint64_t tip = to_delayed_block_height(tip_override.value.as_uint64(), false);
+					uint64_t tip = to_delayed_block_height(tip_override.value.as_uint64(), !tip_override.value.as_uint64());
 					options->state.starting_block_height = tip;
 					options->set_checkpoint_from_block(tip);
+					state.set_property("TIP:OVERRIDE", format::variable());
+					state.set_property("TIP:CHECKPOINT", format::variable());
+					state.set_property("TIP:LATEST", format::variable());
+				}
+				else
+				{
+					tip_checkpoint = state.get_property("TIP:CHECKPOINT").or_else(format::tree());
+					tip_latest = state.get_property("TIP:LATEST").or_else(format::tree());
+					if (tip_checkpoint.value.is_integer())
+						options->set_checkpoint_from_block((uint64_t)std::max<int64_t>(1, (int64_t)tip_checkpoint.value.as_uint64()) - 1);
+					if (tip_latest.value.is_integer() && tip_latest.value.as_uint64() > options->state.latest_block_height)
+						options->set_checkpoint_from_block(tip_latest.value.as_uint64());
 				}
 			}
 
@@ -387,8 +393,6 @@ namespace tangent
 				state.set_property("TIP:EARLIEST", format::variable(block_height));
 			if (!tip_latest.value.is_integer() || tip_latest.value.as_uint64() != options->state.latest_block_height)
 				state.set_property("TIP:LATEST", format::variable(options->state.latest_block_height));
-			if (tip_override.value.is_integer())
-				state.set_property("TIP:OVERRIDE", format::variable());
 
 			coreturn expects_rt<vector<transaction_logs>>(std::move(logs));
 		}
@@ -450,7 +454,7 @@ namespace tangent
 				storages::superchainstate state = storages::superchainstate(asset);
 				auto duplicate_transaction = state.get_computed_transaction(new_transaction.transaction_id, external_id, algorithm::hashing::hash256i(new_transaction.transaction_id));
 				if (duplicate_transaction)
-					coreturn expects_rt<void>(expectation::met);
+					coreturn expects_rt<void>(remote_exception("transaction is in dangling state (reverting due to double spending possibility)"));
 
 				auto status = state.add_outgoing_transaction(new_transaction, external_id);
 				if (!status)
@@ -458,7 +462,7 @@ namespace tangent
 			}
 
 			if (protocol::now().user.superchain.logging)
-				VI_INFO("%s broadcast transaction: %s (ref: %s)", algorithm::asset::blockchain_of(asset).c_str(), *finalized.as_tree().as_json().c_str(), algorithm::encoding::encode_0xhex256(external_id).c_str());
+				VI_INFO("%s broadcast transaction: %s (ref: %s)", algorithm::asset::blockchain_of(asset).c_str(), finalized.as_tree().as_json().c_str(), algorithm::encoding::encode_0xhex256(external_id).c_str());
 
 			auto result = coawait(implementation->broadcast_transaction(finalized));
 			if (!result)
@@ -817,13 +821,13 @@ namespace tangent
 
 			return implementation->to_addresses(public_key);
 		}
-		expects_lr<void> server_node::scan_from_block_height(const algorithm::asset_id& asset, uint64_t block_height)
+		expects_lr<void> server_node::scan_from_block_height(const algorithm::asset_id& asset, option<uint64_t>&& block_height)
 		{
 			if (!algorithm::asset::is_aux(asset))
 				return expects_lr<void>(layer_exception("asset not found"));
 
 			storages::superchainstate state = storages::superchainstate(asset);
-			return state.set_property("TIP:OVERRIDE", format::variable(block_height));
+			return state.set_property("TIP:OVERRIDE", block_height ? format::variable(*block_height) : format::variable());
 		}
 		expects_lr<void> server_node::trigger_node_activity(const algorithm::asset_id& asset)
 		{

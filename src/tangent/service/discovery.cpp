@@ -145,22 +145,23 @@ namespace tangent
 			for (auto& [account, address] : nodes)
 				data.push(format::variable(system_endpoint::to_uri(address)));
 
-			auto node = mempool.get_local_node();
-			if (node && (storages::mempoolstate::services_of(node->first) & services) == services)
+			auto local_nodes = mempool.get_local_nodes();
+			if (local_nodes && !local_nodes->empty() && (storages::mempoolstate::services_of(local_nodes->front().first) & services) == services)
 			{
+				auto& node = local_nodes->front();
 				switch (port)
 				{
 					case storages::node_ports::consensus:
 						if (protocol::now().user.consensus.server)
-							data.push(format::variable("tcp://selfhost:" + to_string(node->first.ports.consensus)));
+							data.push(format::variable("tcp://selfhost:" + to_string(node.first.ports.consensus)));
 						break;
 					case storages::node_ports::discovery:
 						if (protocol::now().user.discovery.server)
-							data.push(format::variable("tcp://selfhost:" + to_string(node->first.ports.discovery)));
+							data.push(format::variable("tcp://selfhost:" + to_string(node.first.ports.discovery)));
 						break;
 					case storages::node_ports::rpc:
 						if (protocol::now().user.rpc.server)
-							data.push(format::variable("tcp://selfhost:" + to_string(node->first.ports.rpc)));
+							data.push(format::variable("tcp://selfhost:" + to_string(node.first.ports.rpc)));
 						break;
 					default:
 						break;

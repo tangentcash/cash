@@ -172,7 +172,7 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<void> mempoolstate::apply_node(const node_pair& value)
+		expects_lr<void> mempoolstate::apply_custom_node(const node_pair& value, int8_t type)
 		{
 			auto& [node, wallet] = value;
 			format::wo_stream node_message;
@@ -194,7 +194,7 @@ namespace tangent
 			map.push_back(var::set::binary(wallet.public_key_hash.view()));
 			map.push_back(var::set::binary(address_message));
 			map.push_back(var::set::binary(wallet.public_key_hash.view()));
-			map.push_back(wallet.has_secret_key() ? var::set::null() : var::set::integer(node.get_preference()));
+			map.push_back(var::set::integer(type >= 0 ? node.get_preference() : type));
 			map.push_back(var::set::integer(services_of(node)));
 			map.push_back(var::set::binary(node_message.data));
 			map.push_back(var::set::binary(*encrypted_wallet_message));
@@ -208,13 +208,25 @@ namespace tangent
 
 			return apply_cooldown_node(node.address, !wallet.has_secret_key() && !node.availability.reachable);
 		}
+		expects_lr<void> mempoolstate::apply_runner_node(const node_pair& node)
+		{
+			return apply_custom_node(node, -1);
+		}
+		expects_lr<void> mempoolstate::apply_neighbor_node(const node_pair& node)
+		{
+			return apply_custom_node(node, -2);
+		}
+		expects_lr<void> mempoolstate::apply_node(const node_pair& node)
+		{
+			return apply_custom_node(node, 0);
+		}
 		expects_lr<void> mempoolstate::apply_node_quality(const socket_address& node_address, int8_t call_result, uint64_t call_latency)
 		{
 			schema_list map;
 			map.push_back(var::set::binary(address_to_message(node_address)));
 
 			auto& storage = get_peer_storage();
-			auto cursor = storage.emplace_query(__func__, "SELECT node_message FROM nodes WHERE address = ? AND quality IS NOT NULL", &map);
+			auto cursor = storage.emplace_query(__func__, "SELECT node_message FROM nodes WHERE address = ? AND quality >= 0", &map);
 			if (!cursor || cursor->error_or_empty())
 				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -284,35 +296,38 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<node_pair> mempoolstate::get_local_node()
+		expects_lr<vector<node_pair>> mempoolstate::get_local_nodes()
 		{
-			auto cursor = get_peer_storage().query(__func__, "SELECT node_message, wallet_message FROM nodes WHERE quality IS NULL LIMIT 1");
+			auto cursor = get_peer_storage().query(__func__, "SELECT node_message, wallet_message FROM nodes WHERE quality < 0 ORDER BY quality DESC");
 			if (!cursor || cursor->error_or_empty())
-				return expects_lr<node_pair>(layer_exception(ledger::storage_util::error_of(cursor)));
+				return expects_lr<vector<node_pair>>(layer_exception(ledger::storage_util::error_of(cursor)));
 
-			auto decrypted_message = protocol::now().box.decrypt((*cursor)["wallet_message"].get().get_blob());
-			if (!decrypted_message)
-				return decrypted_message.error();
-
-			ledger::node node;
-			auto node_blob = (*cursor)["node_message"].get().get_blob();
-			auto node_message = format::ro_stream(node_blob);
-			if (!node.load(node_message))
-				return expects_lr<node_pair>(layer_exception("node deserialization error"));
-
-			ledger::wallet wallet;
-			format::ro_stream wallet_message = format::ro_stream(*decrypted_message);
-			if (!wallet.load(wallet_message))
-				return expects_lr<node_pair>(layer_exception("wallet deserialization error"));
-
-			return std::make_pair(std::move(node), std::move(wallet));
+			vector<node_pair> results;
+			for (auto row : cursor->first())
+			{
+				auto decrypted_message = protocol::now().box.decrypt(row["wallet_message"].get().get_blob());
+				if (decrypted_message)
+				{
+					ledger::node node;
+					auto node_blob = row["node_message"].get().get_blob();
+					auto node_message = format::ro_stream(node_blob);
+					if (node.load(node_message))
+					{
+						ledger::wallet wallet;
+						format::ro_stream wallet_message = format::ro_stream(*decrypted_message);
+						if (wallet.load(wallet_message))
+							results.push_back(std::make_pair(std::move(node), std::move(wallet)));
+					}
+				}
+			}
+			return expects_lr<vector<node_pair>>(std::move(results));
 		}
 		expects_lr<node_pair> mempoolstate::get_neighbor_node(size_t offset)
 		{
 			schema_list map;
 			map.push_back(var::set::integer(offset));
 
-			auto cursor = get_peer_storage().emplace_query(__func__, "SELECT node_message, wallet_message FROM nodes WHERE quality IS NOT NULL ORDER BY quality DESC LIMIT 1 OFFSET ?", &map);
+			auto cursor = get_peer_storage().emplace_query(__func__, "SELECT node_message, wallet_message FROM nodes WHERE quality >= 0 ORDER BY quality DESC LIMIT 1 OFFSET ?", &map);
 			if (!cursor || cursor->error_or_empty())
 				return expects_lr<node_pair>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -339,7 +354,7 @@ namespace tangent
 			map.push_back(var::set::binary(account.view()));
 
 			auto& storage = get_peer_storage();
-			auto cursor = storage.emplace_query(__func__, "SELECT quality FROM nodes WHERE account = ?", &map);
+			auto cursor = storage.emplace_query(__func__, "SELECT quality FROM nodes WHERE account = ? AND quality >= 0", &map);
 			if (!cursor || cursor->error_or_empty())
 				return expects_lr<node_pair>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -427,7 +442,7 @@ namespace tangent
 			map.push_back(var::set::integer(count));
 			map.push_back(var::set::integer(offset));
 
-			auto cursor = get_peer_storage().emplace_query(__func__, "SELECT account, address FROM nodes WHERE quality IS NOT NULL AND (services & ?) == ? ORDER BY quality DESC LIMIT ? OFFSET ?", &map);
+			auto cursor = get_peer_storage().emplace_query(__func__, "SELECT account, address FROM nodes WHERE quality >= 0 AND (services & ?) == ? ORDER BY quality DESC LIMIT ? OFFSET ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<vector<node_location_pair>>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -450,7 +465,7 @@ namespace tangent
 			map.push_back(var::set::integer(services));
 			map.push_back(var::set::integer(count));
 
-			auto cursor = get_peer_storage().emplace_query(__func__, "SELECT account, address FROM nodes WHERE quality IS NOT NULL AND (services & ?) == ? ORDER BY random() LIMIT ?", &map);
+			auto cursor = get_peer_storage().emplace_query(__func__, "SELECT account, address FROM nodes WHERE quality >= 0 AND (services & ?) == ? ORDER BY random() LIMIT ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<vector<node_location_pair>>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -517,7 +532,7 @@ namespace tangent
 		}
 		expects_lr<size_t> mempoolstate::get_nodes_count()
 		{
-			auto cursor = get_peer_storage().query(__func__, "SELECT COUNT(1) AS counter FROM nodes WHERE quality IS NOT NULL");
+			auto cursor = get_peer_storage().query(__func__, "SELECT COUNT(1) AS counter FROM nodes WHERE quality >= 0");
 			if (!cursor || cursor->error_or_empty())
 				return expects_lr<size_t>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -1095,9 +1110,9 @@ namespace tangent
 					services INTEGER NOT NULL,
 					node_message BLOB NOT NULL,
 					wallet_message BLOB NOT NULL,
-					PRIMARY KEY (address)
-					UNIQUE (account)
+					PRIMARY KEY (address, account)
 				) WITHOUT ROWID;
+				CREATE INDEX IF NOT EXISTS nodes_account ON nodes (account);
 				CREATE TABLE IF NOT EXISTS addresses
 				(
 					address BLOB NOT NULL,
@@ -1125,19 +1140,6 @@ namespace tangent
 					commitment BLOB(32) NOT NULL,
 					signature BLOB(65) NOT NULL,
 					PRIMARY KEY (hash, commitment, signature)
-				);
-				CREATE TABLE IF NOT EXISTS transactions
-				(
-					hash BLOB(32) NOT NULL,
-					owner BLOB(20) NOT NULL,
-					asset BLOB(32) NOT NULL,
-					nonce BIGINT NOT NULL,
-					epoch INTEGER DEFAULT 0,
-					quality INTEGER DEFAULT NULL,
-					time INTEGER NOT NULL,
-					price TEXT NOT NULL,
-					message BLOB NOT NULL,
-					PRIMARY KEY (hash)
 				);
 				CREATE TABLE IF NOT EXISTS transactions
 				(

@@ -1114,7 +1114,7 @@ namespace tangent
 			{
 				++retry_responses;
 				if (cache == cache_policy::no_cache_no_throttling)
-					coreturn  response ? expects_rt<format::tree>(remote_exception(generate_error_message(response, reporter, "null", "node has rejected the request"))) : expects_rt<format::tree>(remote_exception::shutdown());
+					coreturn response ? expects_rt<format::tree>(remote_exception(generate_error_message(response, reporter, "null", "node has rejected the request"))) : expects_rt<format::tree>(remote_exception::shutdown());
 				else if (retry_responses > 5)
 					coreturn response ? expects_rt<format::tree>(remote_exception(generate_error_message(response, reporter, "null", "node has rejected the request too many times"))) : expects_rt<format::tree>(remote_exception::shutdown());
 				else if (!coawait(yield_for_cooldown(retry_timeout, setup.timeout)))

@@ -487,9 +487,15 @@ namespace tangent
 				}
 			}
 
-			value = config->child("consensus.account");
-			if (value != nullptr && value->value.is_string())
-				user.consensus.account = value->value.as_blob();
+			value = config->child("consensus.accounts");
+			if (value != nullptr && value->is_list())
+			{
+				for (auto& account : value->childs())
+				{
+					if (account.value.is_string())
+						user.consensus.accounts.push_back(account.value.as_blob());
+				}
+			}
 
 			value = config->child("consensus.address");
 			if (value != nullptr && value->value.is_string())

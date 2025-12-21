@@ -77,12 +77,15 @@ namespace tangent
 			~mempoolstate() noexcept;
 			expects_lr<void> apply_cooldown_node(const socket_address& address, bool cooldown);
 			expects_lr<void> apply_unknown_node(const socket_address& address, bool allow_reserved);
+			expects_lr<void> apply_custom_node(const node_pair& node, int8_t type);
+			expects_lr<void> apply_runner_node(const node_pair& node);
+			expects_lr<void> apply_neighbor_node(const node_pair& node);
 			expects_lr<void> apply_node(const node_pair& node);
 			expects_lr<void> apply_node_quality(const socket_address& address, int8_t call_result, uint64_t call_latency);
 			expects_lr<void> clear_node(const algorithm::pubkeyhash_t& account);
 			expects_lr<void> clear_node(const socket_address& address);
 			expects_lr<void> clear_cooldowns();
-			expects_lr<node_pair> get_local_node();
+			expects_lr<vector<node_pair>> get_local_nodes();
 			expects_lr<node_pair> get_neighbor_node(size_t offset);
 			expects_lr<node_pair> get_better_node(const algorithm::pubkeyhash_t& account);
 			expects_lr<node_pair> get_node(const socket_address& address);

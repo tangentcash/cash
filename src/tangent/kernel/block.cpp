@@ -846,12 +846,12 @@ namespace tangent
 			if (parent_block && (parent_block->number != number - 1 || parent_block->as_hash() != parent_hash))
 				return layer_exception("invalid parent block");
 
-			algorithm::pubkeyhash_t producer;
-			if (!recover_hash(producer))
+			ledger::wallet producer;
+			if (!recover_hash(producer.public_key_hash))
 				return layer_exception("invalid producer signature");
 
 			solver_context solver;
-			if (!solver.apply_validator_state(producer, algorithm::seckey_t(), parent_block))
+			if (!solver.apply_validator_state([&producer](size_t index) { return index > 0 ? nullptr : &producer; }, parent_block))
 			{
 				if (priority != (uint64_t)solver.producers.size())
 					return layer_exception("invalid producer priority");
@@ -897,7 +897,7 @@ namespace tangent
 			if (input.as_message().data != output.as_message().data)
 				return layer_exception("unproven state transition");
 
-			auto verification = solver.verify_block(result, producer);
+			auto verification = solver.verify_block(result, producer.public_key_hash);
 			if (!verification)
 				return verification;
 
@@ -3309,8 +3309,12 @@ namespace tangent
 		}
 		bool dispatcher_context::public_state::load(format::ro_stream& stream)
 		{
-			auto state = algorithm::composition::load_compositor(stream, &alg);
-			if (!state)
+			bool has_compositor = false;
+			if (!stream.read_boolean(stream.read_type(), &has_compositor))
+				return false;
+
+			auto state = has_compositor ? algorithm::composition::load_compositor(stream, &alg) : expects_lr<uptr<algorithm::composition::compositor>>(layer_exception());
+			if (has_compositor && !state)
 				return false;
 
 			if (!stream.read_boolean(stream.read_type(), &distribution))
@@ -3363,7 +3367,10 @@ namespace tangent
 				}
 			}
 
-			compositor = std::move(*state);
+			if (has_compositor)
+				compositor = std::move(*state);
+			else
+				compositor.destroy();
 			participants = std::move(possible_participants);
 			encrypted_shares = std::move(possible_shares);
 			return true;
@@ -3371,7 +3378,9 @@ namespace tangent
 		format::wo_stream dispatcher_context::public_state::as_message() const
 		{
 			format::wo_stream result;
-			algorithm::composition::store_compositor(alg, *compositor, &result);
+			result.write_boolean(!!compositor);
+			if (compositor)
+				algorithm::composition::store_compositor(alg, *compositor, &result);
 			result.write_boolean(distribution);
 			result.write_integer(attempt);
 			result.write_integer((uint8_t)encrypted_shares.size());
@@ -3409,8 +3418,12 @@ namespace tangent
 		}
 		bool dispatcher_context::signature_state::load(format::ro_stream& stream)
 		{
-			auto state = algorithm::composition::load_compositor(stream, &alg);
-			if (!state)
+			bool has_compositor = false;
+			if (!stream.read_boolean(stream.read_type(), &has_compositor))
+				return false;
+
+			auto state = has_compositor ? algorithm::composition::load_compositor(stream, &alg) : expects_lr<uptr<algorithm::composition::compositor>>(layer_exception());
+			if (has_compositor && !state)
 				return false;
 
 			superchain::prepared_transaction possible_message;
@@ -3434,7 +3447,10 @@ namespace tangent
 				possible_participants.insert(item);
 			}
 
-			compositor = std::move(*state);
+			if (has_compositor)
+				compositor = std::move(*state);
+			else
+				compositor.destroy();
 			participants = std::move(possible_participants);
 			message = memory::init<superchain::prepared_transaction>(std::move(possible_message));
 			return true;
@@ -3443,7 +3459,9 @@ namespace tangent
 		{
 			VI_ASSERT(message, "message should be set");
 			format::wo_stream result;
-			algorithm::composition::store_compositor(alg, *compositor, &result);
+			result.write_boolean(!!compositor);
+			if (compositor)
+				algorithm::composition::store_compositor(alg, *compositor, &result);
 			message->store(&result);
 			result.write_integer(attempt);
 			result.write_integer((uint16_t)participants.size());
@@ -3455,11 +3473,11 @@ namespace tangent
 		dispatcher_context::dispatcher_context(const dispatcher_context& other) noexcept : inputs(other.inputs)
 		{
 			outputs.reserve(other.outputs.size());
-			for (auto& output : other.outputs)
+			for (auto& [wallet, output] : other.outputs)
 			{
 				auto* copy = transactions::resolver::from_copy(*output);
 				if (copy)
-					outputs.push_back(copy);
+					outputs.push_back(std::make_pair(wallet, copy));
 			}
 		}
 		dispatcher_context& dispatcher_context::operator=(const dispatcher_context& other) noexcept
@@ -3470,16 +3488,17 @@ namespace tangent
 			inputs = other.inputs;
 			outputs.clear();
 			outputs.reserve(other.outputs.size());
-			for (auto& output : other.outputs)
+			for (auto& [wallet, output] : other.outputs)
 			{
 				auto* copy = transactions::resolver::from_copy(*output);
 				if (copy)
-					outputs.push_back(copy);
+					outputs.push_back(std::make_pair(wallet, copy));
 			}
 			return *this;
 		}
-		expects_lr<dispatcher_context::secret_entropy> dispatcher_context::apply_secret_entropy(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner, const algorithm::storage_type<uint8_t, 64>& entropy, btree_map<algorithm::pubkeyhash_t, secret_entropy::share_pair>&& shares)
+		expects_lr<dispatcher_context::secret_entropy> dispatcher_context::apply_secret_entropy(const wallet* runner_wallet, const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner, const algorithm::storage_type<uint8_t, 64>& entropy, btree_map<algorithm::pubkeyhash_t, secret_entropy::share_pair>&& shares)
 		{
+			VI_ASSERT(runner_wallet != nullptr, "runner wallet should be set");
 			secret_entropy result;
 			result.asset = asset;
 			result.manager = manager;
@@ -3488,22 +3507,22 @@ namespace tangent
 			result.shares = std::move(shares);
 
 			auto mempool = storages::mempoolstate();
-			auto status = mempool.apply_secret_entropy(get_runner_wallet().public_key_hash, result);
+			auto status = mempool.apply_secret_entropy(runner_wallet->public_key_hash, result);
 			if (!status)
 				return status.error();
 
 			return expects_lr<dispatcher_context::secret_entropy>(std::move(result));
 		}
-		expects_lr<dispatcher_context::secret_entropy> dispatcher_context::recover_secret_entropy(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner)
+		expects_lr<dispatcher_context::secret_entropy> dispatcher_context::recover_secret_entropy(const wallet* runner_wallet, const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner)
 		{
-			auto& runner_wallet = get_runner_wallet();
+			VI_ASSERT(runner_wallet != nullptr, "runner wallet should be set");
 			auto mempool = storages::mempoolstate();
-			auto result = mempool.get_secret_entropy(runner_wallet.public_key_hash, asset, manager, owner);
+			auto result = mempool.get_secret_entropy(runner_wallet->public_key_hash, asset, manager, owner);
 			if (result)
 				return result;
 
 			uint8_t entropy_source_1[sizeof(asset)];
-			auto entropy_source_2 = runner_wallet.secret_key.view();
+			auto entropy_source_2 = runner_wallet->secret_key.view();
 			auto entropy_source_3 = manager.view();
 			auto entropy_source_4 = owner.view();
 			asset.encode(entropy_source_1);
@@ -3518,7 +3537,7 @@ namespace tangent
 			if (!algorithm::signing::derive_seed_from_password((uint8_t*)entropy_source.data.data(), entropy_source.data.size(), entropy.data, entropy.size()))
 				return layer_exception("secret entropy source generation failed");
 
-			return apply_secret_entropy(asset, manager, owner, entropy, { });
+			return apply_secret_entropy(runner_wallet, asset, manager, owner, entropy, { });
 		}
 		expects_lr<void> dispatcher_context::checkpoint()
 		{
@@ -3592,10 +3611,11 @@ namespace tangent
 			inputs.clear();
 			repeaters.clear();
 		}
-		void dispatcher_context::emit_transaction(uptr<transaction>&& value)
+		void dispatcher_context::emit_transaction(const wallet* runner_wallet, uptr<transaction>&& value)
 		{
+			VI_ASSERT(runner_wallet, "runner wallet should be set");
 			VI_ASSERT(value, "transaction should be set");
-			outputs.push_back(std::move(value));
+			outputs.push_back(std::make_pair(runner_wallet, std::move(value)));
 		}
 		void dispatcher_context::retry_later(const uint256_t& transaction_hash)
 		{
@@ -3612,12 +3632,7 @@ namespace tangent
 				error.append(1, '\n');
 			error.append(stringify::text("in transaction %s dispatch reverted: %.*s", algorithm::encoding::encode_0xhex256(transaction_hash).c_str(), (int)error_message.size(), error_message.data()));
 		}
-		bool dispatcher_context::is_running_on(const algorithm::pubkeyhash_t& validator) const
-		{
-			auto& runner_wallet = get_runner_wallet();
-			return runner_wallet.public_key_hash == validator;
-		}
-		vector<uptr<transaction>>& dispatcher_context::get_sendable_transactions()
+		vector<std::pair<const ledger::wallet*, uptr<transaction>>>& dispatcher_context::get_sendable_transactions()
 		{
 			return outputs;
 		}
@@ -3653,7 +3668,7 @@ namespace tangent
 			memset(state.public_key_hash.data, 0xFF, sizeof(algorithm::pubkeyhash_t));
 			memset(state.secret_key.data, 0xFF, sizeof(algorithm::seckey_t));
 		}
-		option<uint64_t> solver_context::apply_validator_state(const algorithm::pubkeyhash_t& public_key_hash, const algorithm::seckey_t& secret_key, option<const block_header*>&& parent_block)
+		option<uint64_t> solver_context::apply_validator_state(const std::function<ledger::wallet*(size_t)>& try_producer, option<const block_header*>&& parent_block)
 		{
 			nonces.clear();
 			state = state_variables();
@@ -3681,27 +3696,41 @@ namespace tangent
 			}
 
 			auto origin = state.origin;
-			state.public_key_hash = public_key_hash;
-			state.secret_key = secret_key;
 			state.executor = executor_context(&state.changelog, this, tip.address(), nullptr, { });
 			state.origin = state.origin == state_origin::block ? state_origin::chain_block : state_origin::chain;
 			producers = state.executor.calculate_producers(protocol::now().policy.production.max_per_block).or_else(vector<states::validator_production>());
 			if (producers.empty())
 			{
-				auto work = state.executor.get_validator_production(state.public_key_hash);
-				if (!work)
-					producers.push_back(states::validator_production(state.public_key_hash, tip.address()));
-				else
-					producers.push_back(std::move(*work));
+				auto proposer = try_producer(0);
+				if (proposer != nullptr)
+				{
+					auto work = state.executor.get_validator_production(proposer->public_key_hash);
+					if (!work)
+						producers.push_back(states::validator_production(proposer->public_key_hash, tip.address()));
+					else
+						producers.push_back(std::move(*work));
+				}
 			}
 
+			size_t position = 0;
 			state.origin = origin;
 			state.executor.block = nullptr;
-			auto position = std::find_if(producers.begin(), producers.end(), [this](const states::validator_production& a) { return a.owner == state.public_key_hash; });
-			if (position == producers.end())
-				return optional::none;
+			for (auto& producer : producers)
+			{
+				size_t index = 0; ++position;
+			next:
+				auto target = try_producer(index++);
+				if (!target)
+					continue;
+				else if (producer.owner != target->public_key_hash)
+					goto next;
 
-			return std::distance(producers.begin(), position);
+				state.public_key_hash = target->public_key_hash;
+				state.secret_key = target->secret_key;
+				return position - 1;
+			}
+
+			return optional::none;
 		}
 		size_t solver_context::try_include_transactions(vector<uptr<transaction>>&& candidates)
 		{
