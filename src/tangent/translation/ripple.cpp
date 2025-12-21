@@ -292,27 +292,22 @@ namespace tangent
 			}
 			expects_promise_rt<vector<block_log>> ripple::get_block_transactions(uint64_t block_height, uint64_t block_count)
 			{
-				format::tree map;
+				vector<block_log> results;
 				for (uint64_t i = 0; i < block_count; i++)
 				{
-					auto submap = format::tree::list();
-					auto params = submap.push(format::tree::map());
+					auto map = format::tree::list();
+					auto params = map.push(format::tree::map());
 					params->set("ledger_index", format::variable(block_height));
 					params->set("transactions", format::variable(true));
 					params->set("expand", format::variable(true));
-					map.push(std::move(submap));
-				}
 
-				auto block_data = coawait(execute_rpc_multi(nd_call::ledger(), std::move(map), cache_policy::blob_cache));
-				if (!block_data)
-					coreturn block_data.error();
+					auto block_data = coawait(execute_rpc(nd_call::ledger(), std::move(map), cache_policy::blob_cache));
+					if (!block_data)
+						coreturn block_data.error();
 
-				vector<block_log> results;
-				for (auto& block : block_data->childs())
-				{
-					auto* transactions = (format::tree*)block.child("ledger.transactions");
+					auto* transactions = (format::tree*)block_data->child("ledger.transactions");
 					auto& log = results.emplace_back();
-					log.block_hash = block.child_var("ledger_hash").as_blob();
+					log.block_hash = block_data->child_var("ledger_hash").as_blob();
 					log.transactions = transactions ? std::move(*transactions) : format::tree::list();
 				}
 				coreturn expects_rt<vector<block_log>>(std::move(results));

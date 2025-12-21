@@ -987,7 +987,7 @@ namespace tangent
 			auto setup = format::tree::map();
 			setup.set("jsonrpc", format::variable("2.0"));
 			setup.set("method", format::variable(method));
-			if (multi && args.fields)
+			if (multi && args.fields && args.fields->size() > 1)
 			{
 				auto multi_setup = format::tree::list();
 				for (auto& request : *args.fields)
@@ -1000,7 +1000,7 @@ namespace tangent
 			}
 			else
 			{
-				setup.set("params", args);
+				setup.set("params", multi && args.fields ? args.fields->front() : args);
 				setup.set("id", format::variable(priority));
 			}
 
@@ -1032,7 +1032,7 @@ namespace tangent
 
 				return expects_rt<format::tree>(std::move(*result));
 			};
-			if (!multi)
+			if (!multi || (multi && args.fields && args.fields->size() <= 1))
 				coreturn to_response(*response);
 
 			format::tree results;

@@ -419,7 +419,7 @@ namespace tangent
 				if (!item.empty())
 					address_list.append("x\'").append(codec::hex_encode(to_typeless(item))).append("\',");
 			}
-			if (address_list.empty())
+			if (addresses.empty() || address_list.empty())
 				return expects_lr<hash_map<string, superchain::wallet_link>>(layer_exception("no addresses"));
 
 			address_list.pop_back();

@@ -257,7 +257,7 @@ namespace tangent
 						map.push(std::move(legacy_block_map));
 					}
 
-					block_data = coawait(execute_rpc(nd_call::get_block(), std::move(map), cache_policy::temporary_cache));
+					block_data = coawait(execute_rpc_multi(nd_call::get_block(), std::move(map), cache_policy::temporary_cache));
 					if (!block_data)
 						coreturn block_data.error();
 					
