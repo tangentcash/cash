@@ -230,7 +230,7 @@ namespace tangent
 			{
 				format::tree hashes_map;
 				for (uint64_t i = 0; i < block_count; i++)
-					hashes_map.push(format::variable(block_height + 1));
+					hashes_map.push(format::tree::list())->push(format::variable(block_height + 1));
 
 				auto block_ids = coawait(execute_rpc_multi(nd_call::get_block_hash(), std::move(hashes_map), cache_policy::blob_cache));
 				if (!block_ids)

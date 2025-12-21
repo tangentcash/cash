@@ -447,7 +447,7 @@ namespace tangent
 				for (auto& block : block_data->childs())
 				{
 					auto* transactions = (format::tree*)block.child("transactions");
-					auto transactions_count = transactions->childs().size();
+					auto transactions_count = transactions ? transactions->childs().size() : 0;
 					auto& log = results.emplace_back();
 					log.block_hash = block.child_var("hash").as_blob();
 					log.transactions = transactions ? std::move(*transactions) : format::tree::list();

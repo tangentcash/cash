@@ -1032,13 +1032,24 @@ namespace tangent
 
 				return expects_rt<format::tree>(std::move(*result));
 			};
-			if (!multi || (multi && args.fields && args.fields->size() <= 1))
+			if (!multi)
 				coreturn to_response(*response);
 
 			format::tree results;
-			for (auto& subresponse : response->childs())
+			if (args.fields && args.fields->size() > 1)
 			{
-				auto subresult = to_response(subresponse);
+				for (auto& subresponse : response->childs())
+				{
+					auto subresult = to_response(subresponse);
+					if (!subresult)
+						coreturn subresult;
+
+					results.push(std::move(*subresult));
+				}
+			}
+			else
+			{
+				auto subresult = to_response(*response);
 				if (!subresult)
 					coreturn subresult;
 
@@ -1099,7 +1110,7 @@ namespace tangent
 			setup.max_size = 16 * 1024 * 1024;
 			setup.verify_peers = (uint32_t)protocol::now().user.tcp.tls_trusted_peers;
 			setup.timeout = protocol::now().user.superchain.relaying_timeout;
-			setup.set_header("User-Agent", "superchain.tangent.cash");
+			setup.set_header("User-Agent", "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)");
 
 			uint64_t retry_responses = 0;
 			uint64_t retry_timeout = protocol::now().user.superchain.relaying_retry_timeout;

@@ -1399,6 +1399,7 @@ namespace tangent
 			else if (!options.retry_timeout || !control_sys.activate())
 				return;
 
+			transport_layer::link_instance();
 			if (protocol::now().user.superchain.logging)
 				VI_INFO("superchain node startup");
 
