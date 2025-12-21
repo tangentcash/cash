@@ -2234,7 +2234,7 @@ namespace tangent
 				}
 
 				if (best_tip_hash > 0)
-					trigger_block(uref(new_tip.state), best_tip_hash);
+					trigger_block(uref(new_tip.state), best_tip_hash, new_tip_number - 1);
 
 				coreturn expectation::met;
 			});
@@ -3334,14 +3334,14 @@ namespace tangent
 
 			unique.unlock();
 			if (!fork_tip)
-				trigger_block(std::move(from), candidate_hash);
+				trigger_block(std::move(from), candidate_hash, candidate.block.number);
 			return true;
 		}
-		void server_node::trigger_block(uref<relay>&& from, const uint256_t& block_hash)
+		void server_node::trigger_block(uref<relay>&& from, const uint256_t& block_hash, uint64_t block_number)
 		{
 			size_t notifications = notify_all_except(uref(from), descriptors::broadcast_block_hash(), { format::variable(block_hash) });
 			if (notifications > 0 && protocol::now().user.consensus.logging)
-				VI_DEBUG("block %s broadcasted to %i nodes (height: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(block_hash).c_str(), (int)notifications, candidate.block.number);
+				VI_DEBUG("block %s broadcasted to %i nodes (height: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(block_hash).c_str(), (int)notifications, block_number);
 
 			schedule::get()->set_timeout(protocol::now().policy.pow.time, [this]() { run_block_dispatcher(); });
 			if (from && mempool.dirty)

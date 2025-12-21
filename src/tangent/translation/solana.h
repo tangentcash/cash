@@ -43,7 +43,7 @@ namespace tangent
 				class nd_call
 				{
 				public:
-					static string get_token_metadata(const std::string_view& mint);
+					static const char* get_account_info();
 					static const char* get_token_balance();
 					static const char* get_balance();
 					static const char* get_block_hash();

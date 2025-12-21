@@ -18,7 +18,7 @@ namespace tangent
 		socket_address primary_candidate = socket_address(scheme.hostname, scheme.port > 0 ? scheme.port : protocol::now().user.consensus.port);
 		if (!primary_candidate.is_valid())
 		{
-			auto secondary_candidate = dns::get()->lookup(scheme.hostname, to_string(scheme.port > 0 ? scheme.port : protocol::now().user.consensus.port), dns_type::listen);
+			auto secondary_candidate = dns::get()->lookup(scheme.hostname, to_string(scheme.port > 0 ? scheme.port : protocol::now().user.consensus.port), dns_check::listen);
 			if (!secondary_candidate)
 				return;
 

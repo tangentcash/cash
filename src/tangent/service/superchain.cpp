@@ -202,7 +202,7 @@ namespace tangent
 				int32_t verify_peers = (secure ? (options.verify_peers >= 0 ? options.verify_peers : PEER_NOT_VERIFIED) : PEER_NOT_SECURE);
 				http::client* client = new http::client(timeout);
 				add_activity_request(client);
-				auto address = coawait(dns::get()->lookup_deferred(hostname, port, dns_type::connect, socket_protocol::TCP, socket_type::stream));
+				auto address = coawait(dns::get()->lookup_deferred(hostname, port, secure ? dns_check::secure_connect : dns_check::connect, socket_protocol::tcp, socket_type::stream));
 				if (!address)
 				{
 					remove_activity_request(client);

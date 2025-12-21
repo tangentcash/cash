@@ -27,13 +27,13 @@ namespace tangent
 				memcpy(&tx[offset], data, data_size);
 			}
 
-			string solana::nd_call::get_token_metadata(const std::string_view& mint)
-			{
-				return stringify::text("https://api.solana.fm/v1/tokens/%" PRIu64, (int)mint.size(), mint.data());
-			}
 			const char* solana::nd_call::get_token_balance()
 			{
 				return "getTokenAccountsByOwner";
+			}
+			const char* solana::nd_call::get_account_info()
+			{
+				return "getAccountInfo";
 			}
 			const char* solana::nd_call::get_balance()
 			{
@@ -596,21 +596,84 @@ namespace tangent
 				address_map result = { { (uint8_t)1, *address } };
 				return expects_lr<address_map>(std::move(result));
 			}
-			expects_promise_rt<string> solana::get_token_symbol(const std::string_view& mint)
+			expects_promise_rt<string> solana::get_token_symbol(const std::string_view& mint_address)
 			{
-				auto metadata = coawait(execute_http("GET", nd_call::get_token_metadata(mint), std::string_view(), std::string_view(), cache_policy::lifetime_cache));
-				if (!metadata)
-					coreturn expects_rt<string>(std::move(metadata.error()));
+				format::tree config = format::tree::map();
+				config.set("encoding", format::variable("jsonParsed"));
 
-				string symbol1 = metadata->child_var("tokenList.symbol").as_blob();
-				string symbol2 = metadata->child_var("tokenMetadata.onChainInfo.symbol").as_blob();
-				if (!symbol2.empty())
-					coreturn expects_rt<string>(std::move(symbol2));
+				format::tree map;
+				map.push(format::variable(mint_address));
+				map.push(std::move(config));
 
-				if (!symbol1.empty())
-					coreturn expects_rt<string>(std::move(symbol1));
+				auto account_info = coawait(execute_rpc(nd_call::get_account_info(), std::move(map), cache_policy::lifetime_cache));
+				if (account_info)
+				{
+					auto* token_extensions = account_info->child("value.data.parsed.info.extensions");
+					if (token_extensions)
+					{
+						for (auto& token_extension : token_extensions->childs())
+						{
+							if (token_extension.child_var("extension").as_blob() != "tokenMetadata")
+								continue;
 
-				coreturn expects_rt<string>(remote_exception("mint not found"));
+							auto symbol = token_extension.child_var("state.symbol").as_blob();
+							if (!symbol.empty())
+								coreturn expects_rt<string>(std::move(symbol));
+						}
+					}
+				}
+
+				uint8_t program_id[32]; size_t program_id_size = sizeof(program_id);
+				string metaplex_program_id = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s";
+				if (!b58dec(program_id, &program_id_size, metaplex_program_id.c_str(), metaplex_program_id.size()))
+					coreturn expects_rt<string>(remote_exception("metaplex program id not valid"));
+				
+				uint8_t mint[32]; size_t mint_size = sizeof(mint);
+				if (!b58dec(mint, &mint_size, mint_address.data(), mint_address.size()))
+					coreturn expects_rt<string>(remote_exception("mint address not valid"));
+
+				string seed_buffer;
+				seed_buffer.append("metadata");
+				seed_buffer.append((char*)program_id, program_id_size);
+				seed_buffer.append((char*)mint, mint_size);
+
+				size_t seed_index = seed_buffer.size();
+				seed_buffer.append(1, ' ');
+				seed_buffer.append((char*)program_id, program_id_size);
+				seed_buffer.append("ProgramDerivedAddress");
+
+				uint8_t meta[32]; bool exists = false;
+				for (size_t i = 0; i < 255; i++)
+				{
+					seed_buffer[seed_index] = (char)(255 - i);
+					sha256_Raw((uint8_t*)seed_buffer.data(), seed_buffer.size(), meta);
+					if (!crypto_core_ed25519_is_valid_point(meta))
+					{
+						exists = true;
+						break;
+					}
+				}
+				if (!exists)
+					coreturn expects_rt<string>(remote_exception("metaplex address not found"));
+
+				char meta_address[256]; size_t meta_address_size = sizeof(meta_address);
+				if (!b58enc(meta_address, &meta_address_size, meta, sizeof(meta)))
+					coreturn expects_rt<string>(remote_exception("metaplex address not valid"));
+
+				map.childs()[0] = format::variable(meta_address);
+				account_info = coawait(execute_rpc(nd_call::get_account_info(), std::move(map), cache_policy::lifetime_cache));
+				if (!account_info)
+					coreturn expects_rt<string>(std::move(account_info.error()));
+
+				size_t symbol_offset = 105;
+				auto data = codec::base64_decode(account_info->child_var("value.data.0").as_blob());
+				if (data.size() <= symbol_offset)
+					coreturn expects_rt<string>(remote_exception("metaplex address metadata not valid"));
+
+				size_t symbol_size = 0;
+				while (symbol_offset + symbol_size < data.size() && data[symbol_offset + symbol_size] != 0)
+					++symbol_size;
+				coreturn expects_rt<string>(data.substr(symbol_offset, symbol_size));
 			}
 			expects_promise_rt<solana::token_account> solana::get_token_balance(const std::string_view& mint, const std::string_view& owner)
 			{
