@@ -1459,8 +1459,14 @@ namespace tangent
 					for (auto& request : activity.requests)
 					{
 						auto* stream = request->get_stream();
-						if (stream != nullptr)
-							stream->clear_events(true);
+						if (!stream)
+						{
+							activity.requests.erase(request);
+							request->release();
+							break;
+						}
+						
+						stream->clear_events(true);
 					}
 					yield();
 				}
