@@ -409,15 +409,29 @@ namespace tangent
 				if (!transaction_data)
 					coreturn expects_rt<void>(remote_exception(std::move(transaction_data.error().message())));
 
-				auto hex_data = coawait(execute_rest("POST", trx_nd_call::broadcast_transaction(), *transaction_data, cache_policy::no_cache_no_throttling));
-				if (!hex_data)
-					coreturn expects_rt<void>(std::move(hex_data.error()));
+				uint64_t retry_timeout = 2000;
+				auto result = expects_rt<format::tree>(remote_exception::retry());
+				for (size_t i = 0; i < 6; i++)
+				{
+					result = coawait(execute_rest("POST", trx_nd_call::broadcast_transaction(), *transaction_data, cache_policy::no_cache));
+					if (result)
+						break;
+					
+					auto error_message = result.what();
+					auto* nodes = superchain::server_node::get()->get_nodes(native_asset);
+					if (result.error().is_retry() || result.error().is_shutdown() || stringify::to_lower(error_message).find("java.lang.nullpointerexception") == std::string::npos || !nodes || nodes->empty())
+						coreturn expects_rt<void>(std::move(result.error()));
+					else if (!coawait(nodes->front()->yield_for_cooldown(retry_timeout, 0)))
+						coreturn expects_rt<void>(remote_exception::shutdown());
+				}
+				if (!result)
+					coreturn expects_rt<void>(std::move(result.error()));
 
-				bool success = hex_data->child_var("result").as_boolean();
-				string code = hex_data->child_var("code").as_blob();
-				string message = hex_data->child_var("message").as_blob();
+				bool success = result->child_var("result").as_boolean();
+				string code = result->child_var("code").as_blob();
+				string message = result->child_var("message").as_blob();
 				if (code.empty())
-					code = hex_data->child_var("Error").as_blob();
+					code = result->child_var("Error").as_blob();
 				if (!success)
 					coreturn expects_rt<void>(remote_exception(message.empty() ? code : code + ": " + codec::hex_decode(message)));
 

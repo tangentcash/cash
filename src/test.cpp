@@ -1996,6 +1996,8 @@ struct tests
 	}
 };
 
+#include "tangent/translation/tron.h"
+
 int main(int argc, char* argv[])
 {
 	vitex::runtime scope;
