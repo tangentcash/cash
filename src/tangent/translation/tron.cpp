@@ -180,6 +180,7 @@ namespace tangent
 				netdata.supports_bulk_transfer = false;
 				netdata.requires_transaction_expiration = true;
 				legacy.estimate_gas = 1;
+				legacy.eip_155 = 1;
 			}
 			expects_promise_rt<tron::trx_tx_block_header_info> tron::get_block_header_for_tx()
 			{

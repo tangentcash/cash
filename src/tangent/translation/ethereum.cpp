@@ -645,7 +645,7 @@ namespace tangent
 			}
 			expects_promise_rt<computed_fee> ethereum::estimate_transaction_fee(const wallet_link& from_link, const vector<value_transfer>& to)
 			{
-				auto gas_price_value = coawait(execute_rpc(nd_call::gas_price(), { }, cache_policy::no_cache_no_throttling));
+				auto gas_price_value = coawait(execute_rpc(nd_call::gas_price(), { }, cache_policy::no_cache));
 				if (!gas_price_value)
 					coreturn expects_rt<computed_fee>(std::move(gas_price_value.error()));
 
@@ -653,7 +653,7 @@ namespace tangent
 				uint256_t vgas_premium = 0;
 				if (!legacy.eip_155)
 				{
-					auto max_priority_fee_per_gas_value = legacy.priority_gas ? expects_rt<format::tree>(remote_exception::retry()) : coawait(execute_rpc(nd_call::max_priority_fee_per_gas(), { }, cache_policy::no_cache_no_throttling));
+					auto max_priority_fee_per_gas_value = legacy.priority_gas ? expects_rt<format::tree>(remote_exception::retry()) : coawait(execute_rpc(nd_call::max_priority_fee_per_gas(), { }, cache_policy::no_cache));
 					if (!max_priority_fee_per_gas_value)
 					{
 						auto block_number = coawait(get_latest_block_height());
@@ -723,7 +723,7 @@ namespace tangent
 					vgas_price -= vgas_premium;
 
 				decimal gas_premium = to_eth(vgas_premium * 2, netdata.divisibility);
-				auto gas_limit_estimate = coawait(execute_rpc(nd_call::estimate_gas(), std::move(map), cache_policy::no_cache_no_throttling));
+				auto gas_limit_estimate = coawait(execute_rpc(nd_call::estimate_gas(), std::move(map), cache_policy::no_cache));
 				if (!gas_limit_estimate)
 				{
 					decimal gas_price = to_eth(vgas_price, netdata.divisibility);
