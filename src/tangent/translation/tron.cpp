@@ -70,12 +70,12 @@ namespace tangent
 				pb_varint(message, parent_message.data.size());
 				message.data.append(parent_message.data);
 			}
-			static trx_transaction tx_serialize(const tron::trx_tx_block_header_info& block_header, const std::string_view& contract_address, const string& from_address, const string& to_address, const uint256_t& value, uint64_t fee_limit)
+			static trx_transaction tx_serialize(const tron::trx_tx_block_header_info& block_header, const std::string_view& contract_address, const std::string_view& from_address, const std::string_view& to_address, const string& to_eth_address, const uint256_t& value, uint64_t fee_limit)
 			{
 				uint64_t contract_type;
 				std::string_view contract_type_name;
 				std::string_view contract_type_url;
-				string contract_abi = ethereum::sc_call::transfer(to_address, value);
+				string contract_abi = ethereum::sc_call::transfer(to_eth_address, value);
 				format::wo_stream contract_message;
 				if (!contract_address.empty())
 				{
@@ -471,11 +471,12 @@ namespace tangent
 					coreturn expects_rt<prepared_transaction>(remote_exception(std::move(public_key.error().message())));
 
 				auto eth_contract_address = contract_address ? decode_non_eth_address_pf(*contract_address) : string();
-				auto eth_from_address = decode_non_eth_address_pf(from_link.address);
-				auto eth_to_address = decode_non_eth_address_pf(output.address);
+				auto eth_like_from_address = decode_non_eth_address_pf(from_link.address);
+				auto eth_like_to_address = decode_non_eth_address_pf(output.address);
+				auto eth_to_address = decode_non_eth_address_pf(output.address, false);
 				auto eth_value = from_eth(output.value, divisibility);
 				auto fee_limit = from_eth(std::max(fee_value, max_fee), netdata.divisibility);
-				auto transaction = tx_serialize(*block_header, eth_contract_address, eth_from_address, eth_to_address, eth_value, fee_limit);
+				auto transaction = tx_serialize(*block_header, eth_contract_address, eth_like_from_address, eth_like_to_address, eth_to_address, eth_value, fee_limit);
 				prepared_transaction result;
 				if (contract_address)
 					result.requires_account_input(algorithm::composition::type::secp256k1, wallet_link(from_link), *public_key, (uint8_t*)transaction.raw_transaction_id.data(), transaction.raw_transaction_id.size(), { { output.asset, output.value }, { native_asset, fee_value } });
@@ -507,11 +508,12 @@ namespace tangent
 				auto divisibility = prepared.abi[5].as_decimal();
 				auto contract_address = prepared.abi[0].as_blob();
 				auto eth_contract_address = contract_address.empty() ? string() : decode_non_eth_address_pf(contract_address);
-				auto eth_from_address = decode_non_eth_address_pf(input.utxo.link.address);
-				auto eth_to_address = decode_non_eth_address_pf(output.link.address);
+				auto eth_like_from_address = decode_non_eth_address_pf(input.utxo.link.address);
+				auto eth_like_to_address = decode_non_eth_address_pf(output.link.address);
+				auto eth_to_address = decode_non_eth_address_pf(output.link.address, false);
 				auto eth_value = from_eth(output.tokens.empty() ? output.value : output.tokens.begin()->second.value, divisibility);
 				auto fee_limit = prepared.abi[6].as_uint64();
-				auto transaction = tx_serialize(block_header, eth_contract_address, eth_from_address, eth_to_address, eth_value, fee_limit);
+				auto transaction = tx_serialize(block_header, eth_contract_address, eth_like_from_address, eth_like_to_address, eth_to_address, eth_value, fee_limit);
 				if (input.message.size() != transaction.raw_transaction_id.size() || memcmp(input.message.data(), transaction.raw_transaction_id.data(), transaction.raw_transaction_id.size()))
 					return layer_exception("invalid input message");
 
@@ -561,10 +563,12 @@ namespace tangent
 
 				return encode_0xhex_checksum(hash160 + prefix_size, 20);
 			}
-			string tron::decode_non_eth_address_pf(const std::string_view& non_eth_address)
+			string tron::decode_non_eth_address_pf(const std::string_view& non_eth_address, bool tron_prefix)
 			{
 				string address = decode_non_eth_address(non_eth_address);
-				return stringify::to_lower(stringify::replace(address, "0x", "41"));
+				if (tron_prefix)
+					stringify::replace(address, "0x", "41");
+				return stringify::to_lower(address);
 			}
 			decimal tron::get_divisibility_gwei()
 			{

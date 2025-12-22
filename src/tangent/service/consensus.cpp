@@ -2718,7 +2718,7 @@ namespace tangent
 				if ((inputs > 0 || outputs > 0) && protocol::now().user.consensus.logging)
 					VI_INFO("network topology optimization: OK (connections: +%i / -%i)", (int)inputs, (int)outputs);
 
-				run_block_dispatcher();
+				trigger_block(nullptr, 0, 0);
 				coreturn_void;
 			});
 		}
@@ -3339,9 +3339,12 @@ namespace tangent
 		}
 		void server_node::trigger_block(uref<relay>&& from, const uint256_t& block_hash, uint64_t block_number)
 		{
-			size_t notifications = notify_all_except(uref(from), descriptors::broadcast_block_hash(), { format::variable(block_hash) });
-			if (notifications > 0 && protocol::now().user.consensus.logging)
-				VI_DEBUG("block %s broadcasted to %i nodes (height: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(block_hash).c_str(), (int)notifications, block_number);
+			if (block_hash > 0 && block_number > 0)
+			{
+				size_t notifications = notify_all_except(uref(from), descriptors::broadcast_block_hash(), { format::variable(block_hash) });
+				if (notifications > 0 && protocol::now().user.consensus.logging)
+					VI_DEBUG("block %s broadcasted to %i nodes (height: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(block_hash).c_str(), (int)notifications, block_number);
+			}
 
 			schedule::get()->set_timeout(protocol::now().policy.pow.time, [this]() { run_block_dispatcher(); });
 			if (from && mempool.dirty)

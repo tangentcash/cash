@@ -43,7 +43,7 @@ namespace tangent
 				virtual expects_promise_rt<trx_tx_block_header_info> get_block_header_for_tx();
 				virtual string encode_eth_address(const std::string_view& eth_address) override;
 				virtual string decode_non_eth_address(const std::string_view& non_eth_address) override;
-				virtual string decode_non_eth_address_pf(const std::string_view& non_eth_address);
+				virtual string decode_non_eth_address_pf(const std::string_view& non_eth_address, bool tron_prefix = true);
 				virtual decimal get_divisibility_gwei() override;
 			};
 		}
