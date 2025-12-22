@@ -44,7 +44,7 @@ namespace tangent
 
 					uint256_t nonce = 0;
 					uint256_t chain_id = 0;
-					gwei256_t gas_base_price = 0;
+					gwei256_t gas_premium = 0;
 					gwei256_t gas_price = 0;
 					gwei256_t gas_limit = 0;
 					wei256_t value = 0;
@@ -91,6 +91,7 @@ namespace tangent
 					static const char* block_number();
 					static const char* estimate_gas();
 					static const char* gas_price();
+					static const char* max_priority_fee_per_gas();
 					static const char* call();
 					static const char* send_raw_transaction();
 				};
@@ -100,6 +101,7 @@ namespace tangent
 				{
 					uint8_t eip_155 = 0;
 					uint8_t estimate_gas = 0;
+					uint8_t priority_gas = 0;
 				} legacy;
 				chainparams netdata;
 

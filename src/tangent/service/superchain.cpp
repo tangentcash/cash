@@ -37,7 +37,7 @@ namespace tangent
 		{
 			auto result = fee;
 			result.fee.fee_rate = implementation->to_value(result.fee.fee_rate);
-			result.gas.gas_base_price = implementation->to_value(result.gas.gas_base_price);
+			result.gas.gas_premium = implementation->to_value(result.gas.gas_premium);
 			result.gas.gas_price = implementation->to_value(result.gas.gas_price);
 			return result;
 		}

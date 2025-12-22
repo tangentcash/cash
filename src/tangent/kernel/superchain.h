@@ -242,7 +242,7 @@ namespace tangent
 			} fee;
 			struct
 			{
-				decimal gas_base_price = 0.0;
+				decimal gas_premium = 0.0;
 				decimal gas_price = 0.0;
 				uint256_t gas_limit = 0;
 			} gas;
@@ -255,7 +255,7 @@ namespace tangent
 			static computed_fee fee_per_byte(const decimal& rate, size_t bytes);
 			static computed_fee fee_per_kilobyte(const decimal& rate);
 			static computed_fee fee_per_gas(const decimal& price, const uint256_t& limit);
-			static computed_fee fee_per_gas_priority(const decimal& base_price, const decimal& price, const uint256_t& limit);
+			static computed_fee fee_per_gas_priority(const decimal& premium, const decimal& price, const uint256_t& limit);
 		};
 
 		struct supervisor_options

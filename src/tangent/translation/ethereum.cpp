@@ -156,8 +156,9 @@ namespace tangent
 					case evm_type::eip_1559:
 					{
 						uint8_t transaction_type = 0x02;
-						uint256_t max_fee_per_gas = gas_base_price > 0 ? gas_base_price : gas_price;
-						uint256_t max_priority_fee_per_gas = gas_base_price > 0 ? gas_price - gas_base_price : uint256_t((uint8_t)0);
+						uint256_t base_fee_per_gas_2x = gas_premium;
+						uint256_t max_priority_fee_per_gas = gas_price;
+						uint256_t max_fee_per_gas = base_fee_per_gas_2x + max_priority_fee_per_gas;
 						eth_rlp_uint8(&buffer, &transaction_type);
 						eth_rlp_array(&buffer);
 						eth_rlp_uint256(&buffer, &chain_id);
@@ -309,6 +310,10 @@ namespace tangent
 			const char* ethereum::nd_call::gas_price()
 			{
 				return "eth_gasPrice";
+			}
+			const char* ethereum::nd_call::max_priority_fee_per_gas()
+			{
+				return "eth_maxPriorityFeePerGas";
 			}
 			const char* ethereum::nd_call::call()
 			{
@@ -640,33 +645,42 @@ namespace tangent
 			}
 			expects_promise_rt<computed_fee> ethereum::estimate_transaction_fee(const wallet_link& from_link, const vector<value_transfer>& to)
 			{
-				uint256_t vgas_base_price = 0;
+				auto gas_price_value = coawait(execute_rpc(nd_call::gas_price(), { }, cache_policy::no_cache_no_throttling));
+				if (!gas_price_value)
+					coreturn expects_rt<computed_fee>(std::move(gas_price_value.error()));
+
+				uint256_t vgas_price = hex_to_uint256(gas_price_value->value.as_blob());
+				uint256_t vgas_premium = 0;
 				if (!legacy.eip_155)
 				{
-					auto block_number = coawait(get_latest_block_height());
-					if (!block_number)
-						coreturn expects_rt<computed_fee>(std::move(block_number.error()));
+					auto max_priority_fee_per_gas_value = legacy.priority_gas ? expects_rt<format::tree>(remote_exception::retry()) : coawait(execute_rpc(nd_call::max_priority_fee_per_gas(), { }, cache_policy::no_cache_no_throttling));
+					if (!max_priority_fee_per_gas_value)
+					{
+						auto block_number = coawait(get_latest_block_height());
+						if (!block_number)
+							coreturn expects_rt<computed_fee>(std::move(block_number.error()));
 
-					format::tree map;
-					map.push(format::variable(uint256_to_hex(*block_number)));
-					map.push(format::variable(false));
+						format::tree map;
+						map.push(format::variable(uint256_to_hex(*block_number)));
+						map.push(format::variable(false));
 
-					auto block_data = coawait(execute_rpc(nd_call::get_block_by_number(), std::move(map), cache_policy::temporary_cache));
-					if (!block_data)
-						coreturn expects_rt<computed_fee>(std::move(block_data.error()));
+						auto block_data = coawait(execute_rpc(nd_call::get_block_by_number(), std::move(map), cache_policy::temporary_cache));
+						if (!block_data)
+							coreturn expects_rt<computed_fee>(std::move(block_data.error()));
 
-					auto value = block_data->child("baseFeePerGas");
-					if (value)
-						vgas_base_price = hex_to_uint256(value->value.as_blob());
+						auto value = block_data->child("baseFeePerGas");
+						if (value)
+							vgas_premium = hex_to_uint256(value->value.as_blob());			
+						legacy.priority_gas = 1;
+					}
 					else
-						legacy.eip_155 = 1;
+					{
+						uint256_t max_priority_fee_per_gas = hex_to_uint256(max_priority_fee_per_gas_value->value.as_blob());
+						if (max_priority_fee_per_gas <= vgas_price)
+							vgas_premium = (vgas_price - max_priority_fee_per_gas);
+					}
+					legacy.eip_155 = vgas_premium > 0 ? 0 : 1;
 				}
-
-				auto gas_price_estimate = coawait(execute_rpc(nd_call::gas_price(), { }, cache_policy::no_cache_no_throttling));
-				if (!gas_price_estimate)
-					coreturn expects_rt<computed_fee>(std::move(gas_price_estimate.error()));
-					
-				uint256_t vgas_price = hex_to_uint256(gas_price_estimate->value.as_blob());
 
 				auto& output = to.front();
 				format::tree params = format::tree::map();
@@ -705,17 +719,20 @@ namespace tangent
 				if (!legacy.estimate_gas)
 					map.push(format::variable("latest"));
 
-				decimal gas_base_price = to_eth(vgas_base_price, netdata.divisibility);
+				if (vgas_premium > 0 && vgas_premium < vgas_price)
+					vgas_price -= vgas_premium;
+
+				decimal gas_premium = to_eth(vgas_premium * 2, netdata.divisibility);
 				auto gas_limit_estimate = coawait(execute_rpc(nd_call::estimate_gas(), std::move(map), cache_policy::no_cache_no_throttling));
 				if (!gas_limit_estimate)
 				{
 					decimal gas_price = to_eth(vgas_price, netdata.divisibility);
-					coreturn expects_rt<computed_fee>(computed_fee::fee_per_gas_priority(gas_base_price, gas_price, default_gas_limit));
+					coreturn expects_rt<computed_fee>(computed_fee::fee_per_gas_priority(gas_premium, gas_price, default_gas_limit));
 				}
 
 				uint256_t vgas_limit = hex_to_uint256(gas_limit_estimate->value.as_blob());
 				decimal gas_price = to_eth(vgas_price, netdata.divisibility);
-				coreturn expects_rt<computed_fee>(computed_fee::fee_per_gas_priority(gas_base_price, gas_price, vgas_limit > 0 ? vgas_limit : uint256_t(default_gas_limit)));
+				coreturn expects_rt<computed_fee>(computed_fee::fee_per_gas_priority(gas_premium, gas_price, vgas_limit > 0 ? vgas_limit : uint256_t(default_gas_limit)));
 			}
 			expects_promise_rt<decimal> ethereum::calculate_balance(const algorithm::asset_id& for_asset, const wallet_link& link)
 			{
@@ -756,10 +773,6 @@ namespace tangent
 			}
 			expects_promise_rt<void> ethereum::broadcast_transaction(const finalized_transaction& finalized)
 			{
-				auto duplicate = coawait(get_transaction_receipt(format::util::assign_0xhex(finalized.hashdata), false));
-				if (duplicate)
-					coreturn expects_rt<void>(expectation::met);
-
 				format::tree map;
 				map.push(format::variable(format::util::assign_0xhex(finalized.calldata)));
 
@@ -806,7 +819,7 @@ namespace tangent
 				evm_transaction transaction;
 				transaction.nonce = *nonce;
 				transaction.chain_id = *chain_id;
-				transaction.gas_base_price = from_eth(fee->gas.gas_base_price, netdata.divisibility);
+				transaction.gas_premium = from_eth(fee->gas.gas_premium, netdata.divisibility);
 				transaction.gas_price = from_eth(fee->gas.gas_price, netdata.divisibility);
 				transaction.gas_limit = fee->gas.gas_limit;
 
@@ -843,7 +856,7 @@ namespace tangent
 				result.requires_abi(format::variable(divisibility));
 				result.requires_abi(format::variable(transaction.nonce));
 				result.requires_abi(format::variable(transaction.chain_id));
-				result.requires_abi(format::variable(transaction.gas_base_price));
+				result.requires_abi(format::variable(transaction.gas_premium));
 				result.requires_abi(format::variable(transaction.gas_price));
 				result.requires_abi(format::variable(transaction.gas_limit));
 				coreturn expects_rt<prepared_transaction>(std::move(result));
@@ -865,7 +878,7 @@ namespace tangent
 				evm_transaction transaction;
 				transaction.nonce = prepared.abi[3].as_uint256();
 				transaction.chain_id = prepared.abi[4].as_uint256();
-				transaction.gas_base_price = prepared.abi[5].as_uint256();
+				transaction.gas_premium = prepared.abi[5].as_uint256();
 				transaction.gas_price = prepared.abi[6].as_uint256();
 				transaction.gas_limit = prepared.abi[7].as_uint256();
 				if (!contract_address.empty())
@@ -879,7 +892,7 @@ namespace tangent
 				}
 				else
 				{
-					auto fee_value = computed_fee::fee_per_gas_priority(to_eth(transaction.gas_base_price, divisibility), to_eth(transaction.gas_price, divisibility), transaction.gas_limit).get_max_fee();
+					auto fee_value = computed_fee::fee_per_gas_priority(to_eth(transaction.gas_premium, divisibility), to_eth(transaction.gas_price, divisibility), transaction.gas_limit).get_max_fee();
 					transaction.address = decode_non_eth_address(output.link.address);
 					transaction.value = from_eth(output.value, divisibility);
 				}

@@ -838,7 +838,7 @@ namespace tangent
 				case fee_type::fee:
 					return fee.fee_rate * decimal(fee.byte_rate);
 				case fee_type::gas:
-					return gas.gas_price * gas.gas_limit.to_decimal();
+					return (gas.gas_premium + gas.gas_price) * gas.gas_limit.to_decimal();
 				default:
 					return decimal::zero();
 			}
@@ -854,7 +854,7 @@ namespace tangent
 				case fee_type::fee:
 					return fee.fee_rate.is_positive() && fee.byte_rate > 0;
 				case fee_type::gas:
-					return !gas.gas_base_price.is_nan() && !gas.gas_base_price.is_negative() && gas.gas_price.is_positive() && gas.gas_base_price <= gas.gas_price && gas.gas_limit > 0;
+					return !gas.gas_premium.is_nan() && !gas.gas_premium.is_negative() && gas.gas_price.is_positive() && gas.gas_limit > 0;
 				default:
 					return false;
 			}
@@ -879,11 +879,11 @@ namespace tangent
 		{
 			return fee_per_gas_priority(decimal::zero(), price, limit);
 		}
-		computed_fee computed_fee::fee_per_gas_priority(const decimal& base_price, const decimal& priority_price, const uint256_t& limit)
+		computed_fee computed_fee::fee_per_gas_priority(const decimal& premium, const decimal& priority_price, const uint256_t& limit)
 		{
 			computed_fee result;
 			result.type = fee_type::gas;
-			result.gas.gas_base_price = base_price;
+			result.gas.gas_premium = premium;
 			result.gas.gas_price = priority_price;
 			result.gas.gas_limit = limit;
 			return result;
@@ -936,7 +936,7 @@ namespace tangent
 
 			double multiplier = 100.0;
 			double current_value = (double)(state.latest_block_height - state.starting_block_height);
-			double target_value = (double)(state.current_block_height - state.starting_block_height);
+			double target_value = (double)(state.current_block_height - state.starting_block_height) + 1.0;
 			double percentage = multiplier * current_value / target_value;
 			return std::min(std::floor(percentage * multiplier) / multiplier, multiplier);
 		}
