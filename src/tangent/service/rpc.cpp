@@ -2491,30 +2491,54 @@ namespace tangent
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
 
+			auto params = superchain::server_node::get()->get_chainparams(asset);
+			if (!params)
+				return server_response().error(error_codes::not_found, "asset not valid");
+
 			auto data = format::tree::list();
 			for (auto& item : *list)
 			{
-				auto* attestation_state = (states::validator_attestation*)item.ptr();
-				auto balance_stride = states::bridge_balance::as_instance_column(attestation_state->owner);
+				auto* attestation = (states::validator_attestation*)item.ptr();
+				auto balance_stride = states::bridge_balance::as_instance_column(attestation->owner);
 				auto* next = data.push(format::tree::map());
-				next->set("attestation", attestation_state->as_tree());
+				next->set("attestation", attestation->as_tree());
 
-				size_t offset = 0, count = 512;
+				size_t offset = 0, count = 64;
+				while (params->routing == superchain::routing_policy::account)
+				{
+					auto accounts = chain.get_multiforms_by_column_filter(states::witness_account::as_instance_type(), nullptr, states::witness_account::as_instance_column(attestation->owner), storages::result_filter::equal((uint8_t)states::witness_account::account_type::bridge, -1), 0, storages::result_range_window(offset, count));
+					if (!accounts)
+						break;
+
+					for (auto& state : *accounts)
+					{
+						auto* ref = state.as<states::witness_account>();
+						if (ref->active && asset == ref->asset && ref->owner == attestation->owner && ref->manager == attestation->owner)
+						{
+							next->set("master", ref->as_tree());
+							break;
+						}
+					}
+
+					if (accounts->size() != count || next->has("master"))
+						break;
+				}
+				
 				auto tokens = next->set("balances", format::tree::list());
 				while (true)
 				{
-					auto states = chain.get_multiforms_by_column(states::bridge_balance::as_instance_type(), nullptr, balance_stride, 0, tokens->childs().size(), count);
-					if (!states)
+					auto balances = chain.get_multiforms_by_column(states::bridge_balance::as_instance_type(), nullptr, balance_stride, 0, tokens->childs().size(), count);
+					if (!balances)
 						break;
 
-					for (auto& state : *states)
+					for (auto& state : *balances)
 					{
 						auto* ref = state.as<states::bridge_balance>();
 						if (asset == algorithm::asset::base_id_of(ref->asset))
 							tokens->push(state.ptr()->as_tree());
 					}
 
-					if (states->size() != count)
+					if (balances->size() != count)
 						break;
 				}
 			}
@@ -2613,6 +2637,10 @@ namespace tangent
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
 
+			auto params = superchain::server_node::get()->get_chainparams(asset);
+			if (!params)
+				return server_response().error(error_codes::not_found, "asset not valid");
+
 			auto attestation_stride = states::validator_attestation::as_instance_row(asset);
 			auto data = format::tree::list();
 			for (auto& item : *list)
@@ -2623,7 +2651,28 @@ namespace tangent
 				auto* next = data.push(format::tree::map());
 				next->set("attestation", attestation_state ? attestation_state->value->as_tree() : format::variable());
 
-				size_t offset = 0, count = 512;
+				size_t offset = 0, count = 64;
+				auto* attestation = (states::validator_attestation*)(attestation_state ? *attestation_state->value : nullptr);
+				while (attestation != nullptr && params->routing == superchain::routing_policy::account)
+				{
+					auto accounts = chain.get_multiforms_by_column_filter(states::witness_account::as_instance_type(), nullptr, states::witness_account::as_instance_column(attestation->owner), storages::result_filter::equal((uint8_t)states::witness_account::account_type::bridge, -1), 0, storages::result_range_window(offset, count));
+					if (!accounts)
+						break;
+
+					for (auto& state : *accounts)
+					{
+						auto* ref = state.as<states::witness_account>();
+						if (ref->active && asset == ref->asset && ref->owner == attestation->owner && ref->manager == attestation->owner)
+						{
+							next->set("master", ref->as_tree());
+							break;
+						}
+					}
+
+					if (accounts->size() != count || next->has("master"))
+						break;
+				}
+
 				auto tokens = next->set("balances", format::tree::list());
 				while (true)
 				{
