@@ -474,8 +474,8 @@ namespace tangent
 				balance_value = balance_value.is_nan() ? -input.value : (balance_value - input.value);
 				for (auto& [token_hash, token] : input.tokens)
 				{
-					balance_value = balance[algorithm::asset::id_of("_", token.symbol, token.contract_address)];
-					balance_value = balance_value.is_nan() ? -input.value : (balance_value - input.value);
+					auto& token_balance_value = balance[algorithm::asset::id_of("_", token.symbol, token.contract_address)];
+					token_balance_value = token_balance_value.is_nan() ? -token.value : (token_balance_value - token.value);
 				}
 			}
 
@@ -488,8 +488,8 @@ namespace tangent
 				balance_value = balance_value.is_nan() ? output.value : (balance_value + output.value);
 				for (auto& [token_hash, token] : output.tokens)
 				{
-					balance_value = balance[algorithm::asset::id_of("_", token.symbol, token.contract_address)];
-					balance_value = balance_value.is_nan() ? output.value : (balance_value + output.value);
+					auto& token_balance_value = balance[algorithm::asset::id_of("_", token.symbol, token.contract_address)];
+					token_balance_value = token_balance_value.is_nan() ? token.value : (token_balance_value + token.value);
 				}
 			}
 
