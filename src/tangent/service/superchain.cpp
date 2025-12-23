@@ -525,7 +525,11 @@ namespace tangent
 					transaction_log.erase(transaction_log.end() - 1);
 				VI_INFO("%s", transaction_log.c_str());
 			}
-			coreturn coawait(implementation->prepare_transaction(*normalized_from_link, normalized_to, normalized_max_fee));
+
+			auto result = coawait(implementation->prepare_transaction(*normalized_from_link, normalized_to, normalized_max_fee));
+			if (protocol::now().user.superchain.logging)
+				VI_INFO("%s built transaction: %s", blockchain.c_str(), result ? result->as_tree().as_json() : result.error().what());
+			coreturn result;
 		}
 		expects_lr<finalized_transaction> server_node::finalize_transaction(const algorithm::asset_id& asset, prepared_transaction&& prepared)
 		{
