@@ -2775,7 +2775,6 @@ namespace tangent
 			{
 				size_t offset = 0, resolutions = 0;
 				auto mempool = storages::mempoolstate();
-				bool has_any_pending_attestations = false;
 				bool has_attestation = false;
 				for (auto& [account, descriptor] : descriptors)
 					has_attestation = has_attestation || descriptor.first.services.has_attestation;
@@ -2783,13 +2782,10 @@ namespace tangent
 				auto attestation_hash = mempool.pull_best_attestation_hash(offset++);
 				if (attestation_hash)
 				{
-					has_any_pending_attestations = true;
+					++resolutions;
 					auto status = accept_attestation(nullptr, *attestation_hash);
 					if (status)
-					{
-						++resolutions;
 						goto retry;
-					}
 					else if (protocol::now().user.consensus.logging)
 						VI_INFO("attestation %s resolution delayed: ", algorithm::encoding::encode_0xhex256(*attestation_hash).c_str(), status.what().c_str());
 
@@ -2825,8 +2821,8 @@ namespace tangent
 					}
 					goto retry;
 				}
-				if (has_any_pending_attestations && protocol::now().user.consensus.logging)
-					VI_INFO("attestation resolution: %i proposed (%i pending)", (int)resolutions, (int)offset);
+				if (resolutions > 0 && protocol::now().user.consensus.logging)
+					VI_INFO("attestation resolution: %i pending", (int)resolutions);
 			});
 		}
 		bool server_node::run_block_production()

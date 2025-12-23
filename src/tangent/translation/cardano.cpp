@@ -31,7 +31,7 @@ namespace tangent
 				netdata.composition = algorithm::composition::type::ed25519;
 				netdata.routing = routing_policy::utxo;
 				netdata.tokenization = token_policy::native;
-				netdata.sync_latency = 30;
+				netdata.sync_latency = 11;
 				netdata.divisibility = algorithm::arithmetic::fixed(1000000);
 				netdata.supports_bulk_transfer = true;
 				netdata.requires_transaction_expiration = false;
@@ -221,8 +221,8 @@ namespace tangent
 					value = value.is_nan() ? input.value : (value + input.value);
 					for (auto& [token_hash, token] : input.tokens)
 					{
-						value = balance[token.get_asset(native_asset)];
-						value = value.is_nan() ? token.value : (value + token.value);
+						auto& token_value = balance[token.get_asset(native_asset)];
+						token_value = token_value.is_nan() ? token.value : (token_value + token.value);
 					}
 				}
 				for (auto& [hash, output] : tx.outputs)
@@ -231,8 +231,8 @@ namespace tangent
 					value = value.is_nan() ? -output.value : (value - output.value);
 					for (auto& [token_hash, token] : output.tokens)
 					{
-						value = balance[token.get_asset(native_asset)];
-						value = value.is_nan() ? -token.value : (value - token.value);
+						auto& token_value = balance[token.get_asset(native_asset)];
+						token_value = token_value.is_nan() ? -token.value : (token_value - token.value);
 					}
 				}
 
@@ -282,7 +282,7 @@ namespace tangent
 				Cardano::CborSerialize rosetta_transaction;
 				rosetta_transaction.createArray(1);
 				rosetta_transaction.addString(copy<std::string>(finalized.calldata));
-				
+
 				auto& rosetta_data = rosetta_transaction.getCbor();
 				format::tree args = format::tree::map();
 				auto* network_query = args.set("network_identifier", format::tree::map());
