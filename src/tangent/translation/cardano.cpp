@@ -13,6 +13,11 @@ namespace tangent
 	{
 		namespace translations
 		{
+			static std::string to_unprefixed_hex(const std::string_view& value)
+			{
+				return stringify::starts_with(value, "0x") ? std::string(value.substr(2)) : std::string(value);
+			}
+
 			const char* cardano::nd_call::network_status()
 			{
 				return "/network/status";
@@ -403,14 +408,14 @@ namespace tangent
 					uint8_t dummy_private_key[XSK_LENGTH] = { 0 };
 					for (auto& input : *possible_inputs)
 					{
-						builder.Body.TransactionInput.addInput(copy<std::string>(input.transaction_id), input.index);
+						builder.Body.TransactionInput.addInput(to_unprefixed_hex(input.transaction_id), input.index);
 						builder.addExtendedSigningKey(dummy_private_key);
 					}
 					for (auto& output : result.outputs)
 					{
 						builder.Body.TransactionOutput.addOutput(copy<std::string>(output.link.address), (uint64_t)to_lovelace(output.value));
 						for (auto& [token_hash, token] : output.tokens)
-							builder.Body.TransactionOutput.addAsset(copy<std::string>(token.contract_address), copy<std::string>(token.symbol), (uint64_t)uint256_t((token.value * token.get_divisibility()).truncate(0).to_string()));
+							builder.Body.TransactionOutput.addAsset(to_unprefixed_hex(token.contract_address), copy<std::string>(token.symbol), (uint64_t)uint256_t((token.value * token.get_divisibility()).truncate(0).to_string()));
 					}
 					builder.Body.addFee((uint64_t)to_lovelace(fee_value));
 
@@ -459,14 +464,14 @@ namespace tangent
 					uint8_t dummy_private_key[XSK_LENGTH] = { 0 };
 					for (auto& input : prepared.inputs)
 					{
-						verifier.Body.TransactionInput.addInput(copy<std::string>(input.utxo.transaction_id), input.utxo.index);
+						verifier.Body.TransactionInput.addInput(to_unprefixed_hex(input.utxo.transaction_id), input.utxo.index);
 						verifier.addExtendedSigningKey(dummy_private_key);
 					}
 					for (auto& output : prepared.outputs)
 					{
 						verifier.Body.TransactionOutput.addOutput(copy<std::string>(output.link.address), (uint64_t)to_lovelace(output.value));
 						for (auto& [token_hash, token] : output.tokens)
-							verifier.Body.TransactionOutput.addAsset(copy<std::string>(token.contract_address), copy<std::string>(token.symbol), (uint64_t)uint256_t((token.value * token.get_divisibility()).truncate(0).to_string()));
+							verifier.Body.TransactionOutput.addAsset(to_unprefixed_hex(token.contract_address), copy<std::string>(token.symbol), (uint64_t)uint256_t((token.value * token.get_divisibility()).truncate(0).to_string()));
 					}
 					verifier.Body.addFee(fee_value);
 
@@ -490,14 +495,14 @@ namespace tangent
 
 						uint8_t signature[64] = { 0 };
 						memcpy(signature, input.signature.data(), std::min(sizeof(signature), input.signature.size()));
-						builder.Body.TransactionInput.addInput(copy<std::string>(input.utxo.transaction_id), input.utxo.index);
+						builder.Body.TransactionInput.addInput(to_unprefixed_hex(input.utxo.transaction_id), input.utxo.index);
 						builder.addExtendedVerifyingKey((uint8_t*)raw_public_key->data(), signature);
 					}
 					for (auto& output : prepared.outputs)
 					{
 						builder.Body.TransactionOutput.addOutput(copy<std::string>(output.link.address), (uint64_t)to_lovelace(output.value));
 						for (auto& [token_hash, token] : output.tokens)
-							builder.Body.TransactionOutput.addAsset(copy<std::string>(token.contract_address), copy<std::string>(token.symbol), (uint64_t)uint256_t((token.value * token.get_divisibility()).truncate(0).to_string()));
+							builder.Body.TransactionOutput.addAsset(to_unprefixed_hex(token.contract_address), copy<std::string>(token.symbol), (uint64_t)uint256_t((token.value * token.get_divisibility()).truncate(0).to_string()));
 					}
 					builder.Body.addFee(fee_value);
 
