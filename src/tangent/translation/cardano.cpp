@@ -303,6 +303,7 @@ namespace tangent
 					coreturn expects_rt<prepared_transaction>(remote_exception("latest block slot not found"));
 
 				option<computed_fee> fee = optional::none;
+				option<decimal> additional_value = optional::none;
 			retry_with_fee:
 				decimal fee_value = fee ? fee->get_max_fee() : decimal::zero();
 				auto str = fee_value.to_string();
@@ -331,7 +332,7 @@ namespace tangent
 					}
 				}
 
-				auto possible_inputs = calculate_utxo(from_link, balance_query(total_value, total_token_value));
+				auto possible_inputs = calculate_utxo(from_link, balance_query(additional_value ? total_value + *additional_value : total_value, total_token_value));
 				auto remaining_value = possible_inputs ? get_utxo_value(*possible_inputs, optional::none) : 0.0;
 				if (!possible_inputs || possible_inputs->empty())
 					coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s (or not enough token funds)", total_value.to_string().c_str(), remaining_value.to_string().c_str())));
@@ -377,7 +378,15 @@ namespace tangent
 					if (change_output.value < min_change_output_value)
 					{
 						if (!change_output.tokens.empty())
+						{
+							if (!additional_value)
+							{
+								additional_value = min_change_output_value - change_output.value;
+								goto retry_with_fee;
+							}
+
 							coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s (change value is less than minimum required by protocol)", change_output.value.to_string().c_str(), min_change_output_value.to_string().c_str())));
+						}
 
 						if (change_output.value > fee_value)
 							fee_value = std::move(change_output.value);
