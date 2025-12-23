@@ -3728,7 +3728,8 @@ namespace tangent
 				value = value.is_nan() ? output.value : (value + output.value);
 				for (auto& [token_hash, token] : output.tokens)
 				{
-					auto& token_value = output_value[token.get_asset(base_asset)];
+					auto token_asset = token.get_asset(base_asset);
+					auto& token_value = change_output == required_output_witness.end() ? change_value[token_asset] : output_value[token_asset];
 					token_value = token_value.is_nan() ? token.value : (token_value + token.value);
 				}
 			}
@@ -3736,36 +3737,43 @@ namespace tangent
 			if (output_value.size() < required_output_value.size())
 				return layer_exception("witness transaction doesn't have required amount of outputs");
 
-			auto& input_base_value = input_value[base_asset];
-			auto& output_base_value = output_value[base_asset];
-			auto& change_base_value = change_value[base_asset];
-			auto fee_value = (input_base_value.is_nan() ? decimal::zero() : input_base_value) - ((output_base_value.is_nan() ? decimal::zero() : output_base_value) + (change_base_value.is_nan() ? decimal::zero() : change_base_value));
 			auto max_fee_value = transaction->get_fee_value(executor);
-			if (fee_value.is_negative())
-				return layer_exception("witness transaction output pays more that possible");
-			else if (fee_value > max_fee_value)
-				return layer_exception("witness transaction fee overflow (max: " + max_fee_value.to_string() + ")");
+			for (auto& [input_token_asset, input_token_value_ref] : input_value)
+			{
+				decimal input_token_value = input_token_value_ref.is_nan() ? decimal::zero() : input_token_value_ref;
+				decimal output_token_value = decimal::zero();
+				decimal change_token_value = decimal::zero();
+				auto it = output_value.find(input_token_asset);
+				if (it != output_value.end())
+					output_token_value = it->second.is_nan() ? decimal::zero() : it->second;
+				it = change_value.find(input_token_asset);
+				if (it != change_value.end())
+					change_token_value = it->second.is_nan() ? decimal::zero() : it->second;
+
+				auto delta_token_value = input_token_value - (output_token_value + change_token_value);
+				if (delta_token_value.is_negative())
+					return layer_exception("witness transaction output pays more that possible");
+				else if (input_token_asset == base_asset && delta_token_value > max_fee_value)
+					return layer_exception("witness transaction fee overflow (max: " + max_fee_value.to_string() + ")");
+			}
 
 			for (auto& [output_asset, actual_output_value] : output_value)
 			{
-				auto& output_change_value = change_value[output_asset];
-				if (output_change_value.is_nan())
-					output_change_value = decimal::zero();
-
+				auto change_ref = change_value.find(output_asset);
+				auto max_change_value = change_ref == change_value.end() || change_ref->second.is_nan() ? decimal::zero() : change_ref->second;
 				auto it = required_output_value.find(output_asset);
 				if (it != required_output_value.end())
 				{
-					if (!it->second.is_nan())
-					{
-						if (output_asset != base_asset && actual_output_value != it->second + output_change_value)
-							return layer_exception("witness transaction output pays unexpected token value");
-						else if (output_asset == base_asset && actual_output_value < it->second - max_fee_value || actual_output_value > it->second + max_fee_value)
-							return layer_exception("witness transaction output pays unexpected native value");
-					}
+					if (it->second.is_nan())
+						continue;
+					else if (output_asset != base_asset && actual_output_value != it->second)
+						return layer_exception("witness transaction output pays unexpected token value");
+					else if (output_asset == base_asset && actual_output_value < it->second - max_fee_value || actual_output_value > it->second + max_fee_value)
+						return layer_exception("witness transaction output pays unexpected native value");
 				}
-				else if (output_asset == base_asset && actual_output_value > std::max(output_change_value, max_fee_value))
+				else if (output_asset == base_asset && actual_output_value > std::max(max_change_value, max_fee_value))
 					return layer_exception("witness transaction output pays unexpected native value");
-				else if (output_asset != base_asset && actual_output_value != output_change_value)
+				else if (output_asset != base_asset && actual_output_value != max_change_value)
 					return layer_exception("witness transaction output pays unexpected token value");
 			}
 
