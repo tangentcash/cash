@@ -65,7 +65,7 @@ namespace tangent
 			expects_promise_rt<computed_transaction> link_transaction(const algorithm::asset_id& asset, uint64_t block_height, const std::string_view& block_hash, format::tree& transaction_data);
 			expects_promise_rt<decimal> calculate_balance(const algorithm::asset_id& asset, const wallet_link& link);
 			expects_promise_rt<void> broadcast_transaction(const algorithm::asset_id& asset, const uint256_t& external_id, const finalized_transaction& finalized);
-			expects_promise_rt<prepared_transaction> prepare_transaction(const algorithm::asset_id& asset, const wallet_link& from_link, const vector<value_transfer>& to, const decimal& max_fee);
+			expects_promise_rt<prepared_transaction> prepare_transaction(const algorithm::asset_id& asset, const wallet_link& from_link, const value_transfer& to, const decimal& max_fee);
 			expects_lr<finalized_transaction> finalize_transaction(const algorithm::asset_id& asset, prepared_transaction&& prepared);
 			expects_lr<computed_transaction> get_computed_transaction(const algorithm::asset_id& asset, const std::string_view& transaction_id, const uint256_t& external_id, const uint256_t& optimized_id);
 			expects_lr<computed_wallet> compute_wallet(const algorithm::asset_id& asset, const uint8_t* seed, size_t seed_size);

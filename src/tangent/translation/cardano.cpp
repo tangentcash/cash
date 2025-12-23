@@ -301,7 +301,7 @@ namespace tangent
 
 				coreturn expects_rt<void>(expectation::met);
 			}
-			expects_promise_rt<prepared_transaction> cardano::prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const decimal& max_fee)
+			expects_promise_rt<prepared_transaction> cardano::prepare_transaction(const wallet_link& from_link, const value_transfer& to, const decimal& max_fee)
 			{
 				auto block_slot = coawait(get_latest_block_slot());
 				if (!block_slot)
@@ -318,23 +318,19 @@ namespace tangent
 				prepared_transaction result;
 				result.requires_abi(format::variable(to_lovelace(fee_value)));
 
-				hash_map<algorithm::asset_id, decimal> total_token_value;
-				decimal total_value = fee_value;
-				for (auto& item : to)
+				hash_map<algorithm::asset_id, decimal> total_token_value; decimal total_value = fee_value;
+				auto min_output_value = get_min_protocol_value_per_output(to.asset != native_asset ? 1 : 0);
+				if (to.asset == native_asset)
 				{
-					auto min_output_value = get_min_protocol_value_per_output(item.asset != native_asset ? 1 : 0);
-					if (item.asset == native_asset)
-					{
-						total_value += item.value;
-						if (item.asset == native_asset && item.value < min_output_value)
-							coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s (value is less than minimum required by protocol)", item.value.to_string().c_str(), min_output_value.to_string().c_str())));
-					}
-					else
-					{
-						auto& value = total_token_value[item.asset];
-						value = value.is_nan() ? item.value : (value + item.value);
-						total_value += min_output_value;
-					}
+					total_value += to.value;
+					if (to.asset == native_asset && to.value < min_output_value)
+						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s (value is less than minimum required by protocol)", to.value.to_string().c_str(), min_output_value.to_string().c_str())));
+				}
+				else
+				{
+					auto& value = total_token_value[to.asset];
+					value = value.is_nan() ? to.value : (value + to.value);
+					total_value += min_output_value;
 				}
 
 				auto possible_inputs = calculate_utxo(from_link, balance_query(additional_value ? total_value + *additional_value : total_value, total_token_value));
@@ -356,19 +352,15 @@ namespace tangent
 					}
 				}
 
-				for (auto& item : to)
+				auto to_link = find_linked_addresses({ to.address });
+				auto output = coin_utxo(to_link ? std::move(to_link->begin()->second) : wallet_link::from_address(to.address), string(), (uint32_t)result.outputs.size(), to.asset == native_asset ? decimal(to.value) : std::move(min_output_value));
+				if (to.asset != native_asset)
 				{
-					auto link = find_linked_addresses({ item.address });
-					auto min_output_value = get_min_protocol_value_per_output(item.asset != native_asset ? 1 : 0);
-					auto output = coin_utxo(link ? std::move(link->begin()->second) : wallet_link::from_address(item.address), string(), (uint32_t)result.outputs.size(), item.asset == native_asset ? decimal(item.value) : std::move(min_output_value));
-					if (item.asset != native_asset)
-					{
-						auto& change_token = change_tokens[item.asset];
-						output.apply_token_value(change_token.contract_address, change_token.symbol, item.value, change_token.decimals);
-						change_token.value -= item.value;
-					}
-					result.requires_output(std::move(output));
+					auto& change_token = change_tokens[to.asset];
+					output.apply_token_value(change_token.contract_address, change_token.symbol, to.value, change_token.decimals);
+					change_token.value -= to.value;
 				}
+				result.requires_output(std::move(output));
 
 				auto change_output = coin_utxo(wallet_link(possible_inputs->front().link), string(), (uint32_t)result.outputs.size(), decimal(remaining_value - total_value));
 				for (auto& token : change_tokens)

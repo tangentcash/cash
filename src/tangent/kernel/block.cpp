@@ -3525,13 +3525,16 @@ namespace tangent
 			auto entropy_source_2 = runner_wallet->secret_key.view();
 			auto entropy_source_3 = manager.view();
 			auto entropy_source_4 = owner.view();
+			auto entropy_source_5 = format::util::decode_0xhex(protocol::now().policy.pow.base);
 			asset.encode(entropy_source_1);
 
 			format::wo_stream entropy_source;
-			entropy_source.write_string_raw(algorithm::hashing::hash512(entropy_source_1, sizeof(entropy_source_1)));
-			entropy_source.write_string_raw(algorithm::hashing::hash512((uint8_t*)entropy_source_2.data(), entropy_source_2.size()));
-			entropy_source.write_string_raw(algorithm::hashing::hash512((uint8_t*)entropy_source_3.data(), entropy_source_3.size()));
-			entropy_source.write_string_raw(algorithm::hashing::hash512((uint8_t*)entropy_source_4.data(), entropy_source_4.size()));
+			entropy_source.write_string(algorithm::hashing::hash512(entropy_source_1, sizeof(entropy_source_1)));
+			entropy_source.write_string(algorithm::hashing::hash512((uint8_t*)entropy_source_2.data(), entropy_source_2.size()));
+			entropy_source.write_string(algorithm::hashing::hash512((uint8_t*)entropy_source_3.data(), entropy_source_3.size()));
+			entropy_source.write_string(algorithm::hashing::hash512((uint8_t*)entropy_source_4.data(), entropy_source_4.size()));
+			entropy_source.write_string(algorithm::hashing::hash512((uint8_t*)entropy_source_5.data(), entropy_source_5.size()));
+			entropy_source.write_string(algorithm::hashing::hash512((uint8_t*)entropy_source.data.data(), entropy_source.data.size()));
 
 			algorithm::storage_type<uint8_t, 64> entropy;
 			if (!algorithm::signing::derive_seed_from_password((uint8_t*)entropy_source.data.data(), entropy_source.data.size(), entropy.data, entropy.size()))

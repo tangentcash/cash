@@ -478,7 +478,7 @@ namespace tangent
 		}
 		wo_stream& wo_stream::write_string(const std::string_view& value)
 		{
-			if (util::is_hex_encoding(value))
+			if (util::is_strict_hex_encoding(value))
 			{
 				string source = codec::hex_decode(value);
 				if (source.size() > util::get_max_string_size())
@@ -498,25 +498,6 @@ namespace tangent
 				}
 			}
 			else if (value.size() > util::get_max_string_size())
-			{
-				uint32_t size = std::min<uint32_t>(protocol::now().message.max_message_size, (uint32_t)value.size());
-				uint8_t type = (uint8_t)util::get_string_type(value, false);
-				write(&type, sizeof(uint8_t));
-				write_integer(size);
-				write(value.data(), size);
-			}
-			else
-			{
-				uint8_t type = (uint8_t)util::get_string_type(value, false);
-				uint8_t size = util::get_string_size((viewable)type);
-				write(&type, sizeof(uint8_t));
-				write(value.data(), size);
-			}
-			return *this;
-		}
-		wo_stream& wo_stream::write_string_raw(const std::string_view& value)
-		{
-			if (value.size() > util::get_max_string_size())
 			{
 				uint32_t size = std::min<uint32_t>(protocol::now().message.max_message_size, (uint32_t)value.size());
 				uint8_t type = (uint8_t)util::get_string_type(value, false);
@@ -1812,6 +1793,14 @@ namespace tangent
 		{
 			string result = string(stringify::starts_with(data, "0x") ? data.substr(2) : data);
 			return uppercase ? stringify::to_upper(result) : stringify::to_lower(result);
+		}
+		bool util::is_strict_hex_encoding(const std::string_view& data)
+		{
+			static std::string_view alphabet = "0123456789abcdef";
+			if (data.size() < 2 || data.size() % 2 != 0 || data[0] != '0' || data[1] != 'x')
+				return false;
+
+			return data.substr(2).find_first_not_of(alphabet) == std::string::npos;
 		}
 		bool util::is_hex_encoding(const std::string_view& data)
 		{

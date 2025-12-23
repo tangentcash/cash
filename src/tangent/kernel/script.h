@@ -494,7 +494,6 @@ namespace tangent
 			void wreal320(const decimal& value);
 			void merge(const string_repr& value);
 			void wstr(const string_repr& value);
-			void wrstr(const string_repr& value);
 			bool rboolean(bool& value);
 			bool ruint160(address_repr& value);
 			bool ruint256(uint256_t& value);

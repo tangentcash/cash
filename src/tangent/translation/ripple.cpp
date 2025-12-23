@@ -410,7 +410,7 @@ namespace tangent
 
 				coreturn expects_rt<void>(remote_exception(std::move(error_message)));
 			}
-			expects_promise_rt<prepared_transaction> ripple::prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const decimal& max_fee)
+			expects_promise_rt<prepared_transaction> ripple::prepare_transaction(const wallet_link& from_link, const value_transfer& to, const decimal& max_fee)
 			{
 				auto account_info = coawait(get_account_info(from_link.address));
 				if (!account_info)
@@ -441,20 +441,19 @@ namespace tangent
 				if (fee_value > max_fee)
 					coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
 
-				auto& output = to.front();
-				auto contract_address = superchain::server_node::get()->get_contract_address(output.asset);
+				auto contract_address = superchain::server_node::get()->get_contract_address(to.asset);
 				if (contract_address)
 				{
-					auto account_token_info = coawait(get_account_token_info(output.asset, *contract_address));
-					if (!account_token_info || account_token_info->balance < output.value)
-						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", (account_token_info ? account_token_info->balance : decimal(0.0)).to_string().c_str(), output.value.to_string().c_str())));
+					auto account_token_info = coawait(get_account_token_info(to.asset, *contract_address));
+					if (!account_token_info || account_token_info->balance < to.value)
+						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", (account_token_info ? account_token_info->balance : decimal(0.0)).to_string().c_str(), to.value.to_string().c_str())));
 				}
 
-				auto total_value = contract_address ? fee_value : (output.value + fee_value);
+				auto total_value = contract_address ? fee_value : (to.value + fee_value);
 				if (account_info->balance < total_value || total_value.is_negative())
 					coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", account_info->balance.to_string().c_str(), total_value.to_string().c_str())));
 
-				auto [output_address, output_tag] = address_util::decode_tag_address(output.address);
+				auto [output_address, output_tag] = address_util::decode_tag_address(to.address);
 				transaction_buffer buffer;
 				buffer.transaction_type = 0;
 				buffer.flags = 0;
@@ -467,12 +466,12 @@ namespace tangent
 				buffer.destination = output_address;
 				if (contract_address)
 				{
-					buffer.amount.token_value = output.value;
-					buffer.amount.asset = algorithm::asset::token_of(output.asset);
+					buffer.amount.token_value = to.value;
+					buffer.amount.asset = algorithm::asset::token_of(to.asset);
 					buffer.amount.issuer = *contract_address;
 				}
 				else
-					buffer.amount.base_value = (uint64_t)to_drop(output.value);
+					buffer.amount.base_value = (uint64_t)to_drop(to.value);
 
 				auto signing_public_key = decode_public_key(from_link.public_key);
 				if (!signing_public_key)
@@ -482,10 +481,10 @@ namespace tangent
 				auto message = tx_serialize(&buffer, true);
 				prepared_transaction result;
 				if (contract_address)
-					result.requires_account_input(algorithm::composition::type::ed25519, wallet_link(from_link), public_key, message.data(), message.size(), { { output.asset, output.value }, { native_asset, fee_value } });
+					result.requires_account_input(algorithm::composition::type::ed25519, wallet_link(from_link), public_key, message.data(), message.size(), { { to.asset, to.value }, { native_asset, fee_value } });
 				else
 					result.requires_account_input(algorithm::composition::type::ed25519, wallet_link(from_link), public_key, message.data(), message.size(), { { native_asset, total_value } });
-				result.requires_account_output(output.address, { { output.asset, output.value } });
+				result.requires_account_output(to.address, { { to.asset, to.value } });
 				result.requires_abi(format::variable(contract_address.or_else(string())));
 				result.requires_abi(format::variable(buffer.sequence));
 				result.requires_abi(format::variable(buffer.last_ledger_sequence));

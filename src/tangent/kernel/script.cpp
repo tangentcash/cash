@@ -2669,11 +2669,6 @@ namespace tangent
 			output.write_string(value.view());
 			input.data = output.data;
 		}
-		void abi_repr::wrstr(const string_repr& value)
-		{
-			output.write_string_raw(value.view());
-			input.data = output.data;
-		}
 		bool abi_repr::rboolean(bool& value)
 		{
 			return input.read_boolean(input.read_type(), &value);
@@ -5315,7 +5310,6 @@ namespace tangent
 			abi_type->set_method("void wr320(const real320&in)", &abi_repr::wreal320);
 			abi_type->set_method("void merge(const string&in)", &abi_repr::merge);
 			abi_type->set_method("void wstr(const string&in)", &abi_repr::wstr);
-			abi_type->set_method("void wrstr(const string&in)", &abi_repr::wrstr);
 			abi_type->set_method("bool rstr(string&out)", &abi_repr::rstr);
 			abi_type->set_method("bool ru8(bool&out)", &abi_repr::rboolean);
 			abi_type->set_method("bool ru160(address&out)", &abi_repr::ruint160);

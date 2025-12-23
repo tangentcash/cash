@@ -25,8 +25,8 @@ namespace tangent
 		bool wallet_link::store_payload(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
-			stream->write_string_raw(public_key);
-			stream->write_string_raw(address);
+			stream->write_string(public_key);
+			stream->write_string(address);
 			stream->write_string(owner.optimized_view());
 			return true;
 		}
@@ -181,8 +181,8 @@ namespace tangent
 		uint256_t coin_utxo::token_utxo::as_hash() const
 		{
 			format::wo_stream message;
-			message.write_string_raw(contract_address);
-			message.write_string_raw(symbol);
+			message.write_string(contract_address);
+			message.write_string(symbol);
 			message.write_decimal(value);
 			message.write_integer(decimals);
 			return message.hash();
@@ -253,13 +253,13 @@ namespace tangent
 			if (!link.store_payload(stream))
 				return false;
 
-			stream->write_string_raw(transaction_id);
+			stream->write_string(transaction_id);
 			stream->write_integer(index);
 			stream->write_decimal(value);
 			stream->write_integer((uint32_t)tokens.size());
 			for (auto& [hash, item] : tokens)
 			{
-				stream->write_string_raw(item.contract_address);
+				stream->write_string(item.contract_address);
 				stream->write_string(item.symbol);
 				stream->write_decimal(item.value);
 				stream->write_integer(item.decimals);
@@ -404,7 +404,7 @@ namespace tangent
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_integer(block_id);
-			stream->write_string_raw(transaction_id);
+			stream->write_string(transaction_id);
 			stream->write_integer((uint32_t)inputs.size());
 			for (auto& [hash, item] : inputs)
 			{
@@ -768,7 +768,7 @@ namespace tangent
 				return false;
 			
 			stream->write_string(calldata);
-			stream->write_string_raw(hashdata);
+			stream->write_string(hashdata);
 			stream->write_integer(locktime);
 			return true;
 		}

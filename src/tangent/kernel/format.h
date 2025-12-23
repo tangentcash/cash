@@ -53,7 +53,6 @@ namespace tangent
 			wo_stream& operator= (wo_stream&&) noexcept = default;
 			wo_stream& clear();
 			wo_stream& write_string(const std::string_view& value);
-			wo_stream& write_string_raw(const std::string_view& value);
 			wo_stream& write_decimal(const decimal& value);
 			wo_stream& write_integer(const uint256_t& value);
 			wo_stream& write_boolean(bool value);
@@ -225,6 +224,7 @@ namespace tangent
 			static string decode_0xhex(const std::string_view& data);
 			static string assign_0xhex(const std::string_view& data);
 			static string clear_0xhex(const std::string_view& data, bool uppercase = false);
+			static bool is_strict_hex_encoding(const std::string_view& data);
 			static bool is_hex_encoding(const std::string_view& data);
 			static bool is_base64_encoding(const std::string_view& data);
 			static bool is_base64_url_encoding(const std::string_view& data);

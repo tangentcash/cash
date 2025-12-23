@@ -643,7 +643,7 @@ namespace tangent
 
 				coreturn expects_rt<computed_transaction>(std::move(result));
 			}
-			expects_promise_rt<computed_fee> ethereum::estimate_transaction_fee(const wallet_link& from_link, const vector<value_transfer>& to)
+			expects_promise_rt<computed_fee> ethereum::estimate_transaction_fee(const wallet_link& from_link, const value_transfer& to)
 			{
 				auto gas_price_value = coawait(execute_rpc(nd_call::gas_price(), { }, cache_policy::no_cache));
 				if (!gas_price_value)
@@ -682,12 +682,11 @@ namespace tangent
 					legacy.eip_155 = vgas_premium > 0 ? 0 : 1;
 				}
 
-				auto& output = to.front();
 				format::tree params = format::tree::map();
 				params.set("gasPrice", format::variable(uint256_to_hex(vgas_price)));
 				params.set("from", format::variable(decode_non_eth_address(from_link.address)));
 
-				auto contract_address = superchain::server_node::get()->get_contract_address(output.asset);
+				auto contract_address = superchain::server_node::get()->get_contract_address(to.asset);
 				decimal divisibility = netdata.divisibility;
 				if (contract_address)
 				{
@@ -697,19 +696,19 @@ namespace tangent
 				}
 
 				uint64_t default_gas_limit;
-				uint256_t value = from_eth(output.value, divisibility);
+				uint256_t value = from_eth(to.value, divisibility);
 				if (contract_address)
 				{
 					default_gas_limit = get_erc20_transfer_gas_limit_gwei();
 					params.set("to", format::variable(decode_non_eth_address(*contract_address)));
 					params.set("value", format::variable(uint256_to_hex(0)));
 					params.set("gas", format::variable(uint256_to_hex(default_gas_limit)));
-					params.set("data", format::variable(encode_0xhex(translations::ethereum::sc_call::transfer(decode_non_eth_address(output.address), value))));
+					params.set("data", format::variable(encode_0xhex(translations::ethereum::sc_call::transfer(decode_non_eth_address(to.address), value))));
 				}
 				else
 				{
 					default_gas_limit = get_eth_transfer_gas_limit_gwei();
-					params.set("to", format::variable(decode_non_eth_address(output.address)));
+					params.set("to", format::variable(decode_non_eth_address(to.address)));
 					params.set("value", format::variable(uint256_to_hex(value)));
 					params.set("gas", format::variable(uint256_to_hex(default_gas_limit)));
 				}
@@ -782,7 +781,7 @@ namespace tangent
 
 				coreturn expects_rt<void>(expectation::met);
 			}
-			expects_promise_rt<prepared_transaction> ethereum::prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const decimal& max_fee)
+			expects_promise_rt<prepared_transaction> ethereum::prepare_transaction(const wallet_link& from_link, const value_transfer& to, const decimal& max_fee)
 			{
 				auto chain_id = coawait(get_chain_id());
 				if (!chain_id)
@@ -796,18 +795,17 @@ namespace tangent
 				if (fee_value > max_fee)
 					coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
 
-				auto& output = to.front();
-				auto contract_address = superchain::server_node::get()->get_contract_address(output.asset);
+				auto contract_address = superchain::server_node::get()->get_contract_address(to.asset);
 				if (contract_address)
 				{
-					auto balance = coawait(calculate_balance(output.asset, from_link));
+					auto balance = coawait(calculate_balance(to.asset, from_link));
 					if (!balance || *balance < fee_value)
 						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", (balance ? *balance : decimal(0.0)).to_string().c_str(), fee_value.to_string().c_str())));
 				}
-				else if (!algorithm::asset::token_of(output.asset).empty())
+				else if (!algorithm::asset::token_of(to.asset).empty())
 					coreturn expects_rt<prepared_transaction>(remote_exception("invalid sending token"));
 
-				auto total_value = contract_address ? fee_value : (output.value + fee_value);
+				auto total_value = contract_address ? fee_value : (to.value + fee_value);
 				auto balance = coawait(calculate_balance(native_asset, from_link));
 				if (!balance || *balance < total_value || total_value.is_negative())
 					coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", (balance ? *balance : decimal(0.0)).to_string().c_str(), total_value.to_string().c_str())));
@@ -831,12 +829,12 @@ namespace tangent
 						divisibility = std::move(*contract_divisibility);
 
 					transaction.address = decode_non_eth_address(*contract_address);
-					transaction.abi_data = sc_call::transfer(output.address, from_eth(output.value, divisibility));
+					transaction.abi_data = sc_call::transfer(to.address, from_eth(to.value, divisibility));
 				}
 				else
 				{
-					transaction.address = decode_non_eth_address(output.address);
-					transaction.value = from_eth(output.value, divisibility);
+					transaction.address = decode_non_eth_address(to.address);
+					transaction.value = from_eth(to.value, divisibility);
 				}
 
 				auto public_key = to_composite_public_key(from_link.public_key);
@@ -847,10 +845,10 @@ namespace tangent
 				auto hash = transaction.hash(transaction.serialize(type));
 				prepared_transaction result;
 				if (contract_address)
-					result.requires_account_input(algorithm::composition::type::secp256k1, wallet_link(from_link), *public_key, (uint8_t*)hash.data(), hash.size(), { { output.asset, output.value }, { native_asset, fee_value } });
+					result.requires_account_input(algorithm::composition::type::secp256k1, wallet_link(from_link), *public_key, (uint8_t*)hash.data(), hash.size(), { { to.asset, to.value }, { native_asset, fee_value } });
 				else
 					result.requires_account_input(algorithm::composition::type::secp256k1, wallet_link(from_link), *public_key, (uint8_t*)hash.data(), hash.size(), { { native_asset, total_value } });
-				result.requires_account_output(output.address, { { output.asset, output.value } });
+				result.requires_account_output(to.address, { { to.asset, to.value } });
 				result.requires_abi(format::variable(!!legacy.eip_155));
 				result.requires_abi(format::variable(contract_address.or_else(string())));
 				result.requires_abi(format::variable(divisibility));

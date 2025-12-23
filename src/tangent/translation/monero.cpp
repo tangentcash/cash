@@ -465,7 +465,7 @@ namespace tangent
 
 				coreturn expects_rt<void>(expectation::met);
 			}
-			expects_promise_rt<prepared_transaction> monero::prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const decimal& max_fee)
+			expects_promise_rt<prepared_transaction> monero::prepare_transaction(const wallet_link& from_link, const value_transfer& to, const decimal& max_fee)
 			{
 				format::tree args;
 				args.set("grace_blocks", format::variable((uint8_t)10));

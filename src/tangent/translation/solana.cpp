@@ -389,14 +389,14 @@ namespace tangent
 
 				coreturn expects_rt<void>(expectation::met);
 			}
-			expects_promise_rt<prepared_transaction> solana::prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const decimal& max_fee)
+			expects_promise_rt<prepared_transaction> solana::prepare_transaction(const wallet_link& from_link, const value_transfer& to, const decimal& max_fee)
 			{
 				auto native_balance = coawait(get_balance(from_link.address));
 				if (!native_balance)
 					coreturn expects_rt<prepared_transaction>(std::move(native_balance.error()));
 
 				uint64_t fee_constant = 5000;
-				if (!algorithm::asset::token_of(to.front().asset).empty())
+				if (!algorithm::asset::token_of(to.asset).empty())
 					fee_constant += fee_constant * 2;
 
 				auto fee = computed_fee::flat_fee(fee_constant / netdata.divisibility);
@@ -404,27 +404,26 @@ namespace tangent
 				if (fee_value > max_fee)
 					coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
 
-				auto& output = to.front();
-				auto contract_address = superchain::server_node::get()->get_contract_address(output.asset);
+				auto contract_address = superchain::server_node::get()->get_contract_address(to.asset);
 				option<token_account> from_token = optional::none;
 				option<token_account> to_token = optional::none;
 				if (contract_address)
 				{
 					auto from_token_balance = coawait(get_token_balance(*contract_address, from_link.address));
-					if (!from_token_balance || from_token_balance->balance < output.value)
-						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", (from_token_balance ? from_token_balance->balance : decimal(0.0)).to_string().c_str(), output.value.to_string().c_str())));
+					if (!from_token_balance || from_token_balance->balance < to.value)
+						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", (from_token_balance ? from_token_balance->balance : decimal(0.0)).to_string().c_str(), to.value.to_string().c_str())));
 					else if (from_token_balance->mint.empty())
 						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("account %s does not have associated token account (must not happen)", from_link.address.c_str())));
 
-					auto to_token_balance = coawait(get_token_balance(*contract_address, output.address));
+					auto to_token_balance = coawait(get_token_balance(*contract_address, to.address));
 					if (!to_token_balance)
-						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("account %s does not have associated token account (create token account before sending)", output.address.c_str())));
+						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("account %s does not have associated token account (create token account before sending)", to.address.c_str())));
 
 					from_token = std::move(*from_token_balance);
 					to_token = std::move(*to_token_balance);
 				}
 
-				auto total_value = contract_address ? fee_value : (output.value + fee_value);
+				auto total_value = contract_address ? fee_value : (to.value + fee_value);
 				if (*native_balance < total_value || total_value.is_negative())
 					coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", native_balance->to_string().c_str(), total_value.to_string().c_str())));
 
@@ -438,9 +437,9 @@ namespace tangent
 				transaction.from_token_address = from_token ? from_token->account : string();
 				transaction.to_token_address = to_token ? to_token->account : string();
 				transaction.from_address = from_link.address;
-				transaction.to_address = output.address;
+				transaction.to_address = to.address;
 				transaction.recent_block_hash = *recent_block_hash;
-				transaction.value = (output.value * (from_token ? from_token->divisibility : netdata.divisibility)).to_uint64();
+				transaction.value = (to.value * (from_token ? from_token->divisibility : netdata.divisibility)).to_uint64();
 				transaction.decimals = (uint8_t)((from_token ? from_token->divisibility : netdata.divisibility).to_string().size() - 1);
 
 				vector<uint8_t> message_buffer = tx_message_serialize(&transaction);
@@ -454,10 +453,10 @@ namespace tangent
 				auto public_key = algorithm::composition::to_cstorage<algorithm::composition::cpubkey_t>(*signing_public_key);
 				prepared_transaction result;
 				if (contract_address)
-					result.requires_account_input(algorithm::composition::type::ed25519, wallet_link(from_link), public_key, message_buffer.data(), message_buffer.size(), { { output.asset, output.value }, { native_asset, fee_value } });
+					result.requires_account_input(algorithm::composition::type::ed25519, wallet_link(from_link), public_key, message_buffer.data(), message_buffer.size(), { { to.asset, to.value }, { native_asset, fee_value } });
 				else
 					result.requires_account_input(algorithm::composition::type::ed25519, wallet_link(from_link), public_key, message_buffer.data(), message_buffer.size(), { { native_asset, total_value } });
-				result.requires_account_output(output.address, { { output.asset, output.value } });
+				result.requires_account_output(to.address, { { to.asset, to.value } });
 				result.requires_abi(format::variable(from_token ? from_token->divisibility : netdata.divisibility));
 				result.requires_abi(format::variable(from_token ? from_token->mint : string()));
 				result.requires_abi(format::variable(transaction.token_program_address));

@@ -679,10 +679,10 @@ namespace tangent
 		{
 			uint8_t nonce[32] = { 0 }, salt[12] = { 0 }, tag[16] = { 0 };
 			format::wo_stream message;
-			message.write_string_raw(pubkey_t().view());
-			message.write_string_raw(std::string((char*)nonce, sizeof(nonce)));
-			message.write_string_raw(std::string((char*)salt, sizeof(salt)));
-			message.write_string_raw(std::string((char*)tag, sizeof(tag)));
+			message.write_string(pubkey_t().view());
+			message.write_string(std::string((char*)nonce, sizeof(nonce)));
+			message.write_string(std::string((char*)salt, sizeof(salt)));
+			message.write_string(std::string((char*)tag, sizeof(tag)));
 			return ciphertext.size() > message.data.size();
 		}
 		void signing::derive_secret_key_from_mnemonic(const std::string_view& mnemonic, seckey_t& secret_key)
@@ -854,10 +854,10 @@ namespace tangent
 				return optional::none;
 
 			format::wo_stream message;
-			message.write_string_raw(nonce_public_key.view());
-			message.write_string_raw(std::string_view((char*)salt_nonce, sizeof(salt_nonce)));
-			message.write_string_raw(salt.expose<sizeof(salt_data)>().view);
-			message.write_string_raw(*result);
+			message.write_string(nonce_public_key.view());
+			message.write_string(std::string_view((char*)salt_nonce, sizeof(salt_nonce)));
+			message.write_string(salt.expose<sizeof(salt_data)>().view);
+			message.write_string(*result);
 			return option<string>(std::move(message.data));
 		}
 		option<string> signing::private_decrypt(const seckey_t& secret_key, const std::string_view& ciphertext)

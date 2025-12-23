@@ -481,7 +481,7 @@ namespace tangent
 
 				coreturn expects_rt<void>(expectation::met);
 			}
-			expects_promise_rt<prepared_transaction> stellar::prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const decimal& max_fee)
+			expects_promise_rt<prepared_transaction> stellar::prepare_transaction(const wallet_link& from_link, const value_transfer& to, const decimal& max_fee)
 			{
 				auto account_info = coawait(get_account_info(from_link.address));
 				if (!account_info)
@@ -492,76 +492,45 @@ namespace tangent
 				if (!decode_key(params.ed25519_public_key, from_link.public_key, decoded_public_key, &decoded_public_key_size))
 					coreturn expects_rt<prepared_transaction>(remote_exception("input public key invalid"));
 
-				string memo;
-				for (auto& item : to)
-				{
-					auto [address, tag] = address_util::decode_tag_address(item.address);
-					if (tag.empty())
-						continue;
-					else if (!memo.empty())
-						coreturn expects_rt<prepared_transaction>(remote_exception("too many memos"));
-
-					memo = std::move(tag);
-				}
-
+				auto [address, memo] = address_util::decode_tag_address(to.address);
 				auto memo_id = from_string<uint64_t>(memo);
 				if (memo.size() > 28 || (!memo.empty() && !memo_id))
 					coreturn expects_rt<prepared_transaction>(remote_exception("input memo invalid"));
 
-				size_t paid_outputs_size = 0;
-				hash_set<string> new_accounts;
-				hash_map<algorithm::asset_id, decimal> inputs;
-				vector<StellarCreateAccountOp> accounts;
-				vector<StellarPaymentOp> payments;
-				accounts.reserve(to.size());
-				payments.reserve(to.size());
-				for (auto& item : to)
+				auto has_account = coawait(is_account_exists(to.address));
+				if (!has_account)
+					coreturn expects_rt<prepared_transaction>(has_account.error());
+
+				option<StellarCreateAccountOp> account = optional::none;
+				option<StellarPaymentOp> payment = optional::none;
+				auto contract_address = superchain::server_node::get()->get_contract_address(to.asset);
+				if (!*has_account)
+					account = tx_create_account_prepared(to.address, from_link.address, (uint64_t)to_stroop(to.value), !!contract_address);
+				
+				if (contract_address)
 				{
-					auto has_account = coawait(is_account_exists(item.address));
-					if (!has_account)
-						coreturn expects_rt<prepared_transaction>(has_account.error());
+					auto token = account_info->balances.find(to.asset);
+					if (token == account_info->balances.end())
+						coreturn expects_rt<prepared_transaction>(remote_exception("insufficient funds"));
 
-					if (inputs.find(item.asset) != inputs.end())
-						inputs[item.asset] += item.value;
-					else
-						inputs[item.asset] = item.value;
+					asset_type token_type = to_asset_type(token->second.info.type);
+					if (token_type == asset_type::ASSET_TYPE_NATIVE)
+						coreturn expects_rt<prepared_transaction>(remote_exception("standard not supported"));
 
-					auto contract_address = superchain::server_node::get()->get_contract_address(item.asset);
-					if (!*has_account)
-					{
-						StellarCreateAccountOp account = tx_create_account_prepared(item.address, from_link.address, (uint64_t)to_stroop(item.value), !!contract_address);
-						paid_outputs_size += account.has_starting_balance ? 1 : 0;
-						accounts.push_back(account);
-						new_accounts.insert(item.address);
-						if (account.has_starting_balance)
-							continue;
-					}
-
-					if (contract_address)
-					{
-						auto token = account_info->balances.find(item.asset);
-						if (token == account_info->balances.end())
-							coreturn expects_rt<prepared_transaction>(remote_exception("insufficient funds"));
-
-						asset_type token_type = to_asset_type(token->second.info.type);
-						if (token_type == asset_type::ASSET_TYPE_NATIVE)
-							coreturn expects_rt<prepared_transaction>(remote_exception("standard not supported"));
-
-						payments.push_back(tx_create_payment_prepared(item.address, from_link.address, tx_create_token_asset_prepared(token->second.info.code, token->second.info.issuer, token_type), (uint64_t)to_stroop(item.value)));
-					}
-					else
-					{
-						payments.push_back(tx_create_payment_prepared(item.address, from_link.address, tx_create_native_asset_prepared(), (uint64_t)to_stroop(item.value)));
-						++paid_outputs_size;
-					}
+					payment = tx_create_payment_prepared(to.address, from_link.address, tx_create_token_asset_prepared(token->second.info.code, token->second.info.issuer, token_type), (uint64_t)to_stroop(to.value));
 				}
+				else if (!account)
+					payment = tx_create_payment_prepared(to.address, from_link.address, tx_create_native_asset_prepared(), (uint64_t)to_stroop(to.value));
 
 				auto passphrase = get_network_passphrase();
+				auto accounts = account ? vector<StellarCreateAccountOp>({ *account }) : vector<StellarCreateAccountOp>();
+				auto payments = payment ? vector<StellarPaymentOp>({ *payment }) : vector<StellarPaymentOp>();
 				StellarSignTx transaction = tx_create_transaction(from_link.address, passphrase, account_info->sequence + 1, memo_id.or_else(0), !memo.empty(), accounts.size(), payments.size(), get_base_stroop_fee());
 				decimal fee_value = from_stroop(transaction.fee);
 				if (fee_value > max_fee)
 					coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
 
+				hash_map<algorithm::asset_id, decimal> inputs = { { to.asset, to.value } };
 				auto& fee_input = inputs[native_asset];
 				fee_input = fee_input.is_nan() ? fee_value : (fee_input + fee_value);
 				transaction = tx_create_transaction(from_link.address, passphrase, account_info->sequence + 1, memo_id.or_else(0), !memo.empty(), accounts.size(), payments.size(), get_base_stroop_fee());
@@ -578,27 +547,22 @@ namespace tangent
 					coreturn expects_rt<prepared_transaction>(remote_exception(std::move(signing_public_key.error().message())));
 
 				auto public_key = algorithm::composition::to_cstorage<algorithm::composition::cpubkey_t>(*signing_public_key);
+				auto token = account_info->balances.find(to.asset);
 				vector<uint8_t> raw_data = tx_data_from_signature(transaction, accounts, payments);
 				prepared_transaction result;
 				result.requires_account_input(algorithm::composition::type::ed25519, wallet_link(from_link), public_key, raw_data.data(), raw_data.size(), hash_map<algorithm::asset_id, decimal>(inputs));
-				for (auto& item : to)
-					result.requires_account_output(item.address, { { item.asset, item.value } });
+				result.requires_account_output(to.address, { { to.asset, to.value } });
 				result.requires_abi(format::variable(transaction.sequence_number));
-				result.requires_abi(format::variable((uint32_t)accounts.size()));
-				result.requires_abi(format::variable((uint32_t)payments.size()));
-				for (auto& item : to)
-				{
-					auto token = account_info->balances.find(item.asset);
-					result.requires_abi(format::variable(new_accounts.find(item.address) != new_accounts.end()));
-					result.requires_abi(format::variable(token != account_info->balances.end() ? token->second.info.code : string()));
-					result.requires_abi(format::variable(token != account_info->balances.end() ? token->second.info.issuer : string()));
-					result.requires_abi(format::variable((uint8_t)to_asset_type(token != account_info->balances.end() ? token->second.info.type : string())));
-				}
+				result.requires_abi(format::variable(!!account));
+				result.requires_abi(format::variable(!!payment));
+				result.requires_abi(format::variable(token != account_info->balances.end() ? token->second.info.code : string()));
+				result.requires_abi(format::variable(token != account_info->balances.end() ? token->second.info.issuer : string()));
+				result.requires_abi(format::variable((uint8_t)to_asset_type(token != account_info->balances.end() ? token->second.info.type : string())));
 				coreturn expects_rt<prepared_transaction>(std::move(result));
 			}
 			expects_lr<finalized_transaction> stellar::finalize_transaction(superchain::prepared_transaction&& prepared)
 			{
-				if (prepared.abi.size() < 3)
+				if (prepared.abi.size() != 6 || prepared.outputs.size() != 1)
 					return layer_exception("invalid prepared abi");
 
 				auto& input = prepared.inputs.front();
@@ -607,53 +571,35 @@ namespace tangent
 				if (!decode_key(params.ed25519_public_key, input.utxo.link.public_key, decoded_public_key, &decoded_public_key_size))
 					return layer_exception("input public key invalid");
 
-				string memo;
-				for (auto& item : prepared.outputs)
-				{
-					auto [address, tag] = address_util::decode_tag_address(item.link.address);
-					if (tag.empty())
-						continue;
-					else if (!memo.empty())
-						return layer_exception("too many memos");
-
-					memo = std::move(tag);
-				}
-
+				auto& output = prepared.outputs.front();
+				auto [address, memo] = address_util::decode_tag_address(output.link.address);
 				auto memo_id = from_string<uint64_t>(memo);
 				if (memo.size() > 28 || (!memo.empty() && !memo_id))
 					return layer_exception("input memo invalid");
 
+				auto create_account = prepared.abi[1].as_boolean();
+				auto create_payment = prepared.abi[2].as_boolean();
+				auto token_code = prepared.abi[3].as_string();
+				auto token_issuer = prepared.abi[4].as_string();
+				auto token_type = prepared.abi[5].as_uint8();
 				auto passphrase = get_network_passphrase();
-				StellarSignTx transaction = tx_create_transaction(input.utxo.link.address, passphrase, prepared.abi[0].as_uint64(), memo_id.or_else(0), !memo.empty(), (size_t)prepared.abi[1].as_uint32(), (size_t)prepared.abi[2].as_uint32(), get_base_stroop_fee());
-				size_t abi_pointer = 3;
-				vector<StellarCreateAccountOp> accounts;
-				vector<StellarPaymentOp> payments;
-				for (auto& item : prepared.outputs)
-				{
-					auto create_account_ptr = prepared.load_abi(&abi_pointer);
-					auto token_code_ptr = prepared.load_abi(&abi_pointer);
-					auto token_issuer_ptr = prepared.load_abi(&abi_pointer);
-					auto token_type_ptr = prepared.load_abi(&abi_pointer);
-					if (!create_account_ptr || !token_code_ptr || !token_issuer_ptr || !token_type_ptr)
-						return layer_exception("invalid prepared abi");
+				StellarSignTx transaction = tx_create_transaction(input.utxo.link.address, passphrase, prepared.abi[0].as_uint64(), memo_id.or_else(0), !memo.empty(), create_account ? 1 : 0, create_payment ? 1 : 0, get_base_stroop_fee());
+				option<StellarCreateAccountOp> account = optional::none;
+				option<StellarPaymentOp> payment = optional::none;
 
-					auto& value = item.tokens.empty() ? item.value : item.tokens.begin()->second.value;
-					auto asset = item.tokens.empty() ? item.get_asset(native_asset) : item.tokens.begin()->second.get_asset(native_asset);
-					auto contract_address = superchain::server_node::get()->get_contract_address(asset);
-					if (create_account_ptr->as_boolean())
-					{
-						StellarCreateAccountOp account = tx_create_account_prepared(item.link.address, input.utxo.link.address, (uint64_t)to_stroop(value), !!contract_address);
-						accounts.push_back(account);
-						if (account.has_starting_balance)
-							continue;
-					}
+				auto& value = output.tokens.empty() ? output.value : output.tokens.begin()->second.value;
+				auto asset = output.tokens.empty() ? output.get_asset(native_asset) : output.tokens.begin()->second.get_asset(native_asset);
+				auto contract_address = superchain::server_node::get()->get_contract_address(asset);
+				if (create_account)
+					account = tx_create_account_prepared(output.link.address, input.utxo.link.address, (uint64_t)to_stroop(value), !!contract_address);
 
-					if (contract_address)
-						payments.push_back(tx_create_payment_prepared(item.link.address, input.utxo.link.address, tx_create_token_asset_prepared(token_code_ptr->as_string(), token_issuer_ptr->as_string(), (asset_type)token_type_ptr->as_uint8()), (uint64_t)to_stroop(value)));
-					else
-						payments.push_back(tx_create_payment_prepared(item.link.address, input.utxo.link.address, tx_create_native_asset_prepared(), (uint64_t)to_stroop(value)));
-				}
+				if (contract_address)
+					payment = tx_create_payment_prepared(output.link.address, input.utxo.link.address, tx_create_token_asset_prepared(token_code, token_issuer, (asset_type)token_type), (uint64_t)to_stroop(value));
+				else if (!account)
+					payment = tx_create_payment_prepared(output.link.address, input.utxo.link.address, tx_create_native_asset_prepared(), (uint64_t)to_stroop(value));
 
+				auto accounts = account ? vector<StellarCreateAccountOp>({ *account }) : vector<StellarCreateAccountOp>();
+				auto payments = payment ? vector<StellarPaymentOp>({ *payment }) : vector<StellarPaymentOp>();
 				vector<uint8_t> raw_signature_data = tx_data_from_signature(transaction, accounts, payments);
 				if (input.message.size() != raw_signature_data.size() || memcmp(input.message.data(), raw_signature_data.data(), raw_signature_data.size()))
 					return layer_exception("invalid input message");

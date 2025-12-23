@@ -438,7 +438,7 @@ namespace tangent
 
 				coreturn expects_rt<void>(expectation::met);
 			}
-			expects_promise_rt<prepared_transaction> tron::prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const decimal& max_fee)
+			expects_promise_rt<prepared_transaction> tron::prepare_transaction(const wallet_link& from_link, const value_transfer& to, const decimal& max_fee)
 			{
 				auto chain_id = coawait(get_chain_id());
 				if (!chain_id)
@@ -448,8 +448,7 @@ namespace tangent
 				if (!fee)
 					coreturn expects_rt<prepared_transaction>(std::move(fee.error()));
 
-				auto& output = to.front();
-				auto contract_address = superchain::server_node::get()->get_contract_address(output.asset);
+				auto contract_address = superchain::server_node::get()->get_contract_address(to.asset);
 				if (contract_address)
 					fee->gas.gas_limit *= 4;
 
@@ -459,12 +458,12 @@ namespace tangent
 
 				if (contract_address)
 				{
-					auto balance = coawait(calculate_balance(output.asset, from_link));
+					auto balance = coawait(calculate_balance(to.asset, from_link));
 					if (!balance || *balance < fee_value)
 						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", (balance ? *balance : decimal(0.0)).to_string().c_str(), fee_value.to_string().c_str())));
 				}
 
-				auto total_value = contract_address ? fee_value : (output.value + fee_value);
+				auto total_value = contract_address ? fee_value : (to.value + fee_value);
 				auto balance = coawait(calculate_balance(native_asset, from_link));
 				if (!balance || *balance < total_value || total_value.is_negative())
 					coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", (balance ? *balance : decimal(0.0)).to_string().c_str(), total_value.to_string().c_str())));
@@ -487,17 +486,17 @@ namespace tangent
 
 				auto eth_contract_address = contract_address ? decode_non_eth_address_pf(*contract_address) : string();
 				auto eth_like_from_address = decode_non_eth_address_pf(from_link.address);
-				auto eth_like_to_address = decode_non_eth_address_pf(output.address);
-				auto eth_to_address = decode_non_eth_address_pf(output.address, false);
-				auto eth_value = from_eth(output.value, divisibility);
+				auto eth_like_to_address = decode_non_eth_address_pf(to.address);
+				auto eth_to_address = decode_non_eth_address_pf(to.address, false);
+				auto eth_value = from_eth(to.value, divisibility);
 				auto fee_limit = from_eth(std::max(fee_value, max_fee), netdata.divisibility);
 				auto transaction = tx_serialize(*block_header, eth_contract_address, eth_like_from_address, eth_like_to_address, eth_to_address, eth_value, fee_limit);
 				prepared_transaction result;
 				if (contract_address)
-					result.requires_account_input(algorithm::composition::type::secp256k1, wallet_link(from_link), *public_key, (uint8_t*)transaction.raw_transaction_id.data(), transaction.raw_transaction_id.size(), { { output.asset, output.value }, { native_asset, fee_value } });
+					result.requires_account_input(algorithm::composition::type::secp256k1, wallet_link(from_link), *public_key, (uint8_t*)transaction.raw_transaction_id.data(), transaction.raw_transaction_id.size(), { { to.asset, to.value }, { native_asset, fee_value } });
 				else
 					result.requires_account_input(algorithm::composition::type::secp256k1, wallet_link(from_link), *public_key, (uint8_t*)transaction.raw_transaction_id.data(), transaction.raw_transaction_id.size(), { { native_asset, total_value } });
-				result.requires_account_output(output.address, { { output.asset, output.value } });
+				result.requires_account_output(to.address, { { to.asset, to.value } });
 				result.requires_abi(format::variable(contract_address.or_else(string())));
 				result.requires_abi(format::variable(block_header->ref_block_bytes));
 				result.requires_abi(format::variable(block_header->ref_block_hash));

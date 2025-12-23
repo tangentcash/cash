@@ -419,22 +419,14 @@ namespace tangent
 
 				coreturn expects_rt<void>(expectation::met);
 			}
-			expects_promise_rt<computed_fee> bitcoin::estimate_transaction_fee(const wallet_link& from_link, const vector<value_transfer>& to)
+			expects_promise_rt<computed_fee> bitcoin::estimate_transaction_fee(const wallet_link& from_link, const value_transfer& to)
 			{
-				decimal sending_value = decimal::zero();
-				for (auto& destination : to)
-					sending_value += destination.value;
-
-				auto inputs = calculate_utxo(from_link, balance_query(sending_value, { }));
+				auto inputs = calculate_utxo(from_link, balance_query(to.value, { }));
 				decimal input_value = inputs ? get_utxo_value(*inputs, optional::none) : 0.0;
 				if (!inputs || inputs->empty())
-					coreturn remote_exception(stringify::text("insufficient funds: %s < %s", input_value.to_string().c_str(), sending_value.to_string().c_str()));
+					coreturn remote_exception(stringify::text("insufficient funds: %s < %s", input_value.to_string().c_str(), to.value.to_string().c_str()));
 
-				vector<string> outputs = { inputs->front().link.address };
-				outputs.reserve(to.size() + 1);
-				for (auto& item : to)
-					outputs.push_back(item.address);
-
+				vector<string> outputs = { inputs->front().link.address, to.address };
 				bool has_witness = false;
 				double virtual_size = 10;
 				for (auto& input : *inputs)
@@ -622,7 +614,7 @@ namespace tangent
 				decimal median_fee_rate = std::max(decimal(1), fee_rates.empty() ? decimal(1) : median_of(fee_rates));
 				coreturn expects_rt<computed_fee>(computed_fee::fee_per_byte(median_fee_rate / netdata.divisibility, (size_t)std::ceil(virtual_size)));
 			}
-			expects_promise_rt<prepared_transaction> bitcoin::prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const decimal& max_fee)
+			expects_promise_rt<prepared_transaction> bitcoin::prepare_transaction(const wallet_link& from_link, const value_transfer& to, const decimal& max_fee)
 			{
 				auto fee = coawait(estimate_transaction_fee(from_link, to));
 				if (!fee)
@@ -632,21 +624,15 @@ namespace tangent
 				if (fee_value > max_fee)
 					coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
 
-				decimal total_value = fee_value;
-				for (auto& item : to)
-					total_value += item.value;
-
+				decimal total_value = to.value + fee_value;
 				auto possible_inputs = calculate_utxo(from_link, balance_query(total_value, { }));
 				decimal input_value = possible_inputs ? get_utxo_value(*possible_inputs, optional::none) : 0.0;
 				if (!possible_inputs || possible_inputs->empty())
 					coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", input_value.to_string().c_str(), total_value.to_string().c_str())));
 
+				auto to_link = find_linked_addresses({ to.address });
 				prepared_transaction result;
-				for (auto& item : to)
-				{
-					auto link = find_linked_addresses({ item.address });
-					result.requires_output(coin_utxo(link ? std::move(link->begin()->second) : wallet_link::from_address(item.address), string(), (uint32_t)result.outputs.size(), decimal(item.value)));
-				}
+				result.requires_output(coin_utxo(to_link ? std::move(to_link->begin()->second) : wallet_link::from_address(to.address), string(), (uint32_t)result.outputs.size(), decimal(to.value)));
 				if (input_value > total_value)
 					result.requires_output(coin_utxo(wallet_link(possible_inputs->front().link), string(), (uint32_t)result.outputs.size(), decimal(input_value - total_value)));
 
@@ -1772,18 +1758,14 @@ namespace tangent
 			zcash::zcash(const algorithm::asset_id& new_asset) noexcept : bitcoin(new_asset)
 			{
 			}
-			expects_promise_rt<computed_fee> zcash::estimate_transaction_fee(const wallet_link& from_link, const vector<value_transfer>& to)
+			expects_promise_rt<computed_fee> zcash::estimate_transaction_fee(const wallet_link& from_link, const value_transfer& to)
 			{
-				decimal sending_value = decimal::zero();
-				for (auto& destination : to)
-					sending_value += destination.value;
-
-				auto inputs = calculate_utxo(from_link, balance_query(sending_value, { }));
+				auto inputs = calculate_utxo(from_link, balance_query(to.value, { }));
 				decimal input_value = inputs ? get_utxo_value(*inputs, optional::none) : 0.0;
 				if (!inputs || inputs->empty())
-					return expects_promise_rt<computed_fee>(remote_exception(stringify::text("insufficient funds: %s < %s", input_value.to_string().c_str(), sending_value.to_string().c_str())));
+					return expects_promise_rt<computed_fee>(remote_exception(stringify::text("insufficient funds: %s < %s", input_value.to_string().c_str(), to.value.to_string().c_str())));
 
-				decimal satoshi = decimal(5000 * std::max<size_t>(2, std::max(inputs->size(), 1 + to.size())));
+				decimal satoshi = decimal(5000 * std::max<size_t>(2, inputs->size()));
 				return expects_promise_rt<computed_fee>(computed_fee::flat_fee(satoshi / netdata.divisibility));
 			}
 			const sc_chainparams_* zcash::get_chain()

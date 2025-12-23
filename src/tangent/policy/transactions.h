@@ -265,8 +265,9 @@ namespace tangent
 
 		struct withdraw final : ledger::transaction
 		{
-			vector<std::pair<string, decimal>> to;
 			algorithm::pubkeyhash_t manager;
+			string to_address;
+			decimal to_value = decimal::nan();
 			bool only_if_not_in_queue = true;
 
 			expects_lr<void> validate(uint64_t block_number) const override;
@@ -315,7 +316,7 @@ namespace tangent
 			static ledger::transaction* from_stream(format::ro_stream& stream);
 			static ledger::transaction* from_type(uint32_t hash);
 			static ledger::transaction* from_copy(const ledger::transaction* base);
-			static expects_promise_rt<superchain::prepared_transaction> prepare_transaction(const algorithm::asset_id& asset, const superchain::wallet_link& from_link, const vector<superchain::value_transfer>& to, const decimal& max_fee);
+			static expects_promise_rt<superchain::prepared_transaction> prepare_transaction(const algorithm::asset_id& asset, const superchain::wallet_link& from_link, const superchain::value_transfer& to, const decimal& max_fee);
 			static expects_lr<superchain::finalized_transaction> finalize_transaction(const algorithm::asset_id& asset, superchain::prepared_transaction&& prepared);
 			static expects_promise_rt<void> broadcast_transaction(const algorithm::asset_id& asset, const uint256_t& external_id, superchain::finalized_transaction&& finalized, ledger::dispatcher_context* dispatcher, const ledger::wallet* runner_wallet);
 		};

@@ -266,7 +266,7 @@ namespace tangent
 		{
 			struct
 			{
-				string base = "2786a4886c124f36871891095339534d0209538631bc0225d52faab6792df26c";
+				string base = "83e0bd24dc6b0ee3206aa7d8aebeb7134f505341d43b5c8320d8258eb98ab96b48b21742e0dfb24d227b247d056f99d63e2b1b0ba31323b3dc395950e73ea99e";
 				uint64_t time = 12000;
 				uint64_t adjustment_time = 60000;
 				uint64_t difficulty = 2048;

@@ -26,11 +26,10 @@ namespace tangent
 				return true;
 			};
 		}
-		static vector<value_transfer> normalize_value(relay_backend* implementation, const vector<value_transfer>& to)
+		static value_transfer normalize_value(relay_backend* implementation, const value_transfer& to)
 		{
 			auto result = to;
-			for (auto& next : result)
-				next.value = implementation->to_value(next.value);
+			result.value = implementation->to_value(result.value);
 			return result;
 		}
 		static computed_fee normalize_value(relay_backend* implementation, const computed_fee& fee)
@@ -474,7 +473,7 @@ namespace tangent
 
 			coreturn result;
 		}
-		expects_promise_rt<prepared_transaction> server_node::prepare_transaction(const algorithm::asset_id& asset, const wallet_link& from_link, const vector<value_transfer>& to, const decimal& max_fee)
+		expects_promise_rt<prepared_transaction> server_node::prepare_transaction(const algorithm::asset_id& asset, const wallet_link& from_link, const value_transfer& to, const decimal& max_fee)
 		{
 			if (!algorithm::asset::is_aux(asset))
 				coreturn expects_rt<prepared_transaction>(remote_exception("asset not found"));
@@ -487,43 +486,31 @@ namespace tangent
 				coreturn expects_rt<prepared_transaction>(remote_exception("chain not found"));
 
 			auto normalized_to = normalize_value(implementation, to);
-			if (normalized_to.empty())
-				coreturn expects_rt<prepared_transaction>(remote_exception("to address not found"));
-
 			auto blockchain = algorithm::asset::blockchain_of(asset);
-			for (auto& next : normalized_to)
-			{
-				if (!next.is_valid())
-					coreturn expects_rt<prepared_transaction>(remote_exception("receiver address not valid"));
+			if (!normalized_to.is_valid())
+				coreturn expects_rt<prepared_transaction>(remote_exception("receiver address not valid"));
 
-				if (!algorithm::asset::is_aux(next.asset) || algorithm::asset::blockchain_of(next.asset) != blockchain)
-					coreturn expects_rt<prepared_transaction>(remote_exception("receiver asset not valid"));
-			}
+			if (!algorithm::asset::is_aux(normalized_to.asset) || algorithm::asset::blockchain_of(normalized_to.asset) != blockchain)
+				coreturn expects_rt<prepared_transaction>(remote_exception("receiver asset not valid"));
 
 			auto normalized_from_link = normalize_link(asset, from_link);
 			if (!normalized_from_link)
 				coreturn expects_rt<prepared_transaction>(remote_exception(std::move(normalized_from_link.error().message())));
 
-			if (!implementation->get_chainparams().supports_bulk_transfer && normalized_to.size() > 1)
-				coreturn expects_rt<prepared_transaction>(remote_exception("only one receiver allowed"));
-
 			auto normalized_max_fee = normalize_value(implementation, max_fee);
 			if (protocol::now().user.superchain.logging)
 			{
-				string transaction_log = stringify::text(
+				VI_INFO(
 					"%s build transaction: %s (fee: %s %s)\n"
-					"  send from %s (%s)\n",
+					"  send from %s (%s)\n"
+					"  send %s %s to %s",
 					blockchain.c_str(),
 					algorithm::signing::encode_address(normalized_from_link->owner).c_str(),
 					normalized_max_fee.to_string().c_str(),
 					blockchain.c_str(),
 					normalized_from_link->public_key.empty() ? "none" : normalized_from_link->public_key.c_str(),
-					normalized_from_link->address.empty() ? "unaddressable"  : normalized_from_link->address.c_str());
-				for (auto& item : normalized_to)
-					transaction_log += stringify::text("  send %s %s to %s\n", item.value.to_string().c_str(), algorithm::asset::name_of(item.asset).c_str(), item.address.c_str());
-				if (transaction_log.back() == '\n')
-					transaction_log.erase(transaction_log.end() - 1);
-				VI_INFO("%s", transaction_log.c_str());
+					normalized_from_link->address.empty() ? "unaddressable" : normalized_from_link->address.c_str(),
+					normalized_to.value.to_string().c_str(), algorithm::asset::name_of(normalized_to.asset).c_str(), normalized_to.address.c_str());
 			}
 
 			auto result = coawait(implementation->prepare_transaction(*normalized_from_link, normalized_to, normalized_max_fee));

@@ -3024,23 +3024,10 @@ namespace tangent
 			if (!algorithm::asset::is_aux(asset))
 				return layer_exception("not a valid withdrawal asset");
 
-			if (!to.empty())
-			{
-				if (!chain->supports_bulk_transfer && to.size() > 1)
-					return layer_exception("too many to addresses");
-
-				hash_set<string> addresses;
-				for (auto& item : to)
-				{
-					if (addresses.find(item.first) != addresses.end())
-						return layer_exception("duplicate to address");
-
-					if (!item.second.is_positive())
-						return layer_exception("invalid to value");
-
-					addresses.insert(item.first);
-				}
-			}
+			if (!to_address.empty() && !to_value.is_positive())
+				return layer_exception("invalid to value");
+			else if (to_address.empty() && !to_value.is_nan())
+				return layer_exception("invalid to address/value");
 
 			return ledger::transaction::validate(block_number);
 		}
@@ -3050,8 +3037,8 @@ namespace tangent
 			if (!validation)
 				return validation.error();
 
-			bool migration = to.empty() && executor->receipt.from == manager;
-			if (to.empty() && !migration)
+			bool migration = to_address.empty() && executor->receipt.from == manager;
+			if (to_address.empty() && !migration)
 				return layer_exception("must include at least one withdrawal destination");
 
 			auto policy = executor->get_verified_validator_attestation(asset, manager);
@@ -3141,16 +3128,13 @@ namespace tangent
 			if (!token_balance || token_balance->supply < token_value)
 				return layer_exception(algorithm::asset::handle_of(asset) + " balance is insufficient to cover token withdrawal value (value: " + token_value.to_string() + ")");
 
-			for (auto& item : to)
-			{
-				auto collision = executor->get_witness_account(fee_asset, item.first, 0);
-				if (collision && (!collision->is_routing_account() || collision->owner != executor->receipt.from))
-					return layer_exception("invalid to address (not owned by sender)");
-				else if (!collision)
-					collision = executor->apply_witness_routing_account(asset, executor->receipt.from, { { (uint8_t)1, string(item.first) } });
-				if (!collision)
-					return collision.error();
-			}
+			auto collision = executor->get_witness_account(fee_asset, to_address, 0);
+			if (collision && (!collision->is_routing_account() || collision->owner != executor->receipt.from))
+				return layer_exception("invalid to address (not owned by sender)");
+			else if (!collision)
+				collision = executor->apply_witness_routing_account(asset, executor->receipt.from, { { (uint8_t)1, string(to_address) } });
+			if (!collision)
+				return collision.error();
 
 			if (fee_asset != asset)
 			{
@@ -3195,7 +3179,7 @@ namespace tangent
 					return expects_rt<void>(std::move(error));
 				};
 
-				vector<superchain::value_transfer> transfers;
+				auto transfer = superchain::value_transfer();
 				auto new_manager = get_new_manager(executor->receipt);
 				if (!new_manager.empty())
 				{
@@ -3206,22 +3190,16 @@ namespace tangent
 					if (!account)
 						coreturn cancel(remote_exception(std::move(account.error().message())));
 
-					transfers.push_back(superchain::value_transfer(asset, account->addresses.begin()->second, get_token_value(executor, executor->receipt)));
+					transfer = superchain::value_transfer(asset, account->addresses.begin()->second, get_token_value(executor, executor->receipt));
 				}
 				else
-				{
-					if (to.empty())
-						coreturn cancel(remote_exception(remote_exception("invalid withdrawal destination(s)")));
-
-					for (auto& item : to)
-						transfers.push_back(superchain::value_transfer(asset, item.first, decimal(item.second)));
-				}
+					transfer = superchain::value_transfer(asset, to_address, decimal(to_value));
 
 				auto cache = dispatcher->pull_cache(executor);
 				auto state = ledger::dispatcher_context::signature_state();
 				if (chain->requires_transaction_expiration || !state.load(cache))
 				{
-					auto message = coawait(resolver::prepare_transaction(algorithm::asset::base_id_of(asset), superchain::wallet_link::from_owner(manager), transfers, get_fee_value(executor)));
+					auto message = coawait(resolver::prepare_transaction(algorithm::asset::base_id_of(asset), superchain::wallet_link::from_owner(manager), transfer, get_fee_value(executor)));
 					if (!message)
 						coreturn message.error().is_retry() || message.error().is_shutdown() ? expects_rt<void>(std::move(message.error())) : cancel(std::move(message.error()));
 					else if (message->inputs.size() > std::numeric_limits<uint8_t>::max())
@@ -3335,12 +3313,8 @@ namespace tangent
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_boolean(only_if_not_in_queue);
 			stream->write_string(manager.optimized_view());
-			stream->write_integer((uint16_t)to.size());
-			for (auto& item : to)
-			{
-				stream->write_string(item.first);
-				stream->write_decimal(item.second);
-			}
+			stream->write_string(to_address);
+			stream->write_decimal(to_value);
 			return true;
 		}
 		bool withdraw::load_body(format::ro_stream& stream)
@@ -3352,22 +3326,11 @@ namespace tangent
 			if (!stream.read_string(stream.read_type(), &manager_assembly) || !algorithm::encoding::decode_bytes(manager_assembly, manager.data, sizeof(manager)))
 				return false;
 
-			uint16_t to_size;
-			if (!stream.read_integer(stream.read_type(), &to_size))
+			if (!stream.read_string(stream.read_type(), &to_address))
 				return false;
 
-			for (uint16_t i = 0; i < to_size; i++)
-			{
-				string address;
-				if (!stream.read_string(stream.read_type(), &address))
-					return false;
-
-				decimal value;
-				if (!stream.read_decimal(stream.read_type(), &value))
-					return false;
-
-				to.push_back(std::make_pair(std::move(address), std::move(value)));
-			}
+			if (!stream.read_decimal(stream.read_type(), &to_value))
+				return false;
 
 			return true;
 		}
@@ -3381,15 +3344,8 @@ namespace tangent
 		}
 		void withdraw::set_to(const std::string_view& address, const decimal& value)
 		{
-			for (auto& item : to)
-			{
-				if (item.first == address)
-				{
-					item.second = value;
-					return;
-				}
-			}
-			to.push_back(std::make_pair(string(address), decimal(value)));
+			to_address = address;
+			to_value = value;
 		}
 		void withdraw::set_manager(const algorithm::pubkeyhash_t& new_manager)
 		{
@@ -3415,7 +3371,7 @@ namespace tangent
 		decimal withdraw::get_token_value(const ledger::executor_context* executor, const ledger::receipt& receipt) const
 		{
 			decimal value = 0.0;
-			if (to.empty() && receipt.from == manager)
+			if (to_address.empty() && receipt.from == manager)
 			{
 				auto bridge = executor->get_bridge_balance(asset, manager);
 				if (bridge)
@@ -3430,32 +3386,24 @@ namespace tangent
 				}
 			}
 			else
-			{
-				for (auto& item : to)
-					value += item.second;
-			}
+				value = to_value;
 			return value;
 		}
 		decimal withdraw::get_fee_value(const ledger::executor_context* executor) const
 		{
 			auto reward = executor->get_verified_validator_attestation(algorithm::asset::base_id_of(asset), manager);
-			return reward ? reward->outgoing_fee * std::max<size_t>(1, to.size()) : decimal::zero();
+			return reward ? reward->outgoing_fee : decimal::zero();
 		}
 		format::tree withdraw::as_tree() const
 		{
 			format::tree data = ledger::transaction::as_tree();
 			data.set("manager", algorithm::signing::serialize_address(manager));
-			data.set("only_if_not_in_queue", format::variable(only_if_not_in_queue));
-			if (!to.empty())
+			if (!to_address.empty() && !to_value.is_nan())
 			{
-				auto* to_data = data.set("to", format::tree::list());
-				for (auto& item : to)
-				{
-					auto* coin_data = to_data->push(format::tree::map());
-					coin_data->set("address", format::variable(item.first));
-					coin_data->set("value", format::variable(item.second));
-				}
+				data.set("to_address", format::variable(to_address));
+				data.set("to_value", format::variable(to_value));
 			}
+			data.set("only_if_not_in_queue", format::variable(only_if_not_in_queue));
 			return data;
 		}
 		uint32_t withdraw::as_type() const
@@ -3665,9 +3613,10 @@ namespace tangent
 			auto base_asset = algorithm::asset::base_id_of(transaction->asset);
 			auto required_output_witness = btree_map<string, states::witness_account>();
 			auto required_output_value = btree_map<algorithm::asset_id, decimal>();
-			for (auto& [output_address, output_value] : transaction->to)
+			auto new_manager = transaction->get_new_manager(receipt);
+			if (new_manager.empty())
 			{
-				auto normalized_address = output_address;
+				auto normalized_address = transaction->to_address;
 				auto status = server->normalize_address(transaction->asset, &normalized_address);
 				if (!status)
 					return status.error();
@@ -3682,13 +3631,11 @@ namespace tangent
 				}
 
 				auto& value = required_output_value[transaction->asset];
-				value = value.is_nan() ? output_value : (value + output_value);
+				value = value.is_nan() ? transaction->to_value : (value + transaction->to_value);
 			}
-
-			auto new_manager = transaction->get_new_manager(receipt);
-			if (!new_manager.empty())
+			else
 			{
-				if (!transaction->to.empty())
+				if (!transaction->to_address.empty() || !transaction->to_value.is_nan())
 					return layer_exception("migration/withdrawal confusion");
 
 				auto witness = withdraw::find_receiving_account(executor, transaction->asset, transaction->manager, new_manager);
@@ -3801,20 +3748,24 @@ namespace tangent
 
 			for (auto& [output_asset, actual_output_value] : output_value)
 			{
+				auto& output_change_value = change_value[output_asset];
+				if (output_change_value.is_nan())
+					output_change_value = decimal::zero();
+
 				auto it = required_output_value.find(output_asset);
 				if (it != required_output_value.end())
 				{
 					if (!it->second.is_nan())
 					{
-						if (output_asset != base_asset && actual_output_value != it->second)
+						if (output_asset != base_asset && actual_output_value != it->second + output_change_value)
 							return layer_exception("witness transaction output pays unexpected token value");
 						else if (output_asset == base_asset && actual_output_value < it->second - max_fee_value || actual_output_value > it->second + max_fee_value)
 							return layer_exception("witness transaction output pays unexpected native value");
 					}
 				}
-				else if (output_asset == base_asset && actual_output_value > max_fee_value)
+				else if (output_asset == base_asset && actual_output_value > std::max(output_change_value, max_fee_value))
 					return layer_exception("witness transaction output pays unexpected native value");
-				else if (output_asset != base_asset)
+				else if (output_asset != base_asset && actual_output_value != output_change_value)
 					return layer_exception("witness transaction output pays unexpected token value");
 			}
 
@@ -3900,7 +3851,7 @@ namespace tangent
 				return memory::init<broadcast>(*(const broadcast*)base);
 			return nullptr;
 		}
-		expects_promise_rt<superchain::prepared_transaction> resolver::prepare_transaction(const algorithm::asset_id& asset, const superchain::wallet_link& from_link, const vector<superchain::value_transfer>& to, const decimal& max_fee)
+		expects_promise_rt<superchain::prepared_transaction> resolver::prepare_transaction(const algorithm::asset_id& asset, const superchain::wallet_link& from_link, const superchain::value_transfer& to, const decimal& max_fee)
 		{
 			auto* server = superchain::server_node::get();
 			bool may_mock_up = protocol::now().is(network_type::regtest);
@@ -3925,25 +3876,20 @@ namespace tangent
 
 			auto transfers = hash_map<algorithm::asset_id, decimal>();
 			transfers[algorithm::asset::base_id_of(asset)] = decimal("0.000001");
-			for (auto& transfer : to)
-			{
-				if (transfer.address == "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
-					return expects_promise_rt<superchain::prepared_transaction>(remote_exception("synthetic error"));
-
-				auto& value = transfers[transfer.asset];
-				value = value.is_nan() ? transfer.value : (value + transfer.value);
-				message.write_integer(transfer.asset);
-				message.write_string(transfer.address);
-				message.write_decimal(transfer.value);
-			}
+			if (to.address == "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+				return expects_promise_rt<superchain::prepared_transaction>(remote_exception("synthetic error"));
 
 			uint8_t message_hash[32];
+			auto& value = transfers[to.asset];
+			value = value.is_nan() ? to.value : (value + to.value);
+			message.write_integer(to.asset);
+			message.write_string(to.address);
+			message.write_decimal(to.value);
 			message.hash().encode(message_hash);
 
 			superchain::prepared_transaction regtest_prepared;
 			regtest_prepared.requires_account_input(chain->composition, std::move(*from), *public_key, message_hash, sizeof(message_hash), std::move(transfers));
-			for (auto& transfer : to)
-				regtest_prepared.requires_account_output(transfer.address, { { transfer.asset, transfer.value } });
+			regtest_prepared.requires_account_output(to.address, { { to.asset, to.value } });
 
 			return expects_promise_rt<superchain::prepared_transaction>(std::move(regtest_prepared));
 		}

@@ -82,8 +82,8 @@ namespace tangent
 				virtual expects_promise_rt<coin_utxo> get_transaction_output(const std::string_view& tx_id, uint64_t index) override;
 				virtual expects_promise_rt<computed_transaction> link_transaction(uint64_t block_height, const std::string_view& block_hash, format::tree& transaction_data) override;
 				virtual expects_promise_rt<void> broadcast_transaction(const finalized_transaction& finalized) override;
-				virtual expects_promise_rt<computed_fee> estimate_transaction_fee(const wallet_link& from_link, const vector<value_transfer>& to);
-				virtual expects_promise_rt<prepared_transaction> prepare_transaction(const wallet_link& from_link, const vector<value_transfer>& to, const decimal& max_fee) override;
+				virtual expects_promise_rt<computed_fee> estimate_transaction_fee(const wallet_link& from_link, const value_transfer& to);
+				virtual expects_promise_rt<prepared_transaction> prepare_transaction(const wallet_link& from_link, const value_transfer& to, const decimal& max_fee) override;
 				virtual expects_lr<finalized_transaction> finalize_transaction(prepared_transaction&& prepared) override;
 				virtual expects_lr<secret_box> encode_secret_key(const secret_box& secret_key) override;
 				virtual expects_lr<secret_box> decode_secret_key(const secret_box& secret_key) override;
@@ -189,7 +189,7 @@ namespace tangent
 			public:
 				zcash(const algorithm::asset_id& new_asset) noexcept;
 				virtual ~zcash() override = default;
-				virtual expects_promise_rt<computed_fee> estimate_transaction_fee(const wallet_link& from_link, const vector<value_transfer>& to) override;
+				virtual expects_promise_rt<computed_fee> estimate_transaction_fee(const wallet_link& from_link, const value_transfer& to) override;
 				virtual const sc_chainparams_* get_chain() override;
 				virtual address_format get_address_type() override;
 			};
