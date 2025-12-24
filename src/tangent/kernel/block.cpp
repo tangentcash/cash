@@ -606,8 +606,9 @@ namespace tangent
 		{
 			auto prev_duration = parent_block ? parent_block->get_slot_proof_duration_average() : 0;
 			auto prev_target = parent_block ? parent_block->difficulty : protocol::now().policy.pow.difficulty;
+			auto next_target = algorithm::wesolowski::adjust(prev_target, prev_duration, number);
 			if (parent_block && parent_block->priority > 0)
-				prev_target = algorithm::wesolowski::scale(difficulty, 1.0 / parent_block->get_proof_difficulty_multiplier());
+				prev_target = algorithm::wesolowski::scale(prev_target, 1.0 / parent_block->get_proof_difficulty_multiplier());
 
 			return algorithm::wesolowski::adjust(prev_target, prev_duration, number);
 		}

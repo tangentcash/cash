@@ -215,6 +215,8 @@ namespace tangent
 			uint64_t new_difficulty = difficulty;
 			if (multiplier > 1)
 				new_difficulty = std::max((decimal(new_difficulty) * multiplier).to_uint64(), std::max(new_difficulty, protocol::now().policy.pow.difficulty));
+			else if (multiplier < 1)
+				new_difficulty = std::max((decimal(new_difficulty) * multiplier).to_uint64(), protocol::now().policy.pow.difficulty);
 			return new_difficulty;
 		}
 		string wesolowski::evaluate(uint64_t difficulty, const std::string_view& message)
