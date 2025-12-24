@@ -68,7 +68,7 @@ namespace tangent
 			if (parent_superchainstate == this)
 				parent_superchainstate = nullptr;
 		}
-		expects_lr<void> superchainstate::add_utxo(const superchain::coin_utxo& value)
+		expects_lr<void> superchainstate::receive_utxo(const superchain::coin_utxo& value, uint64_t block_id)
 		{
 			format::wo_stream message;
 			if (!value.store(&message))
@@ -80,19 +80,36 @@ namespace tangent
 
 			schema_list map;
 			map.push_back(var::set::binary(transaction_id_index.data));
+			map.push_back(block_id > 0 ? var::set::integer(block_id) : var::set::null());
+			map.push_back(var::set::boolean(false));
 			map.push_back(var::set::binary(value.link.owner.view()));
 			map.push_back(var::set::string(value.link.public_key));
 			map.push_back(var::set::string(value.link.address));
-			map.push_back(var::set::boolean(false));
 			map.push_back(var::set::binary(message.data));
 			
-			auto cursor = get_storage().emplace_query(__func__, "INSERT OR REPLACE INTO coins (transaction_id_index, owner, public_key, address, spent, message) VALUES (?, ?, ?, ?, ?, ?)", &map);
+			auto cursor = get_storage().emplace_query(__func__, "INSERT OR REPLACE INTO coins (transaction_id_index, receiver_block_id, spent, owner, public_key, address, message) VALUES (?, ?, ?, ?, ?, ?, ?)", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 			return expectation::met;
 		}
-		expects_lr<void> superchainstate::remove_utxo(const std::string_view& transaction_id, uint64_t index)
+		expects_lr<void> superchainstate::spend_utxo(const std::string_view& transaction_id, uint64_t index, uint64_t block_id)
+		{
+			format::wo_stream transaction_id_index;
+			transaction_id_index.write_string(transaction_id);
+			transaction_id_index.write_integer(index);
+
+			schema_list map;
+			map.push_back(block_id > 0 ? var::set::integer(block_id) : var::set::null());
+			map.push_back(var::set::binary(transaction_id_index.data));
+
+			auto cursor = get_storage().emplace_query(__func__, "UPDATE coins SET spender_block_id = ?, spent = TRUE WHERE transaction_id_index = ?", &map);
+			if (!cursor || cursor->error())
+				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
+
+			return expectation::met;
+		}
+		expects_lr<void> superchainstate::revive_utxo(const std::string_view& transaction_id, uint64_t index)
 		{
 			format::wo_stream transaction_id_index;
 			transaction_id_index.write_string(transaction_id);
@@ -100,8 +117,11 @@ namespace tangent
 
 			schema_list map;
 			map.push_back(var::set::binary(transaction_id_index.data));
+			map.push_back(var::set::binary(transaction_id_index.data));
 
-			auto cursor = get_storage().emplace_query(__func__, "UPDATE coins SET spent = TRUE WHERE transaction_id_index = ?", &map);
+			auto cursor = get_storage().emplace_query(__func__,
+				"UPDATE coins SET spent = FALSE WHERE transaction_id_index = ? AND receiver_block_id IS NOT NULL AND spender_block_id IS NULL;"
+				"DELETE FROM coins WHERE transaction_id_index = ? AND receiver_block_id IS NULL AND spender_block_id IS NULL", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -515,10 +535,12 @@ namespace tangent
 			CREATE TABLE IF NOT EXISTS coins
 			(
 				transaction_id_index BLOB NOT NULL,
+				receiver_block_id BIGINT DEFAULT NULL,
+				spender_block_id BIGINT DEFAULT NULL,
+				spent BOOLEAN NOT NULL,
 				owner BLOB(20) NOT NULL,
 				public_key TEXT NOT NULL,
 				address TEXT NOT NULL,
-				spent BOOLEAN NOT NULL,
 				message BLOB NOT NULL,
   				PRIMARY KEY (transaction_id_index)
 			) WITHOUT ROWID;

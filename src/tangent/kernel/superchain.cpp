@@ -661,6 +661,15 @@ namespace tangent
 			}
 			return nullptr;
 		}
+		computed_transaction prepared_transaction::as_pseudo_computed() const
+		{
+			computed_transaction computed;
+			for (auto& output : outputs)
+				computed.outputs[output.as_hash()] = output;
+			for (auto& input : inputs)
+				computed.inputs[input.utxo.as_hash()] = input.utxo;
+			return computed;
+		}
 		prepared_transaction::status prepared_transaction::as_status() const
 		{
 			if (inputs.empty() || outputs.empty())
@@ -1544,39 +1553,31 @@ namespace tangent
 		{
 			return superchain::server_node::get()->get_utxo(native_asset, transaction_id, index);
 		}
-		expects_lr<void> relay_backend_utxo::update_utxo(const prepared_transaction& prepared)
-		{
-			for (auto& output : prepared.inputs)
-			{
-				if (!output.utxo.is_account())
-					remove_utxo(output.utxo.transaction_id, output.utxo.index);
-			}
-
-			for (auto& input : prepared.outputs)
-			{
-				if (!input.is_account() && input.link.has_all())
-					add_utxo(input);
-			}
-
-			return expects_lr<void>(expectation::met);
-		}
 		expects_lr<void> relay_backend_utxo::update_utxo(const computed_transaction& computed)
 		{
 			for (auto& [hash, output] : computed.inputs)
 			{
-				if (!output.is_account())
-					remove_utxo(output.transaction_id, output.index);
+				if (output.is_account())
+					continue;
+
+				auto result = spend_utxo(output.transaction_id, output.index, computed.block_id);
+				if (!result)
+					return result;
 			}
 
 			for (auto& [hash, input] : computed.outputs)
 			{
-				if (!input.is_account() && input.link.has_all())
-					add_utxo(input);
+				if (input.is_account() || !input.link.has_all())
+					continue;
+
+				auto result = receive_utxo(input, computed.block_id);
+				if (!result)
+					return result;
 			}
 
-			return expects_lr<void>(expectation::met);
+			return expectation::met;
 		}
-		expects_lr<void> relay_backend_utxo::add_utxo(const coin_utxo& output)
+		expects_lr<void> relay_backend_utxo::receive_utxo(const coin_utxo& output, uint64_t receiver_block_id)
 		{
 			if (output.transaction_id.empty() || output.index == std::numeric_limits<uint64_t>::max())
 				return expects_lr<void>(layer_exception("output must have a transaction id"));
@@ -1614,19 +1615,14 @@ namespace tangent
 				}
 			}
 
-			auto status = server->add_utxo(native_asset, copy);
-			if (status)
-				return expects_lr<void>(expectation::met);
-
-			remove_utxo(copy.transaction_id, copy.index);
-			return expects_lr<void>(std::move(status.error()));
+			return server->receive_utxo(native_asset, copy, receiver_block_id);
 		}
-		expects_lr<void> relay_backend_utxo::remove_utxo(const std::string_view& transaction_id, uint64_t index)
+		expects_lr<void> relay_backend_utxo::spend_utxo(const std::string_view& transaction_id, uint64_t index, uint64_t spender_block_id)
 		{
 			if (transaction_id.empty() || index == std::numeric_limits<uint64_t>::max())
 				return expects_lr<void>(layer_exception("output must have a transaction id"));
 
-			return superchain::server_node::get()->remove_utxo(native_asset, transaction_id, index);
+			return superchain::server_node::get()->spend_utxo(native_asset, transaction_id, index, spender_block_id);
 		}
 		decimal relay_backend_utxo::get_utxo_value(const vector<coin_utxo>& values, option<string>&& contract_address)
 		{

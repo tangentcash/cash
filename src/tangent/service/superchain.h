@@ -95,8 +95,10 @@ namespace tangent
 			expects_lr<hash_map<string, wallet_link>> get_links_by_public_keys(const algorithm::asset_id& asset, const hash_set<string>& public_keys);
 			expects_lr<hash_map<string, wallet_link>> get_links_by_addresses(const algorithm::asset_id& asset, const hash_set<string>& addresses);
 			expects_lr<hash_map<string, wallet_link>> get_links_by_owner(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, size_t offset, size_t count);
-			expects_lr<void> add_utxo(const algorithm::asset_id& asset, const coin_utxo& value);
-			expects_lr<void> remove_utxo(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint64_t index);
+			expects_lr<void> receive_utxo(const algorithm::asset_id& asset, const coin_utxo& value, uint64_t block_id);
+			expects_lr<void> spend_utxo(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint64_t index, uint64_t block_id);
+			expects_lr<void> revive_utxo(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint64_t index);
+			expects_lr<void> revive_utxo_tree(const algorithm::asset_id& asset, const computed_transaction& computed);
 			expects_lr<coin_utxo> get_utxo(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint64_t index);
 			expects_lr<vector<coin_utxo>> get_utxos(const algorithm::asset_id& asset, const wallet_link& link, size_t offset, size_t count);
 			expects_lr<format::tree> load_cache(const algorithm::asset_id& asset, cache_policy policy, const std::string_view& key);

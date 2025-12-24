@@ -3827,6 +3827,9 @@ namespace tangent
 			if (!origin)
 				return layer_exception("origin transaction not found");
 
+			if (executor->receipt.from != origin->receipt.from)
+				return layer_exception("origin transaction not valid");
+
 			auto* origin_transaction = (withdraw*)*origin->transaction;
 			if (executor->get_witness_transaction(origin_transaction->asset, parent_transaction->proof->hashdata))
 				return layer_exception("broadcast is considered final either by attestation or older protest");
@@ -3866,7 +3869,7 @@ namespace tangent
 			if (!token_transfer)
 				return token_transfer.error();
 
-			return expectation::met;
+			return superchain::server_node::get()->revive_utxo_tree(base_asset, parent_transaction->proof->as_computed());
 		}
 		bool anticast::store_body(format::wo_stream* stream) const
 		{

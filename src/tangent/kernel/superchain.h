@@ -139,7 +139,7 @@ namespace tangent
 			btree_map<uint256_t, coin_utxo> inputs;
 			btree_map<uint256_t, coin_utxo> outputs;
 			string transaction_id;
-			uint64_t block_id;
+			uint64_t block_id = 0;
 
 			computed_transaction() = default;
 			void add_input(coin_utxo&& input);
@@ -187,6 +187,7 @@ namespace tangent
 			bool store_payload(format::wo_stream* stream) const override;
 			bool load_payload(format::ro_stream& stream) override;
 			signable_coin_utxo* next_input_for_aggregation();
+			computed_transaction as_pseudo_computed() const;
 			status as_status() const;
 			format::tree as_tree() const override;
 			uint32_t as_type() const override;
@@ -418,10 +419,9 @@ namespace tangent
 			virtual expects_promise_rt<decimal> calculate_balance(const algorithm::asset_id& for_asset, const wallet_link& link) override;
 			virtual expects_lr<vector<coin_utxo>> calculate_utxo(const wallet_link& link, option<balance_query>&& query);
 			virtual expects_lr<coin_utxo> get_utxo(const std::string_view& transaction_id, uint64_t index);
-			virtual expects_lr<void> update_utxo(const prepared_transaction& computed);
 			virtual expects_lr<void> update_utxo(const computed_transaction& computed);
-			virtual expects_lr<void> add_utxo(const coin_utxo& output);
-			virtual expects_lr<void> remove_utxo(const std::string_view& transaction_id, uint64_t index);
+			virtual expects_lr<void> receive_utxo(const coin_utxo& output, uint64_t receiver_block_id);
+			virtual expects_lr<void> spend_utxo(const std::string_view& transaction_id, uint64_t index, uint64_t spender_block_id);
 			virtual decimal get_utxo_value(const vector<coin_utxo>& values, option<string>&& contract_address);
 
 		public:

@@ -22,8 +22,9 @@ namespace tangent
 			superchainstate& operator=(const superchainstate&) = delete;
 			superchainstate& operator=(superchainstate&&) noexcept = delete;
 			~superchainstate() noexcept;
-			expects_lr<void> add_utxo(const superchain::coin_utxo& value);
-			expects_lr<void> remove_utxo(const std::string_view& transaction_id, uint64_t index);
+			expects_lr<void> receive_utxo(const superchain::coin_utxo& value, uint64_t block_id);
+			expects_lr<void> spend_utxo(const std::string_view& transaction_id, uint64_t index, uint64_t block_id);
+			expects_lr<void> revive_utxo(const std::string_view& transaction_id, uint64_t index);
 			expects_lr<superchain::coin_utxo> get_stxo(const std::string_view& transaction_id, uint64_t index);
 			expects_lr<superchain::coin_utxo> get_utxo(const std::string_view& transaction_id, uint64_t index);
 			expects_lr<vector<superchain::coin_utxo>> get_utxos(const superchain::wallet_link& link, size_t offset, size_t count);

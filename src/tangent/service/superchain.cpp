@@ -469,7 +469,7 @@ namespace tangent
 
 			auto* utxo_implementation = relay_backend_utxo::from_relay(implementation);
 			if (utxo_implementation != nullptr)
-				utxo_implementation->update_utxo(finalized.prepared);
+				utxo_implementation->update_utxo(finalized.prepared.as_pseudo_computed());
 
 			coreturn result;
 		}
@@ -999,15 +999,47 @@ namespace tangent
 			storages::superchainstate state = storages::superchainstate(asset);
 			return state.get_links_by_addresses(addresses);
 		}
-		expects_lr<void> server_node::add_utxo(const algorithm::asset_id& asset, const coin_utxo& value)
+		expects_lr<void> server_node::receive_utxo(const algorithm::asset_id& asset, const coin_utxo& value, uint64_t block_id)
 		{
 			storages::superchainstate state = storages::superchainstate(asset);
-			return state.add_utxo(value);
+			return state.receive_utxo(value, block_id);
 		}
-		expects_lr<void> server_node::remove_utxo(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint64_t index)
+		expects_lr<void> server_node::spend_utxo(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint64_t index, uint64_t block_id)
 		{
 			storages::superchainstate state = storages::superchainstate(asset);
-			return state.remove_utxo(transaction_id, index);
+			return state.spend_utxo(transaction_id, index, block_id);
+		}
+		expects_lr<void> server_node::revive_utxo(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint64_t index)
+		{
+			storages::superchainstate state = storages::superchainstate(asset);
+			return state.revive_utxo(transaction_id, index);
+		}
+		expects_lr<void> server_node::revive_utxo_tree(const algorithm::asset_id& asset, const computed_transaction& computed)
+		{
+			storages::superchainstate state = storages::superchainstate(asset);
+			for (auto& [input_hash, input] : computed.inputs)
+			{
+				auto result = state.revive_utxo(input.transaction_id, input.index);
+				if (!result)
+					return result;
+			}
+
+			for (auto& [output_hash, output] : computed.outputs)
+			{
+				auto result = state.revive_utxo(output.transaction_id, output.index);
+				if (!result)
+					return result;
+
+				auto child = state.get_computed_transaction(output.transaction_id, 0, 0);
+				if (!child)
+					continue;
+
+				result = revive_utxo_tree(asset, *child);
+				if (!result)
+					return result;
+			}
+
+			return expectation::met;
 		}
 		expects_lr<coin_utxo> server_node::get_utxo(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint64_t index)
 		{
