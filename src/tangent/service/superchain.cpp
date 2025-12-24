@@ -1041,6 +1041,18 @@ namespace tangent
 
 			return expectation::met;
 		}
+		expects_lr<void> server_node::update_utxo_tree(const algorithm::asset_id& asset, const computed_transaction& computed)
+		{
+			auto* implementation = get_chain(asset);
+			if (!implementation)
+				return layer_exception("chain not found");
+
+			auto* utxo_implementation = relay_backend_utxo::from_relay(implementation);
+			if (!utxo_implementation)
+				return expectation::met;
+
+			return utxo_implementation->update_utxo(computed);
+		}
 		expects_lr<coin_utxo> server_node::get_utxo(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint64_t index)
 		{
 			storages::superchainstate state = storages::superchainstate(asset);
