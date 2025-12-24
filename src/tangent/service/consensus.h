@@ -226,7 +226,6 @@ namespace tangent
 			struct
 			{
 				std::atomic<bool> verifying = false;
-				std::atomic<bool> prepared = false;
 				std::atomic<bool> waiting = false;
 				std::atomic<bool> dirty = false;
 			} mempool;

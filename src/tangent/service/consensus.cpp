@@ -2833,16 +2833,7 @@ namespace tangent
 			if (!has_production || is_syncing())
 				return false;
 
-			if (!mempool.prepared)
-			{
-				return control_sys.upsert_timeout(TASK_BLOCK_PRODUCTION, protocol::now().policy.pow.time, [this]()
-				{
-					control_sys.clear_timeout(TASK_BLOCK_PRODUCTION);
-					mempool.prepared = true;
-					run_block_production();
-				});
-			}
-			else if (mempool.waiting)
+			if (mempool.waiting)
 			{
 				control_sys.clear_timeout(TASK_BLOCK_PRODUCTION);
 				mempool.waiting = false;
@@ -2864,14 +2855,14 @@ namespace tangent
 				auto position = priority.or_else(protocol::now().policy.production.max_per_block);
 				if (position > 0 && tip)
 				{
-					auto current_solution_time = (double)((int64_t)protocol::now().time.now() - (int64_t)(tip->evaluation_time + protocol::now().policy.pow.time * 2));
+					auto current_solution_time = (int64_t)protocol::now().time.now() - (int64_t)tip->evaluation_time;
 					for (uint64_t i = 0; i <= position; i++)
 					{
 						auto other_node_solution_time = (int64_t)((double)protocol::now().policy.pow.time * algorithm::wesolowski::adjustment_scaling(i).to_double());
 						if (current_solution_time < other_node_solution_time)
 						{
 							mempool.waiting = true;
-							control_sys.upsert_timeout(TASK_BLOCK_PRODUCTION, other_node_solution_time - current_solution_time, [this]()
+							control_sys.upsert_timeout(TASK_BLOCK_PRODUCTION, (uint64_t)(other_node_solution_time - current_solution_time), [this]()
 							{
 								control_sys.clear_timeout(TASK_BLOCK_PRODUCTION);
 								run_block_production();

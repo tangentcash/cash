@@ -829,8 +829,7 @@ namespace tangent
 
 			for (size_t i = 0; i < (size_t)priority; i++)
 			{
-				auto penalty = -rewards[algorithm::asset::native()];
-				auto coinbase_penalty = solver->state.executor.apply_validator_production(solver->producers[i].owner, executor_context::staker::reward_or_penalty, penalty);
+				auto coinbase_penalty = solver->state.executor.apply_validator_production(solver->producers[i].owner, executor_context::staker::unlock, -rewards[algorithm::asset::native()]);
 				if (!coinbase_penalty)
 					return coinbase_penalty.error();
 			}
@@ -1876,7 +1875,14 @@ namespace tangent
 				case staker::unlock:
 				{
 					if (!stake.is_nan())
-						return layer_exception("invalid stake");
+					{
+						if (!stake.is_negative())
+							return layer_exception("invalid stake");
+						
+						new_state.stake += stake;
+						if (new_state.stake.is_negative())
+							new_state.stake = decimal::zero();
+					}
 
 					auto transfer = apply_transfer(algorithm::asset::native(), owner, decimal::zero(), -new_state.stake);
 					if (!transfer)
@@ -1893,7 +1899,7 @@ namespace tangent
 							break;
 					}
 
-					new_state.stake = stake;
+					new_state.stake = decimal::nan();
 					for (auto& reward : rewards)
 					{
 						transfer = apply_transfer(algorithm::asset::native(), owner, decimal::zero(), -reward.reward);
