@@ -2369,8 +2369,8 @@ namespace tangent
 				map.push_back(var::set::string(indices.substr(0, indices.size() - 1)));
 
 				pattern = !block_number ?
-					"SELECT (SELECT row_hash FROM rows WHERE rows.row_number = sq.row_number) AS row_hash, block_number FROM (SELECT ROW_NUMBER() OVER (ORDER BY rank $?, row_number ASC) AS id, row_number, block_number FROM multiforms WHERE column_number = ? AND rank $? ?) AS sq WHERE sq.id IN ($?) ORDER BY sq.id ASC" :
-					"SELECT (SELECT row_hash FROM rows WHERE rows.row_number = sq.row_number) AS row_hash, block_number FROM (SELECT ROW_NUMBER() OVER (ORDER BY rank $?, row_number ASC) AS id, row_number, block_number FROM (SELECT column_number, row_number, rank, hidden, MAX(block_number) AS block_number FROM snapshots WHERE column_number = ? AND block_number < ? GROUP BY row_number) AS queryforms WHERE hidden = FALSE AND rank $? ?) AS sq WHERE sq.id IN ($?) ORDER BY sq.id ASC";
+					"SELECT (SELECT row_hash FROM rows WHERE rows.row_number = sq.row_number) AS row_hash, block_number, (id - 1) AS id FROM (SELECT ROW_NUMBER() OVER (ORDER BY rank $?, row_number ASC) AS id, row_number, block_number FROM multiforms WHERE column_number = ? AND rank $? ?) AS sq WHERE sq.id IN ($?) ORDER BY sq.id ASC" :
+					"SELECT (SELECT row_hash FROM rows WHERE rows.row_number = sq.row_number) AS row_hash, block_number, (id - 1) AS id FROM (SELECT ROW_NUMBER() OVER (ORDER BY rank $?, row_number ASC) AS id, row_number, block_number FROM (SELECT column_number, row_number, rank, hidden, MAX(block_number) AS block_number FROM snapshots WHERE column_number = ? AND block_number < ? GROUP BY row_number) AS queryforms WHERE hidden = FALSE AND rank $? ?) AS sq WHERE sq.id IN ($?) ORDER BY sq.id ASC";
 			}
 
 			auto cursor = temporary->storage->emplace_query(__func__, pattern, &map);
@@ -2385,19 +2385,20 @@ namespace tangent
 			{
 				auto next = response[i];
 				auto row = next["row_hash"].get().get_blob();
+				auto index = (size_t)next["id"].get().get_integer();
 				if (changelog != nullptr)
 				{
 					auto candidate = changelog->outgoing.find(type, column, row);
 					if (candidate)
 					{
-						values.push_back(state_result(std::move(*candidate), true));
+						values.push_back(state_result(std::move(*candidate), true, index));
 						continue;
 					}
 
 					candidate = changelog->incoming.find(type, column, row);
 					if (candidate)
 					{
-						values.push_back(state_result(std::move(*candidate), true));
+						values.push_back(state_result(std::move(*candidate), true, index));
 						continue;
 					}
 				}
@@ -2413,7 +2414,18 @@ namespace tangent
 				}
 				else if (changelog != nullptr)
 					((ledger::block_changelog*)changelog)->incoming.push(*next_state, false);
-				values.push_back(state_result(std::move(next_state), false));
+				values.push_back(state_result(std::move(next_state), false, index));
+			}
+
+			if (window.type() == result_index_window::instance_type())
+			{
+				auto* index_window = (result_index_window*)&window;
+				std::sort(values.begin(), values.end(), [&index_window](const state_result& a, const state_result& b)
+				{
+					auto index_a = std::find(index_window->indices.begin(), index_window->indices.end(), a.index);
+					auto index_b = std::find(index_window->indices.begin(), index_window->indices.end(), b.index);
+					return index_a < index_b;
+				});
 			}
 
 			return values;
@@ -2524,8 +2536,8 @@ namespace tangent
 				map.push_back(var::set::string(indices.substr(0, indices.size() - 1)));
 
 				pattern = !block_number ?
-					"SELECT (SELECT column_hash FROM columns WHERE columns.column_number = sq.column_number) AS column_hash, block_number FROM (SELECT ROW_NUMBER() OVER (ORDER BY rank $?, column_number ASC) AS id, column_number, block_number FROM multiforms WHERE row_number = ? AND rank $? ?) AS sq WHERE sq.id IN ($?) ORDER BY sq.id ASC" :
-					"SELECT (SELECT column_hash FROM columns WHERE columns.column_number = sq.column_number) AS column_hash, block_number FROM (SELECT ROW_NUMBER() OVER (ORDER BY rank $?, column_number ASC) AS id, column_number, block_number FROM (SELECT column_number, row_number, rank, hidden, MAX(block_number) AS block_number FROM snapshots WHERE row_number = ? AND block_number < ? GROUP BY column_number) AS queryforms WHERE hidden = FALSE AND rank $? ?) AS sq WHERE sq.id IN ($?) ORDER BY sq.id ASC";
+					"SELECT (SELECT column_hash FROM columns WHERE columns.column_number = sq.column_number) AS column_hash, block_number, (id - 1) AS id FROM (SELECT ROW_NUMBER() OVER (ORDER BY rank $?, column_number ASC) AS id, column_number, block_number FROM multiforms WHERE row_number = ? AND rank $? ?) AS sq WHERE sq.id IN ($?) ORDER BY sq.id ASC" :
+					"SELECT (SELECT column_hash FROM columns WHERE columns.column_number = sq.column_number) AS column_hash, block_number, (id - 1) AS id FROM (SELECT ROW_NUMBER() OVER (ORDER BY rank $?, column_number ASC) AS id, column_number, block_number FROM (SELECT column_number, row_number, rank, hidden, MAX(block_number) AS block_number FROM snapshots WHERE row_number = ? AND block_number < ? GROUP BY column_number) AS queryforms WHERE hidden = FALSE AND rank $? ?) AS sq WHERE sq.id IN ($?) ORDER BY sq.id ASC";
 			}
 
 			auto cursor = temporary->storage->emplace_query(__func__, pattern, &map);
@@ -2540,19 +2552,20 @@ namespace tangent
 			{
 				auto next = response[i];
 				auto column = next["column_hash"].get().get_blob();
+				auto index = (size_t)next["id"].get().get_integer();
 				if (changelog != nullptr)
 				{
 					auto candidate = changelog->outgoing.find(type, column, row);
 					if (candidate)
 					{
-						values.push_back(state_result(std::move(*candidate), true));
+						values.push_back(state_result(std::move(*candidate), true, index));
 						continue;
 					}
 
 					candidate = changelog->incoming.find(type, column, row);
 					if (candidate)
 					{
-						values.push_back(state_result(std::move(*candidate), true));
+						values.push_back(state_result(std::move(*candidate), true, index));
 						continue;
 					}
 				}
@@ -2568,7 +2581,18 @@ namespace tangent
 				}
 				else if (changelog != nullptr)
 					((ledger::block_changelog*)changelog)->incoming.push(*next_state, false);
-				values.push_back(state_result(std::move(next_state), false));
+				values.push_back(state_result(std::move(next_state), false, index));
+			}
+
+			if (window.type() == result_index_window::instance_type())
+			{
+				auto* index_window = (result_index_window*)&window;
+				std::sort(values.begin(), values.end(), [&index_window](const state_result& a, const state_result& b)
+				{
+					auto index_a = std::find(index_window->indices.begin(), index_window->indices.end(), a.index);
+					auto index_b = std::find(index_window->indices.begin(), index_window->indices.end(), b.index);
+					return index_a < index_b;
+				});
 			}
 
 			return values;

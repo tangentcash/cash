@@ -2862,14 +2862,12 @@ namespace tangent
 				auto solver = ledger::solver_context();
 				auto priority = solver.apply_validator_state(queue, tip.address());
 				auto position = priority.or_else(protocol::now().policy.production.max_per_block);
-				auto baseline_solution_time = tip ? tip->get_slot_proof_duration_average() : 0;
-				auto current_node_solution_time = (uint64_t)((double)baseline_solution_time * algorithm::wesolowski::adjustment_scaling(position));
 				if (position > 0 && tip)
 				{
-					auto current_solution_time = (int64_t)protocol::now().time.now() - (int64_t)tip->generation_time;
+					auto current_solution_time = (double)((int64_t)protocol::now().time.now() - (int64_t)(tip->evaluation_time + protocol::now().policy.pow.time * 2));
 					for (uint64_t i = 0; i <= position; i++)
 					{
-						auto other_node_solution_time = (int64_t)((double)baseline_solution_time * algorithm::wesolowski::adjustment_scaling(i));
+						auto other_node_solution_time = (int64_t)((double)protocol::now().policy.pow.time * algorithm::wesolowski::adjustment_scaling(i).to_double());
 						if (current_solution_time < other_node_solution_time)
 						{
 							mempool.waiting = true;
@@ -2906,6 +2904,7 @@ namespace tangent
 				if (!evaluation)
 					return evaluation.report("block evaluation dismissal");
 
+				auto estimated_time = (double)(tip ? tip->get_slot_proof_duration_average() : 0) * algorithm::wesolowski::adjustment_scaling(position).to_double();
 				if (position > 0)
 				{
 					auto public_key_hash = solver.state.public_key_hash;
@@ -2965,13 +2964,13 @@ namespace tangent
 				if (is_active() && (!tip || evaluation->block.number > tip->number || (evaluation->block.number == tip->number && evaluation->block.priority < tip->priority)))
 				{
 					if (protocol::now().user.consensus.logging)
-						VI_INFO("block %s solved (number: %" PRIu64", txns: %" PRIu64 ", leader: %" PRIu64 ", work: < ~%" PRIu64 " sec.)", algorithm::encoding::encode_0xhex256(evaluation->block.as_hash()).c_str(), evaluation->block.number, (uint64_t)evaluation->block.transactions.size(), position + 1, current_node_solution_time / 1000 + 1);
+						VI_INFO("block %s solved (number: %" PRIu64", txns: %" PRIu64 ", leader: %" PRIu64 ", work: < ~%.2f sec.)", algorithm::encoding::encode_0xhex256(evaluation->block.as_hash()).c_str(), evaluation->block.number, (uint64_t)evaluation->block.transactions.size(), position + 1, estimated_time / 1000.0);
 
 					if (accept_block(nullptr, std::move(*evaluation), 0))
 						goto next_block;
 				}
 				else if (protocol::now().user.consensus.logging)
-					VI_WARN("block %s dismissed (number: %" PRIu64", txns: %" PRIu64 ", leader: %" PRIu64 ", work: < ~%" PRIu64 " sec. wasted)", algorithm::encoding::encode_0xhex256(evaluation->block.as_hash()).c_str(), evaluation->block.number, (uint64_t)evaluation->block.transactions.size(), position + 1, current_node_solution_time / 1000 + 1);
+					VI_WARN("block %s dismissed (number: %" PRIu64", txns: %" PRIu64 ", leader: %" PRIu64 ", work: < ~%.2f sec. wasted)", algorithm::encoding::encode_0xhex256(evaluation->block.as_hash()).c_str(), evaluation->block.number, (uint64_t)evaluation->block.transactions.size(), position + 1, estimated_time / 1000.0);
 			});
 		}
 		bool server_node::run_block_dispatcher()

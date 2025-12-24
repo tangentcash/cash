@@ -27,16 +27,17 @@ namespace tangent
 		struct state_result
 		{
 			uptr<ledger::state> value;
+			size_t index;
 			bool cached;
 
-			state_result() : cached(true)
+			state_result() : index(0), cached(true)
 			{
 			}
-			state_result(uptr<ledger::state>&& new_value, bool new_cached) : value(std::move(new_value)), cached(new_cached)
+			state_result(uptr<ledger::state>&& new_value, bool new_cached, size_t new_index = 0) : value(std::move(new_value)), index(new_index), cached(new_cached)
 			{
 			}
 			state_result(const state_result&) = delete;
-			state_result(state_result&& other) noexcept : value(std::move(other.value)), cached(other.cached)
+			state_result(state_result&& other) noexcept : value(std::move(other.value)), index(other.index), cached(other.cached)
 			{
 			}
 			state_result& operator= (const state_result&) = delete;
@@ -46,6 +47,7 @@ namespace tangent
 					return *this;
 
 				value = std::move(other.value);
+				index = other.index;
 				cached = other.cached;
 				return *this;
 			}
