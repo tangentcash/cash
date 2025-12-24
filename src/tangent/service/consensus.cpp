@@ -2855,7 +2855,7 @@ namespace tangent
 				auto position = priority.or_else(protocol::now().policy.production.max_per_block);
 				if (position > 0 && tip)
 				{
-					auto current_solution_time = (int64_t)protocol::now().time.now() - (int64_t)tip->evaluation_time;
+					auto current_solution_time = std::max<int64_t>(((int64_t)protocol::now().time.now() - (int64_t)tip->evaluation_time) - (int64_t)protocol::now().policy.pow.time * 2, 0);
 					for (uint64_t i = 0; i <= position; i++)
 					{
 						auto other_node_solution_time = (int64_t)((double)protocol::now().policy.pow.time * algorithm::wesolowski::adjustment_scaling(i).to_double());
