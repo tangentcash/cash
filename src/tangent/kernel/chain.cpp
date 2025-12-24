@@ -860,12 +860,13 @@ namespace tangent
 				account.public_key_version = 0xC;
 				account.address_version = 0x6;
 				policy.pow.base = "5606b660d1a231b6c24671da42a0c9a0fad602b1d771f43e0c192729938c971201f81b311eadab3417cb5d45ad55f89d74f6946f3d3dad45459af37e8ef7029b";
+				policy.pow.time = 120;
 				policy.pow.genesis_length = 0;
+				policy.attestation.withdrawal_time = 240; 
 				policy.attestation.min_stake_value = decimal::zero();
 				policy.participation.min_stake_value = decimal::zero();
 				policy.production.min_stake_value = decimal::zero();
 				policy.delegations_max_per_account = std::numeric_limits<uint32_t>::max();
-				policy.pow.time = 120;
 				policy.transaction_tps = 10000;
 				policy.commitment_tps = 500;
 				break;
@@ -878,6 +879,7 @@ namespace tangent
 				account.public_key_version = 0xD;
 				account.address_version = 0x5;
 				policy.pow.base = "13c6e158fd95c9e0fb5f61b21cd36f3be9b206669ca0d6bf19449267de4e243c3ba67d6f37d92634cd0b12ea094d2c63d978a9a857691db6576a81ff90ddebff";
+				policy.attestation.withdrawal_time = 43200000;
 				break;
 			case tangent::network_type::mainnet:
 				break;

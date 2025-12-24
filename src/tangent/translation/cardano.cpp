@@ -299,6 +299,10 @@ namespace tangent
 				if (!tx_hash)
 					coreturn expects_rt<void>(tx_hash.error());
 
+				auto result = tx_hash->child("transaction_identifier.hash");
+				if (!result || result->value.as_string().empty())
+					coreturn expects_rt<void>(remote_exception(tx_hash->as_json()));
+
 				coreturn expects_rt<void>(expectation::met);
 			}
 			expects_promise_rt<prepared_transaction> cardano::prepare_transaction(const wallet_link& from_link, const value_transfer& to, const decimal& max_fee)
@@ -307,10 +311,10 @@ namespace tangent
 				if (!block_slot)
 					coreturn expects_rt<prepared_transaction>(remote_exception("latest block slot not found"));
 
-				option<computed_fee> fee = optional::none;
+				option<std::pair<computed_fee, size_t>> fee = optional::none;
 				option<decimal> additional_value = optional::none;
 			retry_with_fee:
-				decimal fee_value = fee ? fee->get_max_fee() : decimal::zero();
+				decimal fee_value = fee ? fee->first.get_max_fee() : decimal::zero();
 				auto str = fee_value.to_string();
 				if (fee && fee_value > max_fee)
 					coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
@@ -397,11 +401,19 @@ namespace tangent
 				try
 				{
 					Cardano::Transaction builder = Cardano::Transaction();
-					uint8_t dummy_private_key[XSK_LENGTH] = { 0 };
+					uint8_t dummy_signature[XVK_LENGTH] = { 1 };
+					uint8_t dummy_public_key[BLAKE256_LENGTH] = { 1 };
+					uint8_t dummy_private_key[XSK_LENGTH] = { 1 };
 					for (auto& input : *possible_inputs)
 					{
 						builder.Body.TransactionInput.addInput(to_unprefixed_hex(input.transaction_id), input.index);
-						builder.addExtendedSigningKey(dummy_private_key);
+						if (!fee)
+						{
+							crypto::fill_random_bytes(dummy_public_key, sizeof(dummy_public_key));
+							builder.addExtendedVerifyingKey(dummy_public_key, dummy_signature);
+						}
+						else
+							builder.addExtendedSigningKey(dummy_private_key);
 					}
 					for (auto& output : result.outputs)
 					{
@@ -413,11 +425,11 @@ namespace tangent
 
 					std::vector<Cardano::Transaction::Digest> digests;
 					auto& raw_tx_data = builder.build(&digests);
-					if (!fee)
+					uint64_t tx_size = raw_tx_data.size() + 8;
+					if (!fee || fee->second < tx_size)
 					{
-						decimal lovelace_fee = builder.getFeeTransacion_PostBuild(0);
-						fee = computed_fee::flat_fee(lovelace_fee / netdata.divisibility);
-						fee_value = fee->get_max_fee();
+						uint64_t lovelace_fee = PROTOCOL_FEE_FIXED + PROTOCOL_FEE_PER_BYTE * tx_size;
+						fee = std::make_pair(computed_fee::flat_fee(lovelace_fee / netdata.divisibility), tx_size);
 						goto retry_with_fee;
 					}
 
@@ -620,14 +632,6 @@ namespace tangent
 				static const uint64_t ada_output_lovelace = netdata.divisibility.to_uint64();
 				static const uint64_t token_output_lovelace = PROTOCOL_UTXO_VALUE_PER_WORD * 48;
 				return decimal(std::max(ada_output_lovelace, token_output_lovelace * tokens)) / netdata.divisibility;
-			}
-			decimal cardano::get_min_protocol_fee_fixed()
-			{
-				return decimal(PROTOCOL_FEE_FIXED) / netdata.divisibility;
-			}
-			decimal cardano::get_min_protocol_fee_per_byte()
-			{
-				return decimal(PROTOCOL_FEE_PER_BYTE) / netdata.divisibility;
 			}
 			uint256_t cardano::to_lovelace(const decimal& value)
 			{

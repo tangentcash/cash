@@ -310,6 +310,23 @@ namespace tangent
 			static expects_lr<void> validate_finalized_proof(const ledger::executor_context* executor, const withdraw* transaction, const ledger::receipt& receipt, const superchain::finalized_transaction& finalized);
 		};
 
+		struct anticast final : ledger::transaction
+		{
+			uint256_t broadcast_hash = 0;
+
+			expects_lr<void> validate(uint64_t block_number) const override;
+			expects_lr<void> execute(ledger::executor_context* executor) const override;
+			bool store_body(format::wo_stream* stream) const override;
+			bool load_body(format::ro_stream& stream) override;
+			bool recover_many(const ledger::executor_context* executor, const ledger::receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const override;
+			void set_protest(const uint256_t& new_broadcast_hash);
+			format::tree as_tree() const override;
+			uint32_t as_type() const override;
+			std::string_view as_typename() const override;
+			static uint32_t as_instance_type();
+			static std::string_view as_instance_typename();
+		};
+
 		class resolver
 		{
 		public:

@@ -279,6 +279,7 @@ namespace tangent
 			} pow;
 			struct
 			{
+				uint64_t withdrawal_time = 302400000;
 				uint64_t max_per_transaction = 32;
 				decimal min_stake_value = std::string_view("120");
 				decimal max_reward_increase = std::string_view("0.80");
@@ -304,7 +305,7 @@ namespace tangent
 			uint64_t commitment_tps = 10;
 			uint64_t transaction_tps = 200;
 			uint64_t transaction_gas = 30000;
-			uint32_t delegations_max_per_account = 6;
+			uint32_t delegations_max_per_account = 32;
 			uint32_t delegations_reset_time = 25000;
 		} policy;
 

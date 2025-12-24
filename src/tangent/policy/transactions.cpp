@@ -1,6 +1,8 @@
 #include "transactions.h"
 #include "../kernel/script.h"
 #include "../service/superchain.h"
+#define MOCKUP_FAIL "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+#define MOCKUP_LOST "0xbeefdeadbeefdeadbeefdeadbeefdeadbeefdead"
 
 namespace tangent
 {
@@ -3164,7 +3166,10 @@ namespace tangent
 
 			auto policy = executor->get_verified_validator_attestation(asset, manager);
 			if (policy && policy->queue_transaction_hash != executor->receipt.transaction_hash)
-				return expects_promise_rt<void>(remote_exception::retry());
+			{
+				if (only_if_not_in_queue && policy->queue_transaction_hash > 0)
+					return expects_promise_rt<void>(remote_exception::retry());
+			}
 
 			return coasync<expects_rt<void>>([this, executor, dispatcher, runner_wallet]() mutable -> expects_promise_rt<void>
 			{
@@ -3797,6 +3802,122 @@ namespace tangent
 			return expectation::met;
 		}
 
+		expects_lr<void> anticast::validate(uint64_t block_number) const
+		{
+			if (!broadcast_hash)
+				return layer_exception("broadcast hash not valid");
+
+			return ledger::transaction::validate(block_number);
+		}
+		expects_lr<void> anticast::execute(ledger::executor_context* executor) const
+		{
+			auto validation = transaction::execute(executor);
+			if (!validation)
+				return validation.error();
+
+			auto parent = executor->get_block_transaction<broadcast>(broadcast_hash, true);
+			if (!parent)
+				return layer_exception("parent transaction not found");
+
+			auto* parent_transaction = (broadcast*)*parent->transaction;
+			if (!parent_transaction->proof)
+				return layer_exception("parent transaction not valid");
+
+			auto origin = executor->get_block_transaction<withdraw>(parent_transaction->withdraw_hash, true);
+			if (!origin)
+				return layer_exception("origin transaction not found");
+
+			auto* origin_transaction = (withdraw*)*origin->transaction;
+			if (executor->get_witness_transaction(origin_transaction->asset, parent_transaction->proof->hashdata))
+				return layer_exception("broadcast is considered final either by attestation or older protest");
+
+			auto time_lock = protocol::now().policy.attestation.withdrawal_time / protocol::now().policy.pow.time;
+			auto time_delta = parent->receipt.block_number < executor->receipt.block_number ? executor->receipt.block_number - parent->receipt.block_number : 0;
+			if (time_delta <= time_lock)
+				return layer_exception("broadcast time lock active - retry after block number " + to_string(parent->receipt.block_number + time_lock));
+
+			auto base_asset = algorithm::asset::base_id_of(origin_transaction->asset);
+			auto finalization = executor->apply_witness_transaction(base_asset, parent_transaction->proof->hashdata);
+			if (!finalization)
+				return finalization.error();
+
+			auto token_value = origin_transaction->get_token_value(executor, origin->receipt);
+			auto token_transfer = executor->apply_transfer(origin_transaction->asset, origin->receipt.from, decimal::zero(), -token_value);
+			if (!token_transfer)
+				return token_transfer.error();
+
+			auto attestation = executor->get_verified_validator_attestation(base_asset, origin_transaction->manager);
+			if (!attestation)
+				return expectation::met;
+
+			auto prev_attestation = executor->get_validator_attestation_reward(base_asset, origin_transaction->manager);
+			if (!prev_attestation)
+				return expectation::met;
+
+			auto next_attestation = executor->apply_validator_attestation_reward(base_asset, origin_transaction->manager, -attestation->outgoing_fee);
+			if (!next_attestation)
+				return next_attestation.error();
+
+			auto compensation = std::max(decimal::zero(), prev_attestation->reward - next_attestation->reward);
+			if (!compensation.is_positive())
+				return expectation::met;
+
+			token_transfer = executor->apply_transfer(base_asset, origin->receipt.from, compensation, decimal::zero());
+			if (!token_transfer)
+				return token_transfer.error();
+
+			return expectation::met;
+		}
+		bool anticast::store_body(format::wo_stream* stream) const
+		{
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			stream->write_integer(broadcast_hash);
+			return true;
+		}
+		bool anticast::load_body(format::ro_stream& stream)
+		{
+			if (!stream.read_integer(stream.read_type(), &broadcast_hash))
+				return false;
+
+			return true;
+		}
+		bool anticast::recover_many(const ledger::executor_context* executor, const ledger::receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const
+		{
+			auto parent = executor->get_block_transaction_instance(broadcast_hash);
+			if (!parent)
+				return false;
+
+			parties.insert(algorithm::pubkeyhash_t(parent->receipt.from));
+			return true;
+		}
+		void anticast::set_protest(const uint256_t& new_broadcast_hash)
+		{
+			broadcast_hash = new_broadcast_hash;
+		}
+		format::tree anticast::as_tree() const
+		{
+			format::tree data = ledger::transaction::as_tree();
+			data.set("broadcast_hash", format::variable(algorithm::encoding::encode_0xhex256(broadcast_hash)));
+			return data;
+		}
+		uint32_t anticast::as_type() const
+		{
+			return as_instance_type();
+		}
+		std::string_view anticast::as_typename() const
+		{
+			return as_instance_typename();
+		}
+		uint32_t anticast::as_instance_type()
+		{
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
+		}
+		std::string_view anticast::as_instance_typename()
+		{
+			return "anticast";
+		}
+
 		ledger::transaction* resolver::from_stream(format::ro_stream& stream)
 		{
 			uint32_t type; size_t seek = stream.seek;
@@ -3830,6 +3951,8 @@ namespace tangent
 				return memory::init<withdraw>();
 			else if (hash == broadcast::as_instance_type())
 				return memory::init<broadcast>();
+			else if (hash == anticast::as_instance_type())
+				return memory::init<anticast>();
 			return nullptr;
 		}
 		ledger::transaction* resolver::from_copy(const ledger::transaction* base)
@@ -3857,6 +3980,8 @@ namespace tangent
 				return memory::init<withdraw>(*(const withdraw*)base);
 			else if (hash == broadcast::as_instance_type())
 				return memory::init<broadcast>(*(const broadcast*)base);
+			else if (hash == anticast::as_instance_type())
+				return memory::init<anticast>(*(const anticast*)base);
 			return nullptr;
 		}
 		expects_promise_rt<superchain::prepared_transaction> resolver::prepare_transaction(const algorithm::asset_id& asset, const superchain::wallet_link& from_link, const superchain::value_transfer& to, const decimal& max_fee)
@@ -3884,8 +4009,8 @@ namespace tangent
 
 			auto transfers = hash_map<algorithm::asset_id, decimal>();
 			transfers[algorithm::asset::base_id_of(asset)] = decimal("0.000001");
-			if (to.address == "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
-				return expects_promise_rt<superchain::prepared_transaction>(remote_exception("synthetic error"));
+			if (to.address == MOCKUP_FAIL)
+				return expects_promise_rt<superchain::prepared_transaction>(remote_exception("synthetic mockup error"));
 
 			uint8_t message_hash[32];
 			auto& value = transfers[to.asset];
@@ -3931,7 +4056,7 @@ namespace tangent
 				});
 			}
 
-			if (dispatcher != nullptr)
+			if (dispatcher != nullptr && !(finalized.prepared.outputs.size() == 1 && finalized.prepared.outputs.front().link.address == MOCKUP_LOST))
 			{
 				auto* transaction = memory::init<attestate>();
 				transaction->asset = asset;

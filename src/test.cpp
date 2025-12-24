@@ -735,13 +735,47 @@ struct generators
 	{
 		auto& [user1, user1_nonce] = users[0];
 		auto& [user2, user2_nonce] = users[1];
+		auto executor = ledger::executor_context(nullptr);
+		auto* withdrawal_ethereum_token = memory::init<transactions::withdraw>();
+		withdrawal_ethereum_token->set_asset("ETH", "USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7");
+		withdrawal_ethereum_token->set_manager(user2.public_key_hash);
+		withdrawal_ethereum_token->set_to("0xbeefdeadbeefdeadbeefdeadbeefdeadbeefdead", executor.get_account_balance(algorithm::asset::id_of("ETH", "USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7"), user1.public_key_hash).expect("user balance not valid").get_balance());
+		withdrawal_ethereum_token->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
+		transactions.push_back(withdrawal_ethereum_token);
+	}
+	static void withdraw_stage_2(vector<uptr<ledger::transaction>>& transactions, vector<account_ref>& users)
+	{
+		auto& [user1, user1_nonce] = users[0];
+		auto& [user2, user2_nonce] = users[1];
 		auto* withdraw_ripple = memory::init<transactions::withdraw>();
 		withdraw_ripple->set_asset("XRP");
 		withdraw_ripple->set_manager(user2.public_key_hash);
 		withdraw_ripple->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(withdraw_ripple);
 	}
-	static void withdraw_stage_2(vector<uptr<ledger::transaction>>& transactions, vector<account_ref>& users)
+	static void withdraw_stage_3(vector<uptr<ledger::transaction>>& transactions, vector<account_ref>& users)
+	{
+		auto& [user1, user1_nonce] = users[0];
+		auto& [user2, user2_nonce] = users[1];
+		auto chain = storages::chainstate();
+		auto results = chain.get_transactions_by_owner(chain.get_latest_block_number().or_else(1), user2.public_key_hash, -1, 0, 16);
+		for (auto& transaction : *results)
+		{
+			if (transaction->as_type() != transactions::broadcast::as_instance_type())
+				continue;
+
+			auto* broadcast = (transactions::broadcast*)*transaction;
+			if (!broadcast->proof || broadcast->proof->prepared.outputs.size() != 1 || broadcast->proof->prepared.outputs.front().link.address != "0xbeefdeadbeefdeadbeefdeadbeefdeadbeefdead")
+				continue;
+
+			auto* anticast_ethereum_token = memory::init<transactions::anticast>();
+			anticast_ethereum_token->asset = broadcast->asset;
+			anticast_ethereum_token->set_protest(broadcast->as_hash());
+			anticast_ethereum_token->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
+			transactions.push_back(anticast_ethereum_token);
+		}
+	}
+	static void withdraw_stage_4(vector<uptr<ledger::transaction>>& transactions, vector<account_ref>& users)
 	{
 		auto& [user1, user1_nonce] = users[0];
 		auto& [user2, user2_nonce] = users[1];
@@ -753,7 +787,7 @@ struct generators
 		withdrawal_ethereum_token->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(withdrawal_ethereum_token);
 	}
-	static void withdraw_stage_3(vector<uptr<ledger::transaction>>& transactions, vector<account_ref>& users)
+	static void withdraw_stage_5(vector<uptr<ledger::transaction>>& transactions, vector<account_ref>& users)
 	{
 		auto& [user1, user1_nonce] = users[0];
 		auto& [user2, user2_nonce] = users[1];
@@ -782,7 +816,7 @@ struct generators
 		withdrawal_bitcoin->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(withdrawal_bitcoin);
 	}
-	static void withdraw_stage_4(vector<uptr<ledger::transaction>>& transactions, vector<account_ref>& users)
+	static void withdraw_stage_6(vector<uptr<ledger::transaction>>& transactions, vector<account_ref>& users)
 	{
 		auto& [user1, user1_nonce] = users[0];
 		auto& [user2, user2_nonce] = users[1];
@@ -1682,13 +1716,15 @@ struct tests
 			TEST_BLOCK(&generators::rollup_stage_1, "0x392206930aea95ffaf2a6d4d4e6c322249c6ca1f7d663f3b41a0007302678792", 14);
 			TEST_BLOCK(std::bind(&generators::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 0, 1), "0xc2988532b77749829aef7e883f6a6d173f642f4e7571776119c675a0ec2594f3", 15);
 			TEST_BLOCK_FAULT(&generators::migrate_stage_1, "0xef8f8ebf38690b63bb3368d7d4dea69705d377e78c30a4c9cd20f6267ab60e2e", 16);
-			TEST_BLOCK(&generators::migrate_stage_2, "0x3cb9496a5e70d350f60edda205ca57a32d9e9f7c676818cd9090788c6405bcc1", 18);
-			TEST_BLOCK(&generators::migrate_stage_3, "0x733e7777edca19df470efc7318048e23ebe05cca2050ce754a1a09bbb4504cf5", 20);
-			TEST_BLOCK(&generators::withdraw_stage_1, "0xd63c9dfaaf9162d850d6ea46ee72c75a163ce5e385b439dc48e5161a635eacaa", 22);
-			TEST_BLOCK(&generators::withdraw_stage_2, "0xf44a37cedde38c161d642d14c4e3489dfed6fdb0a3dcff43ee2b1b9797b1ce48", 24);
-			TEST_BLOCK(&generators::withdraw_stage_3, "0xb8ca9cada84f6eb2031780d5f0c6e0a4433c924ad21071ffa594aba3f7293cc8", 26);
-			TEST_BLOCK(&generators::withdraw_stage_4, "0xcdbe2b4308d5e2548d2ef7daa98888ee3aa84ae709d10f9842f55074190cb7fc", 28);
-			TEST_BLOCK(std::bind(&generators::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 1, 0), "0x1dac8bc8cd3b52462910535f3288fbac50ac52566ae0b819cfa008a89cad80c1", 30);
+			TEST_BLOCK(&generators::migrate_stage_2, "0xf8eb1c8631b7bf1025e2cca9f6222b6992e304dfc280e921852741d9f7f1fd76", 18);
+			TEST_BLOCK(&generators::migrate_stage_3, "0xb0f51aad65b721eee171a0bbb16be9a61b672d28efffff8c6dcf046c48c57a37", 20);
+			TEST_BLOCK(&generators::withdraw_stage_1, "0x4f030dad991806ce6fa9fba4749cffc5804ce1d2626bfd71b6be163163f8142f", 22);
+			TEST_BLOCK(&generators::withdraw_stage_2, "0x669b024101cfbe06d55b5e456f51d88d59323b4e9346b2b00652997d4deb1f80", 24);
+			TEST_BLOCK(&generators::withdraw_stage_3, "0xc4e236e5bcc3a240633a1539de0cb62530e851d66cca4dbbd0d1ff03806021c6", 26);
+			TEST_BLOCK(&generators::withdraw_stage_4, "0x9c3538a0738396cf9cdc412070be91628ee5ec1ef05e8bbbdcbffd7de82d4a99", 27);
+			TEST_BLOCK(&generators::withdraw_stage_5, "0xd2c3bdaeddf1713753985b63a625a7c54ef9a5f30fe428b92f11758a2a33bbf4", 29);
+			TEST_BLOCK(&generators::withdraw_stage_6, "0x86d2099dd2c5dfe1a57f7c8d63c5ed82dd7f91b37d8aa13fb18605b086afa999", 31);
+			TEST_BLOCK(std::bind(&generators::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 1, 0), "0x19c83b80bb7812bd9754adf270dee2a0a6aa389f6bfbb621661a8352b4b6ecac", 33);
 			if (userdata != nullptr)
 				*userdata = std::move(users);
 			else

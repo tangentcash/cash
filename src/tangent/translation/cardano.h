@@ -46,8 +46,6 @@ namespace tangent
 
 			public:
 				virtual decimal get_min_protocol_value_per_output(size_t tokens);
-				virtual decimal get_min_protocol_fee_fixed();
-				virtual decimal get_min_protocol_fee_per_byte();
 				virtual uint256_t to_lovelace(const decimal& value);
 				virtual string get_blockchain();
 				virtual string get_network();
