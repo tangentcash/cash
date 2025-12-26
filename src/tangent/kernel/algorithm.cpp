@@ -519,7 +519,7 @@ namespace tangent
 		{
 			while (true)
 			{
-				if (!crypto::fill_random_bytes(secret_key.data, sizeof(seckey_t)))
+				if (!crypto::fill_random_bytes(secret_key.blob, sizeof(seckey_t)))
 					break;
 				else if (verify_secret_key(secret_key))
 					break;
@@ -530,13 +530,13 @@ namespace tangent
 			uint8_t recovery_id = 0;
 			size_t signature_size = sizeof(hashsig_t);
 			size_t recovery_offset = signature_size - sizeof(recovery_id);
-			memcpy(&recovery_id, signature.data + recovery_offset, sizeof(recovery_id));
+			memcpy(&recovery_id, signature.blob + recovery_offset, sizeof(recovery_id));
 			if (recovery_id > 4)
 				return false;
 
 			secp256k1_context* context = get_context();
 			secp256k1_ecdsa_recoverable_signature recoverable_signature;
-			if (!secp256k1_ecdsa_recoverable_signature_parse_compact(context, &recoverable_signature, signature.data, recovery_id))
+			if (!secp256k1_ecdsa_recoverable_signature_parse_compact(context, &recoverable_signature, signature.blob, recovery_id))
 				return false;
 
 			uint8_t data[32];
@@ -547,7 +547,7 @@ namespace tangent
 				return false;
 
 			size_t public_key_size = sizeof(pubkey_t);
-			return secp256k1_ec_pubkey_serialize(context, public_key.data, &public_key_size, &recovered_public_key, SECP256K1_EC_COMPRESSED) == 1;
+			return secp256k1_ec_pubkey_serialize(context, public_key.blob, &public_key_size, &recovered_public_key, SECP256K1_EC_COMPRESSED) == 1;
 		}
 		bool signing::recover_hash(const uint256_t& hash, pubkeyhash_t& public_key_hash, const hashsig_t& signature)
 		{
@@ -562,29 +562,29 @@ namespace tangent
 		{
 			uint8_t data[32];
 			hash.encode(data);
-			memzero(signature.data, sizeof(hashsig_t));
+			memzero(signature.blob, sizeof(hashsig_t));
 
 			secp256k1_context* context = get_context();
 			secp256k1_ecdsa_recoverable_signature recoverable_signature;
-			if (secp256k1_ecdsa_sign_recoverable(context, &recoverable_signature, data, secret_key.data, secp256k1_nonce_function_rfc6979, nullptr) != 1)
+			if (secp256k1_ecdsa_sign_recoverable(context, &recoverable_signature, data, secret_key.blob, secp256k1_nonce_function_rfc6979, nullptr) != 1)
 				return false;
 
 			int recovery_id = 0;
-			if (secp256k1_ecdsa_recoverable_signature_serialize_compact(context, signature.data, &recovery_id, &recoverable_signature) != 1)
+			if (secp256k1_ecdsa_recoverable_signature_serialize_compact(context, signature.blob, &recovery_id, &recoverable_signature) != 1)
 				return false;
 
-			signature.data[sizeof(hashsig_t) - 1] = (uint8_t)recovery_id;
+			signature.blob[sizeof(hashsig_t) - 1] = (uint8_t)recovery_id;
 			return true;
 		}
 		bool signing::verify(const uint256_t& hash, const pubkey_t& public_key, const hashsig_t& signature)
 		{
 			secp256k1_context* context = get_context();
 			secp256k1_ecdsa_signature compact_signature;
-			if (secp256k1_ecdsa_signature_parse_compact(context, &compact_signature, signature.data) != 1)
+			if (secp256k1_ecdsa_signature_parse_compact(context, &compact_signature, signature.blob) != 1)
 				return false;
 
 			secp256k1_pubkey derived_public_key;
-			if (secp256k1_ec_pubkey_parse(context, &derived_public_key, public_key.data, sizeof(pubkey_t)) != 1)
+			if (secp256k1_ec_pubkey_parse(context, &derived_public_key, public_key.blob, sizeof(pubkey_t)) != 1)
 				return false;
 
 			uint8_t data[32];
@@ -664,13 +664,13 @@ namespace tangent
 		bool signing::verify_secret_key(const seckey_t& secret_key)
 		{
 			secp256k1_context* context = get_context();
-			return secp256k1_ec_seckey_verify(context, secret_key.data) == 1;
+			return secp256k1_ec_seckey_verify(context, secret_key.blob) == 1;
 		}
 		bool signing::verify_public_key(const pubkey_t& public_key)
 		{
 			secp256k1_pubkey derived_public_key;
 			secp256k1_context* context = get_context();
-			return secp256k1_ec_pubkey_parse(context, &derived_public_key, public_key.data, sizeof(pubkey_t)) == 1;
+			return secp256k1_ec_pubkey_parse(context, &derived_public_key, public_key.blob, sizeof(pubkey_t)) == 1;
 		}
 		bool signing::verify_address(const std::string_view& address)
 		{
@@ -702,7 +702,7 @@ namespace tangent
 		void signing::derive_secret_key_from_parent(const seckey_t& secret_key, const uint256_t& entropy, seckey_t& child_secret_key)
 		{
 			format::wo_stream message;
-			message.write_typeless(secret_key.data, sizeof(seckey_t));
+			message.write_typeless(secret_key.blob, sizeof(seckey_t));
 			message.write_typeless(entropy);
 			derive_secret_key(message.hash(), child_secret_key);
 		}
@@ -713,7 +713,7 @@ namespace tangent
 			{
 				uint8_t seed[32];
 				hash = hashing::hash256i(seed, sizeof(seed));
-				entropy.encode(secret_key.data);
+				entropy.encode(secret_key.blob);
 				if (verify_secret_key(secret_key))
 					break;
 			}
@@ -722,16 +722,16 @@ namespace tangent
 		{
 			secp256k1_pubkey derived_public_key;
 			secp256k1_context* context = get_context();
-			memzero(public_key.data, sizeof(pubkey_t));
-			if (secp256k1_ec_pubkey_create(context, &derived_public_key, secret_key.data) != 1)
+			memzero(public_key.blob, sizeof(pubkey_t));
+			if (secp256k1_ec_pubkey_create(context, &derived_public_key, secret_key.blob) != 1)
 				return false;
 
 			size_t public_key_size = sizeof(pubkey_t);
-			return secp256k1_ec_pubkey_serialize(context, public_key.data, &public_key_size, &derived_public_key, SECP256K1_EC_COMPRESSED) == 1;
+			return secp256k1_ec_pubkey_serialize(context, public_key.blob, &public_key_size, &derived_public_key, SECP256K1_EC_COMPRESSED) == 1;
 		}
 		void signing::derive_public_key_hash(const pubkey_t& public_key, pubkeyhash_t& public_key_hash)
 		{
-			hashing::hash160(public_key.data, sizeof(pubkey_t), public_key_hash.data);
+			hashing::hash160(public_key.blob, sizeof(pubkey_t), public_key_hash.blob);
 		}
 		bool signing::derive_seed_from_password(const uint8_t* input, size_t input_size, uint8_t* output, size_t output_size)
 		{
@@ -757,7 +757,7 @@ namespace tangent
 			VI_ASSERT(shares.size() <= 64, "shares count must be less than or equal to 64");
 			std::array<sss_Share, 64> sss_shares; size_t index = 0;
 			for (auto& share : shares)
-				memcpy(sss_shares[index++], share.data, sizeof(sss_Share));
+				memcpy(sss_shares[index++], share.blob, sizeof(sss_Share));
 
 			return sss_combine_shares(message, sss_shares.data(), (uint8_t)shares.size()) == 0;
 		}
@@ -768,61 +768,61 @@ namespace tangent
 		bool signing::scalar_add_secret_key(seckey_t& secret_key, const seckey_t& scalar)
 		{
 			secp256k1_context* context = algorithm::signing::get_context();
-			return secp256k1_ec_seckey_tweak_add(context, secret_key.data, scalar.data) == 1;
+			return secp256k1_ec_seckey_tweak_add(context, secret_key.blob, scalar.blob) == 1;
 		}
 		bool signing::scalar_mul_secret_key(seckey_t& secret_key, const seckey_t& scalar)
 		{
 			secp256k1_context* context = algorithm::signing::get_context();
-			return secp256k1_ec_seckey_tweak_mul(context, secret_key.data, scalar.data) == 1;
+			return secp256k1_ec_seckey_tweak_mul(context, secret_key.blob, scalar.blob) == 1;
 		}
 		bool signing::scalar_add_public_key(pubkey_t& public_key, const seckey_t& scalar)
 		{
 			secp256k1_context* context = algorithm::signing::get_context();
 			secp256k1_pubkey result_public_key;
-			if (secp256k1_ec_pubkey_parse(context, &result_public_key, public_key.data, sizeof(public_key.data)) != 1)
+			if (secp256k1_ec_pubkey_parse(context, &result_public_key, public_key.blob, sizeof(public_key.blob)) != 1)
 				return false;
 
-			if (secp256k1_ec_pubkey_tweak_add(context, &result_public_key, scalar.data) != 1)
+			if (secp256k1_ec_pubkey_tweak_add(context, &result_public_key, scalar.blob) != 1)
 				return false;
 
-			size_t key_size = sizeof(public_key.data);
-			return secp256k1_ec_pubkey_serialize(context, public_key.data, &key_size, &result_public_key, SECP256K1_EC_COMPRESSED) == 1;
+			size_t key_size = sizeof(public_key.blob);
+			return secp256k1_ec_pubkey_serialize(context, public_key.blob, &key_size, &result_public_key, SECP256K1_EC_COMPRESSED) == 1;
 		}
 		bool signing::scalar_mul_public_key(pubkey_t& public_key, const seckey_t& scalar)
 		{
 			secp256k1_context* context = algorithm::signing::get_context();
 			secp256k1_pubkey result_public_key;
-			if (secp256k1_ec_pubkey_parse(context, &result_public_key, public_key.data, sizeof(public_key.data)) != 1)
+			if (secp256k1_ec_pubkey_parse(context, &result_public_key, public_key.blob, sizeof(public_key.blob)) != 1)
 				return false;
 
-			if (secp256k1_ec_pubkey_tweak_mul(context, &result_public_key, scalar.data) != 1)
+			if (secp256k1_ec_pubkey_tweak_mul(context, &result_public_key, scalar.blob) != 1)
 				return false;
 
-			size_t key_size = sizeof(public_key.data);
-			return secp256k1_ec_pubkey_serialize(context, public_key.data, &key_size, &result_public_key, SECP256K1_EC_COMPRESSED) == 1;
+			size_t key_size = sizeof(public_key.blob);
+			return secp256k1_ec_pubkey_serialize(context, public_key.blob, &key_size, &result_public_key, SECP256K1_EC_COMPRESSED) == 1;
 		}
 		bool signing::point_add_public_key(pubkey_t& public_key, const pubkey_t& point)
 		{
 			secp256k1_context* context = algorithm::signing::get_context();
 			secp256k1_pubkey result_public_key, other_public_key;
-			if (secp256k1_ec_pubkey_parse(context, &result_public_key, public_key.data, sizeof(public_key.data)) != 1)
+			if (secp256k1_ec_pubkey_parse(context, &result_public_key, public_key.blob, sizeof(public_key.blob)) != 1)
 				return false;
 
-			if (secp256k1_ec_pubkey_parse(context, &other_public_key, point.data, sizeof(point.data)) != 1)
+			if (secp256k1_ec_pubkey_parse(context, &other_public_key, point.blob, sizeof(point.blob)) != 1)
 				return false;
 
 			secp256k1_pubkey* public_keys[2] = { &result_public_key, &other_public_key };
 			if (secp256k1_ec_pubkey_combine(context, &result_public_key, public_keys, 2) != 1)
 				return false;
 
-			size_t key_size = sizeof(public_key.data);
-			return secp256k1_ec_pubkey_serialize(context, public_key.data, &key_size, &result_public_key, SECP256K1_EC_COMPRESSED) == 1;
+			size_t key_size = sizeof(public_key.blob);
+			return secp256k1_ec_pubkey_serialize(context, public_key.blob, &key_size, &result_public_key, SECP256K1_EC_COMPRESSED) == 1;
 		}
 		option<string> signing::public_encrypt(const pubkey_t& public_key, const std::string_view& plaintext, const uint256_t& entropy)
 		{
 			secp256k1_pubkey recipient_public_key;
 			secp256k1_context* context = get_context();
-			if (secp256k1_ec_pubkey_parse(context, &recipient_public_key, public_key.data, sizeof(public_key.data)) != 1)
+			if (secp256k1_ec_pubkey_parse(context, &recipient_public_key, public_key.blob, sizeof(public_key.blob)) != 1)
 				return optional::none;
 
 			seckey_t nonce_secret_key;
@@ -833,7 +833,7 @@ namespace tangent
 				return optional::none;
 
 			uint8_t shared_entropy[32];
-			if (secp256k1_ecdh(context, shared_entropy, &recipient_public_key, nonce_secret_key.data, secp256k1_ecdh_hash_function_default, nullptr) != 1)
+			if (secp256k1_ecdh(context, shared_entropy, &recipient_public_key, nonce_secret_key.blob, secp256k1_ecdh_hash_function_default, nullptr) != 1)
 				return optional::none;
 
 			uint8_t entropy_seed[32];
@@ -842,8 +842,8 @@ namespace tangent
 			uint8_t salt_data[32], salt_nonce[32], salt_message[32], salt_entropy[32];
 			algorithm::hashing::hash256((uint8_t*)plaintext.data(), plaintext.size(), salt_message);
 			algorithm::hashing::hash256(entropy_seed, sizeof(entropy_seed), salt_entropy);
-			secp256k1_nonce_function_rfc6979(salt_nonce, salt_message, nonce_secret_key.data, nullptr, salt_entropy, 0);
-			secp256k1_nonce_function_rfc6979(salt_data, salt_nonce, nonce_secret_key.data, nullptr, salt_entropy, 1);
+			secp256k1_nonce_function_rfc6979(salt_nonce, salt_message, nonce_secret_key.blob, nullptr, salt_entropy, 0);
+			secp256k1_nonce_function_rfc6979(salt_data, salt_nonce, nonce_secret_key.blob, nullptr, salt_entropy, 1);
 
 			uint8_t shared_secret_key[32];
 			if (crypto_kdf_hkdf_sha256_extract(shared_secret_key, shared_entropy, sizeof(shared_entropy), salt_nonce, sizeof(salt_nonce)) < 0)
@@ -870,7 +870,7 @@ namespace tangent
 			pubkey_t input_public_key;
 			string input_nonce, input_salt, input_ciphertext;
 			format::ro_stream message = format::ro_stream(ciphertext);
-			if (!message.read_string(message.read_type(), &input_nonce) || !encoding::decode_bytes(input_nonce, input_public_key.data, sizeof(input_public_key.data)))
+			if (!message.read_string(message.read_type(), &input_nonce) || !encoding::decode_bytes(input_nonce, input_public_key.blob, sizeof(input_public_key.blob)))
 				return optional::none;
 			else if (!message.read_string(message.read_type(), &input_nonce))
 				return optional::none;
@@ -881,11 +881,11 @@ namespace tangent
 
 			secp256k1_pubkey sender_public_key;
 			secp256k1_context* context = get_context();
-			if (secp256k1_ec_pubkey_parse(context, &sender_public_key, input_public_key.data, sizeof(input_public_key.data)) != 1)
+			if (secp256k1_ec_pubkey_parse(context, &sender_public_key, input_public_key.blob, sizeof(input_public_key.blob)) != 1)
 				return optional::none;
 
 			uint8_t shared_entropy[32];
-			if (secp256k1_ecdh(context, shared_entropy, &sender_public_key, secret_key.data, secp256k1_ecdh_hash_function_default, nullptr) != 1)
+			if (secp256k1_ecdh(context, shared_entropy, &sender_public_key, secret_key.blob, secp256k1_ecdh_hash_function_default, nullptr) != 1)
 				return optional::none;
 
 			uint8_t shared_secret_key[32];
@@ -913,14 +913,14 @@ namespace tangent
 			else if (decoded_size != sizeof(seckey_t))
 				return false;
 
-			memcpy(secret_key.data, decoded, sizeof(seckey_t));
+			memcpy(secret_key.blob, decoded, sizeof(seckey_t));
 			return true;
 		}
 		bool signing::encode_secret_key(const seckey_t& secret_key, string& value)
 		{
 			auto& account = protocol::now().account;
 			char encoded[128];
-			if (segwit::encode(encoded, account.secret_key_prefix.c_str(), (int)account.secret_key_version, secret_key.data, sizeof(seckey_t)) != 1)
+			if (segwit::encode(encoded, account.secret_key_prefix.c_str(), (int)account.secret_key_version, secret_key.blob, sizeof(seckey_t)) != 1)
 				return false;
 
 			size_t size = strnlen(encoded, sizeof(encoded));
@@ -942,14 +942,14 @@ namespace tangent
 			else if (decoded_size != sizeof(pubkey_t))
 				return false;
 
-			memcpy(public_key.data, decoded, sizeof(pubkey_t));
+			memcpy(public_key.blob, decoded, sizeof(pubkey_t));
 			return true;
 		}
 		bool signing::encode_public_key(const pubkey_t& public_key, string& value)
 		{
 			auto& account = protocol::now().account;
 			char encoded[128];
-			if (segwit::encode(encoded, account.public_key_prefix.c_str(), (int)account.public_key_version, public_key.data, sizeof(pubkey_t)) != 1)
+			if (segwit::encode(encoded, account.public_key_prefix.c_str(), (int)account.public_key_version, public_key.blob, sizeof(pubkey_t)) != 1)
 				return false;
 
 			size_t size = strnlen(encoded, sizeof(encoded));
@@ -972,14 +972,14 @@ namespace tangent
 			else if (decoded_size != sizeof(pubkeyhash_t))
 				return false;
 
-			memcpy(public_key_hash.data, decoded, decoded_size);
+			memcpy(public_key_hash.blob, decoded, decoded_size);
 			return true;
 		}
 		bool signing::encode_address(const pubkeyhash_t& public_key_hash, string& address)
 		{
 			char encoded[128];
 			auto& account = protocol::now().account;
-			if (segwit::encode(encoded, account.address_prefix.c_str(), (int)account.address_version, public_key_hash.data, sizeof(pubkeyhash_t)) != 1)
+			if (segwit::encode(encoded, account.address_prefix.c_str(), (int)account.address_version, public_key_hash.blob, sizeof(pubkeyhash_t)) != 1)
 				return false;
 
 			size_t size = strnlen(encoded, sizeof(encoded));

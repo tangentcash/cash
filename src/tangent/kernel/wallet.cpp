@@ -94,7 +94,7 @@ namespace tangent
 				if (secret_key_assembly.size() != sizeof(secret_key))
 					return false;
 
-				memcpy(secret_key.data, secret_key_assembly.data(), sizeof(secret_key));
+				memcpy(secret_key.blob, secret_key_assembly.data(), sizeof(secret_key));
 			}
 
 			string public_key_assembly; public_key.clear();
@@ -106,7 +106,7 @@ namespace tangent
 				if (public_key_assembly.size() != sizeof(public_key))
 					return false;
 
-				memcpy(public_key.data, public_key_assembly.data(), sizeof(public_key));
+				memcpy(public_key.blob, public_key_assembly.data(), sizeof(public_key));
 			}
 
 			string public_key_hash_assembly; public_key_hash.clear();
@@ -118,7 +118,7 @@ namespace tangent
 				if (public_key_hash_assembly.size() != sizeof(public_key_hash))
 					return false;
 
-				memcpy(public_key_hash.data, public_key_hash_assembly.data(), sizeof(public_key_hash));
+				memcpy(public_key_hash.blob, public_key_hash_assembly.data(), sizeof(public_key_hash));
 			}
 
 			return true;
@@ -310,7 +310,7 @@ namespace tangent
 			for (uint16_t i = 0; i < neighbors_size; i++)
 			{
 				string public_key_assembly; algorithm::pubkey_t public_key;
-				if (!stream.read_string(stream.read_type(), &public_key_assembly) || !algorithm::encoding::decode_bytes(public_key_assembly, public_key.data, sizeof(public_key.data)))
+				if (!stream.read_string(stream.read_type(), &public_key_assembly) || !algorithm::encoding::decode_bytes(public_key_assembly, public_key.blob, sizeof(public_key)))
 					return false;
 
 				availability.neighbors.insert(public_key);

@@ -419,32 +419,32 @@ struct generators
 		auto& [user1, user1_nonce] = users[0];
 		auto& [user2, user2_nonce] = users[1];
 		auto* call1 = memory::init<transactions::call>();
-		call1->program_call(contracts->at(0), decimal::zero(), "transfer", { format::variable(user2.public_key_hash.view()), format::variable(decimal(1234u)) });
+		call1->call_to(contracts->at(0), "transfer", { format::variable(user2.public_key_hash.view()), format::variable(decimal(1234u)) });
 		call1->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(call1);
 
 		auto* call2 = memory::init<transactions::call>();
-		call2->program_call(contracts->at(0), decimal::zero(), "info", { });
+		call2->call_to(contracts->at(0), "info", { });
 		call2->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(call2);
 
 		auto* call3 = memory::init<transactions::call>();
-		call3->program_call(contracts->at(2), decimal::zero(), "transfer", { format::variable(user1.public_key_hash.view()), format::variable(decimal(4321u)) });
+		call3->call_to(contracts->at(2), "transfer", { format::variable(user1.public_key_hash.view()), format::variable(decimal(4321u)) });
 		call3->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(call3);
 
 		auto* call4 = memory::init<transactions::call>();
-		call4->program_call(contracts->at(2), decimal::zero(), "info", { });
+		call4->call_to(contracts->at(2), "info", { });
 		call4->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(call4);
 
 		auto* call5 = memory::init<transactions::call>();
-		call5->program_call(contracts->at(1), decimal::zero(), "balance_of_test_token", { });
+		call5->call_to(contracts->at(1), "balance_of_test_token", { });
 		call5->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(call5);
 
 		auto* call6 = memory::init<transactions::call>();
-		call6->program_call(contracts->at(3), decimal::zero(), "balance_of_test_token", { });
+		call6->call_to(contracts->at(3), "balance_of_test_token", { });
 		call6->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(call6);
 	}
@@ -455,10 +455,13 @@ struct generators
 		setup_user1->allocate_production_stake(decimal::zero());
 		setup_user1->allocate_attestation_stake(algorithm::asset::id_of("ETH"), decimal::zero());
 		setup_user1->configure_attestation_security(algorithm::asset::id_of("ETH"), protocol::now().policy.participation.min_per_account, decimal::zero(), true, true);
-		setup_user1->configure_attestation_reward(algorithm::asset::id_of("ETH"), 0.0012, 0.0012);
+		setup_user1->configure_attestation_reward(algorithm::asset::id_of("ETH"), 0, 0.001);
+		setup_user1->allocate_attestation_stake(algorithm::asset::id_of("TRX"), decimal::zero());
+		setup_user1->configure_attestation_security(algorithm::asset::id_of("TRX"), protocol::now().policy.participation.min_per_account, decimal::zero(), true, true);
+		setup_user1->configure_attestation_reward(algorithm::asset::id_of("TRX"), 0, 20);
 		setup_user1->allocate_attestation_stake(algorithm::asset::id_of("BTC"), decimal::zero());
 		setup_user1->configure_attestation_security(algorithm::asset::id_of("BTC"), protocol::now().policy.participation.min_per_account, decimal::zero(), true, true);
-		setup_user1->configure_attestation_reward(algorithm::asset::id_of("BTC"), 0.00001, 0.000025);
+		setup_user1->configure_attestation_reward(algorithm::asset::id_of("BTC"), 0, 0.0005);
 		setup_user1->allocate_participation_stake(decimal::zero());
 		setup_user1->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(setup_user1);
@@ -553,6 +556,13 @@ struct generators
 		route_ethereum->set_manager(user1.public_key_hash);
 		route_ethereum->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(route_ethereum);
+
+		auto* route_tron = memory::init<transactions::route>();
+		route_tron->set_asset("TRX");
+		route_tron->set_routing_address("TFwBey8L5swmhRGEQSCnULT7ad68KFJe6L");
+		route_tron->set_manager(user1.public_key_hash);
+		route_tron->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
+		transactions.push_back(route_tron);
 	}
 	static void route_stage_1(vector<uptr<ledger::transaction>>& transactions, vector<account_ref>& users)
 	{
@@ -608,8 +618,10 @@ struct generators
 		auto owner_addresses = *executor.get_witness_accounts_by_purpose(user1.public_key_hash, states::witness_account::account_type::bridge, 0, 128);
 		auto address_bitcoin = std::find_if(owner_addresses.begin(), owner_addresses.end(), [](states::witness_account& item) { return item.asset == algorithm::asset::id_of("BTC"); });
 		auto address_ethereum = std::find_if(owner_addresses.begin(), owner_addresses.end(), [](states::witness_account& item) { return item.asset == algorithm::asset::id_of("ETH"); });
+		auto address_tron = std::find_if(owner_addresses.begin(), owner_addresses.end(), [](states::witness_account& item) { return item.asset == algorithm::asset::id_of("TRX"); });
 		VI_PANIC(address_bitcoin != owner_addresses.end(), "bitcoin bridge address not found");
 		VI_PANIC(address_ethereum != owner_addresses.end(), "ethereum bridge address not found");
+		VI_PANIC(address_tron != owner_addresses.end(), "tron bridge address not found");
 
 		auto* attestate_bitcoin = memory::init<transactions::attestate>();
 		attestate_bitcoin->set_asset("BTC");
@@ -627,6 +639,15 @@ struct generators
 			{ superchain::value_transfer(token_asset, "0xCa0dfDdBb1cBD7B5A08E9173D9bbE5722138d4d5", 1000000) },
 			{ superchain::value_transfer(token_asset, address_ethereum->addresses.begin()->second, 1000000) });
 		transactions.push_back(attestate_ethereum);
+
+		token_asset = algorithm::asset::id_of("TRX", "USDT", "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t");
+		auto* attestate_tron = memory::init<transactions::attestate>();
+		attestate_tron->set_asset("TRX");
+		attestate_tron->set_finalized_proof(78662308,
+			"798926719b28355b97b079f540dff72ce8fb246c10323900c07dbbba5866189b",
+			{ superchain::value_transfer(token_asset, "TFwBey8L5swmhRGEQSCnULT7ad68KFJe6L", 400000) },
+			{ superchain::value_transfer(token_asset, address_tron->addresses.begin()->second, 400000) });
+		transactions.push_back(attestate_tron);
 	}
 	static void attestate_stage_1(vector<uptr<ledger::transaction>>& transactions, vector<account_ref>& users)
 	{
@@ -918,7 +939,7 @@ struct tests
 	{
 		format::tree data = format::tree::map();
 		algorithm::pubkeyhash_t owner;
-		algorithm::hashing::hash160((uint8_t*)"publickeyhash", 13, owner.data);
+		algorithm::hashing::hash160((uint8_t*)"publickeyhash", 13, owner.blob);
 		uint256_t asset = algorithm::asset::id_of("BTC");
 		uint64_t block_number = 1;
 
@@ -1210,8 +1231,8 @@ struct tests
 			{
 				auto& share = participants[i];
 				auto entropy = "seed" + to_string(i);
-				algorithm::hashing::hash512((uint8_t*)entropy.data(), entropy.size(), share.seed.data);
-				share.keypair = algorithm::composition::derive_keypair(alg, share.seed.data, share.seed.size()).expect("failed to derive a keypair share");
+				algorithm::hashing::hash512((uint8_t*)entropy.data(), entropy.size(), share.seed.blob);
+				share.keypair = algorithm::composition::derive_keypair(alg, share.seed.blob, share.seed.size()).expect("failed to derive a keypair share");
 
 				auto participant_data = mpc_data.set("participant" + to_string(i + 1), format::tree::map());
 				participant_data->set("seed", format::variable(format::util::encode_0xhex(share.seed.view())));
@@ -1742,11 +1763,12 @@ struct tests
 
 			format::tree results;
 			format::tree* data = userdata ? nullptr : &results;
-			TEST_BLOCK(&generators::setup_stage_0, "0x6655f98e14a6ac22116987372aee077af7d3900f4b505de16734412abeab6768", 1);
-			TEST_BLOCK(&generators::route_stage_0, "0xd4dc4053429e3ccdce973f34319606e08f584bd43e0678042cfad8e806c3d712", 2);
-			TEST_BLOCK(&generators::attestate_stage_0, "0xfcda19e3c6d14fe6d85c96633d150df563995d3e0be2bdb1dcb0fb698a004f6e", 4);
-			TEST_BLOCK(std::bind(&generators::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), "tcrt1x00g22stp0qcprrxra7x2pz2au33armtfc50460", 0.1), "0x625a9a54f91a5b0881eae38d47486befa9ef3bf53a5c8e546832e22cbc5b593f", 5);
-			TEST_BLOCK(std::bind(&generators::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("ETH", "USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7"), "tcrt1x00g22stp0qcprrxra7x2pz2au33armtfc50460", 5000), "0x9da310ae7d68c0319a40c8b79695631879f95b6885b31c46612f9ec70ee56592", 6);
+			TEST_BLOCK(&generators::setup_stage_0, "0x8dddbd714522677ec180556288040420882fce72f174c5001ada57296b6b25ee", 1);
+			TEST_BLOCK(&generators::route_stage_0, "0x66b5ab5fb69446f4879964fd7e0f43cc6b1255ba7d5d6ca8359d6e99ef4471dc", 2);
+			TEST_BLOCK(&generators::attestate_stage_0, "0x81363f0d2cbaaab2b87f7cb6fb011641e36359ca5eb0f03c74f9237fe7131b3d", 4);
+			TEST_BLOCK(std::bind(&generators::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), "tcrt1x00g22stp0qcprrxra7x2pz2au33armtfc50460", 5), "0x1d1b30bd897dd7bcd883bc4f4ee6d5479efb352f896ac64477e81bc418096f3e", 5);
+			TEST_BLOCK(std::bind(&generators::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("ETH", "USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7"), "tcrt1x00g22stp0qcprrxra7x2pz2au33armtfc50460", 300000), "0x0073d6be11027df9ae97a520896c7a6d40edbbda4246933de4757cdd35d00894", 6);
+			TEST_BLOCK(std::bind(&generators::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("TRX", "USDT", "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"), "tcrt1x00g22stp0qcprrxra7x2pz2au33armtfc50460", 200000), "0xbbf51211061fea70f9b48a945b5f3dee2267b713759e2af7032be8af71ccc243", 7);
 			if (userdata != nullptr)
 				*userdata = std::move(users);
 			else
@@ -2008,10 +2030,10 @@ struct tests
 		term->capture_time();
 
 		algorithm::seckey_t from;
-		crypto::fill_random_bytes(from.data, sizeof(from));
+		crypto::fill_random_bytes(from.blob, sizeof(from));
 
 		algorithm::pubkeyhash_t to;
-		crypto::fill_random_bytes(to.data, sizeof(to));
+		crypto::fill_random_bytes(to.blob, sizeof(to));
 
 		auto transaction = transactions::setup();
 		transaction.allocate_production_stake(decimal::zero());

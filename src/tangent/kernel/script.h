@@ -454,6 +454,26 @@ namespace tangent
 			static uint256_t per(const uint256_t& left, const uint256_t& right);
 		};
 
+		struct payable_repr
+		{
+			vector<std::pair<algorithm::asset_id, decimal>> payments;
+			decimal total_value;
+
+			payable_repr();
+			payable_repr(vector<std::pair<algorithm::asset_id, decimal>>&& new_payments);
+			payable_repr(const payable_repr&) = default;
+			payable_repr& operator=(const payable_repr&) = default;
+			bool plus(const algorithm::asset_id& new_asset, const decimal& new_value);
+			bool minus(const algorithm::asset_id& new_asset, const decimal& new_value);
+			bool minus_total(const decimal& new_value);
+			bool has(const algorithm::asset_id& new_asset) const;
+			decimal of(const algorithm::asset_id& new_asset) const;
+			const decimal& total() const;
+			algorithm::asset_id at(uint32_t index) const;
+			uint32_t size() const;
+			uint32_t empty() const;
+		};
+
 		struct address_repr
 		{
 			algorithm::pubkeyhash_t hash;
@@ -465,6 +485,7 @@ namespace tangent
 			address_repr(const address_repr&) = default;
 			address_repr& operator=(const address_repr&) = default;
 			void pay(const uint256_t& asset, const decimal& value);
+			void pay_all(const payable_repr& payable);
 			void mint(const string_repr& token, const decimal& supply, const decimal& reserve);
 			void burn(const string_repr& token, const decimal& supply, const decimal& reserve);
 			decimal balance_of(const uint256_t& asset) const;
@@ -473,7 +494,7 @@ namespace tangent
 			bool empty() const;
 			static void free_call(asIScriptGeneric* generic);
 			static void paid_call(asIScriptGeneric* generic);
-			static void call(asIScriptGeneric* generic, const decimal& value);
+			static void call(asIScriptGeneric* generic, const payable_repr& value, size_t args_offset);
 			static bool equals(const address_repr& a, const address_repr& b);
 		};
 
@@ -658,7 +679,7 @@ namespace tangent
 			static uint64_t block_time_between(uint64_t block_number_a, uint64_t block_number_b);
 			static uint64_t block_priority();
 			static uint64_t block_number();
-			static decimal tx_value();
+			static payable_repr tx_value();
 			static bool tx_paid();
 			static address_repr tx_from();
 			static address_repr tx_to();
@@ -696,6 +717,7 @@ namespace tangent
 			static uint256_t alg_prandom();
 			static void math_min_value(asIScriptGeneric* generic);
 			static void math_max_value(asIScriptGeneric* generic);
+			static void math_abs(asIScriptGeneric* generic);
 			static void math_min(asIScriptGeneric* generic);
 			static void math_max(asIScriptGeneric* generic);
 			static void math_clamp(asIScriptGeneric* generic);
@@ -776,6 +798,7 @@ namespace tangent
 			{
 				hash_map<string, hash_map<size_t, uptr<states::account_multiform>>> index[2];
 				option<algorithm::wesolowski::distribution> distribution = optional::none;
+				option<payable_repr> payable = optional::none;
 			} cache;
 			ledger::executor_context* executor;
 			library module;
@@ -783,14 +806,14 @@ namespace tangent
 			program(ledger::executor_context* new_executor, library&& new_module);
 			virtual expects_lr<void> execute(ccall mutability, const std::string_view& entrypoint, const format::variables& args, std::function<expects_lr<void>(void*, int)>&& return_callback);
 			virtual expects_lr<void> execute(ccall mutability, const function& entrypoint, const format::variables& args, std::function<expects_lr<void>(void*, int)>&& return_callback);
-			virtual expects_lr<void> subexecute(const algorithm::pubkeyhash_t& target, const decimal& value, ccall mutability, const std::string_view& entrypoint, format::variables&& args, void* output_value, int output_type_id) const;
+			virtual expects_lr<void> subexecute(const algorithm::pubkeyhash_t& target, const payable_repr& payable, ccall mutability, const std::string_view& entrypoint, format::variables&& args, void* output_value, int output_type_id) const;
 			virtual expects_lr<vector<std::function<void(immediate_context*)>>> dispatch_arguments(ccall* mutability, const function& entrypoint, const format::variables& args) const;
 			virtual void dispatch_event(int event_type_id, const void* object_value, int object_type_id);
 			virtual void dispatch_exception(immediate_context* coroutine);
 			virtual void dispatch_coroutine(immediate_context* coroutine);
             virtual ccall mutability_of(const function& entrypoint) const;
 			virtual algorithm::pubkeyhash_t callable() const;
-			virtual decimal payable() const;
+			virtual payable_repr payable() const;
 			virtual function deploy_function() const;
 			virtual string function_declaration() const;
 			virtual const format::variables* function_arguments() const;

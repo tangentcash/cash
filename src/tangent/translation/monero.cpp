@@ -262,7 +262,7 @@ namespace tangent
 						for (auto& transaction_public_key : info.public_keys)
 						{
 							uint8_t derivation_key[32];
-							if (!generate_derivation_key(transaction_public_key.data, private_view_key, derivation_key))
+							if (!generate_derivation_key(transaction_public_key.blob, private_view_key, derivation_key))
 								continue;
 							
 							for (size_t i = 0; i < outputs.size(); i++)

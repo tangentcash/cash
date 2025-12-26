@@ -28,10 +28,9 @@ namespace tangent
 			struct
 			{
 				btree_map<algorithm::pubkeyhash_t, btree_map<algorithm::asset_id, decimal>> balances;
+				script::payable_repr payable;
 				algorithm::pubkeyhash_t from;
 				algorithm::pubkeyhash_t to;
-				algorithm::asset_id payable = 0;
-				decimal pay = decimal::zero();
 			} state;
 			struct
 			{
@@ -42,12 +41,12 @@ namespace tangent
 			} program;
 			struct
 			{
-				ledger::solver_context solver;
+				hash_map<size_t, format::tree> events;
 				uptr<transactions::call> contextual;
+				ledger::solver_context solver;
+				script::cmodule pmodule;
 				format::tree returning;
 				format::tree log;
-				hash_map<size_t, format::tree> events;
-				script::cmodule pmodule;
 				ledger::block block;
 			} tracer;
 
@@ -67,16 +66,17 @@ namespace tangent
 				executor = &tracer.solver.state.executor;
 			}
 			~script_context() = default;
-			expects_lr<void> assign_transaction(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& from, const algorithm::pubkeyhash_t& to, const decimal& value, const std::string_view& function_decl, const format::variables& args)
+			expects_lr<void> assign_transaction(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& from, const algorithm::pubkeyhash_t& to, const vector<std::pair<algorithm::asset_id, decimal>>& pays, const std::string_view& function_decl, const format::variables& args)
 			{
 				ledger::receipt receipt;
 				receipt.from = from;
 
 				uptr<transactions::call> transaction = memory::init<transactions::call>();
 				transaction->asset = asset;
-				transaction->signature.data[0] = 0xFF;
+				transaction->pays = pays;
+				transaction->signature.blob[0] = 0xFF;
 				transaction->nonce = std::max<size_t>(1, tracer.solver.state.executor.get_account_nonce(from).or_else(states::account_nonce(algorithm::pubkeyhash_t(), nullptr)).nonce);
-				transaction->program_call(to, value, function_decl, format::variables(args));
+				transaction->call_to(to, function_decl, format::variables(args));
 				transaction->set_gas(decimal::zero(), ledger::block::get_transaction_gas_limit());
 				tracer.contextual = std::move(transaction);
 				tracer.solver.apply_temporary_state(&tracer.block, *tracer.contextual, std::move(receipt));
@@ -180,7 +180,8 @@ namespace tangent
 					function_args.erase(function_args.begin());
 
 					auto transaction = transactions::call();
-					transaction.program_call(state.to, state.pay, function_decl, std::move(function_args));
+					transaction.call_to(state.to, function_decl, std::move(function_args));
+					transaction.pays = state.payable.payments;
 
 					auto message = transaction.as_message();
 					data = std::move(message.data);
@@ -211,16 +212,13 @@ namespace tangent
 				if (state.to.empty())
 					return layer_exception("contract address not valid");
 
-				if (!state.payable)
-					return layer_exception("payable asset not valid");
-
 				auto entrypoint = module.get_function_by_decl(function);
 				if (!entrypoint.is_valid())
 					entrypoint = module.get_function_by_name(function);
 				if (!entrypoint.is_valid())
 					return layer_exception("illegal call to function: null function");
 
-				auto assignment = assign_transaction(state.payable, state.from.data, state.to, state.pay, function, args);
+				auto assignment = assign_transaction(algorithm::asset::native(), state.from, state.to, state.payable.payments, function, args);
 				if (!assignment)
 					return assignment.error();
 
@@ -231,11 +229,11 @@ namespace tangent
 					{
 						for (auto& [asset, value] : balances)
 						{
-							auto prev_balance = executor->get_account_balance(asset, account.data);
+							auto prev_balance = executor->get_account_balance(asset, account);
 							if (prev_balance && prev_balance->get_balance() >= value)
 								continue;
 
-							auto balance = states::account_balance(account.data, asset, nullptr);
+							auto balance = states::account_balance(account, asset, nullptr);
 							balance.supply = value;
 
 							auto status = executor->store(&balance, false);
@@ -244,9 +242,9 @@ namespace tangent
 						}
 					}
 
-					if (state.pay.is_positive())
+					for (auto& [paying_asset, paying_value] : state.payable.payments)
 					{
-						auto payment = executor->apply_payment(state.payable, state.from.data, state.to.data, state.pay);
+						auto payment = executor->apply_payment(paying_asset, state.from, state.to, paying_value);
 						if (!payment)
 							return payment.error();
 					}
@@ -356,6 +354,7 @@ namespace tangent
 					return execution.error();
 
 				tracer.solver.state.changelog.commit();
+				state.payable = script::payable_repr();
 				state.balances.clear();
 				return expectation::met;
 			}
@@ -364,10 +363,12 @@ namespace tangent
 				if (!executor->receipt.events.empty())
 				{
 					auto data = format::tree();
-					auto type = script::factory::get()->get_vm()->get_type_info_by_id(event_type_id);
-					data.key = type.is_valid() ? type.get_name() : std::string_view("__pod__");
 					if (script::marshall::store(data, object_value, object_type_id))
+					{
+						auto type = script::factory::get()->get_vm()->get_type_info_by_id(event_type_id);
+						data.key = type.is_valid() ? type.get_name() : std::string_view("__pod__");
 						tracer.events[executor->receipt.events.size() - 1] = std::move(data);
+					}
 				}
 			}
 			void dispatch_exception(script::immediate_context* coroutine) override
@@ -382,8 +383,7 @@ namespace tangent
 				state.balances.clear();
 				state.from = algorithm::pubkeyhash_t();
 				state.to = algorithm::pubkeyhash_t();
-				state.payable = 0;
-				state.pay = decimal::zero();
+				state.payable = script::payable_repr();
 				module = nullptr;
 				program.path.clear();
 				program.log.clear();
@@ -451,7 +451,7 @@ namespace tangent
 								return err("not a valid address");
 						}
 						else
-							crypto::fill_random_bytes(context.state.from.data, sizeof(algorithm::pubkeyhash_t));
+							crypto::fill_random_bytes(context.state.from.blob, sizeof(algorithm::pubkeyhash_t));
 					}
 
 					if (context.state.from.empty())
@@ -469,7 +469,7 @@ namespace tangent
 								return err("not a valid address");
 						}
 						else
-							crypto::fill_random_bytes(context.state.to.data, sizeof(algorithm::pubkeyhash_t));
+							crypto::fill_random_bytes(context.state.to.blob, sizeof(algorithm::pubkeyhash_t));
 					}
 
 					if (context.state.to.empty())
@@ -477,42 +477,43 @@ namespace tangent
 
 					return ok(algorithm::signing::encode_address(context.state.to));
 				}
-				else if (method == "payable")
-				{
-					if (args.size() > 1)
-					{
-						auto asset = algorithm::asset::id_of(stringify::to_upper(args[1]), args.size() > 2 ? stringify::to_upper(args[2]) : std::string_view(), args.size() > 3 ? args[3] : std::string_view());
-						if (!algorithm::asset::is_any(asset))
-							return err("not a valid asset");
-						context.state.payable = asset;
-					}
-
-					return ok(context.state.payable > 0 ? algorithm::asset::name_of(context.state.payable) : "null");
-				}
 				else if (method == "pay")
 				{
-					if (args.size() > 1)
+					if (args.size() > 2)
 					{
 						decimal value = decimal(args[1]);
-						if (value.is_nan() || value.is_negative())
+						if (value.is_nan())
 							return err("not a valid decimal value");
-						context.state.pay = std::move(value);
+
+						auto asset = algorithm::asset::id_of(args[2], args.size() > 3 ? args[3] : std::string_view(), args.size() > 4 ? args[4] : std::string_view());
+						if (!algorithm::asset::is_any(asset))
+							return err("not a valid asset");
+
+						if (!context.state.payable.plus(asset, value.is_positive() ? value : -context.state.payable.of(asset)))
+							return err("failed to pay");
 					}
 
-					return ok(context.state.pay.to_string());
+					std::erase_if(context.state.payable.payments, [](const std::pair<algorithm::asset_id, decimal>& item) { return !item.second.is_positive(); });
+					for (auto& [asset, value] : context.state.payable.payments)
+						ok(value.to_string() + " " + algorithm::asset::name_of(asset));
+					return true;
 				}
 				else if (method == "fund")
 				{
-					if (args.size() >= 2 && context.state.payable > 0)
+					if (args.size() > 2)
 					{
 						decimal value = decimal(args[1]);
-						if (value.is_nan() || value.is_negative())
+						if (value.is_nan())
 							return err("not a valid decimal value");
 
+						auto asset = algorithm::asset::id_of(args[2], args.size() > 3 ? args[3] : std::string_view(), args.size() > 4 ? args[4] : std::string_view());
+						if (!algorithm::asset::is_any(asset))
+							return err("not a valid asset");
+
 						if (value.is_positive())
-							context.state.balances[context.state.from][context.state.payable] = std::move(value);
+							context.state.balances[context.state.from][asset] = std::move(value);
 						else
-							context.state.balances[context.state.from].erase(context.state.payable);
+							context.state.balances[context.state.from].erase(asset);
 					}
 
 					for (auto& [account, balances] : context.state.balances)
@@ -529,20 +530,41 @@ namespace tangent
 				}
 				else if (method == "pay_funded")
 				{
-					if (args.size() > 1)
+					if (args.size() > 2)
 					{
 						decimal value = decimal(args[1]);
 						if (value.is_nan() || value.is_negative())
 							return err("not a valid decimal value");
 
+						auto asset = algorithm::asset::id_of(args[2], args.size() > 3 ? args[3] : std::string_view(), args.size() > 4 ? args[4] : std::string_view());
+						if (!algorithm::asset::is_any(asset))
+							return err("not a valid asset");
+
+						if (!context.state.payable.plus(asset, value.is_positive() ? value : -context.state.payable.of(asset)))
+							return err("failed to pay");
+
 						if (value.is_positive())
-							context.state.balances[context.state.from][context.state.payable] = value;
+							context.state.balances[context.state.from][asset] = value;
 						else
-							context.state.balances[context.state.from].erase(context.state.payable);
-						context.state.pay = std::move(value);
+							context.state.balances[context.state.from].erase(asset);
 					}
 
-					return ok(context.state.pay.to_string());
+					for (auto& [account, balances] : context.state.balances)
+					{
+						for (auto& [asset, value] : balances)
+						{
+							string address = "null";
+							if (!account.empty())
+								algorithm::signing::encode_address(account, address);
+							ok(address + ": " + value.to_string() + " " + algorithm::asset::name_of(asset));
+						}
+					}
+
+					std::erase_if(context.state.payable.payments, [](const std::pair<algorithm::asset_id, decimal>& item) { return !item.second.is_positive(); });
+					for (auto& [asset, value] : context.state.payable.payments)
+						ok(value.to_string() + " " + algorithm::asset::name_of(asset));
+
+					return true;
 				}
 				else if (method == "compile")
 				{
@@ -728,7 +750,7 @@ namespace tangent
 							{
 								auto type = context.module.get_vm()->get_type_info_by_id(type_id);
 								auto name = type.is_valid() ? type.get_name() : std::string_view();
-								if (name == "rwptr" || name == "rptr")
+								if (name == "pmut" || name == "pconst")
 								{
 									auto decl = function.get_decl();
 									if (!decl.empty())
@@ -905,54 +927,29 @@ namespace tangent
 				{
 					ok(
 						"------------- VM for smart contract scripts --------------\n"
-						"This tool may be used to debug the smart contracts before\n"
-						"deployment. VM here does not require non-zero balance\n"
-						"to send assets to smart contracts. Everything is virtual\n"
-						"and will not be written to current chain state. However,\n"
-						"VM will use current chain state (if any) as a base to\n"
-						"execute smart contracts on top of. You may fund one or\n"
-						"more accounts before running smart contract code as well\n"
-						"as pay to smart contract without funding before hand. The\n"
-						"state will be incremental, each call to smart contract will\n"
-						"use and update current virtual state. This can be leveraged\n"
-						"while debugging more complex execution scenarious requiring\n"
-						"more than one consecutive update to smart contract state.\n"
-						"Standard debugger is also included and can be used to view\n"
-						"the state of the smart contract  Highly verbose.\n"
-						"This tool supports execution plans which are useful for\n"
-						"creating the test cases using (execp) that are a chain of\n"
-						"commands which will be executed until one of them fails or\n"
-						"until all of them are successfully finalized. Because state\n"
-						"is built upon current chain state, it is possible to test\n"
-						"the smart contracts virtually on the mainnet blockchain\n"
-						"--------- VM compiler and debugger functionality ---------\n"
-						"from [address?|?]                                        -- get/set caller address (if ? then random)\n"
-						"to [address?|?]                                          -- get/set contract address (if ? then random)\n"
-						"payable [blockchain?] [token?] [contract_address?]       -- get/set caller address paying asset\n"
-						"fund [value?]                                            -- get/set caller address balance\n"
-						"pay [value?]                                             -- get/set caller address paying value\n"
-						"pay_funded [value?]                                      -- combination of fund then pay\n"
-						"compile [path]                                           -- compile and use program\n"
-						"assemble [type:deploy|call|abi|code] [path] [args?]      -- assemble current program (type=deploy/call: assemble deploy tx data with packed args)\n"
-						"pack [args?]...                                          -- pack many args into one (for non-trivial function args)\n"
-						"pack256 [integer]...                                     -- pack a decimal uint256 into a hex number\n"
-						"unpack [stream]                                          -- unpack stream to many args\n"
-						"unpack256 [integer]...                                   -- unpack hex uint256 into a decimal number\n"
-						"call [declaration] [args?]...                            -- call a function in a current program\n"
-						"debug [declaration] [args?]...                           -- call a function in a current program with debugger attached\n"
-						"result                                                   -- get call result log\n"
-						"log                                                      -- get call event log\n"
-						"changelog                                                -- get call state changes log\n"
-						"receipt                                                  -- get call receipt\n"
-						"abi                                                      -- get program abi listing\n"
-						"reset                                                    -- reset contract state\n"
-						"trap [off|err|all|now]                                   -- enable command interpreter if execp has finished (all) or failed (err)\n"
-						"clear                                                    -- clear console output\n"
-						"---------------- Environment functionality -----------------\n"
-						"execp [path]                                             -- run predefined execution plan (json file of format: [[\"method\", value_or_object_or_array_args?...], ...])\n"
-						"help                                                     -- show this message\n"
-						"\n"
-						"********* Node configuration arguments applicable **********");
+						"trap [off|err|all|now]                                  -- enable command interpreter if execp has finished (all) or failed (err)\n"
+						"execp [path]                                            -- run predefined execution plan (json file of format: [[\"method\", value_or_object_or_array_args?...], ...])\n"
+						"from [address?|?]                                       -- get/set caller address (if ? then random)\n"
+						"to [address?|?]                                         -- get/set contract address (if ? then random)\n"
+						"fund [value?] [blockchain?] [token?] [contract?]        -- get/set caller address balance\n"
+						"pay [value?] [blockchain?] [token?] [contract?]         -- get/set caller address paying value\n"
+						"pay_funded [value?] [blockchain?] [token?] [contract?]  -- combination of fund then pay\n"
+						"compile [path]                                          -- compile and use program\n"
+						"assemble [type:deploy|call|abi|code] [path] [args?]     -- assemble current program (type=deploy/call: assemble deploy tx data with packed args)\n"
+						"pack [args?]...                                         -- pack many args into one (for non-trivial function args)\n"
+						"pack256 [integer]...                                    -- pack a decimal uint256 into a hex number\n"
+						"unpack [stream]                                         -- unpack stream to many args\n"
+						"unpack256 [integer]...                                  -- unpack hex uint256 into a decimal number\n"
+						"call [declaration] [args?]...                           -- call a function in a current program\n"
+						"debug [declaration] [args?]...                          -- call a function in a current program with debugger attached\n"
+						"result                                                  -- get call result log\n"
+						"log                                                     -- get call event log\n"
+						"changelog                                               -- get call state changes log\n"
+						"receipt                                                 -- get call receipt\n"
+						"abi                                                     -- get program abi listing\n"
+						"reset                                                   -- reset contract state\n"
+						"clear                                                   -- clear console output\n"
+						"help                                                    -- show this message\n");
 					return true;
 				}
 				return command_execute(args, directory);

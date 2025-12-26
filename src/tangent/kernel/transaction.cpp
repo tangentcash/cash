@@ -220,7 +220,7 @@ namespace tangent
 				return false;
 
 			string from_assembly;
-			if (!stream.read_string(stream.read_type(), &from_assembly) || !algorithm::encoding::decode_bytes(from_assembly, from.data, sizeof(from.data)))
+			if (!stream.read_string(stream.read_type(), &from_assembly) || !algorithm::encoding::decode_bytes(from_assembly, from.blob, sizeof(from)))
 				return false;
 
 			uint16_t size;

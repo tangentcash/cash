@@ -12,27 +12,27 @@ namespace tangent
 		template <typename t, size_t s>
 		struct storage_type
 		{
-			t data[s] = { 0 };
+			t blob[s] = { 0 };
 
 			storage_type() = default;
 			storage_type(std::nullptr_t) = delete;
-			storage_type(const t new_data[s])
+			storage_type(const t new_blob[s])
 			{
-				if (new_data != nullptr)
-					memcpy(data, new_data, sizeof(data));
+				if (new_blob != nullptr)
+					memcpy(blob, new_blob, sizeof(blob));
 			}
-			storage_type(const t* new_data, size_t new_size)
+			storage_type(const t* new_blob, size_t new_size)
 			{
-				if (new_data != nullptr)
-					memcpy(data, new_data, std::min(new_size, sizeof(data)));
+				if (new_blob != nullptr)
+					memcpy(blob, new_blob, std::min(new_size, sizeof(blob)));
 			}
-			storage_type(const std::string_view& new_data)
+			storage_type(const std::string_view& new_blob)
 			{
-				memcpy(data, new_data.data(), std::min(new_data.size(), sizeof(data)));
+				memcpy(blob, new_blob.data(), std::min(new_blob.size(), sizeof(blob)));
 			}
-			storage_type(const vector<uint8_t>& new_data)
+			storage_type(const vector<uint8_t>& new_blob)
 			{
-				memcpy(data, new_data.data(), std::min(new_data.size(), sizeof(data)));
+				memcpy(blob, new_blob.data(), std::min(new_blob.size(), sizeof(blob)));
 			}
 			storage_type(const storage_type&) = default;
 			storage_type(storage_type&&) noexcept = default;
@@ -44,48 +44,48 @@ namespace tangent
 			}
 			void clear()
 			{
-				memset(data, 0, sizeof(data));
+				memset(blob, 0, sizeof(blob));
 			}
 			bool equals(const storage_type& other) const
 			{
-				return !memcmp(other.data, data, sizeof(data));
+				return !memcmp(other.blob, blob, sizeof(blob));
 			}
 			bool empty() const
 			{
 				t null[s] = { 0 };
-				return !memcmp(data, null, sizeof(null));
+				return !memcmp(blob, null, sizeof(null));
 			}
 			vector<uint8_t> container() const
 			{
 				vector<uint8_t> result;
 				result.resize(s);
-				memcpy(result.data(), data, sizeof(data));
+				memcpy(result.data(), blob, sizeof(blob));
 				return result;
 			}
 			std::string_view view() const
 			{
-				return std::string_view((char*)data, sizeof(data));
+				return std::string_view((char*)blob, sizeof(blob));
 			}
 			std::string_view optimized_view() const
 			{
 				size_t size = s;
-				auto* ptr = data + size;
+				auto* ptr = blob + size;
 				while (size > 0 && !*(--ptr))
 					--size;
 
-				return std::string_view((char*)data, size);
+				return std::string_view((char*)blob, size);
 			}
 			bool operator== (const storage_type& other) const
 			{
-				return equals(other.data);
+				return equals(other.blob);
 			}
 			bool operator< (const storage_type& other) const
 			{
 				for (size_t i = 0; i < s; ++i)
 				{
-					if (data[i] > other.data[i])
+					if (blob[i] > other.blob[i])
 						return false;
-					else if (data[i] < other.data[i])
+					else if (blob[i] < other.blob[i])
 						return true;
 				}
 				return false;
@@ -438,68 +438,16 @@ namespace vitex
 {
 	namespace core
 	{
-		template <>
-		struct key_hash<tangent::algorithm::hashsig_t>
+		template <typename t, size_t s>
+		struct key_hash<tangent::algorithm::storage_type<t, s>>
 		{
-			typedef int argument_type;
+			typedef tangent::algorithm::storage_type<t, s> argument_type;
 			typedef size_t result_type;
 			using is_transparent = void;
 
-			inline result_type operator()(const tangent::algorithm::hashsig_t& value) const noexcept
+			inline result_type operator()(const tangent::algorithm::storage_type<t, s>& value) const noexcept
 			{
-				return key_hash<std::string_view>()(std::string_view((char*)value.data, sizeof(value.data)));
-			}
-		};
-
-		template <>
-		struct key_hash<tangent::algorithm::seckey_t>
-		{
-			typedef int argument_type;
-			typedef size_t result_type;
-			using is_transparent = void;
-
-			inline result_type operator()(const tangent::algorithm::seckey_t& value) const noexcept
-			{
-				return key_hash<std::string_view>()(std::string_view((char*)value.data, sizeof(value.data)));
-			}
-		};
-
-		template <>
-		struct key_hash<tangent::algorithm::pubkey_t>
-		{
-			typedef int argument_type;
-			typedef size_t result_type;
-			using is_transparent = void;
-
-			inline result_type operator()(const tangent::algorithm::pubkey_t& value) const noexcept
-			{
-				return key_hash<std::string_view>()(std::string_view((char*)value.data, sizeof(value.data)));
-			}
-		};
-
-		template <>
-		struct key_hash<tangent::algorithm::pubkeyhash_t>
-		{
-			typedef int argument_type;
-			typedef size_t result_type;
-			using is_transparent = void;
-
-			inline result_type operator()(const tangent::algorithm::pubkeyhash_t& value) const noexcept
-			{
-				return key_hash<std::string_view>()(std::string_view((char*)value.data, sizeof(value.data)));
-			}
-		};
-
-		template <>
-		struct key_hash<tangent::algorithm::share_t>
-		{
-			typedef int argument_type;
-			typedef size_t result_type;
-			using is_transparent = void;
-
-			inline result_type operator()(const tangent::algorithm::share_t& value) const noexcept
-			{
-				return key_hash<std::string_view>()(std::string_view((char*)value.data, sizeof(value.data)));
+				return key_hash<std::string_view>()(value.view());
 			}
 		};
 	}

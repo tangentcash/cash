@@ -66,7 +66,7 @@ namespace tangent
 				return false;
 
 			string signature_assembly;
-			if (!stream.read_string(stream.read_type(), &signature_assembly) || !algorithm::encoding::decode_bytes(signature_assembly, signature.data, sizeof(signature.data)))
+			if (!stream.read_string(stream.read_type(), &signature_assembly) || !algorithm::encoding::decode_bytes(signature_assembly, signature.blob, sizeof(signature)))
 				return false;
 
 			if (!load_payload(stream))

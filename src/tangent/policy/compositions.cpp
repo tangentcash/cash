@@ -35,26 +35,26 @@ namespace tangent
 		inline curve_point from_compressed_point_secp256k1(const algorithm::storage_type<uint8_t, 33>& value)
 		{
 			curve_point result;
-			bn_read_be(value.data + 1, &result.x);
-			uncompress_coords(&secp256k1, value.data[0], &result.x, &result.y);
+			bn_read_be(value.blob + 1, &result.x);
+			uncompress_coords(&secp256k1, value.blob[0], &result.x, &result.y);
 			return result;
 		}
 		inline algorithm::storage_type<uint8_t, 33> to_compressed_point_secp256k1(const curve_point& value)
 		{
 			algorithm::storage_type<uint8_t, 33> result;
-			compress_coords(&value, result.data);
+			compress_coords(&value, result.blob);
 			return result;
 		}
 		inline bignum256 from_scalar_secp256k1(const algorithm::storage_type<uint8_t, 32>& value)
 		{
 			bignum256 result;
-			bn_read_be(value.data, &result);
+			bn_read_be(value.blob, &result);
 			return result;
 		}
 		inline algorithm::storage_type<uint8_t, 32> to_scalar_secp256k1(const bignum256& value)
 		{
 			algorithm::storage_type<uint8_t, 32> result;
-			bn_write_be(&value, result.data);
+			bn_write_be(&value, result.blob);
 			return result;
 		}
 
@@ -112,8 +112,8 @@ namespace tangent
 				memcpy(secret_key_buffer, secret_key.data(), secret_key.size());
 				ed25519_publickey_ext(secret_key_buffer, public_key);
 				if (group_public_key.empty())
-					memcpy(group_public_key.data, public_key, sizeof(public_key));
-				else if (crypto_core_ed25519_add(group_public_key.data, public_key, group_public_key.data) != 0)
+					memcpy(group_public_key.blob, public_key, sizeof(public_key));
+				else if (crypto_core_ed25519_add(group_public_key.blob, public_key, group_public_key.blob) != 0)
 					return layer_exception("invalid secret key");
 
 				--z_steps;
@@ -127,10 +127,10 @@ namespace tangent
 				calculate_nonce(nonce, message, secret_key, ++index);
 
 				ed25519_point_t r;
-				if (crypto_scalarmult_ed25519_base_noclamp(r.data, nonce) != 0 || r.empty())
+				if (crypto_scalarmult_ed25519_base_noclamp(r.blob, nonce) != 0 || r.empty())
 					goto retry_nonce;
 
-				if (!cumulative_r.empty() && (crypto_core_ed25519_add(r.data, r.data, cumulative_r.data) != 0 || r.empty()))
+				if (!cumulative_r.empty() && (crypto_core_ed25519_add(r.blob, r.blob, cumulative_r.blob) != 0 || r.empty()))
 					goto retry_nonce;
 
 				cumulative_r = r;
@@ -148,17 +148,17 @@ namespace tangent
 				uint8_t hram[64];
 				crypto_hash_sha512_state hash;
 				crypto_hash_sha512_init(&hash);
-				crypto_hash_sha512_update(&hash, cumulative_r.data, sizeof(cumulative_r.data));
-				crypto_hash_sha512_update(&hash, group_public_key.data, sizeof(group_public_key.data));
+				crypto_hash_sha512_update(&hash, cumulative_r.blob, sizeof(cumulative_r.blob));
+				crypto_hash_sha512_update(&hash, group_public_key.blob, sizeof(group_public_key.blob));
 				crypto_hash_sha512_update(&hash, message.data(), message.size());
 				crypto_hash_sha512_final(&hash, hram);
 				crypto_core_ed25519_scalar_reduce(hram, hram);
 
 				ed25519_scalar_t s;
-				crypto_core_ed25519_scalar_mul(s.data, hram, secret_key.data());
-				crypto_core_ed25519_scalar_add(s.data, s.data, nonce);
+				crypto_core_ed25519_scalar_mul(s.blob, hram, secret_key.data());
+				crypto_core_ed25519_scalar_add(s.blob, s.blob, nonce);
 				if (!cumulative_s.empty())
-					crypto_core_ed25519_scalar_add(s.data, s.data, cumulative_s.data);
+					crypto_core_ed25519_scalar_add(s.blob, s.blob, cumulative_s.blob);
 
 				cumulative_s = s;
 				--s_steps;
@@ -178,8 +178,8 @@ namespace tangent
 		expects_lr<void> ed25519_compositor::to_public_key(algorithm::composition::cpubkey_t* output) const
 		{
 			VI_ASSERT(output != nullptr, "output should be set");
-			output->resize(sizeof(group_public_key.data));
-			memcpy(output->data(), group_public_key.data, sizeof(group_public_key.data));
+			output->resize(sizeof(group_public_key));
+			memcpy(output->data(), group_public_key.blob, sizeof(group_public_key));
 			return expectation::met;
 		}
 		expects_lr<void> ed25519_compositor::to_signature(algorithm::composition::chashsig_t* output) const
@@ -190,9 +190,9 @@ namespace tangent
 			if (!status)
 				return status;
 
-			output->resize(sizeof(cumulative_r.data) + sizeof(cumulative_s.data));
-			memcpy(output->data(), cumulative_r.data, sizeof(cumulative_r.data));
-			memcpy(output->data() + sizeof(cumulative_r.data), cumulative_s.data, sizeof(cumulative_s.data));
+			output->resize(sizeof(cumulative_r) + sizeof(cumulative_s));
+			memcpy(output->data(), cumulative_r.blob, sizeof(cumulative_r));
+			memcpy(output->data() + sizeof(cumulative_r.blob), cumulative_s.blob, sizeof(cumulative_s));
 			return verify_signature(message.data(), message.size(), *output, public_key);
 		}
 		expects_lr<void> ed25519_compositor::verify_signature(const uint8_t* new_message, size_t new_message_size, const algorithm::composition::chashsig_t& signature, const algorithm::composition::cpubkey_t& public_key) const
@@ -201,7 +201,7 @@ namespace tangent
 			if (public_key.size() != sizeof(ed25519_point_t))
 				return layer_exception("invalid public key");
 
-			if (signature.size() != sizeof(cumulative_r.data) + sizeof(cumulative_s.data))
+			if (signature.size() != sizeof(cumulative_r) + sizeof(cumulative_s))
 				return layer_exception("invalid signature");
 
 			if (crypto_sign_verify_detached(signature.data(), new_message, new_message_size, public_key.data()) != 0)
@@ -274,14 +274,14 @@ namespace tangent
 			}
 
 			string intermediate;
-			if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, cumulative_r.data, sizeof(cumulative_r.data)))
+			if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, cumulative_r.blob, sizeof(cumulative_r)))
 				return false;
 
-			if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, cumulative_s.data, sizeof(cumulative_s.data)))
+			if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, cumulative_s.blob, sizeof(cumulative_s)))
 				return false;
 
 
-			if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, group_public_key.data, sizeof(group_public_key.data)))
+			if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, group_public_key.blob, sizeof(group_public_key)))
 				return false;
 
 			if (!stream.read_string(stream.read_type(), &intermediate))
@@ -337,8 +337,8 @@ namespace tangent
 				memcpy(secret_key_buffer, secret_key.data(), secret_key.size());
 				ed25519_publickey_ext(secret_key_buffer, public_key);
 				if (group_public_key.empty())
-					memcpy(group_public_key.data, public_key, sizeof(public_key));
-				else if (crypto_core_ed25519_add(group_public_key.data, public_key, group_public_key.data) != 0)
+					memcpy(group_public_key.blob, public_key, sizeof(public_key));
+				else if (crypto_core_ed25519_add(group_public_key.blob, public_key, group_public_key.blob) != 0)
 					return layer_exception("invalid secret key");
 
 				--z_steps;
@@ -360,8 +360,8 @@ namespace tangent
 		expects_lr<void> ed25519_clsag_compositor::to_public_key(algorithm::composition::cpubkey_t* output) const
 		{
 			VI_ASSERT(output != nullptr, "output should be set");
-			output->resize(sizeof(group_public_key.data));
-			memcpy(output->data(), group_public_key.data, sizeof(group_public_key.data));
+			output->resize(sizeof(group_public_key));
+			memcpy(output->data(), group_public_key.blob, sizeof(group_public_key));
 			return expectation::met;
 		}
 		expects_lr<void> ed25519_clsag_compositor::to_signature(algorithm::composition::chashsig_t* output) const
@@ -407,7 +407,7 @@ namespace tangent
 		bool ed25519_clsag_compositor::load(format::ro_stream& stream)
 		{
 			string intermediate;
-			if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, group_public_key.data, sizeof(group_public_key.data)))
+			if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, group_public_key.blob, sizeof(group_public_key)))
 				return false;
 
 			if (!stream.read_integer(stream.read_type(), &participants))
@@ -463,8 +463,8 @@ namespace tangent
 				if (secp256k1_ec_pubkey_parse(context, &uncompressed_public_key, new_public_key.data(), new_public_key.size()) != 1)
 					return layer_exception("invalid public key");
 
-				size_t key_size = sizeof(group_public_key.data);
-				if (secp256k1_ec_pubkey_serialize(context, group_public_key.data, &key_size, &uncompressed_public_key, SECP256K1_EC_COMPRESSED) != 1)
+				size_t key_size = sizeof(group_public_key);
+				if (secp256k1_ec_pubkey_serialize(context, group_public_key.blob, &key_size, &uncompressed_public_key, SECP256K1_EC_COMPRESSED) != 1)
 					return layer_exception("invalid public key");
 			}
 			else
@@ -531,22 +531,22 @@ namespace tangent
 
 				if (group_public_key.empty())
 				{
-					size_t key_size = sizeof(group_public_key.data);
-					if (secp256k1_ec_pubkey_serialize(context, group_public_key.data, &key_size, &next_public_key, SECP256K1_EC_COMPRESSED) != 1)
+					size_t key_size = sizeof(group_public_key);
+					if (secp256k1_ec_pubkey_serialize(context, group_public_key.blob, &key_size, &next_public_key, SECP256K1_EC_COMPRESSED) != 1)
 						return layer_exception("invalid secret key");
 				}
 				else
 				{
 					secp256k1_pubkey prev_public_key, result_public_key;
-					if (secp256k1_ec_pubkey_parse(context, &prev_public_key, group_public_key.data, sizeof(group_public_key.data)) != 1)
+					if (secp256k1_ec_pubkey_parse(context, &prev_public_key, group_public_key.blob, sizeof(group_public_key)) != 1)
 						return layer_exception("invalid intermediate public key");
 
 					secp256k1_pubkey* public_keys[2] = { &prev_public_key, &next_public_key };
 					if (secp256k1_ec_pubkey_combine(context, &result_public_key, public_keys, 2) != 1)
 						return layer_exception("invalid secret key");
 
-					size_t key_size = sizeof(group_public_key.data);
-					if (secp256k1_ec_pubkey_serialize(context, group_public_key.data, &key_size, &result_public_key, SECP256K1_EC_COMPRESSED) != 1)
+					size_t key_size = sizeof(group_public_key);
+					if (secp256k1_ec_pubkey_serialize(context, group_public_key.blob, &key_size, &result_public_key, SECP256K1_EC_COMPRESSED) != 1)
 						return layer_exception("invalid secret key");
 				}
 
@@ -743,25 +743,25 @@ namespace tangent
 			algorithm::hashing::hash512(seed, seed_size, key_buffer);
 
 			secp256k1_scalar_t secret_key;
-			memcpy(secret_key.data, key_buffer, std::min(sizeof(secret_key.data), sizeof(key_buffer)));
+			memcpy(secret_key.blob, key_buffer, std::min(sizeof(secret_key), sizeof(key_buffer)));
 
 			secp256k1_pubkey extended_public_key;
 			secp256k1_context* context = algorithm::signing::get_context();
-			while (secp256k1_ec_seckey_verify(context, secret_key.data) != 1 || secp256k1_ec_pubkey_create(context, &extended_public_key, secret_key.data) != 1)
+			while (secp256k1_ec_seckey_verify(context, secret_key.blob) != 1 || secp256k1_ec_pubkey_create(context, &extended_public_key, secret_key.blob) != 1)
 			{
 				algorithm::hashing::hash512(key_buffer, sizeof(key_buffer), key_buffer);
-				memcpy(secret_key.data, key_buffer, std::min(sizeof(secret_key.data), sizeof(key_buffer)));
+				memcpy(secret_key.blob, key_buffer, std::min(sizeof(secret_key), sizeof(key_buffer)));
 			}
 
-			output->resize(sizeof(secret_key.data));
-			memcpy(output->data(), secret_key.data, sizeof(secret_key.data));
+			output->resize(sizeof(secret_key));
+			memcpy(output->data(), secret_key.blob, sizeof(secret_key));
 			return expectation::met;
 		}
 		expects_lr<void> secp256k1_compositor::to_public_key(algorithm::composition::cpubkey_t* output) const
 		{
 			VI_ASSERT(output != nullptr, "output should be set");
-			output->resize(sizeof(group_public_key.data));
-			memcpy(output->data(), group_public_key.data, sizeof(group_public_key.data));
+			output->resize(sizeof(group_public_key));
+			memcpy(output->data(), group_public_key.blob, sizeof(group_public_key));
 			return expectation::met;
 		}
 		expects_lr<void> secp256k1_compositor::to_signature(algorithm::composition::chashsig_t* output) const
@@ -913,13 +913,13 @@ namespace tangent
 				return false;
 
 			string intermediate;
-			if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, group_public_key.data, sizeof(group_public_key.data)))
+			if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, group_public_key.blob, sizeof(group_public_key)))
 				return false;
 
-			if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, cumulative_r.data, sizeof(cumulative_r.data)))
+			if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, cumulative_r.blob, sizeof(cumulative_r)))
 				return false;
 
-			if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, cumulative_s.data, sizeof(cumulative_s.data)))
+			if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, cumulative_s.blob, sizeof(cumulative_s)))
 				return false;
 
 			if (!stream.read_string(stream.read_type(), &intermediate))
@@ -1010,7 +1010,7 @@ namespace tangent
 				sha256_Raw(secret_key.data(), secret_key.size(), ask);
 
 				uint8_t bip340_algo[] = "BIP0340/nonce", nonce[32];
-				if (secp256k1_nonce_function_bip340(nonce, message_hash, 32, ask, public_key.data + 1, bip340_algo, sizeof(bip340_algo) - 1, index_nonce) != 1)
+				if (secp256k1_nonce_function_bip340(nonce, message_hash, 32, ask, public_key.blob + 1, bip340_algo, sizeof(bip340_algo) - 1, index_nonce) != 1)
 					return false;
 
 				bn_read_be(nonce, k);
@@ -1021,7 +1021,7 @@ namespace tangent
 			{
 				uint8_t data[96];
 				bn_write_be(&r.x, data);
-				memcpy(data + 32, public_key.data + 1, 32);
+				memcpy(data + 32, public_key.blob + 1, 32);
 				memcpy(data + 64, message_hash, 32);
 
 				uint8_t bip340_challenge[] = "BIP0340/challenge", challenge[32];
@@ -1045,22 +1045,22 @@ namespace tangent
 
 				if (group_public_key.empty())
 				{
-					size_t key_size = sizeof(group_public_key.data);
-					if (secp256k1_ec_pubkey_serialize(context, group_public_key.data, &key_size, &next_public_key, SECP256K1_EC_COMPRESSED) != 1)
+					size_t key_size = sizeof(group_public_key);
+					if (secp256k1_ec_pubkey_serialize(context, group_public_key.blob, &key_size, &next_public_key, SECP256K1_EC_COMPRESSED) != 1)
 						return layer_exception("invalid secret key");
 				}
 				else
 				{
 					secp256k1_pubkey prev_public_key, result_public_key;
-					if (secp256k1_ec_pubkey_parse(context, &prev_public_key, group_public_key.data, sizeof(group_public_key.data)) != 1)
+					if (secp256k1_ec_pubkey_parse(context, &prev_public_key, group_public_key.blob, sizeof(group_public_key)) != 1)
 						return layer_exception("invalid intermediate public key");
 
 					secp256k1_pubkey* public_keys[2] = { &prev_public_key, &next_public_key };
 					if (secp256k1_ec_pubkey_combine(context, &result_public_key, public_keys, 2) != 1)
 						return layer_exception("invalid secret key");
 
-					size_t key_size = sizeof(group_public_key.data);
-					if (secp256k1_ec_pubkey_serialize(context, group_public_key.data, &key_size, &result_public_key, SECP256K1_EC_COMPRESSED) != 1)
+					size_t key_size = sizeof(group_public_key);
+					if (secp256k1_ec_pubkey_serialize(context, group_public_key.blob, &key_size, &result_public_key, SECP256K1_EC_COMPRESSED) != 1)
 						return layer_exception("invalid secret key");
 				}
 
@@ -1121,12 +1121,12 @@ namespace tangent
 				if (indices.size() == 1 && !group_public_key_tweak.empty())
 				{
 					bignum256 t;
-					bn_read_be(group_public_key_tweak.data, &t);
+					bn_read_be(group_public_key_tweak.blob, &t);
 					bn_addmod(&s, &t, &secp256k1.order);
 					if (bn_is_zero(&s))
 						return layer_exception("invalid taproot tweak");
 				}
-				bn_cnegate(group_public_key.data[0] == SECP256K1_TAG_PUBKEY_ODD, &s, &secp256k1.order);
+				bn_cnegate(group_public_key.blob[0] == SECP256K1_TAG_PUBKEY_ODD, &s, &secp256k1.order);
 				bn_multiply(&e, &s, &secp256k1.order);
 				bn_addmod(&s, &k, &secp256k1.order);
 				if (bn_is_zero(&s))
@@ -1153,25 +1153,25 @@ namespace tangent
 			algorithm::hashing::hash512(seed, seed_size, key_buffer);
 
 			secp256k1_scalar_t secret_key;
-			memcpy(secret_key.data, key_buffer, std::min(sizeof(secret_key.data), sizeof(key_buffer)));
+			memcpy(secret_key.blob, key_buffer, std::min(sizeof(secret_key), sizeof(key_buffer)));
 
 			secp256k1_pubkey extended_public_key;
 			secp256k1_context* context = algorithm::signing::get_context();
-			while (secp256k1_ec_seckey_verify(context, secret_key.data) != 1 || secp256k1_ec_pubkey_create(context, &extended_public_key, secret_key.data) != 1)
+			while (secp256k1_ec_seckey_verify(context, secret_key.blob) != 1 || secp256k1_ec_pubkey_create(context, &extended_public_key, secret_key.blob) != 1)
 			{
 				algorithm::hashing::hash512(key_buffer, sizeof(key_buffer), key_buffer);
-				memcpy(secret_key.data, key_buffer, std::min(sizeof(secret_key.data), sizeof(key_buffer)));
+				memcpy(secret_key.blob, key_buffer, std::min(sizeof(secret_key), sizeof(key_buffer)));
 			}
 
-			output->resize(sizeof(secret_key.data));
-			memcpy(output->data(), secret_key.data, sizeof(secret_key.data));
+			output->resize(sizeof(secret_key));
+			memcpy(output->data(), secret_key.blob, sizeof(secret_key));
 			return expectation::met;
 		}
 		expects_lr<void> secp256k1_schnorr_compositor::to_public_key(algorithm::composition::cpubkey_t* output) const
 		{
 			VI_ASSERT(output != nullptr, "output should be set");
-			output->resize(sizeof(group_public_key.data));
-			memcpy(output->data(), group_public_key.data, sizeof(group_public_key.data));
+			output->resize(sizeof(group_public_key));
+			memcpy(output->data(), group_public_key.blob, sizeof(group_public_key));
 			return expectation::met;
 		}
 		expects_lr<void> secp256k1_schnorr_compositor::to_signature(algorithm::composition::chashsig_t* output) const
@@ -1278,16 +1278,16 @@ namespace tangent
 			}
 
 			string intermediate;
-			if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, cumulative_r.data, sizeof(cumulative_r.data)))
+			if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, cumulative_r.blob, sizeof(cumulative_r)))
 				return false;
 
-			if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, cumulative_s.data, sizeof(cumulative_s.data)))
+			if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, cumulative_s.blob, sizeof(cumulative_s)))
 				return false;
 
-			if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, group_public_key.data, sizeof(group_public_key.data)))
+			if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, group_public_key.blob, sizeof(group_public_key)))
 				return false;
 
-			if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, group_public_key_tweak.data, sizeof(group_public_key_tweak.data)))
+			if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, group_public_key_tweak.blob, sizeof(group_public_key_tweak)))
 				return false;
 
 			if (!stream.read_string(stream.read_type(), &intermediate) || intermediate.size() != sizeof(message_hash))
@@ -1311,18 +1311,18 @@ namespace tangent
 		{
 			secp256k1_context* context = algorithm::signing::get_context();
 			secp256k1_pubkey extended_public_key;
-			if (secp256k1_ec_pubkey_parse(context, &extended_public_key, public_key.data, sizeof(public_key.data)) != 1)
+			if (secp256k1_ec_pubkey_parse(context, &extended_public_key, public_key.blob, sizeof(public_key.blob)) != 1)
 				return layer_exception("invalid public key");
 
-			if (secp256k1_ec_pubkey_tweak_add(context, &extended_public_key, tweak.data) != 1)
+			if (secp256k1_ec_pubkey_tweak_add(context, &extended_public_key, tweak.blob) != 1)
 				return layer_exception("invalid public key tweak");
 
-			size_t result_size = sizeof(public_key.data);
-			auto result = algorithm::composition::cpubkey_t(result_size + sizeof(tweak.data), 0);
+			size_t result_size = sizeof(public_key.blob);
+			auto result = algorithm::composition::cpubkey_t(result_size + sizeof(tweak.blob), 0);
 			if (!secp256k1_ec_pubkey_serialize(context, result.data(), &result_size, &extended_public_key, SECP256K1_EC_COMPRESSED))
 				return layer_exception("invalid tweaked public key");
 
-			memcpy(result.data() + sizeof(public_key.data), tweak.data, sizeof(tweak.data));
+			memcpy(result.data() + sizeof(public_key.blob), tweak.blob, sizeof(tweak.blob));
 			return expects_lr<algorithm::composition::cpubkey_t>(std::move(result));
 		}
 	}

@@ -29,10 +29,10 @@ namespace tangent
 
 			for (auto& [owner, value] : to)
 			{
-				if (executor->receipt.from == algorithm::pubkeyhash_t(owner.data))
+				if (executor->receipt.from == owner)
 					return layer_exception("invalid payment");
 
-				auto payment = executor->apply_payment(asset, executor->receipt.from, owner.data, value);
+				auto payment = executor->apply_payment(asset, executor->receipt.from, owner, value);
 				if (!payment)
 					return payment.error();
 			}
@@ -67,7 +67,7 @@ namespace tangent
 			{
 				string owner_assembly;
 				algorithm::pubkeyhash_t owner;
-				if (!stream.read_string(type, &owner_assembly) || !algorithm::encoding::decode_bytes(owner_assembly, owner.data, sizeof(owner.data)))
+				if (!stream.read_string(type, &owner_assembly) || !algorithm::encoding::decode_bytes(owner_assembly, owner.blob, sizeof(owner)))
 					return false;
 
 				decimal value;
@@ -89,7 +89,7 @@ namespace tangent
 				{
 					string owner_assembly;
 					algorithm::pubkeyhash_t owner;
-					if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_bytes(owner_assembly, owner.data, sizeof(owner.data)))
+					if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_bytes(owner_assembly, owner.blob, sizeof(owner)))
 						return false;
 
 					decimal value;
@@ -105,7 +105,7 @@ namespace tangent
 		bool transfer::recover_many(const ledger::executor_context* executor, const ledger::receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const
 		{
 			for (auto& [owner, value] : to)
-				parties.insert(algorithm::pubkeyhash_t(owner.data));
+				parties.insert(owner);
 			return true;
 		}
 		void transfer::set_to(const algorithm::pubkeyhash_t& new_to, const decimal& new_value)
@@ -119,7 +119,7 @@ namespace tangent
 			for (auto& [owner, value] : to)
 			{
 				auto* transfer_data = transfers_data->push(format::tree::map());
-				transfer_data->set("to", algorithm::signing::serialize_address(owner.data));
+				transfer_data->set("to", algorithm::signing::serialize_address(owner));
 				transfer_data->set("value", format::variable(value));
 			}
 			return data;
@@ -186,7 +186,7 @@ namespace tangent
 					else if (collision->storage != data)
 						return layer_exception("program hashcode collision");
 
-					auto status = executor->apply_account_program(account.data, hashcode);
+					auto status = executor->apply_account_program(account, hashcode);
 					if (!status)
 						return status.error();
 
@@ -203,7 +203,7 @@ namespace tangent
 					if (!result)
 						return result.error();
 
-					auto status = executor->apply_account_program(account.data, storage);
+					auto status = executor->apply_account_program(account, storage);
 					if (!status)
 						return status.error();
 
@@ -271,7 +271,7 @@ namespace tangent
 			message.write_integer(0xFFFFFFFF);
 
 			algorithm::pubkeyhash_t account;
-			algorithm::hashing::hash160((uint8_t*)message.data.data(), message.data.size(), account.data);
+			algorithm::hashing::hash160((uint8_t*)message.data.data(), message.data.size(), account.blob);
 			return account;
 		}
 		option<deploy::data_type> deploy::get_data_type() const
@@ -334,8 +334,16 @@ namespace tangent
 			if (function.empty())
 				return layer_exception("invalid function call");
 
-			if (value.is_nan() || value.is_negative())
-				return layer_exception("invalid value");
+			hash_set<algorithm::asset_id> duplicates;
+			for (auto& [paying_asset, paying_value] : pays)
+			{
+				if (!algorithm::asset::is_any(paying_asset) || !paying_value.is_positive())
+					return layer_exception("invalid value");
+				else if (duplicates.find(paying_asset) != duplicates.end())
+					return layer_exception("duplicate payment asset");
+				
+				duplicates.insert(paying_asset);
+			}
 
 			return ledger::transaction::validate(block_number);
 		}
@@ -367,12 +375,12 @@ namespace tangent
 			if (!pmodule)
 				return pmodule.error();
 
-			if (value.is_positive())
+			for (auto& [paying_asset, paying_value] : pays)
 			{
 				if (executor->receipt.from == callable)
 					return layer_exception("invalid payment");
 
-				auto payment = executor->apply_payment(asset, executor->receipt.from, callable, value);
+				auto payment = executor->apply_payment(paying_asset, executor->receipt.from, callable, paying_value);
 				if (!payment)
 					return payment.error();
 			}
@@ -384,20 +392,41 @@ namespace tangent
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_string(callable.optimized_view());
 			stream->write_string(function);
-			stream->write_decimal(value);
+			stream->write_integer((uint8_t)pays.size());
+			for (auto& [paying_asset, paying_value] : pays)
+			{
+				stream->write_integer(paying_asset);
+				stream->write_decimal(paying_value);
+			}
 			return format::variables_util::serialize_merge_into(args, stream);
 		}
 		bool call::load_body(format::ro_stream& stream)
 		{
 			string callable_assembly;
-			if (!stream.read_string(stream.read_type(), &callable_assembly) || !algorithm::encoding::decode_bytes(callable_assembly, callable.data, sizeof(callable)))
+			if (!stream.read_string(stream.read_type(), &callable_assembly) || !algorithm::encoding::decode_bytes(callable_assembly, callable.blob, sizeof(callable)))
 				return false;
 
 			if (!stream.read_string(stream.read_type(), &function))
 				return false;
 
-			if (!stream.read_decimal(stream.read_type(), &value))
+			uint8_t pays_size;
+			if (!stream.read_integer(stream.read_type(), &pays_size))
 				return false;
+
+			pays.clear();
+			pays.reserve((size_t)pays_size);
+			for (uint8_t i = 0; i < pays_size; i++)
+			{
+				algorithm::asset_id paying_asset;
+				if (!stream.read_integer(stream.read_type(), &paying_asset))
+					return false;
+
+				decimal paying_value;
+				if (!stream.read_decimal(stream.read_type(), &paying_value))
+					return false;
+
+				pays.push_back(std::make_pair(std::move(paying_asset), std::move(paying_value)));
+			}
 
 			args.clear();
 			return format::variables_util::deserialize_merge_from(stream, &args);
@@ -422,20 +451,29 @@ namespace tangent
 			parties.insert(algorithm::pubkeyhash_t(callable));
 			return true;
 		}
-		void call::program_call(const algorithm::pubkeyhash_t& new_callable, const decimal& new_value, const std::string_view& new_function, format::variables&& new_args)
+		void call::call_to(const algorithm::pubkeyhash_t& new_callable, const std::string_view& new_function, format::variables&& new_args)
 		{
 			args = std::move(new_args);
 			function = new_function;
-			value = new_value;
 			callable = new_callable;
+		}
+		void call::pay_with(const algorithm::asset_id& asset, const decimal& new_value)
+		{
+			pays.push_back(std::make_pair(asset, new_value));
 		}
 		format::tree call::as_tree() const
 		{
 			format::tree data = ledger::transaction::as_tree();
 			data.set("callable", algorithm::signing::serialize_address(callable));
-			data.set("value", format::variable(value));
 			data.set("function", format::variable(function));
 			data.set("args", format::variables_util::serialize(args));
+			auto* pays_data = data.set("pays", format::tree::list());
+			for (auto& [paying_asset, paying_value] : pays)
+			{
+				auto* pay_data = pays_data->push(format::tree::map());
+				pay_data->set("asset", algorithm::asset::serialize(paying_asset));
+				pay_data->set("value", format::variable(paying_value));
+			}
 			return data;
 		}
 		uint32_t call::as_type() const
@@ -547,12 +585,12 @@ namespace tangent
 				bool internal_transaction = transaction->signature.empty();
 				uint256_t transaction_hash = transaction->as_hash();
 				uint64_t transaction_nonce = transaction->nonce;
-				uint8_t transaction_code = transaction->signature.data[0];
+				uint8_t transaction_code = transaction->signature.blob[0];
 				uint8_t execution_flags = (uint8_t)ledger::executor_context::flags::pedantic;
 				if (internal_transaction)
 				{
 					transaction->nonce = nonce;
-					transaction->signature.data[0] = 0xFF;
+					transaction->signature.blob[0] = 0xFF;
 					execution_flags |= (uint8_t)ledger::executor_context::flags::replayable;
 					owner = executor->receipt.from;
 				}
@@ -562,7 +600,7 @@ namespace tangent
 				transaction->gas_price = decimal::zero();
 				transaction->gas_limit = gas_limit - executor->receipt.relative_gas_use;
 				auto execution = ledger::executor_context::execute_tx(executor->solver, executor->block, executor->changelog, transaction, transaction_hash, owner, 0, execution_flags, internal_receipt);
-				transaction->signature.data[0] = transaction_code;
+				transaction->signature.blob[0] = transaction_code;
 				transaction->nonce = transaction_nonce;
 				transaction->gas_limit = 0;
 				transaction->gas_price = decimal::nan();
@@ -1301,7 +1339,7 @@ namespace tangent
 					return false;
 
 				algorithm::pubkeyhash_t participant; string participant_assembly;
-				if (!stream.read_string(stream.read_type(), &participant_assembly) || !algorithm::encoding::decode_bytes(participant_assembly, participant.data, sizeof(participant.data)))
+				if (!stream.read_string(stream.read_type(), &participant_assembly) || !algorithm::encoding::decode_bytes(participant_assembly, participant.blob, sizeof(participant)))
 					return false;
 
 				migrations[broadcast_hash] = participant;
@@ -1719,7 +1757,7 @@ namespace tangent
 				return false;
 
 			string proof_assembly;
-			if (!stream.read_string(stream.read_type(), &proof_assembly) || !algorithm::encoding::decode_bytes(proof_assembly, proof.data, sizeof(proof.data)))
+			if (!stream.read_string(stream.read_type(), &proof_assembly) || !algorithm::encoding::decode_bytes(proof_assembly, proof.blob, sizeof(proof)))
 				return false;
 
 			return true;
@@ -2129,11 +2167,11 @@ namespace tangent
 					{
 						for (auto& failing_attester : failing_attesters)
 						{
-							auto prev_attestation = executor->get_validator_attestation_reward(transfer_asset, failing_attester.data);
+							auto prev_attestation = executor->get_validator_attestation_reward(transfer_asset, failing_attester);
 							if (!prev_attestation)
 								continue;
 
-							auto next_attestation = executor->apply_validator_attestation_reward(transfer_asset, failing_attester.data, -attestation_fee);
+							auto next_attestation = executor->apply_validator_attestation_reward(transfer_asset, failing_attester, -attestation_fee);
 							if (!next_attestation)
 								return next_attestation.error();
 
@@ -2215,7 +2253,7 @@ namespace tangent
 				for (uint16_t j = 0; j < signatures_size; j++)
 				{
 					algorithm::hashsig_t commitment; string signature_assembly;
-					if (!stream.read_string(stream.read_type(), &signature_assembly) || !algorithm::encoding::decode_bytes(signature_assembly, commitment.data, sizeof(commitment.data)))
+					if (!stream.read_string(stream.read_type(), &signature_assembly) || !algorithm::encoding::decode_bytes(signature_assembly, commitment.blob, sizeof(commitment)))
 						return false;
 
 					signatures.insert(commitment);
@@ -2745,7 +2783,7 @@ namespace tangent
 		bool route::load_body(format::ro_stream& stream)
 		{
 			string manager_assembly;
-			if (!stream.read_string(stream.read_type(), &manager_assembly) || !algorithm::encoding::decode_bytes(manager_assembly, manager.data, sizeof(manager.data)))
+			if (!stream.read_string(stream.read_type(), &manager_assembly) || !algorithm::encoding::decode_bytes(manager_assembly, manager.blob, sizeof(manager)))
 				return false;
 
 			if (!stream.read_string(stream.read_type(), &routing_address))
@@ -2914,7 +2952,7 @@ namespace tangent
 			auto group = parent_transaction->get_group(parent->receipt);
 			for (auto& participant : group)
 			{
-				auto status = executor->apply_validator_participation_ref(participant.data, ref, true);
+				auto status = executor->apply_validator_participation_ref(participant, ref, true);
 				if (!status)
 					return status.error();
 			}
@@ -3328,7 +3366,7 @@ namespace tangent
 				return false;
 
 			string manager_assembly;
-			if (!stream.read_string(stream.read_type(), &manager_assembly) || !algorithm::encoding::decode_bytes(manager_assembly, manager.data, sizeof(manager)))
+			if (!stream.read_string(stream.read_type(), &manager_assembly) || !algorithm::encoding::decode_bytes(manager_assembly, manager.blob, sizeof(manager)))
 				return false;
 
 			if (!stream.read_string(stream.read_type(), &to_address))

@@ -58,9 +58,9 @@ namespace tangent
 		struct call final : ledger::transaction
 		{
 			algorithm::pubkeyhash_t callable;
+			vector<std::pair<algorithm::asset_id, decimal>> pays;
 			format::variables args;
 			string function;
-			decimal value;
 
 			expects_lr<void> validate(uint64_t block_number) const override;
 			expects_lr<void> execute(ledger::executor_context* executor) const override;
@@ -68,7 +68,8 @@ namespace tangent
 			bool store_body(format::wo_stream* stream) const override;
 			bool load_body(format::ro_stream& stream) override;
 			bool recover_many(const ledger::executor_context* executor, const ledger::receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const override;
-			void program_call(const algorithm::pubkeyhash_t& new_callable, const decimal& new_value, const std::string_view& new_function, format::variables&& new_args);
+			void call_to(const algorithm::pubkeyhash_t& new_callable, const std::string_view& new_function, format::variables&& new_args);
+			void pay_with(const algorithm::asset_id& asset, const decimal& new_value);
 			format::tree as_tree() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;

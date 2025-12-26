@@ -1485,7 +1485,7 @@ namespace tangent
 			for (uint8_t i = 0; i < encrypted_shares_size; i++)
 			{
 				algorithm::pubkeyhash_t participant; string intermediate;
-				if (!reader.read_string(reader.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, participant.data, sizeof(participant.data)))
+				if (!reader.read_string(reader.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, participant.blob, sizeof(participant)))
 					return remote_exception("encrypted share not valid");
 
 				string encrypted_share;
@@ -1531,7 +1531,7 @@ namespace tangent
 			auto intermediate = string();
 			auto reader = format::ro_stream(packed->at(2).as_string());
 			auto compositor = ledger::dispatcher_context::entropy_aggregation_state();
-			if (!reader.read_string(reader.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, compositor.public_key.data, sizeof(compositor.public_key.data)))
+			if (!reader.read_string(reader.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, compositor.public_key.blob, sizeof(compositor.public_key)))
 				return remote_exception("invalid public key of new participant");
 
 			uint16_t encrypted_shares_size;
@@ -1643,7 +1643,7 @@ namespace tangent
 			for (uint8_t i = 0; i < list_size; i++)
 			{
 				algorithm::pubkey_t item; string intermediate;
-				if (!reader.read_string(reader.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, item.data, sizeof(item.data)))
+				if (!reader.read_string(reader.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, item.blob, sizeof(item)))
 					return remote_exception("encrypted share public key not valid");
 
 				list.insert(std::make_pair(item, string()));
@@ -3797,7 +3797,7 @@ namespace tangent
 				for (uint16_t i = 0; i < encrypted_values_size; i++)
 				{
 					algorithm::pubkeyhash_t item; string intermediate;
-					if (!message.read_string(message.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, item.data, sizeof(item.data)))
+					if (!message.read_string(message.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, item.blob, sizeof(item)))
 						coreturn remote_exception("invalid encrypted share value participant");
 
 					string encrypted_value;
@@ -4236,7 +4236,7 @@ namespace tangent
 					shares.insert(pair.input);
 
 				algorithm::storage_type<uint8_t, 64> entropy;
-				if (!algorithm::signing::combine_shares_into_secret(shares, entropy.data))
+				if (!algorithm::signing::combine_shares_into_secret(shares, entropy.blob))
 					return remote_exception("entropy recovery failed");
 
 				auto status = dispatcher->apply_secret_entropy(runner_wallet, ref->second->asset, ref->second->manager, ref->second->owner, entropy, std::move(mapped_shares));
@@ -4301,7 +4301,7 @@ namespace tangent
 			if (!secret)
 				return remote_exception(std::move(secret.error().message()));
 
-			auto keypair = algorithm::composition::derive_keypair(chain->composition, secret->entropy.data, secret->entropy.size());
+			auto keypair = algorithm::composition::derive_keypair(chain->composition, secret->entropy.blob, secret->entropy.size());
 			if (!keypair)
 				return remote_exception(std::move(keypair.error().message()));
 
@@ -4318,12 +4318,12 @@ namespace tangent
 				return remote_exception("encrypted group shares count mismatch");
 
 			btree_set<algorithm::share_t> shares;
-			if (!algorithm::signing::split_secret_into_shares(secret->entropy.data, algorithm::signing::recovery_threshold(recovery_group), (uint8_t)recovery_group, shares))
+			if (!algorithm::signing::split_secret_into_shares(secret->entropy.blob, algorithm::signing::recovery_threshold(recovery_group), (uint8_t)recovery_group, shares))
 				return remote_exception("group share derivation failed");
 
 			auto entropy_check = secret->entropy;
-			memset(entropy_check.data, 0, entropy_check.size());
-			if (!algorithm::signing::combine_shares_into_secret(shares, entropy_check.data) || secret->entropy != entropy_check)
+			memset(entropy_check.blob, 0, entropy_check.size());
+			if (!algorithm::signing::combine_shares_into_secret(shares, entropy_check.blob) || secret->entropy != entropy_check)
 				return remote_exception("group share recovery check failed");
 
 			auto share = shares.begin();
@@ -4391,7 +4391,7 @@ namespace tangent
 			if (!secret)
 				return remote_exception(std::move(secret.error().message()));
 
-			auto keypair = algorithm::composition::derive_keypair(input->alg, secret->entropy.data, secret->entropy.size());
+			auto keypair = algorithm::composition::derive_keypair(input->alg, secret->entropy.blob, secret->entropy.size());
 			if (!keypair)
 				return remote_exception(std::move(keypair.error().message()));
 

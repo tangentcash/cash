@@ -12,6 +12,7 @@ extern "C"
 #define SCRIPT_TAG_ARRAY 19192
 #define SCRIPT_TAG_MUTABLE_PROGRAM 19190
 #define SCRIPT_TAG_IMMUTABLE_PROGRAM 19191
+#define SCRIPT_TYPE_PAYABLE "payable"
 #define SCRIPT_TYPE_ADDRESS "address"
 #define SCRIPT_TYPE_STRING "string"
 #define SCRIPT_TYPE_UINT128 "uint128"
@@ -2500,6 +2501,121 @@ namespace tangent
 			return left % right;
 		}
 
+		payable_repr::payable_repr() : total_value(decimal::zero())
+		{
+		}
+		payable_repr::payable_repr(vector<std::pair<algorithm::asset_id, decimal>>&& new_payments) : payments(std::move(new_payments)), total_value(decimal::zero())
+		{
+			hash_set<algorithm::asset_id> duplicates;
+			for (auto& [paying_asset, paying_value] : payments)
+			{
+				if (!algorithm::asset::is_any(paying_asset) || !paying_value.is_positive())
+				{
+					contract::throw_ptr(exception_repr(exception_repr::category::argument(), "payment contains bad asset or value"));
+					return;
+				}
+				else if (duplicates.find(paying_asset) != duplicates.end())
+				{
+					contract::throw_ptr(exception_repr(exception_repr::category::argument(), "duplicate payment"));
+					return;
+				}
+				total_value += paying_value;
+			}
+		}
+		bool payable_repr::plus(const algorithm::asset_id& new_asset, const decimal& new_value)
+		{
+			if (new_value.is_nan())
+				return false;
+
+			for (auto it = payments.begin(); it != payments.end(); it++)
+			{
+				auto& [paying_asset, paying_value] = *it;
+				if (paying_asset != new_asset)
+					continue;
+				else if (new_value.is_negative() && paying_value < -new_value)
+					return false;
+
+				paying_value += new_value;
+				total_value += new_value;
+				if (!paying_value.is_positive())
+					payments.erase(it);
+				return true;
+			}
+
+			if (payments.size() >= 255 || new_value.is_negative())
+				return false;
+
+			payments.push_back(std::make_pair(new_asset, new_value));
+			return true;
+		}
+		bool payable_repr::minus(const algorithm::asset_id& new_asset, const decimal& new_value)
+		{
+			return plus(new_asset, -new_value);
+		}
+		bool payable_repr::minus_total(const decimal& new_value)
+		{
+			if (new_value.is_nan() || new_value.is_negative() || payments.empty() || total_value < new_value)
+				return false;
+			else if (new_value.is_zero())
+				return true;
+
+			auto leftover_value = new_value;
+			auto it = payments.begin();
+			while (it != payments.end() && leftover_value.is_positive())
+			{
+				if (it->second.is_positive())
+				{
+					auto step_value = std::min(it->second, leftover_value);
+					it->second -= step_value;
+					leftover_value -= step_value;
+				}
+				++it;
+			}
+
+			std::erase_if(payments, [](const std::pair<algorithm::asset_id, decimal>& item) { return !item.second.is_positive(); });
+			return true;
+		}
+		bool payable_repr::has(const algorithm::asset_id& new_asset) const
+		{
+			for (auto& [paying_asset, paying_value] : payments)
+			{
+				if (paying_asset == new_asset)
+					return true;
+			}
+			return false;
+		}
+		decimal payable_repr::of(const algorithm::asset_id& new_asset) const
+		{
+			for (auto& [paying_asset, paying_value] : payments)
+			{
+				if (paying_asset == new_asset)
+					return paying_value;
+			}
+			return decimal::zero();
+		}
+		const decimal& payable_repr::total() const
+		{
+			return total_value;
+		}
+		algorithm::asset_id payable_repr::at(uint32_t index) const
+		{
+			if (index >= (uint32_t)payments.size())
+			{
+				contract::throw_ptr(exception_repr(exception_repr::category::argument(), stringify::text("range [%i; %i) is out of bounds (size: %i)", index, index + 1, (int)payments.size())));
+				return 0;
+			}
+
+			return payments[index].first;
+		}
+		uint32_t payable_repr::size() const
+		{
+			return (uint32_t)payments.size();
+		}
+		uint32_t payable_repr::empty() const
+		{
+			return payments.empty() || !total_value.is_positive();
+		}
+
 		address_repr::address_repr(const algorithm::pubkeyhash_t& owner) : hash(owner)
 		{
 		}
@@ -2512,7 +2628,7 @@ namespace tangent
 		{
 			uint8_t owner_raw_data[32]; size_t owner_raw_data_size;
 			owner_data.encode_compact(owner_raw_data, &owner_raw_data_size);
-			memcpy(hash.data, owner_raw_data, std::min(owner_raw_data_size, sizeof(hash.data)));
+			memcpy(hash.blob, owner_raw_data, std::min(owner_raw_data_size, sizeof(hash.blob)));
 		}
 		void address_repr::pay(const uint256_t& asset, const decimal& value)
 		{
@@ -2520,9 +2636,19 @@ namespace tangent
 			if (!p || !value.is_positive())
 				return;
 
-			auto payment = p->executor->apply_payment(asset, p->callable().data, hash.data, value);
+			auto payment = p->executor->apply_payment(asset, p->callable(), hash, value);
 			if (!payment)
 				return contract::throw_ptr(exception_repr(exception_repr::category::execution(), std::string_view(payment.error().message())));
+		}
+		void address_repr::pay_all(const payable_repr& payable)
+		{
+			auto* p = program::fetch_mutable_or_throw();
+			for (auto& [paying_asset, paying_value] : payable.payments)
+			{
+				auto payment = p->executor->apply_payment(paying_asset, p->callable(), hash, paying_value);
+				if (!payment)
+					return contract::throw_ptr(exception_repr(exception_repr::category::execution(), std::string_view(payment.error().message())));
+			}
 		}
 		void address_repr::mint(const string_repr& token, const decimal& supply, const decimal& reserve)
 		{
@@ -2530,7 +2656,7 @@ namespace tangent
 			if (!p || token.empty() || (!supply.is_positive() && !reserve.is_positive()))
 				return;
 
-			auto payment = p->executor->apply_transfer(contract::coin_token(token), hash.data, supply.is_positive() ? supply : decimal::zero(), reserve.is_positive() ? reserve : decimal::zero());
+			auto payment = p->executor->apply_transfer(contract::coin_token(token), hash, supply.is_positive() ? supply : decimal::zero(), reserve.is_positive() ? reserve : decimal::zero());
 			if (!payment)
 				return contract::throw_ptr(exception_repr(exception_repr::category::execution(), std::string_view(payment.error().message())));
 		}
@@ -2540,14 +2666,14 @@ namespace tangent
 			if (!p || token.empty() || (!supply.is_positive() && !reserve.is_positive()))
 				return;
 
-			auto payment = p->executor->apply_transfer(contract::coin_token(token), hash.data, supply.is_positive() ? -supply : decimal::zero(), reserve.is_positive() ? -reserve : decimal::zero());
+			auto payment = p->executor->apply_transfer(contract::coin_token(token), hash, supply.is_positive() ? -supply : decimal::zero(), reserve.is_positive() ? -reserve : decimal::zero());
 			if (!payment)
 				return contract::throw_ptr(exception_repr(exception_repr::category::execution(), std::string_view(payment.error().message())));
 		}
 		decimal address_repr::balance_of(const uint256_t& asset) const
 		{
 			auto* p = program::fetch_immutable_or_throw();
-			return p ? p->executor->get_account_balance(asset, hash.data).or_else(states::account_balance(algorithm::pubkeyhash_t(), asset, nullptr)).get_balance() : decimal::zero();
+			return p ? p->executor->get_account_balance(asset, hash).or_else(states::account_balance(algorithm::pubkeyhash_t(), asset, nullptr)).get_balance() : decimal::zero();
 		}
 		string_repr address_repr::to_string() const
 		{
@@ -2556,7 +2682,7 @@ namespace tangent
 		uint256_t address_repr::to_public_key_hash() const
 		{
 			uint8_t data[32] = { 0 };
-			memcpy(data, hash.data, sizeof(algorithm::pubkeyhash_t));
+			memcpy(data, hash.blob, sizeof(algorithm::pubkeyhash_t));
 
 			uint256_t numeric = 0;
 			numeric.decode(data);
@@ -2569,17 +2695,13 @@ namespace tangent
 		void address_repr::paid_call(asIScriptGeneric* generic)
 		{
 			generic_context inout = generic_context(generic);
-			auto& value = *inout.get_arg_object<decimal>(1);
-			if (!value.is_zero() && !value.is_positive())
-				contract::throw_ptr(exception_repr(exception_repr::category::execution(), "illegal call value paid"));
-			else
-				call(generic, value);
+			call(generic, *inout.get_arg_object<payable_repr>(1), 2);
 		}
 		void address_repr::free_call(asIScriptGeneric* generic)
 		{
-			call(generic, decimal::nan());
+			call(generic, payable_repr(), 1);
 		}
-		void address_repr::call(asIScriptGeneric* generic, const decimal& value)
+		void address_repr::call(asIScriptGeneric* generic, const payable_repr& payable, size_t args_offset)
 		{
 			generic_context inout = generic_context(generic);
 			auto object = (address_repr*)inout.get_object_address();
@@ -2590,7 +2712,7 @@ namespace tangent
 			VI_ASSERT(object != nullptr, "this object should be set");
 
 			format::wo_stream stream;
-			for (size_t i = value.is_nan() ? 1 : 2; i < inout.get_args_count(); i++)
+			for (size_t i = args_offset; i < inout.get_args_count(); i++)
 			{
 				void* input_value = inout.get_arg_address(i);
 				int input_type_id = inout.get_arg_type_id(i);
@@ -2606,7 +2728,7 @@ namespace tangent
 			auto* p = program::fetch_mutable();
 			if (p != nullptr)
 			{
-				auto execution = p->subexecute(object->hash, value.is_nan() ? decimal::zero() : value, ccall::paying_call, function.view(), std::move(function_args), output_value, output_type_id);
+				auto execution = p->subexecute(object->hash, payable, ccall::paying_call, function.view(), std::move(function_args), output_value, output_type_id);
 				if (!execution)
 					return contract::throw_ptr(exception_repr(exception_repr::category::execution(), std::string_view(execution.error().message())));
 			}
@@ -2615,7 +2737,7 @@ namespace tangent
 				auto* immutable_program = program::fetch_immutable_or_throw();
 				if (immutable_program != nullptr)
 				{
-					auto execution = immutable_program->subexecute(object->hash, decimal::zero(), ccall::const_call, function.view(), std::move(function_args), output_value, output_type_id);
+					auto execution = immutable_program->subexecute(object->hash, payable, ccall::const_call, function.view(), std::move(function_args), output_value, output_type_id);
 					if (!execution)
 						return contract::throw_ptr(exception_repr(exception_repr::category::execution(), std::string_view(execution.error().message())));
 				}
@@ -2623,7 +2745,7 @@ namespace tangent
 		}
 		bool address_repr::equals(const address_repr& a, const address_repr& b)
 		{
-			return a.hash.equals(b.hash.data);
+			return a.hash.equals(b.hash);
 		}
 
 		abi_repr::abi_repr(const string_repr& data) : output(data.view())
@@ -2680,7 +2802,7 @@ namespace tangent
 				return false;
 
 			algorithm::pubkeyhash_t blob;
-			if (!algorithm::encoding::decode_bytes(result.view(), blob.data, sizeof(blob.data)))
+			if (!algorithm::encoding::decode_bytes(result.view(), blob.blob, sizeof(blob)))
 				return false;
 
 			value = address_repr(blob);
@@ -3047,16 +3169,16 @@ namespace tangent
 				switch (mode)
 				{
 					case cquery::column:
-						results = p->executor->get_account_multiforms_by_column(p->callable().data, subject.data, (size_t)offset, count);
+						results = p->executor->get_account_multiforms_by_column(p->callable(), subject.data, (size_t)offset, count);
 						break;
 					case cquery::column_filter:
-						results = p->executor->get_account_multiforms_by_column_filter(p->callable().data, subject.data, comparator, value, order, (size_t)offset, count);
+						results = p->executor->get_account_multiforms_by_column_filter(p->callable(), subject.data, comparator, value, order, (size_t)offset, count);
 						break;
 					case cquery::row:
-						results = p->executor->get_account_multiforms_by_row(p->callable().data, subject.data, (size_t)offset, count);
+						results = p->executor->get_account_multiforms_by_row(p->callable(), subject.data, (size_t)offset, count);
 						break;
 					case cquery::row_filter:
-						results = p->executor->get_account_multiforms_by_row_filter(p->callable().data, subject.data, comparator, value, order, (size_t)offset, count);
+						results = p->executor->get_account_multiforms_by_row_filter(p->callable(), subject.data, comparator, value, order, (size_t)offset, count);
 						break;
 					default:
 						break;
@@ -3379,12 +3501,12 @@ namespace tangent
 
 			if (!object_value || object_type_id == (int)type_id::void_t)
 			{
-				auto requires_erase = p->executor->get_account_uniform(p->callable().data, index.data);
+				auto requires_erase = p->executor->get_account_uniform(p->callable(), index.data);
 				if (!requires_erase)
 					return;
 			}
 
-			auto data = p->executor->apply_account_uniform(p->callable().data, index.data, stream.data);
+			auto data = p->executor->apply_account_uniform(p->callable(), index.data, stream.data);
 			if (!data)
 				return contract::throw_ptr(exception_repr(exception_repr::category::storage(), std::string_view(data.error().message())));
 		}
@@ -3409,7 +3531,7 @@ namespace tangent
 				return false;
 			}
 
-			auto data = p->executor->get_account_uniform(p->callable().data, index.data);
+			auto data = p->executor->get_account_uniform(p->callable(), index.data);
 			if (!data)
 			{
 				if (throw_on_error)
@@ -3457,7 +3579,7 @@ namespace tangent
 				return false;
 			}
 
-			auto data = p->executor->get_account_uniform(p->callable().data, index.data);
+			auto data = p->executor->get_account_uniform(p->callable(), index.data);
 			return data && !data->data.empty();
 		}
 		bool contract::uniform_into(const void* index_value, int index_type_id, void* object_value, int object_type_id)
@@ -3506,12 +3628,12 @@ namespace tangent
 
 			if (!object_value || object_type_id == (int)type_id::void_t)
 			{
-				auto requires_erase = p->executor->get_account_multiform(p->callable().data, column.data, row.data);
+				auto requires_erase = p->executor->get_account_multiform(p->callable(), column.data, row.data);
 				if (!requires_erase)
 					return;
 			}
 
-			auto data = p->executor->apply_account_multiform(p->callable().data, column.data, row.data, stream.data, filter_value);
+			auto data = p->executor->apply_account_multiform(p->callable(), column.data, row.data, stream.data, filter_value);
 			if (!data)
 				return contract::throw_ptr(exception_repr(exception_repr::category::storage(), std::string_view(data.error().message())));
 
@@ -3555,7 +3677,7 @@ namespace tangent
 				return false;
 			}
 
-			auto data = p->executor->get_account_multiform(p->callable().data, column.data, row.data);
+			auto data = p->executor->get_account_multiform(p->callable(), column.data, row.data);
 			if (!data)
 			{
 				if (throw_on_error)
@@ -3630,7 +3752,7 @@ namespace tangent
 				return false;
 			}
 
-			auto data = p->executor->get_account_multiform(p->callable().data, column.data, row.data);
+			auto data = p->executor->get_account_multiform(p->callable(), column.data, row.data);
 			return data && !data->data.empty();
 		}
 		void contract::multiform_get(asIScriptGeneric* generic)
@@ -3855,14 +3977,14 @@ namespace tangent
 			auto* p = program::fetch_immutable_or_throw();
 			return p ? p->executor->block->number : 0;
 		}
-		decimal contract::tx_value()
+		payable_repr contract::tx_value()
 		{
 			auto* p = program::fetch_immutable_or_throw();
-			return p ? p->payable() : decimal::nan();
+			return p ? p->payable() : payable_repr();
 		}
 		bool contract::tx_paid()
 		{
-			return tx_value().is_positive();
+			return !tx_value().empty();
 		}
 		address_repr contract::tx_from()
 		{
@@ -4274,6 +4396,25 @@ namespace tangent
 				}
 			}
 		}
+		void contract::math_abs(asIScriptGeneric* generic)
+		{
+			generic_context inout = generic_context(generic);
+			int type_id = inout.get_return_addressable_type_id();
+			if (mpf_value::requires_fixed_point(type_id))
+			{
+				mpf_value left = mpf_value(inout.get_arg_type_id(0), inout.get_arg_address(0));
+				mpf_abs(left.target, left.target);
+				if (!left.into(inout))
+					return contract::throw_ptr(exception_repr(exception_repr::category::execution(), "template type must be fixed point"));
+			}
+			else
+			{
+				mpz_value left = mpz_value(inout.get_arg_type_id(0), inout.get_arg_address(0));
+				mpz_abs(left.target, left.target);
+				if (!left.into(inout))
+					return contract::throw_ptr(exception_repr(exception_repr::category::execution(), "template type must be integer"));
+			}
+		}
 		void contract::math_min(asIScriptGeneric* generic)
 		{
 			generic_context inout = generic_context(generic);
@@ -4515,6 +4656,16 @@ namespace tangent
 						stream->write_string(((address_repr*)value)->hash.optimized_view());
 						return expectation::met;
 					}
+					else if (name == SCRIPT_TYPE_PAYABLE)
+					{
+						stream->write_integer((uint8_t)((payable_repr*)value)->payments.size());
+						for (auto& [paying_asset, paying_value] : ((payable_repr*)value)->payments)
+						{
+							stream->write_integer(paying_asset);
+							stream->write_decimal(paying_value);
+						}
+						return expectation::met;
+					}
 					else if (name == SCRIPT_TYPE_STRING)
 					{
 						stream->write_string(((string_repr*)value)->view());
@@ -4623,6 +4774,17 @@ namespace tangent
 						stream = algorithm::signing::serialize_address(((address_repr*)value)->hash);
 						return expectation::met;
 					}
+					else if (name == SCRIPT_TYPE_PAYABLE)
+					{
+						stream = format::tree::list();
+						for (auto& [paying_asset, paying_value] : ((payable_repr*)value)->payments)
+						{
+							auto paying = stream.push(format::tree::map());
+							paying->set("asset", algorithm::asset::serialize(paying_asset));
+							paying->set("value", format::variable(paying_value));
+						}
+						return expectation::met;
+					}
 					else if (name == SCRIPT_TYPE_STRING)
 					{
 						stream = format::tree(format::variable(((string_repr*)value)->view()));
@@ -4670,9 +4832,12 @@ namespace tangent
 							std::string_view name = object.get_property_name(i);
 							void* address = object.get_address_of_property(i);
 							int type_id = object.get_property_type_id(i);
-							auto status = store(*stream.set(name, format::tree()), address, type_id);
+							auto child = format::tree();
+							auto status = store(child, address, type_id);
 							if (!status)
 								return status;
+
+							stream.set(name, std::move(child));
 						}
 						return expectation::met;
 					}
@@ -4754,6 +4919,34 @@ namespace tangent
 						else
 							((address_repr*)value)->hash = algorithm::pubkeyhash_t(data);
 
+						unique.address = nullptr;
+						return expectation::met;
+					}
+					else if (name == SCRIPT_TYPE_PAYABLE)
+					{
+						uint8_t payments_size;
+						if (!stream.read_integer(stream.read_type(), &payments_size))
+							return layer_exception("load failed for payable type");
+
+						vector<std::pair<algorithm::asset_id, decimal>> payments;
+						payments.reserve((size_t)payments_size);
+						for (uint8_t i = 0; i < payments_size; i++)
+						{
+							algorithm::asset_id asset;
+							if (!stream.read_integer(stream.read_type(), &asset))
+								return layer_exception("load failed for payable type");
+
+							decimal value;
+							if (!stream.read_decimal(stream.read_type(), &value))
+								return layer_exception("load failed for payable type");
+
+							if (!algorithm::asset::is_any(asset) || value.is_nan() || value.is_negative())
+								return layer_exception("load failed for payable type");
+
+							payments.push_back(std::make_pair(std::move(asset), std::move(value)));
+						}
+
+						*(payable_repr*)value = payable_repr(std::move(payments));
 						unique.address = nullptr;
 						return expectation::met;
 					}
@@ -4910,6 +5103,24 @@ namespace tangent
 						unique.address = nullptr;
 						return expectation::met;
 					}
+					else if (name == SCRIPT_TYPE_PAYABLE)
+					{
+						vector<std::pair<algorithm::asset_id, decimal>> payments;
+						payments.reserve(stream.childs().size());
+						for (auto& payment : stream.childs())
+						{
+							algorithm::asset_id asset = payment.child_var("asset.id").as_uint256();;
+							decimal value = payment.child_var("value").as_decimal();
+							if (!algorithm::asset::is_any(asset) || value.is_nan() || value.is_negative())
+								return layer_exception("load failed for payable type");
+
+							payments.push_back(std::make_pair(std::move(asset), std::move(value)));
+						}
+
+						*(payable_repr*)value = payable_repr(std::move(payments));
+						unique.address = nullptr;
+						return expectation::met;
+					}
 					else if (name == SCRIPT_TYPE_STRING)
 					{
 						((string_repr*)value)->assign_view(stream.value.as_blob());
@@ -5055,6 +5266,7 @@ namespace tangent
 			auto uint128_type = vm->set_struct_trivial<uint128_t>("uint128", (size_t)object_behaviours::app_class_allints);
 			auto uint256_type = vm->set_struct_trivial<uint256_t>("uint256", (size_t)object_behaviours::app_class_allints);
 			auto real320_type = vm->set_struct_trivial<decimal>("real320");
+			auto payable_type = vm->set_struct_trivial<payable_repr>("payable");
 			auto address_type = vm->set_struct_trivial<address_repr>("address");
 			auto abi_type = vm->set_struct_trivial<abi_repr>("abi");
 			auto varying_type = vm->set_template_class_address("varying<class t>", "varying<t>", sizeof(varying_repr), (size_t)object_behaviours::pattern | (size_t)object_behaviours::value | bridge::type_traits_of<varying_repr>());
@@ -5286,6 +5498,18 @@ namespace tangent
 			real320_type->set_method_static("real320 nan()", &decimal::nan);
 			real320_type->set_method_static("real320 zero()", &decimal::zero);
 			real320_type->set_method_static("real320 from(const string&in, uint8)", &real320_repr::from);
+			payable_type->set_constructor<payable_repr>("void f()");
+			payable_type->set_constructor<payable_repr, const payable_repr&>("void f(const payable&in)");
+			payable_type->set_method("bool plus(const uint256&in, const real320&in)", &payable_repr::plus);
+			payable_type->set_method("bool minus(const uint256&in, const real320&in)", &payable_repr::minus);
+			payable_type->set_method("bool minus(const real320&in)", &payable_repr::minus_total);
+			payable_type->set_method("bool has(const uint256&in) const", &payable_repr::has);
+			payable_type->set_method("real320 of(const uint256&in) const", &payable_repr::of);
+			payable_type->set_method("const real320& total() const", &payable_repr::total);
+			payable_type->set_method("uint256 opIndex(usize)", &payable_repr::at);
+			payable_type->set_method("uint256 opIndex(usize) const", &payable_repr::at);
+			payable_type->set_method("bool empty() const", &payable_repr::empty);
+			payable_type->set_method("usize size() const", &payable_repr::size);
 			address_type->set_constructor<address_repr>("void f()");
 			address_type->set_constructor<address_repr, const string_repr&>("void f(const string&in)");
 			address_type->set_constructor<address_repr, const uint256_t&>("void f(const uint256&in)");
@@ -5293,11 +5517,12 @@ namespace tangent
 			address_type->set_method("uint256 u256() const", &address_repr::to_public_key_hash);
 			address_type->set_method("bool empty() const", &address_repr::empty);
 			address_type->set_method("void pay(const uint256&in, const real320&in) const", &address_repr::pay);
+			address_type->set_method("void pay(const payable&in) const", &address_repr::pay_all);
 			address_type->set_method("void mint(const string&in, const real320&in, const real320&in = real320::zero()) const", &address_repr::mint);
 			address_type->set_method("void burn(const string&in, const real320&in, const real320&in = real320::zero()) const", &address_repr::burn);
 			address_type->set_method("real320 balance_of(const uint256&in) const", &address_repr::balance_of);
 			address_type->set_method_extern("t call<t>(const string&in, const ?&in ...) const", &address_repr::free_call, convention::generic_call);
-			address_type->set_method_extern("t paid_call<t>(const string&in, const real320&in, const ?&in ...) const", &address_repr::paid_call, convention::generic_call);
+			address_type->set_method_extern("t paid_call<t>(const string&in, const payable&in, const ?&in ...) const", &address_repr::paid_call, convention::generic_call);
 			address_type->set_operator_extern(operators::equals_t, (uint32_t)position::constant, "bool", "const address&in", &address_repr::equals);
 			abi_type->set_constructor<abi_repr>("void f()");
 			abi_type->set_constructor<abi_repr, const string_repr&>("void f(const string&in)");
@@ -5412,7 +5637,7 @@ namespace tangent
 			vm->set_function("bool paid()", &contract::tx_paid);
 			vm->set_function("address from()", &contract::tx_from);
 			vm->set_function("address to()", &contract::tx_to);
-			vm->set_function("real320 value()", &contract::tx_value);
+			vm->set_function("payable value()", &contract::tx_value);
 			vm->set_function("string blockchain()", &contract::tx_blockchain);
 			vm->set_function("string token()", &contract::tx_token);
 			vm->set_function("string contract()", &contract::tx_contract);
@@ -5456,6 +5681,7 @@ namespace tangent
 			vm->begin_namespace("math");
 			vm->set_function("t min_value<t>()", &contract::math_min_value, convention::generic_call);
 			vm->set_function("t max_value<t>()", &contract::math_max_value, convention::generic_call);
+			vm->set_function("t abs<t>(const t&in)", &contract::math_abs, convention::generic_call);
 			vm->set_function("t min<t>(const t&in, const t&in)", &contract::math_min, convention::generic_call);
 			vm->set_function("t max<t>(const t&in, const t&in)", &contract::math_max, convention::generic_call);
 			vm->set_function("t clamp<t>(const t&in, const t&in, const t&in)", &contract::math_clamp, convention::generic_call);
@@ -5855,17 +6081,18 @@ namespace tangent
 				vm->return_context(coroutine);
 			return resolver;
 		}
-		expects_lr<void> program::subexecute(const algorithm::pubkeyhash_t& target, const decimal& value, ccall mutability, const std::string_view& entrypoint, format::variables&& args, void* output_value, int output_type_id) const
+		expects_lr<void> program::subexecute(const algorithm::pubkeyhash_t& target, const payable_repr& payable, ccall mutability, const std::string_view& entrypoint, format::variables&& args, void* output_value, int output_type_id) const
 		{
 			if (entrypoint.empty())
 				return layer_exception(stringify::text("illegal subcall to %s program: illegal operation", address_repr(target).to_string().data()));
 
-			auto link = executor->get_account_program(target.data);
+			auto link = executor->get_account_program(target);
 			if (!link)
 				return layer_exception(stringify::text("illegal subcall to %s program on function \"%.*s\": illegal operation", address_repr(target).to_string().data(), (int)entrypoint.size(), entrypoint.data()));
 
 			auto transaction = transactions::call();
-			transaction.program_call(target, value, entrypoint, std::move(args));
+			transaction.call_to(target, entrypoint, std::move(args));
+			transaction.pays = payable.payments;
 			transaction.asset = executor->transaction->asset;
 			transaction.gas_price = executor->transaction->gas_price;
 			transaction.gas_limit = executor->get_gas_left();
@@ -6041,15 +6268,12 @@ namespace tangent
 
 			return executor->receipt.from;
 		}
-		decimal program::payable() const
+		payable_repr program::payable() const
 		{
-			uint32_t type = executor->transaction->as_type();
-			if (type == transactions::call::as_instance_type())
-				return ((transactions::call*)executor->transaction)->value;
-			else if (type == transactions::deploy::as_instance_type())
-				return decimal::zero();
+			if (executor->transaction->as_type() == transactions::call::as_instance_type())
+				return payable_repr(vector<std::pair<algorithm::asset_id, decimal>>(((transactions::call*)executor->transaction)->pays));
 
-			return decimal::nan();
+			return payable_repr();
 		}
 		function program::deploy_function() const
 		{

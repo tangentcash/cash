@@ -853,7 +853,7 @@ namespace tangent
 
 				auto owner = algorithm::pubkeyhash_t(row["owner"].get().get_blob());
 				auto submanager = algorithm::pubkeyhash_t(row["manager"].get().get_blob());
-				auto account = executor.get_bridge_account(asset, !manager.empty() ? manager : submanager.data, owner.data);
+				auto account = executor.get_bridge_account(asset, !manager.empty() ? manager : submanager, owner);
 				if (account)
 					result.push_back(std::move(*account));
 			}

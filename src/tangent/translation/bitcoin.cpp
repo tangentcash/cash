@@ -678,7 +678,7 @@ namespace tangent
 							pubkey.compressed = signing_public_key->size() == BTC_ECKEY_COMPRESSED_LENGTH;
 
 							compositions::secp256k1_scalar_t tweak;
-							btc_key_get_taproot_tweak(&pubkey, nullptr, tweak.data);
+							btc_key_get_taproot_tweak(&pubkey, nullptr, tweak.blob);
 
 							auto public_key = algorithm::composition::to_cstorage<algorithm::composition::cpubkey_t>(*signing_public_key);
 							auto xonly_public_key_and_tweak = compositions::secp256k1_schnorr_compositor::to_tweaked_public_key(public_key, tweak);

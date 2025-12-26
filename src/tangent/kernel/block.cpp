@@ -3029,15 +3029,15 @@ namespace tangent
 				return false;
 
 			string manager_assembly;
-			if (!stream.read_string(stream.read_type(), &manager_assembly) || !algorithm::encoding::decode_bytes(manager_assembly, manager.data, sizeof(manager.data)))
+			if (!stream.read_string(stream.read_type(), &manager_assembly) || !algorithm::encoding::decode_bytes(manager_assembly, manager.blob, sizeof(manager)))
 				return false;
 
 			string owner_assembly;
-			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_bytes(owner_assembly, owner.data, sizeof(owner.data)))
+			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_bytes(owner_assembly, owner.blob, sizeof(owner)))
 				return false;
 
 			string entropy_assembly;
-			if (!stream.read_string(stream.read_type(), &entropy_assembly) || !algorithm::encoding::decode_bytes(entropy_assembly, entropy.data, sizeof(entropy.data)))
+			if (!stream.read_string(stream.read_type(), &entropy_assembly) || !algorithm::encoding::decode_bytes(entropy_assembly, entropy.blob, sizeof(entropy)))
 				return false;
 
 			uint8_t shares_size;
@@ -3048,14 +3048,14 @@ namespace tangent
 			for (uint8_t i = 0; i < shares_size; i++)
 			{
 				string participant_assembly; algorithm::pubkeyhash_t participant;
-				if (!stream.read_string(stream.read_type(), &participant_assembly) || !algorithm::encoding::decode_bytes(participant_assembly, participant.data, sizeof(participant.data)))
+				if (!stream.read_string(stream.read_type(), &participant_assembly) || !algorithm::encoding::decode_bytes(participant_assembly, participant.blob, sizeof(participant)))
 					return false;
 
 				auto& pair = shares[participant]; string share_assembly;
-				if (!stream.read_string(stream.read_type(), &share_assembly) || !algorithm::encoding::decode_bytes(share_assembly, pair.input.data, sizeof(pair.input.data)))
+				if (!stream.read_string(stream.read_type(), &share_assembly) || !algorithm::encoding::decode_bytes(share_assembly, pair.input.blob, sizeof(pair.input)))
 					return false;
 
-				if (!stream.read_string(stream.read_type(), &share_assembly) || !algorithm::encoding::decode_bytes(share_assembly, pair.output.data, sizeof(pair.output.data)))
+				if (!stream.read_string(stream.read_type(), &share_assembly) || !algorithm::encoding::decode_bytes(share_assembly, pair.output.blob, sizeof(pair.output)))
 					return false;
 			}
 			return true;
@@ -3117,7 +3117,7 @@ namespace tangent
 			for (uint16_t i = 0; i < encrypted_shares_size; i++)
 			{
 				algorithm::pubkeyhash_t item; string intermediate;
-				if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, item.data, sizeof(item.data)))
+				if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, item.blob, sizeof(item)))
 					return false;
 
 				string encrypted_share;
@@ -3147,7 +3147,7 @@ namespace tangent
 				return false;
 
 			string public_key_assembly;
-			if (!stream.read_string(stream.read_type(), &public_key_assembly) || !algorithm::encoding::decode_bytes(public_key_assembly, public_key.data, sizeof(public_key.data)))
+			if (!stream.read_string(stream.read_type(), &public_key_assembly) || !algorithm::encoding::decode_bytes(public_key_assembly, public_key.blob, sizeof(public_key)))
 				return false;
 
 			uint16_t encrypted_shares_size;
@@ -3169,7 +3169,7 @@ namespace tangent
 				for (uint16_t i = 0; i < encrypted_values_size; i++)
 				{
 					algorithm::pubkeyhash_t item; string intermediate;
-					if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, item.data, sizeof(item.data)))
+					if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, item.blob, sizeof(item)))
 						return false;
 
 					string encrypted_value;
@@ -3188,7 +3188,7 @@ namespace tangent
 			for (uint16_t i = 0; i < participants_size; i++)
 			{
 				algorithm::pubkeyhash_t item; string intermediate;
-				if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, item.data, sizeof(item.data)))
+				if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, item.blob, sizeof(item)))
 					return false;
 
 				participants.insert(item);
@@ -3221,7 +3221,7 @@ namespace tangent
 		bool dispatcher_context::entropy_recovery_state::load_message(format::ro_stream& stream)
 		{
 			string proof_assembly;
-			if (!stream.read_string(stream.read_type(), &proof_assembly) || !algorithm::encoding::decode_bytes(proof_assembly, proof.data, sizeof(proof.data)))
+			if (!stream.read_string(stream.read_type(), &proof_assembly) || !algorithm::encoding::decode_bytes(proof_assembly, proof.blob, sizeof(proof)))
 				return false;
 
 			uint16_t encrypted_shares_size;
@@ -3243,7 +3243,7 @@ namespace tangent
 				for (uint16_t i = 0; i < encrypted_values_size; i++)
 				{
 					algorithm::pubkeyhash_t item; string intermediate;
-					if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, item.data, sizeof(item.data)))
+					if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, item.blob, sizeof(item)))
 						return false;
 
 					string encrypted_value;
@@ -3338,7 +3338,7 @@ namespace tangent
 			for (uint16_t i = 0; i < participants_size; i++)
 			{
 				algorithm::pubkeyhash_t item; string intermediate;
-				if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, item.data, sizeof(item.data)))
+				if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, item.blob, sizeof(item)))
 					return false;
 
 				possible_participants.insert(item);
@@ -3352,7 +3352,7 @@ namespace tangent
 			for (uint16_t i = 0; i < shares_size; i++)
 			{
 				algorithm::pubkey_t public_key; string intermediate;
-				if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, public_key.data, sizeof(public_key.data)))
+				if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, public_key.blob, sizeof(public_key)))
 					return false;
 
 				uint8_t values_size;
@@ -3363,7 +3363,7 @@ namespace tangent
 				for (uint16_t j = 0; j < values_size; j++)
 				{
 					algorithm::pubkeyhash_t participant;
-					if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, participant.data, sizeof(participant.data)))
+					if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, participant.blob, sizeof(participant)))
 						return false;
 
 					string encrypted_share;
@@ -3448,7 +3448,7 @@ namespace tangent
 			for (uint16_t i = 0; i < participants_size; i++)
 			{
 				algorithm::pubkeyhash_t item; string intermediate;
-				if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, item.data, sizeof(item.data)))
+				if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, item.blob, sizeof(item)))
 					return false;
 
 				possible_participants.insert(item);
@@ -3544,7 +3544,7 @@ namespace tangent
 			entropy_source.write_string(algorithm::hashing::hash512((uint8_t*)entropy_source.data.data(), entropy_source.data.size()));
 
 			algorithm::storage_type<uint8_t, 64> entropy;
-			if (!algorithm::signing::derive_seed_from_password((uint8_t*)entropy_source.data.data(), entropy_source.data.size(), entropy.data, entropy.size()))
+			if (!algorithm::signing::derive_seed_from_password((uint8_t*)entropy_source.data.data(), entropy_source.data.size(), entropy.blob, entropy.size()))
 				return layer_exception("secret entropy source generation failed");
 
 			return apply_secret_entropy(runner_wallet, asset, manager, owner, entropy, { });
@@ -3669,14 +3669,19 @@ namespace tangent
 			abstract_receipt.transaction_hash = abstract_transaction->as_hash();
 			abstract_receipt.block_number = abstract_block->number;
 
-			state = state_variables();
+			state.public_key_hash = algorithm::pubkeyhash_t();
+			state.secret_key = algorithm::seckey_t();
+			state.commitment_gas_limit = 0;
+			state.transaction_gas_limit = 0;
+			state.executor = executor_context(&state.changelog);
+			state.origin = state_origin::chain;
 			state.executor = executor_context(&state.changelog, this, abstract_block, abstract_transaction, std::move(abstract_receipt));
 			transactions = transaction_queue();
 			tip = optional::none;
 			producers.clear();
 			nonces.clear();
-			memset(state.public_key_hash.data, 0xFF, sizeof(algorithm::pubkeyhash_t));
-			memset(state.secret_key.data, 0xFF, sizeof(algorithm::seckey_t));
+			memset(state.public_key_hash.blob, 0xFF, sizeof(algorithm::pubkeyhash_t));
+			memset(state.secret_key.blob, 0xFF, sizeof(algorithm::seckey_t));
 		}
 		option<uint64_t> solver_context::apply_validator_state(const std::function<ledger::wallet*(size_t)>& try_producer, option<const block_header*>&& parent_block)
 		{
