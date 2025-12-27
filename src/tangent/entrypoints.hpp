@@ -257,9 +257,9 @@ namespace tangent
 					script::debugger_context* debugger = new script::debugger_context();
 					debugger->add_to_string_callback("string", [](string& indent, int depth, void* object, int type_id)
 					{
-						string& source = *(string*)object;
+						script::string_repr& source = *(script::string_repr*)object;
 						string_stream stream;
-						stream << "\"" << source << "\"";
+						stream << "\"" << source.view() << "\"";
 						stream << " (string, " << source.size() << " chars)";
 						return stream.str();
 					});
@@ -318,6 +318,25 @@ namespace tangent
 
 						return stream.str();
 					});
+					debugger->add_to_string_callback("payable", [](string& indent, int depth, void* object, int type_id)
+					{
+						auto& source = *(script::payable_repr*)object;
+						string_stream stream;
+						stream << "0x" << object << " (payable, " << source.payments.size() << " payments)";
+						if (!depth || source.payments.empty())
+							return stream.str();
+
+						stream << " [";
+						for (size_t i = 0; i < source.payments.size(); i++)
+						{
+							auto& [paying_asset, paying_value] = source.payments[i];
+							stream << paying_value.to_string() << " " << algorithm::asset::name_of(paying_asset);
+							if (i + 1 < source.payments.size())
+								stream << ", ";
+						}
+						stream << "]";
+						return stream.str();
+					});
 					debugger->add_to_string_callback("address", [](string& indent, int depth, void* object, int type_id)
 					{
 						auto& source = *(script::address_repr*)object;
@@ -335,7 +354,14 @@ namespace tangent
 					});
 					if (!has_any)
 					{
-						script::bindings::registry::import_any(vm);
+						auto vany = vm->set_class<script::bindings::any>("any", true);
+						vany->set_constructor_extern("any@ f()", &script::bindings::any::factory1);
+						vany->set_constructor_extern("any@ f(?&in) explicit", &script::bindings::any::factory2);
+						vany->set_enum_refs(&script::bindings::any::enum_references);
+						vany->set_release_refs(&script::bindings::any::release_references);
+						vany->set_method_extern("any &opAssign(any&in)", &script::bindings::any::assignment);
+						vany->set_method("void store(?&in)", &script::bindings::any::store);
+						vany->set_method("bool retrieve(?&out)", &script::bindings::any::retrieve);
 						has_any = true;
 					}
 					debugger->set_interrupt_callback([](bool is_interrupted) { console::get()->write_line(is_interrupted ? "program execution interrupted" : "resuming program execution"); });
@@ -376,6 +402,12 @@ namespace tangent
 				auto* vm = coroutine->get_vm();
 				if (vm->has_debugger())
 					vm->get_debugger()->exception_callback(coroutine->get_context());
+			}
+			void dispatch_coroutine(script::immediate_context* coroutine) override
+			{
+				auto* vm = coroutine->get_vm();
+				if (vm->has_debugger())
+					vm->get_debugger()->line_callback(coroutine->get_context());
 			}
 			void reset()
 			{
