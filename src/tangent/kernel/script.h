@@ -463,6 +463,7 @@ namespace tangent
 			payable_repr(vector<std::pair<algorithm::asset_id, decimal>>&& new_payments);
 			payable_repr(const payable_repr&) = default;
 			payable_repr& operator=(const payable_repr&) = default;
+			void recalculate();
 			bool plus(const algorithm::asset_id& new_asset, const decimal& new_value);
 			bool minus(const algorithm::asset_id& new_asset, const decimal& new_value);
 			bool minus_total(const decimal& new_value);

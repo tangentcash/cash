@@ -2506,6 +2506,10 @@ namespace tangent
 		}
 		payable_repr::payable_repr(vector<std::pair<algorithm::asset_id, decimal>>&& new_payments) : payments(std::move(new_payments)), total_value(decimal::zero())
 		{
+			recalculate();
+		}
+		void payable_repr::recalculate()
+		{
 			hash_set<algorithm::asset_id> duplicates;
 			for (auto& [paying_asset, paying_value] : payments)
 			{
@@ -4928,8 +4932,8 @@ namespace tangent
 						if (!stream.read_integer(stream.read_type(), &payments_size))
 							return layer_exception("load failed for payable type");
 
-						vector<std::pair<algorithm::asset_id, decimal>> payments;
-						payments.reserve((size_t)payments_size);
+						auto* payable = new (value) payable_repr();
+						payable->payments.reserve((size_t)payments_size);
 						for (uint8_t i = 0; i < payments_size; i++)
 						{
 							algorithm::asset_id asset;
@@ -4943,10 +4947,10 @@ namespace tangent
 							if (!algorithm::asset::is_any(asset) || value.is_nan() || value.is_negative())
 								return layer_exception("load failed for payable type");
 
-							payments.push_back(std::make_pair(std::move(asset), std::move(value)));
+							payable->payments.push_back(std::make_pair(std::move(asset), std::move(value)));
 						}
 
-						*(payable_repr*)value = payable_repr(std::move(payments));
+						payable->recalculate();
 						unique.address = nullptr;
 						return expectation::met;
 					}
@@ -4956,13 +4960,14 @@ namespace tangent
 						if (!stream.read_string(stream.read_type(), &data))
 							return layer_exception("load failed for string type");
 
-						((string_repr*)value)->assign_view(data);
+						new (value) string_repr(data);
 						unique.address = nullptr;
 						return expectation::met;
 					}
 					else if (name == SCRIPT_TYPE_UINT128)
 					{
-						if (!stream.read_integer(stream.read_type(), (uint128_t*)value))
+						auto* data = new (value) uint128_t();
+						if (!stream.read_integer(stream.read_type(), data))
 							return layer_exception("load failed for uint128 type");
 
 						unique.address = nullptr;
@@ -4970,7 +4975,8 @@ namespace tangent
 					}
 					else if (name == SCRIPT_TYPE_UINT256)
 					{
-						if (!stream.read_integer(stream.read_type(), (uint256_t*)value))
+						auto* data = new (value) uint256_t();
+						if (!stream.read_integer(stream.read_type(), data))
 							return layer_exception("load failed for uint256 type");
 
 						unique.address = nullptr;
@@ -4978,7 +4984,8 @@ namespace tangent
 					}
 					else if (name == SCRIPT_TYPE_REAL320)
 					{
-						if (!stream.read_decimal_or_integer(stream.read_type(), (decimal*)value))
+						auto* data = new (value) decimal();
+						if (!stream.read_decimal_or_integer(stream.read_type(), data))
 							return layer_exception("load failed for decimal type");
 
 						unique.address = nullptr;
@@ -5105,8 +5112,8 @@ namespace tangent
 					}
 					else if (name == SCRIPT_TYPE_PAYABLE)
 					{
-						vector<std::pair<algorithm::asset_id, decimal>> payments;
-						payments.reserve(stream.childs().size());
+						auto* payable = new (value) payable_repr();
+						payable->payments.reserve(stream.childs().size());
 						for (auto& payment : stream.childs())
 						{
 							algorithm::asset_id asset = payment.child_var("asset.id").as_uint256();;
@@ -5114,34 +5121,34 @@ namespace tangent
 							if (!algorithm::asset::is_any(asset) || value.is_nan() || value.is_negative())
 								return layer_exception("load failed for payable type");
 
-							payments.push_back(std::make_pair(std::move(asset), std::move(value)));
+							payable->payments.push_back(std::make_pair(std::move(asset), std::move(value)));
 						}
 
-						*(payable_repr*)value = payable_repr(std::move(payments));
+						payable->recalculate();
 						unique.address = nullptr;
 						return expectation::met;
 					}
 					else if (name == SCRIPT_TYPE_STRING)
 					{
-						((string_repr*)value)->assign_view(stream.value.as_blob());
+						new (value) string_repr(stream.value.as_blob());
 						unique.address = nullptr;
 						return expectation::met;
 					}
 					else if (name == SCRIPT_TYPE_UINT128)
 					{
-						*(uint128_t*)value = stream.value.as_uint128();
+						new (value) uint128_t(stream.value.as_uint128());
 						unique.address = nullptr;
 						return expectation::met;
 					}
 					else if (name == SCRIPT_TYPE_UINT256)
 					{
-						*(uint256_t*)value = stream.value.as_uint256();
+						new (value) uint256_t(stream.value.as_uint256());
 						unique.address = nullptr;
 						return expectation::met;
 					}
 					else if (name == SCRIPT_TYPE_REAL320)
 					{
-						*(decimal*)value = stream.value.as_decimal();
+						new (value) decimal(stream.value.as_decimal());
 						unique.address = nullptr;
 						return expectation::met;
 					}
