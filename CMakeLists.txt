@@ -50,6 +50,9 @@ set_target_properties(tangentcash PROPERTIES
 if (MSVC)
     set(CMAKE_EXE_LINKER_FLAGS "/ENTRY:mainCRTStartup /SUBSYSTEM:CONSOLE")
 endif()
+if (TAN_TEST)
+    target_compile_definitions(tangentcash PUBLIC -DTAN_TEST)
+endif()
 
 target_precompile_headers(tangentcash PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${CMAKE_CURRENT_LIST_DIR}/src/tangent/kernel/chain.h>)
 if (MSVC)

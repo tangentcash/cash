@@ -1119,7 +1119,7 @@ namespace tangent
 				{ "TRX", chain<translations::tron>(this) },
 				{ "XRP", chain<translations::ripple>(this) },
 				{ "XLM", chain<translations::stellar>(this) },
-#ifndef NDEBUG
+#ifdef TAN_TEST
 				{ "BCH", chain<translations::bitcoin_cash>(this) },
 				{ "BTG", chain<translations::bitcoin_gold>(this) },
 				{ "BSV", chain<translations::bitcoin_sv>(this) },
