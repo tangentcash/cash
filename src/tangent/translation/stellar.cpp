@@ -270,8 +270,7 @@ namespace tangent
 				netdata.tokenization = token_policy::none;
 				netdata.sync_latency = 0;
 				netdata.divisibility = algorithm::arithmetic::fixed(10000000);
-				netdata.supports_bulk_transfer = true;
-				netdata.requires_transaction_expiration = false;
+				netdata.transaction_expires = false;
 			}
 			expects_promise_rt<stellar::asset_info> stellar::get_asset_info(const std::string_view& address, const std::string_view& code)
 			{

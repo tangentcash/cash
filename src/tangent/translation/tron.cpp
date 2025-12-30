@@ -177,8 +177,7 @@ namespace tangent
 				netdata.tokenization = token_policy::program;
 				netdata.sync_latency = 20;
 				netdata.divisibility = algorithm::arithmetic::fixed(1000000);
-				netdata.supports_bulk_transfer = false;
-				netdata.requires_transaction_expiration = true;
+				netdata.transaction_expires = true;
 				legacy.estimate_gas = 1;
 				legacy.eip_155 = 1;
 			}

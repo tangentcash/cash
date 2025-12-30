@@ -38,8 +38,7 @@ namespace tangent
 				netdata.tokenization = token_policy::native;
 				netdata.sync_latency = 11;
 				netdata.divisibility = algorithm::arithmetic::fixed(1000000);
-				netdata.supports_bulk_transfer = true;
-				netdata.requires_transaction_expiration = false;
+				netdata.transaction_expires = false;
 			}
 			expects_promise_rt<uint64_t> cardano::get_latest_block_height()
 			{

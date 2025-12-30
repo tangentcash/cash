@@ -3240,7 +3240,7 @@ namespace tangent
 
 				auto cache = dispatcher->pull_cache(executor);
 				auto state = ledger::dispatcher_context::signature_state();
-				if (chain->requires_transaction_expiration || !state.load(cache))
+				if (chain->transaction_expires || !state.load(cache))
 				{
 					auto message = coawait(resolver::prepare_transaction(algorithm::asset::base_id_of(asset), superchain::wallet_link::from_owner(manager), transfer, get_fee_value(executor)));
 					if (!message)

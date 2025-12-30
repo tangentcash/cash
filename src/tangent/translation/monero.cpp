@@ -84,8 +84,7 @@ namespace tangent
 				netdata.tokenization = token_policy::none;
 				netdata.sync_latency = 10;
 				netdata.divisibility = algorithm::arithmetic::fixed(1000000000000);
-				netdata.supports_bulk_transfer = true;
-				netdata.requires_transaction_expiration = false;
+				netdata.transaction_expires = false;
 			}
 			expects_promise_rt<vector<uint64_t>> monero::get_output_indices(const std::string_view& transaction_id)
 			{

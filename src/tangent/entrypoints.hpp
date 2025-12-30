@@ -660,6 +660,21 @@ namespace tangent
 					format::wo_stream message;
 					return ok(format::variables_util::serialize_flat_into(function_args, &message) ? message.encode() : "null");
 				}
+				else if (method == "pack3_256")
+				{
+					if (args.size() < 2)
+						return err("blockchain required");
+
+					auto asset = algorithm::asset::id_of(args[1], args.size() > 2 ? args[2] : std::string_view(), args.size() > 3 ? args[3] : std::string_view());
+					if (!algorithm::asset::is_any(asset))
+						return err("not a valid asset");
+
+					uint8_t data[32];
+					asset.encode(data);
+
+					size_t size = asset.bytes();
+					return ok(format::util::encode_0xhex(std::string_view((char*)data + (sizeof(data) - size), size)));
+				}
 				else if (method == "pack256")
 				{
 					if (args.size() < 2)
@@ -970,6 +985,7 @@ namespace tangent
 						"assemble [type:deploy|call|abi|code] [path] [args?]     -- assemble current program (type=deploy/call: assemble deploy tx data with packed args)\n"
 						"pack [args?]...                                         -- pack many args into one (for non-trivial function args)\n"
 						"pack256 [integer]...                                    -- pack a decimal uint256 into a hex number\n"
+						"pack3_256 [blockchain] [token?] [contract?]             -- pack an asset into uint256\n"
 						"unpack [stream]                                         -- unpack stream to many args\n"
 						"unpack256 [integer]...                                  -- unpack hex uint256 into a decimal number\n"
 						"call [declaration] [args?]...                           -- call a function in a current program\n"

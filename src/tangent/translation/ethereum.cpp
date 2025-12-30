@@ -331,8 +331,7 @@ namespace tangent
 				netdata.tokenization = token_policy::program;
 				netdata.sync_latency = 64;
 				netdata.divisibility = algorithm::arithmetic::fixed("1000000000000000000");
-				netdata.supports_bulk_transfer = false;
-				netdata.requires_transaction_expiration = false;
+				netdata.transaction_expires = false;
 			}
 			expects_promise_rt<format::tree> ethereum::get_transaction_receipt(const std::string_view& transaction_id, bool cached)
 			{

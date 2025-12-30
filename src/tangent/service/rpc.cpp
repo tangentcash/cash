@@ -366,7 +366,7 @@ namespace tangent
 			bind(0 | access_type::r, "txnstate", "gettransactionbyhash", 1, 2, "uint256 hash, uint8? unrolling = 0", "txn | block::txn", "get transaction by hash", std::bind(&server_node::txnstate_get_transaction_by_hash, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "txnstate", "getrawtransactionbyhash", 1, 1, "uint256 hash", "string", "get raw transaction by hash", std::bind(&server_node::txnstate_get_raw_transaction_by_hash, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "txnstate", "getreceiptbytransactionhash", 1, 1, "uint256 hash", "receipt", "get receipt by transaction hash", std::bind(&server_node::txnstate_get_receipt_by_transaction_hash, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "calltransaction", 5, 32, "string asset, string from_address, string to_address, decimal value, string function, ...", "program_trace", "execute of immutable function of program assigned to to_address", std::bind(&server_node::chainstate_call_transaction, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "calltransaction", 4, 32, "string asset, string from_address, string to_address, string function, ...", "program_trace", "execute of immutable function of program assigned to to_address", std::bind(&server_node::chainstate_call_transaction, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getblockstatebyhash", 1, 2, "uint256 hash, uint8? unrolling = 0", "uint256[] | (uniform|multiform)[]", "get block state by hash", std::bind(&server_node::chainstate_get_block_state_by_hash, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getblockstatebynumber", 1, 2, "uint64 number, uint8? unrolling = 0", "uint256[] | (uniform|multiform)[]", "get block state by number", std::bind(&server_node::chainstate_get_block_state_by_number, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getblockgaspricebyhash", 2, 3, "uint256 hash, string asset, double? percentile = 0.5", "decimal", "get gas price from percentile of block transactions by hash", std::bind(&server_node::chainstate_get_block_gas_price_by_hash, this, std::placeholders::_1, std::placeholders::_2));
@@ -1659,8 +1659,8 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "to account address not valid");
 
 			format::variables function_args;
-			function_args.reserve(args.size() - 5);
-			for (size_t i = 5; i < args.size(); i++)
+			function_args.reserve(args.size() - 4);
+			for (size_t i = 4; i < args.size(); i++)
 				function_args.push_back(args[i]);
 
 			auto temp_solver = ledger::solver_context();
@@ -1670,7 +1670,7 @@ namespace tangent
 
 			auto temp_transaction = transactions::call();
 			temp_transaction.asset = algorithm::asset::id_of_handle(args[0].as_string());
-			temp_transaction.call_to(to, args[4].as_string(), std::move(function_args));
+			temp_transaction.call_to(to, args[3].as_string(), std::move(function_args));
 			temp_transaction.set_gas(decimal::zero(), ledger::block::get_transaction_gas_limit());
 
 			auto temp_receipt = ledger::receipt();
@@ -3289,9 +3289,8 @@ namespace tangent
 			{
 				auto* next = data.push(algorithm::asset::serialize(asset.first));
 				next->set("divisibility", format::variable(asset.second.divisibility));
-				next->set("sync_latency", format::variable(asset.second.sync_latency));
-				next->set("slow_transfer", format::variable(asset.second.requires_transaction_expiration));
-				next->set("bulk_transfer", format::variable(asset.second.supports_bulk_transfer));
+				next->set("transaction_finality", format::variable(asset.second.sync_latency));
+				next->set("transaction_expires", format::variable(asset.second.transaction_expires));
 				switch (asset.second.composition)
 				{
 					case algorithm::composition::type::ed25519:

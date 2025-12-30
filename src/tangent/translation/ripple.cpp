@@ -191,8 +191,7 @@ namespace tangent
 				netdata.tokenization = token_policy::none;
 				netdata.sync_latency = 0;
 				netdata.divisibility = algorithm::arithmetic::fixed(1000000);
-				netdata.supports_bulk_transfer = false;
-				netdata.requires_transaction_expiration = true;
+				netdata.transaction_expires = true;
 			}
 			expects_promise_rt<ripple::account_info> ripple::get_account_info(const std::string_view& address)
 			{

@@ -67,8 +67,7 @@ namespace tangent
 				netdata.tokenization = token_policy::native;
 				netdata.sync_latency = 30;
 				netdata.divisibility = algorithm::arithmetic::fixed(1000000000);
-				netdata.supports_bulk_transfer = false;
-				netdata.requires_transaction_expiration = true;
+				netdata.transaction_expires = true;
 			}
 			expects_promise_rt<uint64_t> solana::get_latest_block_height()
 			{

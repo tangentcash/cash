@@ -356,8 +356,7 @@ namespace tangent
 				token_policy tokenization;
 				uint64_t sync_latency;
 				decimal divisibility;
-				bool supports_bulk_transfer;
-				bool requires_transaction_expiration;
+				bool transaction_expires;
 			};
 
 		protected:
