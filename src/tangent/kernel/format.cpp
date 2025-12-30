@@ -226,39 +226,18 @@ namespace tangent
 					case rapidjson::kStringType:
 					{
 						std::string_view text(from->GetString(), from->GetStringLength());
-						if (!stringify::has_number(text))
+						if (stringify::has_integer(text))
 						{
-							to.value = variable(text);
-							break;
+							auto number = uint256_t(text, 10);
+							if (number.to_string() != text)
+								to.value = variable(decimal(text));
+							else
+								to.value = variable(number);
 						}
-						else if (stringify::has_decimal(text))
-						{
+						else if (stringify::has_number(text))
 							to.value = variable(decimal(text));
-							break;
-						}
-						else if (stringify::has_integer(text))
-						{
-							auto number = from_string<int64_t>(text);
-							if (number)
-							{
-								if (*number >= 0)
-									to.value = variable((uint64_t)*number);
-								else
-									to.value = variable(decimal(*number));
-								break;
-							}
-						}
 						else
-						{
-							auto number = from_string<double>(text);
-							if (number)
-							{
-								to.value = variable(decimal(*number));
-								break;
-							}
-						}
-
-						to.value = variable(text);
+							to.value = variable(text);
 						break;
 					}
 					default:
