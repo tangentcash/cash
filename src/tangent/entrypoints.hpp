@@ -386,6 +386,7 @@ namespace tangent
 			}
 			void dispatch_event(int event_type_id, const void* object_value, int object_type_id) override
 			{
+				script::program::dispatch_event(event_type_id, object_value, object_type_id);
 				if (!executor->receipt.events.empty())
 				{
 					auto data = format::tree();
@@ -399,12 +400,14 @@ namespace tangent
 			}
 			void dispatch_exception(script::immediate_context* coroutine) override
 			{
+				script::program::dispatch_exception(coroutine);
 				auto* vm = coroutine->get_vm();
 				if (vm->has_debugger())
 					vm->get_debugger()->exception_callback(coroutine->get_context());
 			}
 			void dispatch_coroutine(script::immediate_context* coroutine) override
 			{
+				script::program::dispatch_coroutine(coroutine);
 				auto* vm = coroutine->get_vm();
 				if (vm->has_debugger())
 					vm->get_debugger()->line_callback(coroutine->get_context());

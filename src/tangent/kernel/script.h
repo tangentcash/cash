@@ -9,6 +9,8 @@ namespace tangent
 	{
 		using namespace vitex::scripting;
 
+		struct program;
+
 		struct address_repr;
 
 		class array_repr;
@@ -33,17 +35,20 @@ namespace tangent
 			virtual_machine* vm;
 			asITypeInfo* type;
 			void* address;
+			void** address_ptr;
 
-			cobject(virtual_machine* new_vm, asITypeInfo* new_type, void* new_address) noexcept : vm(new_vm), type(new_type), address(new_address)
+			cobject(virtual_machine* new_vm, asITypeInfo* new_type, void* new_address, void** new_address_ptr) noexcept : vm(new_vm), type(new_type), address(new_address), address_ptr(new_address_ptr)
 			{
 			}
-			cobject(const cobject& other) noexcept : vm(other.vm), type(other.type), address(other.address)
+			cobject(const cobject& other) noexcept : vm(other.vm), type(other.type), address(other.address), address_ptr(other.address_ptr)
 			{
 				((cobject*)&other)->address = nullptr;
+				((cobject*)&other)->address_ptr = nullptr;
 			}
-			cobject(cobject&& other) noexcept : vm(other.vm), type(other.type), address(other.address)
+			cobject(cobject&& other) noexcept : vm(other.vm), type(other.type), address(other.address), address_ptr(other.address_ptr)
 			{
 				other.address = nullptr;
+				other.address_ptr = nullptr;
 			}
 			~cobject()
 			{
@@ -58,7 +63,9 @@ namespace tangent
 				vm = other.vm;
 				type = other.type;
 				address = other.address;
+				address_ptr = other.address_ptr;
 				((cobject*)&other)->address = nullptr;
+				((cobject*)&other)->address_ptr = nullptr;
 				return *this;
 			}
 			cobject& operator= (cobject&& other) noexcept
@@ -70,13 +77,22 @@ namespace tangent
 				vm = other.vm;
 				type = other.type;
 				address = other.address;
+				address_ptr = other.address_ptr;
 				other.address = nullptr;
+				other.address_ptr = nullptr;
 				return *this;
+			}
+			inline void reset()
+			{
+				address = nullptr;
+				address_ptr = nullptr;
 			}
 			inline void destroy()
 			{
 				if (vm != nullptr && type != nullptr && address != nullptr)
 					vm->release_object(address, type);
+				if (address_ptr != nullptr)
+					*address_ptr = nullptr;
 			}
 		};
 
@@ -118,7 +134,8 @@ namespace tangent
 			string_repr& assign_append(const string_repr& other);
 			string_repr& assign_append_char(char c);
 			string_repr append(const string_repr& other);
-			string_repr append_char(char c);
+			string_repr append_char_back(char c);
+			string_repr append_char_front(char c);
 			bool operator==(const string_repr& other) const;
 			int compare(const string_repr& other) const;
 			const char* at(uint32_t index) const;
@@ -230,14 +247,6 @@ namespace tangent
 				unsigned char data[1];
 			};
 
-			struct scache
-			{
-				asIScriptFunction* comparator;
-				asIScriptFunction* equals;
-				int comparator_return_code;
-				int equals_return_code;
-			};
-
 		private:
 			vitex::scripting::type_info obj_type;
 			sbuffer* buffer;
@@ -265,20 +274,17 @@ namespace tangent
 			const void* at(uint32_t index) const;
 			void set_value(uint32_t index, void* value);
 			array_repr& operator= (const array_repr&) noexcept;
-			bool operator== (const array_repr&) const;
 			void insert_at(uint32_t index, void* value);
 			void insert_at(uint32_t index, const array_repr& other);
+			void insert_first(void* value);
 			void insert_last(void* value);
 			void remove_at(uint32_t index);
+			void remove_first();
 			void remove_last();
 			void remove_range(uint32_t start, uint32_t count);
-			void remove_if(void* value, uint32_t start_at);
 			void swap(uint32_t index1, uint32_t index2);
-			void sort(asIScriptFunction* callback);
 			void reverse();
 			void clear();
-			uint32_t find(void* value, uint32_t start_at) const;
-			uint32_t find_by_ref(void* value, uint32_t start_at) const;
 			void* get_buffer();
 			void enum_references(asIScriptEngine* engine);
 			void release_references(asIScriptEngine* engine);
@@ -287,7 +293,6 @@ namespace tangent
 			void* get_array_item_pointer(uint32_t index);
 			void* get_data_pointer(void* buffer);
 			void copy(void* dst, void* src);
-			void precache();
 			bool check_max_size(uint32_t num_elements);
 			void resize(int64_t delta, uint32_t at);
 			void create_buffer(sbuffer** buf, uint32_t num_elements);
@@ -295,18 +300,12 @@ namespace tangent
 			void copy_buffer(sbuffer* dst, sbuffer* src);
 			void create(sbuffer* buf, uint32_t start, uint32_t end);
 			void destroy(sbuffer* buf, uint32_t start, uint32_t end);
-			bool less(const void* a, const void* b, immediate_context* ctx, scache* cache);
-			bool equals(const void* a, const void* b, immediate_context* ctx, scache* cache) const;
-			bool is_eligible_for_find(scache** output) const;
-			bool is_eligible_for_sort(scache** output) const;
 
 		public:
 			static array_repr* create(asITypeInfo* t);
 			static array_repr* create(asITypeInfo* t, uint32_t length);
 			static array_repr* create(asITypeInfo* t, uint32_t length, void* default_value);
-			static void cleanup_type_info_cache(asITypeInfo* type);
 			static bool template_callback(asITypeInfo* t, bool& dont_garbage_collect);
-			static size_t get_id();
 
 		public:
 			template <typename t>
@@ -354,6 +353,8 @@ namespace tangent
 		{
 			static void custom_constructor_bool(decimal* base, bool value);
 			static void custom_constructor_string(decimal* base, const string_repr& value);
+			static void custom_constructor_uint128(decimal* base, const uint128_t& value);
+			static void custom_constructor_uint256(decimal* base, const uint256_t& value);
 			static void custom_constructor_copy(decimal* base, const decimal& value);
 			static void custom_constructor(decimal* base);
 			static bool is_not_zero_or_nan(decimal& base);
@@ -377,7 +378,6 @@ namespace tangent
 			static decimal sub(const decimal& left, const decimal& right);
 			static decimal mul(const decimal& left, const decimal& right);
 			static decimal div(const decimal& left, const decimal& right);
-			static decimal per(const decimal& left, const decimal& right);
 			static decimal from(const string_repr& data, uint8_t base);
 			static decimal zero();
 			static uint32_t estimate_bits(uint32_t digits);
@@ -489,7 +489,10 @@ namespace tangent
 			void pay_all(const payable_repr& payable);
 			void mint(const string_repr& token, const decimal& supply, const decimal& reserve);
 			void burn(const string_repr& token, const decimal& supply, const decimal& reserve);
+			decimal token_balance_of(const string_repr& token) const;
+			decimal token_reserve_of(const string_repr& token) const;
 			decimal balance_of(const uint256_t& asset) const;
+			decimal reserve_of(const uint256_t& asset) const;
 			string_repr to_string() const;
 			uint256_t to_public_key_hash() const;
 			bool empty() const;
@@ -508,13 +511,13 @@ namespace tangent
 			abi_repr(const string_repr& data);
 			abi_repr(const abi_repr&) = default;
 			abi_repr& operator=(const abi_repr&) = default;
+			void merge(const string_repr& value);
 			void seek(uint32_t offset);
 			void clear();
 			void wboolean(bool value);
 			void wuint160(const address_repr& value);
 			void wuint256(const uint256_t& value);
 			void wreal320(const decimal& value);
-			void merge(const string_repr& value);
 			void wstr(const string_repr& value);
 			bool rboolean(bool& value);
 			bool ruint160(address_repr& value);
@@ -604,6 +607,7 @@ namespace tangent
 			ranging_slice_repr& where_lte(const uint256_t& new_value);
 			ranging_slice_repr& order_asc();
 			ranging_slice_repr& order_desc();
+			hash_map<size_t, uptr<states::account_multiform>>& cache_ptr(const program* p);
 			static ranging_slice_repr from_column(const void* index_value, int index_type_id);
 			static ranging_slice_repr from_row(const void* index_value, int index_type_id);
 			static ranging_slice_repr from(cquery new_mode, uint8_t new_slot, const void* index_value, int index_type_id);
@@ -622,7 +626,6 @@ namespace tangent
 			ranging_repr(asITypeInfo* new_type);
 			~ranging_repr();
 			void reset() override;
-			const void* from(ranging_slice_repr& slice);
 			ranging_slice_repr from_column(const void* new_column);
 			ranging_slice_repr from_row(const void* new_row);
 			void erase(const void* new_column, const void* new_row);
@@ -694,15 +697,17 @@ namespace tangent
 			static uint256_t tx_asset();
 			static uint256_t coin_native();
 			static uint256_t coin_token(const string_repr& token);
-			static uint256_t coin_from_decimal(const decimal& value);
-			static decimal coin_to_decimal(const uint256_t& value);
 			static uint256_t coin_id_of(const string_repr& blockchain, const string_repr& token, const string_repr& contract_address);
 			static string_repr coin_blockchain_of(const uint256_t& value);
 			static string_repr coin_token_of(const uint256_t& value);
 			static string_repr coin_checksum_of(const uint256_t& value);
 			static string_repr coin_name_of(const uint256_t& value);
-			static string_repr alg_encode_bytes256(const uint256_t& value);
-			static uint256_t alg_decode_bytes256(const string_repr& value);
+			static uint256_t alg_to_r256(const decimal& value);
+			static decimal alg_from_r256(const uint256_t& value);
+			static string_repr alg_from_u256(const uint256_t& value);
+			static uint256_t alg_to_u256(const string_repr& value);
+			static string_repr alg_from_e16(const string_repr& value);
+			static string_repr alg_to_e16(const string_repr& value);
 			static address_repr alg_erecover160(const uint256_t& hash, const string_repr& signature);
 			static string_repr alg_erecover264(const uint256_t& hash, const string_repr& signature);
 			static string_repr alg_crc32(const string_repr& data);
@@ -823,21 +828,11 @@ namespace tangent
 			static program* fetch_mutable_or_throw(immediate_context* coroutine = immediate_context::get());
 			static const program* fetch_immutable_or_throw(immediate_context* coroutine = immediate_context::get());
 			static bool request_gas_mop(size_t difficulty);
+			static bool request_gas_vmemory(size_t size);
 			template <typename t>
 			static inline t* request_gas_memory(size_t size)
 			{
-				auto* program = program::fetch_immutable();
-				if (program != nullptr)
-				{
-					size_t paid_blocks = std::max(size / sizeof(uint128_t), sizeof(uint128_t));
-					size_t paid_gas = (size_t)ledger::gas_cost::program_memory * paid_blocks;
-					if (paid_gas > 0 && !program->executor->burn_gas(paid_gas))
-					{
-						contract::throw_ptr(exception_repr(exception_repr::category::memory(), std::string_view("ran out of gas")));
-						return nullptr;
-					}
-				}
-				return memory::allocate<t>(size);
+				return request_gas_vmemory(size) ? memory::allocate<t>(size) : nullptr;
 			}
 		};
 	}

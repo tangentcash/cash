@@ -9,7 +9,6 @@ extern "C"
 #include "../internal/sha3.h"
 }
 #define SCRIPT_QUERY_PREFETCH 16
-#define SCRIPT_TAG_ARRAY 19192
 #define SCRIPT_TAG_MUTABLE_PROGRAM 19190
 #define SCRIPT_TAG_IMMUTABLE_PROGRAM 19191
 #define SCRIPT_TYPE_PAYABLE "payable"
@@ -33,10 +32,6 @@ namespace tangent
 	{
 		typedef hash_map<string_repr, std::atomic<int32_t>> string_repr_cache_type;
 
-		static std::string_view type_name_of(int type_id)
-		{
-			return factory::get()->get_vm()->get_type_info_by_id(type_id).get_name();
-		}
 		static string mpf_to_string(const mpf_t target)
 		{
 			char buffer[1024]; string result; mp_exp_t exp;
@@ -68,310 +63,10 @@ namespace tangent
 				result.pop_back();
 			return result;
 		}
-
-		struct mpz_value
+		static void burn_marshalling_memory(const format::ro_stream& stream, size_t prev_seek)
 		{
-			mpz_t target = { };
-			mpz_t field = { };
-
-			mpz_value()
-			{
-				mpz_init(target);
-				mpz_init_set_ui(field, 1);
-			}
-			mpz_value(int type_id, void* value)
-			{
-				switch (type_id)
-				{
-					case (int)type_id::int8_t:
-						mpz_init_set_si(target, *(int8_t*)value);
-						mpz_init_set_ui(field, std::numeric_limits<uint8_t>::max());
-						break;
-					case (int)type_id::bool_t:
-					case (int)type_id::uint8_t:
-						mpz_init_set_ui(target, *(uint8_t*)value);
-						mpz_init_set_ui(field, std::numeric_limits<uint8_t>::max());
-						break;
-					case (int)type_id::int16_t:
-						mpz_init_set_si(target, *(int16_t*)value);
-						mpz_init_set_ui(field, std::numeric_limits<uint16_t>::max());
-						break;
-					case (int)type_id::uint16_t:
-						mpz_init_set_ui(target, *(uint16_t*)value);
-						mpz_init_set_ui(field, std::numeric_limits<uint16_t>::max());
-						break;
-					case (int)type_id::int32_t:
-						mpz_init_set_si(target, *(int32_t*)value);
-						mpz_init_set_ui(field, std::numeric_limits<uint32_t>::max());
-						break;
-					case (int)type_id::uint32_t:
-						mpz_init_set_ui(target, *(uint32_t*)value);
-						mpz_init_set_ui(field, std::numeric_limits<uint32_t>::max());
-						break;
-					case (int)type_id::int64_t:
-						mpz_init_set_si(target, *(int64_t*)value);
-						mpz_init_set_ui(field, std::numeric_limits<uint64_t>::max());
-						break;
-					case (int)type_id::uint64_t:
-						mpz_init_set_ui(target, *(uint64_t*)value);
-						mpz_init_set_ui(field, std::numeric_limits<uint64_t>::max());
-						break;
-					default:
-					{
-						auto type = factory::get()->get_vm()->get_type_info_by_id(type_id);
-						auto name = type.is_valid() ? type.get_name() : std::string_view();
-						value = type_id & (int)vitex::scripting::type_id::handle_t ? *(void**)value : value;
-						if (name == SCRIPT_TYPE_UINT128)
-						{
-							uint8_t buffer[sizeof(uint128_t)];
-							(*(uint128_t*)value).encode(buffer);
-							mpz_init(target);
-							mpz_import(target, sizeof(buffer), 1, 1, 1, 0, buffer);
-							mpz_init_set_ui(field, 2);
-							mpz_mul_ui(field, field, sizeof(uint128_t));
-							mpz_sub_ui(field, field, 1);
-							break;
-						}
-						else if (name == SCRIPT_TYPE_UINT256)
-						{
-							uint8_t buffer[sizeof(uint256_t)];
-							(*(uint256_t*)value).encode(buffer);
-							mpz_init(target);
-							mpz_import(target, sizeof(buffer), 1, 1, 1, 0, buffer);
-							mpz_init_set_ui(field, 2);
-							mpz_mul_ui(field, field, sizeof(uint256_t));
-							mpz_sub_ui(field, field, 1);
-							break;
-						}
-						else if (type_id & (int)vitex::scripting::type_id::mask_seqnbr_t)
-						{
-							mpz_init_set_ui(target, *(int32_t*)value);
-							mpz_init_set_ui(field, std::numeric_limits<uint32_t>::max());
-							break;
-						}
-
-						mpz_init(target);
-						mpz_init_set_ui(field, 1);
-						break;
-					}
-				}
-			}
-			mpz_value(const mpz_value& other)
-			{
-				mpz_init_set(target, other.target);
-				mpz_init_set(field, other.field);
-			}
-			mpz_value(mpz_value&& other) noexcept
-			{
-				mpz_init(target);
-				mpz_init(field);
-				mpz_swap(target, other.target);
-				mpz_swap(field, other.field);
-			}
-			~mpz_value()
-			{
-				mpz_clear(target);
-				mpz_clear(field);
-			}
-			mpz_value& operator=(const mpz_value& other)
-			{
-				if (this == &other)
-					return *this;
-
-				mpz_set(target, other.target);
-				mpz_init_set(field, other.field);
-				return *this;
-			}
-			mpz_value& operator=(mpz_value&& other) noexcept
-			{
-				if (this == &other)
-					return *this;
-
-				mpz_swap(target, other.target);
-				mpz_swap(field, other.field);
-				return *this;
-			}
-			bool into(generic_context& inout)
-			{
-				int type_id = inout.get_return_addressable_type_id();
-				mpz_mod(target, target, field);
-				switch (type_id)
-				{
-					case (int)type_id::int8_t:
-						inout.set_return_byte((uint8_t)mpz_get_si(target));
-						return true;
-					case (int)type_id::bool_t:
-					case (int)type_id::uint8_t:
-						inout.set_return_byte((uint8_t)mpz_get_ui(target));
-						return true;
-					case (int)type_id::int16_t:
-						inout.set_return_word((uint16_t)mpz_get_si(target));
-						return true;
-					case (int)type_id::uint16_t:
-						inout.set_return_word((uint16_t)mpz_get_ui(target));
-						return true;
-					case (int)type_id::int32_t:
-						inout.set_return_dword((uint32_t)mpz_get_si(target));
-						return true;
-					case (int)type_id::uint32_t:
-						inout.set_return_dword((uint32_t)mpz_get_ui(target));
-						return true;
-					case (int)type_id::int64_t:
-						inout.set_return_qword((uint64_t)mpz_get_si(target));
-						return true;
-					case (int)type_id::uint64_t:
-						inout.set_return_qword((uint64_t)mpz_get_ui(target));
-						return true;
-					default:
-					{
-						auto type = factory::get()->get_vm()->get_type_info_by_id(type_id);
-						auto name = type.is_valid() ? type.get_name() : std::string_view();
-						if (name == SCRIPT_TYPE_UINT128)
-						{
-							size_t size = 0;
-							char* data = (char*)mpz_export(nullptr, &size, 1, 1, 1, 0, target);
-							uint8_t buffer[sizeof(uint128_t)] = { 0 };
-							memcpy((char*)buffer + (sizeof(buffer) - size), data, size);
-							free(data);
-
-							uint128_t result;
-							result.decode(buffer);
-							new (inout.get_address_of_return_location()) uint128_t(result);
-							return true;
-						}
-						else if (name == SCRIPT_TYPE_UINT256)
-						{
-							size_t size = 0;
-							char* data = (char*)mpz_export(nullptr, &size, 1, 1, 1, 0, target);
-							uint8_t buffer[sizeof(uint256_t)] = { 0 };
-							memcpy((char*)buffer + (sizeof(buffer) - size), data, size);
-							free(data);
-
-							uint256_t result;
-							result.decode(buffer);
-							new (inout.get_address_of_return_location()) uint256_t(result);
-							return true;
-						}
-						else if (type_id & (int)vitex::scripting::type_id::mask_seqnbr_t)
-						{
-							inout.set_return_dword((uint32_t)mpz_get_si(target));
-							return true;
-						}
-						return false;
-					}
-				}
-			}
-		};
-
-		struct mpf_value
-		{
-			mpf_t target = { };
-
-			mpf_value()
-			{
-				mpf_init(target);
-				mpf_set_prec(target, 8);
-			}
-			mpf_value(int type_id, void* value)
-			{
-				switch (type_id)
-				{
-					case (int)type_id::float_t:
-					case (int)type_id::double_t:
-						contract::throw_ptr(exception_repr(exception_repr::category::argument(), "floating point value not permitted"));
-						break;
-					default:
-					{
-						auto type = factory::get()->get_vm()->get_type_info_by_id(type_id);
-						auto name = type.is_valid() ? type.get_name() : std::string_view();
-						value = type_id & (int)vitex::scripting::type_id::handle_t ? *(void**)value : value;
-						if (name == SCRIPT_TYPE_REAL320)
-						{
-							auto str = (*(decimal*)value).to_string();
-							mpf_init(target);
-							mpf_set_prec(target, real320_repr::target_bits());
-							mpf_set_str(target, str.c_str(), 10);
-							break;
-						}
-
-						mpf_init(target);
-						mpf_set_prec(target, 8);
-						break;
-					}
-				}
-			}
-			mpf_value(const mpf_value& other)
-			{
-				mpf_init_set(target, other.target);
-			}
-			mpf_value(mpf_value&& other) noexcept
-			{
-				mpf_init(target);
-				mpf_swap(target, other.target);
-			}
-			~mpf_value()
-			{
-				mpf_clear(target);
-			}
-			mpf_value& operator=(const mpf_value& other)
-			{
-				if (this == &other)
-					return *this;
-
-				mpf_set(target, other.target);
-				return *this;
-			}
-			mpf_value& operator=(mpf_value&& other) noexcept
-			{
-				if (this == &other)
-					return *this;
-
-				mpf_swap(target, other.target);
-				return *this;
-			}
-			bool into(generic_context& inout)
-			{
-				int type_id = inout.get_return_addressable_type_id();
-				auto type = factory::get()->get_vm()->get_type_info_by_id(type_id);
-				auto name = type.is_valid() ? type.get_name() : std::string_view();
-				if (name == SCRIPT_TYPE_REAL320)
-				{
-					decimal result = decimal(mpf_to_string(target));
-					real320_repr::truncate_or_throw(result, true);
-					new (inout.get_address_of_return_location()) decimal(std::move(result));
-					return true;
-				}
-
-				return false;
-			}
-			size_t bits()
-			{
-				char buffer[1024]; mp_exp_t exp;
-				mpf_get_str(buffer, &exp, 10, sizeof(buffer) - 2, target);
-				return real320_repr::estimate_bits((uint32_t)strlen(buffer));
-			}
-			static bool requires_fixed_point(int type_id)
-			{
-				auto type = factory::get()->get_vm()->get_type_info_by_id(type_id);
-				auto name = type.is_valid() ? type.get_name() : std::string_view();
-				return name == SCRIPT_TYPE_REAL320;
-			}
-		};
-
-		static void mpf_value_to_mpz_value(const mpf_value& input, mpz_value& output)
-		{
-			auto str = mpf_to_string(input.target);
-			mpz_set_str(output.target, str.c_str(), 10);
-		}
-		static void mpz_value_to_mpf_value(const mpz_value& input, mpf_value& output)
-		{
-			char* str = mpz_get_str(nullptr, 10, input.target);
-			if (str != nullptr)
-			{
-				mpf_set_prec(output.target, (mp_bitcnt_t)mpz_sizeinbase(input.field, 2));
-				mpf_set_str(output.target, str, 10);
-				free(str);
-			}
+			if (prev_seek < stream.seek)
+				program::request_gas_vmemory(stream.seek - prev_seek);
 		}
 
 		std::string_view exception_repr::category::generic()
@@ -514,8 +209,7 @@ namespace tangent
 		{
 			VI_ASSERT(info && string(obj_type.get_name()) == SCRIPT_TYPE_ARRAY, "array type is invalid");
 			obj_type.add_ref();
-			precache();
-
+			sub_type_id = obj_type.get_sub_type_id();
 			if (sub_type_id & (uint32_t)type_id::mask_object_t)
 				element_size = (uint32_t)sizeof(uintptr_t);
 			else
@@ -528,13 +222,10 @@ namespace tangent
 			if (obj_type.flags() & (uint32_t)object_behaviours::gc)
 				obj_type.get_vm()->notify_of_new_object(this, obj_type);
 		}
-		array_repr::array_repr(const array_repr& other) noexcept : obj_type(other.obj_type), buffer(nullptr), element_size(0), sub_type_id(-1)
+		array_repr::array_repr(const array_repr& other) noexcept : obj_type(other.obj_type), buffer(nullptr), element_size(other.element_size), sub_type_id(other.sub_type_id)
 		{
 			VI_ASSERT(obj_type.is_valid() && string(obj_type.get_name()) == SCRIPT_TYPE_ARRAY, "array type is invalid");
 			obj_type.add_ref();
-			precache();
-
-			element_size = other.element_size;
 			if (obj_type.flags() & (uint32_t)object_behaviours::gc)
 				obj_type.get_vm()->notify_of_new_object(this, obj_type);
 
@@ -545,8 +236,7 @@ namespace tangent
 		{
 			VI_ASSERT(info && string(vitex::scripting::type_info(info).get_name()) == SCRIPT_TYPE_ARRAY, "array type is invalid");
 			obj_type.add_ref();
-			precache();
-
+			sub_type_id = obj_type.get_sub_type_id();
 			if (sub_type_id & (uint32_t)type_id::mask_object_t)
 				element_size = (uint32_t)sizeof(uintptr_t);
 			else
@@ -674,22 +364,6 @@ namespace tangent
 			memmove(buffer->data + start * (size_t)element_size, buffer->data + (start + count) * (size_t)element_size, (size_t)(buffer->num_elements - start - count) * (size_t)element_size);
 			buffer->num_elements -= count;
 		}
-		void array_repr::remove_if(void* value, uint32_t start_at)
-		{
-			scache* cache; uint32_t count = size();
-			if (!is_eligible_for_find(&cache) || !count || !program::request_gas_mop(0))
-				return;
-
-			immediate_context* context = immediate_context::get();
-			for (uint32_t i = start_at; i < count; i++)
-			{
-				if (equals(at(i), value, context, cache))
-				{
-					remove_at(i--);
-					--count;
-				}
-			}
-		}
 		void array_repr::resize(int64_t delta, uint32_t where)
 		{
 			uint32_t buffer_size = buffer ? buffer->num_elements : 0;
@@ -814,6 +488,10 @@ namespace tangent
 				}
 			}
 		}
+		void array_repr::insert_first(void* value)
+		{
+			insert_at(0, value);
+		}
 		void array_repr::insert_last(void* value)
 		{
 			insert_at(buffer ? buffer->num_elements : 0, value);
@@ -823,6 +501,10 @@ namespace tangent
 			if (index >= (buffer ? buffer->num_elements : 0))
 				return contract::throw_ptr(exception_repr(exception_repr::category::argument(), stringify::text("range [%i; %i) is out of bounds (size: %i)", index, index + 1, buffer ? buffer->num_elements : 0)));
 			resize(-1, index);
+		}
+		void array_repr::remove_first()
+		{
+			remove_at(0);
 		}
 		void array_repr::remove_last()
 		{
@@ -963,197 +645,6 @@ namespace tangent
 		{
 			resize(0);
 		}
-		bool array_repr::operator==(const array_repr& other) const
-		{
-			if (obj_type.get_type_info() != other.obj_type.get_type_info())
-				return false;
-
-			if (size() != other.size())
-				return false;
-
-			immediate_context* cmp_context = 0;
-			bool is_nested = false;
-
-			if (sub_type_id & ~(uint32_t)type_id::mask_seqnbr_t)
-			{
-				cmp_context = immediate_context::get();
-				if (cmp_context)
-				{
-					if (cmp_context->get_vm() == obj_type.get_vm() && cmp_context->push_state())
-						is_nested = true;
-					else
-						cmp_context = 0;
-				}
-
-				if (cmp_context == 0)
-					cmp_context = obj_type.get_vm()->request_context();
-			}
-
-			bool is_equal = true;
-			scache* cache = reinterpret_cast<scache*>(obj_type.get_user_data(SCRIPT_TAG_ARRAY));
-			for (uint32_t n = 0; n < size(); n++)
-			{
-				if (!equals(at(n), other.at(n), cmp_context, cache))
-				{
-					is_equal = false;
-					break;
-				}
-			}
-
-			if (cmp_context)
-			{
-				if (is_nested)
-				{
-					auto state = cmp_context->get_state();
-					cmp_context->pop_state();
-					if (state == execution::aborted)
-						cmp_context->abort();
-				}
-				else
-					obj_type.get_vm()->return_context(cmp_context);
-			}
-
-			return is_equal;
-		}
-		bool array_repr::less(const void* a, const void* b, immediate_context* context, scache* cache)
-		{
-			if (sub_type_id & ~(uint32_t)type_id::mask_seqnbr_t)
-			{
-				if (sub_type_id & (uint32_t)type_id::handle_t)
-				{
-					if (*(void**)a == 0)
-						return true;
-
-					if (*(void**)b == 0)
-						return false;
-				}
-
-				if (!cache || !cache->comparator)
-					return false;
-
-				bool is_less = false;
-				context->execute_subcall(cache->comparator, [a, b](immediate_context* context)
-				{
-					context->set_object((void*)a);
-					context->set_arg_object(0, (void*)b);
-				}, [&is_less](immediate_context* context) { is_less = (context->get_return_dword() < 0); });
-				return is_less;
-			}
-
-			switch (sub_type_id)
-			{
-#define COMPARE(t) *((t*)a) < *((t*)b)
-				case (uint32_t)type_id::bool_t: return COMPARE(bool);
-				case (uint32_t)type_id::int8_t: return COMPARE(signed char);
-				case (uint32_t)type_id::uint8_t: return COMPARE(unsigned char);
-				case (uint32_t)type_id::int16_t: return COMPARE(signed short);
-				case (uint32_t)type_id::uint16_t: return COMPARE(unsigned short);
-				case (uint32_t)type_id::int32_t: return COMPARE(signed int);
-				case (uint32_t)type_id::uint32_t: return COMPARE(uint32_t);
-				case (uint32_t)type_id::float_t:
-				case (uint32_t)type_id::double_t:
-					contract::throw_ptr(exception_repr(exception_repr::category::argument(), "floating point value not permitted"));
-					return false;
-				default: return COMPARE(signed int);
-#undef COMPARE
-			}
-
-			return false;
-		}
-		bool array_repr::equals(const void* a, const void* b, immediate_context* context, scache* cache) const
-		{
-			if (sub_type_id & ~(uint32_t)type_id::mask_seqnbr_t)
-			{
-				if (sub_type_id & (uint32_t)type_id::handle_t)
-				{
-					if (*(void**)a == *(void**)b)
-						return true;
-				}
-
-				if (cache && cache->equals)
-				{
-					bool is_matched = false;
-					context->execute_subcall(cache->equals, [a, b](immediate_context* context)
-					{
-						context->set_object((void*)a);
-						context->set_arg_object(0, (void*)b);
-					}, [&is_matched](immediate_context* context) { is_matched = (context->get_return_byte() != 0); });
-					return is_matched;
-				}
-
-				if (cache && cache->comparator)
-				{
-					bool is_matched = false;
-					context->execute_subcall(cache->comparator, [a, b](immediate_context* context)
-					{
-						context->set_object((void*)a);
-						context->set_arg_object(0, (void*)b);
-					}, [&is_matched](immediate_context* context) { is_matched = (context->get_return_dword() == 0); });
-					return is_matched;
-				}
-
-				return false;
-			}
-
-			switch (sub_type_id)
-			{
-#define COMPARE(t) *((t*)a) == *((t*)b)
-				case (uint32_t)type_id::bool_t: return COMPARE(bool);
-				case (uint32_t)type_id::int8_t: return COMPARE(signed char);
-				case (uint32_t)type_id::uint8_t: return COMPARE(unsigned char);
-				case (uint32_t)type_id::int16_t: return COMPARE(signed short);
-				case (uint32_t)type_id::uint16_t: return COMPARE(unsigned short);
-				case (uint32_t)type_id::int32_t: return COMPARE(signed int);
-				case (uint32_t)type_id::uint32_t: return COMPARE(uint32_t);
-				case (uint32_t)type_id::float_t:
-				case (uint32_t)type_id::double_t:
-					contract::throw_ptr(exception_repr(exception_repr::category::argument(), "floating point value not permitted"));
-					return false;
-				default: return COMPARE(signed int);
-#undef COMPARE
-			}
-		}
-		uint32_t array_repr::find_by_ref(void* value, uint32_t start_at) const
-		{
-			uint32_t length = size();
-			if (!length || !program::request_gas_mop(0))
-				return string_repr::npos;
-
-			if (sub_type_id & (uint32_t)type_id::handle_t)
-			{
-				value = *(void**)value;
-				for (uint32_t i = start_at; i < length; i++)
-				{
-					if (*(void**)at(i) == value)
-						return i;
-				}
-			}
-			else
-			{
-				for (uint32_t i = start_at; i < length; i++)
-				{
-					if (at(i) == value)
-						return i;
-				}
-			}
-
-			return string_repr::npos;
-		}
-		uint32_t array_repr::find(void* value, uint32_t start_at) const
-		{
-			scache* cache; uint32_t count = size();
-			if (!is_eligible_for_find(&cache) || !count || !program::request_gas_mop(0))
-				return string_repr::npos;
-
-			immediate_context* context = immediate_context::get();
-			for (uint32_t i = start_at; i < count; i++)
-			{
-				if (equals(at(i), value, context, cache))
-					return i;
-			}
-
-			return string_repr::npos;
-		}
 		void array_repr::copy(void* dest, void* src)
 		{
 			memcpy(dest, src, element_size);
@@ -1178,53 +669,6 @@ namespace tangent
 			copy(swap, get_array_item_pointer(index1));
 			copy(get_array_item_pointer(index1), get_array_item_pointer(index2));
 			copy(get_array_item_pointer(index2), swap);
-		}
-		void array_repr::sort(asIScriptFunction* callback)
-		{
-			scache* cache; uint32_t count = size();
-			if (!is_eligible_for_sort(&cache) || count < 2 || !program::request_gas_mop(4))
-				return;
-
-			unsigned char swap[16];
-			immediate_context* context = immediate_context::get();
-			if (callback != nullptr)
-			{
-				function_delegate delegatef(callback);
-				for (uint32_t i = 1; i < count; i++)
-				{
-					int64_t j = (int64_t)(i - 1);
-					copy(swap, get_array_item_pointer(i));
-					while (j >= 0)
-					{
-						void* a = get_data_pointer(swap), * b = at(j); bool is_less = false;
-						context->execute_subcall(delegatef.callable(), [a, b](immediate_context* context)
-						{
-							context->set_arg_address(0, a);
-							context->set_arg_address(1, b);
-						}, [&is_less](immediate_context* context) { is_less = (context->get_return_byte() > 0); });
-						if (!is_less)
-							break;
-
-						copy(get_array_item_pointer(j + 1), get_array_item_pointer(j));
-						j--;
-					}
-					copy(get_array_item_pointer(j + 1), swap);
-				}
-			}
-			else
-			{
-				for (uint32_t i = 1; i < count; i++)
-				{
-					int64_t j = (int64_t)(i - 1);
-					copy(swap, get_array_item_pointer(i));
-					while (j >= 0 && less(get_data_pointer(swap), at(j), context, cache))
-					{
-						copy(get_array_item_pointer(j + 1), get_array_item_pointer(j));
-						j--;
-					}
-					copy(get_array_item_pointer(j + 1), swap);
-				}
-			}
 		}
 		void array_repr::copy_buffer(sbuffer* dest, sbuffer* src)
 		{
@@ -1270,99 +714,6 @@ namespace tangent
 						memcpy(dest->data, src->data, (size_t)count * (size_t)element_size);
 				}
 			}
-		}
-		void array_repr::precache()
-		{
-			sub_type_id = obj_type.get_sub_type_id();
-			if (!(sub_type_id & ~(uint32_t)type_id::mask_seqnbr_t))
-				return;
-
-			scache* cache = reinterpret_cast<scache*>(obj_type.get_user_data(SCRIPT_TAG_ARRAY));
-			if (cache)
-				return;
-
-			umutex<std::mutex> unique(factory::get()->exclusive);
-			cache = reinterpret_cast<scache*>(obj_type.get_user_data(SCRIPT_TAG_ARRAY));
-			if (cache)
-				return;
-
-			cache = memory::allocate<scache>(sizeof(scache));
-			if (!cache)
-				return;
-
-			memset(cache, 0, sizeof(scache));
-			bool must_be_const = (sub_type_id & (uint32_t)type_id::const_handle_t) ? true : false;
-
-			auto sub_type = obj_type.get_vm()->get_type_info_by_id(sub_type_id);
-			if (sub_type.is_valid())
-			{
-				for (uint32_t i = 0; i < sub_type.get_methods_count(); i++)
-				{
-					auto function = sub_type.get_method_by_index((int)i);
-					if (function.get_args_count() == 1 && (!must_be_const || function.is_read_only()))
-					{
-						size_t flags = 0;
-						int return_type_id = function.get_return_type_id(&flags);
-						if (flags != (size_t)modifiers::none)
-							continue;
-
-						bool is_cmp = false, is_equals = false;
-						if (return_type_id == (uint32_t)type_id::int32_t && function.get_name() == "opCmp")
-							is_cmp = true;
-						if (return_type_id == (uint32_t)type_id::bool_t && function.get_name() == "opEquals")
-							is_equals = true;
-
-						if (!is_cmp && !is_equals)
-							continue;
-
-						int param_type_id;
-						function.get_arg(0, &param_type_id, &flags);
-
-						if ((param_type_id & ~((uint32_t)type_id::handle_t | (uint32_t)type_id::const_handle_t)) != (sub_type_id & ~((uint32_t)type_id::handle_t | (uint32_t)type_id::const_handle_t)))
-							continue;
-
-						if ((flags & (size_t)modifiers::in_ref))
-						{
-							if ((param_type_id & (uint32_t)type_id::handle_t) || (must_be_const && !(flags & (size_t)modifiers::constant)))
-								continue;
-						}
-						else if (param_type_id & (uint32_t)type_id::handle_t)
-						{
-							if (must_be_const && !(param_type_id & (uint32_t)type_id::const_handle_t))
-								continue;
-						}
-						else
-							continue;
-
-						if (is_cmp)
-						{
-							if (cache->comparator || cache->comparator_return_code)
-							{
-								cache->comparator = 0;
-								cache->comparator_return_code = (int)virtual_error::multiple_functions;
-							}
-							else
-								cache->comparator = function.get_function();
-						}
-						else if (is_equals)
-						{
-							if (cache->equals || cache->equals_return_code)
-							{
-								cache->equals = 0;
-								cache->equals_return_code = (int)virtual_error::multiple_functions;
-							}
-							else
-								cache->equals = function.get_function();
-						}
-					}
-				}
-			}
-
-			if (cache->equals == 0 && cache->equals_return_code == 0)
-				cache->equals_return_code = (int)virtual_error::no_function;
-			if (cache->comparator == 0 && cache->comparator_return_code == 0)
-				cache->comparator_return_code = (int)virtual_error::no_function;
-			obj_type.set_user_data(cache, SCRIPT_TAG_ARRAY);
 		}
 		void array_repr::enum_references(asIScriptEngine* engine)
 		{
@@ -1412,16 +763,6 @@ namespace tangent
 		array_repr* array_repr::create(asITypeInfo* info)
 		{
 			return array_repr::create(info, (uint32_t)0);
-		}
-		void array_repr::cleanup_type_info_cache(asITypeInfo* type_context)
-		{
-			vitex::scripting::type_info type(type_context);
-			array_repr::scache* cache = reinterpret_cast<array_repr::scache*>(type.get_user_data(SCRIPT_TAG_ARRAY));
-			if (cache != nullptr)
-			{
-				cache->~scache();
-				memory::deallocate(cache);
-			}
 		}
 		bool array_repr::template_callback(asITypeInfo* info_context, bool& dont_garbage_collect)
 		{
@@ -1508,62 +849,6 @@ namespace tangent
 
 			return true;
 		}
-		bool array_repr::is_eligible_for_find(scache** output) const
-		{
-			scache* cache = reinterpret_cast<scache*>(obj_type.get_user_data(SCRIPT_TAG_ARRAY));
-			if (!(sub_type_id & ~((int)type_id::mask_seqnbr_t)))
-			{
-				*output = cache;
-				return true;
-			}
-
-			if (cache != nullptr && cache->equals != nullptr)
-			{
-				*output = cache;
-				return true;
-			}
-
-			immediate_context* context = immediate_context::get();
-			if (context != nullptr)
-			{
-				if (cache && cache->comparator_return_code == (int)virtual_error::multiple_functions)
-					contract::throw_ptr(exception_repr(exception_repr::category::argument(), "too many opCmp implementations for find function"));
-				else
-					contract::throw_ptr(exception_repr(exception_repr::category::argument(), "no opCmp implementation for find function"));
-			}
-			*output = nullptr;
-			return false;
-		}
-		bool array_repr::is_eligible_for_sort(scache** output) const
-		{
-			scache* cache = reinterpret_cast<scache*>(obj_type.get_user_data(SCRIPT_TAG_ARRAY));
-			if (!(sub_type_id & ~((int)type_id::mask_seqnbr_t)))
-			{
-				*output = cache;
-				return true;
-			}
-
-			if (cache != nullptr && cache->comparator != nullptr)
-			{
-				*output = cache;
-				return true;
-			}
-
-			immediate_context* context = immediate_context::get();
-			if (context != nullptr)
-			{
-				if (cache && cache->comparator_return_code == (int)virtual_error::multiple_functions)
-					contract::throw_ptr(exception_repr(exception_repr::category::argument(), "too many opCmp implementations for find function"));
-				else
-					contract::throw_ptr(exception_repr(exception_repr::category::argument(), "no opCmp implementation for find function"));
-			}
-			*output = nullptr;
-			return false;
-		}
-		size_t array_repr::get_id()
-		{
-			return SCRIPT_TAG_ARRAY;
-		}
 
 		string_repr::string_repr()
 		{
@@ -1629,7 +914,7 @@ namespace tangent
 		string_repr string_repr::operator+(char c) const
 		{
 			string_repr result(*this);
-			result.append_char(c);
+			result.append_char_back(c);
 			return result;
 		}
 		string_repr& string_repr::assign(const string_repr& other)
@@ -1674,10 +959,16 @@ namespace tangent
 			copy.assign_append(other);
 			return copy;
 		}
-		string_repr string_repr::append_char(char c)
+		string_repr string_repr::append_char_back(char c)
 		{
 			auto copy = *this;
 			copy.assign_append_char(c);
+			return copy;
+		}
+		string_repr string_repr::append_char_front(char c)
+		{
+			auto copy = *this;
+			copy.push_front(c);
 			return copy;
 		}
 		bool string_repr::operator==(const string_repr& other) const
@@ -1762,7 +1053,7 @@ namespace tangent
 		}
 		void string_repr::push_back(char c)
 		{
-			append_char(c);
+			assign_append_char(c);
 		}
 		void string_repr::pop_back()
 		{
@@ -2005,15 +1296,26 @@ namespace tangent
 		}
 		uint128_t string_repr::from_string_uint128(int base) const
 		{
+			if (!stringify::has_integer(view(), base))
+				return uint128_t();
+
 			return uint128_t(view(), base);
 		}
 		uint256_t string_repr::from_string_uint256(int base) const
 		{
+			if (!stringify::has_integer(view(), base))
+				return uint256_t();
+
 			return uint256_t(view(), base);
 		}
 		decimal string_repr::from_string_decimal(int base) const
 		{
-			return decimal::from(view(), base);
+			if (stringify::has_integer(view(), base))
+				return decimal::from(view(), base);
+			else if (base == 10 && stringify::has_number(view(), base))
+				return decimal(view());
+
+			return decimal::nan();
 		}
 		string_repr string_repr::to_string_uint128(const uint128_t& other, int base)
 		{
@@ -2073,6 +1375,16 @@ namespace tangent
 			}
 			else
 				new(base) decimal(view);
+			truncate_or_throw(*base, true);
+		}
+		void real320_repr::custom_constructor_uint128(decimal* base, const uint128_t& value)
+		{
+			new(base) decimal(value.to_decimal());
+			truncate_or_throw(*base, true);
+		}
+		void real320_repr::custom_constructor_uint256(decimal* base, const uint256_t& value)
+		{
+			new(base) decimal(value.to_decimal());
 			truncate_or_throw(*base, true);
 		}
 		void real320_repr::custom_constructor_copy(decimal* base, const decimal& value)
@@ -2205,15 +1517,9 @@ namespace tangent
 			decimal left_allocated = left;
 			return div_eq(left_allocated, right);
 		}
-		decimal real320_repr::per(const decimal& left, const decimal& right)
-		{
-			decimal result = left % right;
-			truncate_or_throw(result, false);
-			return result;
-		}
 		decimal real320_repr::from(const string_repr& data, uint8_t base)
 		{
-			decimal result = decimal::from(data.view(), base);
+			decimal result = base == 10 ? decimal(data.view()) : decimal::from(data.view(), base);
 			truncate_or_throw(result, false);
 			return result;
 		}
@@ -2303,7 +1609,10 @@ namespace tangent
 		}
 		uint128_t& uint128_repr::div_eq(uint128_t& base, const uint128_t& v)
 		{
-			base /= v;
+			if (v != 0)
+				base /= v;
+			else
+				base = 0;
 			return base;
 		}
 		uint128_t& uint128_repr::add_eq(uint128_t& base, const uint128_t& v)
@@ -2438,7 +1747,10 @@ namespace tangent
 		}
 		uint256_t& uint256_repr::div_eq(uint256_t& base, const uint256_t& v)
 		{
-			base /= v;
+			if (v != 0)
+				base /= v;
+			else
+				base = 0;
 			return base;
 		}
 		uint256_t& uint256_repr::add_eq(uint256_t& base, const uint256_t& v)
@@ -2550,6 +1862,7 @@ namespace tangent
 				return false;
 
 			payments.push_back(std::make_pair(new_asset, new_value));
+			total_value += new_value;
 			return true;
 		}
 		bool payable_repr::minus(const algorithm::asset_id& new_asset, const decimal& new_value)
@@ -2577,6 +1890,7 @@ namespace tangent
 			}
 
 			std::erase_if(payments, [](const std::pair<algorithm::asset_id, decimal>& item) { return !item.second.is_positive(); });
+			total_value -= new_value;
 			return true;
 		}
 		bool payable_repr::has(const algorithm::asset_id& new_asset) const
@@ -2674,10 +1988,23 @@ namespace tangent
 			if (!payment)
 				return contract::throw_ptr(exception_repr(exception_repr::category::execution(), std::string_view(payment.error().message())));
 		}
+		decimal address_repr::token_balance_of(const string_repr& token) const
+		{
+			return balance_of(contract::coin_token(token));
+		}
+		decimal address_repr::token_reserve_of(const string_repr& token) const
+		{
+			return reserve_of(contract::coin_token(token));
+		}
 		decimal address_repr::balance_of(const uint256_t& asset) const
 		{
 			auto* p = program::fetch_immutable_or_throw();
 			return p ? p->executor->get_account_balance(asset, hash).or_else(states::account_balance(algorithm::pubkeyhash_t(), asset, nullptr)).get_balance() : decimal::zero();
+		}
+		decimal address_repr::reserve_of(const uint256_t& asset) const
+		{
+			auto* p = program::fetch_immutable_or_throw();
+			return p ? p->executor->get_account_balance(asset, hash).or_else(states::account_balance(algorithm::pubkeyhash_t(), asset, nullptr)).reserve : decimal::zero();
 		}
 		string_repr address_repr::to_string() const
 		{
@@ -2756,6 +2083,14 @@ namespace tangent
 		{
 			input.data = output.data;
 		}
+		void abi_repr::merge(const string_repr& value)
+		{
+			size_t prev_size = output.data.size();
+			output.data.append(value.data(), (size_t)value.size());
+			input.data = output.data;
+			if (prev_size < output.data.size())
+				program::request_gas_vmemory(output.data.size() - prev_size);
+		}
 		void abi_repr::seek(uint32_t offset)
 		{
 			input.seek = (size_t)offset;
@@ -2767,33 +2102,43 @@ namespace tangent
 		}
 		void abi_repr::wboolean(bool value)
 		{
+			size_t prev_size = output.data.size();
 			output.write_boolean(value);
 			input.data = output.data;
+			if (prev_size < output.data.size())
+				program::request_gas_vmemory(output.data.size() - prev_size);
 		}
 		void abi_repr::wuint160(const address_repr& value)
 		{
+			size_t prev_size = output.data.size();
 			output.write_string(value.hash.optimized_view());
 			input.data = output.data;
+			if (prev_size < output.data.size())
+				program::request_gas_vmemory(output.data.size() - prev_size);
 		}
 		void abi_repr::wuint256(const uint256_t& value)
 		{
+			size_t prev_size = output.data.size();
 			output.write_integer(value);
 			input.data = output.data;
+			if (prev_size < output.data.size())
+				program::request_gas_vmemory(output.data.size() - prev_size);
 		}
 		void abi_repr::wreal320(const decimal& value)
 		{
+			size_t prev_size = output.data.size();
 			output.write_decimal(value);
 			input.data = output.data;
-		}
-		void abi_repr::merge(const string_repr& value)
-		{
-			output.data.append(value.data(), (size_t)value.size());
-			input.data = output.data;
+			if (prev_size < output.data.size())
+				program::request_gas_vmemory(output.data.size() - prev_size);
 		}
 		void abi_repr::wstr(const string_repr& value)
 		{
+			size_t prev_size = output.data.size();
 			output.write_string(value.view());
 			input.data = output.data;
+			if (prev_size < output.data.size())
+				program::request_gas_vmemory(output.data.size() - prev_size);
 		}
 		bool abi_repr::rboolean(bool& value)
 		{
@@ -3163,8 +2508,7 @@ namespace tangent
 			if (!p)
 				return false;
 
-			bool is_column = mode == cquery::column || mode == cquery::column_filter;
-			auto& cache = ((program*)p)->cache.index[is_column ? 0 : 1][subject.data];
+			auto& cache = cache_ptr(p);
 		retry:
 			auto it = cache.find((size_t)offset);
 			if (it == cache.end())
@@ -3207,7 +2551,7 @@ namespace tangent
 			if (other_index_value != nullptr && other_index_type_id != (int)type_id::void_t)
 			{
 				auto index_slot = uint8_t(0);
-				auto stream = format::ro_stream(is_column ? it->second->row : it->second->column);
+				auto stream = format::ro_stream(mode == cquery::column || mode == cquery::column_filter ? it->second->row : it->second->column);
 				if (slot > 0 && (!stream.read_integer(stream.read_type(), &index_slot) || index_slot != slot))
 					return false;
 
@@ -3286,6 +2630,17 @@ namespace tangent
 			order = ledger::filter_order::descending;
 			return *this;
 		}
+		hash_map<size_t, uptr<states::account_multiform>>& ranging_slice_repr::cache_ptr(const program* p)
+		{
+			if (mode == cquery::column || mode == cquery::row)
+				return ((program*)p)->cache.index[mode == cquery::column || mode == cquery::column_filter ? 0 : 1][subject.data];
+
+			auto index = subject;
+			index.write_typeless((char*)&comparator, sizeof(comparator));
+			index.write_typeless((char*)&order, sizeof(order));
+			index.write_typeless(value);
+			return ((program*)p)->cache.index[mode == cquery::column || mode == cquery::column_filter ? 0 : 1][index.data];
+		}
 		ranging_slice_repr ranging_slice_repr::from_column(const void* index_value, int index_type_id)
 		{
 			return from(cquery::column, 0, index_value, index_type_id);
@@ -3330,43 +2685,6 @@ namespace tangent
 				item.value.destroy(value_type);
 			}
 			map.clear();
-		}
-		const void* ranging_repr::from(ranging_slice_repr& slice)
-		{
-			range_item item;
-			auto column_type = type.get_sub_type(0);
-			auto row_type = type.get_sub_type(1);
-			auto value_type = type.get_sub_type(2);
-			if (item.column.copy(nullptr, type.get_sub_type_id(0), column_type) && item.row.copy(nullptr, type.get_sub_type_id(1), row_type) && item.value.copy(nullptr, type.get_sub_type_id(2), value_type))
-			{
-				auto index_slot = uint8_t(0);
-				auto stream = slice.subject.ro();
-				if (stream.read_integer(stream.read_type(), &index_slot) && index_slot == slot)
-				{
-					bool is_column = slice.mode == cquery::column || slice.mode == cquery::column_filter;
-					auto status = marshall::load(stream, is_column ? item.column.value : item.row.value, type.get_sub_type_id(is_column ? 0 : 1));
-					if (status && slice.next_index(item.value.value, type.get_sub_type_id(2), is_column ? item.row.value : item.column.value, type.get_sub_type_id(is_column ? 1 : 0)))
-					{
-						auto index = to_key(item.column.value, item.row.value);
-						auto it = map.find(index);
-						if (it != map.end())
-						{
-							if (it->second.column.copy(item.column.value, type.get_sub_type_id(0), column_type) && item.row.copy(item.row.value, type.get_sub_type_id(1), row_type) && item.value.copy(item.value.value, type.get_sub_type_id(2), value_type))
-								return it->second.value.address();
-						}
-						else
-						{
-							map[index] = item;
-							return item.value.address();
-						}
-					}
-				}
-			}
-			item.column.destroy(column_type);
-			item.row.destroy(row_type);
-			item.value.destroy(value_type);
-			contract::throw_ptr(exception_repr(exception_repr::category::storage(), "range state load failed"));
-			return nullptr;
 		}
 		ranging_slice_repr ranging_repr::from_column(const void* new_column)
 		{
@@ -3782,7 +3100,7 @@ namespace tangent
 				return contract::throw_ptr(exception_repr(exception_repr::category::argument(), std::string_view(status.error().message())));
 
 			auto type = factory::get()->get_vm()->get_type_info_by_id(object_type_id);
-			auto name = type.is_valid() ? type.get_name() : std::string_view("?");
+			auto name = type.is_valid() ? type.get_name() : std::string_view("primitive");
 			auto reader = stream.ro();
 			format::variables returns;
 			if (!format::variables_util::deserialize_flat_from(reader, &returns))
@@ -3806,7 +3124,7 @@ namespace tangent
 				return contract::throw_ptr(exception_repr(exception_repr::category::argument(), std::string_view(status.error().message())));
 
 			auto type = factory::get()->get_vm()->get_type_info_by_id(event_type_id);
-			auto name = type.is_valid() ? type.get_name() : std::string_view("?");
+			auto name = type.is_valid() ? type.get_name() : std::string_view("primitive");
 			auto reader = stream.ro();
 			format::variables returns;
 			if (!format::variables_util::deserialize_flat_from(reader, &returns))
@@ -3825,7 +3143,7 @@ namespace tangent
 				return false;
 
 			auto type = factory::get()->get_vm()->get_type_info_by_id(object_type_id);
-			auto name = type.is_valid() ? type.get_name() : std::string_view("?");
+			auto name = type.is_valid() ? type.get_name() : std::string_view("primitive");
 			auto id = algorithm::hashing::hash32d(name);
 			auto* event = event_index < 0 ? p->executor->receipt.reverse_find_event(id, (size_t)(-event_index)) : p->executor->receipt.find_event(id, (size_t)event_index);
 			if (!event)
@@ -3850,7 +3168,7 @@ namespace tangent
 			void* object_value = inout.get_arg_address(2);
 			int object_type_id = inout.get_arg_type_id(2);
 			auto type = factory::get()->get_vm()->get_type_info_by_id(event_type_id);
-			auto name = type.is_valid() ? type.get_name() : std::string_view("?");
+			auto name = type.is_valid() ? type.get_name() : std::string_view("primitive");
 			auto id = algorithm::hashing::hash32d(name);
 			auto* event = event_index < 0 ? p->executor->receipt.reverse_find_event(id, (size_t)(-event_index)) : p->executor->receipt.find_event(id, (size_t)event_index);
 			if (!event)
@@ -3880,7 +3198,7 @@ namespace tangent
 			void* object_value = inout.get_address_of_return_location();
 			int object_type_id = inout.get_return_addressable_type_id();
 			auto type = factory::get()->get_vm()->get_type_info_by_id(object_type_id);
-			auto name = type.is_valid() ? type.get_name() : std::string_view("?");
+			auto name = type.is_valid() ? type.get_name() : std::string_view("primitive");
 			auto id = algorithm::hashing::hash32d(name);
 			auto* event = event_index < 0 ? p->executor->receipt.reverse_find_event(id, (size_t)(-event_index - 1)) : p->executor->receipt.find_event(id, (size_t)event_index);
 			if (!event)
@@ -3907,7 +3225,7 @@ namespace tangent
 			void* object_value = inout.get_address_of_return_location();
 			int object_type_id = inout.get_return_addressable_type_id();
 			auto type = factory::get()->get_vm()->get_type_info_by_id(event_type_id);
-			auto name = type.is_valid() ? type.get_name() : std::string_view("?");
+			auto name = type.is_valid() ? type.get_name() : std::string_view("primitive");
 			auto id = algorithm::hashing::hash32d(name);
 			auto* event = event_index < 0 ? p->executor->receipt.reverse_find_event(id, (size_t)(-event_index - 1)) : p->executor->receipt.find_event(id, (size_t)event_index);
 			if (!event)
@@ -3925,11 +3243,7 @@ namespace tangent
 		address_repr contract::block_proposer()
 		{
 			auto* p = program::fetch_immutable_or_throw();
-			if (!p)
-				return address_repr();
-
-			size_t index = (size_t)p->executor->block->priority;
-			return index < p->executor->solver->producers.size() ? address_repr(algorithm::pubkeyhash_t(p->executor->solver->producers[index].owner)) : address_repr();
+			return p ? address_repr(p->executor->solver->state.public_key_hash) : address_repr();
 		}
 		uint256_t contract::block_parent_hash()
 		{
@@ -4052,41 +3366,6 @@ namespace tangent
 
 			return algorithm::asset::id_of(protocol::now().policy.token, token.view(), algorithm::signing::encode_address(p->callable()));
 		}
-		uint256_t contract::coin_from_decimal(const decimal& value)
-		{
-			if (value.is_nan())
-			{
-				contract::throw_ptr(exception_repr(exception_repr::category::argument(), string_repr(value.to_string() + " as uint256 - not a number")));
-				return 0;
-			}
-
-			if (value.is_negative())
-			{
-				contract::throw_ptr(exception_repr(exception_repr::category::argument(), string_repr(value.to_string() + " as uint256 - negative number")));
-				return 0;
-			}
-
-			if (value.integer_size() > protocol::now().message.integer_precision || value.decimal_size() > protocol::now().message.decimal_precision)
-			{
-				contract::throw_ptr(exception_repr(exception_repr::category::argument(), string_repr(value.to_string() + " as uint256 - fixed point overflow")));
-				return 0;
-			}
-
-			auto copy = value;
-			copy *= (uint64_t)std::pow<uint64_t>(10, protocol::now().message.decimal_precision);
-
-			auto result = uint256_t::max();
-			if (copy < result.to_decimal())
-				result = uint256_t(copy.truncate(0).to_string(), 10);
-			return result;
-		}
-		decimal contract::coin_to_decimal(const uint256_t& value)
-		{
-			auto precision = protocol::now().message.decimal_precision;
-			auto result = value.to_decimal().truncate(precision);
-			result /= (uint64_t)std::pow<uint64_t>(10, protocol::now().message.decimal_precision);
-			return result;
-		}
 		uint256_t contract::coin_id_of(const string_repr& blockchain, const string_repr& token, const string_repr& contract_address)
 		{
 			return algorithm::asset::id_of(blockchain.view(), token.view(), contract_address.view());
@@ -4107,13 +3386,49 @@ namespace tangent
 		{
 			return string_repr(algorithm::asset::name_of(value));
 		}
-		string_repr contract::alg_encode_bytes256(const uint256_t& value)
+		uint256_t contract::alg_to_r256(const decimal& value)
+		{
+			if (value.is_nan())
+			{
+				contract::throw_ptr(exception_repr(exception_repr::category::argument(), string_repr(value.to_string() + " as uint256 - not a number")));
+				return 0;
+			}
+
+			if (value.is_negative())
+			{
+				contract::throw_ptr(exception_repr(exception_repr::category::argument(), string_repr(value.to_string() + " as uint256 - negative number")));
+				return 0;
+			}
+
+			uint32_t integer_size = value.integer_size();
+			if (integer_size > 60 || integer_size > protocol::now().message.integer_precision || value.decimal_size() > protocol::now().message.decimal_precision)
+			{
+				contract::throw_ptr(exception_repr(exception_repr::category::argument(), string_repr(value.to_string() + " as uint256 - fixed point overflow")));
+				return 0;
+			}
+
+			auto copy = value;
+			copy *= (uint64_t)std::pow<uint64_t>(10, protocol::now().message.decimal_precision);
+
+			auto result = uint256_t::max();
+			if (copy < result.to_decimal())
+				result = uint256_t(copy.truncate(0).to_string(), 10);
+			return result;
+		}
+		decimal contract::alg_from_r256(const uint256_t& value)
+		{
+			auto precision = protocol::now().message.decimal_precision;
+			auto result = value.to_decimal().truncate(precision);
+			result /= (uint64_t)std::pow<uint64_t>(10, protocol::now().message.decimal_precision);
+			return result;
+		}
+		string_repr contract::alg_from_u256(const uint256_t& value)
 		{
 			uint8_t data[32];
 			value.encode(data);
 			return string_repr(std::string_view((char*)data, sizeof(data)));
 		}
-		uint256_t contract::alg_decode_bytes256(const string_repr& value)
+		uint256_t contract::alg_to_u256(const string_repr& value)
 		{
 			uint8_t data[32];
 			memcpy(data, value.data(), std::min(sizeof(data), (size_t)value.size()));
@@ -4121,6 +3436,14 @@ namespace tangent
 			uint256_t buffer;
 			buffer.decode(data);
 			return buffer;
+		}
+		string_repr contract::alg_from_e16(const string_repr& value)
+		{
+			return string_repr(format::util::decode_0xhex(value.view()));
+		}
+		string_repr contract::alg_to_e16(const string_repr& value)
+		{
+			return string_repr(format::util::encode_0xhex(value.view()));
 		}
 		address_repr contract::alg_erecover160(const uint256_t& hash, const string_repr& signature)
 		{
@@ -4262,7 +3585,6 @@ namespace tangent
 				case (int)type_id::int8_t:
 					inout.set_return_byte((uint8_t)std::numeric_limits<int8_t>::min());
 					break;
-				case (int)type_id::bool_t:
 				case (int)type_id::uint8_t:
 					inout.set_return_byte(std::numeric_limits<uint8_t>::min());
 					break;
@@ -4318,11 +3640,6 @@ namespace tangent
 						new (inout.get_address_of_return_location()) decimal(result);
 						break;
 					}
-					else if (type_id & (int)vitex::scripting::type_id::mask_seqnbr_t)
-					{
-						inout.set_return_dword((uint32_t)std::numeric_limits<int32_t>::min());
-						break;
-					}
 					return contract::throw_ptr(exception_repr(exception_repr::category::execution(), "template type must be arithmetic"));
 				}
 			}
@@ -4336,7 +3653,6 @@ namespace tangent
 				case (int)type_id::int8_t:
 					inout.set_return_byte((uint8_t)std::numeric_limits<int8_t>::max());
 					break;
-				case (int)type_id::bool_t:
 				case (int)type_id::uint8_t:
 					inout.set_return_byte(std::numeric_limits<uint8_t>::max());
 					break;
@@ -4391,11 +3707,6 @@ namespace tangent
 						new (inout.get_address_of_return_location()) decimal(result);
 						break;
 					}
-					else if (type_id & (int)vitex::scripting::type_id::mask_seqnbr_t)
-					{
-						inout.set_return_dword((uint32_t)std::numeric_limits<int32_t>::max());
-						break;
-					}
 					return contract::throw_ptr(exception_repr(exception_repr::category::execution(), "template type must be arithmetic"));
 				}
 			}
@@ -4404,119 +3715,327 @@ namespace tangent
 		{
 			generic_context inout = generic_context(generic);
 			int type_id = inout.get_return_addressable_type_id();
-			if (mpf_value::requires_fixed_point(type_id))
+			void* v = inout.get_arg_address(0);
+			switch (type_id)
 			{
-				mpf_value left = mpf_value(inout.get_arg_type_id(0), inout.get_arg_address(0));
-				mpf_abs(left.target, left.target);
-				if (!left.into(inout))
-					return contract::throw_ptr(exception_repr(exception_repr::category::execution(), "template type must be fixed point"));
-			}
-			else
-			{
-				mpz_value left = mpz_value(inout.get_arg_type_id(0), inout.get_arg_address(0));
-				mpz_abs(left.target, left.target);
-				if (!left.into(inout))
-					return contract::throw_ptr(exception_repr(exception_repr::category::execution(), "template type must be integer"));
+				case (int)type_id::int8_t:
+					inout.set_return_byte((uint8_t)std::abs(*(int8_t*)v));
+					break;
+				case (int)type_id::uint8_t:
+					inout.set_return_byte(*(uint8_t*)v);
+					break;
+				case (int)type_id::int16_t:
+					inout.set_return_word((uint16_t)std::abs(*(int16_t*)v));
+					break;
+				case (int)type_id::uint16_t:
+					inout.set_return_word(*(uint16_t*)v);
+					break;
+				case (int)type_id::int32_t:
+					inout.set_return_dword((uint32_t)std::abs(*(int32_t*)v));
+					break;
+				case (int)type_id::uint32_t:
+					inout.set_return_dword(*(uint32_t*)v);
+					break;
+				case (int)type_id::int64_t:
+					inout.set_return_qword((uint64_t)std::abs(*(int64_t*)v));
+					break;
+				case (int)type_id::uint64_t:
+					inout.set_return_qword(*(uint64_t*)v);
+					break;
+				case (int)type_id::float_t:
+				case (int)type_id::double_t:
+					return contract::throw_ptr(exception_repr(exception_repr::category::argument(), "floating point value not permitted"));
+				default:
+				{
+					auto type = factory::get()->get_vm()->get_type_info_by_id(type_id);
+					auto name = type.is_valid() ? type.get_name() : std::string_view();
+					if (name == SCRIPT_TYPE_UINT128)
+					{
+						new (inout.get_address_of_return_location()) uint128_t(*(uint128_t*)v);
+						break;
+					}
+					else if (name == SCRIPT_TYPE_UINT256)
+					{
+						new (inout.get_address_of_return_location()) uint256_t(*(uint256_t*)v);
+						break;
+					}
+					else if (name == SCRIPT_TYPE_REAL320)
+					{
+						auto copy = *(decimal*)v;
+						if (copy.is_negative())
+							copy = -copy;
+						new (inout.get_address_of_return_location()) decimal(std::move(copy));
+						break;
+					}
+					return contract::throw_ptr(exception_repr(exception_repr::category::execution(), "template type must be arithmetic"));
+				}
 			}
 		}
 		void contract::math_min(asIScriptGeneric* generic)
 		{
 			generic_context inout = generic_context(generic);
 			int type_id = inout.get_return_addressable_type_id();
-			if (mpf_value::requires_fixed_point(type_id))
+			void* a = inout.get_arg_address(0);
+			void* b = inout.get_arg_address(1);
+			switch (type_id)
 			{
-				mpf_value left = mpf_value(inout.get_arg_type_id(0), inout.get_arg_address(0));
-				mpf_value right = mpf_value(inout.get_arg_type_id(1), inout.get_arg_address(1));
-				auto& lowest = mpf_cmp(left.target, right.target) < 0 ? left : right;
-				if (!lowest.into(inout))
-					return contract::throw_ptr(exception_repr(exception_repr::category::execution(), "template type must be fixed point"));
-			}
-			else
-			{
-				mpz_value left = mpz_value(inout.get_arg_type_id(0), inout.get_arg_address(0));
-				mpz_value right = mpz_value(inout.get_arg_type_id(1), inout.get_arg_address(1));
-				auto& lowest = mpz_cmp(left.target, right.target) < 0 ? left : right;
-				if (!lowest.into(inout))
-					return contract::throw_ptr(exception_repr(exception_repr::category::execution(), "template type must be integer"));
+				case (int)type_id::int8_t:
+					inout.set_return_byte(std::min<int8_t>(*(int8_t*)a, *(int8_t*)b));
+					break;
+				case (int)type_id::uint8_t:
+					inout.set_return_byte(std::min<uint8_t>(*(uint8_t*)a, *(uint8_t*)b));
+					break;
+				case (int)type_id::int16_t:
+					inout.set_return_word(std::min<int16_t>(*(int16_t*)a, *(int16_t*)b));
+					break;
+				case (int)type_id::uint16_t:
+					inout.set_return_word(std::min<uint16_t>(*(uint16_t*)a, *(uint16_t*)b));
+					break;
+				case (int)type_id::int32_t:
+					inout.set_return_dword(std::min<int32_t>(*(int32_t*)a, *(int32_t*)b));
+					break;
+				case (int)type_id::uint32_t:
+					inout.set_return_dword(std::min<uint32_t>(*(uint32_t*)a, *(uint32_t*)b));
+					break;
+				case (int)type_id::int64_t:
+					inout.set_return_qword(std::min<int64_t>(*(int64_t*)a, *(int64_t*)b));
+					break;
+				case (int)type_id::uint64_t:
+					inout.set_return_qword(std::min<uint64_t>(*(uint64_t*)a, *(uint64_t*)b));
+					break;
+				case (int)type_id::float_t:
+				case (int)type_id::double_t:
+					return contract::throw_ptr(exception_repr(exception_repr::category::argument(), "floating point value not permitted"));
+				default:
+				{
+					auto type = factory::get()->get_vm()->get_type_info_by_id(type_id);
+					auto name = type.is_valid() ? type.get_name() : std::string_view();
+					if (name == SCRIPT_TYPE_UINT128)
+					{
+						uint128_t& a_v = *(uint128_t*)a;
+						uint128_t& b_v = *(uint128_t*)b;
+						new (inout.get_address_of_return_location()) uint128_t(a_v < b_v ? a_v : b_v);
+						break;
+					}
+					else if (name == SCRIPT_TYPE_UINT256)
+					{
+						uint256_t& a_v = *(uint256_t*)a;
+						uint256_t& b_v = *(uint256_t*)b;
+						new (inout.get_address_of_return_location()) uint256_t(a_v < b_v ? a_v : b_v);
+						break;
+					}
+					else if (name == SCRIPT_TYPE_REAL320)
+					{
+						decimal& a_v = *(decimal*)a;
+						decimal& b_v = *(decimal*)b;
+						new (inout.get_address_of_return_location()) decimal(a_v < b_v ? a_v : b_v);
+						break;
+					}
+					return contract::throw_ptr(exception_repr(exception_repr::category::execution(), "template type must be arithmetic"));
+				}
 			}
 		}
 		void contract::math_max(asIScriptGeneric* generic)
 		{
 			generic_context inout = generic_context(generic);
 			int type_id = inout.get_return_addressable_type_id();
-			if (mpf_value::requires_fixed_point(type_id))
+			void* a = inout.get_arg_address(0);
+			void* b = inout.get_arg_address(1);
+			switch (type_id)
 			{
-				mpf_value left = mpf_value(inout.get_arg_type_id(0), inout.get_arg_address(0));
-				mpf_value right = mpf_value(inout.get_arg_type_id(1), inout.get_arg_address(1));
-				auto& highest = mpf_cmp(left.target, right.target) > 0 ? left : right;
-				if (!highest.into(inout))
-					return contract::throw_ptr(exception_repr(exception_repr::category::execution(), "template type must be fixed point"));
-			}
-			else
-			{
-				mpz_value left = mpz_value(inout.get_arg_type_id(0), inout.get_arg_address(0));
-				mpz_value right = mpz_value(inout.get_arg_type_id(1), inout.get_arg_address(1));
-				auto& highest = mpz_cmp(left.target, right.target) > 0 ? left : right;
-				if (!highest.into(inout))
-					return contract::throw_ptr(exception_repr(exception_repr::category::execution(), "template type must be integer"));
+				case (int)type_id::int8_t:
+					inout.set_return_byte(std::max<int8_t>(*(int8_t*)a, *(int8_t*)b));
+					break;
+				case (int)type_id::uint8_t:
+					inout.set_return_byte(std::max<uint8_t>(*(uint8_t*)a, *(uint8_t*)b));
+					break;
+				case (int)type_id::int16_t:
+					inout.set_return_word(std::max<int16_t>(*(int16_t*)a, *(int16_t*)b));
+					break;
+				case (int)type_id::uint16_t:
+					inout.set_return_word(std::max<uint16_t>(*(uint16_t*)a, *(uint16_t*)b));
+					break;
+				case (int)type_id::int32_t:
+					inout.set_return_dword(std::max<int32_t>(*(int32_t*)a, *(int32_t*)b));
+					break;
+				case (int)type_id::uint32_t:
+					inout.set_return_dword(std::max<uint32_t>(*(uint32_t*)a, *(uint32_t*)b));
+					break;
+				case (int)type_id::int64_t:
+					inout.set_return_qword(std::max<int64_t>(*(int64_t*)a, *(int64_t*)b));
+					break;
+				case (int)type_id::uint64_t:
+					inout.set_return_qword(std::max<uint64_t>(*(uint64_t*)a, *(uint64_t*)b));
+					break;
+				case (int)type_id::float_t:
+				case (int)type_id::double_t:
+					return contract::throw_ptr(exception_repr(exception_repr::category::argument(), "floating point value not permitted"));
+				default:
+				{
+					auto type = factory::get()->get_vm()->get_type_info_by_id(type_id);
+					auto name = type.is_valid() ? type.get_name() : std::string_view();
+					if (name == SCRIPT_TYPE_UINT128)
+					{
+						uint128_t& a_v = *(uint128_t*)a;
+						uint128_t& b_v = *(uint128_t*)b;
+						new (inout.get_address_of_return_location()) uint128_t(a_v > b_v ? a_v : b_v);
+						break;
+					}
+					else if (name == SCRIPT_TYPE_UINT256)
+					{
+						uint256_t& a_v = *(uint256_t*)a;
+						uint256_t& b_v = *(uint256_t*)b;
+						new (inout.get_address_of_return_location()) uint256_t(a_v > b_v ? a_v : b_v);
+						break;
+					}
+					else if (name == SCRIPT_TYPE_REAL320)
+					{
+						decimal& a_v = *(decimal*)a;
+						decimal& b_v = *(decimal*)b;
+						new (inout.get_address_of_return_location()) decimal(a_v > b_v ? a_v : b_v);
+						break;
+					}
+					return contract::throw_ptr(exception_repr(exception_repr::category::execution(), "template type must be arithmetic"));
+				}
 			}
 		}
 		void contract::math_clamp(asIScriptGeneric* generic)
 		{
 			generic_context inout = generic_context(generic);
 			int type_id = inout.get_return_addressable_type_id();
-			if (mpf_value::requires_fixed_point(type_id))
+			void* a = inout.get_arg_address(0);
+			void* b = inout.get_arg_address(1);
+			void* c = inout.get_arg_address(2);
+			switch (type_id)
 			{
-				mpf_value value = mpf_value(inout.get_arg_type_id(0), inout.get_arg_address(0));
-				mpf_value left = mpf_value(inout.get_arg_type_id(1), inout.get_arg_address(1));
-				mpf_value right = mpf_value(inout.get_arg_type_id(2), inout.get_arg_address(2));
-				auto& clamped = mpf_cmp(value.target, left.target) < 0 ? left : (mpf_cmp(value.target, right.target) > 0 ? right : value);
-				if (!clamped.into(inout))
-					return contract::throw_ptr(exception_repr(exception_repr::category::execution(), "template type must be fixed point"));
-			}
-			else
-			{
-				mpz_value value = mpz_value(inout.get_arg_type_id(0), inout.get_arg_address(0));
-				mpz_value left = mpz_value(inout.get_arg_type_id(1), inout.get_arg_address(1));
-				mpz_value right = mpz_value(inout.get_arg_type_id(2), inout.get_arg_address(2));
-				auto& clamped = mpz_cmp(value.target, left.target) < 0 ? left : (mpz_cmp(value.target, right.target) > 0 ? right : value);
-				if (!clamped.into(inout))
-					return contract::throw_ptr(exception_repr(exception_repr::category::execution(), "template type must be integer"));
+				case (int)type_id::int8_t:
+					inout.set_return_byte(std::min<int8_t>(std::max<int8_t>(*(int8_t*)a, *(int8_t*)b), *(int8_t*)c));
+					break;
+				case (int)type_id::uint8_t:
+					inout.set_return_byte(std::min<uint8_t>(std::max<uint8_t>(*(uint8_t*)a, *(uint8_t*)b), *(uint8_t*)c));
+					break;
+				case (int)type_id::int16_t:
+					inout.set_return_word(std::min<int16_t>(std::max<int16_t>(*(int16_t*)a, *(int16_t*)b), *(int16_t*)c));
+					break;
+				case (int)type_id::uint16_t:
+					inout.set_return_word(std::min<uint16_t>(std::max<uint16_t>(*(uint16_t*)a, *(uint16_t*)b), *(uint16_t*)c));
+					break;
+				case (int)type_id::int32_t:
+					inout.set_return_dword(std::min<int32_t>(std::max<int32_t>(*(int32_t*)a, *(int32_t*)b), *(int32_t*)c));
+					break;
+				case (int)type_id::uint32_t:
+					inout.set_return_dword(std::min<uint32_t>(std::max<uint32_t>(*(uint32_t*)a, *(uint32_t*)b), *(uint32_t*)c));
+					break;
+				case (int)type_id::int64_t:
+					inout.set_return_qword(std::min<int64_t>(std::max<int64_t>(*(int64_t*)a, *(int64_t*)b), *(int64_t*)c));
+					break;
+				case (int)type_id::uint64_t:
+					inout.set_return_qword(std::min<uint64_t>(std::max<uint64_t>(*(uint64_t*)a, *(uint64_t*)b), *(uint64_t*)c));
+					break;
+				case (int)type_id::float_t:
+				case (int)type_id::double_t:
+					return contract::throw_ptr(exception_repr(exception_repr::category::argument(), "floating point value not permitted"));
+				default:
+				{
+					auto type = factory::get()->get_vm()->get_type_info_by_id(type_id);
+					auto name = type.is_valid() ? type.get_name() : std::string_view();
+					if (name == SCRIPT_TYPE_UINT128)
+					{
+						uint128_t& a_v = *(uint128_t*)a;
+						uint128_t& b_v = *(uint128_t*)b;
+						uint128_t& c_v = *(uint128_t*)c;
+						uint128_t& ab_v = a_v > b_v ? a_v : b_v;
+						new (inout.get_address_of_return_location()) uint128_t(ab_v < c_v ? ab_v : c_v);
+						break;
+					}
+					else if (name == SCRIPT_TYPE_UINT256)
+					{
+						uint256_t& a_v = *(uint256_t*)a;
+						uint256_t& b_v = *(uint256_t*)b;
+						uint256_t& c_v = *(uint256_t*)c;
+						uint256_t& ab_v = a_v > b_v ? a_v : b_v;
+						new (inout.get_address_of_return_location()) uint256_t(ab_v < c_v ? ab_v : c_v);
+						break;
+					}
+					else if (name == SCRIPT_TYPE_REAL320)
+					{
+						decimal& a_v = *(decimal*)a;
+						decimal& b_v = *(decimal*)b;
+						decimal& c_v = *(decimal*)c;
+						decimal& ab_v = a_v > b_v ? a_v : b_v;
+						new (inout.get_address_of_return_location()) decimal(ab_v < c_v ? ab_v : c_v);
+						break;
+					}
+					return contract::throw_ptr(exception_repr(exception_repr::category::execution(), "template type must be arithmetic"));
+				}
 			}
 		}
 		void contract::math_lerp(asIScriptGeneric* generic)
 		{
 			generic_context inout = generic_context(generic);
 			int type_id = inout.get_return_addressable_type_id();
-			if (mpf_value::requires_fixed_point(type_id))
+			void* a = inout.get_arg_address(0);
+			void* b = inout.get_arg_address(1);
+			void* c = inout.get_arg_address(2);
+			switch (type_id)
 			{
-				mpf_value left = mpf_value(inout.get_arg_type_id(0), inout.get_arg_address(0));
-				mpf_value right = mpf_value(inout.get_arg_type_id(1), inout.get_arg_address(1));
-				mpf_value time = mpf_value(inout.get_arg_type_id(2), inout.get_arg_address(2));
-				mpf_value result = left;
-				mpf_set_ui(result.target, 1);
-				mpf_sub(result.target, result.target, time.target);
-				mpf_mul(result.target, result.target, left.target);
-				mpf_mul(time.target, time.target, right.target);
-				mpf_add(result.target, result.target, time.target);
-				if (!result.into(inout))
-					return contract::throw_ptr(exception_repr(exception_repr::category::execution(), "template type must be fixed point"));
-			}
-			else
-			{
-				mpz_value left = mpz_value(inout.get_arg_type_id(0), inout.get_arg_address(0));
-				mpz_value right = mpz_value(inout.get_arg_type_id(1), inout.get_arg_address(1));
-				mpz_value time = mpz_value(inout.get_arg_type_id(2), inout.get_arg_address(2));
-				mpz_value result = left;
-				mpz_set_ui(result.target, 1);
-				mpz_sub(result.target, result.target, time.target);
-				mpz_mul(result.target, result.target, left.target);
-				mpz_mod(result.target, result.target, result.field);
-				mpz_mul(time.target, time.target, right.target);
-				mpz_mod(time.target, time.target, time.field);
-				mpz_add(result.target, result.target, time.target);
-				if (!result.into(inout))
-					return contract::throw_ptr(exception_repr(exception_repr::category::execution(), "template type must be integer"));
+				case (int)type_id::int8_t:
+					inout.set_return_byte(math<int8_t>::lerp(*(int8_t*)a, *(int8_t*)b, *(int8_t*)c));
+					break;
+				case (int)type_id::uint8_t:
+					inout.set_return_byte(math<uint8_t>::lerp(*(uint8_t*)a, *(uint8_t*)b, *(uint8_t*)c));
+					break;
+				case (int)type_id::int16_t:
+					inout.set_return_word(math<int16_t>::lerp(*(int16_t*)a, *(int16_t*)b, *(int16_t*)c));
+					break;
+				case (int)type_id::uint16_t:
+					inout.set_return_word(math<uint16_t>::lerp(*(uint16_t*)a, *(uint16_t*)b, *(uint16_t*)c));
+					break;
+				case (int)type_id::int32_t:
+					inout.set_return_dword(math<int32_t>::lerp(*(int32_t*)a, *(int32_t*)b, *(int32_t*)c));
+					break;
+				case (int)type_id::uint32_t:
+					inout.set_return_dword(math<uint32_t>::lerp(*(uint32_t*)a, *(uint32_t*)b, *(uint32_t*)c));
+					break;
+				case (int)type_id::int64_t:
+					inout.set_return_qword(math<int64_t>::lerp(*(int64_t*)a, *(int64_t*)b, *(int64_t*)c));
+					break;
+				case (int)type_id::uint64_t:
+					inout.set_return_qword(math<uint64_t>::lerp(*(uint64_t*)a, *(uint64_t*)b, *(uint64_t*)c));
+					break;
+				case (int)type_id::float_t:
+				case (int)type_id::double_t:
+					return contract::throw_ptr(exception_repr(exception_repr::category::argument(), "floating point value not permitted"));
+				default:
+				{
+					auto type = factory::get()->get_vm()->get_type_info_by_id(type_id);
+					auto name = type.is_valid() ? type.get_name() : std::string_view();
+					if (name == SCRIPT_TYPE_UINT128)
+					{
+						uint128_t& a_v = *(uint128_t*)a;
+						uint128_t& b_v = *(uint128_t*)b;
+						uint128_t& c_v = *(uint128_t*)c;
+						new (inout.get_address_of_return_location()) uint128_t(math<uint128_t>::lerp(a_v, b_v, c_v));
+						break;
+					}
+					else if (name == SCRIPT_TYPE_UINT256)
+					{
+						uint256_t& a_v = *(uint256_t*)a;
+						uint256_t& b_v = *(uint256_t*)b;
+						uint256_t& c_v = *(uint256_t*)c;
+						new (inout.get_address_of_return_location()) uint256_t(math<uint256_t>::lerp(a_v, b_v, c_v));
+						break;
+					}
+					else if (name == SCRIPT_TYPE_REAL320)
+					{
+						decimal& a_v = *(decimal*)a;
+						decimal& b_v = *(decimal*)b;
+						decimal& c_v = *(decimal*)c;
+						new (inout.get_address_of_return_location()) decimal(math<decimal>::lerp(a_v, b_v, c_v));
+						break;
+					}
+					return contract::throw_ptr(exception_repr(exception_repr::category::execution(), "template type must be arithmetic"));
+				}
 			}
 		}
 		void contract::math_pow(asIScriptGeneric* generic)
@@ -4526,32 +4045,112 @@ namespace tangent
 
 			generic_context inout = generic_context(generic);
 			int type_id = inout.get_return_addressable_type_id();
-			if (mpf_value::requires_fixed_point(type_id))
+			void* a = inout.get_arg_address(0);
+			void* b = inout.get_arg_address(1);
+			switch (type_id)
 			{
-				mpf_value value = mpf_value(inout.get_arg_type_id(0), inout.get_arg_address(0));
-				mpf_value count = mpf_value(inout.get_arg_type_id(1), inout.get_arg_address(1));
-				auto exponent = mpf_get_ui(count.target);
-				if (exponent > 0)
-				{
-					auto bits_required = uint128_t(value.bits()) * uint128_t(exponent);
-					auto bits_limit = uint128_t(mpf_get_prec(value.target));
-					if (bits_required > bits_limit)
-						return contract::throw_ptr(exception_repr(exception_repr::category::execution(), stringify::text("fixed point overflow (bits_required: %s, bits_limit: %s)", bits_required.to_string().c_str(), bits_limit.to_string().c_str())));
-				}
+				case (int)type_id::int8_t:
+					inout.set_return_byte(std::pow<int8_t>(*(int8_t*)a, *(int8_t*)b));
+					break;
+				case (int)type_id::uint8_t:
+					inout.set_return_byte(std::pow<uint8_t>(*(uint8_t*)a, *(uint8_t*)b));
+					break;
+				case (int)type_id::int16_t:
+					if (*(int16_t*)b > (int16_t)std::numeric_limits<uint8_t>::max())
+						return contract::throw_ptr(exception_repr(exception_repr::category::argument(), "exponent overflow (max: 255)"));
 
-				mpf_value result = value;
-				mpf_pow_ui(result.target, value.target, exponent);
-				if (!result.into(inout))
-					return contract::throw_ptr(exception_repr(exception_repr::category::execution(), "template type must be fixed point"));
-			}
-			else
-			{
-				mpz_value value = mpz_value(inout.get_arg_type_id(0), inout.get_arg_address(0));
-				mpz_value count = mpz_value(inout.get_arg_type_id(1), inout.get_arg_address(1));
-				mpz_value result = value;
-				mpz_powm(result.target, value.target, count.target, value.field);
-				if (!result.into(inout))
-					return contract::throw_ptr(exception_repr(exception_repr::category::execution(), "template type must be integer"));
+					inout.set_return_word(std::pow<int16_t>(*(int16_t*)a, *(int16_t*)b));
+					break;
+				case (int)type_id::uint16_t:
+					if (*(uint16_t*)b > (uint16_t)std::numeric_limits<uint8_t>::max())
+						return contract::throw_ptr(exception_repr(exception_repr::category::argument(), "exponent overflow (max: 255)"));
+
+					inout.set_return_word(std::pow<uint16_t>(*(uint16_t*)a, *(uint16_t*)b));
+					break;
+				case (int)type_id::int32_t:
+					if (*(int32_t*)b > (int32_t)std::numeric_limits<uint8_t>::max())
+						return contract::throw_ptr(exception_repr(exception_repr::category::argument(), "exponent overflow (max: 255)"));
+
+					inout.set_return_dword(std::pow<int32_t>(*(int32_t*)a, *(int32_t*)b));
+					break;
+				case (int)type_id::uint32_t:
+					if (*(uint32_t*)b > (uint32_t)std::numeric_limits<uint8_t>::max())
+						return contract::throw_ptr(exception_repr(exception_repr::category::argument(), "exponent overflow (max: 255)"));
+
+					inout.set_return_dword(std::pow<uint32_t>(*(uint32_t*)a, *(uint32_t*)b));
+					break;
+				case (int)type_id::int64_t:
+					if (*(int64_t*)b > (int64_t)std::numeric_limits<uint8_t>::max())
+						return contract::throw_ptr(exception_repr(exception_repr::category::argument(), "exponent overflow (max: 255)"));
+
+					inout.set_return_qword(std::pow<int64_t>(*(int64_t*)a, *(int64_t*)b));
+					break;
+				case (int)type_id::uint64_t:
+					if (*(uint64_t*)b > (uint64_t)std::numeric_limits<uint8_t>::max())
+						return contract::throw_ptr(exception_repr(exception_repr::category::argument(), "exponent overflow (max: 255)"));
+
+					inout.set_return_qword(std::pow<uint64_t>(*(uint64_t*)a, *(uint64_t*)b));
+					break;
+				case (int)type_id::float_t:
+				case (int)type_id::double_t:
+					return contract::throw_ptr(exception_repr(exception_repr::category::argument(), "floating point value not permitted"));
+				default:
+				{
+					auto type = factory::get()->get_vm()->get_type_info_by_id(type_id);
+					auto name = type.is_valid() ? type.get_name() : std::string_view();
+					if (name == SCRIPT_TYPE_UINT128)
+					{
+						uint128_t& a_v = *(uint128_t*)a;
+						uint128_t& b_v = *(uint128_t*)b;
+						if (b_v > uint128_t(std::numeric_limits<uint8_t>::max()))
+							return contract::throw_ptr(exception_repr(exception_repr::category::argument(), "exponent overflow (max: 255)"));
+
+						uint128_t r = a_v;
+						for (uint128_t i = 1; i < b_v; i++)
+							r *= a_v;
+
+						new (inout.get_address_of_return_location()) uint128_t(r);
+						break;
+					}
+					else if (name == SCRIPT_TYPE_UINT256)
+					{
+						uint256_t& a_v = *(uint256_t*)a;
+						uint256_t& b_v = *(uint256_t*)b;
+						if (b_v > uint256_t(std::numeric_limits<uint8_t>::max()))
+							return contract::throw_ptr(exception_repr(exception_repr::category::argument(), "exponent overflow (max: 255)"));
+
+						uint256_t r = a_v;
+						for (uint256_t i = 1; i < b_v; i++)
+							r *= a_v;
+
+						new (inout.get_address_of_return_location()) uint256_t(r);
+						break;
+					}
+					else if (name == SCRIPT_TYPE_REAL320)
+					{
+						decimal& a_v = *(decimal*)a;
+						decimal& b_v = *(decimal*)b;
+						if (b_v > decimal(std::numeric_limits<uint8_t>::max()))
+							return contract::throw_ptr(exception_repr(exception_repr::category::argument(), "exponent overflow (max: 255)"));
+						else if (b_v.is_negative())
+							return contract::throw_ptr(exception_repr(exception_repr::category::argument(), "exponent must be positive"));
+						else if (b_v != b_v.truncate(0))
+							return contract::throw_ptr(exception_repr(exception_repr::category::argument(), "exponent must be an integer"));
+
+						mpf_t result;
+						mpf_init(result);
+						mpf_set_prec(result, real320_repr::target_bits());
+						mpf_set_str(result, a_v.to_string().c_str(), 10);
+						mpf_pow_ui(result, result, b_v.to_uint32());
+
+						decimal r_v = decimal(mpf_to_string(result));
+						real320_repr::truncate_or_throw(r_v, true);
+						new (inout.get_address_of_return_location()) decimal(std::move(r_v));
+						mpf_clear(result);
+						break;
+					}
+					return contract::throw_ptr(exception_repr(exception_repr::category::execution(), "template type must be arithmetic"));
+				}
 			}
 		}
 		void contract::math_sqrt(asIScriptGeneric* generic)
@@ -4561,22 +4160,82 @@ namespace tangent
 
 			generic_context inout = generic_context(generic);
 			int type_id = inout.get_return_addressable_type_id();
-			if (mpf_value::requires_fixed_point(type_id))
+			void* v = inout.get_arg_address(0);
+			switch (type_id)
 			{
-				mpf_value value = mpf_value(inout.get_arg_type_id(0), inout.get_arg_address(0));
-				mpf_sqrt(value.target, value.target);
-				if (!value.into(inout))
-					return contract::throw_ptr(exception_repr(exception_repr::category::execution(), "template type must be fixed point"));
-			}
-			else
-			{
-				mpz_value value = mpz_value(inout.get_arg_type_id(0), inout.get_arg_address(0));
-				mpf_value pf_value;
-				mpz_value_to_mpf_value(value, pf_value);
-				mpf_sqrt(pf_value.target, pf_value.target);
-				mpf_value_to_mpz_value(pf_value, value);
-				if (!value.into(inout))
-					return contract::throw_ptr(exception_repr(exception_repr::category::execution(), "template type must be integer"));
+				case (int)type_id::int8_t:
+					if (*(int8_t*)v < 0)
+						return contract::throw_ptr(exception_repr(exception_repr::category::argument(), "value must be positive"));
+
+					inout.set_return_byte(algorithm::arithmetic::integer_sqrt<int8_t>(*(int8_t*)v));
+					break;
+				case (int)type_id::uint8_t:
+					inout.set_return_byte(algorithm::arithmetic::integer_sqrt<uint8_t>(*(uint8_t*)v));
+					break;
+				case (int)type_id::int16_t:
+					if (*(int16_t*)v < 0)
+						return contract::throw_ptr(exception_repr(exception_repr::category::argument(), "value must be positive"));
+
+					inout.set_return_word(algorithm::arithmetic::integer_sqrt<int16_t>(*(int16_t*)v));
+					break;
+				case (int)type_id::uint16_t:
+					inout.set_return_word(algorithm::arithmetic::integer_sqrt<uint16_t>(*(uint16_t*)v));
+					break;
+				case (int)type_id::int32_t:
+					if (*(int32_t*)v < 0)
+						return contract::throw_ptr(exception_repr(exception_repr::category::argument(), "value must be positive"));
+
+					inout.set_return_dword(algorithm::arithmetic::integer_sqrt<int32_t>(*(int32_t*)v));
+					break;
+				case (int)type_id::uint32_t:
+					inout.set_return_dword(algorithm::arithmetic::integer_sqrt<uint32_t>(*(uint32_t*)v));
+					break;
+				case (int)type_id::int64_t:
+					if (*(int64_t*)v < 0)
+						return contract::throw_ptr(exception_repr(exception_repr::category::argument(), "value must be positive"));
+
+					inout.set_return_qword(algorithm::arithmetic::integer_sqrt<int64_t>(*(int64_t*)v));
+					break;
+				case (int)type_id::uint64_t:
+					inout.set_return_qword(algorithm::arithmetic::integer_sqrt<uint64_t>(*(uint64_t*)v));
+					break;
+				case (int)type_id::float_t:
+				case (int)type_id::double_t:
+					return contract::throw_ptr(exception_repr(exception_repr::category::argument(), "floating point value not permitted"));
+				default:
+				{
+					auto type = factory::get()->get_vm()->get_type_info_by_id(type_id);
+					auto name = type.is_valid() ? type.get_name() : std::string_view();
+					if (name == SCRIPT_TYPE_UINT128)
+					{
+						new (inout.get_address_of_return_location()) uint128_t(algorithm::arithmetic::integer_sqrt<uint128_t>(*(uint128_t*)v));
+						break;
+					}
+					else if (name == SCRIPT_TYPE_UINT256)
+					{
+						new (inout.get_address_of_return_location()) uint256_t(algorithm::arithmetic::integer_sqrt<uint256_t>(*(uint256_t*)v));
+						break;
+					}
+					else if (name == SCRIPT_TYPE_REAL320)
+					{
+						decimal& v_v = (*(decimal*)v);
+						if ((*(decimal*)v).is_negative())
+							return contract::throw_ptr(exception_repr(exception_repr::category::argument(), "value must be positive"));
+
+						mpf_t result;
+						mpf_init(result);
+						mpf_set_prec(result, real320_repr::target_bits());
+						mpf_set_str(result, v_v.to_string().c_str(), 10);
+						mpf_sqrt(result, result);
+
+						decimal r_v = decimal(mpf_to_string(result));
+						real320_repr::truncate_or_throw(r_v, true);
+						new (inout.get_address_of_return_location()) decimal(std::move(r_v));
+						mpf_clear(result);
+						break;
+					}
+					return contract::throw_ptr(exception_repr(exception_repr::category::execution(), "template type must be arithmetic"));
+				}
 			}
 		}
 		void contract::require(bool condition, const string_repr& message)
@@ -4859,6 +4518,7 @@ namespace tangent
 			if (!value)
 				return layer_exception("load failed for null type");
 
+			size_t seek = stream.seek;
 			switch (value_type_id)
 			{
 				case (int)type_id::void_t:
@@ -4866,48 +4526,57 @@ namespace tangent
 				case (int)type_id::bool_t:
 					if (!stream.read_boolean(stream.read_type(), (bool*)value))
 						return layer_exception("load failed for bool type");
+
+					burn_marshalling_memory(stream, seek);
 					return expectation::met;
 				case (int)type_id::int8_t:
 				case (int)type_id::uint8_t:
 					if (!stream.read_integer(stream.read_type(), (uint8_t*)value))
 						return layer_exception("load failed for uint8 type");
+
+					burn_marshalling_memory(stream, seek);
 					return expectation::met;
 				case (int)type_id::int16_t:
 				case (int)type_id::uint16_t:
 					if (!stream.read_integer(stream.read_type(), (uint16_t*)value))
 						return layer_exception("load failed for uint16 type");
+
+					burn_marshalling_memory(stream, seek);
 					return expectation::met;
 				case (int)type_id::int32_t:
 				case (int)type_id::uint32_t:
 					if (!stream.read_integer(stream.read_type(), (uint32_t*)value))
 						return layer_exception("load failed for uint32 type");
+
+					burn_marshalling_memory(stream, seek);
 					return expectation::met;
 				case (int)type_id::int64_t:
 				case (int)type_id::uint64_t:
 					if (!stream.read_integer(stream.read_type(), (uint64_t*)value))
 						return layer_exception("load failed for uint64 type");
+
+					burn_marshalling_memory(stream, seek);
 					return expectation::met;
 				case (int)type_id::float_t:
 				case (int)type_id::double_t:
 					return layer_exception("floating point value not permitted");
 				default:
 				{
-					bool managing = false;
 					auto* vm = factory::get()->get_vm();
+					void* address = nullptr, *address_ptr = value;
 					auto type = vm->get_type_info_by_id(value_type_id);
 					auto name = type.is_valid() ? type.get_name() : std::string_view();
 					if (value_type_id & (int)vitex::scripting::type_id::handle_t && !(type.flags() & (size_t)object_behaviours::enumerator) && !*(void**)value)
 					{
-						void* address = vm->create_object(type);
+						address = vm->create_object(type);
 						if (!address)
 							return layer_exception(stringify::text("%s has no default constructor", name.data()));
 
 						*(void**)value = address;
 						value = address;
-						managing = true;
 					}
 
-					auto unique = cobject(vm, type.get_type_info(), managing ? value : nullptr);
+					auto unique = cobject(vm, type.get_type_info(), address, address ? (void**)address_ptr : nullptr);
 					if (name == SCRIPT_TYPE_ADDRESS)
 					{
 						string data;
@@ -4923,7 +4592,8 @@ namespace tangent
 						else
 							((address_repr*)value)->hash = algorithm::pubkeyhash_t(data);
 
-						unique.address = nullptr;
+						unique.reset();
+						burn_marshalling_memory(stream, seek);
 						return expectation::met;
 					}
 					else if (name == SCRIPT_TYPE_PAYABLE)
@@ -4951,7 +4621,8 @@ namespace tangent
 						}
 
 						payable->recalculate();
-						unique.address = nullptr;
+						unique.reset();
+						burn_marshalling_memory(stream, seek);
 						return expectation::met;
 					}
 					else if (name == SCRIPT_TYPE_STRING)
@@ -4961,7 +4632,8 @@ namespace tangent
 							return layer_exception("load failed for string type");
 
 						new (value) string_repr(data);
-						unique.address = nullptr;
+						unique.reset();
+						burn_marshalling_memory(stream, seek);
 						return expectation::met;
 					}
 					else if (name == SCRIPT_TYPE_UINT128)
@@ -4970,7 +4642,8 @@ namespace tangent
 						if (!stream.read_integer(stream.read_type(), data))
 							return layer_exception("load failed for uint128 type");
 
-						unique.address = nullptr;
+						unique.reset();
+						burn_marshalling_memory(stream, seek);
 						return expectation::met;
 					}
 					else if (name == SCRIPT_TYPE_UINT256)
@@ -4979,7 +4652,8 @@ namespace tangent
 						if (!stream.read_integer(stream.read_type(), data))
 							return layer_exception("load failed for uint256 type");
 
-						unique.address = nullptr;
+						unique.reset();
+						burn_marshalling_memory(stream, seek);
 						return expectation::met;
 					}
 					else if (name == SCRIPT_TYPE_REAL320)
@@ -4988,7 +4662,8 @@ namespace tangent
 						if (!stream.read_decimal_or_integer(stream.read_type(), data))
 							return layer_exception("load failed for decimal type");
 
-						unique.address = nullptr;
+						unique.reset();
+						burn_marshalling_memory(stream, seek);
 						return expectation::met;
 					}
 					else if (name == SCRIPT_TYPE_ARRAY)
@@ -5003,13 +4678,12 @@ namespace tangent
 						array->resize(size);
 						for (uint32_t i = 0; i < size; i++)
 						{
-							void* address = array->at(i);
-							auto status = load(stream, address, type_id);
+							auto status = load(stream, array->at(i), type_id);
 							if (!status)
 								return status;
 						}
 
-						unique.address = nullptr;
+						unique.reset();
 						return expectation::met;
 					}
 					else if (value_type_id & (int)vitex::scripting::type_id::script_object_t)
@@ -5018,20 +4692,20 @@ namespace tangent
 						size_t properties = object.get_properties_count();
 						for (size_t i = 0; i < properties; i++)
 						{
-							void* address = object.get_address_of_property(i);
-							int type_id = object.get_property_type_id(i);
-							auto status = load(stream, address, type_id);
+							auto status = load(stream, object.get_address_of_property(i), object.get_property_type_id(i));
 							if (!status)
 								return status;
 						}
 
-						unique.address = nullptr;
+						unique.reset();
 						return expectation::met;
 					}
 					else if (value_type_id & (int)vitex::scripting::type_id::mask_seqnbr_t)
 					{
 						if (!stream.read_integer(stream.read_type(), (uint32_t*)value))
 							return layer_exception("load failed for uint32 type");
+
+						burn_marshalling_memory(stream, seek);
 						return expectation::met;
 					}
 					return layer_exception(stringify::text("load not supported for %s type", name.data()));
@@ -5049,52 +4723,60 @@ namespace tangent
 					return expectation::met;
 				case (int)type_id::bool_t:
 					*(bool*)value = stream.value.as_boolean();
+					program::request_gas_vmemory(sizeof(bool));
 					return expectation::met;
 				case (int)type_id::int8_t:
 					*(int8_t*)value = stream.value.as_decimal().to_int8();
+					program::request_gas_vmemory(sizeof(int8_t));
 					return expectation::met;
 				case (int)type_id::uint8_t:
 					*(uint8_t*)value = stream.value.as_uint8();
+					program::request_gas_vmemory(sizeof(uint8_t));
 					return expectation::met;
 				case (int)type_id::int16_t:
 					*(int16_t*)value = stream.value.as_decimal().to_int16();
+					program::request_gas_vmemory(sizeof(int16_t));
 					return expectation::met;
 				case (int)type_id::uint16_t:
 					*(uint16_t*)value = stream.value.as_uint16();
+					program::request_gas_vmemory(sizeof(uint16_t));
 					return expectation::met;
 				case (int)type_id::int32_t:
 					*(int32_t*)value = stream.value.as_decimal().to_int32();
+					program::request_gas_vmemory(sizeof(int32_t));
 					return expectation::met;
 				case (int)type_id::uint32_t:
 					*(uint32_t*)value = stream.value.as_uint32();
+					program::request_gas_vmemory(sizeof(uint32_t));
 					return expectation::met;
 				case (int)type_id::int64_t:
 					*(int64_t*)value = stream.value.as_decimal().to_int64();
+					program::request_gas_vmemory(sizeof(int64_t));
 					return expectation::met;
 				case (int)type_id::uint64_t:
 					*(uint64_t*)value = stream.value.as_uint64();
+					program::request_gas_vmemory(sizeof(uint64_t));
 					return expectation::met;
 				case (int)type_id::float_t:
 				case (int)type_id::double_t:
 					return layer_exception("floating point value not permitted");
 				default:
 				{
-					bool managing = false;
 					auto* vm = factory::get()->get_vm();
+					void* address = nullptr, * address_ptr = value;
 					auto type = vm->get_type_info_by_id(value_type_id);
 					auto name = type.is_valid() ? type.get_name() : std::string_view();
 					if (value_type_id & (int)vitex::scripting::type_id::handle_t && !(type.flags() & (size_t)object_behaviours::enumerator) && !*(void**)value)
 					{
-						void* address = vm->create_object(type);
+						address = vm->create_object(type);
 						if (!address)
 							return layer_exception(stringify::text("%s has no default constructor", name.data()));
 
 						*(void**)value = address;
 						value = address;
-						managing = true;
 					}
 
-					auto unique = cobject(vm, type.get_type_info(), managing ? value : nullptr);
+					auto unique = cobject(vm, type.get_type_info(), address, address ? (void**)address_ptr : nullptr);
 					if (name == SCRIPT_TYPE_ADDRESS)
 					{
 						string data = stream.value.as_blob();
@@ -5107,7 +4789,8 @@ namespace tangent
 						else
 							((address_repr*)value)->hash = algorithm::pubkeyhash_t(data);
 
-						unique.address = nullptr;
+						unique.reset();
+						program::request_gas_vmemory(data.size());
 						return expectation::met;
 					}
 					else if (name == SCRIPT_TYPE_PAYABLE)
@@ -5125,31 +4808,36 @@ namespace tangent
 						}
 
 						payable->recalculate();
-						unique.address = nullptr;
+						unique.reset();
+						program::request_gas_vmemory(payable->payments.size() * sizeof(uint256_t));
 						return expectation::met;
 					}
 					else if (name == SCRIPT_TYPE_STRING)
 					{
-						new (value) string_repr(stream.value.as_blob());
-						unique.address = nullptr;
+						auto* data = new (value) string_repr(stream.value.as_blob());
+						unique.reset();
+						program::request_gas_vmemory(data->size());
 						return expectation::met;
 					}
 					else if (name == SCRIPT_TYPE_UINT128)
 					{
 						new (value) uint128_t(stream.value.as_uint128());
-						unique.address = nullptr;
+						unique.reset();
+						program::request_gas_vmemory(sizeof(uint128_t));
 						return expectation::met;
 					}
 					else if (name == SCRIPT_TYPE_UINT256)
 					{
 						new (value) uint256_t(stream.value.as_uint256());
-						unique.address = nullptr;
+						unique.reset();
+						program::request_gas_vmemory(sizeof(uint256_t));
 						return expectation::met;
 					}
 					else if (name == SCRIPT_TYPE_REAL320)
 					{
-						new (value) decimal(stream.value.as_decimal());
-						unique.address = nullptr;
+						auto* data = new (value) decimal(stream.value.as_decimal());
+						unique.reset();
+						program::request_gas_vmemory(sizeof(uint256_t));
 						return expectation::met;
 					}
 					else if (name == SCRIPT_TYPE_ARRAY)
@@ -5166,7 +4854,7 @@ namespace tangent
 								return status;
 						}
 
-						unique.address = nullptr;
+						unique.reset();
 						return expectation::met;
 					}
 					else if (value_type_id & (int)vitex::scripting::type_id::script_object_t)
@@ -5185,12 +4873,13 @@ namespace tangent
 								return status;
 						}
 
-						unique.address = nullptr;
+						unique.reset();
 						return expectation::met;
 					}
 					else if (value_type_id & (int)vitex::scripting::type_id::mask_seqnbr_t)
 					{
 						*(int*)value = stream.value.as_decimal().to_int32();
+						program::request_gas_vmemory(sizeof(int32_t));
 						return expectation::met;
 					}
 					return layer_exception(stringify::text("load not supported for %s type", name.data()));
@@ -5281,14 +4970,12 @@ namespace tangent
 			auto ranging_type = vm->set_template_class_address("ranging<class c, class r, class v>", "ranging<c, r, v>", sizeof(ranging_repr), (size_t)object_behaviours::pattern | (size_t)object_behaviours::value | bridge::type_traits_of<ranging_repr>());
 			auto ranging_slice_type = vm->set_struct_trivial<ranging_slice_repr>("ranging_slice");
 			array_type->set_template_callback(&array_repr::template_callback);
-			array_type->set_function_def("bool array<t>::less_sync(const t&in a, const t&in b)");
 			array_type->set_constructor_extern<array_repr, asITypeInfo*>("array<t>@ f(int&in)", &array_repr::create);
 			array_type->set_constructor_extern<array_repr, asITypeInfo*, uint32_t>("array<t>@ f(int&in, usize) explicit", &array_repr::create);
 			array_type->set_constructor_extern<array_repr, asITypeInfo*, uint32_t, void*>("array<t>@ f(int&in, usize, const t&in)", &array_repr::create);
 			array_type->set_operator_copy<array_repr>();
 			array_type->set_enum_refs(&array_repr::enum_references);
 			array_type->set_release_refs(&array_repr::release_references);
-			array_type->set_method("bool opEquals(const array<t>&in) const", &array_repr::operator==);
 			array_type->set_method<array_repr, void*, uint32_t>("t& opIndex(usize)", &array_repr::at);
 			array_type->set_method<array_repr, const void*, uint32_t>("const t& opIndex(usize) const", &array_repr::at);
 			array_type->set_method<array_repr, void*>("t& front()", &array_repr::front);
@@ -5297,22 +4984,18 @@ namespace tangent
 			array_type->set_method<array_repr, const void*>("const t& back() const", &array_repr::back);
 			array_type->set_method("bool empty() const", &array_repr::empty);
 			array_type->set_method("usize size() const", &array_repr::size);
-			array_type->set_method("usize capacity() const", &array_repr::capacity);
-			array_type->set_method("void reserve(usize)", &array_repr::reserve);
 			array_type->set_method<array_repr, void, uint32_t>("void resize(usize)", &array_repr::resize);
 			array_type->set_method("void clear()", &array_repr::clear);
 			array_type->set_method("void push(const t&in)", &array_repr::insert_last);
+			array_type->set_method("void push_front(const t&in)", &array_repr::insert_first);
 			array_type->set_method("void pop()", &array_repr::remove_last);
+			array_type->set_method("void pop_front()", &array_repr::remove_first);
 			array_type->set_method<array_repr, void, uint32_t, void*>("void insert(usize, const t&in)", &array_repr::insert_at);
 			array_type->set_method<array_repr, void, uint32_t, const array_repr&>("void insert(usize, const array<t>&)", &array_repr::insert_at);
-			array_type->set_method("void erase_if(const t&in if_handle_then_const, usize = 0)", &array_repr::remove_if);
 			array_type->set_method("void erase(usize)", &array_repr::remove_at);
 			array_type->set_method("void erase(usize, usize)", &array_repr::remove_range);
 			array_type->set_method("void reverse()", &array_repr::reverse);
 			array_type->set_method("void swap(usize, usize)", &array_repr::swap);
-			array_type->set_method("void sort(less_sync@ = null)", &array_repr::sort);
-			array_type->set_method<array_repr, uint32_t, void*, uint32_t>("usize find(const t&in if_handle_then_const, usize = 0) const", &array_repr::find);
-			array_type->set_method<array_repr, uint32_t, void*, uint32_t>("usize find_ref(const t&in if_handle_then_const, usize = 0) const", &array_repr::find_by_ref);
 			string_type->set_constructor_extern("void f()", &string_repr::create);
 			string_type->set_constructor_extern("void f(const string&in)", &string_repr::create_copy);
 			string_type->set_destructor_extern("void f()", &string_repr::destroy);
@@ -5320,8 +5003,8 @@ namespace tangent
 			string_type->set_method("string& opAddAssign(const string&in)", &string_repr::assign_append);
 			string_type->set_method("string& opAddAssign(uint8)", &string_repr::assign_append_char);
 			string_type->set_method("string opAdd(const string&in) const", &string_repr::append);
-			string_type->set_method("string opAdd(uint8) const", &string_repr::append_char);
-			string_type->set_method("string opAdd_r(uint8) const", &string_repr::append_char);
+			string_type->set_method("string opAdd(uint8) const", &string_repr::append_char_back);
+			string_type->set_method("string opAdd_r(uint8) const", &string_repr::append_char_front);
 			string_type->set_method("int opCmp(const string&in) const", &string_repr::compare);
 			string_type->set_method("uint8& opIndex(usize)", &string_repr::at);
 			string_type->set_method("const uint8& opIndex(usize) const", &string_repr::at);
@@ -5392,10 +5075,8 @@ namespace tangent
 			uint128_type->set_method_extern("uint64 u64() const", &uint128_repr::to_uint64);
 			uint128_type->set_method_extern("uint256 u256() const", &uint128_repr::to_uint256);
 			uint128_type->set_method("real320 r320() const", &uint128_t::to_decimal);
-			uint128_type->set_method<uint128_t, const uint64_t&>("const uint64& low() const", &uint128_t::low);
-			uint128_type->set_method<uint128_t, const uint64_t&>("const uint64& high() const", &uint128_t::high);
 			uint128_type->set_method("uint8 bits() const", &uint128_t::bits);
-			uint128_type->set_method("uint8 bytes() const", &uint128_t::bits);
+			uint128_type->set_method("uint8 bytes() const", &uint128_t::bytes);
 			uint128_type->set_operator_extern(operators::mul_assign_t, (uint32_t)position::left, "uint128&", "const uint128&in", &uint128_repr::mul_eq);
 			uint128_type->set_operator_extern(operators::div_assign_t, (uint32_t)position::left, "uint128&", "const uint128&in", &uint128_repr::div_eq);
 			uint128_type->set_operator_extern(operators::add_assign_t, (uint32_t)position::left, "uint128&", "const uint128&in", &uint128_repr::add_eq);
@@ -5433,8 +5114,6 @@ namespace tangent
 			uint256_type->set_method_extern("uint64 u64() const", &uint256_repr::to_uint64);
 			uint256_type->set_method_extern("uint128 u128() const", &uint256_repr::to_uint128);
 			uint256_type->set_method("real320 r320() const", &uint256_t::to_decimal);
-			uint256_type->set_method<uint256_t, const uint128_t&>("const uint128& low() const", &uint256_t::low);
-			uint256_type->set_method<uint256_t, const uint128_t&>("const uint128& high() const", &uint256_t::high);
 			uint256_type->set_method("uint16 bits() const", &uint256_t::bits);
 			uint256_type->set_method("uint16 bytes() const", &uint256_t::bytes);
 			uint256_type->set_operator_extern(operators::mul_assign_t, (uint32_t)position::left, "uint256&", "const uint256&in", &uint256_repr::mul_eq);
@@ -5463,15 +5142,15 @@ namespace tangent
 			real320_type->set_constructor_extern<decimal*, int64_t>("void f(int64)", &real320_repr::custom_constructor_arithmetic<int64_t>);
 			real320_type->set_constructor_extern<decimal*, uint64_t>("void f(uint64)", &real320_repr::custom_constructor_arithmetic<uint64_t>);
 			real320_type->set_constructor_extern<decimal*, const string_repr&>("void f(const string&in)", &real320_repr::custom_constructor_string);
+			real320_type->set_constructor_extern<decimal*, const uint128_t&>("void f(const uint128&in)", &real320_repr::custom_constructor_uint128);
+			real320_type->set_constructor_extern<decimal*, const uint256_t&>("void f(const uint256&in)", &real320_repr::custom_constructor_uint256);
 			real320_type->set_constructor_extern<decimal*, const decimal&>("void f(const real320&in)", &real320_repr::custom_constructor_copy);
 			real320_type->set_method_extern("bool opImplConv() const", &real320_repr::is_not_zero_or_nan);
-			real320_type->set_method("bool is_nan() const", &decimal::is_nan);
-			real320_type->set_method("bool is_zero() const", &decimal::is_zero);
-			real320_type->set_method("bool is_zero_or_nan() const", &decimal::is_zero_or_nan);
-			real320_type->set_method("bool is_positive() const", &decimal::is_positive);
-			real320_type->set_method("bool is_negative() const", &decimal::is_negative);
-			real320_type->set_method("bool is_integer() const", &decimal::is_integer);
-			real320_type->set_method("bool is_fractional() const", &decimal::is_fractional);
+			real320_type->set_method("bool nan() const", &decimal::is_nan);
+			real320_type->set_method("bool zero() const", &decimal::is_zero);
+			real320_type->set_method("bool zero_or_nan() const", &decimal::is_zero_or_nan);
+			real320_type->set_method("bool positive() const", &decimal::is_positive);
+			real320_type->set_method("bool negative() const", &decimal::is_negative);
 			real320_type->set_method("int8 i8() const", &decimal::to_int8);
 			real320_type->set_method("int16 i16() const", &decimal::to_int16);
 			real320_type->set_method("int32 i32() const", &decimal::to_int32);
@@ -5482,10 +5161,6 @@ namespace tangent
 			real320_type->set_method("uint64 u64() const", &decimal::to_uint64);
 			real320_type->set_method_extern("uint128 u128() const", &real320_repr::to_uint128);
 			real320_type->set_method_extern("uint256 u256() const", &real320_repr::to_uint256);
-			real320_type->set_method_extern("string exponent() const", &real320_repr::to_exponent);
-			real320_type->set_method("uint32 decimal_size() const", &decimal::decimal_size);
-			real320_type->set_method("uint32 integer_size() const", &decimal::integer_size);
-			real320_type->set_method("uint32 size() const", &decimal::size);
 			real320_type->set_operator_extern(operators::neg_t, (uint32_t)position::constant, "real320", "", &real320_repr::negate);
 			real320_type->set_operator_extern(operators::mul_assign_t, (uint32_t)position::left, "real320&", "const real320&in", &real320_repr::mul_eq);
 			real320_type->set_operator_extern(operators::div_assign_t, (uint32_t)position::left, "real320&", "const real320&in", &real320_repr::div_eq);
@@ -5501,9 +5176,7 @@ namespace tangent
 			real320_type->set_operator_extern(operators::sub_t, (uint32_t)position::constant, "real320", "const real320&in", &real320_repr::sub);
 			real320_type->set_operator_extern(operators::mul_t, (uint32_t)position::constant, "real320", "const real320&in", &real320_repr::mul);
 			real320_type->set_operator_extern(operators::div_t, (uint32_t)position::constant, "real320", "const real320&in", &real320_repr::div);
-			real320_type->set_operator_extern(operators::mod_t, (uint32_t)position::constant, "real320", "const real320&in", &real320_repr::per);
-			real320_type->set_method_static("real320 nan()", &decimal::nan);
-			real320_type->set_method_static("real320 zero()", &decimal::zero);
+			real320_type->set_method_static("real320 enan()", &decimal::nan);
 			real320_type->set_method_static("real320 from(const string&in, uint8)", &real320_repr::from);
 			payable_type->set_constructor<payable_repr>("void f()");
 			payable_type->set_constructor<payable_repr, const payable_repr&>("void f(const payable&in)");
@@ -5525,22 +5198,25 @@ namespace tangent
 			address_type->set_method("bool empty() const", &address_repr::empty);
 			address_type->set_method("void pay(const uint256&in, const real320&in) const", &address_repr::pay);
 			address_type->set_method("void pay(const payable&in) const", &address_repr::pay_all);
-			address_type->set_method("void mint(const string&in, const real320&in, const real320&in = real320::zero()) const", &address_repr::mint);
-			address_type->set_method("void burn(const string&in, const real320&in, const real320&in = real320::zero()) const", &address_repr::burn);
+			address_type->set_method("void mint(const string&in, const real320&in, const real320&in = real320()) const", &address_repr::mint);
+			address_type->set_method("void burn(const string&in, const real320&in, const real320&in = real320()) const", &address_repr::burn);
+			address_type->set_method("real320 token_balance_of(const string&in) const", &address_repr::token_balance_of);
+			address_type->set_method("real320 token_reserve_of(const string&in) const", &address_repr::token_reserve_of);
 			address_type->set_method("real320 balance_of(const uint256&in) const", &address_repr::balance_of);
+			address_type->set_method("real320 reserve_of(const uint256&in) const", &address_repr::reserve_of);
 			address_type->set_method_extern("t call<t>(const string&in, const ?&in ...) const", &address_repr::free_call, convention::generic_call);
 			address_type->set_method_extern("t paid_call<t>(const string&in, const payable&in, const ?&in ...) const", &address_repr::paid_call, convention::generic_call);
 			address_type->set_operator_extern(operators::equals_t, (uint32_t)position::constant, "bool", "const address&in", &address_repr::equals);
 			abi_type->set_constructor<abi_repr>("void f()");
 			abi_type->set_constructor<abi_repr, const string_repr&>("void f(const string&in)");
 			abi_type->set_constructor<abi_repr, const abi_repr&>("void f(const abi&in)");
+			abi_type->set_method("void merge(const string&in)", &abi_repr::merge);
 			abi_type->set_method("void seek(usize)", &abi_repr::seek);
 			abi_type->set_method("void clear()", &abi_repr::clear);
 			abi_type->set_method("void wu8(bool)", &abi_repr::wboolean);
 			abi_type->set_method("void wu160(const address&in)", &abi_repr::wuint160);
 			abi_type->set_method("void wu256(const uint256&in)", &abi_repr::wuint256);
 			abi_type->set_method("void wr320(const real320&in)", &abi_repr::wreal320);
-			abi_type->set_method("void merge(const string&in)", &abi_repr::merge);
 			abi_type->set_method("void wstr(const string&in)", &abi_repr::wstr);
 			abi_type->set_method("bool rstr(string&out)", &abi_repr::rstr);
 			abi_type->set_method("bool ru8(bool&out)", &abi_repr::rboolean);
@@ -5568,7 +5244,6 @@ namespace tangent
 			ranging_type->set_template_callback(&ranging_repr::template_callback);
 			ranging_type->set_type_constructor<ranging_repr, asITypeInfo*>("void f(int&in)");
 			ranging_type->set_type_destructor<ranging_repr>("void f()");
-			ranging_type->set_method("const v& from(ranging_slice&in) const", &ranging_repr::from);
 			ranging_type->set_method("ranging_slice x(const c&in) const", &ranging_repr::from_column);
 			ranging_type->set_method("ranging_slice y(const r&in) const", &ranging_repr::from_row);
 			ranging_type->set_method("void erase(const c&in, const r&in)", &ranging_repr::erase);
@@ -5604,29 +5279,6 @@ namespace tangent
 			vm->set_function("t get_event<t>(const ?&in, int32)", &contract::log_get_event, convention::generic_call);
 			vm->end_namespace();
 
-			vm->begin_namespace("sv");
-			vm->set_function("void set(const ?&in, const ?&in)", &contract::uniform_set);
-			vm->set_function("void set(const ?&in, const ?&in, bool)", &contract::uniform_set_if);
-			vm->set_function("void erase(const ?&in)", &contract::uniform_erase);
-			vm->set_function("bool has(const ?&in)", &contract::uniform_has);
-			vm->set_function("bool into(const ?&in, ?&out)", &contract::uniform_into);
-			vm->set_function("t get<t>(const ?&in)", &contract::uniform_get, convention::generic_call);
-			vm->end_namespace();
-
-			vm->begin_namespace("sv::range");
-			vm->set_function("void set(const ?&in, const ?&in, const ?&in)", &contract::multiform_set);
-			vm->set_function("void set(const ?&in, const ?&in, const ?&in, const uint256&in)", &contract::multiform_set_ranked);
-			vm->set_function("void set(const ?&in, const ?&in, const ?&in, bool)", &contract::multiform_set_if);
-			vm->set_function("void set(const ?&in, const ?&in, const ?&in, const uint256&in, bool)", &contract::multiform_set_if_ranked);
-			vm->set_function("void erase(const ?&in, const ?&in)", &contract::multiform_erase);
-			vm->set_function("bool has(const ?&in, const ?&in)", &contract::multiform_has);
-			vm->set_function("bool into(const ?&in, const ?&in, ?&out)", &contract::multiform_into);
-			vm->set_function("bool into(const ?&in, const ?&in, ?&out, uint256&out)", &contract::multiform_into_ranked);
-			vm->set_function("t get<t>(const ?&in, const ?&in)", &contract::multiform_get, convention::generic_call);
-			vm->set_function("ranging_slice x(const ?&in)", &ranging_slice_repr::from_column);
-			vm->set_function("ranging_slice y(const ?&in)", &ranging_slice_repr::from_row);
-			vm->end_namespace();
-
 			vm->begin_namespace("block");
 			vm->set_function("address proposer()", &contract::block_proposer);
 			vm->set_function("uint256 parent_hash()", &contract::block_parent_hash);
@@ -5658,8 +5310,6 @@ namespace tangent
 			vm->begin_namespace("coin");
 			vm->set_function("uint256 native()", &contract::coin_native);
 			vm->set_function("uint256 token(const string&in)", &contract::coin_token);
-			vm->set_function("uint256 from(const real320&in)", &contract::coin_from_decimal);
-			vm->set_function("real320 r320(const uint256&in)", &contract::coin_to_decimal);
 			vm->set_function("uint256 id_of(const string&in, const string&in = string(), const string&in = string())", &contract::coin_id_of);
 			vm->set_function("string blockchain_of(const uint256&in)", &contract::coin_blockchain_of);
 			vm->set_function("string token_of(const uint256&in)", &contract::coin_token_of);
@@ -5668,8 +5318,12 @@ namespace tangent
 			vm->end_namespace();
 
 			vm->begin_namespace("alg");
-			vm->set_function("string from_u256(const uint256&in)", &contract::alg_encode_bytes256);
-			vm->set_function("uint256 to_u256(const string&in)", &contract::alg_decode_bytes256);
+			vm->set_function("real320 from_r256(const uint256&in)", &contract::alg_from_r256);
+			vm->set_function("uint256 to_r256(const real320&in)", &contract::alg_to_r256);
+			vm->set_function("string from_u256(const uint256&in)", &contract::alg_from_u256);
+			vm->set_function("uint256 to_u256(const string&in)", &contract::alg_to_u256);
+			vm->set_function("string from_e16(const string&in)", &contract::alg_from_e16);
+			vm->set_function("string to_e16(const string&in)", &contract::alg_to_e16);
 			vm->set_function("address erecover160(const uint256&in, const string&in)", &contract::alg_erecover160);
 			vm->set_function("string erecover264(const uint256&in, const string&in)", &contract::alg_erecover264);
 			vm->set_function("uint256 prandom256()", &contract::alg_prandom);
@@ -5699,9 +5353,6 @@ namespace tangent
 
 			vm->set_function("void require(bool, const string&in = string())", &contract::require);
 			vm->set_default_array_type("array<t>");
-			vm->begin_namespace("array");
-			vm->set_property("const usize npos", &string_repr::npos);
-			vm->end_namespace();
 			vm->set_string_factory_type("string");
 			vm->begin_namespace("string");
 			vm->set_function("string from(int8, int = 10)", &string_repr::to_string<int8_t>);
@@ -5770,7 +5421,6 @@ namespace tangent
 			vm->set_property(features::bool_conversion_mode, 0);
 			vm->set_property(features::foreach_support, 0);
 			vm->set_string_factory_functions(this, to_string_constant, from_string_constant, free_string_constant);
-			vm->set_type_info_user_data_cleanup_callback(array_repr::cleanup_type_info_cache, array_repr::get_id());
 			vm->set_full_stack_tracing(false);
 			vm->set_ts_imports(false);
 			vm->set_cache(!protocol::now().user.storage.module_cache_path.empty());
@@ -5884,7 +5534,7 @@ namespace tangent
 				}
 
 				auto type = vm->get_type_info_by_id(info.type_id);
-				auto name = type.is_valid() ? type.get_name() : std::string_view("?");
+				auto name = type.is_valid() ? type.get_name() : std::string_view("primitive");
 				if (name != SCRIPT_TYPE_VARYING && name != SCRIPT_TYPE_MAPPING && name != SCRIPT_TYPE_RANGING)
 				{
 					auto decl = module->get_property_decl(i, true);
@@ -5910,7 +5560,7 @@ namespace tangent
 					continue;
 
 				auto type = vm->get_type_info_by_id(info.type_id);
-				auto name = type.is_valid() ? type.get_name() : std::string_view("?");
+				auto name = type.is_valid() ? type.get_name() : std::string_view("primitive");
 				if (name == SCRIPT_TYPE_VARYING || name == SCRIPT_TYPE_MAPPING || name == SCRIPT_TYPE_RANGING)
 				{
 					auto value = (container_repr*)module.get_address_of_property(i);
@@ -6036,7 +5686,7 @@ namespace tangent
 						if (format::variables_util::deserialize_flat_from(reader, &returns))
 						{
 							auto type = factory::get()->get_vm()->get_type_info_by_id(output_type_id);
-							auto name = type.is_valid() ? type.get_name() : std::string_view("?");
+							auto name = type.is_valid() ? type.get_name() : std::string_view("primitive");
 							auto status = executor->emit_event(algorithm::hashing::hash32d(name), std::move(returns), true);
 							if (!status)
 								resolver = std::move(status);
@@ -6204,13 +5854,13 @@ namespace tangent
 							if (!status)
 							{
 								auto reader_message = format::util::decode_stream(value.as_string());
-								reader = format::ro_stream(reader_message); address = nullptr;
+								reader = format::ro_stream(reader_message);
 								status = marshall::load(reader, (void*)&address, type_id | (int)vitex::scripting::type_id::handle_t);
 								if (!status)
 									return layer_exception(stringify::text("illegal call to function \"%s\": argument #%i not bound to program (%s)", entrypoint.get_decl().data(), i, status.error().what()));
 							}
 
-							auto object = cobject(vm, type.get_type_info(), address);
+							auto object = cobject(vm, type.get_type_info(), address, nullptr);
 							frames.emplace_back([i, type_id, object = std::move(object)](immediate_context* coroutine) mutable { coroutine->set_arg_object(i, (void*)object.address); });
 							break;
 						}
@@ -6342,6 +5992,21 @@ namespace tangent
 			{
 				contract::throw_ptr(exception_repr(exception_repr::category::execution(), std::string_view("ran out of gas")));
 				return false;
+			}
+			return true;
+		}
+		bool program::request_gas_vmemory(size_t size)
+		{
+			auto* program = program::fetch_immutable();
+			if (program != nullptr)
+			{
+				size_t paid_blocks = std::max(size / sizeof(uint128_t), sizeof(uint128_t));
+				size_t paid_gas = (size_t)ledger::gas_cost::program_memory * paid_blocks;
+				if (paid_gas > 0 && !program->executor->burn_gas(paid_gas))
+				{
+					contract::throw_ptr(exception_repr(exception_repr::category::memory(), std::string_view("ran out of gas")));
+					return false;
+				}
 			}
 			return true;
 		}

@@ -20,7 +20,7 @@ namespace tangent
 
 		typedef std::function<uptr<transaction>(bool commitment)> replace_transaction_callback;
 
-		enum class filter_comparator
+		enum class filter_comparator : uint8_t
 		{
 			greater,
 			greater_equal,
@@ -30,7 +30,7 @@ namespace tangent
 			less_equal
 		};
 
-		enum class filter_order
+		enum class filter_order : uint8_t
 		{
 			ascending,
 			descending

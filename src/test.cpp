@@ -292,108 +292,17 @@ struct generators
 	static void deploy_stage_1(vector<uptr<ledger::transaction>>& transactions, vector<account_ref>& users, vector<algorithm::pubkeyhash_t>* contracts)
 	{
 		auto& [user1, user1_nonce] = users[0];
-		std::string_view token_program = VI_STRINGIFY((
-			class token_storage
-		{
-			address deployer;
-			address contract;
-			address account;
-			string name;
-			string symbol;
-			real320 supply;
-		}
-
-		class token_transfer
-		{
-			address from;
-			address to;
-			real320 value;
-		}
-
-		varying<token_storage> token;
-
-		token_storage construct(pmut@, const string & in symbol, const string & in name, const address & in admin, const real320 & in value)
-		{
-			require(value.is_positive(), "illegal operation - supply must be positive");
-			token_storage new_token;
-			new_token.deployer = tx::from();
-			new_token.contract = tx::to();
-			new_token.account = admin;
-			new_token.name = name;
-			new_token.symbol = symbol;
-			new_token.supply = value;
-			token = new_token;
-
-			token.ref.account.mint(token.ref.symbol, token.ref.supply);
-			return token.ref;
-		}
-		token_transfer transfer(pmut@, const address & in to, const real320 & in value)
-		{
-			address from = tx::from();
-			require(value.is_positive(), "illegal operation - value must be positive");
-			require(value <= balance_of(null, from), string::from(from) + ": illegal operation - insufficient balance");
-			from.burn(token.ref.symbol, value);
-			to.mint(token.ref.symbol, value);
-
-			token_transfer event;
-			event.from = from;
-			event.to = to;
-			event.value = value;
-			return event;
-		}
-		real320 mint(pmut@, const real320 & in value)
-		{
-			require(token.ref.account == tx::from(), "illegal operation - operation not permitted");
-			require(value.is_positive(), "illegal operation - value must be positive");
-
-			token_storage new_token = token.ref;
-			new_token.supply += value;
-			token = new_token;
-
-			token.ref.account.mint(token.ref.symbol, value);
-			return balance_of(null, token.ref.account);
-		}
-		real320 burn(pmut@, const real320 & in value)
-		{
-			require(value.is_positive(), "illegal operation - value must be positive");
-			require(value <= token.ref.supply, "token supply will underflow (" + string::from(token.ref.supply) + " < " + string::from(value) + ")");
-
-			token_storage new_token = token.ref;
-			new_token.supply -= value;
-			token = new_token;
-
-			address account = tx::from();
-			account.burn(token.ref.symbol, value);
-			return balance_of(null, account);
-		}
-		real320 balance_of(pconst@, const address & in account)
-		{
-			return account.balance_of(coin::token(token.ref.symbol));
-		}
-		token_storage info(pconst@)
-		{
-			return token.ref;
-		}));
-		std::string_view bridge_program = VI_STRINGIFY((
-			varying<address> token_account;
-
-		void construct(pmut@, const address & in new_token_account)
-		{
-			token_account = new_token_account;
-		}
-		real320 balance_of_test_token(pconst@)
-		{
-			return token_account.ref.call<real320>("real320 balance_of(pconst@, const address&in)", tx::from());
-		}));
+		string token_program = *algorithm::encoding::unpack_program(codec::base64_decode("eNq1VduOmzAQfd5I+YdRHirQ7qKqfcsmVf8kcmCIrBqbGjtpVPXf6yvYIShadfsGZ4a5nDMz1IwMAyjxA/lhUEKSE65Xv9erJ9I0Eo2pwZ6JK8q3BKsFV5LUKsVIXQvNHTQoSfkJOOkweR2u3VEwC0gk7OuXzzDovmdXg/xZr9arOqnEROdDizIvpZWiS1MqkUY7E6YxBjsTeTVJd1lj33z0N+uQGWxDpkpdq6LvtPr+4gHwlX+iPBQ/x22PEQ1lWZg0HeURDwVa3NVY+q4k/tRUYuGwqhcDVfSMRfkCG8oYnggD0aMkigoOr4Es6LSJeESI/pvScpB3w/FyiJ0+jS9VVBL2oH5tt5bNosxdorDBRYlbh6CysbsWc6Mlw1ii7pPBs2dM0wwkRt/YfhTQd2MDJX1EuJLYxioqU4EqJjiKlCAudunHRGnJJ5uflHzcID7kY5AIq8QDVdNZnRH9Tsmd24LiWSjY7eFIGOE1HkRbcM0MCzatiexnNVThMHiGzRbuJaR80G1La4pG4hDQp7MfVkdD4B26ffteuCVJRp9xWEfO8Yz+bLiHKhAXd92DSlguxQT4tpOZCfLGYEbaeBdcRZmeDxZyNmewT4VcEGt65kKBeemoUthsPlj45WV3DE3DPd+w5w9csUnzQPxs/GahylwWN0zvkeV/LM3tpTAxPTOBsovJAJo3KFsmLlBszO5kCzU7NXa5YAczR9+RtZb/quPrYx1vfsqzQxTVfbjRS+ouaDq59U7Teyc0fhrVdQnGgqYItaDc/oJMcbMSyzI935FCylsRE+fhs6v/F6kiAY0="));
+		string bridge_program = *algorithm::encoding::unpack_program(codec::base64_decode("eNpljssKgzAURNcN5B+Ci2JApLQ7a8U/CWm8FmlM5ObGtpT+ex/ahbgdZs6cUeOjc5dSNw1CCJUgfwWntDE+Ojpyxtnou0YY7wJhNJQOfaQ6mwIxz7adEw5uajGWnD052ywycVr3PicvzhC0Pex34qytdgaUbxVBoKmaDr+7ekYiUES3VM0R2txoa8uZVKXJmvkHrf1lkgm6F0WLvk+l/Eq9AUJwYpA="));
 
 		auto* deploy1 = memory::init<transactions::deploy>();
-		deploy1->from_program(token_program.substr(1, token_program.size() - 2), { format::variable("CAP10"), format::variable("Test Token 0"), format::variable(user1.get_address()), format::variable(decimal(10000u)) });
+		deploy1->from_program(token_program, { format::variable("CAP10"), format::variable("Test Token 0"), format::variable(user1.get_address()), format::variable(decimal(10000u)) });
 		deploy1->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(deploy1);
 		contracts->push_back(deploy1->get_account());
 
 		auto* deploy2 = memory::init<transactions::deploy>();
-		deploy2->from_program(bridge_program.substr(1, bridge_program.size() - 2), { format::variable(contracts->back().view()) });
+		deploy2->from_program(bridge_program, { format::variable(contracts->back().view()) });
 		deploy2->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(deploy2);
 		contracts->push_back(deploy2->get_account());
@@ -402,6 +311,8 @@ struct generators
 	{
 		auto executor = ledger::executor_context(nullptr);
 		auto& [user2, user2_nonce] = users[1];
+		string testing_program = *algorithm::encoding::unpack_program(codec::base64_decode("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"));
+
 		auto* deploy1 = memory::init<transactions::deploy>();
 		deploy1->from_hashcode(executor.get_account_program(contracts->at(0))->hashcode, { format::variable("CAP20"), format::variable("Test Token 1"), format::variable(user2.get_address()), format::variable(decimal(20000u)) });
 		deploy1->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
@@ -413,6 +324,12 @@ struct generators
 		deploy2->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(deploy2);
 		contracts->push_back(deploy2->get_account());
+
+		auto* deploy3 = memory::init<transactions::deploy>();
+		deploy3->from_program(testing_program, { });
+		deploy3->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
+		transactions.push_back(deploy3);
+		contracts->push_back(deploy3->get_account());
 	}
 	static void call_stage_1(vector<uptr<ledger::transaction>>& transactions, vector<account_ref>& users, vector<algorithm::pubkeyhash_t>* contracts)
 	{
@@ -447,6 +364,12 @@ struct generators
 		call6->call_to(contracts->at(3), "balance_of_test_token", { });
 		call6->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(call6);
+
+		auto* call7 = memory::init<transactions::call>();
+		call7->call_to(contracts->at(4), "test_module", { });
+		call7->set_gas(decimal::zero(), 500000);
+		call7->sign(user2.secret_key, user2_nonce++);
+		transactions.push_back(call7);
 	}
 	static void setup_stage_0(vector<uptr<ledger::transaction>>& transactions, vector<account_ref>& users)
 	{
@@ -1740,21 +1663,21 @@ struct tests
 			TEST_BLOCK(&generators::transfer_stage_1, "0xbd08402823d785a3bc2298571908b2d4bf3f1676b94f1d99913c56b6a526f0f9", 8);
 			TEST_BLOCK(&generators::transfer_stage_2, "0x46c842ed965a912190963652907b3f1e29bc2c545ddd03ce0289593b954837da", 9);
 			TEST_BLOCK(std::bind(&generators::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), users[2].wallet.get_address(), 0.05), "0x2aa08a037b661997bf08421368db08167af86b16566555e777c49dfb321e0660", 10);
-			TEST_BLOCK(std::bind(&generators::deploy_stage_1, std::placeholders::_1, std::placeholders::_2, &contracts), "0x39fa9dda3575c4704d998d4a95d69bed19ddbd630b7280733d862f1e6b7d2c67", 11);
-			TEST_BLOCK(std::bind(&generators::deploy_stage_2, std::placeholders::_1, std::placeholders::_2, &contracts), "0xc72c37a61b617fb004f3c96b1ee82b139be1075269d774091ea5791ffe601c50", 12);
-			TEST_BLOCK(std::bind(&generators::call_stage_1, std::placeholders::_1, std::placeholders::_2, &contracts), "0x8a3f5761fab30b42b9449eeeca68504fe60edad34b9ded521c879178cd9326b7", 13);
-			TEST_BLOCK(&generators::rollup_stage_1, "0x392206930aea95ffaf2a6d4d4e6c322249c6ca1f7d663f3b41a0007302678792", 14);
-			TEST_BLOCK(std::bind(&generators::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 0, 1), "0xc2988532b77749829aef7e883f6a6d173f642f4e7571776119c675a0ec2594f3", 15);
-			TEST_BLOCK_FAULT(&generators::migrate_stage_1, "0xef8f8ebf38690b63bb3368d7d4dea69705d377e78c30a4c9cd20f6267ab60e2e", 16);
-			TEST_BLOCK(&generators::migrate_stage_2, "0xf8eb1c8631b7bf1025e2cca9f6222b6992e304dfc280e921852741d9f7f1fd76", 18);
-			TEST_BLOCK(&generators::migrate_stage_3, "0xb0f51aad65b721eee171a0bbb16be9a61b672d28efffff8c6dcf046c48c57a37", 20);
-			TEST_BLOCK(&generators::withdraw_stage_1, "0x4f030dad991806ce6fa9fba4749cffc5804ce1d2626bfd71b6be163163f8142f", 22);
-			TEST_BLOCK(&generators::withdraw_stage_2, "0x669b024101cfbe06d55b5e456f51d88d59323b4e9346b2b00652997d4deb1f80", 24);
-			TEST_BLOCK(&generators::withdraw_stage_3, "0xc4e236e5bcc3a240633a1539de0cb62530e851d66cca4dbbd0d1ff03806021c6", 26);
-			TEST_BLOCK(&generators::withdraw_stage_4, "0x9c3538a0738396cf9cdc412070be91628ee5ec1ef05e8bbbdcbffd7de82d4a99", 27);
-			TEST_BLOCK(&generators::withdraw_stage_5, "0xd2c3bdaeddf1713753985b63a625a7c54ef9a5f30fe428b92f11758a2a33bbf4", 29);
-			TEST_BLOCK(&generators::withdraw_stage_6, "0x86d2099dd2c5dfe1a57f7c8d63c5ed82dd7f91b37d8aa13fb18605b086afa999", 31);
-			TEST_BLOCK(std::bind(&generators::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 1, 0), "0x19c83b80bb7812bd9754adf270dee2a0a6aa389f6bfbb621661a8352b4b6ecac", 33);
+			TEST_BLOCK(std::bind(&generators::deploy_stage_1, std::placeholders::_1, std::placeholders::_2, &contracts), "0x61770575e00a486f19941ae7310ecbbcbb75016a2702625a935a9cb7afff6527", 11);
+			TEST_BLOCK(std::bind(&generators::deploy_stage_2, std::placeholders::_1, std::placeholders::_2, &contracts), "0xc3fd837fe56cf3b984a2632c852301dcfbd72d3bc80de7d89527a3246ef1250c", 12);
+			TEST_BLOCK(std::bind(&generators::call_stage_1, std::placeholders::_1, std::placeholders::_2, &contracts), "0xad3c9f721828dd250de14bc56362751287ee5b904b0d16a494f15f91abcd47c7", 13);
+			TEST_BLOCK(&generators::rollup_stage_1, "0x6fcb1e4f315eea7c949bdd4635b38b491ce6ac286c34c4bb2771827855dd52aa", 14);
+			TEST_BLOCK(std::bind(&generators::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 0, 1), "0x509f194091055552007767ce2a8a9cd351a354b9d79424482996e92fe4cd5ade", 15);
+			TEST_BLOCK_FAULT(&generators::migrate_stage_1, "0x3cc7992bbfbc5e0351aac3fa8e50273a488a8c5a727d2ac120e97b0c5bba74b4", 16);
+			TEST_BLOCK(&generators::migrate_stage_2, "0xcac5091491272c8c9312a33822c38321bc06efe981d941609e2bdc0e5c859e40", 18);
+			TEST_BLOCK(&generators::migrate_stage_3, "0xb66ee618eca5d3483e496de3693ae69cbdc7bc842965ca112a315ee2ae613778", 20);
+			TEST_BLOCK(&generators::withdraw_stage_1, "0x99b8c75d7a52304b16780ada4db2ada245909229ca5c448f8346a01fded3d7c8", 22);
+			TEST_BLOCK(&generators::withdraw_stage_2, "0x2ae071d641105cc5596b26095f970dec1be8fa5253db2b859a16c6ba8ffa6eb3", 24);
+			TEST_BLOCK(&generators::withdraw_stage_3, "0xe85b72ffe41932210323bd728aa94312ca66bc5a19dbfcc70be603b7c917a121", 26);
+			TEST_BLOCK(&generators::withdraw_stage_4, "0x5a23b8383663a93fa566e626d6bce0d4cca9191b44cfc27a18d4ed6d8761db72", 27);
+			TEST_BLOCK(&generators::withdraw_stage_5, "0xcb940983a01b5967bb2295885b8cda65be1f54dd4fc0d2c508def269f1cee8a4", 29);
+			TEST_BLOCK(&generators::withdraw_stage_6, "0xe712e917e05786e3988ce78e6081ac008ee42f4c252f7c912b18210767462700", 31);
+			TEST_BLOCK(std::bind(&generators::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 1, 0), "0xc9dd7fa1184913abf35570a5703ca1163f503225ba81951c493bc639853699b3", 33);
 			if (userdata != nullptr)
 				*userdata = std::move(users);
 			else

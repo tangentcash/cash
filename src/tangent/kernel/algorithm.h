@@ -287,7 +287,7 @@ namespace tangent
 					++copy;
 				return copy;
 			}
-			template<typename t>
+			template <typename t>
 			static t integer_sqrt(t n)
 			{
 				if (n == 0)
@@ -297,7 +297,7 @@ namespace tangent
 				const uint16_t bits = sizeof(t) * 8;
 				for (int i = 0; i < bits; ++i)
 				{
-					if ((temp & (static_cast<t>(1) << (bits - 1))) != 0)
+					if ((temp & (t(1) << (bits - 1))) != 0)
 						break;
 					temp <<= 1;
 					count++;
