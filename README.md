@@ -3,6 +3,9 @@
     <br />
     <img src="https://github.com/tangentcash/cash/blob/main/var/images/favicon.png?raw=true" alt="Tangent Protocol Logo" width="100" />
     <h3>Tangent Protocol / Cash Node</h3>
+    <h3>
+    [![Discord server](https://img.shields.io/badge/Discord-Server-5865f2?logo=discord)](https://discord.gg/TyubmucCTB)
+    </h3>
 </div>
 
 ## Project information
@@ -74,6 +77,7 @@ There are several ways to build this project that are explained here:
 ## License
 
 This project is licensed under the MIT license
+
 
 
 
