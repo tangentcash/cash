@@ -67,11 +67,12 @@ There are several ways to build this project that are explained here:
 ## Links
 
 * [Discord server](https://discord.gg/TyubmucCTB)
-* [Project website](https://tangent.cash/)
+* [![Project website](https://img.shields.io/badge/play-station-blue.svg?https://tangent.cash/favicon.svg)](https://tangent.cash/)
 
 ## License
 
 This project is licensed under the MIT license
+
 
 
 
