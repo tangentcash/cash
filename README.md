@@ -38,10 +38,10 @@ Users can deposit native cryptocurrency using any bridging node of their choice.
 
 ### Consensus
 - **Verifiable Delay Function**: Proof of work in form of Wesolowki's verifiable delay function, requiring sequential operations to be computed, unlike classic algorithms that can utilize multithreading.
-- **Block Time**: Target block time is 6 seconds. Genesis round (first 14,400 blocks) will produce 200x rewards to ensure network security at initial stage.
+- **Block Time**: Target block time is 12 seconds. Genesis round (first 7,200 blocks) will produce 75x rewards to ensure network security at initial stage.
 - **Validator Committee**: Each block is created by a randomly selected committee of up to 12 validators. Validators are ranked by priority within their epoch, preventing lower-priority blocks from replacing higher-priority valid candidate blocks. Lower-priority also requires higher difficulty.
 - **Epoch Management**: Epochs cannot be skipped, which may impact availability in favor of security.
-- **Rewards and Penalties**: Each accepted block emits 1.25 TAN for the winning validator and applies penalties to validators with higher priority who did not commit their work.
+- **Rewards and Penalties**: Each accepted block emits 1.2 TAN for the winning validator and applies penalties to validators with higher priority who did not commit their work.
 
 ### Network Recovery
 In case of a network halt due to the unavailability of the entire committee, any node can create a recovery block that meets the network recovery difficulty, which is 90 times higher than the current difficulty. This ensures a minimum network recovery time of 9 minutes. The recovery block has the lowest priority and can be replaced by a block created by any node selected for the committee in that proposal slot.
