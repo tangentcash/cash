@@ -66,11 +66,13 @@ There are several ways to build this project that are explained here:
 
 ## Links
 
-* [Our Discord server](https://discord.gg/TyubmucCTB)
+* [Discord server](https://discord.gg/TyubmucCTB)
+* [Project website](https://tangent.cash/)
 
 ## License
 
 This project is licensed under the MIT license
+
 
 
 
