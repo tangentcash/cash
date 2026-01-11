@@ -64,5 +64,10 @@ There are several ways to build this project that are explained here:
 * [vitex (submodule)](https://github.com/romanpunia/vitex)
 * [zlib (so)](https://github.com/madler/zlib)
 
+## Links
+
+* [![Our Discord server](img.shields.io)](https://discord.gg/TyubmucCTB)
+
 ## License
+
 This project is licensed under the MIT license
