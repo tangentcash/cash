@@ -66,12 +66,13 @@ There are several ways to build this project that are explained here:
 
 ## Links
 
-* [![Discord server](https://img.shields.io/badge/discord-server-purple?logo=tangent.cash)](https://discord.gg/TyubmucCTB)
+* [Discord server](https://discord.gg/TyubmucCTB)
 * [Project website](https://tangent.cash/)
 
 ## License
 
 This project is licensed under the MIT license
+
 
 
 
