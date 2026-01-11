@@ -2471,13 +2471,19 @@ namespace tangent
 			if (!validation)
 				return validation.error();
 
-			auto delegation_requirement = executor->verify_account_delegation(manager);
-			if (!delegation_requirement)
-				return delegation_requirement;
-
-			auto delegation = executor->apply_account_delegation(manager, 1);
-			if (!delegation)
-				return delegation.error();
+			auto may_delegate = executor->verify_account_delegation(manager);
+			if (!may_delegate)
+			{
+				auto overdelegation_fee = executor->apply_fee_transfer(algorithm::asset::native(), executor->receipt.from, algorithm::arithmetic::divide(protocol::now().policy.production.reward_value, protocol::now().policy.delegations_max_per_account));
+				if (!overdelegation_fee)
+					return overdelegation_fee.error();
+			}
+			else
+			{
+				auto delegation = executor->apply_account_delegation(manager, 1);
+				if (!delegation)
+					return delegation.error();
+			}
 
 			auto* params = superchain::server_node::get()->get_chainparams(asset);
 			if (!params)
