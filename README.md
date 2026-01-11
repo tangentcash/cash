@@ -66,8 +66,9 @@ There are several ways to build this project that are explained here:
 
 ## Links
 
-* [![Our Discord server](img.shields.io)](https://discord.gg/TyubmucCTB)
+* [![Our Discord server](https://img.shields.io/badge/discord-server-violet?logo=discord)](https://discord.gg/TyubmucCTB)
 
 ## License
 
 This project is licensed under the MIT license
+
