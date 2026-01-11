@@ -6,7 +6,7 @@
     <a href="https://discord.gg/TyubmucCTB">
         <img src="https://cdn.prod.website-files.com/6257adef93867e50d84d30e2/66e3d7f4ef6498ac018f2c55_Symbol.svg">
     <a href="https://tangent.cash/">
-        <img src="https://tangent.cash/favicon.svg">
+        <img src="https://tangent.cash/favicon.svg" width="10">
 </div>
 
 ## Project information
@@ -78,6 +78,7 @@ There are several ways to build this project that are explained here:
 ## License
 
 This project is licensed under the MIT license
+
 
 
 
