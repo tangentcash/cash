@@ -3,6 +3,8 @@
     <br />
     <img src="https://github.com/tangentcash/cash/blob/main/var/images/favicon.png?raw=true" alt="Tangent Protocol Logo" width="100" />
     <h3>Tangent Protocol / Cash Node</h3>
+    <a href="https://discord.gg/TyubmucCTB">
+        <img src="https://cdn.prod.website-files.com/6257adef93867e50d84d30e2/66e3d7f4ef6498ac018f2c55_Symbol.svg">
 </div>
 
 ## Project information
@@ -74,6 +76,7 @@ There are several ways to build this project that are explained here:
 ## License
 
 This project is licensed under the MIT license
+
 
 
 
