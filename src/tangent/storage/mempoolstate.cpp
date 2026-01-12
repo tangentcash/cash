@@ -1079,8 +1079,6 @@ namespace tangent
 				services |= (uint32_t)node_services::superchain;
 			if (node.services.has_rpc)
 				services |= (uint32_t)node_services::rpc;
-			if (node.services.has_rpc_web_sockets)
-				services |= (uint32_t)node_services::rpc_web_sockets;
 			if (node.services.has_production)
 				services |= (uint32_t)node_services::production;
 			if (node.services.has_participation)

@@ -637,13 +637,9 @@ namespace tangent
 			if (value != nullptr && value->value.is_string())
 				user.rpc.password = value->value.as_blob();
 
-			value = config->child("rpc.websockets");
+			value = config->child("rpc.sandbox");
 			if (value != nullptr && value->value.is_boolean())
-				user.rpc.web_sockets = value->value.as_boolean();
-
-			value = config->child("rpc.isolated");
-			if (value != nullptr && value->value.is_boolean())
-				user.rpc.isolated = value->value.as_boolean();
+				user.rpc.sandbox = value->value.as_boolean();
 
 			value = config->child("rpc.server");
 			if (value != nullptr && value->value.is_boolean())

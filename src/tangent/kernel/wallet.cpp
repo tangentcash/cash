@@ -294,7 +294,6 @@ namespace tangent
 			stream->write_boolean(services.has_discovery);
 			stream->write_boolean(services.has_superchain);
 			stream->write_boolean(services.has_rpc);
-			stream->write_boolean(services.has_rpc_web_sockets);
 			stream->write_boolean(services.has_production);
 			stream->write_boolean(services.has_participation);
 			stream->write_boolean(services.has_attestation);
@@ -363,9 +362,6 @@ namespace tangent
 			if (!stream.read_boolean(stream.read_type(), &services.has_rpc))
 				return false;
 
-			if (!stream.read_boolean(stream.read_type(), &services.has_rpc_web_sockets))
-				return false;
-
 			if (!stream.read_boolean(stream.read_type(), &services.has_production))
 				return false;
 
@@ -418,7 +414,6 @@ namespace tangent
 			services_data->set("discovery", format::variable(services.has_discovery));
 			services_data->set("superchain", format::variable(services.has_superchain));
 			services_data->set("rpc", format::variable(services.has_rpc));
-			services_data->set("rpc_web_sockets", format::variable(services.has_rpc_web_sockets));
 			services_data->set("production", format::variable(services.has_production));
 			services_data->set("participation", format::variable(services.has_participation));
 			services_data->set("attestation", format::variable(services.has_attestation));

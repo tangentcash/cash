@@ -892,7 +892,6 @@ namespace tangent
 				node.services.has_discovery = protocol::now().user.discovery.server;
 				node.services.has_superchain = protocol::now().user.superchain.server;
 				node.services.has_rpc = protocol::now().user.rpc.server && protocol::now().user.rpc.username.empty();
-				node.services.has_rpc_web_sockets = node.services.has_rpc && protocol::now().user.rpc.web_sockets;
 
 				bool runner = account == runner_account;
 				auto result = accept_local_node(mempool, descriptor, runner);

@@ -311,23 +311,20 @@ namespace tangent
 			http::map_router* router = new http::map_router();
 			router->listen(protocol::now().user.rpc.address, to_string(protocol::now().user.rpc.port)).expect("listener binding error");
 			router->post("/", std::bind(&server_node::http_request, this, std::placeholders::_1));
+			router->web_socket_receive("/", std::bind(&server_node::ws_receive, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+			router->web_socket_disconnect("/", std::bind(&server_node::ws_disconnect, this, std::placeholders::_1));
 			router->base->callbacks.authorize = auth_token.empty() ? http::authorize_callback(nullptr) : std::bind(&server_node::authorize, this, std::placeholders::_1, std::placeholders::_2);
 			router->base->callbacks.headers = std::bind(&server_node::headers, this, std::placeholders::_1, std::placeholders::_2);
 			router->base->callbacks.options = std::bind(&server_node::options, this, std::placeholders::_1);
+			router->base->allow_web_socket = true;
+			router->base->web_socket_timeout = 0;
 			router->base->auth.type = "Basic";
 			router->base->auth.realm = "p2p.tangent.cash";
 			router->temporary_directory.clear();
-			if (protocol::now().user.rpc.web_sockets)
-			{
-				router->web_socket_receive("/", std::bind(&server_node::ws_receive, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
-				router->web_socket_disconnect("/", std::bind(&server_node::ws_disconnect, this, std::placeholders::_1));
-				router->base->allow_web_socket = true;
-				router->base->web_socket_timeout = 0;
-			}
 
 			node->configure(router).expect("configuration error");
 			node->listen().expect("listen queue error");
-			if (consensus_service && protocol::now().user.rpc.web_sockets)
+			if (consensus_service != nullptr)
 			{
 				consensus_service->events.accept_block = std::bind(&server_node::dispatch_accept_block, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3);
 				consensus_service->events.accept_transaction = std::bind(&server_node::dispatch_accept_transaction, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3);
@@ -624,7 +621,7 @@ namespace tangent
 				goto next_request;
 			}
 
-			if (protocol::now().user.rpc.isolated && context->second.access_types & (uint32_t)access_type::a)
+			if (protocol::now().user.rpc.sandbox && context->second.access_types & (uint32_t)access_type::a)
 			{
 				form_response(base, *request, responses, server_response().error(error_codes::bad_method, "access to admin level functionality requires trusted environment"));
 				goto next_request;
@@ -2919,8 +2916,6 @@ namespace tangent
 						services |= (uint32_t)storages::node_services::superchain;
 					else if (service == "rpc")
 						services |= (uint32_t)storages::node_services::rpc;
-					else if (service == "rpc_web_sockets")
-						services |= (uint32_t)storages::node_services::rpc_web_sockets;
 					else if (service == "production")
 						services |= (uint32_t)storages::node_services::production;
 					else if (service == "participation")
@@ -3421,8 +3416,7 @@ namespace tangent
 				rpc->set("port", format::variable(protocol::now().user.rpc.port));
 				rpc->set("cursor_size", format::variable(protocol::now().message.items_per_query));
 				rpc->set("page_size", format::variable(protocol::now().message.pages_per_query));
-				rpc->set("websockets", format::variable(protocol::now().user.rpc.web_sockets));
-				rpc->set("isolated", format::variable(protocol::now().user.rpc.isolated));
+				rpc->set("sandbox", format::variable(protocol::now().user.rpc.sandbox));
 				rpc->set("restricted", format::variable(!protocol::now().user.rpc.username.empty()));
 			}
 

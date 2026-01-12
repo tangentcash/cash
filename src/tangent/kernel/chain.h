@@ -194,8 +194,7 @@ namespace tangent
 				uint16_t port = 18419;
 				string username;
 				string password;
-				bool web_sockets = false;
-				bool isolated = true;
+				bool sandbox = true;
 				bool server = false;
 				bool logging = true;
 			} rpc;

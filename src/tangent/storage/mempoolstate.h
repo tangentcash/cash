@@ -38,10 +38,9 @@ namespace tangent
 			discovery = (1 << 1),
 			superchain = (1 << 2),
 			rpc = (1 << 3),
-			rpc_web_sockets = (1 << 4),
-			production = (1 << 5),
-			participation = (1 << 6),
-			attestation = (1 << 7)
+			production = (1 << 4),
+			participation = (1 << 5),
+			attestation = (1 << 6)
 		};
 
 		class routing_util

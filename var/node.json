@@ -35,8 +35,7 @@
         "port": 18419,
         "username": null,
         "password": null,
-        "websockets": false,
-        "isolated": true,
+        "sandbox": true,
         "server": false,
         "logging": true
     },

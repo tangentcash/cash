@@ -93,7 +93,6 @@ namespace tangent
 			auto* discovery_argument = query.get("discovery");
 			auto* superchain_argument = query.get("superchain");
 			auto* rpc_argument = query.get("rpc");
-			auto* rpc_web_sockets_argument = query.get("rpc_web_sockets");
 			auto* production_argument = query.get("production");
 			auto* participation_argument = query.get("participation");
 			auto* attestation_argument = query.get("attestation");
@@ -117,8 +116,6 @@ namespace tangent
 				services |= (uint32_t)storages::node_services::superchain;
 			if (rpc_argument != nullptr && rpc_argument->value.get_boolean())
 				services |= (uint32_t)storages::node_services::rpc;
-			if (rpc_web_sockets_argument != nullptr && rpc_web_sockets_argument->value.get_boolean())
-				services |= (uint32_t)storages::node_services::rpc_web_sockets;
 			if (production_argument != nullptr && production_argument->value.get_boolean())
 				services |= (uint32_t)storages::node_services::production;
 			if (participation_argument != nullptr && participation_argument->value.get_boolean())

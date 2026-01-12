@@ -72,7 +72,6 @@ namespace tangent
 				bool has_discovery = false;
 				bool has_superchain = false;
 				bool has_rpc = false;
-				bool has_rpc_web_sockets = false;
 				bool has_production = false;
 				bool has_participation = false;
 				bool has_attestation = false;
