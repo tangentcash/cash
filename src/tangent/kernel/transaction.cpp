@@ -132,6 +132,10 @@ namespace tangent
 		{
 			return false;
 		}
+		uint256_t transaction::gas_asset() const
+		{
+			return algorithm::asset::base_id_of(asset);
+		}
 		format::tree transaction::as_tree() const
 		{
 			format::tree data;

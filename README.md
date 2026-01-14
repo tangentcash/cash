@@ -52,14 +52,8 @@ Users can deposit native cryptocurrency using any bridging node of their choice.
 ### Network Recovery
 In case of a network halt due to the unavailability of the entire committee, any node can create a recovery block that meets the network recovery difficulty, which is 90 times higher than the current difficulty. This ensures a minimum network recovery time of 9 minutes. The recovery block has the lowest priority and can be replaced by a block created by any node selected for the committee in that proposal slot.
 
-## Building
-There are several ways to build this project that are explained here:
-* [Build locally](var/documents/BUILD-MANUAL.md)
-* [Build with Docker](var/documents/BUILD-DOCKER.md)
-
-### Configuration
-+ **TAN_TEST** builds a test target with multiple cases covered
-+ **VI_LOGGING** is a logging level (errors, warnings, default, debug, verbose), defaults to "default"
+## Documentation
+Proceed to [this link](https://tangent.cash/docs/node/01-install) to view essential information about project setup process.
 
 ## Dependencies
 * [gmp (so)](https://gmplib.org/)

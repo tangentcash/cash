@@ -3402,7 +3402,6 @@ namespace tangent
 			if (protocol::now().user.superchain.server)
 			{
 				auto* superchain = data.set("superchain", format::tree::map());
-				superchain->set("block_relay_multiplier", format::variable(protocol::now().user.superchain.block_replay_multiplier));
 				superchain->set("relaying_timeout", format::variable(protocol::now().user.superchain.relaying_timeout));
 				superchain->set("relaying_retry_timeout", format::variable(protocol::now().user.superchain.relaying_retry_timeout));
 				auto array = superchain->set("nodes", format::tree::list());

@@ -42,6 +42,7 @@ namespace tangent
 			virtual void set_asset(const std::string_view& blockchain, const std::string_view& token = std::string_view(), const std::string_view& contract_address = std::string_view());
 			virtual bool is_commitment() const;
 			virtual bool is_dispatchable() const;
+			virtual uint256_t gas_asset() const;
 			virtual format::tree as_tree() const override;
 			virtual uint32_t as_type() const override = 0;
 			virtual std::string_view as_typename() const override = 0;

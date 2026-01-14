@@ -180,7 +180,6 @@ namespace tangent
 			struct
 			{
 				uptr<format::tree> options;
-				uint64_t block_replay_multiplier = 4;
 				uint64_t relaying_timeout = 30000;
 				uint64_t relaying_retry_timeout = 300;
 				uint32_t cache1_size = 4096;
@@ -278,7 +277,7 @@ namespace tangent
 			} pow;
 			struct
 			{
-				uint64_t withdrawal_time = 302400000;
+				uint64_t withdrawal_time = 345600000;
 				uint64_t max_per_transaction = 32;
 				decimal min_stake_value = std::string_view("120");
 				decimal max_reward_increase = std::string_view("0.80");

@@ -593,10 +593,6 @@ namespace tangent
 			if (value != nullptr && value->value.is_boolean())
 				user.discovery.logging = value->value.as_boolean();
 
-			value = config->child("superchain.block_replay_multiplier");
-			if (value != nullptr && value->value.is_integer())
-				user.superchain.block_replay_multiplier = value->value.as_uint64();
-
 			value = config->child("superchain.relaying_timeout");
 			if (value != nullptr && value->value.is_integer())
 				user.superchain.relaying_timeout = value->value.as_uint64();

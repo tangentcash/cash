@@ -1442,11 +1442,12 @@ namespace tangent
 			if (gas_calculation || !transaction->gas_price.is_positive())
 				return expectation::met;
 
-			auto state = get_account_balance(transaction->asset, receipt.from);
+			auto asset = transaction->gas_asset();
+			auto state = get_account_balance(asset, receipt.from);
 			decimal max_paid_value = transaction->gas_price * transaction->gas_limit.to_decimal();
 			decimal max_payable_value = state ? state->get_balance() : decimal::zero();
 			if (max_payable_value < max_paid_value)
-				return layer_exception(algorithm::asset::handle_of(transaction->asset) + " balance is insufficient (balance: " + max_payable_value.to_string() + ", value: " + max_paid_value.to_string() + ")");
+				return layer_exception(algorithm::asset::handle_of(asset) + " balance is insufficient to cover gas fees (balance: " + max_payable_value.to_string() + ", value: " + max_paid_value.to_string() + ")");
 
 			return expectation::met;
 		}
@@ -2953,7 +2954,7 @@ namespace tangent
 
 			if (executor.receipt.relative_gas_use > 0 && executor.transaction->gas_price.is_positive())
 			{
-				auto fee = executor.apply_fee_transfer(executor.transaction->asset, executor.receipt.from, executor.transaction->gas_price * executor.receipt.relative_gas_use.to_decimal());
+				auto fee = executor.apply_fee_transfer(executor.transaction->gas_asset(), executor.receipt.from, executor.transaction->gas_price * executor.receipt.relative_gas_use.to_decimal());
 				if (!fee)
 					return fee.error();
 			}
