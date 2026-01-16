@@ -18,7 +18,7 @@ namespace tangent
 		struct block_evaluation;
 		struct solver_context;
 
-		typedef std::function<uptr<transaction>(bool commitment)> replace_transaction_callback;
+		typedef btree_map<algorithm::asset_id, decimal> block_rewards;
 
 		enum class filter_comparator : uint8_t
 		{
@@ -169,8 +169,6 @@ namespace tangent
 			virtual bool operator==(const block_header& other) const;
 			virtual bool operator!=(const block_header& other) const;
 			virtual expects_lr<void> verify_validity(const block_header* parent_block, const algorithm::pubkeyhash_t& recovered_producer = algorithm::pubkeyhash_t()) const;
-			virtual bool store_payload_proof(format::wo_stream* stream) const;
-			virtual bool load_payload_proof(format::ro_stream& stream);
 			virtual bool store_payload(format::wo_stream* stream) const override;
 			virtual bool load_payload(format::ro_stream& stream) override;
 			virtual bool sign(const algorithm::seckey_t& secret_key) override;
@@ -221,8 +219,6 @@ namespace tangent
 			virtual ~block() override = default;
 			block& operator=(const block&) = default;
 			block& operator=(block&&) = default;
-			expects_lr<void> evaluate(const block_header* parent_block, solver_context* solver, const replace_transaction_callback& callback);
-			expects_lr<void> validate(const block_header* parent_block, block_evaluation* evaluated_result = nullptr) const;
 			expects_lr<void> verify_integrity(const block_header* parent_block, const block_state* state) const;
 			bool store_payload(format::wo_stream* stream) const override;
 			bool load_payload(format::ro_stream& stream) override;
@@ -567,6 +563,8 @@ namespace tangent
 				algorithm::seckey_t secret_key;
 				uint256_t commitment_gas_limit = 0;
 				uint256_t transaction_gas_limit = 0;
+				uint8_t block_options = 0;
+				bool validator_active = true;
 				block_changelog changelog;
 				executor_context executor = executor_context(&changelog);
 				state_origin origin = state_origin::chain;
@@ -583,17 +581,23 @@ namespace tangent
 
 			void apply_temporary_state(block_header* abstract_block, const transaction* abstract_transaction, receipt&& abstract_receipt);
 			option<uint64_t> apply_validator_state(const std::function<ledger::wallet*(size_t)>& try_producer, option<const block_header*>&& parent_block = optional::none);
-			size_t try_include_transactions(vector<uptr<transaction>>&& candidates);
+			size_t try_include_transactions(vector<uptr<transaction>>&& candidates, hash_set<uint256_t>* hashes = nullptr);
 			queued_transaction& force_include_transaction(uptr<transaction>&& candidate);
 			include_decision decide_on_inclusion(const queued_transaction& candidate, const uint256_t& current_gas_limit, const uint256_t& max_gas_limit) const;
-			expects_lr<block_evaluation> evaluate_block(const replace_transaction_callback& callback);
-			expects_lr<void> solve_block(block_evaluation& evaluation);
+			expects_lr<void> block_evalution_prepare(block_evaluation& solution);
+			expects_lr<void> block_evalution_update(block_evaluation& solution, block_rewards& rewards);
+			expects_lr<void> block_evalution_finalize(block_evaluation& solution, block_rewards& rewards);
+			expects_lr<block_evaluation> evaluate_block_inline();
+			expects_lr<void> block_solution_solve(block_evaluation& evaluation);
+			expects_lr<void> block_solution_sign(block_evaluation& evaluation);
+			expects_lr<void> solve_block_inline(block_evaluation& evaluation);
 			expects_lr<void> verify_block(const block_evaluation& solution, const algorithm::pubkeyhash_t& recovered_producer = algorithm::pubkeyhash_t());
 			expects_lr<block_checkpoint> checkpoint_block(block_evaluation& solution, bool keep_reverted_transactions = true);
 			expects_lr<void> erase_failed_transactions();
 			bool can_accept_more_transactions();
 			static expects_lr<void> solve_evaluated_block(block_evaluation& evaluation, const algorithm::pubkeyhash_t& public_key_hash, const algorithm::seckey_t& secret_key);
 			static expects_lr<void> verify_solved_block(const block_header* parent_block, const block_evaluation& solution, const algorithm::pubkeyhash_t& recovered_producer = algorithm::pubkeyhash_t());
+			static expects_lr<void> validate_solved_block(const block_header* parent_block, const block& child_block, block_evaluation* evaluated_result = nullptr);
 			static expects_lr<block_checkpoint> checkpoint_solved_block(block_evaluation& solution, bool keep_reverted_transactions = true);
 			static queued_transaction precompute_transaction_element(uptr<transaction>&& candidate);
 			static void precompute_transaction_list(vector<queued_transaction>& candidates);

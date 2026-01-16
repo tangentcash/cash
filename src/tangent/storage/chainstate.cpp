@@ -359,7 +359,7 @@ namespace tangent
 					return layer_exception("block " + to_string(current_number - 1) + " reorganization failed: parent block data pruned");
 
 				ledger::block_evaluation evaluation;
-				auto validation = candidate_block->validate(parent_block.address(), &evaluation);
+				auto validation = ledger::solver_context::validate_solved_block(parent_block.address(), *candidate_block, &evaluation);
 				if (!validation)
 					return layer_exception("block " + to_string(current_number) + " validation failed: " + validation.error().message());
 

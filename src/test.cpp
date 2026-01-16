@@ -118,8 +118,8 @@ struct tester
 		if (!solver.try_include_transactions(std::move(transactions)))
 			VI_PANIC(false, "empty block not allowed");
 
-		auto proposal = solver.evaluate_block(nullptr).expect("block evaluation failed");
-		solver.solve_block(proposal).expect("block solution failed");
+		auto proposal = solver.evaluate_block_inline().expect("block evaluation failed");
+		solver.solve_block_inline(proposal).expect("block solution failed");
 		if (results != nullptr)
 			solver.verify_block(proposal).expect("block verification failed");
 
@@ -1891,7 +1891,7 @@ struct tests
 			result->set("block_hash", format::variable(algorithm::encoding::encode_0xhex256(next->as_hash())));
 
 			ledger::block_evaluation evaluation;
-			auto validation = next->validate(parent_block.address(), &evaluation);
+			auto validation = ledger::solver_context::validate_solved_block(parent_block.address(), *next, &evaluation);
 			if (!validation)
 			{
 				result->set("status", format::variable("block validation test failed"));

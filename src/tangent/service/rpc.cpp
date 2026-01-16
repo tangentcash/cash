@@ -3185,13 +3185,7 @@ namespace tangent
 				else if (current_number > 1 && checkpoint_number >= current_number - 1 && !parent_block)
 					return server_response().error(error_codes::not_found, "block " + to_string(current_number - 1) + " verification failed: parent block data pruned");
 
-				if (validate)
-				{
-					auto validation = next->validate(parent_block.address());
-					if (!validation)
-						return server_response().error(error_codes::not_found, "block " + to_string(current_number) + " validation failed: " + validation.error().message());
-				}
-				else
+				if (!validate)
 				{
 					auto verification = next->verify_validity(parent_block.address());
 					if (!verification)
@@ -3201,6 +3195,12 @@ namespace tangent
 					verification = next->verify_integrity(parent_block.address(), state.address());
 					if (!verification)
 						return server_response().error(error_codes::not_found, "block " + to_string(current_number) + " integrity verification failed: " + verification.error().message());
+				}
+				else
+				{
+					auto validation = ledger::solver_context::validate_solved_block(parent_block.address(), *next);
+					if (!validation)
+						return server_response().error(error_codes::not_found, "block " + to_string(current_number) + " validation failed: " + validation.error().message());
 				}
 
 				data.push(format::variable(algorithm::encoding::encode_0xhex256(next->as_hash())));

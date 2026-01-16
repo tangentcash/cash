@@ -362,11 +362,12 @@ namespace tangent
 			if (absolute_work != (parent_block ? parent_block->absolute_work + gas_work : gas_work))
 				return layer_exception("invalid absolute gas work");
 
-			if (slot_duration != ((parent_block ? parent_block->slot_duration + parent_block->get_proof_accounted_duration() : uint256_t(0)) * (get_slot_length() > 1 ? uint256_t(1) : uint256_t(0))))
+			bool cumulative = get_slot_length() > 1;
+			if (slot_duration != (cumulative && parent_block ? parent_block->slot_duration + parent_block->get_proof_accounted_duration() : uint256_t(0)))
 				return layer_exception("invalid slot duration");
 
-			if (slot_gas_use != (parent_block ? parent_block->slot_gas_use + gas_use : gas_use))
-				return layer_exception("invalid slot duration");
+			if (slot_gas_use != (cumulative && parent_block ? parent_block->slot_gas_use : uint256_t(0)) + gas_use)
+				return layer_exception("invalid slot gas use");
 
 			for (auto& witness : witnesses)
 			{
@@ -379,9 +380,10 @@ namespace tangent
 
 			return expectation::met;
 		}
-		bool block_header::store_payload_proof(format::wo_stream* stream) const
+		bool block_header::store_payload(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
+			stream->write_string(proof);
 			stream->write_integer(parent_hash);
 			stream->write_integer(transaction_root);
 			stream->write_integer(receipt_root);
@@ -393,6 +395,7 @@ namespace tangent
 			stream->write_integer(slot_gas_use);
 			stream->write_integer(difficulty);
 			stream->write_integer(generation_time);
+			stream->write_integer(evaluation_time);
 			stream->write_integer(priority);
 			stream->write_integer(number);
 			stream->write_integer(transaction_count);
@@ -405,8 +408,11 @@ namespace tangent
 			}
 			return true;
 		}
-		bool block_header::load_payload_proof(format::ro_stream& stream)
+		bool block_header::load_payload(format::ro_stream& stream)
 		{
+			if (!stream.read_string(stream.read_type(), &proof))
+				return false;
+
 			if (!stream.read_integer(stream.read_type(), &parent_hash))
 				return false;
 
@@ -440,6 +446,9 @@ namespace tangent
 			if (!stream.read_integer(stream.read_type(), &generation_time))
 				return false;
 
+			if (!stream.read_integer(stream.read_type(), &evaluation_time))
+				return false;
+
 			if (!stream.read_integer(stream.read_type(), &priority))
 				return false;
 
@@ -469,29 +478,6 @@ namespace tangent
 
 				set_witness_requirement(asset, block_number);
 			}
-
-			return true;
-		}
-		bool block_header::store_payload(format::wo_stream* stream) const
-		{
-			VI_ASSERT(stream != nullptr, "stream should be set");
-			if (!store_payload_proof(stream))
-				return false;
-
-			stream->write_string(proof);
-			stream->write_integer(evaluation_time);
-			return true;
-		}
-		bool block_header::load_payload(format::ro_stream& stream)
-		{
-			if (!load_payload_proof(stream))
-				return false;
-
-			if (!stream.read_string(stream.read_type(), &proof))
-				return false;
-
-			if (!stream.read_integer(stream.read_type(), &evaluation_time))
-				return false;
 
 			return true;
 		}
@@ -685,8 +671,11 @@ namespace tangent
 		{
 			format::wo_stream message;
 			message.write_string(public_key_hash.optimized_view());
-			if (!block_header::store_payload_proof(&message))
-				message.clear();
+			message.write_integer(parent_hash);
+			message.write_integer(difficulty);
+			message.write_integer(generation_time);
+			message.write_integer(priority);
+			message.write_integer(number);
 			return message;
 		}
 		uint256_t block_header::as_hash(bool renew) const
@@ -765,171 +754,6 @@ namespace tangent
 
 		block::block(const block_header& other) : block_header(other)
 		{
-		}
-		expects_lr<void> block::evaluate(const block_header* parent_block, solver_context* solver, const replace_transaction_callback& replace_transaction)
-		{
-			VI_ASSERT(solver != nullptr, "evaluation context should be set");
-			block_header::set_parent_block(parent_block);
-			auto position = std::find_if(solver->producers.begin(), solver->producers.end(), [&solver](const states::validator_production& a) { return a.owner == solver->state.public_key_hash; });
-			bool eligible = solver->state.executor.get_validator_production(solver->state.public_key_hash).or_else(states::validator_production(algorithm::pubkeyhash_t(), nullptr)).is_active();
-			uint8_t block_options = parent_block && parent_block->network_congestion() ? (uint8_t)executor_context::flags::congestion : 0;
-			priority = (uint64_t)(position == solver->producers.end() ? protocol::now().policy.production.max_per_block : std::distance(solver->producers.begin(), position));
-			difficulty = algorithm::wesolowski::scale(get_proof_slot_target(parent_block), get_proof_difficulty_multiplier());
-
-			auto commitment_gas_limit = uint256_t(0);
-			auto transaction_gas_limit = uint256_t(0);
-			for (auto& item : solver->transactions.pending)
-			{
-				auto& current_gas_limit = item.candidate->is_commitment() ? commitment_gas_limit : transaction_gas_limit;
-				current_gas_limit += item.candidate->gas_limit;
-			}
-
-			auto rewards = btree_map<algorithm::asset_id, decimal>({ { algorithm::asset::native(), get_reward_value() } });
-			for (auto& item : solver->transactions.pending)
-			{
-			retry_replacement_transaction:
-				auto* candidate_transaction = *item.candidate;
-				uint8_t tx_options = item.candidate->is_commitment() ? (uint8_t)executor_context::flags::pedantic : 0;
-				auto execution = executor_context::execute_tx(solver, this, &solver->state.changelog, candidate_transaction, item.hash, item.owner, item.size, block_options | tx_options);
-				if (!execution)
-				{
-					if (protocol::now().user.consensus.logging)
-						VI_WARN("transaction %s execution error: %s", algorithm::encoding::encode_0xhex256(item.hash).c_str(), execution.error().what());
-
-					solver->transactions.failed.insert(item.hash);
-					while (candidate_transaction == *item.candidate && replace_transaction)
-					{
-						auto& current_gas_limit = item.candidate->is_commitment() ? commitment_gas_limit : transaction_gas_limit;
-						auto max_gas_limit = item.candidate->is_commitment() ? block_header::get_commitment_gas_limit() : block_header::get_transaction_gas_limit();
-						auto replacement = solver->precompute_transaction_element(replace_transaction(item.candidate->is_commitment()));
-						if (solver->decide_on_inclusion(replacement, current_gas_limit - item.candidate->gas_limit, max_gas_limit) == solver_context::include_decision::include_in_block)
-						{
-							current_gas_limit = current_gas_limit - item.candidate->gas_limit + replacement.candidate->gas_limit;
-							gas_limit = commitment_gas_limit + transaction_gas_limit;
-							item = std::move(replacement);
-						}
-						else if (!replacement.candidate)
-							break;
-					}
-				}
-				else
-				{
-					auto& blob = transactions.emplace_back();
-					blob.transaction = std::move(item.candidate);
-					blob.receipt = std::move(execution->receipt);
-					if (blob.receipt.relative_gas_use > 0 && blob.transaction->asset != algorithm::asset::native() && blob.transaction->gas_price.is_positive())
-					{
-						auto& reward = rewards[blob.transaction->asset];
-						reward = (reward.is_nan() ? decimal::zero() : reward) + blob.transaction->gas_price * blob.receipt.relative_gas_use.to_decimal();
-					}
-					solver->state.changelog.outgoing.commit();
-				}
-
-				solver->state.changelog.clear_temporary_state();
-				if (item.candidate && candidate_transaction != *item.candidate)
-					goto retry_replacement_transaction;
-			}
-
-			bool coinbase = solver->state.executor.get_validator_production(solver->state.public_key_hash).or_else(states::validator_production(algorithm::pubkeyhash_t(), nullptr)).is_active();
-			if (coinbase)
-			{
-				for (auto& [asset, reward] : rewards)
-				{
-					if (asset == algorithm::asset::native())
-					{
-						auto coinbase_reward = solver->state.executor.apply_validator_production(solver->state.public_key_hash, executor_context::staker::reward_or_penalty, reward);
-						if (!coinbase_reward)
-							return coinbase_reward.error();
-					}
-					else
-					{
-						auto coinbase_fee = solver->state.executor.apply_validator_production_reward(asset, solver->state.public_key_hash, reward);
-						if (!coinbase_fee)
-							return coinbase_fee.error();
-					}
-				}
-			}
-			else if (!eligible)
-				return layer_exception("block producer must be active");
-
-			for (size_t i = 0; i < (size_t)priority; i++)
-			{
-				auto coinbase_penalty = solver->state.executor.apply_validator_production(solver->producers[i].owner, executor_context::staker::unlock, -rewards[algorithm::asset::native()]);
-				if (!coinbase_penalty)
-					return coinbase_penalty.error();
-			}
-
-			size_t block_cost = (size_t)gas_cost::write_byte * 1024;
-			gas_limit += block_cost;
-			gas_use += block_cost;
-			solver->state.changelog.outgoing.commit();
-			recalculate(parent_block, &solver->state.changelog.outgoing);
-			return expectation::met;
-		}
-		expects_lr<void> block::validate(const block_header* parent_block, block_evaluation* evaluated_result) const
-		{
-			if (parent_block && (parent_block->number != number - 1 || parent_block->as_hash() != parent_hash))
-				return layer_exception("invalid parent block");
-
-			ledger::wallet producer;
-			if (!recover_hash(producer.public_key_hash))
-				return layer_exception("invalid producer signature");
-
-			solver_context solver;
-			if (!solver.apply_validator_state([&producer](size_t index) { return index > 0 ? nullptr : &producer; }, parent_block))
-			{
-				if (priority != (uint64_t)solver.producers.size())
-					return layer_exception("invalid producer priority");
-			}
-
-			hash_map<uint256_t, std::pair<const block_transaction*, const solver_context::queued_transaction*>> childs;
-			solver.transactions.pending.reserve(transactions.size());
-			for (auto& transaction : transactions)
-			{
-				if (!transaction.transaction)
-					return layer_exception("invalid transaction included in a block");
-
-				auto& info = solver.force_include_transaction(transactions::resolver::from_copy(*transaction.transaction));
-				childs[transaction.receipt.transaction_hash] = std::make_pair(&transaction, (const solver_context::queued_transaction*)&info);
-			}
-
-			auto evaluation = solver.evaluate_block(nullptr);
-			if (!evaluation)
-				return evaluation.error();
-
-			auto& result = *evaluation;
-			for (auto& transaction : result.block.transactions)
-			{
-				auto it = childs.find(transaction.receipt.transaction_hash);
-				if (it == childs.end())
-					return layer_exception("transaction " + algorithm::encoding::encode_0xhex256(transaction.receipt.transaction_hash) + " not found in block");
-
-				auto& child = it->second;
-				if (transaction.receipt.from != child.second->owner != 0)
-					return layer_exception("transaction " + algorithm::encoding::encode_0xhex256(transaction.receipt.transaction_hash) + " public key recovery failed");
-
-				transaction.receipt.block_time = child.first->receipt.block_time;
-				transaction.receipt.checksum = 0;
-			}
-
-			result.block.proof = proof;
-			result.block.generation_time = generation_time;
-			result.block.evaluation_time = evaluation_time;
-			result.block.signature = signature;
-			result.block.recalculate(parent_block, &result.state);
-
-			block_header input = *this, output = result.block;
-			if (input.as_message().data != output.as_message().data)
-				return layer_exception("unproven state transition");
-
-			auto verification = solver.verify_block(result, producer.public_key_hash);
-			if (!verification)
-				return verification;
-
-			if (evaluated_result != nullptr)
-				*evaluated_result = std::move(result);
-
-			return expectation::met;
 		}
 		expects_lr<void> block::verify_integrity(const block_header* parent_block, const block_state* state) const
 		{
@@ -1067,9 +891,10 @@ namespace tangent
 				transition_count = (uint32_t)state->finalized.size();
 			}
 
+			bool cumulative = get_slot_length() > 1;
 			absolute_work = (parent_block ? parent_block->absolute_work : uint256_t(0)) + get_gas_work(gas_use, gas_limit, priority);
-			slot_duration = (parent_block ? parent_block->slot_duration + parent_block->get_proof_accounted_duration() : uint256_t(0)) * (get_slot_length() > 1 ? 1 : 0);
-			slot_gas_use = parent_block ? parent_block->slot_gas_use + gas_use : gas_use;
+			slot_duration = (cumulative && parent_block ? parent_block->slot_duration + parent_block->get_proof_accounted_duration() : uint256_t(0));
+			slot_gas_use = (cumulative && parent_block ? parent_block->slot_gas_use : uint256_t(0)) + gas_use;
 			transaction_count = (uint32_t)transactions.size();
 		}
 		format::tree block::as_tree() const
@@ -3704,6 +3529,8 @@ namespace tangent
 			state.secret_key = algorithm::seckey_t();
 			state.commitment_gas_limit = 0;
 			state.transaction_gas_limit = 0;
+			state.block_options = 0;
+			state.validator_active = true;
 			state.executor = executor_context(&state.changelog);
 			state.origin = state_origin::chain;
 			state.executor = executor_context(&state.changelog, this, abstract_block, abstract_transaction, std::move(abstract_receipt));
@@ -3779,7 +3606,7 @@ namespace tangent
 
 			return optional::none;
 		}
-		size_t solver_context::try_include_transactions(vector<uptr<transaction>>&& candidates)
+		size_t solver_context::try_include_transactions(vector<uptr<transaction>>&& candidates, hash_set<uint256_t>* hashes)
 		{
 			vector<queued_transaction> subqueue;
 			subqueue.reserve(candidates.size());
@@ -3796,6 +3623,14 @@ namespace tangent
 			auto max_transaction_gas_limit = block_header::get_transaction_gas_limit();
 			for (auto& item : subqueue)
 			{
+				if (hashes != nullptr)
+				{
+					if (hashes->find(item.hash) != hashes->end())
+						continue;
+
+					hashes->insert(item.hash);
+				}
+
 				auto& max_gas_limit = item.candidate->is_commitment() ? max_commitment_gas_limit : max_transaction_gas_limit;
 				auto& current_gas_limit = item.candidate->is_commitment() ? state.commitment_gas_limit : state.transaction_gas_limit;
 				auto decision = decide_on_inclusion(item, current_gas_limit, max_gas_limit);
@@ -3850,31 +3685,141 @@ namespace tangent
 
 			return include_decision::include_in_block;
 		}
-		expects_lr<block_evaluation> solver_context::evaluate_block(const replace_transaction_callback& callback)
+		expects_lr<void> solver_context::block_evalution_prepare(block_evaluation& solution)
 		{
-			block_evaluation result;
-			state.executor = executor_context(&state.changelog, this, &result.block, nullptr, { });
+			auto* parent_block = tip.address();
+			auto position = std::find_if(producers.begin(), producers.end(), [this](const states::validator_production& a) { return a.owner == state.public_key_hash; });
+			solution.block = ledger::block();
+			solution.block.set_parent_block(parent_block);
+			solution.block.priority = (uint64_t)(position == producers.end() ? protocol::now().policy.production.max_per_block : std::distance(producers.begin(), position));
+			solution.block.difficulty = algorithm::wesolowski::scale(solution.block.get_proof_slot_target(parent_block), solution.block.get_proof_difficulty_multiplier());
+			state.executor = executor_context(&state.changelog, this, &solution.block, nullptr, { });
+			state.validator_active = state.executor.get_validator_production(state.public_key_hash).or_else(states::validator_production(algorithm::pubkeyhash_t(), nullptr)).is_active();
+			state.block_options = parent_block && parent_block->network_congestion() ? (uint8_t)executor_context::flags::congestion : 0;
 			state.changelog.clear();
-
+			return expectation::met;
+		}
+		expects_lr<void> solver_context::block_evalution_update(block_evaluation& solution, block_rewards& rewards)
+		{
 			if (transactions.queued != transactions.pending.size())
 			{
 				precompute_transaction_list(transactions.pending);
 				transactions.queued = transactions.pending.size();
 			}
 
-			auto chain = storages::chainstate();
-			auto evaluation = result.block.evaluate(tip.address(), this, callback);
-			erase_failed_transactions().report("mempool cleanup failed");
-			if (!evaluation)
-				return evaluation.error();
+			for (auto& item : transactions.pending)
+			{
+				uint8_t tx_options = item.candidate->is_commitment() ? (uint8_t)executor_context::flags::pedantic : 0;
+				auto execution = executor_context::execute_tx(this, &solution.block, &state.changelog, *item.candidate, item.hash, item.owner, item.size, state.block_options | tx_options);
+				if (execution)
+				{
+					auto& blob = solution.block.transactions.emplace_back();
+					blob.transaction = std::move(item.candidate);
+					blob.receipt = std::move(execution->receipt);
+					if (blob.receipt.relative_gas_use > 0 && blob.transaction->asset != algorithm::asset::native() && blob.transaction->gas_price.is_positive())
+					{
+						auto& reward = rewards[blob.transaction->asset];
+						reward = (reward.is_nan() ? decimal::zero() : reward) + blob.transaction->gas_price * blob.receipt.relative_gas_use.to_decimal();
+					}
+					state.changelog.outgoing.commit();
+				}
+				else
+				{
+					transactions.failed.insert(item.hash);
+					if (protocol::now().user.consensus.logging)
+						VI_WARN("transaction %s execution error: %s", algorithm::encoding::encode_0xhex256(item.hash).c_str(), execution.error().what());
+				}
+				state.changelog.clear_temporary_state();
+			}
 
-			state.changelog.outgoing.pending.swap(result.state.pending);
-			state.changelog.outgoing.finalized.swap(result.state.finalized);
-			return expects_lr<block_evaluation>(std::move(result));
+			transactions.queued = 0;
+			transactions.pending.clear();
+			return expectation::met;
 		}
-		expects_lr<void> solver_context::solve_block(block_evaluation& evaluation)
+		expects_lr<void> solver_context::block_evalution_finalize(block_evaluation& solution, block_rewards& rewards)
 		{
-			return solve_evaluated_block(evaluation, state.public_key_hash, state.secret_key);
+			auto& coinbase = rewards[algorithm::asset::native()];
+			coinbase = coinbase.is_nan() ? solution.block.get_reward_value() : (coinbase + solution.block.get_reward_value());
+
+			bool pays_coinbase = state.executor.get_validator_production(state.public_key_hash).or_else(states::validator_production(algorithm::pubkeyhash_t(), nullptr)).is_active();
+			if (pays_coinbase)
+			{
+				for (auto& [asset, reward] : rewards)
+				{
+					if (asset == algorithm::asset::native())
+					{
+						auto coinbase_reward = state.executor.apply_validator_production(state.public_key_hash, executor_context::staker::reward_or_penalty, reward);
+						if (!coinbase_reward)
+							return coinbase_reward.error();
+					}
+					else
+					{
+						auto coinbase_fee = state.executor.apply_validator_production_reward(asset, state.public_key_hash, reward);
+						if (!coinbase_fee)
+							return coinbase_fee.error();
+					}
+				}
+			}
+			else if (!state.validator_active)
+				return layer_exception("block producer must be active");
+
+			for (size_t i = 0; i < (size_t)solution.block.priority; i++)
+			{
+				auto coinbase_penalty = state.executor.apply_validator_production(producers[i].owner, executor_context::staker::unlock, -rewards[algorithm::asset::native()]);
+				if (!coinbase_penalty)
+					return coinbase_penalty.error();
+			}
+
+			auto* parent_block = tip.address();
+			size_t block_cost = (size_t)gas_cost::write_byte * 1024;
+			state.changelog.outgoing.commit();
+			solution.block.gas_limit += block_cost;
+			solution.block.gas_use += block_cost;
+			solution.block.recalculate(parent_block, &state.changelog.outgoing);
+			state.changelog.outgoing.pending.swap(solution.state.pending);
+			state.changelog.outgoing.finalized.swap(solution.state.finalized);
+			erase_failed_transactions().report("mempool cleanup failed");
+			return expectation::met;
+		}
+		expects_lr<block_evaluation> solver_context::evaluate_block_inline()
+		{
+			block_evaluation solution;
+			auto preparation = block_evalution_prepare(solution);
+			if (!preparation)
+				return preparation.error();
+
+			auto rewards = block_rewards();
+			auto execution = block_evalution_update(solution, rewards);
+			if (!execution)
+				return execution.error();
+
+			auto finalization = block_evalution_finalize(solution, rewards);
+			if (!finalization)
+				return execution.error();
+
+			return expects_lr<block_evaluation>(std::move(solution));
+		}
+		expects_lr<void> solver_context::block_solution_solve(block_evaluation& evaluation)
+		{
+			if (!evaluation.block.solve(state.public_key_hash))
+				return layer_exception("block proof evaluation failed");
+
+			return expectation::met;
+		}
+		expects_lr<void> solver_context::block_solution_sign(block_evaluation& evaluation)
+		{
+			if (!evaluation.block.sign(state.secret_key))
+				return layer_exception("block signature evaluation failed");
+
+			return expectation::met;
+		}
+		expects_lr<void> solver_context::solve_block_inline(block_evaluation& evaluation)
+		{
+			auto solution = block_solution_solve(evaluation);
+			if (!solution)
+				return solution;
+
+			return block_solution_sign(evaluation);
 		}
 		expects_lr<void> solver_context::verify_block(const block_evaluation& solution, const algorithm::pubkeyhash_t& recovered_producer)
 		{
@@ -3916,6 +3861,71 @@ namespace tangent
 				return validity;
 
 			return solution.block.verify_integrity(parent_block, &solution.state);
+		}
+		expects_lr<void> solver_context::validate_solved_block(const block_header* parent_block, const block& child_block, block_evaluation* evaluated_result)
+		{
+			if (parent_block && (parent_block->number != child_block.number - 1 || parent_block->as_hash() != child_block.parent_hash))
+				return layer_exception("invalid parent block");
+
+			ledger::wallet producer;
+			if (!child_block.recover_hash(producer.public_key_hash))
+				return layer_exception("invalid producer signature");
+
+			solver_context solver;
+			if (!solver.apply_validator_state([&producer](size_t index) { return index > 0 ? nullptr : &producer; }, parent_block))
+			{
+				if (child_block.priority != (uint64_t)solver.producers.size())
+					return layer_exception("invalid producer priority");
+			}
+
+			hash_map<uint256_t, std::pair<const block_transaction*, const solver_context::queued_transaction*>> childs;
+			solver.transactions.pending.reserve(child_block.transactions.size());
+			for (auto& transaction : child_block.transactions)
+			{
+				if (!transaction.transaction)
+					return layer_exception("invalid transaction included in a block");
+
+				auto& info = solver.force_include_transaction(transactions::resolver::from_copy(*transaction.transaction));
+				childs[transaction.receipt.transaction_hash] = std::make_pair(&transaction, (const solver_context::queued_transaction*)&info);
+			}
+
+			auto evaluation = solver.evaluate_block_inline();
+			if (!evaluation)
+				return evaluation.error();
+
+			auto& result = *evaluation;
+			for (auto& transaction : result.block.transactions)
+			{
+				auto it = childs.find(transaction.receipt.transaction_hash);
+				if (it == childs.end())
+					return layer_exception("transaction " + algorithm::encoding::encode_0xhex256(transaction.receipt.transaction_hash) + " not found in block");
+
+				auto& child = it->second;
+				if (transaction.receipt.from != child.second->owner != 0)
+					return layer_exception("transaction " + algorithm::encoding::encode_0xhex256(transaction.receipt.transaction_hash) + " public key recovery failed");
+
+				transaction.receipt.block_time = child.first->receipt.block_time;
+				transaction.receipt.checksum = 0;
+			}
+
+			result.block.proof = child_block.proof;
+			result.block.generation_time = child_block.generation_time;
+			result.block.evaluation_time = child_block.evaluation_time;
+			result.block.signature = child_block.signature;
+			result.block.recalculate(parent_block, &result.state);
+
+			block_header input = child_block, output = result.block;
+			if (input.as_message().data != output.as_message().data)
+				return layer_exception("unproven state transition");
+
+			auto verification = solver.verify_block(result, producer.public_key_hash);
+			if (!verification)
+				return verification;
+
+			if (evaluated_result != nullptr)
+				*evaluated_result = std::move(result);
+
+			return expectation::met;
 		}
 		expects_lr<block_checkpoint> solver_context::checkpoint_solved_block(block_evaluation& solution, bool keep_reverted_transactions)
 		{
@@ -3983,7 +3993,7 @@ namespace tangent
 				if (solution.block.transition_count != solution.state.finalized.size())
 				{
 					auto parent_block = chain.get_block_by_number(solution.block.number - 1);
-					auto validation = solution.block.validate(parent_block.address(), &solution);
+					auto validation = validate_solved_block(parent_block.address(), solution.block, &solution);
 					if (!validation)
 					{
 						storage_util::multi_tx_rollback(__func__, std::move(global_state)).report("global state rollback failed");

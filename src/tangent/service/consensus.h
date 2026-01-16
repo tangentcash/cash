@@ -223,8 +223,22 @@ namespace tangent
 			} events;
 
 		private:
+			struct miner_state : reference<miner_state>
+			{
+				std::mutex mutex;
+				std::condition_variable condition;
+				ledger::solver_context solver;
+				ledger::block_evaluation solution;
+				ledger::block_rewards rewards;
+				hash_set<uint256_t> hashes;
+				expects_rt<void> status = remote_exception::retry();
+
+				void reset();
+			};
+
 			struct
 			{
+				uref<miner_state> miner;
 				std::atomic<bool> verifying = false;
 				std::atomic<bool> waiting = false;
 				std::atomic<bool> dirty = false;

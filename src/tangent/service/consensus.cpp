@@ -26,14 +26,6 @@ namespace tangent
 			uint32_t length;
 		};
 
-		struct background_miner_state : reference<background_miner_state>
-		{
-			std::mutex mutex;
-			std::condition_variable condition;
-			ledger::block_evaluation evaluation;
-			expects_rt<void> solution = remote_exception::retry();
-		};
-
 		static option<socket_address> text_address_to_socket_address(const std::string_view& value)
 		{
 			auto ip_address = value.substr(0, value.find(':'));
@@ -763,6 +755,14 @@ namespace tangent
 		callable::descriptor descriptors::aggregate_signature()
 		{
 			return callable::descriptor(__func__, 18);
+		}
+
+		void server_node::miner_state::reset()
+		{
+			solver = ledger::solver_context();
+			status = remote_exception::retry();
+			rewards.clear();
+			hashes.clear();
 		}
 
 		server_node::server_node() noexcept : socket_server(), control_sys("consensus-node")
@@ -2851,17 +2851,26 @@ namespace tangent
 
 			return control_sys.task_if_none(TASK_BLOCK_PRODUCTION, [this](system_task&& task)
 			{
-			next_block:
+				auto chain = storages::chainstate();
+				auto mempool = storages::mempoolstate();
 				auto queue = [this](size_t index)
 				{
 					auto it = descriptors.begin();
 					std::advance(it, std::min(descriptors.size(), index));
 					return it != descriptors.end() ? &it->second.second : nullptr;
 				};
-				auto chain = storages::chainstate();
+			next_block:
+				if (!is_active() || (protocol::now().is(network_type::regtest) && !mempool.get_transactions_count().or_else(0)))
+					return;
+
 				auto tip = chain.get_latest_block_header();
-				auto solver = ledger::solver_context();
-				auto priority = solver.apply_validator_state(queue, tip.address());
+				auto& miner = this->mempool.miner;
+				if (!miner)
+					miner = new miner_state();
+				else
+					miner->reset();
+
+				auto priority = miner->solver.apply_validator_state(queue, tip.address());
 				auto position = priority.or_else(protocol::now().policy.production.max_per_block);
 				if (position > 0 && tip)
 				{
@@ -2869,114 +2878,95 @@ namespace tangent
 					for (uint64_t i = 0; i <= position; i++)
 					{
 						auto other_node_solution_time = (int64_t)((double)protocol::now().policy.pow.time * algorithm::wesolowski::adjustment_scaling(i).to_double());
-						if (current_solution_time < other_node_solution_time)
+						if (current_solution_time >= other_node_solution_time)
+							continue;
+
+						this->mempool.waiting = true;
+						control_sys.upsert_timeout(TASK_BLOCK_PRODUCTION, (uint64_t)(other_node_solution_time - current_solution_time), [this]()
 						{
-							mempool.waiting = true;
-							control_sys.upsert_timeout(TASK_BLOCK_PRODUCTION, (uint64_t)(other_node_solution_time - current_solution_time), [this]()
-							{
-								control_sys.clear_timeout(TASK_BLOCK_PRODUCTION);
-								run_block_production();
-							});
-							return;
-						}
+							control_sys.clear_timeout(TASK_BLOCK_PRODUCTION);
+							run_block_production();
+						});
+						return;
 					}
 				}
 
-				size_t offsets[2] = { 0, 0 }, count = 512;
-				bool congestion = solver.state.executor.options & (uint8_t)ledger::executor_context::flags::congestion;
-				auto mempool = storages::mempoolstate();
-				auto include = [&](size_t index, uint8_t flags) -> bool
-				{
-					size_t& offset = offsets[index];
-					if (offset == std::numeric_limits<size_t>::max())
-						return false;
+				auto status = miner->solver.block_evalution_prepare(miner->solution);
+				if (!status)
+					goto next_block;
 
-					auto results = mempool.get_best_transactions_from_queue(flags, offset, count);
-					auto size = results ? results->size() : 0;
-					solver.try_include_transactions(std::move(*results));
-					offset = count == size ? size : std::numeric_limits<size_t>::max();
-					return offset != std::numeric_limits<size_t>::max();
-				};
-				while (is_active() && solver.can_accept_more_transactions() && (include(0, congestion ? (uint8_t)storages::transaction_queue::congestion : 0) || include(1, (uint8_t)storages::transaction_queue::commitment)));
-				if (solver.transactions.pending.empty() && protocol::now().is(network_type::regtest))
-					return solver.erase_failed_transactions().report("mempool cleanup failed");
-
-				auto evaluation = solver.evaluate_block([&](bool commitment) -> uptr<ledger::transaction>
+				std::thread worker([miner]()
 				{
-					uint8_t flags = commitment ? (uint8_t)storages::transaction_queue::commitment : (congestion ? (uint8_t)storages::transaction_queue::congestion : 0);
-					auto candidate = mempool.get_best_transactions_from_queue(flags, offsets[commitment ? 1 : 0]++, 1);
-					return candidate && !candidate->empty() ? candidate->front().reset() : nullptr;
+					auto solution = miner->solver.block_solution_solve(miner->solution);
+					umutex<std::mutex> unique(miner->mutex);
+					miner->status = solution ? expects_rt<void>(expectation::met) : expects_rt<void>(remote_exception(std::move(solution.error().message())));
+					miner->condition.notify_one();
 				});
-				if (!evaluation)
-					return evaluation.report("block evaluation dismissal");
-
-				auto estimated_time = (double)(tip ? tip->get_slot_proof_duration_average() : 0) * algorithm::wesolowski::adjustment_scaling(position).to_double();
-				if (position > 0)
+				std::unique_lock<std::mutex> unique(miner->mutex);
+				do
 				{
-					auto public_key_hash = solver.state.public_key_hash;
-					auto secret_key = solver.state.secret_key;
-					auto state = uref(new background_miner_state());
-					state->evaluation = std::move(*evaluation);
-					std::thread worker([state, public_key_hash, secret_key]()
+					size_t offsets[2] = { 0, 0 }, count = 512;
+					while (miner->solver.can_accept_more_transactions() && (offsets[0] != std::numeric_limits<size_t>::max() || offsets[1] != std::numeric_limits<size_t>::max()))
 					{
-						auto solution = ledger::solver_context::solve_evaluated_block(state->evaluation, public_key_hash, secret_key);
-						if (!solution)
-							return solution.report("block solution dismissal");
-
-						umutex<std::mutex> unique(state->mutex);
-						state->solution = solution ? expects_rt<void>(expectation::met) : expects_rt<void>(remote_exception(std::move(solution.error().message())));
-						state->condition.notify_one();
-					});
-					while (true)
-					{
-						std::unique_lock<std::mutex> unique(state->mutex);
-						if (state->condition.wait_for(unique, std::chrono::milliseconds(1000), [&chain, &state, &queue]
-						{
-							if (state->solution || !state->solution.error().is_retry())
-								return true;
-
-							auto tip = chain.get_latest_block_header();
-							auto priority = ledger::solver_context().apply_validator_state(queue, tip.address());
-							if (priority.or_else(protocol::now().policy.production.max_per_block) != 0)
-								return false;
-
-							state->solution = remote_exception::shutdown();
-							return true;
-						}))
-							break;
+						auto results0 = mempool.get_best_transactions_from_queue(miner->solver.state.executor.options & (uint8_t)ledger::executor_context::flags::congestion ? (uint8_t)storages::transaction_queue::congestion : 0, offsets[0], count);
+						auto results1 = mempool.get_best_transactions_from_queue((uint8_t)storages::transaction_queue::commitment, offsets[1], count);
+						offsets[0] = count == (results0 ? results0->size() : 0) ? (results0 ? results0->size() : 0) : std::numeric_limits<size_t>::max();
+						offsets[1] = count == (results1 ? results1->size() : 0) ? (results1 ? results1->size() : 0) : std::numeric_limits<size_t>::max();
+						miner->solver.try_include_transactions(std::move(*results0), &miner->hashes);
+						miner->solver.try_include_transactions(std::move(*results1), &miner->hashes);
 					}
 
-					std::unique_lock<std::mutex> unique(state->mutex);
-					if (!state->solution && state->solution.error().is_shutdown())
-					{
-						if (worker.joinable())
-							worker.detach();
-						goto next_block;
-					}
+					status = miner->solver.block_evalution_update(miner->solution, miner->rewards);
+					if (!status)
+						break;
+					else if (!position)
+						continue;
 
-					unique.unlock();
+					auto tip = chain.get_latest_block_header();
+					auto priority = ledger::solver_context().apply_validator_state(queue, tip.address());
+					if (priority.or_else(protocol::now().policy.production.max_per_block) == 0)
+					{
+						miner->status = remote_exception::shutdown();
+						break;
+					}
+				} while (miner->condition.wait_for(unique, std::chrono::milliseconds(200)) == std::cv_status::timeout);
+
+				auto header = ledger::block_header();
+				auto timing = (double)(tip ? tip->get_slot_proof_duration_average() : 0) * algorithm::wesolowski::adjustment_scaling(position).to_double();
+				if (!miner->status && miner->status.error().is_shutdown())
+				{
+					header = miner->solution.block;
+					miner = nullptr;
 					if (worker.joinable())
-						worker.join();
-					evaluation = std::move(state->evaluation);
+						worker.detach();
 				}
-				else
-				{
-					auto solution = solver.solve_block(*evaluation);
-					if (!solution)
-						return solution.report("block solution dismissal");
-				}
+				else if (worker.joinable())
+					worker.join();
 
+				unique.unlock();
 				tip = chain.get_latest_block_header();
-				if (is_active() && (!tip || evaluation->block.number > tip->number || (evaluation->block.number == tip->number && evaluation->block.priority < tip->priority)))
+				if (!is_active() || !status || !miner || !(!tip || miner->solution.block.number > tip->number || (miner->solution.block.number == tip->number && miner->solution.block.priority < tip->priority)))
 				{
+				skip_block:
 					if (protocol::now().user.consensus.logging)
-						VI_INFO("block %s solved (number: %" PRIu64", txns: %" PRIu64 ", leader: %" PRIu64 ", work: < ~%.2f sec.)", algorithm::encoding::encode_0xhex256(evaluation->block.as_hash()).c_str(), evaluation->block.number, (uint64_t)evaluation->block.transactions.size(), position + 1, estimated_time / 1000.0);
-
-					if (accept_block(nullptr, std::move(*evaluation), 0))
-						goto next_block;
+						VI_WARN("block %s dismissed: %s (number: %" PRIu64", txns: %i, leader: %" PRIu64 ", work: < ~%.2f sec.)", algorithm::encoding::encode_0xhex256(header.as_hash()).c_str(), status ? (miner && !miner->status ? miner->status.what().c_str() : "better block found") : status.what().c_str(), header.number, header.transaction_count, position + 1, timing / 1000.0);
+					return;
 				}
-				else if (protocol::now().user.consensus.logging)
-					VI_WARN("block %s dismissed (number: %" PRIu64", txns: %" PRIu64 ", leader: %" PRIu64 ", work: < ~%.2f sec. wasted)", algorithm::encoding::encode_0xhex256(evaluation->block.as_hash()).c_str(), evaluation->block.number, (uint64_t)evaluation->block.transactions.size(), position + 1, estimated_time / 1000.0);
+
+				status = miner->solver.block_evalution_finalize(miner->solution, miner->rewards);
+				if (status)
+					status = miner->solver.block_solution_sign(miner->solution);
+				if (!status)
+					goto skip_block;
+
+				if (protocol::now().user.consensus.logging)
+					VI_INFO("block %s solved (number: %" PRIu64", txns: %i, leader: %" PRIu64 ", work: < ~%.2f sec.)", algorithm::encoding::encode_0xhex256(miner->solution.block.as_hash()).c_str(), miner->solution.block.number, miner->solution.block.transaction_count, position + 1, timing / 1000.0);
+
+				if (!accept_block(nullptr, std::move(miner->solution), 0))
+					goto skip_block;
+
+				miner->solver.erase_failed_transactions().report("mempool cleanup failed");
+				goto next_block;	
 			});
 		}
 		bool server_node::run_block_dispatcher()
@@ -3273,7 +3263,7 @@ namespace tangent
 											<+> - <+> = possible reorganization
 			*/
 			auto reorganization = ledger::solver_context::requires_reorganization(candidate);
-			auto validation = fork_branch && reorganization ? expects_lr<void>(expectation::met) : candidate.block.validate(parent_block.address(), &candidate);
+			auto validation = fork_branch && reorganization ? expects_lr<void>(expectation::met) : ledger::solver_context::validate_solved_block(parent_block.address(), candidate.block, &candidate);
 			if (!validation)
 			{
 				if (protocol::now().user.consensus.logging)
