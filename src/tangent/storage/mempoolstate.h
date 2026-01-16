@@ -43,6 +43,12 @@ namespace tangent
 			attestation = (1 << 6)
 		};
 
+		enum class transaction_queue : uint8_t
+		{
+			commitment = 1 << 0,
+			congestion = 1 << 1
+		};
+
 		class routing_util
 		{
 		public:
@@ -112,7 +118,7 @@ namespace tangent
 			expects_lr<uint64_t> get_lowest_transaction_nonce(const algorithm::pubkeyhash_t& owner);
 			expects_lr<uint64_t> get_highest_transaction_nonce(const algorithm::pubkeyhash_t& owner);
 			expects_lr<uptr<ledger::transaction>> get_transaction_by_hash(const uint256_t& transaction_hash);
-			expects_lr<vector<uptr<ledger::transaction>>> get_transactions(bool commitment, size_t offset, size_t count);
+			expects_lr<vector<uptr<ledger::transaction>>> get_best_transactions_from_queue(uint8_t transaction_queue_flags, size_t offset, size_t count);
 			expects_lr<vector<uptr<ledger::transaction>>> get_transactions_by_owner(const algorithm::pubkeyhash_t& owner, int8_t direction, size_t offset, size_t count);
 			expects_lr<vector<uint256_t>> get_transaction_hashset(size_t offset, size_t count);
 			ledger::storage_index_ptr& get_peer_storage();

@@ -298,6 +298,7 @@ namespace tangent
 				decimal min_stake_value = std::string_view("36");
 				decimal reward_value = std::string_view("1.2");
 				decimal genesis_reward_value = std::string_view("90");
+				decimal network_congestion_threshold = std::string_view("0.25");
 			} production;
 			string token = "TAN";
 			uint64_t commitment_tps = 10;

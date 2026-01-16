@@ -924,15 +924,21 @@ namespace tangent
 			finalize_checksum(**value, (*cursor)["hash"].get());
 			return value;
 		}
-		expects_lr<vector<uptr<ledger::transaction>>> mempoolstate::get_transactions(bool commitment, size_t offset, size_t count)
+		expects_lr<vector<uptr<ledger::transaction>>> mempoolstate::get_best_transactions_from_queue(uint8_t flags, size_t offset, size_t count)
 		{
 			schema_list map;
 			map.push_back(var::set::integer(count));
 			map.push_back(var::set::integer(offset));
 
-			auto cursor = get_peer_storage().emplace_query(__func__, commitment ?
-				"SELECT message FROM transactions WHERE quality IS NULL ORDER BY epoch ASC, time ASC NULLS LAST LIMIT ? OFFSET ?" :
-				"SELECT message FROM transactions WHERE quality IS NOT NULL ORDER BY epoch ASC, quality DESC NULLS LAST LIMIT ? OFFSET ?", &map);
+			std::string_view command;
+			if (flags & (uint8_t)transaction_queue::commitment)
+				command = "SELECT message FROM transactions WHERE quality IS NULL ORDER BY epoch ASC, time ASC NULLS LAST LIMIT ? OFFSET ?";
+			else if (flags & (uint8_t)transaction_queue::congestion)
+				command = "SELECT message FROM transactions WHERE quality > 0 ORDER BY epoch ASC, quality DESC NULLS LAST LIMIT ? OFFSET ?";
+			else
+				command = "SELECT message FROM transactions WHERE quality IS NOT NULL ORDER BY epoch ASC, quality DESC NULLS LAST LIMIT ? OFFSET ?";
+
+			auto cursor = get_peer_storage().emplace_query(__func__, command, &map);
 			if (!cursor || cursor->error())
 				return expects_lr<vector<uptr<ledger::transaction>>>(layer_exception(ledger::storage_util::error_of(cursor)));
 

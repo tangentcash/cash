@@ -336,7 +336,7 @@ namespace tangent
 			bind(0, "websocket", "subscribe", 1, 3, "string addresses, bool? blocks, bool? transactions", "uint64", "subscribe to streams of incoming blocks and transactions optionally include blocks and transactions relevant to comma separated address list", std::bind(&server_node::web_socket_subscribe, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0, "websocket", "unsubscribe", 1, 1, "", "void", "unsubscribe from all streams", std::bind(&server_node::web_socket_unsubscribe, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0, "utility", "encodeaddress", 1, 1, "string public_key_hash", "string", "encode public key hash", std::bind(&server_node::utility_encode_address, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0, "utility", "decodeaddress", 1, 1, "string address", "{ public_key_hash: string,  }", "decode address", std::bind(&server_node::utility_decode_address, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0, "utility", "decodeaddress", 1, 1, "string address", "string", "decode address", std::bind(&server_node::utility_decode_address, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0, "utility", "decodemessage", 1, 1, "string message", "any[]", "decode message", std::bind(&server_node::utility_decode_message, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0, "utility", "decodetransaction", 1, 1, "string message_hex", "{ transaction: txn, signer_address: string }", "decode transaction message and convert to object", std::bind(&server_node::utility_decode_transaction, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0, "utility", "help", 0, 0, "", "{ declaration: string, method: string, description: string }[]", "get reference of all methods", std::bind(&server_node::utility_help, this, std::placeholders::_1, std::placeholders::_2));
@@ -427,7 +427,7 @@ namespace tangent
 			bind(0 | access_type::r, "mempoolstate", "getclosestnodecount", 0, 0, "", "uint64", "get closest node count", std::bind(&server_node::mempoolstate_get_closest_node_counter, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getnode", 1, 1, "string uri_address", "validator", "get associated node info by ip address", std::bind(&server_node::mempoolstate_get_node, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getaddresses", 2, 3, "uint64 offset, uint64 count, string? services = 'consensus' | 'discovery' | 'superchain' | 'rpc' | 'rpc_public_access' | 'rpc_web_sockets' | 'production' | 'participation' | 'attestation'", "string[]", "get best node ip addresses with optional comma separated list of services", std::bind(&server_node::mempoolstate_get_addresses, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "mempoolstate", "getgasprice", 1, 3, "string asset, double? percentile = 0.5, bool? mempool_only", "decimal", "get gas price from percentile of pending transactions", std::bind(&server_node::mempoolstate_get_gas_price, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "mempoolstate", "getgasprice", 1, 3, "string asset, double? percentile = 0.5, bool? mempool_only", "{ price: decimal, paid: boolean }", "get gas price from percentile of pending transactions", std::bind(&server_node::mempoolstate_get_gas_price, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getassetprice", 2, 3, "string asset_from, string asset_to, double? percentile = 0.5", "decimal", "get gas asset from percentile of pending transactions", std::bind(&server_node::mempoolstate_get_asset_price, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "simulatetransaction", 1, 1, "string message_hex", "uint256", "execute transaction with block gas limit and return the receipt", std::bind(&server_node::mempoolstate_simulate_transaction, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getmempooltransactionbyhash", 1, 1, "uint256 hash", "txn", "get mempool transaction by hash", std::bind(&server_node::mempoolstate_get_transaction_by_hash, this, std::placeholders::_1, std::placeholders::_2));
@@ -2941,22 +2941,16 @@ namespace tangent
 			double percentile = args.size() > 1 ? args[1].as_double() : 0.50;
 			bool mempool_only = args.size() > 2 ? args[2].as_boolean() : true;
 			auto mempool = storages::mempoolstate();
+			auto chain = storages::chainstate();
+			auto tip = chain.get_latest_block_header();
 			auto price = mempool.get_gas_price(asset, percentile);
-			if (!price && !mempool_only)
-			{
-				auto chain = storages::chainstate();
-				auto number = chain.get_latest_block_number();
-				if (!number)
-					return server_response().error(error_codes::not_found, "gas price not found");
+			if (!mempool_only && !price && tip)
+				price = chain.get_block_gas_price(tip->number, asset, percentile);		
 
-				price = chain.get_block_gas_price(*number, asset, percentile);
-				if (!price)
-					return server_response().error(error_codes::not_found, "gas price not found");
-			}
-			else if (!price)
-				return server_response().success(format::variable(decimal::zero()));
-
-			return server_response().success(format::variable(*price));
+			auto result = format::tree::map();
+			result.set("price", format::variable(price ? *price : decimal::zero()));
+			result.set("paid", format::variable(tip && tip->network_congestion()));
+			return server_response().success(std::move(result));
 		}
 		server_response server_node::mempoolstate_get_asset_price(http::connection* base, format::variables&& args)
 		{
@@ -3047,35 +3041,27 @@ namespace tangent
 		}
 		server_response server_node::mempoolstate_get_transactions(http::connection* base, format::variables&& args)
 		{
-			bool commitment = args[0].as_boolean();
+			uint8_t flags = args[0].as_boolean() ? (uint8_t)storages::transaction_queue::commitment : 0;
 			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
 			if (!count || count > protocol::now().message.pages_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			uint8_t unrolling = args.size() > 3 ? args[3].as_uint8() : 0;
 			auto mempool = storages::mempoolstate();
-			if (unrolling == 0)
-			{
-				auto data = format::tree::list();
-				auto list = mempool.get_transactions(commitment, offset, count);
-				if (!list)
-					return server_response().error(error_codes::not_found, "transactions not found");
+			auto data = format::tree::list();
+			auto list = mempool.get_best_transactions_from_queue(flags, offset, count);
+			if (!list)
+				return server_response().error(error_codes::not_found, "transactions not found");
 
-				for (auto& item : *list)
+			for (auto& item : *list)
+			{
+				if (unrolling == 0)
 					data.push(format::variable(algorithm::encoding::encode_0xhex256(item->as_hash())));
-				return server_response().success(std::move(data));
-			}
-			else
-			{
-				auto data = format::tree::list();
-				auto list = mempool.get_transactions(commitment, offset, count);
-				if (!list)
-					return server_response().error(error_codes::not_found, "transactions not found");
-
-				for (auto& item : *list)
+				else
 					data.push(item->as_tree());
-				return server_response().success(std::move(data));
 			}
+
+			return server_response().success(std::move(data));
 		}
 		server_response server_node::mempoolstate_get_transactions_by_owner(http::connection* base, format::variables&& args)
 		{

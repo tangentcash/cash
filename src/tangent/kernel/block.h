@@ -152,6 +152,7 @@ namespace tangent
 			uint256_t gas_limit = 0;
 			uint256_t absolute_work = 0;
 			uint256_t slot_duration = 0;
+			uint256_t slot_gas_use = 0;
 			uint64_t difficulty = 0;
 			uint64_t generation_time = 0;
 			uint64_t evaluation_time = 0;
@@ -180,6 +181,8 @@ namespace tangent
 			virtual bool verify_proof(const algorithm::pubkeyhash_t& public_key_hash) const;
 			virtual void set_parent_block(const block_header* parent_block);
 			virtual void set_witness_requirement(const algorithm::asset_id& asset, uint64_t block_number);
+			virtual bool network_congestion() const;
+			virtual decimal network_congestion_threshold() const;
 			virtual uint64_t get_witness_requirement(const algorithm::asset_id& asset) const;
 			virtual int8_t get_relative_order(const block_header& other) const;
 			virtual uint64_t get_slot_proof_duration_average() const;
@@ -202,6 +205,7 @@ namespace tangent
 			static uint256_t get_commitment_gas_limit();
 			static uint256_t get_transaction_gas_limit();
 			static uint256_t get_total_gas_limit();
+			static uint256_t get_slot_total_gas_limit();
 			static uint256_t get_gas_work(const uint256_t& gas_use, const uint256_t& gas_limit, uint64_t priority);
 			static bool is_genesis_round(const uint64_t block_number);
 		};
@@ -273,7 +277,8 @@ namespace tangent
 				pedantic = 1 << 0,
 				evaluation = 1 << 1,
 				replayable = 1 << 2,
-				unrestricted = 1 << 3
+				unrestricted = 1 << 3,
+				congestion = 1 << 4
 			};
 
 			enum class staker : uint8_t

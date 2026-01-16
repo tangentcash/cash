@@ -956,6 +956,17 @@ namespace tangent
 				return layer_exception("nonce is too old");
 			}
 
+			if (!candidate_tx->is_commitment() && !candidate_tx->gas_price.is_positive())
+			{
+				auto tip = chain.get_latest_block_header();
+				if (tip && tip->network_congestion())
+				{
+					if (protocol::now().user.consensus.logging)
+						VI_WARN("transaction %s %.*s validation failed: must pay for gas (anti-spam)", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data());
+					return layer_exception("must pay for gas (anti-spam)");
+				}
+			}
+
 			algorithm::pubkeyhash_t validation_owner;
 			auto validation = ledger::executor_context::validate_tx(*candidate_tx, candidate_hash, validation_owner);
 			if (!validation)
@@ -2871,24 +2882,29 @@ namespace tangent
 					}
 				}
 
-				size_t offset[2] = { 0, 0 }, count = 512;
-				bool accepting[2] = { true, true };
+				size_t offsets[2] = { 0, 0 }, count = 512;
+				bool congestion = solver.state.executor.options & (uint8_t)ledger::executor_context::flags::congestion;
 				auto mempool = storages::mempoolstate();
-				while (is_active() && (accepting[0] || accepting[1]) && solver.can_accept_more_transactions())
+				auto include = [&](size_t index, uint8_t flags) -> bool
 				{
-					auto transactions = accepting[0] ? mempool.get_transactions(false, offset[0], count) : expects_lr<vector<uptr<ledger::transaction>>>(layer_exception());
-					auto commitments = accepting[1] ? mempool.get_transactions(true, offset[1], count) : expects_lr<vector<uptr<ledger::transaction>>>(layer_exception());
-					offset[0] += transactions ? solver.try_include_transactions(std::move(*transactions)) : 0;
-					offset[1] += commitments ? solver.try_include_transactions(std::move(*commitments)) : 0;
-					accepting[0] = count == (transactions ? transactions->size() : 0);
-					accepting[1] = count == (commitments ? commitments->size() : 0);
-				}
-				if (!is_active() || (solver.transactions.pending.empty() && protocol::now().is(network_type::regtest)))
+					size_t& offset = offsets[index];
+					if (offset == std::numeric_limits<size_t>::max())
+						return false;
+
+					auto results = mempool.get_best_transactions_from_queue(flags, offset, count);
+					auto size = results ? results->size() : 0;
+					solver.try_include_transactions(std::move(*results));
+					offset = count == size ? size : std::numeric_limits<size_t>::max();
+					return offset != std::numeric_limits<size_t>::max();
+				};
+				while (is_active() && solver.can_accept_more_transactions() && (include(0, congestion ? (uint8_t)storages::transaction_queue::congestion : 0) || include(1, (uint8_t)storages::transaction_queue::commitment)));
+				if (solver.transactions.pending.empty() && protocol::now().is(network_type::regtest))
 					return solver.erase_failed_transactions().report("mempool cleanup failed");
 
 				auto evaluation = solver.evaluate_block([&](bool commitment) -> uptr<ledger::transaction>
 				{
-					auto candidate = mempool.get_transactions(commitment, offset[commitment ? 1 : 0]++, 1);
+					uint8_t flags = commitment ? (uint8_t)storages::transaction_queue::commitment : (congestion ? (uint8_t)storages::transaction_queue::congestion : 0);
+					auto candidate = mempool.get_best_transactions_from_queue(flags, offsets[commitment ? 1 : 0]++, 1);
 					return candidate && !candidate->empty() ? candidate->front().reset() : nullptr;
 				});
 				if (!evaluation)

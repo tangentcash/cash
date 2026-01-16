@@ -362,8 +362,10 @@ namespace tangent
 			if (absolute_work != (parent_block ? parent_block->absolute_work + gas_work : gas_work))
 				return layer_exception("invalid absolute gas work");
 
-			uint256_t cumulative = get_slot_length() > 1 ? uint256_t(1) : uint256_t(0);
-			if (slot_duration != ((parent_block ? parent_block->slot_duration + parent_block->get_proof_accounted_duration() : uint256_t(0)) * cumulative))
+			if (slot_duration != ((parent_block ? parent_block->slot_duration + parent_block->get_proof_accounted_duration() : uint256_t(0)) * (get_slot_length() > 1 ? uint256_t(1) : uint256_t(0))))
+				return layer_exception("invalid slot duration");
+
+			if (slot_gas_use != (parent_block ? parent_block->slot_gas_use + gas_use : gas_use))
 				return layer_exception("invalid slot duration");
 
 			for (auto& witness : witnesses)
@@ -388,6 +390,7 @@ namespace tangent
 			stream->write_integer(gas_limit);
 			stream->write_integer(absolute_work);
 			stream->write_integer(slot_duration);
+			stream->write_integer(slot_gas_use);
 			stream->write_integer(difficulty);
 			stream->write_integer(generation_time);
 			stream->write_integer(priority);
@@ -426,6 +429,9 @@ namespace tangent
 				return false;
 
 			if (!stream.read_integer(stream.read_type(), &slot_duration))
+				return false;
+
+			if (!stream.read_integer(stream.read_type(), &slot_gas_use))
 				return false;
 
 			if (!stream.read_integer(stream.read_type(), &difficulty))
@@ -526,6 +532,14 @@ namespace tangent
 			auto& number = witnesses[algorithm::asset::base_id_of(asset)];
 			if (number < block_number)
 				number = block_number;
+		}
+		bool block_header::network_congestion() const
+		{
+			return network_congestion_threshold() > protocol::now().policy.production.network_congestion_threshold;
+		}
+		decimal block_header::network_congestion_threshold() const
+		{
+			return algorithm::arithmetic::divide(slot_gas_use.to_decimal(), get_slot_total_gas_limit().to_decimal());
 		}
 		uint64_t block_header::get_witness_requirement(const algorithm::asset_id& asset) const
 		{
@@ -629,9 +643,6 @@ namespace tangent
 			data.set("coinbase", format::variable(get_reward_value()));
 			data.set("gas_use", algorithm::encoding::serialize_uint256(gas_use));
 			data.set("gas_limit", algorithm::encoding::serialize_uint256(gas_limit));
-			data.set("slot_duration", algorithm::encoding::serialize_uint256(slot_duration));
-			data.set("slot_duration_average", algorithm::encoding::serialize_uint256(get_slot_proof_duration_average()));
-			data.set("slot_length", algorithm::encoding::serialize_uint256(get_slot_length()));
 			data.set("generation_time", algorithm::encoding::serialize_uint256(generation_time));
 			data.set("evaluation_time", algorithm::encoding::serialize_uint256(evaluation_time));
 			data.set("proof_duration", algorithm::encoding::serialize_uint256(get_proof_duration()));
@@ -646,6 +657,13 @@ namespace tangent
 			pow_data->set("difficulty", format::variable(difficulty));
 			pow_data->set("security", format::variable(protocol::now().policy.pow.security));
 			pow_data->set("size", format::variable(proof.size()));
+			auto* slot_data = data.set("slot", format::tree::map());
+			slot_data->set("duration_total", algorithm::encoding::serialize_uint256(slot_duration));
+			slot_data->set("duration_average", algorithm::encoding::serialize_uint256(get_slot_proof_duration_average()));
+			slot_data->set("gas_use", algorithm::encoding::serialize_uint256(slot_gas_use));
+			slot_data->set("gas_limit", algorithm::encoding::serialize_uint256(get_slot_total_gas_limit()));
+			slot_data->set("congestion", format::variable(network_congestion()));
+			slot_data->set("length", algorithm::encoding::serialize_uint256(get_slot_length()));
 			auto* witnesses_data = data.set("witnesses", format::tree::list());
 			for (auto& item : witnesses)
 			{
@@ -722,6 +740,11 @@ namespace tangent
 			static uint256_t limit = get_commitment_gas_limit() + get_transaction_gas_limit();
 			return limit;
 		}
+		uint256_t block_header::get_slot_total_gas_limit()
+		{
+			static uint256_t limit = algorithm::wesolowski::adjustment_interval() * get_total_gas_limit();
+			return limit;
+		}
 		uint256_t block_header::get_gas_work(const uint256_t& gas_use, const uint256_t& gas_limit, uint64_t priority)
 		{
 			if (!gas_limit)
@@ -749,6 +772,7 @@ namespace tangent
 			block_header::set_parent_block(parent_block);
 			auto position = std::find_if(solver->producers.begin(), solver->producers.end(), [&solver](const states::validator_production& a) { return a.owner == solver->state.public_key_hash; });
 			bool eligible = solver->state.executor.get_validator_production(solver->state.public_key_hash).or_else(states::validator_production(algorithm::pubkeyhash_t(), nullptr)).is_active();
+			uint8_t block_options = parent_block && parent_block->network_congestion() ? (uint8_t)executor_context::flags::congestion : 0;
 			priority = (uint64_t)(position == solver->producers.end() ? protocol::now().policy.production.max_per_block : std::distance(solver->producers.begin(), position));
 			difficulty = algorithm::wesolowski::scale(get_proof_slot_target(parent_block), get_proof_difficulty_multiplier());
 
@@ -765,7 +789,8 @@ namespace tangent
 			{
 			retry_replacement_transaction:
 				auto* candidate_transaction = *item.candidate;
-				auto execution = executor_context::execute_tx(solver, this, &solver->state.changelog, candidate_transaction, item.hash, item.owner, item.size, item.candidate->is_commitment() ? (uint8_t)executor_context::flags::pedantic : 0);
+				uint8_t tx_options = item.candidate->is_commitment() ? (uint8_t)executor_context::flags::pedantic : 0;
+				auto execution = executor_context::execute_tx(solver, this, &solver->state.changelog, candidate_transaction, item.hash, item.owner, item.size, block_options | tx_options);
 				if (!execution)
 				{
 					if (protocol::now().user.consensus.logging)
@@ -1042,9 +1067,9 @@ namespace tangent
 				transition_count = (uint32_t)state->finalized.size();
 			}
 
-			uint256_t cumulative = get_slot_length() > 1 ? 1 : 0;
 			absolute_work = (parent_block ? parent_block->absolute_work : uint256_t(0)) + get_gas_work(gas_use, gas_limit, priority);
-			slot_duration = (parent_block ? parent_block->slot_duration + parent_block->get_proof_accounted_duration() : uint256_t(0)) * cumulative;
+			slot_duration = (parent_block ? parent_block->slot_duration + parent_block->get_proof_accounted_duration() : uint256_t(0)) * (get_slot_length() > 1 ? 1 : 0);
+			slot_gas_use = parent_block ? parent_block->slot_gas_use + gas_use : gas_use;
 			transaction_count = (uint32_t)transactions.size();
 		}
 		format::tree block::as_tree() const
@@ -1439,7 +1464,12 @@ namespace tangent
 				return layer_exception("invalid transaction");
 
 			bool gas_calculation = block != nullptr && block->number == std::numeric_limits<int64_t>::max() - 1;
-			if (gas_calculation || !transaction->gas_price.is_positive())
+			if (gas_calculation)
+				return expectation::met;
+
+			if (!transaction->is_commitment() && (options & (uint8_t)flags::congestion) && !transaction->gas_price.is_positive())
+				return layer_exception("must pay for gas - network congestion requirement");
+			else if (!transaction->gas_price.is_positive())
 				return expectation::met;
 
 			auto asset = transaction->gas_asset();
@@ -3713,6 +3743,7 @@ namespace tangent
 
 			auto origin = state.origin;
 			state.executor = executor_context(&state.changelog, this, tip.address(), nullptr, { });
+			state.executor.options = tip && tip->network_congestion() ? (uint8_t)executor_context::flags::congestion : 0;
 			state.origin = state.origin == state_origin::block ? state_origin::chain_block : state_origin::chain;
 			producers = state.executor.calculate_producers(protocol::now().policy.production.max_per_block).or_else(vector<states::validator_production>());
 			if (producers.empty())
@@ -3799,6 +3830,9 @@ namespace tangent
 
 			uint256_t new_gas_limit = current_gas_limit + item.candidate->gas_limit;
 			if (new_gas_limit < current_gas_limit || new_gas_limit > max_gas_limit)
+				return include_decision::not_includable;
+
+			if (!item.candidate->is_commitment() && (((uint8_t)state.executor.options & (uint8_t)executor_context::flags::congestion) && !item.candidate->gas_price.is_positive()))
 				return include_decision::not_includable;
 
 			auto map_nonce = nonces.find(algorithm::pubkeyhash_t(item.owner));
