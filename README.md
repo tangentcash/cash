@@ -1,7 +1,7 @@
 <br/>
 <div align="center">
     <br />
-    <img src="https://github.com/tangentcash/cash/blob/main/var/images/favicon.png?raw=true" alt="Tangent Protocol Logo" width="100" />
+    <img src="https://github.com/tangentcash/cash/blob/main/var/favicon.png?raw=true" alt="Tangent Protocol Logo" width="100" />
     <h3>Tangent Protocol / Cash Node</h3>
 </div>
 <div align="center">
