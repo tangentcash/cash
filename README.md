@@ -50,7 +50,7 @@ Users can deposit native cryptocurrency using any bridging node of their choice.
 - **Rewards and Penalties**: Each accepted block emits 1.2 TAN for the winning validator and applies penalties to validators with higher priority who did not commit their work.
 
 ### Network Recovery
-In case of a network halt due to the unavailability of the entire committee, any node can create a recovery block that meets the network recovery difficulty, which is 90 times higher than the current difficulty. This ensures a minimum network recovery time of 9 minutes. The recovery block has the lowest priority and can be replaced by a block created by any node selected for the committee in that proposal slot.
+In case of a network halt due to the unavailability of the entire committee, any node can create a recovery block that meets the network recovery difficulty, which is 90 times higher than the current difficulty. This ensures a minimum network recovery time of 18 minutes. The recovery block has the lowest priority and can be replaced by a block created by any node selected for the committee in that proposal slot.
 
 ## Documentation
 Proceed to [this link](https://tangent.cash/docs/node/01-install) to view essential information about project setup process.
