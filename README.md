@@ -35,7 +35,7 @@ Nodes download and validate data from seeder nodes, gradually forming a list of 
 - **Participant**: Holds a private key share, allowing it to create deposit addresses on other blockchains and sign transactions for withdrawals. Participants are randomly selected into bridges to ensure unpredictability and fairness.
 
 ### Security
-The asset bridging process employs an N-of-N signature scheme and utilizes [Multi-Party Computation (MPC)](var/documents/TECHNICAL-MPC.md) capabilities to build aggregated signatures or public keys which involves coordinating an array of participants of an asset bridge, ensuring robust security.
+The asset bridging process employs an N-of-N signature scheme and utilizes [Multi-Party Computation (MPC)](https://tangent.cash/docs/blockchain/bridges/02-mpc/) capabilities to build aggregated signatures or public keys which involves coordinating an array of participants of an asset bridge, ensuring robust security.
 
 ### Bridging
 Users can deposit native cryptocurrency using any bridging node of their choice. Each node sets its own flat fees for deposits and withdrawals. Users request a deposit address* from a bridging node and send assets to that address. To withdraw assets, users select a bridging node (which can be different from the one used for depositing) and send a withdrawal transaction. The assets will then be sent to the user's selected address.
