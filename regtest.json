@@ -1,0 +1,14 @@
+{
+    "network": "regtest",
+    "consensus": {
+        "address": "0.0.0.0"
+    },
+    "discovery": {
+        "address": "0.0.0.0",
+        "server": true
+    },
+    "rpc": {
+        "address": "0.0.0.0",
+        "server": true
+    }
+}

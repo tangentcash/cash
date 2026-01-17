@@ -1,10 +1,11 @@
-bin
-var
 .git
 .github
 .gitignore
 .gitmodules
+bin
+var
 Dockerfile
+regtest.Dockerfile
 LICENSE
 README.md
 vcpkg.json
