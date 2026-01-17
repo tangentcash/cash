@@ -1,6 +1,7 @@
-.git
 bin
 var
+.git
+.github
 .gitignore
 .gitmodules
 Dockerfile
