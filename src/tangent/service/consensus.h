@@ -213,6 +213,7 @@ namespace tangent
 				std::recursive_mutex attestation;
 				std::recursive_mutex neighbor;
 				std::recursive_mutex fork;
+				std::recursive_mutex tip;
 				std::mutex inventory;
 			} sync;
 
@@ -249,6 +250,7 @@ namespace tangent
 			hash_map<uint256_t, neighbor_callback> neighbors;
 			hash_map<uint8_t, callable> callables;
 			hash_map<void*, uref<relay>> nodes;
+			hash_map<uint256_t, ledger::block*> pending_blocks;
 			hash_set<outbound_node*> pending_nodes;
 			forwarder inventory;
 			system_control control_sys;
@@ -313,7 +315,7 @@ namespace tangent
 			void clear_pending_neighbors();
 			void clear_pending_fork(relay* state);
 			void accept_pending_fork(uref<relay>&& state, const uint256_t& candidate_hash, ledger::block_header&& candidate_block);
-			bool accept_block(uref<relay>&& from, ledger::block_evaluation&& candidate, const uint256_t& fork_tip);
+			expects_lr<void> accept_block(uref<relay>&& from, ledger::block_evaluation&& candidate, const uint256_t& fork_tip);
 			bool connected_to_ip_address(const socket_address& address);
 			relay_descriptor* find_descriptor(const algorithm::pubkeyhash_t& account);
 			uref<relay> find_by_ip_address(const socket_address& address);
@@ -342,7 +344,10 @@ namespace tangent
 			void announce_peer(uref<relay>&& state, bool available);
 			void fill_node_services(relay_descriptor& descriptor);
 			void fill_node_neighbors(relay_descriptor& descriptor);
-			void trigger_block(uref<relay>&& from, const uint256_t& block_hash, uint64_t block_number);
+			void append_pending_block(uref<relay>&& from, const uint256_t& block_hash, ledger::block* tip);
+			void erase_pending_block(const uint256_t& block_hash);
+			void broadcast_pending_block(uref<relay>&& from, const uint256_t& block_hash, uint64_t block_number);
+			void finalize_pending_block(uref<relay>&& from, const uint256_t& block_hash, uint64_t block_number);
 			bool accept_proposal_transaction(const ledger::block& checkpoint_block, const ledger::block_transaction& transaction);
 			void pull_messages(uref<relay>&& state);
 			void push_messages(uref<relay>&& state);

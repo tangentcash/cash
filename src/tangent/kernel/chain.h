@@ -22,8 +22,9 @@ namespace tangent
 
 	enum
 	{
-		ELEMENTS_FEW = 32,
-		ELEMENTS_MANY = 512
+		ELEMENTS_FEW = 1 << 5,
+		ELEMENTS_MANY = 2 << 11,
+		ELEMENTS_HUGE = 2 << 16
 	};
 
 	enum class network_type

@@ -852,16 +852,18 @@ namespace tangent
 				account.public_key_version = 0xC;
 				account.address_version = 0x6;
 				policy.pow.base = "5606b660d1a231b6c24671da42a0c9a0fad602b1d771f43e0c192729938c971201f81b311eadab3417cb5d45ad55f89d74f6946f3d3dad45459af37e8ef7029b";
-				policy.pow.time = 120;
+				policy.pow.time = 1;
+				policy.pow.difficulty = 1;
+				policy.pow.security = 64;
 				policy.pow.genesis_length = 0;
-				policy.attestation.withdrawal_time = 240; 
+				policy.attestation.withdrawal_time = 2;
 				policy.attestation.min_stake_value = decimal::zero();
 				policy.participation.min_stake_value = decimal::zero();
 				policy.production.network_congestion_threshold = 2;
 				policy.production.min_stake_value = decimal::zero();
 				policy.delegations_max_per_account = std::numeric_limits<uint32_t>::max();
-				policy.transaction_tps = 10000;
-				policy.commitment_tps = 500;
+				policy.transaction_tps = 5000000;
+				policy.commitment_tps = 50000;
 				break;
 			case tangent::network_type::testnet:
 				message.packet_magic = 0xf815c95c;

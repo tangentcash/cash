@@ -311,7 +311,7 @@ struct generators
 	{
 		auto executor = ledger::executor_context(nullptr);
 		auto& [user2, user2_nonce] = users[1];
-		string testing_program = *algorithm::encoding::unpack_program(codec::base64_decode("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"));
+		string testing_program = *algorithm::encoding::unpack_program(codec::base64_decode("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"));
 
 		auto* deploy1 = memory::init<transactions::deploy>();
 		deploy1->from_hashcode(executor.get_account_program(contracts->at(0))->hashcode, { format::variable("CAP20"), format::variable("Test Token 1"), format::variable(user2.get_address()), format::variable(decimal(20000u)) });
@@ -1664,20 +1664,20 @@ struct tests
 			TEST_BLOCK(&generators::transfer_stage_2, "0x46c842ed965a912190963652907b3f1e29bc2c545ddd03ce0289593b954837da", 9);
 			TEST_BLOCK(std::bind(&generators::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), users[2].wallet.get_address(), 0.05), "0x2aa08a037b661997bf08421368db08167af86b16566555e777c49dfb321e0660", 10);
 			TEST_BLOCK(std::bind(&generators::deploy_stage_1, std::placeholders::_1, std::placeholders::_2, &contracts), "0x61770575e00a486f19941ae7310ecbbcbb75016a2702625a935a9cb7afff6527", 11);
-			TEST_BLOCK(std::bind(&generators::deploy_stage_2, std::placeholders::_1, std::placeholders::_2, &contracts), "0xc3fd837fe56cf3b984a2632c852301dcfbd72d3bc80de7d89527a3246ef1250c", 12);
-			TEST_BLOCK(std::bind(&generators::call_stage_1, std::placeholders::_1, std::placeholders::_2, &contracts), "0xad3c9f721828dd250de14bc56362751287ee5b904b0d16a494f15f91abcd47c7", 13);
-			TEST_BLOCK(&generators::rollup_stage_1, "0x6fcb1e4f315eea7c949bdd4635b38b491ce6ac286c34c4bb2771827855dd52aa", 14);
-			TEST_BLOCK(std::bind(&generators::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 0, 1), "0x509f194091055552007767ce2a8a9cd351a354b9d79424482996e92fe4cd5ade", 15);
-			TEST_BLOCK_FAULT(&generators::migrate_stage_1, "0x3cc7992bbfbc5e0351aac3fa8e50273a488a8c5a727d2ac120e97b0c5bba74b4", 16);
-			TEST_BLOCK(&generators::migrate_stage_2, "0xcac5091491272c8c9312a33822c38321bc06efe981d941609e2bdc0e5c859e40", 18);
-			TEST_BLOCK(&generators::migrate_stage_3, "0xb66ee618eca5d3483e496de3693ae69cbdc7bc842965ca112a315ee2ae613778", 20);
-			TEST_BLOCK(&generators::withdraw_stage_1, "0x99b8c75d7a52304b16780ada4db2ada245909229ca5c448f8346a01fded3d7c8", 22);
-			TEST_BLOCK(&generators::withdraw_stage_2, "0x2ae071d641105cc5596b26095f970dec1be8fa5253db2b859a16c6ba8ffa6eb3", 24);
-			TEST_BLOCK(&generators::withdraw_stage_3, "0xe85b72ffe41932210323bd728aa94312ca66bc5a19dbfcc70be603b7c917a121", 26);
-			TEST_BLOCK(&generators::withdraw_stage_4, "0x5a23b8383663a93fa566e626d6bce0d4cca9191b44cfc27a18d4ed6d8761db72", 27);
-			TEST_BLOCK(&generators::withdraw_stage_5, "0xcb940983a01b5967bb2295885b8cda65be1f54dd4fc0d2c508def269f1cee8a4", 29);
-			TEST_BLOCK(&generators::withdraw_stage_6, "0xe712e917e05786e3988ce78e6081ac008ee42f4c252f7c912b18210767462700", 31);
-			TEST_BLOCK(std::bind(&generators::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 1, 0), "0xc9dd7fa1184913abf35570a5703ca1163f503225ba81951c493bc639853699b3", 33);
+			TEST_BLOCK(std::bind(&generators::deploy_stage_2, std::placeholders::_1, std::placeholders::_2, &contracts), "0x619af9b91c03f0e7fd55eb24dbd412c1a8a8b5226f337e6c3f537ca3aab90387", 12);
+			TEST_BLOCK(std::bind(&generators::call_stage_1, std::placeholders::_1, std::placeholders::_2, &contracts), "0x2c40a7e24257463d028e76e05e59b6cadc76fc1340b89ae0de2d639e082865c6", 13);
+			TEST_BLOCK(&generators::rollup_stage_1, "0x97d6856dcc945e2fdb5ab01c1fb5f8645012eacd389ebf6720b23191a4e0642f", 14);
+			TEST_BLOCK(std::bind(&generators::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 0, 1), "0x471838cf627f9e962f0bba917ca1598778a0a36c117ce4850d73136b0cfe625d", 15);
+			TEST_BLOCK_FAULT(&generators::migrate_stage_1, "0xce21723d84f60b11ecbcf586b4c63a07dc402a9947c08cf66e04e39f43ef24e4", 16);
+			TEST_BLOCK(&generators::migrate_stage_2, "0x099838ae9c54329f9eb79316e171edb62943f123e3eb9ab6a8acfe556ad25bc8", 18);
+			TEST_BLOCK(&generators::migrate_stage_3, "0x40cc1848ed43d92dc8d0e57ef0567bdbf831a53ae2b2f5c42b07c6ad341d23e7", 20);
+			TEST_BLOCK(&generators::withdraw_stage_1, "0x11ac09e2dd1579006991cf44479ea5fe5d6c5c862a6504d2b20d25f8d9b7518d", 22);
+			TEST_BLOCK(&generators::withdraw_stage_2, "0x238072f3ec7091f4d8fc30cbef96fb4ed7dc0fcbaba998ca0faa71a82b5aa7e8", 24);
+			TEST_BLOCK(&generators::withdraw_stage_3, "0xc5db53aa51e432507eb8a6ad7cee6501179e92b83fa392c5ce44404d573facbb", 26);
+			TEST_BLOCK(&generators::withdraw_stage_4, "0x5bfb0840d0de2b6cd0a979b85226220e5d95f8081e50d199fb6216e2773a5d29", 27);
+			TEST_BLOCK(&generators::withdraw_stage_5, "0xcc32a941aba14b95d1e529d5d9908514b55554479eddc8a600009f596acc03ab", 29);
+			TEST_BLOCK(&generators::withdraw_stage_6, "0x69244ad61b01a0310b94bb47fdbaa8ed2e64dd41d2cbc18edd8e410b3ed64a4d", 31);
+			TEST_BLOCK(std::bind(&generators::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 1, 0), "0xfd8c775d53bb039967dde360ed2778dda246d5c2bdabcd138c7e6ed20848e99a", 33);
 			if (userdata != nullptr)
 				*userdata = std::move(users);
 			else
@@ -1697,15 +1697,15 @@ struct tests
 			format::tree* data = userdata ? nullptr : &results;
 			TEST_BLOCK(&generators::setup_stage_0, "0x8dddbd714522677ec180556288040420882fce72f174c5001ada57296b6b25ee", 1);
 			TEST_BLOCK(&generators::route_stage_0, "0x66b5ab5fb69446f4879964fd7e0f43cc6b1255ba7d5d6ca8359d6e99ef4471dc", 2);
-			TEST_BLOCK(&generators::attestate_stage_0, "0x3a2b7a5649dd834659a97b5ef255fb0e50c6bc5c44f4a553212efc2d64f5c4de", 4);
-			TEST_BLOCK(std::bind(&generators::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), "tcrt1x00g22stp0qcprrxra7x2pz2au33armtfc50460", 5), "0xed0f6b5827302cb60583bf1830c80a165884e56f56fe5f520915d0e4a5be427c", 5);
-			TEST_BLOCK(std::bind(&generators::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("ETH", "tBTC", "0x18084fbA666a33d37592fA2633fD49a74DD93a88"), "tcrt1x00g22stp0qcprrxra7x2pz2au33armtfc50460", 5), "0x88b7d2fe1f620961e547efa89b4d98ed8ed093b16d99c3d49e735c3f7730daf8", 6);
-			TEST_BLOCK(std::bind(&generators::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("ETH", "USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7"), "tcrt1x00g22stp0qcprrxra7x2pz2au33armtfc50460", 300000), "0xd6e83599ce05a430c9dd7e31555602a71f1f57e792d4c9347fe5d58c70c5c610", 7);
-			TEST_BLOCK(std::bind(&generators::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("TRX", "USDT", "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"), "tcrt1x00g22stp0qcprrxra7x2pz2au33armtfc50460", 200000), "0xb80556b6d18c1a9840f99d4786b22a5eb0bfcbe5ac9db3d8ea3f6ad5c93b2552", 8);
-			TEST_BLOCK(std::bind(&generators::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), "tcrt1xu0k7jd2hsv2x5h80tcslpk3n0kvzzw5kup6vng", 5), "0xb370d2e64a6a2979bd4a34117c617f59f360b2c1d94ef9191af951bee3fef224", 9);
-			TEST_BLOCK(std::bind(&generators::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("ETH", "tBTC", "0x18084fbA666a33d37592fA2633fD49a74DD93a88"), "tcrt1xu0k7jd2hsv2x5h80tcslpk3n0kvzzw5kup6vng", 5), "0xb73f2fbef8df8fdfcce37d40cf162434daf1e420efb252cd4f738ed6e13fb74f", 10);
-			TEST_BLOCK(std::bind(&generators::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("ETH", "USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7"), "tcrt1xu0k7jd2hsv2x5h80tcslpk3n0kvzzw5kup6vng", 300000), "0x52bd740c518443a5c1ce81017f73a25e6f7cbdd5af3aac53dd81225e232fcc7e", 11);
-			TEST_BLOCK(std::bind(&generators::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("TRX", "USDT", "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"), "tcrt1xu0k7jd2hsv2x5h80tcslpk3n0kvzzw5kup6vng", 200000), "0x30d175cb87eddff534ef8bb38906dfee6cb3fa876437037fa4d01b8eb3b8e206", 12);
+			TEST_BLOCK(&generators::attestate_stage_0, "0x871da5cfd6f36867a0afcaf67543274eba4b4ba2f503a234857196f5b24a7421", 4);
+			TEST_BLOCK(std::bind(&generators::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), "tcrt1x00g22stp0qcprrxra7x2pz2au33armtfc50460", 5), "0xb29a530cfa2b9f4d4af3e1af5948f9b93dada865b5b33afb2a773c47f04c65b7", 5);
+			TEST_BLOCK(std::bind(&generators::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("ETH", "tBTC", "0x18084fbA666a33d37592fA2633fD49a74DD93a88"), "tcrt1x00g22stp0qcprrxra7x2pz2au33armtfc50460", 5), "0x2df0a24d65dec22afe742b487c25fb5f59dccc90315fbfd101902834047dbf81", 6);
+			TEST_BLOCK(std::bind(&generators::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("ETH", "USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7"), "tcrt1x00g22stp0qcprrxra7x2pz2au33armtfc50460", 300000), "0xb0a94a62edcd09be2c3e6a901c40a8bd652ae6e76bd7c5d15358b7a85c486aef", 7);
+			TEST_BLOCK(std::bind(&generators::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("TRX", "USDT", "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"), "tcrt1x00g22stp0qcprrxra7x2pz2au33armtfc50460", 200000), "0x70e5078680ce8e399b428f273c28676f8b12c11e85a0b55d97fd9963c811b354", 8);
+			TEST_BLOCK(std::bind(&generators::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), "tcrt1xu0k7jd2hsv2x5h80tcslpk3n0kvzzw5kup6vng", 5), "0x725109701cc51fe527c3c4489e63b4365c7794ae08f2b3d0d15c3e3f1d854119", 9);
+			TEST_BLOCK(std::bind(&generators::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("ETH", "tBTC", "0x18084fbA666a33d37592fA2633fD49a74DD93a88"), "tcrt1xu0k7jd2hsv2x5h80tcslpk3n0kvzzw5kup6vng", 5), "0x98b6d91c309967500cbee5f114e6a983802e09fdead4a30b6416a9c931376416", 10);
+			TEST_BLOCK(std::bind(&generators::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("ETH", "USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7"), "tcrt1xu0k7jd2hsv2x5h80tcslpk3n0kvzzw5kup6vng", 300000), "0x0fdf691e3ccd703129c8170d2d43748ed1ffb9e3e64113db55be3a2b7836b7c3", 11);
+			TEST_BLOCK(std::bind(&generators::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("TRX", "USDT", "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"), "tcrt1xu0k7jd2hsv2x5h80tcslpk3n0kvzzw5kup6vng", 200000), "0xecf20fca40c67191de3517cb47415f0d2609111130ce3931aab9491b26b487ee", 12);
 			if (userdata != nullptr)
 				*userdata = std::move(users);
 			else
@@ -2034,9 +2034,13 @@ int main(int argc, char* argv[])
 		auto* queue = schedule::get();
 		queue->start(schedule::desc());
 
-		const size_t block_count = 1000;
-		const uint256_t transaction_gas_limit = (size_t)ledger::block::get_transaction_gas_limit();
+		vector<account_ref> users;
+		tests::blockchain_partial_coverage(&users);
+		const size_t block_count = 1024;
+		const size_t transaction_count = 512;
 		const decimal starting_account_balance = decimal(500).truncate(12);
+		auto transactions_mutex = std::mutex();
+		auto transactions_queue = single_queue<vector<uptr<ledger::transaction>>>();
 		auto checkpoint = [&](vector<uptr<ledger::transaction>>&& transactions, vector<account_ref>& users)
 		{
 			static uint64_t cumulative_transaction_count = 0, cumulative_transition_count = 0;
@@ -2052,10 +2056,37 @@ int main(int argc, char* argv[])
 				cumulative_transition_count, 1000.0 * (double)block.transition_count / time,
 				cumulative_query_count, 1000.0 * (double)((uint64_t)ledger::storage_util::get_thread_invocations() - cumulative_query_count) / time);
 		};
+		auto make_checkpointer = [&]
+		{
+			return std::thread([&]()
+			{
+				auto transactions_subqueue = single_queue<vector<uptr<ledger::transaction>>>();
+				for (size_t i = 0; i < block_count; i++)
+				{
+					if (transactions_subqueue.empty())
+					{
+						while (transactions_queue.empty())
+							std::this_thread::sleep_for(std::chrono::milliseconds(1));
 
-		vector<account_ref> users;
-		tests::blockchain_partial_coverage(&users);
-
+						umutex<std::mutex> unique(transactions_mutex);
+						transactions_subqueue.swap(transactions_queue);
+					}
+					checkpoint(std::move(transactions_subqueue.front()), users);
+					transactions_subqueue.pop();
+				}
+			});
+		};
+		auto feed_checkpointer = [&](vector<uptr<ledger::transaction>>&& transactions)
+		{
+			umutex<std::mutex> unique(transactions_mutex);
+			transactions_queue.push(std::move(transactions));
+			while (transactions_queue.size() >= 16)
+			{
+				unique.unlock();
+				std::this_thread::sleep_for(std::chrono::milliseconds(1));
+				unique.lock();
+			}
+		};
 		auto& [user1, user1_nonce] = users[0];
 		auto chain = storages::chainstate();
 		auto mempool = storages::mempoolstate();
@@ -2063,17 +2094,6 @@ int main(int argc, char* argv[])
 		auto user1_addresses = *executor.get_witness_accounts_by_purpose(user1.public_key_hash, states::witness_account::account_type::bridge, 0, 128);
 		auto user1_bridge_address = std::find_if(user1_addresses.begin(), user1_addresses.end(), [](states::witness_account& item) { return item.asset == algorithm::asset::id_of("BTC"); });
 		VI_PANIC(user1_bridge_address != user1_addresses.end(), "user 1 bridge address not found");
-
-		auto gas_wallet = ledger::wallet::from_seed();
-		transactions::transfer gas_transaction;
-		gas_transaction.set_asset("BTC");
-		gas_transaction.set_to(gas_wallet.public_key_hash, 0.1);
-		gas_transaction.sign(user1.secret_key, user1_nonce, decimal::zero()).expect("pre-validation failed");
-		gas_transaction.gas_limit *= 2;
-
-		size_t transaction_count = (size_t)(transaction_gas_limit / gas_transaction.gas_limit);
-		transaction_count = std::min(transaction_count, transaction_count - 10);
-
 		auto entropy = from_string<uint8_t>(args.get("test-entropy")).expect("must provide a \"test-entropy\" flag (number in [1, 2, 3])");
 		if (entropy == 1)
 		{
@@ -2093,7 +2113,8 @@ int main(int argc, char* argv[])
 			checkpoint(std::move(genesis), users);
 
 			auto receiver = ledger::wallet::from_seed("000002");
-			auto generate = [&]() -> vector<uptr<ledger::transaction>>
+			auto checkpointer = make_checkpointer();
+			for (size_t i = 0; i < block_count; i++)
 			{
 				vector<uptr<ledger::transaction>> transactions;
 				transactions.resize(transaction_count);
@@ -2103,22 +2124,16 @@ int main(int argc, char* argv[])
 
 					auto* transaction = memory::init<transactions::transfer>();
 					transaction->set_asset("BTC");
-					transaction->set_gas(gas_transaction.gas_price, gas_transaction.gas_limit);
+					transaction->set_gas(decimal::zero(), 21000);
 					transaction->set_to(receiver.public_key_hash, decimal(outgoing_account_balance).truncate(12) * decimal(balance));
 					VI_PANIC(transaction->sign(user1.secret_key, user1_nonce++), "authentication failed");
 					item = transaction;
 				}));
 				VI_SORT(transactions.begin(), transactions.end(), [](const uptr<ledger::transaction>& a, const uptr<ledger::transaction>& b) { return a->nonce < b->nonce; });
-				return transactions;
-			};
-
-			auto transactions = generate();
-			for (size_t i = 0; i < block_count; i++)
-			{
-				auto next_transactions = cotask<vector<uptr<ledger::transaction>>>([&]() { return generate(); });
-				checkpoint(std::move(transactions), users);
-				transactions = std::move(next_transactions.get());
+				feed_checkpointer(std::move(transactions));
 			}
+			if (checkpointer.joinable())
+				checkpointer.join();
 		}
 		else if (entropy == 2)
 		{
@@ -2160,7 +2175,8 @@ int main(int argc, char* argv[])
 			genesis.push_back(transfer);
 			checkpoint(std::move(genesis), users);
 
-			auto generate = [&]() -> vector<uptr<ledger::transaction>>
+			auto checkpointer = make_checkpointer();
+			for (size_t i = 0; i < block_count; i++)
 			{
 				vector<uptr<ledger::transaction>> transactions;
 				transactions.resize(transaction_count);
@@ -2172,22 +2188,16 @@ int main(int argc, char* argv[])
 
 					auto* transaction = memory::init<transactions::transfer>();
 					transaction->set_asset("BTC");
-					transaction->set_gas(gas_transaction.gas_price, gas_transaction.gas_limit);
+					transaction->set_gas(decimal::zero(), 21000);
 					transaction->set_to(receiver.wallet.public_key_hash, decimal(outgoing_account_balance).truncate(12) * decimal(balance));
 					VI_PANIC(transaction->sign(sender.wallet.secret_key, sender.nonce++), "authentication failed");
 					item = transaction;
 				}));
 				VI_SORT(transactions.begin(), transactions.end(), [](const uptr<ledger::transaction>& a, const uptr<ledger::transaction>& b) { return a->nonce < b->nonce; });
-				return transactions;
-			};
-
-			auto transactions = generate();
-			for (size_t i = 0; i < block_count; i++)
-			{
-				auto next_transactions = cotask<vector<uptr<ledger::transaction>>>([&]() { return generate(); });
-				checkpoint(std::move(transactions), users);
-				transactions = std::move(next_transactions.get());
+				feed_checkpointer(std::move(transactions));
 			}
+			if (checkpointer.joinable())
+				checkpointer.join();
 		}
 		else if (entropy == 3)
 		{
@@ -2223,7 +2233,8 @@ int main(int argc, char* argv[])
 			genesis.push_back(transfer);
 			checkpoint(std::move(genesis), users);
 
-			auto generate = [&]() -> vector<uptr<ledger::transaction>>
+			auto checkpointer = make_checkpointer();
+			for (size_t i = 0; i < block_count; i++)
 			{
 				vector<uptr<ledger::transaction>> transactions;
 				transactions.resize(transaction_count);
@@ -2237,22 +2248,16 @@ int main(int argc, char* argv[])
 
 					auto* transaction = memory::init<transactions::transfer>();
 					transaction->set_asset("BTC");
-					transaction->set_gas(gas_transaction.gas_price, gas_transaction.gas_limit);
+					transaction->set_gas(decimal::zero(), 21000);
 					transaction->set_to(receiver, decimal(outgoing_account_balance).truncate(12) * decimal(balance));
 					VI_PANIC(transaction->sign(sender.wallet.secret_key, sender.nonce++), "authentication failed");
 					item = transaction;
 				}));
 				VI_SORT(transactions.begin(), transactions.end(), [](const uptr<ledger::transaction>& a, const uptr<ledger::transaction>& b) { return a->nonce < b->nonce; });
-				return transactions;
-			};
-
-			auto transactions = generate();
-			for (size_t i = 0; i < block_count; i++)
-			{
-				auto next_transactions = cotask<vector<uptr<ledger::transaction>>>([&]() { return generate(); });
-				checkpoint(std::move(transactions), users);
-				transactions = std::move(next_transactions.get());
+				feed_checkpointer(std::move(transactions));
 			}
+			if (checkpointer.joinable())
+				checkpointer.join();
 		}
 
 		auto tip_block = chain.get_latest_block();

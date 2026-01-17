@@ -442,7 +442,7 @@ namespace tangent
 
 			for (auto& [uniform_storage, type] : get_uniform_multi_storage())
 			{
-				size_t offset = 0, count = 1024;
+				size_t offset = 0, count = ELEMENTS_HUGE;
 				map.clear();
 				map.push_back(var::set::integer(block_number));
 				map.push_back(var::set::integer(count));
@@ -487,7 +487,7 @@ namespace tangent
 
 			for (auto& [multiform_storage, type] : get_multiform_multi_storage())
 			{
-				size_t offset = 0, count = 1024;
+				size_t offset = 0, count = ELEMENTS_HUGE;
 				map.clear();
 				map.push_back(var::set::integer(block_number));
 				map.push_back(var::set::integer(count));
@@ -592,7 +592,7 @@ namespace tangent
 			auto& blob_storage = get_blob_storage(); uint64_t state_delta = 0;
 			for (auto& [uniform_storage, type] : get_uniform_multi_storage())
 			{
-				size_t offset = 0, count = 1024;
+				size_t offset = 0, count = ELEMENTS_HUGE;
 				schema_list map;
 				map.push_back(var::set::integer(block_number));
 				map.push_back(var::set::integer(count));
@@ -629,7 +629,7 @@ namespace tangent
 
 			for (auto& [multiform_storage, type] : get_multiform_multi_storage())
 			{
-				size_t offset = 0, count = 1024;
+				size_t offset = 0, count = ELEMENTS_HUGE;
 				schema_list map;
 				map.push_back(var::set::integer(block_number));
 				map.push_back(var::set::integer(count));
@@ -856,6 +856,7 @@ namespace tangent
 			parallel::wail_all(std::move(queue));
 			vector<promise<expects_lr<void>>> expectation_queue;
 			expectation_queue.reserve(8 + uniform_writers.size() * 2 + multiform_writers.size() * 2);
+			bool must_write_transaction_data = !reorganization;
 			for (auto& [type, writer] : uniform_writers)
 			{
 				expectation_queue.emplace_back(cotask<expects_lr<void>>([&]() -> expects_lr<void>
@@ -988,7 +989,7 @@ namespace tangent
 					return expectation::met;
 				}, false));
 			}
-			if (!reorganization)
+			if (must_write_transaction_data)
 			{
 				auto& tx_storage = get_tx_storage();
 				auto& account_storage = get_account_storage();
@@ -1034,59 +1035,59 @@ namespace tangent
 					}
 					return expectation::met;
 				}, false));
-				if (transaction_to_account_index)
+				expectation_queue.emplace_back(cotask<expects_lr<void>>([&]() -> expects_lr<void>
 				{
-					expectation_queue.emplace_back(cotask<expects_lr<void>>([&]() -> expects_lr<void>
-					{
-						sqlite::expects_db<sqlite::cursor> cursor = sqlite::database_exception(string());
-						for (auto& data : transactions)
-						{
-							for (auto& party : data.parties)
-							{
-								auto* statement = *commit_account_data;
-								account_storage_ptr->bind_blob(statement, 0, party.view());
-								account_storage_ptr->bind_int64(statement, 1, evaluation.block.number);
-
-								cursor = account_storage.prepared_query(__func__, statement);
-								if (!cursor || cursor->error_or_empty())
-									return layer_exception(cursor->empty() ? "account not linked" : ledger::storage_util::error_of(cursor));
-
-								uint64_t account_number = cursor->first().front().get_column(0).get().get_integer();
-								statement = *commit_party_data;
-								party_storage_ptr->bind_int64(statement, 0, data.transaction_number);
-								party_storage_ptr->bind_int64(statement, 1, account_number);
-								party_storage_ptr->bind_int64(statement, 2, evaluation.block.number);
-
-								cursor = party_storage.prepared_query(__func__, statement);
-								if (!cursor || cursor->error())
-									return layer_exception(ledger::storage_util::error_of(cursor));
-							}
-						}
+					if (!transaction_to_account_index)
 						return expectation::met;
-					}, false));
-				}
-				if (transaction_to_rollup_index)
+
+					sqlite::expects_db<sqlite::cursor> cursor = sqlite::database_exception(string());
+					for (auto& data : transactions)
+					{
+						for (auto& party : data.parties)
+						{
+							auto* statement = *commit_account_data;
+							account_storage_ptr->bind_blob(statement, 0, party.view());
+							account_storage_ptr->bind_int64(statement, 1, evaluation.block.number);
+
+							cursor = account_storage.prepared_query(__func__, statement);
+							if (!cursor || cursor->error_or_empty())
+								return layer_exception(cursor->empty() ? "account not linked" : ledger::storage_util::error_of(cursor));
+
+							uint64_t account_number = cursor->first().front().get_column(0).get().get_integer();
+							statement = *commit_party_data;
+							party_storage_ptr->bind_int64(statement, 0, data.transaction_number);
+							party_storage_ptr->bind_int64(statement, 1, account_number);
+							party_storage_ptr->bind_int64(statement, 2, evaluation.block.number);
+
+							cursor = party_storage.prepared_query(__func__, statement);
+							if (!cursor || cursor->error())
+								return layer_exception(ledger::storage_util::error_of(cursor));
+						}
+					}
+					return expectation::met;
+				}, false));
+				expectation_queue.emplace_back(cotask<expects_lr<void>>([&]() -> expects_lr<void>
 				{
-					expectation_queue.emplace_back(cotask<expects_lr<void>>([&]() -> expects_lr<void>
-					{
-						auto* statement = *commit_alias_data;
-						sqlite::expects_db<sqlite::cursor> cursor = sqlite::database_exception(string());
-						for (auto& data : transactions)
-						{
-							for (auto& alias : data.aliases)
-							{
-								alias_storage_ptr->bind_int64(statement, 0, data.transaction_number);
-								alias_storage_ptr->bind_blob(statement, 1, std::string_view((char*)alias.transaction_hash, sizeof(alias.transaction_hash)));
-								alias_storage_ptr->bind_int64(statement, 2, evaluation.block.number);
-
-								cursor = alias_storage.prepared_query(__func__, statement);
-								if (!cursor || cursor->error())
-									return layer_exception(ledger::storage_util::error_of(cursor));
-							}
-						}
+					if (!transaction_to_rollup_index)
 						return expectation::met;
-					}, false));
-				}
+
+					auto* statement = *commit_alias_data;
+					sqlite::expects_db<sqlite::cursor> cursor = sqlite::database_exception(string());
+					for (auto& data : transactions)
+					{
+						for (auto& alias : data.aliases)
+						{
+							alias_storage_ptr->bind_int64(statement, 0, data.transaction_number);
+							alias_storage_ptr->bind_blob(statement, 1, std::string_view((char*)alias.transaction_hash, sizeof(alias.transaction_hash)));
+							alias_storage_ptr->bind_int64(statement, 2, evaluation.block.number);
+
+							cursor = alias_storage.prepared_query(__func__, statement);
+							if (!cursor || cursor->error())
+								return layer_exception(ledger::storage_util::error_of(cursor));
+						}
+					}
+					return expectation::met;
+				}, false));
 			}
 
 			for (auto& status : parallel::inline_wait_all(std::move(expectation_queue)))
@@ -1317,8 +1318,7 @@ namespace tangent
 
 			auto& blob_storage = get_blob_storage();
 			vector<decimal> gas_prices;
-			size_t offset = 0;
-			size_t count = ELEMENTS_MANY;
+			size_t offset = 0, count = ELEMENTS_HUGE;
 			while (true)
 			{
 				schema_list map;

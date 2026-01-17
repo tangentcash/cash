@@ -3273,17 +3273,13 @@ namespace tangent
 		uint64_t contract::block_time()
 		{
 			auto* p = program::fetch_immutable_or_throw();
-			if (!p)
-				return 0;
-
-			uint64_t milliseconds = p->executor->block->generation_time - p->executor->block->generation_time % protocol::now().policy.pow.time;
-			return milliseconds / 1000;
+			return p ? p->executor->block->generation_time : 0;
 		}
 		uint64_t contract::block_time_between(uint64_t block_number_a, uint64_t block_number_b)
 		{
 			uint64_t left = std::min(block_number_a, block_number_b);
 			uint64_t right = std::max(block_number_a, block_number_b);
-			return (right - left) * protocol::now().policy.pow.time / 1000;
+			return (right - left) * protocol::now().policy.pow.time;
 		}
 		uint64_t contract::block_priority()
 		{

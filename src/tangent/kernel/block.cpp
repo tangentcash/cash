@@ -3795,7 +3795,7 @@ namespace tangent
 
 			auto finalization = block_evalution_finalize(solution, rewards);
 			if (!finalization)
-				return execution.error();
+				return finalization.error();
 
 			return expects_lr<block_evaluation>(std::move(solution));
 		}

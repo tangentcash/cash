@@ -5,8 +5,6 @@
 #include "../policy/transactions.h"
 #include <random>
 #include <array>
-#define BLOCK_RATE_NORMAL ELEMENTS_MANY
-#define BLOCK_DATA_CONSENSUS (uint32_t)storages::block_details::transactions | (uint32_t)storages::block_details::block_transactions
 #define TASK_TOPOLOGY_OPTIMIZATION "topology_optimization"
 #define TASK_MEMPOOL_VACUUM "mempool_vacuum"
 #define TASK_FORK_RESOLUTION "fork_resolution"
@@ -1072,7 +1070,11 @@ namespace tangent
 					ledger::block_evaluation candidate;
 					format::ro_stream block_message = format::ro_stream(event->args.front().as_string());
 					if (candidate.block.load(block_message))
-						accept_block(std::move(state), std::move(candidate), 0);
+					{
+						auto status = accept_block(std::move(state), std::move(candidate), 0);
+						if (!status && protocol::now().user.consensus.logging)
+							VI_WARN("%s", status.error().what());
+					}
 				}
 			});
 			return expectation::met;
@@ -1358,10 +1360,15 @@ namespace tangent
 				return remote_exception("invalid arguments");
 
 			auto chain = storages::chainstate();
-			auto block = chain.get_block_by_hash(block_hash, BLOCK_RATE_NORMAL, BLOCK_DATA_CONSENSUS);
+			auto block = chain.get_block_by_hash(block_hash, ELEMENTS_MANY, (uint32_t)storages::block_details::transactions | (uint32_t)storages::block_details::block_transactions);
 			if (block)
 				return format::variables({ format::variable(block->as_message().data) });
 			
+			umutex<std::recursive_mutex> unique(sync.tip);
+			auto it = pending_blocks.find(block_hash);
+			if (it != pending_blocks.end())
+				return format::variables({ format::variable(it->second->as_message().data) });
+
 			return format::variables();
 		}
 		expects_rt<format::variables> server_node::fetch_blocks(uref<relay>&& state, const exchange& event)
@@ -1386,7 +1393,7 @@ namespace tangent
 			uint64_t size = protocol::now().message.blocks_size_per_query, offset = 0;
 			while (block_number > 0 && size > 0)
 			{
-				auto block = chain.get_block_by_number(block_number + offset, BLOCK_RATE_NORMAL, BLOCK_DATA_CONSENSUS);
+				auto block = chain.get_block_by_number(block_number + offset, ELEMENTS_MANY, (uint32_t)storages::block_details::transactions | (uint32_t)storages::block_details::block_transactions);
 				if (!block)
 					break;
 
@@ -2235,8 +2242,9 @@ namespace tangent
 
 						best_tip_hash = tip.block.as_hash();
 						new_tip_number = tip.block.number + 1;
-						if (!accept_block(uref(new_tip.state), std::move(tip), new_tip_fork_hash))
-							coreturn remote_exception("block violates consensus protocol");
+						auto status = accept_block(uref(new_tip.state), std::move(tip), new_tip_fork_hash);
+						if (!status)
+							coreturn remote_exception(std::move(status.error().message()));
 						
 						if (!is_active())
 							break;
@@ -2244,7 +2252,10 @@ namespace tangent
 				}
 
 				if (best_tip_hash > 0)
-					trigger_block(uref(new_tip.state), best_tip_hash, new_tip_number - 1);
+				{
+					broadcast_pending_block(uref(new_tip.state), best_tip_hash, new_tip_number - 1);
+					finalize_pending_block(uref(new_tip.state), best_tip_hash, new_tip_number - 1);
+				}
 
 				coreturn expectation::met;
 			});
@@ -2728,7 +2739,7 @@ namespace tangent
 				if ((inputs > 0 || outputs > 0) && protocol::now().user.consensus.logging)
 					VI_INFO("network topology optimization: OK (connections: +%i / -%i)", (int)inputs, (int)outputs);
 
-				trigger_block(nullptr, 0, 0);
+				schedule::get()->set_timeout(protocol::now().policy.pow.time, [this]() { run_block_dispatcher(); });
 				coreturn_void;
 			});
 		}
@@ -2765,7 +2776,7 @@ namespace tangent
 				auto state = uref(best_fork->second.state);
 				auto status = coawait(resolve_and_verify_fork(std::move(*best_fork)));
 				if (!status && protocol::now().user.consensus.logging)
-					VI_WARN("block %s conflict unresolved: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), status.what().c_str());
+					VI_WARN("fork %s dismissed with %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), status.what().c_str());
 
 				auto new_best_fork = get_best_fork_header();
 				clear_pending_fork(*state);
@@ -2962,8 +2973,13 @@ namespace tangent
 				if (protocol::now().user.consensus.logging)
 					VI_INFO("block %s solved (number: %" PRIu64", txns: %i, leader: %" PRIu64 ", work: < ~%.2f sec.)", algorithm::encoding::encode_0xhex256(miner->solution.block.as_hash()).c_str(), miner->solution.block.number, miner->solution.block.transaction_count, position + 1, timing / 1000.0);
 
-				if (!accept_block(nullptr, std::move(miner->solution), 0))
+				status = accept_block(nullptr, std::move(miner->solution), 0);
+				if (!status)
+				{
+					if (protocol::now().user.consensus.logging)
+						VI_ERR("%s", status.error().what());
 					goto skip_block;
+				}
 
 				miner->solver.erase_failed_transactions().report("mempool cleanup failed");
 				goto next_block;	
@@ -3157,12 +3173,12 @@ namespace tangent
 			fork.state = state;
 			mempool.dirty = true;
 		}
-		bool server_node::accept_block(uref<relay>&& from, ledger::block_evaluation&& candidate, const uint256_t& fork_tip)
+		expects_lr<void> server_node::accept_block(uref<relay>&& from, ledger::block_evaluation&& candidate, const uint256_t& fork_tip)
 		{
 			uint256_t candidate_hash = candidate.block.as_hash();
 			auto chain = storages::chainstate();
 			if (chain.get_block_header_by_hash(candidate_hash))
-				return true;
+				return expectation::met;
 
 			bool fork_branch = fork_tip > 0;
 			auto fork_tip_block = ledger::block_header();
@@ -3190,9 +3206,7 @@ namespace tangent
 											   \
 												<+> = ignore (smaller branch)
 				*/
-				if (protocol::now().user.consensus.logging)
-					VI_WARN("block %s rejected: inferior fork %s (length: %" PRIi64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), branch_length < 0 ? "branch" : "work", branch_length);
-				return false;
+				return layer_exception(stringify::text("block %s rejected: inferior fork %s (length: %" PRIi64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), branch_length < 0 ? "branch" : "work", branch_length));
 			}
 			else if (branch_length == 0 && tip_block && tip_hash != candidate_hash && candidate.block < *tip_block)
 			{
@@ -3201,21 +3215,25 @@ namespace tangent
 													 /
 					<+> - <+> - <+> - <+> - <+> - <+> - <+>
 				*/
-				if (protocol::now().user.consensus.logging)
-					VI_WARN("block %s rejected: inferior fork difficulty", algorithm::encoding::encode_0xhex256(candidate_hash).c_str());
-				return false;
+				return layer_exception(stringify::text("block %s rejected: inferior fork difficulty", algorithm::encoding::encode_0xhex256(candidate_hash).c_str()));
 			}
 			else if (!parent_block && candidate.block.number > 1)
 			{
 				auto verification = from ? candidate.block.verify_validity(parent_block.address()) : expects_lr<void>(layer_exception("unexpected orphan"));
 				if (!verification)
-				{
-					if (protocol::now().user.consensus.logging)
-						VI_WARN("block %s rejected: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), verification.error().what());
-					return false;
-				}
+					return layer_exception(stringify::text("block %s rejected: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), verification.error().what()));
 
 				umutex<std::recursive_mutex> unique(sync.fork);
+				if (forks.find(candidate_hash) != forks.end())
+					return expectation::met;
+
+				/*
+															   <+> = better orphan (possibly)
+															  /
+					<+> - <+> - <+> - <+> - <+> - <+> ------------
+														  \
+														   <+> = weaker orphan
+				*/
 				bool better_than_prev_fork = forks.empty();
 				for (auto& fork_candidate_tip : forks)
 				{
@@ -3225,36 +3243,19 @@ namespace tangent
 						break;
 					}
 				}
-
 				if (!better_than_prev_fork)
-				{
-					/*
-																   <+> = better orphan
-																  /
-						<+> - <+> - <+> - <+> - <+> - <+> ------------
-															  \
-															   <+> = weaker orphan
-					*/
-					if (protocol::now().user.consensus.logging)
-					{
-						if (forks.find(candidate_hash) == forks.end())
-							VI_WARN("block %s rejected: inferior fork orphan", algorithm::encoding::encode_0xhex256(candidate_hash).c_str());
-					}
-					return false;
-				}
-				else if (forks.find(candidate_hash) != forks.end())
-					return true;
-
+					return layer_exception(stringify::text("block %s rejected: inferior fork orphan", algorithm::encoding::encode_0xhex256(candidate_hash).c_str()));
+				
 				/*
 					<+> - <+> - <+> - <+> - <+> - <+> ----
 														  \
-														   <+> = possibly orphan
+														   <+> = better orphan (possibly)
 				*/
 				accept_pending_fork(uref(from), candidate_hash, ledger::block_header(candidate.block));
 				run_fork_resolution();
 				if (protocol::now().user.consensus.logging)
 					VI_INFO("block %s new best found (height: %" PRIu64 ", distance: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), candidate.block.number, std::abs((int64_t)(tip_block ? tip_block->number : 0) - (int64_t)candidate.block.number));
-				return true;
+				return expectation::met;
 			}
 
 			/*
@@ -3265,34 +3266,25 @@ namespace tangent
 			auto reorganization = ledger::solver_context::requires_reorganization(candidate);
 			auto validation = fork_branch && reorganization ? expects_lr<void>(expectation::met) : ledger::solver_context::validate_solved_block(parent_block.address(), candidate.block, &candidate);
 			if (!validation)
-			{
-				if (protocol::now().user.consensus.logging)
-					VI_WARN("block %s rejected: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), validation.error().what());
-				return false;
-			}
+				return layer_exception(stringify::text("block %s rejected: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), validation.error().what()));
 			else if (reorganization && !protocol::now().user.consensus.reorganizable)
-			{
-				if (protocol::now().user.consensus.logging)
-					VI_WARN("block %s rejected: requires deep chain reorganization (disabled)", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), validation.error().what());
-				return false;
-			}
+				return layer_exception(stringify::text("block %s rejected: requires deep chain reorganization (disabled)", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), validation.error().what()));
 
+			bool chain_extension = !fork_tip;
 			if (!try_acquire_checkpointer())
-			{
-				if (protocol::now().user.consensus.logging)
-					VI_WARN("block %s checkpoint failed: checkpointer busy", algorithm::encoding::encode_0xhex256(candidate_hash).c_str());
-				return false;
-			}
+				return layer_exception(stringify::text("block %s checkpoint failed: checkpointer busy", algorithm::encoding::encode_0xhex256(candidate_hash).c_str()));
+			else if (chain_extension)
+				append_pending_block(uref(from), candidate_hash, &candidate.block);
 
 			auto mutation = ledger::solver_context::checkpoint_solved_block(candidate);
 			release_checkpointer();
+			if (chain_extension)
+				erase_pending_block(candidate_hash);
+
 			if (!mutation)
-			{
-				if (protocol::now().user.consensus.logging)
-					VI_ERR("block %s checkpoint failed: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), mutation.error().what());
-				return false;
-			}
-			else if (protocol::now().user.consensus.logging)
+				return layer_exception(stringify::text("block %s checkpoint failed: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), mutation.error().what()));
+			
+			if (protocol::now().user.consensus.logging)
 			{
 				if (mutation->is_fork)
 				{
@@ -3324,25 +3316,41 @@ namespace tangent
 			}
 
 			unique.unlock();
-			if (!fork_tip)
-				trigger_block(std::move(from), candidate_hash, candidate.block.number);
-			return true;
+			if (chain_extension)
+				finalize_pending_block(std::move(from), candidate_hash, candidate.block.number);
+			return expectation::met;
 		}
-		void server_node::trigger_block(uref<relay>&& from, const uint256_t& block_hash, uint64_t block_number)
+		void server_node::append_pending_block(uref<relay>&& from, const uint256_t& block_hash, ledger::block* tip)
 		{
-			if (block_hash > 0 && block_number > 0)
-			{
-				size_t notifications = notify_all_except(uref(from), descriptors::broadcast_block_hash(), { format::variable(block_hash) });
-				if (notifications > 0 && protocol::now().user.consensus.logging)
-					VI_DEBUG("block %s broadcasted to %i nodes (height: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(block_hash).c_str(), (int)notifications, block_number);
-			}
+			VI_ASSERT(tip != nullptr, "tip should be set");
+			uint64_t block_number = tip->number;
+			umutex<std::recursive_mutex> unique(sync.tip);
+			pending_blocks[block_hash] = tip;
+			unique.unlock();
+			broadcast_pending_block(std::move(from), block_hash, block_number);
+		}
+		void server_node::erase_pending_block(const uint256_t& block_hash)
+		{
+			umutex<std::recursive_mutex> unique(sync.tip);
+			pending_blocks.erase(block_hash);
+		}
+		void server_node::broadcast_pending_block(uref<relay>&& from, const uint256_t& block_hash, uint64_t block_number)
+		{
+			if (!block_hash || !block_number)
+				return;
 
+			size_t notifications = notify_all_except(uref(from), descriptors::broadcast_block_hash(), { format::variable(block_hash) });
+			if (notifications > 0 && protocol::now().user.consensus.logging)
+				VI_DEBUG("block %s broadcasted to %i nodes (height: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(block_hash).c_str(), (int)notifications, block_number);
+		}
+		void server_node::finalize_pending_block(uref<relay>&& from, const uint256_t& block_hash, uint64_t block_number)
+		{
 			schedule::get()->set_timeout(protocol::now().policy.pow.time, [this]() { run_block_dispatcher(); });
-			if (from && mempool.dirty)
-			{
-				mempool.dirty = false;
-				synchronize_mempool_with(uref(from));
-			}
+			if (!from || !mempool.dirty)
+				return;
+
+			mempool.dirty = false;
+			synchronize_mempool_with(std::move(from));
 		}
 		bool server_node::accept_proposal_transaction(const ledger::block& checkpoint_block, const ledger::block_transaction& transaction)
 		{
