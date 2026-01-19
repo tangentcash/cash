@@ -185,9 +185,9 @@ namespace tangent
 			static bool decode_address(const std::string_view& address, pubkeyhash_t& public_key_hash);
 			static bool encode_address(const pubkeyhash_t& public_key_hash, string& address);
 			static string encode_address(const pubkeyhash_t& public_key_hash);
-			static format::tree serialize_secret_key(const seckey_t& secret_key);
-			static format::tree serialize_public_key(const pubkey_t& public_key);
-			static format::tree serialize_address(const pubkeyhash_t& public_key_hash);
+			static format::variable serialize_secret_key(const seckey_t& secret_key);
+			static format::variable serialize_public_key(const pubkey_t& public_key);
+			static format::variable serialize_address(const pubkeyhash_t& public_key_hash);
 			static secp256k1_context* get_context();
 		};
 
@@ -200,7 +200,7 @@ namespace tangent
 			static string encode_0xhex128(const uint128_t& data);
 			static uint128_t decode_0xhex128(const std::string_view& data);
 			static uint32_t type_of(const std::string_view& name);
-			static format::tree serialize_uint256(const uint256_t& data, bool always16 = false);
+			static format::variable serialize_uint256(const uint256_t& data, bool always16 = false);
 			static expects_lr<string> pack_program(const std::string_view& unpacked_code);
 			static expects_lr<string> unpack_program(const std::string_view& packed_code);
 

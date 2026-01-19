@@ -994,7 +994,7 @@ namespace tangent
 				address.clear();
 			return address;
 		}
-		format::tree signing::serialize_secret_key(const seckey_t& secret_key)
+		format::variable signing::serialize_secret_key(const seckey_t& secret_key)
 		{
 			if (secret_key.empty())
 				return format::variable();
@@ -1005,7 +1005,7 @@ namespace tangent
 
 			return format::variable(data);
 		}
-		format::tree signing::serialize_public_key(const pubkey_t& public_key)
+		format::variable signing::serialize_public_key(const pubkey_t& public_key)
 		{
 			if (public_key.empty())
 				return format::variable();
@@ -1016,7 +1016,7 @@ namespace tangent
 
 			return format::variable(data);
 		}
-		format::tree signing::serialize_address(const pubkeyhash_t& public_key_hash)
+		format::variable signing::serialize_address(const pubkeyhash_t& public_key_hash)
 		{
 			if (public_key_hash.empty())
 				return format::variable();
@@ -1075,7 +1075,7 @@ namespace tangent
 		{
 			return hashing::hash32d(name);
 		}
-		format::tree encoding::serialize_uint256(const uint256_t& value, bool always16)
+		format::variable encoding::serialize_uint256(const uint256_t& value, bool always16)
 		{
 			if (!always16 && value <= std::numeric_limits<int64_t>::max())
 				return format::variable((uint64_t)value);

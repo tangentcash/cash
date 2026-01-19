@@ -897,12 +897,18 @@ namespace tangent
 		}
 		format::tree rollup::as_tree() const
 		{
+			algorithm::pubkeyhash_t from;
 			format::tree data = ledger::transaction::as_tree();
 			auto* transactions_data = data.set("transactions", format::tree::list());
 			for (auto& group : transactions)
 			{
 				for (auto& transaction : group.second)
-					transactions_data->push(transaction->as_tree());
+				{
+					bool internal_transaction = transaction->signature.empty();
+					auto* item = transactions_data->push(format::tree::map());
+					item->set("action", transaction->as_tree());
+					item->set("signer", !internal_transaction && transaction->recover_hash(from) ? algorithm::signing::serialize_address(from) : format::variable());
+				}
 			}
 			return data;
 		}
