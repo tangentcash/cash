@@ -295,14 +295,15 @@ namespace tangent
 			struct
 			{
 				uint64_t max_per_block = 12;
-				uint64_t genesis_epoch_length = 21600;
 				decimal min_stake_value = std::string_view("12");
 				decimal network_congestion_threshold = std::string_view("0.25");
 			} production;
 			struct
 			{
 				uint64_t epoch_length = 500000;
+				uint64_t genesis_epoch_length = 10000;
 				decimal decay_rate = std::string_view("0.01");
+				decimal genesis_coinbase_value = std::string_view("70");
 				decimal coinbase_value = std::string_view("1.2");
 				decimal min_coinbase_value = std::string_view("0.0002");
 			} emission;

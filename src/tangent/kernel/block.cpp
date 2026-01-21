@@ -597,6 +597,9 @@ namespace tangent
 		decimal block_header::get_reward_value() const
 		{
 			auto& emission = protocol::now().policy.emission;
+			if (is_genesis_epoch(number))
+				return emission.genesis_coinbase_value;
+
 			auto epoch = number / emission.epoch_length;
 			auto decay = 1 - emission.decay_rate * epoch;
 			auto coinbase = emission.coinbase_value * decay;
@@ -752,7 +755,7 @@ namespace tangent
 		}
 		bool block_header::is_genesis_epoch(const uint64_t block_number)
 		{
-			uint64_t ending_block_number = protocol::now().policy.production.genesis_epoch_length;
+			uint64_t ending_block_number = protocol::now().policy.emission.genesis_epoch_length;
 			return ending_block_number > 0 && block_number <= ending_block_number;
 		}
 
