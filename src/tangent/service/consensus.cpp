@@ -2920,7 +2920,7 @@ namespace tangent
 					miner->result = solution ? expects_rt<void>(expectation::met) : expects_rt<void>(remote_exception(std::move(solution.error().message())));
 					miner->condition.notify_one();
 				});
-				while (true)
+				while (is_active())
 				{
 					size_t offsets[2] = { 0, 0 }, count = 512, queue = 0;
 					while (miner->solver.can_accept_more_transactions() && (offsets[0] != std::numeric_limits<size_t>::max() || offsets[1] != std::numeric_limits<size_t>::max()))
@@ -2948,7 +2948,7 @@ namespace tangent
 					}
 
 					std::unique_lock<std::mutex> unique(miner->mutex);
-					if (miner->condition.wait_for(unique, std::chrono::milliseconds(200)) != std::cv_status::timeout || (!miner->result && !miner->result.error().is_retry()))
+					if (miner->condition.wait_for(unique, std::chrono::milliseconds(200)) != std::cv_status::timeout || miner->result || !miner->result.error().is_retry())
 						break;
 				}
 
