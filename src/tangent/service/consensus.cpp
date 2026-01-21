@@ -2866,8 +2866,14 @@ namespace tangent
 				auto mempool = storages::mempoolstate();
 				auto queue = [this](size_t index)
 				{
+					if (index == 0)
+						return &runner_descriptor->second;
+
 					auto it = descriptors.begin();
 					std::advance(it, std::min(descriptors.size(), index));
+					if (it != descriptors.end() && it->second.second.public_key_hash == runner_descriptor->second.public_key_hash)
+						++it;
+
 					return it != descriptors.end() ? &it->second.second : nullptr;
 				};
 			next_block:

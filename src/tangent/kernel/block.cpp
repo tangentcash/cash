@@ -3579,9 +3579,12 @@ namespace tangent
 			producers = state.executor.calculate_producers(protocol::now().policy.production.max_per_block).or_else(vector<states::validator_production>());
 			if (producers.empty())
 			{
-				auto proposer = try_producer(0);
-				if (proposer != nullptr)
+				while (producers.size() < protocol::now().policy.production.max_per_block)
 				{
+					auto proposer = try_producer(producers.size());
+					if (!proposer)
+						break;
+
 					auto work = state.executor.get_validator_production(proposer->public_key_hash);
 					if (!work)
 						producers.push_back(states::validator_production(proposer->public_key_hash, tip.address()));
