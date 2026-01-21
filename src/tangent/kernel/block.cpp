@@ -596,7 +596,11 @@ namespace tangent
 		}
 		decimal block_header::get_reward_value() const
 		{
-			return is_genesis_round(number) ? protocol::now().policy.production.genesis_reward_value : protocol::now().policy.production.reward_value;
+			auto& emission = protocol::now().policy.emission;
+			auto epoch = number / emission.epoch_length;
+			auto decay = 1 - emission.decay_rate * epoch;
+			auto coinbase = emission.coinbase_value * decay;
+			return math0::max(coinbase, emission.min_coinbase_value);
 		}
 		decimal block_header::get_proof_difficulty_multiplier() const
 		{
@@ -746,9 +750,9 @@ namespace tangent
 			uint256_t work = (multiplier * gas_use) / gas_limit;
 			return work - (work % alignment) + alignment;
 		}
-		bool block_header::is_genesis_round(const uint64_t block_number)
+		bool block_header::is_genesis_epoch(const uint64_t block_number)
 		{
-			uint64_t ending_block_number = protocol::now().policy.pow.genesis_length;
+			uint64_t ending_block_number = protocol::now().policy.production.genesis_epoch_length;
 			return ending_block_number > 0 && block_number <= ending_block_number;
 		}
 
@@ -3716,7 +3720,7 @@ namespace tangent
 					auto& blob = solution.block.transactions.emplace_back();
 					blob.transaction = std::move(item.candidate);
 					blob.receipt = std::move(execution->receipt);
-					if (blob.receipt.relative_gas_use > 0 && blob.transaction->asset != algorithm::asset::native() && blob.transaction->gas_price.is_positive())
+					if (blob.receipt.relative_gas_use > 0 && blob.transaction->gas_price.is_positive())
 					{
 						auto& reward = rewards[blob.transaction->asset];
 						reward = (reward.is_nan() ? decimal::zero() : reward) + blob.transaction->gas_price * blob.receipt.relative_gas_use.to_decimal();
@@ -3741,8 +3745,8 @@ namespace tangent
 			auto& coinbase = rewards[algorithm::asset::native()];
 			coinbase = coinbase.is_nan() ? solution.block.get_reward_value() : (coinbase + solution.block.get_reward_value());
 
-			bool pays_coinbase = state.executor.get_validator_production(state.public_key_hash).or_else(states::validator_production(algorithm::pubkeyhash_t(), nullptr)).is_active();
-			if (pays_coinbase)
+			bool paying_rewards = state.executor.get_validator_production(state.public_key_hash).or_else(states::validator_production(algorithm::pubkeyhash_t(), nullptr)).is_active();
+			if (paying_rewards)
 			{
 				for (auto& [asset, reward] : rewards)
 				{
@@ -3765,9 +3769,9 @@ namespace tangent
 
 			for (size_t i = 0; i < (size_t)solution.block.priority; i++)
 			{
-				auto coinbase_penalty = state.executor.apply_validator_production(producers[i].owner, executor_context::staker::unlock, -rewards[algorithm::asset::native()]);
-				if (!coinbase_penalty)
-					return coinbase_penalty.error();
+				auto penalty = state.executor.apply_validator_production(producers[i].owner, executor_context::staker::unlock, -rewards[algorithm::asset::native()]);
+				if (!penalty)
+					return penalty.error();
 			}
 
 			auto* parent_block = tip.address();

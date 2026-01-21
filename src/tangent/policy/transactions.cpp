@@ -2480,7 +2480,7 @@ namespace tangent
 			auto may_delegate = executor->verify_account_delegation(manager);
 			if (!may_delegate)
 			{
-				auto overdelegation_fee = executor->apply_fee_transfer(algorithm::asset::native(), executor->receipt.from, algorithm::arithmetic::divide(protocol::now().policy.production.reward_value, protocol::now().policy.delegations_max_per_account));
+				auto overdelegation_fee = executor->apply_fee_transfer(algorithm::asset::native(), executor->receipt.from, protocol::now().policy.emission.min_coinbase_value);
 				if (!overdelegation_fee)
 					return layer_exception("must pay for over-delegation but " + overdelegation_fee.error().message());
 			}

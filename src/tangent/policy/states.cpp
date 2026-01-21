@@ -596,7 +596,7 @@ namespace tangent
 
 			if (stake.is_negative())
 				return layer_exception("invalid stake");
-			else if (!stake.is_nan() && !ledger::block::is_genesis_round(block_number) && stake < protocol::now().policy.production.min_stake_value)
+			else if (!stake.is_nan() && !ledger::block::is_genesis_epoch(block_number) && stake < protocol::now().policy.production.min_stake_value)
 				return layer_exception(stringify::text("minimum stake requirement not met (%s %s)", protocol::now().policy.production.min_stake_value.to_string().c_str(), protocol::now().policy.token.c_str()));
 
 			return expectation::met;

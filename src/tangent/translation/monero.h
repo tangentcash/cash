@@ -53,6 +53,29 @@ namespace tangent
 					string hash;
 				};
 
+				struct transaction
+				{
+					struct input
+					{
+						uint64_t amount = 0;
+						vector<uint64_t> key_offsets;
+						uint8_t key_image[32] = { 0 };
+					};
+
+					struct output
+					{
+						uint64_t amount = 0;
+						uint64_t ecdh_encrypted_amount = 0;
+						uint8_t amount_commitment[32] = { 0 };
+						uint8_t public_key[32] = { 0 };
+					};
+
+					vector<input> inputs;
+					vector<output> outputs;
+					vector<uint8_t> extra;
+					uint64_t fee = 0;
+				};
+
 			protected:
 				chainparams netdata;
 

@@ -855,7 +855,6 @@ namespace tangent
 				policy.pow.time = 1;
 				policy.pow.difficulty = 1;
 				policy.pow.security = 64;
-				policy.pow.genesis_length = 0;
 				policy.attestation.withdrawal_time = 2;
 				policy.attestation.min_stake_value = decimal::zero();
 				policy.participation.min_stake_value = decimal::zero();

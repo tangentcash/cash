@@ -48,6 +48,84 @@ namespace tangent
 	{
 		namespace translations
 		{
+			template <typename t>
+			static void serialize_uint(t value, vector<uint8_t>& buffer)
+			{
+				buffer.resize(sizeof(t));
+				for (size_t i = 0; i < sizeof(t); ++i)
+					buffer.push_back((value >> (i * 8)) & 0xFF);
+			}
+			static void serialize_varint(uint64_t value, vector<uint8_t>& buffer)
+			{
+				if (value < 253)
+				{
+					buffer.push_back(static_cast<uint8_t>(value));
+				}
+				else if (value <= 0xFFFF)
+				{
+					buffer.push_back(253);
+					uint16_t v = static_cast<uint16_t>(value);
+					for (int i = 0; i < 2; ++i)
+						buffer.push_back((v >> (i * 8)) & 0xFF);
+				}
+				else if (value <= 0xFFFFFFFF)
+				{
+					buffer.push_back(254);
+					uint32_t v = static_cast<uint32_t>(value);
+					for (int i = 0; i < 4; ++i)
+						buffer.push_back((v >> (i * 8)) & 0xFF);
+				}
+				else
+				{
+					buffer.push_back(255);
+					for (int i = 0; i < 8; ++i)
+						buffer.push_back((value >> (i * 8)) & 0xFF);
+				}
+			}
+			static void serialize_fixed_bytes(const uint8_t* data, size_t data_size, vector<uint8_t>& buffer)
+			{
+				size_t size = buffer.size();
+				buffer.resize(size + data_size);
+				memcpy(buffer.data() + size, data, data_size);
+			}
+			static vector<uint8_t> serialize_transaction(const monero::transaction& tx)
+			{
+				vector<uint8_t> buffer;
+				buffer.push_back(0x2); // version - 2
+				serialize_varint(0x0, buffer); // unlock_time - instant
+				serialize_varint(tx.inputs.size(), buffer); // vin size
+				for (const auto& input : tx.inputs)
+				{
+					buffer.push_back(0x2); // type - key spend
+					serialize_varint(0, buffer); // amount - legacy (zero)
+					serialize_varint(input.key_offsets.size(), buffer); // key_offsets size
+					for (const auto& offset : input.key_offsets)
+						serialize_varint(offset, buffer); // key_offsets
+					serialize_fixed_bytes(input.key_image, sizeof(input.key_image), buffer); // key_image
+				}
+				serialize_varint(tx.outputs.size(), buffer); // vout size
+				for (const auto& output : tx.outputs)
+				{
+					buffer.push_back(0x1); // type - pay to key
+					serialize_varint(0, buffer); // amount - legacy (zero)
+					serialize_fixed_bytes(output.public_key, sizeof(output.public_key), buffer); // target - public key
+				}
+				serialize_varint(tx.extra.size(), buffer); // extra size
+				buffer.insert(buffer.end(), tx.extra.begin(), tx.extra.end()); // extra
+				serialize_varint(5, buffer); // rct_type - CLSAG
+				serialize_varint(tx.fee, buffer); // txn_fee - fee to be paid
+				serialize_varint(0, buffer); // pseudo_outs size
+				serialize_varint(tx.outputs.size(), buffer); // out_pk size
+				for (const auto& output : tx.outputs)
+					serialize_fixed_bytes(output.amount_commitment, sizeof(output.amount_commitment), buffer); // out_pk - pedersen commitment (amount + target) 
+				serialize_varint(tx.outputs.size(), buffer); // ecdh_info size
+				for (const auto& output : tx.outputs)
+					serialize_varint(output.ecdh_encrypted_amount, buffer); // ecdh_info - encrypted amount
+
+				// TODO: reverse engineer other fields
+				return buffer;
+			}
+
 			const char* monero::nd_call::json_rpc()
 			{
 				return "/json_rpc";
@@ -477,6 +555,20 @@ namespace tangent
 				decimal fee_value = fee.get_max_fee();
 				if (fee_value > max_fee)
 					coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
+
+				decimal total_value = to.value + fee_value;
+				auto possible_inputs = calculate_utxo(from_link, balance_query(total_value, { }));
+				decimal input_value = possible_inputs ? get_utxo_value(*possible_inputs, optional::none) : 0.0;
+				if (!possible_inputs || possible_inputs->empty())
+					coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", input_value.to_string().c_str(), total_value.to_string().c_str())));
+
+				auto to_link = find_linked_addresses({ to.address });
+				prepared_transaction result;
+				result.requires_output(coin_utxo(to_link ? std::move(to_link->begin()->second) : wallet_link::from_address(to.address), string(), (uint32_t)result.outputs.size(), decimal(to.value)));
+				if (input_value > total_value)
+					result.requires_output(coin_utxo(wallet_link(possible_inputs->front().link), string(), (uint32_t)result.outputs.size(), decimal(input_value - total_value)));
+
+
 
 				coreturn expects_rt<prepared_transaction>(remote_exception("not implemented"));
 			}

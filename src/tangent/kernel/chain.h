@@ -270,7 +270,6 @@ namespace tangent
 				uint64_t adjustment_time = 120000;
 				uint64_t difficulty = 2048;
 				uint16_t security = 2048;
-				uint64_t genesis_length = 7200;
 				decimal max_increase = std::string_view("2.00");
 				decimal max_decrease = std::string_view("0.50");
 				decimal bump_per_priority = std::string_view("1.3625");
@@ -280,7 +279,7 @@ namespace tangent
 			{
 				uint64_t withdrawal_time = 345600000;
 				uint64_t max_per_transaction = 32;
-				decimal min_stake_value = std::string_view("120");
+				decimal min_stake_value = std::string_view("900");
 				decimal max_reward_increase = std::string_view("0.80");
 				decimal consensus_threshold = std::string_view("0.80");
 				decimal fee_rate = std::string_view("0.15");
@@ -289,18 +288,24 @@ namespace tangent
 			{
 				uint64_t min_per_account = 5;
 				uint64_t max_per_account = 21;
-				decimal min_stake_value = std::string_view("240");
+				decimal min_stake_value = std::string_view("2700");
 				decimal stake_threshold = std::string_view("0.20");
 				decimal fee_rate = std::string_view("0.30");
 			} participation;
 			struct
 			{
 				uint64_t max_per_block = 12;
-				decimal min_stake_value = std::string_view("36");
-				decimal reward_value = std::string_view("1.2");
-				decimal genesis_reward_value = std::string_view("90");
+				uint64_t genesis_epoch_length = 21600;
+				decimal min_stake_value = std::string_view("12");
 				decimal network_congestion_threshold = std::string_view("0.25");
 			} production;
+			struct
+			{
+				uint64_t epoch_length = 500000;
+				decimal decay_rate = std::string_view("0.01");
+				decimal coinbase_value = std::string_view("1.2");
+				decimal min_coinbase_value = std::string_view("0.0002");
+			} emission;
 			string token = "TAN";
 			uint64_t commitment_tps = 10;
 			uint64_t transaction_tps = 200;

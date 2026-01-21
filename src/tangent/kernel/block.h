@@ -205,7 +205,7 @@ namespace tangent
 			static uint256_t get_total_gas_limit();
 			static uint256_t get_slot_total_gas_limit();
 			static uint256_t get_gas_work(const uint256_t& gas_use, const uint256_t& gas_limit, uint64_t priority);
-			static bool is_genesis_round(const uint64_t block_number);
+			static bool is_genesis_epoch(const uint64_t block_number);
 		};
 
 		struct block final : block_header
