@@ -131,7 +131,7 @@ namespace tangent
 				for (auto& tx_operation : operations_data->childs())
 				{
 					string status = tx_operation.child_var("status").as_blob();
-					if (status != "success")
+					if (stringify::to_lower(status) != "success")
 						continue;
 
 					auto identifier = stringify::split(tx_operation.child_var("coin_change.coin_identifier.identifier").as_blob(), ':');
@@ -142,6 +142,7 @@ namespace tangent
 					string type = tx_operation.child_var("type").as_blob();
 					decimal value = math0::abs(tx_operation.child_var("amount.value").as_decimal()) / netdata.divisibility;
 					auto* token_bundle = tx_operation.child("metadata.tokenBundle");
+					stringify::to_lower(type);
 					if (type == "output")
 					{
 						auto target_address = discovery->find(address);
