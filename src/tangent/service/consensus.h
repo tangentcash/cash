@@ -232,7 +232,7 @@ namespace tangent
 				ledger::block_evaluation solution;
 				ledger::block_rewards rewards;
 				hash_set<uint256_t> hashes;
-				expects_rt<void> status = remote_exception::retry();
+				expects_rt<void> result = remote_exception::retry();
 
 				void reset();
 			};
@@ -315,7 +315,7 @@ namespace tangent
 			void clear_pending_neighbors();
 			void clear_pending_fork(relay* state);
 			void accept_pending_fork(uref<relay>&& state, const uint256_t& candidate_hash, ledger::block_header&& candidate_block);
-			expects_lr<void> accept_block(uref<relay>&& from, ledger::block_evaluation&& candidate, const uint256_t& fork_tip);
+			expects_lr<void> accept_block(uref<relay>&& from, ledger::block_evaluation& candidate, const uint256_t& fork_tip);
 			bool connected_to_ip_address(const socket_address& address);
 			relay_descriptor* find_descriptor(const algorithm::pubkeyhash_t& account);
 			uref<relay> find_by_ip_address(const socket_address& address);
