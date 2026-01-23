@@ -1135,7 +1135,11 @@ namespace tangent
 			if (stake.is_nan() && queue_transaction_hash > 0)
 				return layer_exception("transaction queue must be empty before unlocking");
 
-			auto min_stake_value = std::max(protocol::now().policy.attestation.min_stake_value, participation_threshold * security_level);
+			if (participation_threshold.is_nan() || participation_threshold.is_negative())
+				return layer_exception("invalid participation threshold");
+
+			auto min_participation_stake_value = std::max(participation_threshold - protocol::now().policy.participation.min_stake_value, decimal::zero());
+			auto min_stake_value = std::max(protocol::now().policy.attestation.min_stake_value, min_participation_stake_value * security_level);
 			if (stake.is_negative())
 				return layer_exception("invalid stake");
 			else if (!stake.is_nan() && stake < min_stake_value)
