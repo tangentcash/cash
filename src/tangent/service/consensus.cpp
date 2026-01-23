@@ -2659,84 +2659,55 @@ namespace tangent
 			umutex<std::recursive_mutex> unique(sync.fork);
 			mempool.verifying = false;
 		}
-		bool server_node::run_superchain_sync()
+		bool server_node::run_superchain_sync(const algorithm::asset_id& asset)
 		{
 			if (!protocol::now().user.superchain.listener)
 				return false;
 
-			if (is_syncing())
-			{
-				VI_INFO("superchain sync: awaiting on-chain stability");
-				control_sys.upsert_timeout(TASK_SUPERCHAIN_SYNC "_runner", protocol::now().user.superchain.polling_frequency, [this]() { run_superchain_sync(); });
+			auto* bridge = superchain::bridge::get();
+			auto* listener = bridge->get_network_instance(asset);
+			if (!listener || listener->connections.empty())
 				return false;
-			}
 
-			transport_layer::link_instance();
-			return control_sys.async_task_if_none(TASK_SUPERCHAIN_SYNC, [this]() -> promise<void>
+			string blockchain = algorithm::asset::blockchain_of(listener->asset);
+			string task = stringify::text(TASK_SUPERCHAIN_SYNC "_%s", blockchain.c_str());
+			stringify::to_lower(task);
+			return control_sys.async_task_if_none(task, [this, task, blockchain, bridge, listener]() -> promise<void>
 			{
-				auto* bridge = superchain::bridge::get();
-				auto& listeners = bridge->get_networks();
-				bridge->network_active = [this]() -> bool { return is_active(); };
-				VI_INFO("superchain sync: now pulling (networks: %i)", (int)listeners.size());
-			retry:
-				std::atomic<uint64_t> requests = 0;
-				bridge->network_fetch = [this, &requests](const std::string_view& location, const std::string_view& method, const http::fetch_frame& options) -> expects_promise_system<http::response_frame>
+				uint64_t retry_after_timestamp = std::numeric_limits<uint64_t>::max();
+				VI_INFO("%s block pulling: resuming now", blockchain.c_str());
+				while (is_active())
 				{
-					if (!is_active())
-						return expects_promise_system<http::response_frame>(system_exception("http fetch: shutdown (cancelled)", std::make_error_condition(std::errc::network_down)));
-
-					++requests;
-					return http::fetch(location, method, options);
-				};
-
-				std::atomic<uint64_t> retry_after_timestamp = std::numeric_limits<uint64_t>::max();
-				vector<promise<void>> pullers;
-				pullers.reserve(listeners.size());
-				for (auto& [blockchain, listener] : listeners)
-				{
-					if (listener.connections.empty())
-						continue;
-
-					pullers.push_back(coasync<void>([&]() -> promise<void>
+					auto result = coawait(bridge->link_transactions(listener->asset));
+					if (!result)
 					{
-					pull:
-						auto result = coawait(bridge->link_transactions(listener.asset));
-						if (!result)
-						{
-							if (protocol::now().user.superchain.logging && !listener.options.state.retry_after_time)
-								VI_WARN("superchain sync %s pulling halt: %s", blockchain.c_str(), result.error().what());
+						if (protocol::now().user.superchain.logging && !listener->options.state.retry_after_time)
+							VI_WARN("%s block pulling halt: %s", blockchain.c_str(), result.error().what());
 
-							if (result.error().is_retry())
-								retry_after_timestamp = std::min(retry_after_timestamp.load(), result.error().is_retry_after() ? result.error().retry_after_timestamp() : (protocol::now().time.now_cpu() + protocol::now().user.superchain.polling_frequency));
-
+						if (!is_active())
 							coreturn_void;
-						}
-
+						else if (result.error().is_retry())
+							retry_after_timestamp = std::min(retry_after_timestamp, result.error().is_retry_after() ? result.error().retry_after_timestamp() : (protocol::now().time.now_cpu() + protocol::now().user.superchain.polling_frequency));
+						break;
+					}
+					else
+					{
 						for (auto& result : *result)
 						{
 							if (protocol::now().user.superchain.logging)
-								result.report_logs(listener.asset, listener.options);
+								result.report_logs(listener->asset, listener->options);
 							if (!result.receipts.empty())
-								dispatch_transaction_logs(listener.asset, listener.options, std::move(result)).report("failed to dispatch transaction logs");
+								dispatch_transaction_logs(listener->asset, listener->options, std::move(result)).report("failed to dispatch transaction logs");
 						}
-						goto pull;
-					}, true));
+					}
 				}
 
-				for (auto& puller : pullers)
-					coawait(std::move(puller));
-
-				bridge->network_fetch = nullptr;
-				if (!is_active())
-					coreturn_void;
-
-				uint64_t time = protocol::now().time.now_cpu();
-				if (retry_after_timestamp != std::numeric_limits<uint64_t>::max() && time > retry_after_timestamp)
-					goto retry;
-
-				uint64_t timeout = retry_after_timestamp != std::numeric_limits<uint64_t>::max() ? retry_after_timestamp - time : protocol::now().user.superchain.polling_frequency;
-				VI_INFO("superchain sync: awaiting pulling window (in: %" PRIu64 " ms, pulls: %" PRIu64 ")", timeout, (uint64_t)requests.load());
-				control_sys.upsert_timeout(TASK_SUPERCHAIN_SYNC "_runner", timeout, [this]() { run_superchain_sync(); });
+				if (is_active())
+				{
+					uint64_t timeout = std::max<uint64_t>(retry_after_timestamp != std::numeric_limits<uint64_t>::max() ? retry_after_timestamp - protocol::now().time.now_cpu() : protocol::now().user.superchain.polling_frequency, 2000);
+					VI_INFO("%s block pulling: resumes in %" PRIu64 " ms", blockchain.c_str(), timeout);
+					control_sys.upsert_timeout(task + "_runner", timeout, [this, listener]() { run_superchain_sync(listener->asset); });
+				}
 				coreturn_void;
 			});
 		}
@@ -3185,7 +3156,22 @@ namespace tangent
 			control_sys.interval_if_none(TASK_BLOCK_DISPATCH_RETRIAL "_runner", protocol::now().user.consensus.dispatch_retry_interval, std::bind(&server_node::run_block_dispatcher, this));
 			run_topology_optimization();
 			run_mempool_vacuum();
-			run_superchain_sync();
+
+			if (protocol::now().user.superchain.listener)
+			{
+				auto* bridge = superchain::bridge::get();
+				bridge->network_active = [this]() -> bool { return is_active(); };
+				bridge->network_fetch = [this](const std::string_view& location, const std::string_view& method, const http::fetch_frame& options) -> expects_promise_system<http::response_frame>
+				{
+					if (!is_active())
+						return expects_promise_system<http::response_frame>(system_exception("http fetch: shutdown (cancelled)", std::make_error_condition(std::errc::network_down)));
+
+					return http::fetch(location, method, options);
+				};
+				transport_layer::link_instance();
+				for (auto& [blockchain, listener] : bridge->get_networks())
+					run_superchain_sync(listener.asset);
+			}
 		}
 		void server_node::shutdown()
 		{

@@ -298,7 +298,7 @@ namespace tangent
 			void bind_query(const callable::descriptor& descriptor, query_callback&& on_query_callback);
 			bool try_acquire_checkpointer();
 			void release_checkpointer();
-			bool run_superchain_sync();
+			bool run_superchain_sync(const algorithm::asset_id& asset);
 			bool run_topology_optimization();
 			bool run_mempool_vacuum();
 			bool run_fork_resolution();

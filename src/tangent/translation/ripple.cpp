@@ -312,6 +312,10 @@ namespace tangent
 			}
 			expects_promise_rt<computed_transaction> ripple::link_transaction(uint64_t block_height, const std::string_view& block_hash, format::tree& transaction_data)
 			{
+				string tx_result = transaction_data.child_var("metaData.TransactionResult").as_blob();
+				if (tx_result != "tesSUCCESS")
+					coreturn expects_rt<computed_transaction>(remote_exception("tx reverted"));
+
 				string tx_hash = transaction_data.child_var("hash").as_blob();
 				string type = transaction_data.child_var("TransactionType").as_blob();
 				string from = transaction_data.child_var("Account").as_blob();

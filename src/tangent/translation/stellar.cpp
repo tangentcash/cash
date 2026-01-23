@@ -373,6 +373,10 @@ namespace tangent
 			}
 			expects_promise_rt<computed_transaction> stellar::link_transaction(uint64_t block_height, const std::string_view& block_hash, format::tree& transaction_data)
 			{
+				bool is_successful = transaction_data.child_var("successful").as_boolean() || transaction_data.child_var("transaction_successful").as_boolean();
+				if (!is_successful)
+					coreturn expects_rt<computed_transaction>(remote_exception("tx reverted"));
+
 				algorithm::asset_id token_asset = native_asset;
 				string tx_hash = transaction_data.child_var("transaction_hash").as_blob();
 				string tx_type = transaction_data.child_var("type").as_blob();
