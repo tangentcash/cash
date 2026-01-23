@@ -3618,6 +3618,9 @@ namespace tangent
 		}
 		size_t solver_context::try_include_transactions(vector<uptr<transaction>>&& candidates, hash_set<uint256_t>* hashes)
 		{
+			if (candidates.empty())
+				return 0;
+
 			vector<queued_transaction> subqueue;
 			subqueue.reserve(candidates.size());
 			transactions.pending.reserve(transactions.pending.size() + candidates.size());

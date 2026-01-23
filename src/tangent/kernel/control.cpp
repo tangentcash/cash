@@ -434,6 +434,7 @@ namespace tangent
 			policy.threads[((size_t)difficulty::timeout)] = 1;
 		}
 
+		policy.threads[((size_t)difficulty::sync)] = std::max<size_t>(policy.threads[((size_t)difficulty::sync)], 6);
 		if (protocol::now().user.logs.control_logging)
 			VI_INFO("service launch (services: %i)", (int)services.size());
 

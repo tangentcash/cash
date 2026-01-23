@@ -755,14 +755,6 @@ namespace tangent
 			return callable::descriptor(__func__, 18);
 		}
 
-		void server_node::miner_state::reset()
-		{
-			solver = ledger::solver_context();
-			result = remote_exception::retry_later();
-			rewards.clear();
-			hashes.clear();
-		}
-
 		server_node::server_node() noexcept : socket_server(), control_sys("consensus-node"), runner_descriptor(nullptr)
 		{
 		}
@@ -2963,13 +2955,11 @@ namespace tangent
 					return;
 
 				auto tip = chain.get_latest_block_header();
-				auto& miner = this->mempool.miner;
-				if (!miner)
-					miner = new miner_state();
-				else
-					miner->reset();
+				prover.solver = ledger::solver_context();
+				prover.rewards.clear();
+				prover.hashes.clear();
 
-				auto priority = miner->solver.apply_validator_state(accounts, tip.address());
+				auto priority = prover.solver.apply_validator_state(accounts, tip.address());
 				auto position = priority.or_else(protocol::now().policy.production.max_per_block);
 				if (position > 0 && tip)
 				{
@@ -2990,81 +2980,79 @@ namespace tangent
 					}
 				}
 
-				auto builder = miner->solver.block_evalution_prepare(miner->solution);
-				if (!builder)
+				auto evaluation = prover.solver.block_evalution_prepare(prover.solution);
+				if (!evaluation)
 					goto next_block;
 
-				bool abandon = false;
-				std::thread worker([miner]()
+				size_t iteration = 0, iteration_threshold = 16, count = 512;
+				auto solution_account = prover.solver.state.public_key_hash;
+				auto solution_challenge = ledger::block_header(prover.solution.block);
+				auto solution_task = cotask<expects_lr<ledger::block_header>>([solution_challenge = std::move(solution_challenge), solution_account]() mutable -> expects_lr<ledger::block_header>
 				{
-					auto solution = miner->solver.block_solution_solve(miner->solution);
-					umutex<std::mutex> unique(miner->mutex);
-					miner->result = solution ? expects_rt<void>(expectation::met) : expects_rt<void>(remote_exception(std::move(solution.error().message())));
-					miner->condition.notify_one();
-				});
-				while (is_active())
+					return solution_challenge.solve(solution_account) ? expects_lr<ledger::block_header>(std::move(solution_challenge)) : expects_lr<ledger::block_header>(layer_exception("failed to solve a block"));
+				}, false);
+				while (is_active() && solution_task.is_pending())
 				{
-					size_t offsets[2] = { 0, 0 }, count = 512, queue = 0;
-					while (miner->solver.can_accept_more_transactions() && (offsets[0] != std::numeric_limits<size_t>::max() || offsets[1] != std::numeric_limits<size_t>::max()))
+					size_t offsets[2] = { 0, 0 }, queue = 0;
+					while (prover.solver.can_accept_more_transactions() && (offsets[0] != std::numeric_limits<size_t>::max() || offsets[1] != std::numeric_limits<size_t>::max()))
 					{
-						auto results0 = mempool.get_best_transactions_from_queue(miner->solver.state.executor.options & (uint8_t)ledger::executor_context::flags::congestion ? (uint8_t)storages::transaction_queue::congestion : 0, offsets[0], count);
+						auto results0 = mempool.get_best_transactions_from_queue(prover.solver.state.executor.options & (uint8_t)ledger::executor_context::flags::congestion ? (uint8_t)storages::transaction_queue::congestion : 0, offsets[0], count);
 						auto results1 = mempool.get_best_transactions_from_queue((uint8_t)storages::transaction_queue::commitment, offsets[1], count);
 						offsets[0] = count == (results0 ? results0->size() : 0) ? (results0 ? results0->size() : 0) : std::numeric_limits<size_t>::max();
 						offsets[1] = count == (results1 ? results1->size() : 0) ? (results1 ? results1->size() : 0) : std::numeric_limits<size_t>::max();
-						queue += miner->solver.try_include_transactions(std::move(*results0), &miner->hashes) + miner->solver.try_include_transactions(std::move(*results1), &miner->hashes);
+						queue += prover.solver.try_include_transactions(std::move(*results0), &prover.hashes) + prover.solver.try_include_transactions(std::move(*results1), &prover.hashes);
 					}
 
+					++iteration;
 					if (queue > 0)
 					{
-						builder = miner->solver.block_evalution_update(miner->solution, miner->rewards);
-						if (!builder)
+						evaluation = prover.solver.block_evalution_update(prover.solution, prover.rewards);
+						if (!evaluation)
 							break;
 					}
 
-					if (position > 0)
+					if (position > 0 && iteration % iteration_threshold == 0)
 					{
 						tip = chain.get_latest_block_header();
-						abandon = ledger::solver_context().apply_validator_state(accounts, tip.address()).or_else(protocol::now().policy.production.max_per_block) == 0;
-						if (abandon)
+						if (ledger::solver_context().apply_validator_state(accounts, tip.address()).or_else(protocol::now().policy.production.max_per_block) == 0)
 							break;
 					}
 
-					std::unique_lock<std::mutex> unique(miner->mutex);
-					if (miner->condition.wait_for(unique, std::chrono::milliseconds(200)) != std::cv_status::timeout || miner->result || !miner->result.error().is_retry())
-						break;
+					std::this_thread::sleep_for(std::chrono::microseconds(iteration < iteration_threshold ? 500 : 50000));
 				}
 
 				auto span = (double)(tip ? tip->get_slot_proof_duration_average() : 0) * algorithm::wesolowski::adjustment_scaling(position).to_double();
-				if (worker.joinable())
-					abandon ? worker.detach() : worker.join();
+				auto solution = !evaluation || solution_task.is_pending() ? expects_lr<ledger::block_header>(layer_exception("orphaned")) : solution_task.get();
+				if (solution)
+				{
+					prover.solution.block.proof = std::move(solution->proof);
+					prover.solution.block.evaluation_time = solution->evaluation_time;
+				}
 
 				tip = chain.get_latest_block_header();
-				if (is_active() && builder && (!tip || miner->solution.block.number > tip->number || (miner->solution.block.number == tip->number && miner->solution.block.priority < tip->priority)))
+				if (is_active() && solution && evaluation && (!tip || prover.solution.block.number > tip->number || (prover.solution.block.number == tip->number && prover.solution.block.priority < tip->priority)))
 				{
-					builder = miner->solver.block_evalution_finalize(miner->solution, miner->rewards);
-					builder = builder ? miner->solver.block_solution_sign(miner->solution) : builder;
-					auto verifier = builder ? accept_block(nullptr, miner->solution, 0) : builder;
-					if (builder && verifier)
+					evaluation = prover.solver.block_evalution_finalize(prover.solution, prover.rewards);
+					evaluation = evaluation ? prover.solver.block_solution_sign(prover.solution) : evaluation;
+					auto verification = evaluation ? accept_block(nullptr, prover.solution, 0) : evaluation;
+					if (evaluation && verification)
 					{
-						miner->solver.erase_failed_transactions().report("mempool cleanup failed");
+						prover.solver.erase_failed_transactions().report("mempool cleanup failed");
 						if (protocol::now().user.consensus.logging)
-							VI_INFO("block %s solved (number: %" PRIu64", txns: %" PRIu64 ", leader: %" PRIu64 ", work: < ~%.2f sec.)", algorithm::encoding::encode_0xhex256(miner->solution.block.as_hash()).c_str(), miner->solution.block.number, (uint64_t)miner->solution.block.transactions.size(), position + 1, span / 1000.0);
+							VI_INFO("block %s solved (number: %" PRIu64", txns: %" PRIu64 ", leader: %" PRIu64 ", work: < ~%.2f sec.)", algorithm::encoding::encode_0xhex256(prover.solution.block.as_hash()).c_str(), prover.solution.block.number, (uint64_t)prover.solution.block.transactions.size(), position + 1, span / 1000.0);
 
 						goto next_block;
 					}
 					else if (protocol::now().user.consensus.logging)
 					{
-						if (!builder || !miner->result || !verifier)
-							VI_WARN("block %s dismissed: %s (number: %" PRIu64", txns: %" PRIu64 ", leader: %" PRIu64 ", work: < ~%.2f sec.)", algorithm::encoding::encode_0xhex256(miner->solution.block.as_hash()).c_str(), builder ? (miner && !miner->result ? miner->result.error().what() : "cancelled") : builder.error().what(), miner->solution.block.number, (uint64_t)miner->solution.block.transactions.size(), position + 1, span / 1000.0);
+						if (!evaluation)
+							VI_WARN("block %s dismissed: %s (number: %" PRIu64", txns: %" PRIu64 ", leader: %" PRIu64 ", work: < ~%.2f sec.)", algorithm::encoding::encode_0xhex256(prover.solution.block.as_hash()).c_str(), evaluation.error().what(), prover.solution.block.number, (uint64_t)prover.solution.block.transactions.size(), position + 1, span / 1000.0);
 						else
-							VI_WARN("%s", verifier.error().what());
+							VI_WARN("%s", verification.error().what());
 					}
 				}
 				else if (protocol::now().user.consensus.logging)
-					VI_WARN("block %s dismissed: %s (number: %" PRIu64", txns: %" PRIu64 ", leader: %" PRIu64 ", work: < ~%.2f sec.)", algorithm::encoding::encode_0xhex256(miner->solution.block.as_hash()).c_str(), builder ? (miner && !miner->result ? miner->result.error().what() : "cancelled") : builder.error().what(), miner->solution.block.number, (uint64_t)miner->solution.block.transactions.size(), position + 1, span / 1000.0);
-				
-				if (abandon)
-					miner = nullptr;
+					VI_WARN("block %s dismissed: %s (number: %" PRIu64", txns: %" PRIu64 ", leader: %" PRIu64 ", work: < ~%.2f sec.)", algorithm::encoding::encode_0xhex256(prover.solution.block.as_hash()).c_str(), evaluation ? (solution ? "cancelled" : solution.error().what()) : evaluation.error().what(), prover.solution.block.number, (uint64_t)prover.solution.block.transactions.size(), position + 1, span / 1000.0);
 			});
 		}
 		bool server_node::run_block_dispatcher()
