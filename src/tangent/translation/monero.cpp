@@ -1,5 +1,4 @@
 #include "monero.h"
-#include "../service/superchain.h"
 #include <sodium.h>
 extern "C"
 {
@@ -155,7 +154,7 @@ namespace tangent
 				return "/get_o_indexes.bin";
 			}
 
-			monero::monero(const algorithm::asset_id& new_asset) noexcept : relay_backend_utxo(new_asset)
+			monero::monero(const algorithm::asset_id& new_asset) noexcept : translation_utxo(new_asset)
 			{
 				netdata.composition = algorithm::composition::type::ed25519_clsag;
 				netdata.routing = routing_policy::utxo;

@@ -2,6 +2,7 @@
 #define TAN_KERNEL_SUPERCHAIN_H
 #include "control.h"
 #include "../policy/messages.h"
+#include <vitex/network/http.h>
 
 namespace tangent
 {
@@ -35,9 +36,9 @@ namespace tangent
 			lifetime_cache
 		};
 
-		class server_relay;
+		struct network_options;
 
-		class relay_backend;
+		class translation;
 
 		struct wallet_link : messages::uniform
 		{
@@ -227,6 +228,8 @@ namespace tangent
 			vector<computed_transaction> receipts;
 			uint64_t block_height = (uint64_t)-1;
 			string block_hash;
+
+			void report_logs(const algorithm::asset_id& asset, const network_options& options);
 		};
 
 		struct computed_fee
@@ -259,93 +262,73 @@ namespace tangent
 			static computed_fee fee_per_gas_priority(const decimal& premium, const decimal& price, const uint256_t& limit);
 		};
 
-		struct supervisor_options
+		struct computed_wallet
 		{
-			uint64_t polling_frequency = 70000;
-			uint64_t blocks_batching = 1;
+			algorithm::composition::cseckey_t secret_key;
+			algorithm::composition::cpubkey_t public_key;
+			vector<uint8_t> seed;
+			address_map addresses;
+			address_map encoded_addresses;
+			secret_box encoded_seed;
+			secret_box encoded_secret_key;
+			string encoded_public_key;
+
+			format::tree as_tree() const;
 		};
 
-		struct chain_supervisor_options : supervisor_options
+		struct network_options
 		{
 			struct
 			{
-				hash_set<server_relay*> interactions;
-				uint64_t current_block_height = 0;
-				uint64_t latest_block_height = 0;
-				uint64_t starting_block_height = 0;
-				uint64_t latest_time_awaited = 0;
+				uint64_t inital_block_height = 0;
+				uint64_t index_block_height = 0;
+				uint64_t target_block_height = 0;
+				uint64_t retry_after_time = 0;
 			} state;
+			uint64_t blocks_batching = 1;
 
 			void set_checkpoint_from_block(uint64_t block_height);
 			void set_checkpoint_to_block(uint64_t block_height);
 			uint64_t get_next_block_height(uint64_t block_count);
-			uint64_t get_time_awaited() const;
 			bool has_next_block_height(uint64_t block_count) const;
-			bool has_current_block_height() const;
-			bool has_latest_block_height() const;
-			bool will_wait_for_transactions() const;
+			bool has_target_block_height() const;
 			double get_checkpoint_percentage() const;
-			const hash_set<server_relay*>& get_interacted_nodes() const;
-			bool is_cancelled(const algorithm::asset_id& asset);
 		};
 
-		struct multichain_supervisor_options : supervisor_options
+		struct connection_instance
 		{
-			hash_map<string, chain_supervisor_options> specifics;
-			uint64_t retry_timeout = 30000;
-
-			chain_supervisor_options& add_specific_options(const std::string_view& blockchain);
-		};
-
-		class server_relay : public reference<server_relay>
-		{
-		public:
-			struct error_reporter
-			{
-				string type;
-				string method;
-			};
-
-		private:
-			vector<std::pair<promise<bool>, task_id>> tasks;
 			hash_map<string, string> urls;
-			std::recursive_mutex mutex;
-			int64_t latest;
-			double rps;
-			bool allowed;
+			uint64_t rps_retry_after_timestamp = 0;
+			uint64_t error_retry_after_timestamp = 0;
+			bool keep_alive = true;
+			double rps = 0.0;
 
-		public:
-			void* user_data;
-
-		public:
-			server_relay(hash_map<string, string>&& node_urls, double node_rps) noexcept;
-			~server_relay() noexcept;
-			expects_promise_rt<format::tree> execute_rpc(const algorithm::asset_id& asset, error_reporter& reporter, const std::string_view& method, const format::tree& args, cache_policy cache, const std::string_view& path, bool multi);
-			expects_promise_rt<format::tree> execute_rest(const algorithm::asset_id& asset, error_reporter& reporter, const std::string_view& method, const std::string_view& path, const format::tree& args, cache_policy cache);
-			expects_promise_rt<format::tree> execute_http(const algorithm::asset_id& asset, error_reporter& reporter, const std::string_view& method, const std::string_view& path, const std::string_view& type, const std::string_view& body, cache_policy cache);
-			promise<bool> yield_for_cooldown(uint64_t& retry_timeout, uint64_t total_timeout_ms);
-			promise<bool> yield_for_discovery(chain_supervisor_options* options);
-			expects_lr<void> verify_compatibility(const algorithm::asset_id& asset);
-			task_id enqueue_activity(const promise<bool>& future, task_id timer_id);
-			void dequeue_activity(task_id timer_id);
-			void allow_activities();
-			void trigger_activities();
-			void cancel_activities();
 			bool has_distinct_url(const std::string_view& type) const;
-			bool is_activity_allowed() const;
-			const string& get_node_url(const std::string_view& type) const;
-			string get_node_url(const std::string_view& type, const std::string_view& path) const;
-
-		public:
-			static std::string_view get_cache_type(cache_policy cache);
+			const string& get_url(const std::string_view& type) const;
+			string get_url(const std::string_view& type, const std::string_view& path) const;
 		};
 
-		class relay_backend : public reference<relay_backend>
+		struct network_instance
+		{
+			vector<connection_instance> connections;
+			uptr<translation> translation;
+			network_options options;
+			algorithm::asset_id asset;
+			format::tree props;
+		};
+
+		class address_util
+		{
+		public:
+			static string encode_tag_address(const std::string_view& address, const std::string_view& destination_tag);
+			static std::pair<string, string> decode_tag_address(const std::string_view& address_destination_tag);
+		};
+
+		class translation : public reference<translation>
 		{
 			friend class datamaster;
 
 		public:
-			typedef std::function<void(server_relay*)> interaction_callback;
 			typedef std::pair<string, string> contract_address_symbol_pair;
 
 		public:
@@ -365,11 +348,8 @@ namespace tangent
 			bool allow_any_token;
 
 		public:
-			interaction_callback interact;
-
-		public:
-			relay_backend(const algorithm::asset_id& new_asset) noexcept;
-			virtual ~relay_backend() noexcept;
+			translation(const algorithm::asset_id& new_asset) noexcept;
+			virtual ~translation() noexcept;
 			virtual expects_promise_rt<format::tree> execute_rpc(const std::string_view& method, const format::tree& args, cache_policy cache, const std::string_view& path = std::string_view());
 			virtual expects_promise_rt<format::tree> execute_rpc_multi(const std::string_view& method, const format::tree& args, cache_policy cache, const std::string_view& path = std::string_view());
 			virtual expects_promise_rt<format::tree> execute_rest(const std::string_view& method, const std::string_view& path, const format::tree& args, cache_policy cache);
@@ -393,14 +373,14 @@ namespace tangent
 			virtual expects_lr<address_map> to_addresses(const std::string_view& public_key) = 0;
 			virtual expects_lr<btree_map<string, wallet_link>> find_linked_addresses(const hash_set<string>& addresses);
 			virtual expects_lr<btree_map<string, wallet_link>> find_linked_addresses(const algorithm::pubkeyhash_t& owner, size_t offset, size_t count);
-			virtual expects_lr<void> verify_node_compatibility(server_relay* node);
+			virtual expects_lr<void> verify_node_compatibility(connection_instance* node);
 			virtual decimal to_value(const decimal& value) const;
 			virtual uint256_t to_baseline_value(const decimal& value) const;
 			virtual decimal from_baseline_value(const uint256_t& value) const;
 			virtual const chainparams& get_chainparams() const = 0;
 		};
 
-		class relay_backend_utxo : public relay_backend
+		class translation_utxo : public translation
 		{
 		public:
 			struct balance_query
@@ -412,8 +392,8 @@ namespace tangent
 			};
 
 		public:
-			relay_backend_utxo(const algorithm::asset_id& new_asset) noexcept;
-			virtual ~relay_backend_utxo() = default;
+			translation_utxo(const algorithm::asset_id& new_asset) noexcept;
+			virtual ~translation_utxo() = default;
 			virtual expects_promise_rt<coin_utxo> get_transaction_output(const std::string_view& transaction_id, uint64_t index) = 0;
 			virtual expects_promise_rt<decimal> calculate_balance(const algorithm::asset_id& for_asset, const wallet_link& link) override;
 			virtual expects_lr<vector<coin_utxo>> calculate_utxo(const wallet_link& link, option<balance_query>&& query);
@@ -424,14 +404,108 @@ namespace tangent
 			virtual decimal get_utxo_value(const vector<coin_utxo>& values, option<string>&& contract_address);
 
 		public:
-			static relay_backend_utxo* from_relay(relay_backend* base);
+			static translation_utxo* from(translation* base);
 		};
 
-		class address_util
+		class bridge : public singleton<bridge>
 		{
 		public:
-			static string encode_tag_address(const std::string_view& address, const std::string_view& destination_tag);
-			static std::pair<string, string> decode_tag_address(const std::string_view& address_destination_tag);
+			struct error_reporter
+			{
+				string type;
+				string method;
+			};
+
+			typedef std::function<expects_promise_system<http::response_frame>(const std::string_view&, const std::string_view&, const http::fetch_frame&)> fetch_callback;
+			typedef std::function<bool(const std::string_view&)> invocation_callback;
+
+		protected:
+			hash_map<string, invocation_callback> registrations;
+			hash_map<string, network_instance> networks;
+
+		public:
+			fetch_callback network_fetch;
+			activity_callback network_active;
+
+		public:
+			bridge() noexcept;
+			~bridge() noexcept;
+			expects_promise_rt<format::tree> execute_rpc(const algorithm::asset_id& asset, connection_instance& connection, error_reporter& reporter, const std::string_view& method, const format::tree& args, cache_policy cache, const std::string_view& path, bool multi);
+			expects_promise_rt<format::tree> execute_rest(const algorithm::asset_id& asset, connection_instance& connection, error_reporter& reporter, const std::string_view& method, const std::string_view& path, const format::tree& args, cache_policy cache);
+			expects_promise_rt<format::tree> execute_http(const algorithm::asset_id& asset, connection_instance& connection, error_reporter& reporter, const std::string_view& method, const std::string_view& path, const std::string_view& type, const std::string_view& body, cache_policy cache);
+			expects_promise_rt<uint64_t> get_latest_block_height(const algorithm::asset_id& asset);
+			expects_promise_rt<vector<block_log>> get_block_transactions(const algorithm::asset_id& asset, uint64_t block_height, uint64_t block_count);
+			expects_promise_rt<vector<transaction_logs>> link_transactions(const algorithm::asset_id& asset);
+			expects_promise_rt<computed_transaction> link_transaction(const algorithm::asset_id& asset, uint64_t block_height, const std::string_view& block_hash, format::tree& transaction_data);
+			expects_promise_rt<decimal> calculate_balance(const algorithm::asset_id& asset, const wallet_link& link);
+			expects_promise_rt<void> broadcast_transaction(const algorithm::asset_id& asset, const uint256_t& external_id, const finalized_transaction& finalized);
+			expects_promise_rt<prepared_transaction> prepare_transaction(const algorithm::asset_id& asset, const wallet_link& from_link, const value_transfer& to, const decimal& max_fee);
+			expects_lr<finalized_transaction> finalize_transaction(const algorithm::asset_id& asset, prepared_transaction&& prepared);
+			expects_lr<computed_transaction> get_computed_transaction(const algorithm::asset_id& asset, const std::string_view& transaction_id, const uint256_t& external_id, const uint256_t& optimized_id);
+			expects_lr<computed_wallet> compute_wallet(const algorithm::asset_id& asset, const uint8_t* seed, size_t seed_size);
+			expects_lr<secret_box> encode_secret_key(const algorithm::asset_id& asset, const secret_box& secret_key);
+			expects_lr<secret_box> decode_secret_key(const algorithm::asset_id& asset, const secret_box& secret_key);
+			expects_lr<string> encode_public_key(const algorithm::asset_id& asset, const std::string_view& public_key);
+			expects_lr<string> decode_public_key(const algorithm::asset_id& asset, const std::string_view& public_key);
+			expects_lr<string> encode_address(const algorithm::asset_id& asset, const std::string_view& public_key_hash);
+			expects_lr<string> decode_address(const algorithm::asset_id& asset, const std::string_view& address);
+			expects_lr<string> encode_transaction_id(const algorithm::asset_id& asset, const std::string_view& transaction_id);
+			expects_lr<string> decode_transaction_id(const algorithm::asset_id& asset, const std::string_view& transaction_id);
+			expects_lr<void> normalize_secret_key(const algorithm::asset_id& asset, secret_box* secret_key);
+			expects_lr<void> normalize_public_key(const algorithm::asset_id& asset, string* public_key);
+			expects_lr<void> normalize_address(const algorithm::asset_id& asset, string* address);
+			expects_lr<void> normalize_transaction_id(const algorithm::asset_id& asset, string* transaction_id);
+			expects_lr<algorithm::composition::cpubkey_t> to_composite_public_key(const algorithm::asset_id& asset, const std::string_view& public_key);
+			expects_lr<address_map> to_addresses(const algorithm::asset_id& asset, const std::string_view& public_key);
+			expects_lr<void> scan_from_block_height(const algorithm::asset_id& asset, option<uint64_t>&& block_height);
+			expects_lr<void> enable_contract_address(const algorithm::asset_id& asset, const std::string_view& contract_address);
+			expects_lr<void> enable_link(const algorithm::asset_id& asset, const wallet_link& link);
+			expects_lr<void> disable_link(const algorithm::asset_id& asset, const wallet_link& link);
+			expects_lr<wallet_link> normalize_link(const algorithm::asset_id& asset, const wallet_link& link);
+			expects_lr<uint64_t> get_earliest_scanned_block_height(const algorithm::asset_id& asset);
+			expects_lr<uint64_t> get_latest_known_block_height(const algorithm::asset_id& asset);
+			expects_lr<wallet_link> get_link(const algorithm::asset_id& asset, const std::string_view& address);
+			expects_lr<hash_map<string, wallet_link>> get_links_by_public_keys(const algorithm::asset_id& asset, const hash_set<string>& public_keys);
+			expects_lr<hash_map<string, wallet_link>> get_links_by_addresses(const algorithm::asset_id& asset, const hash_set<string>& addresses);
+			expects_lr<hash_map<string, wallet_link>> get_links_by_owner(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, size_t offset, size_t count);
+			expects_lr<void> receive_utxo(const algorithm::asset_id& asset, const coin_utxo& value, uint64_t block_id);
+			expects_lr<void> spend_utxo(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint64_t index, uint64_t block_id);
+			expects_lr<void> revive_utxo(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint64_t index);
+			expects_lr<void> revive_utxo_tree(const algorithm::asset_id& asset, const computed_transaction& computed);
+			expects_lr<void> update_utxo_tree(const algorithm::asset_id& asset, const computed_transaction& computed);
+			expects_lr<coin_utxo> get_utxo(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint64_t index);
+			expects_lr<vector<coin_utxo>> get_utxos(const algorithm::asset_id& asset, const wallet_link& link, size_t offset, size_t count);
+			expects_lr<format::tree> load_cache(const algorithm::asset_id& asset, cache_policy policy, const std::string_view& key);
+			expects_lr<void> store_cache(const algorithm::asset_id& asset, cache_policy policy, const std::string_view& key, const format::tree& value);
+			option<string> get_contract_address(const algorithm::asset_id& asset);
+			vector<algorithm::asset_id> get_assets(bool observing_only = false);
+			hash_map<algorithm::asset_id, translation::chainparams> get_assets_with_params();
+			const hash_map<string, invocation_callback>& get_registrations();
+			hash_map<string, network_instance>& get_networks();
+			translation* get_network(const algorithm::asset_id& asset);
+			network_instance* get_network_instance(const algorithm::asset_id& asset);
+			const translation::chainparams* get_network_params(const algorithm::asset_id& asset);
+			connection_instance* add_network_connection(const algorithm::asset_id& asset, const std::string_view& url, double rps, bool keep_alive);
+			connection_instance* add_network_connection(const algorithm::asset_id& asset, hash_map<string, string>&& urls, double rps, bool keep_alive);
+			format::tree* add_network_props(const algorithm::asset_id& asset, const format::tree& value);
+			format::tree* get_network_props(const algorithm::asset_id& asset);
+			void remove_network(const algorithm::asset_id& asset);
+			bool has_network(const algorithm::asset_id& asset, bool and_connections = false);
+
+		public:
+			template <typename t, typename... args>
+			t* add_network(const algorithm::asset_id& asset, args&&... values)
+			{
+				t* instance = new t(asset, values...);
+				add_network_instance(asset, instance);
+				return instance;
+			}
+
+		private:
+			void add_network_instance(const algorithm::asset_id& asset, translation* instance);
+
+		public:
+			static std::string_view cache_type_of(cache_policy cache);
 		};
 	}
 }

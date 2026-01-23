@@ -12,7 +12,7 @@ namespace tangent
 	{
 		namespace translations
 		{
-			class bitcoin : public relay_backend_utxo
+			class bitcoin : public translation_utxo
 			{
 			public:
 				enum class address_format

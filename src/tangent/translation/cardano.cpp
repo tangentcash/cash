@@ -1,5 +1,4 @@
 #include "cardano.h"
-#include "../service/superchain.h"
 #include "../internal/cardano.h"
 extern "C"
 {
@@ -31,7 +30,7 @@ namespace tangent
 				return "/construction/submit";
 			}
 
-			cardano::cardano(const algorithm::asset_id& new_asset) noexcept : relay_backend_utxo(new_asset)
+			cardano::cardano(const algorithm::asset_id& new_asset) noexcept : translation_utxo(new_asset)
 			{
 				netdata.composition = algorithm::composition::type::ed25519;
 				netdata.routing = routing_policy::utxo;
@@ -172,7 +171,7 @@ namespace tangent
 										decimal divisibility = decimals > 0 ? decimal("1" + string(decimals, '0')) : decimal(1);
 										decimal token_value = algorithm::arithmetic::divide(math0::abs(item.child_var("value").as_decimal()), divisibility);
 										new_output.apply_token_value(contract_address, symbol, token_value, decimals);
-										superchain::server_node::get()->enable_contract_address(token_asset, contract_address);
+										bridge::get()->enable_contract_address(token_asset, contract_address);
 									}
 								}
 							}
@@ -209,7 +208,7 @@ namespace tangent
 										decimal divisibility = decimals > 0 ? decimal("1" + string(decimals, '0')) : decimal(1);
 										decimal token_value = algorithm::arithmetic::divide(math0::abs(item.child_var("value").as_decimal()), divisibility);
 										new_input.apply_token_value(contract_address, symbol, token_value, decimals);
-										superchain::server_node::get()->enable_contract_address(token_asset, contract_address);
+										bridge::get()->enable_contract_address(token_asset, contract_address);
 									}
 								}
 							}

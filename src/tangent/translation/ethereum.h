@@ -10,7 +10,7 @@ namespace tangent
 	{
 		namespace translations
 		{
-			class ethereum : public relay_backend
+			class ethereum : public translation
 			{
 			public:
 				typedef uint256_t wei256_t;

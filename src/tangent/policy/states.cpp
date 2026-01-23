@@ -1,6 +1,6 @@
 #include "states.h"
 #include "../kernel/block.h"
-#include "../service/superchain.h"
+#include "../kernel/superchain.h"
 
 namespace tangent
 {
@@ -1593,7 +1593,7 @@ namespace tangent
 		}
 		format::tree bridge_account::as_tree() const
 		{
-			auto* chain = superchain::server_node::get()->get_chainparams(asset);
+			auto* chain = superchain::bridge::get()->get_network_params(asset);
 			auto data = ledger::multiform::as_tree();
 			data.set("owner", algorithm::signing::serialize_address(owner));
 			data.set("manager", algorithm::signing::serialize_address(manager));
@@ -1853,7 +1853,7 @@ namespace tangent
 		bool witness_account::store_row(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
-			auto location = addresses.empty() ? string() : superchain::server_node::get()->decode_address(asset, addresses.begin()->second).or_else(string(addresses.begin()->second));
+			auto location = addresses.empty() ? string() : superchain::bridge::get()->decode_address(asset, addresses.begin()->second).or_else(string(addresses.begin()->second));
 			stream->write_integer(asset);
 			stream->write_string(location);
 			return true;
@@ -1872,13 +1872,13 @@ namespace tangent
 		bool witness_account::store_data(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
-			auto* server = superchain::server_node::get();
+			auto* bridge = superchain::bridge::get();
 			stream->write_boolean(active);
 			stream->write_string(manager.optimized_view());
 			stream->write_integer((uint8_t)addresses.size());
 			for (auto& address : addresses)
 			{
-				auto raw_address = server->decode_address(asset, address.second);
+				auto raw_address = bridge->decode_address(asset, address.second);
 				stream->write_integer(address.first);
 				stream->write_string(raw_address ? *raw_address : address.second);
 			}
@@ -1897,7 +1897,7 @@ namespace tangent
 			if (!stream.read_integer(stream.read_type(), &addresses_size))
 				return false;
 
-			auto* server = superchain::server_node::get();
+			auto* bridge = superchain::bridge::get();
 			addresses.clear();
 			for (uint8_t i = 0; i < addresses_size; i++)
 			{
@@ -1909,7 +1909,7 @@ namespace tangent
 				if (!stream.read_string(stream.read_type(), &address))
 					return false;
 
-				auto encoded_address = server->encode_address(asset, address);
+				auto encoded_address = bridge->encode_address(asset, address);
 				if (encoded_address)
 					addresses[version] = std::move(*encoded_address);
 				else

@@ -57,18 +57,22 @@ namespace tangent
 	private:
 		string error_message;
 		int8_t error_status;
+		uint64_t error_retry_time;
 
 	public:
 		remote_exception(string&& text);
 		const char* what() const noexcept override;
 		string&& message() noexcept;
+		uint64_t retry_after_timestamp() const noexcept;
+		bool is_retry_after() const noexcept;
 		bool is_retry() const noexcept;
 		bool is_shutdown() const noexcept;
-		static remote_exception retry();
+		static remote_exception retry_later();
+		static remote_exception retry_after(uint64_t timestamp);
 		static remote_exception shutdown();
 
 	private:
-		remote_exception(int8_t new_status);
+		remote_exception(int8_t new_status, uint64_t new_retry_time);
 	};
 
 	template <typename v>
@@ -181,11 +185,10 @@ namespace tangent
 			struct
 			{
 				uptr<format::tree> options;
-				uint64_t relaying_timeout = 30000;
-				uint64_t relaying_retry_timeout = 300;
+				uint64_t polling_frequency = 70000;
 				uint32_t cache1_size = 4096;
 				uint32_t cache2_size = 16384;
-				bool server = false;
+				bool listener = false;
 				bool logging = true;
 			} superchain;
 			struct
@@ -200,7 +203,7 @@ namespace tangent
 			} rpc;
 			struct
 			{
-				uint64_t timeout = 60000;
+				uint64_t timeout = 15000;
 				uint64_t keep_alive = 5000;
 				uint64_t mbps_per_socket = 24;
 				uint64_t tls_trusted_peers = 100;
@@ -301,9 +304,9 @@ namespace tangent
 			struct
 			{
 				uint64_t epoch_length = 500000;
-				uint64_t genesis_epoch_length = 10000;
+				uint64_t genesis_epoch_length = 5000;
 				decimal decay_rate = std::string_view("0.01");
-				decimal genesis_coinbase_value = std::string_view("70");
+				decimal genesis_coinbase_value = std::string_view("40");
 				decimal coinbase_value = std::string_view("1.2");
 				decimal min_coinbase_value = std::string_view("0.0002");
 			} emission;

@@ -2,7 +2,6 @@
 #include "script.h"
 #include "../storage/chainstate.h"
 #include "../storage/mempoolstate.h"
-#include "../service/superchain.h"
 #include <rocksdb/db.h>
 #include <rocksdb/table.h>
 #define KEY_FRONT 32
@@ -70,7 +69,7 @@ namespace tangent
 		return std::move(error_message);
 	}
 
-	remote_exception::remote_exception(int8_t new_status) : std::exception(), error_status(new_status)
+	remote_exception::remote_exception(int8_t new_status, uint64_t new_retry_time) : std::exception(), error_status(new_status), error_retry_time(new_retry_time)
 	{
 	}
 	remote_exception::remote_exception(string&& text) : std::exception(), error_message(std::move(text)), error_status(0)
@@ -79,7 +78,7 @@ namespace tangent
 	const char* remote_exception::what() const noexcept
 	{
 		if (error_status > 0)
-			return "result currently unavailable (may retry)";
+			return error_retry_time > 0 ? "result currently unavailable (may retry after exact time)" : "result currently unavailable (may retry later)";
 		else if (error_status < 0)
 			return "failed due to a shutdown";
 		return error_message.c_str();
@@ -92,6 +91,14 @@ namespace tangent
 			error_message = "failed due to a shutdown";
 		return std::move(error_message);
 	}
+	uint64_t remote_exception::retry_after_timestamp() const noexcept
+	{
+		return error_retry_time;
+	}
+	bool remote_exception::is_retry_after() const noexcept
+	{
+		return is_retry() && error_retry_time > 0;
+	}
 	bool remote_exception::is_retry() const noexcept
 	{
 		return error_status > 0;
@@ -100,13 +107,17 @@ namespace tangent
 	{
 		return error_status < 0;
 	}
-	remote_exception remote_exception::retry()
+	remote_exception remote_exception::retry_later()
 	{
-		return remote_exception(1);
+		return remote_exception(1, 0);
+	}
+	remote_exception remote_exception::retry_after(uint64_t timestamp)
+	{
+		return remote_exception(1, timestamp);
 	}
 	remote_exception remote_exception::shutdown()
 	{
-		return remote_exception(-1);
+		return remote_exception(-1, 0);
 	}
 
 	repository::~repository()
@@ -593,13 +604,9 @@ namespace tangent
 			if (value != nullptr && value->value.is_boolean())
 				user.discovery.logging = value->value.as_boolean();
 
-			value = config->child("superchain.relaying_timeout");
+			value = config->child("superchain.polling_frequency");
 			if (value != nullptr && value->value.is_integer())
-				user.superchain.relaying_timeout = value->value.as_uint64();
-
-			value = config->child("superchain.relaying_retry_timeout");
-			if (value != nullptr && value->value.is_integer())
-				user.superchain.relaying_retry_timeout = value->value.as_uint64();
+				user.superchain.polling_frequency = value->value.as_uint64();
 
 			value = config->child("superchain.cache1_size");
 			if (value != nullptr && value->value.is_integer())
@@ -609,9 +616,9 @@ namespace tangent
 			if (value != nullptr && value->value.is_integer())
 				user.superchain.cache2_size = value->value.as_uint32();
 
-			value = config->child("superchain.server");
+			value = config->child("superchain.listener");
 			if (value != nullptr && value->value.is_boolean())
-				user.superchain.server = value->value.as_boolean();
+				user.superchain.listener = value->value.as_boolean();
 
 			value = config->child("superchain.logging");
 			if (value != nullptr && value->value.is_boolean())
@@ -888,7 +895,7 @@ namespace tangent
 	protocol::~protocol()
 	{
 		database.checkpoint();
-		superchain::server_node::cleanup_instance();
+		superchain::bridge::cleanup_instance();
 		script::factory::cleanup_instance();
 		algorithm::signing::deinitialize();
 		error_handling::set_callback(nullptr);

@@ -232,7 +232,7 @@ namespace tangent
 				ledger::block_evaluation solution;
 				ledger::block_rewards rewards;
 				hash_set<uint256_t> hashes;
-				expects_rt<void> result = remote_exception::retry();
+				expects_rt<void> result = remote_exception::retry_later();
 
 				void reset();
 			};
@@ -288,7 +288,7 @@ namespace tangent
 			expects_rt<format::variables> recover_entropy(uref<relay>&& state, const exchange& event);
 			expects_rt<format::variables> aggregate_public_key(uref<relay>&& state, const exchange& event);
 			expects_rt<format::variables> aggregate_signature(uref<relay>&& state, const exchange& event);
-			expects_lr<void> dispatch_transaction_logs(const algorithm::asset_id& asset, const superchain::chain_supervisor_options& options, superchain::transaction_logs&& logs);
+			expects_lr<void> dispatch_transaction_logs(const algorithm::asset_id& asset, const superchain::network_options& options, superchain::transaction_logs&& logs);
 			expects_lr<socket_address> find_node_from_mempool();
 			expects_promise_rt<socket_address> find_node_from_discovery();
 			expects_promise_rt<uref<relay>> connect_to_physical_node(const socket_address& address);
@@ -304,6 +304,7 @@ namespace tangent
 			void bind_query(const callable::descriptor& descriptor, query_callback&& on_query_callback);
 			bool try_acquire_checkpointer();
 			void release_checkpointer();
+			bool run_superchain_sync();
 			bool run_topology_optimization();
 			bool run_mempool_vacuum();
 			bool run_fork_resolution();

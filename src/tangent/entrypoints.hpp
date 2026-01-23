@@ -2,7 +2,6 @@
 #define TAN_VALIDATOR_ENTRYPOINTS_HPP
 #include "service/consensus.h"
 #include "service/discovery.h"
-#include "service/superchain.h"
 #include "service/rpc.h"
 #include "storage/chainstate.h"
 #include "kernel/script.h"
@@ -1042,13 +1041,11 @@ namespace tangent
 			auto params = protocol(environment);
 			consensus::server_node consensus_service;
 			discovery::server_node discovery_service;
-			superchain::server_node& superchain_service = *superchain::server_node::get();
 			rpc::server_node rpc_service = rpc::server_node(&consensus_service);
 
 			service_control control;
-			control.bind(discovery_service.get_entrypoint());
 			control.bind(consensus_service.get_entrypoint());
-			control.bind(superchain_service.get_entrypoint());
+			control.bind(discovery_service.get_entrypoint());
 			control.bind(rpc_service.get_entrypoint());
 			return control.launch();
 		}

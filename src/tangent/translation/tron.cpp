@@ -1,5 +1,4 @@
 #include "tron.h"
-#include "../service/superchain.h"
 extern "C"
 {
 #include "../internal/bitcoin.h"
@@ -19,6 +18,12 @@ namespace tangent
 				format::tree transaction_data;
 			};
 
+			static promise<void> sleep_async(uint64_t milliseconds)
+			{
+				promise<void> result;
+				schedule::get()->set_timeout(milliseconds, [result]() mutable { result.set(); });
+				return result;
+			}
 			static void pb_varint(format::wo_stream& message, uint64_t value)
 			{
 				uint64_t bits = value & 0x7f;
@@ -205,7 +210,7 @@ namespace tangent
 				info.expiration = info.timestamp + 60 * 1000;
 				coreturn expects_rt<tron::trx_tx_block_header_info>(std::move(info));
 			}
-			expects_lr<void> tron::verify_node_compatibility(server_relay* node)
+			expects_lr<void> tron::verify_node_compatibility(connection_instance* node)
 			{
 				if (!node->has_distinct_url("jrpc"))
 					return layer_exception("trongrid jrpc solidity node is required (default location http://hostname:8545/jsonrpc)");
@@ -313,7 +318,7 @@ namespace tangent
 							auto& token_output = outputs[to][token_asset];
 							token_input = token_input.is_nan() ? token_value : (token_input + token_value);
 							token_output = token_output.is_nan() ? token_value : (token_output + token_value);
-							superchain::server_node::get()->enable_contract_address(token_asset, contract_address);
+							bridge::get()->enable_contract_address(token_asset, contract_address);
 						}
 					}
 				}
@@ -364,7 +369,7 @@ namespace tangent
 			}
 			expects_promise_rt<decimal> tron::calculate_balance(const algorithm::asset_id& for_asset, const wallet_link& link)
 			{
-				auto contract_address = superchain::server_node::get()->get_contract_address(for_asset);
+				auto contract_address = bridge::get()->get_contract_address(for_asset);
 				decimal divisibility = netdata.divisibility;
 				if (contract_address)
 				{
@@ -410,7 +415,7 @@ namespace tangent
 					coreturn expects_rt<void>(remote_exception(std::move(transaction_data.error().message())));
 
 				uint64_t retry_timeout = 2000;
-				auto result = expects_rt<format::tree>(remote_exception::retry());
+				auto result = expects_rt<format::tree>(remote_exception::retry_later());
 				for (size_t i = 0; i < 6; i++)
 				{
 					result = coawait(execute_rest("POST", trx_nd_call::broadcast_transaction(), *transaction_data, cache_policy::no_cache));
@@ -418,11 +423,10 @@ namespace tangent
 						break;
 					
 					auto error_message = result.what();
-					auto* nodes = superchain::server_node::get()->get_nodes(native_asset);
-					if (result.error().is_retry() || result.error().is_shutdown() || stringify::to_lower(error_message).find("java.lang.nullpointerexception") == std::string::npos || !nodes || nodes->empty())
+					if (result.error().is_retry() || result.error().is_shutdown() || stringify::to_lower(error_message).find("java.lang.nullpointerexception") == std::string::npos)
 						coreturn expects_rt<void>(std::move(result.error()));
-					else if (!coawait(nodes->front()->yield_for_cooldown(retry_timeout, 0)))
-						coreturn expects_rt<void>(remote_exception::shutdown());
+					
+					coawait(sleep_async(retry_timeout));
 				}
 				if (!result)
 					coreturn expects_rt<void>(std::move(result.error()));
@@ -447,7 +451,7 @@ namespace tangent
 				if (!fee)
 					coreturn expects_rt<prepared_transaction>(std::move(fee.error()));
 
-				auto contract_address = superchain::server_node::get()->get_contract_address(to.asset);
+				auto contract_address = bridge::get()->get_contract_address(to.asset);
 				if (contract_address)
 					fee->gas.gas_limit *= 4;
 

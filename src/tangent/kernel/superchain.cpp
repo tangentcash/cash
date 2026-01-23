@@ -1,16 +1,55 @@
 #include "superchain.h"
-#include "../service/superchain.h"
+#include "../storage/superchainstate.h"
+#include "../translation/bitcoin.h"
+#include "../translation/cardano.h"
+#include "../translation/ethereum.h"
+#include "../translation/ripple.h"
+#include "../translation/solana.h"
+#include "../translation/stellar.h"
+#include "../translation/tron.h"
+#include "../translation/monero.h"
 #include <sstream>
 
 namespace tangent
 {
 	namespace superchain
 	{
-		static string generate_error_message(const expects_system<http::response_frame>& response, const server_relay::error_reporter& reporter, const std::string_view& error_code, const std::string_view& error_message)
+		template <typename t>
+		static bridge::invocation_callback chain(bridge* server)
+		{
+			return [server](const std::string_view& blockchain) -> bool
+			{
+				algorithm::asset_id asset = algorithm::asset::id_of(blockchain);
+				if (server->has_network(asset))
+					return false;
+
+				server->add_network<t>(asset);
+				return true;
+			};
+		}
+		static value_transfer normalize_value(translation* implementation, const value_transfer& to)
+		{
+			auto result = to;
+			result.value = implementation->to_value(result.value);
+			return result;
+		}
+		static computed_fee normalize_value(translation* implementation, const computed_fee& fee)
+		{
+			auto result = fee;
+			result.fee.fee_rate = implementation->to_value(result.fee.fee_rate);
+			result.gas.gas_premium = implementation->to_value(result.gas.gas_premium);
+			result.gas.gas_price = implementation->to_value(result.gas.gas_price);
+			return result;
+		}
+		static decimal normalize_value(translation* implementation, const decimal& value)
+		{
+			return implementation->to_value(value);
+		}
+		static string normalize_error(const expects_system<http::response_frame>& response, const bridge::error_reporter& reporter, const std::string_view& error_code, const std::string_view& error_message)
 		{
 			string_stream message;
 			string method = reporter.method;
-			message << "superchain::" << reporter.type << "::" << stringify::to_lower(method) << " error: ";
+			message << "" << reporter.type << "::" << stringify::to_lower(method) << " error: ";
 			if (error_message.empty())
 				message << "no response";
 			else
@@ -840,6 +879,41 @@ namespace tangent
 			return "finalized_transaction";
 		}
 
+		void transaction_logs::report_logs(const algorithm::asset_id& asset, const network_options& options)
+		{
+			auto blockchain = algorithm::asset::blockchain_of(asset);
+			VI_INFO("%s block %s found (height: %i, sync: %.2f%%, txns: %i)",
+				blockchain.c_str(),
+				block_hash.c_str(),
+				(int)block_height,
+				options.get_checkpoint_percentage(),
+				(int)receipts.size());
+
+			for (auto& tx : receipts)
+			{
+				string transfer_logs = stringify::text(
+					"%s transaction %s found (block: %" PRIu64 ")\n",
+					blockchain.c_str(),
+					tx.transaction_id.c_str(), tx.block_id);
+				for (auto& [hash, input] : tx.inputs)
+				{
+					transfer_logs += stringify::text("  %s spends %s %s\n", input.link.as_name().c_str(), input.value.to_string().c_str(), blockchain.c_str());
+					for (auto& [token_hash, token] : input.tokens)
+						transfer_logs += stringify::text("    with %s %s\n", token.value.to_string().c_str(), algorithm::asset::name_of(token.get_asset(asset)).c_str());
+				}
+				for (auto& [hash, output] : tx.outputs)
+				{
+					transfer_logs += stringify::text("  %s receives %s %s\n", output.link.as_name().c_str(), output.value.to_string().c_str(), blockchain.c_str());
+					for (auto& [token_hash, token] : output.tokens)
+						transfer_logs += stringify::text("    with %s %s\n", token.value.to_string().c_str(), algorithm::asset::name_of(token.get_asset(asset)).c_str());
+				}
+				if (transfer_logs.back() == '\n')
+					transfer_logs.erase(transfer_logs.end() - 1);
+
+				VI_INFO("%s", transfer_logs.c_str());
+			}
+		}
+
 		decimal computed_fee::get_max_fee() const
 		{
 			switch (type)
@@ -898,365 +972,70 @@ namespace tangent
 			return result;
 		}
 
-		void chain_supervisor_options::set_checkpoint_from_block(uint64_t block_height)
+		format::tree computed_wallet::as_tree() const
 		{
-			if (!state.starting_block_height)
-				state.starting_block_height = block_height;
-			state.latest_block_height = block_height;
+			auto data = format::tree::map();
+			data.set("seed", format::variable(format::util::encode_0xhex(std::string_view((char*)seed.data(), seed.size()))));
+			data.set("secret_key", format::variable(format::util::encode_0xhex(std::string_view((char*)secret_key.data(), secret_key.size()))));
+			data.set("public_key", format::variable(format::util::encode_0xhex(std::string_view((char*)public_key.data(), public_key.size()))));
+			data.set("encoded_secret_key", format::variable(encoded_secret_key.heap()));
+			data.set("encoded_public_key", format::variable(encoded_public_key));
+			auto* addresses_data = data.set("addresses", format::tree::list());
+			for (auto encoded_address : encoded_addresses)
+			{
+				auto intemediate = addresses.find(encoded_address.first);
+				auto* address = addresses_data->push(format::tree::map());
+				address->set("version", format::variable(encoded_address.first));
+				address->set("address", intemediate != addresses.end() ? format::variable(format::util::encode_0xhex(intemediate->second)) : format::variable());
+				address->set("encoded_address", format::variable(encoded_address.second));
+			}
+			return data;
 		}
-		void chain_supervisor_options::set_checkpoint_to_block(uint64_t block_height)
+
+		void network_options::set_checkpoint_from_block(uint64_t block_height)
 		{
-			if (!state.current_block_height && !state.latest_block_height && !state.starting_block_height)
+			state.inital_block_height = block_height;
+			state.index_block_height = block_height;
+			state.target_block_height = 0;
+		}
+		void network_options::set_checkpoint_to_block(uint64_t block_height)
+		{
+			if (!state.inital_block_height || !state.index_block_height)
 				set_checkpoint_from_block(block_height > 1 ? block_height - 1 : block_height);
-			state.current_block_height = block_height;
+			state.target_block_height = block_height;
 		}
-		uint64_t chain_supervisor_options::get_next_block_height(uint64_t block_count)
+		uint64_t network_options::get_next_block_height(uint64_t block_count)
 		{
 			block_count = std::max<uint64_t>(1, block_count);
-			uint64_t result = (state.latest_block_height / block_count) * block_count;
-			state.latest_block_height = result + block_count;
+			uint64_t result = (state.index_block_height / block_count) * block_count;
+			state.index_block_height = result + block_count;
 			return result;
 		}
-		uint64_t chain_supervisor_options::get_time_awaited() const
-		{
-			return state.latest_time_awaited;
-		}
-		bool chain_supervisor_options::has_next_block_height(uint64_t block_count) const
+		bool network_options::has_next_block_height(uint64_t block_count) const
 		{
 			block_count = std::max<uint64_t>(1, block_count) - 1;
-			return state.current_block_height >= state.latest_block_height + block_count;
+			return state.index_block_height + block_count <= state.target_block_height;
 		}
-		bool chain_supervisor_options::has_current_block_height() const
+		bool network_options::has_target_block_height() const
 		{
-			return state.current_block_height > 0;
+			return state.target_block_height > 0;
 		}
-		bool chain_supervisor_options::has_latest_block_height() const
+		double network_options::get_checkpoint_percentage() const
 		{
-			return state.latest_block_height > 0;
-		}
-		bool chain_supervisor_options::will_wait_for_transactions() const
-		{
-			return has_latest_block_height() && !has_next_block_height(0);
-		}
-		double chain_supervisor_options::get_checkpoint_percentage() const
-		{
-			if (!has_latest_block_height() || !has_current_block_height())
+			if (!state.inital_block_height || !state.index_block_height || !state.target_block_height)
 				return 0.0;
 
 			double multiplier = 100.0;
-			double current_value = (double)(state.latest_block_height - state.starting_block_height);
-			double target_value = (double)(state.current_block_height - state.starting_block_height) + 1.0;
+			double current_value = (double)((state.index_block_height - 1) - state.inital_block_height);
+			double target_value = (double)(state.target_block_height - state.inital_block_height);
+			if (current_value == target_value)
+				return multiplier;
+
 			double percentage = multiplier * current_value / target_value;
 			return std::min(std::floor(percentage * multiplier) / multiplier, multiplier);
 		}
-		const hash_set<server_relay*>& chain_supervisor_options::get_interacted_nodes() const
-		{
-			return state.interactions;
-		}
-		bool chain_supervisor_options::is_cancelled(const algorithm::asset_id& asset)
-		{
-			auto* nodes = superchain::server_node::get()->get_nodes(asset);
-			if (!nodes || nodes->empty())
-				return true;
 
-			for (auto& node : *nodes)
-			{
-				if (!node->is_activity_allowed())
-					return true;
-			}
-
-			return false;
-		}
-
-		chain_supervisor_options& multichain_supervisor_options::add_specific_options(const std::string_view& blockchain)
-		{
-			auto& options = specifics[string(blockchain)];
-			auto* settings = (supervisor_options*)&options;
-			*settings = *(supervisor_options*)this;
-			return options;
-		}
-
-		server_relay::server_relay(hash_map<string, string>&& node_urls, double node_rps) noexcept : urls(std::move(node_urls)), latest(0), rps(node_rps), allowed(true), user_data(nullptr)
-		{
-			for (auto& [type, path] : urls)
-				stringify::trim(path);
-		}
-		server_relay::~server_relay() noexcept
-		{
-			cancel_activities();
-		}
-		expects_promise_rt<format::tree> server_relay::execute_rpc(const algorithm::asset_id& asset, error_reporter& reporter, const std::string_view& method, const format::tree& args, cache_policy cache, const std::string_view& path, bool multi)
-		{
-			if (reporter.type.empty())
-				reporter.type = "jrpc";
-			if (reporter.method.empty())
-				reporter.method = method;
-
-			auto priority = get_cache_type(cache);
-			auto setup = format::tree::map();
-			setup.set("jsonrpc", format::variable("2.0"));
-			setup.set("method", format::variable(method));
-			if (multi && args.fields && args.fields->size() > 1)
-			{
-				auto multi_setup = format::tree::list();
-				for (auto& request : *args.fields)
-				{
-					auto* sub_setup = multi_setup.push(setup);
-					sub_setup->set("params", request);
-					sub_setup->set("id", format::variable(string(priority) + to_string(multi_setup.childs().size())));
-				}
-				setup = std::move(multi_setup);
-			}
-			else
-			{
-				setup.set("params", multi && args.fields ? args.fields->front() : args);
-				setup.set("id", format::variable(priority));
-			}
-
-			auto response = coawait(execute_rest(asset, reporter, "POST", path, setup, cache));
-			if (!response)
-				coreturn expects_rt<format::tree>(std::move(response.error()));
-
-			auto to_response = [&reporter](format::tree& response) -> expects_rt<format::tree>
-			{
-				if (response.has("error.code"))
-				{
-					string code = response.child_var("error.code").as_blob();
-					string description = response.has("error.message") ? response.child_var("error.message").as_blob() : "no error description";
-					return expects_rt<format::tree>(remote_exception(generate_error_message(expects_system<http::response_frame>(system_exception()), reporter, code, description)));
-				}
-				else if (response.has("result.error_code"))
-				{
-					string code = response.child_var("result.error_code").as_blob();
-					string description = response.has("result.error_message") ? response.child_var("result.error_message").as_blob() : "no error description";
-					return expects_rt<format::tree>(remote_exception(generate_error_message(expects_system<http::response_frame>(system_exception()), reporter, code, description)));
-				}
-
-				auto* result = (format::tree*)response.child("result");
-				if (!result)
-				{
-					string description = response.value.is_string() ? response.value.as_blob() : "no error description";
-					return expects_rt<format::tree>(remote_exception(generate_error_message(expects_system<http::response_frame>(system_exception()), reporter, "null", description)));
-				}
-
-				return expects_rt<format::tree>(std::move(*result));
-			};
-			if (!multi)
-				coreturn to_response(*response);
-
-			format::tree results;
-			if (args.fields && args.fields->size() > 1)
-			{
-				for (auto& subresponse : response->childs())
-				{
-					auto subresult = to_response(subresponse);
-					if (!subresult)
-						coreturn subresult;
-
-					results.push(std::move(*subresult));
-				}
-			}
-			else
-			{
-				auto subresult = to_response(*response);
-				if (!subresult)
-					coreturn subresult;
-
-				results.push(std::move(*subresult));
-			}
-			coreturn expects_rt<format::tree>(std::move(results));
-		}
-		expects_promise_rt<format::tree> server_relay::execute_rest(const algorithm::asset_id& asset, error_reporter& reporter, const std::string_view& method, const std::string_view& path, const format::tree& args, cache_policy cache)
-		{
-			if (reporter.type.empty())
-				reporter.type = "rest";
-			if (reporter.method.empty())
-				reporter.method = location(get_node_url(reporter.type, path)).path.substr(1);
-
-			string body = (args.is_none() ? string() : args.as_json());
-			coreturn coawait(execute_http(asset, reporter, method, path, "application/json", body, cache));
-		}
-		expects_promise_rt<format::tree> server_relay::execute_http(const algorithm::asset_id& asset, error_reporter& reporter, const std::string_view& method, const std::string_view& path, const std::string_view& type, const std::string_view& body, cache_policy cache)
-		{
-			if (reporter.type.empty())
-				reporter.type = "http";
-
-			string target_url = get_node_url(reporter.type, path);
-			if (reporter.method.empty())
-				reporter.method = location(target_url).path.substr(1);
-
-			if (!allowed)
-				coreturn expects_rt<format::tree>(remote_exception(generate_error_message(expects_system<http::response_frame>(system_exception()), reporter, "null", "system shutdown (cancelled)")));
-
-			if (path.empty() && body.empty())
-				cache = cache_policy::no_cache;
-
-			auto* server = superchain::server_node::get();
-			string message = string(path).append(body);
-			string hash = codec::hex_encode(algorithm::hashing::hash256((uint8_t*)message.data(), message.size()));
-			if (cache != cache_policy::no_cache && cache != cache_policy::no_cache_no_throttling)
-			{
-				auto data = server->load_cache(asset, cache, hash);
-				if (data)
-					coreturn expects_rt<format::tree>(std::move(*data));
-			}
-
-			if (rps > 0.0 && cache != cache_policy::no_cache_no_throttling)
-			{
-				const int64_t time = (int64_t)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-				const double timeout = (double)(time - latest);
-				const double limit = 1000.0 / rps;
-				const uint64_t cooldown = (uint64_t)(limit - timeout);
-				uint64_t retry_timeout = cooldown;
-				if (timeout < limit && !coawait(yield_for_cooldown(retry_timeout, protocol::now().user.superchain.relaying_timeout)))
-					coreturn expects_rt<format::tree>(remote_exception::retry());
-				else if (!allowed)
-					coreturn expects_rt<format::tree>(remote_exception::shutdown());
-				latest = (int64_t)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-			}
-
-			http::fetch_frame setup;
-			setup.max_size = 16 * 1024 * 1024;
-			setup.verify_peers = (uint32_t)protocol::now().user.tcp.tls_trusted_peers;
-			setup.timeout = protocol::now().user.superchain.relaying_timeout;
-			setup.set_header("User-Agent", "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)");
-
-			uint64_t retry_responses = 0;
-			uint64_t retry_timeout = protocol::now().user.superchain.relaying_retry_timeout;
-			if (!body.empty())
-			{
-				setup.set_header("Content-Type", type);
-				setup.content.assign(body);
-			}
-		retry:
-			auto response = coawait(server->internal_call(target_url, method, setup));
-			if (!response || response->status_code == 408 || response->status_code == 429 || response->status_code == 502 || response->status_code == 503 || response->status_code == 504)
-			{
-				++retry_responses;
-				if (cache == cache_policy::no_cache_no_throttling)
-					coreturn response ? expects_rt<format::tree>(remote_exception(generate_error_message(response, reporter, "null", "node has rejected the request"))) : expects_rt<format::tree>(remote_exception::shutdown());
-				else if (retry_responses > 5)
-					coreturn response ? expects_rt<format::tree>(remote_exception(generate_error_message(response, reporter, "null", "node has rejected the request too many times"))) : expects_rt<format::tree>(remote_exception::shutdown());
-				else if (!coawait(yield_for_cooldown(retry_timeout, setup.timeout)))
-					coreturn response ? expects_rt<format::tree>(remote_exception(generate_error_message(response, reporter, "null", "node has rejected the request after cooldown"))) : expects_rt<format::tree>(remote_exception::shutdown());
-				else if (!allowed)
-					coreturn expects_rt<format::tree>(remote_exception::shutdown());
-				goto retry;
-			}
-
-			format::tree result;
-			auto content_type = response->get_header("Content-Type");
-			if (stringify::starts_with(content_type, "application/json") || stringify::starts_with(content_type, "application/hal+json"))
-			{
-				auto data = format::tree::from_json(std::string_view(response->content.data.data(), response->content.data.size()));
-				if (!data)
-					coreturn expects_rt<format::tree>(remote_exception(generate_error_message(response, reporter, "null", "response decoding failed: " + data.error().message())));
-
-				result = std::move(*data);
-			}
-			else
-				result = format::variable::from(std::string_view(response->content.data.data(), response->content.data.size()));
-
-			if (cache != cache_policy::no_cache && cache != cache_policy::no_cache_no_throttling && (response->status_code < 400 || response->status_code == 404))
-				server->store_cache(asset, cache, hash, result);
-
-			coreturn expects_rt<format::tree>(std::move(result));
-		}
-		promise<bool> server_relay::yield_for_cooldown(uint64_t& retry_timeout, uint64_t total_timeout_ms)
-		{
-			if (total_timeout_ms > 0 && retry_timeout >= total_timeout_ms)
-				coreturn false;
-
-			promise<bool> future;
-			task_id timer_id = enqueue_activity(future, schedule::get()->set_timeout(retry_timeout, [future]() mutable
-			{
-				if (future.is_pending())
-					future.set(true);
-			}));
-			if (!coawait(std::move(future)))
-				coreturn false;
-
-			dequeue_activity(timer_id);
-			retry_timeout *= 2;
-			coreturn true;
-		}
-		promise<bool> server_relay::yield_for_discovery(chain_supervisor_options* options)
-		{
-			if (!allowed)
-				coreturn promise<bool>(false);
-
-			promise<bool> future;
-			options->state.latest_time_awaited += options->polling_frequency;
-			task_id timer_id = enqueue_activity(future, schedule::get()->set_timeout(options->polling_frequency, [future]() mutable
-			{
-				if (future.is_pending())
-					future.set(true);
-			}));
-			if (!coawait(std::move(future)))
-				coreturn false;
-
-			dequeue_activity(timer_id);
-			coreturn true;
-		}
-		expects_lr<void> server_relay::verify_compatibility(const algorithm::asset_id& asset)
-		{
-			auto* implementation = superchain::server_node::get()->get_chain(asset);
-			if (!implementation)
-				return expectation::met;
-
-			return implementation->verify_node_compatibility(this);
-		}
-		task_id server_relay::enqueue_activity(const promise<bool>& future, task_id timer_id)
-		{
-			if (future.is_pending())
-			{
-				umutex<std::recursive_mutex> unique(mutex);
-				tasks.push_back(std::make_pair(future, timer_id));
-			}
-			if (!allowed)
-				cancel_activities();
-			return timer_id;
-		}
-		void server_relay::dequeue_activity(task_id timer_id)
-		{
-			umutex<std::recursive_mutex> unique(mutex);
-			for (auto it = tasks.begin(); it != tasks.end(); it++)
-			{
-				if (it->second == timer_id)
-				{
-					tasks.erase(it);
-					break;
-				}
-			}
-		}
-		void server_relay::allow_activities()
-		{
-			allowed = true;
-		}
-		void server_relay::trigger_activities()
-		{
-			umutex<std::recursive_mutex> unique(mutex);
-			for (auto& task : tasks)
-			{
-				schedule::get()->clear_timeout(task.second);
-				if (task.first.is_pending())
-					task.first.set(true);
-			}
-			tasks.clear();
-		}
-		void server_relay::cancel_activities()
-		{
-			umutex<std::recursive_mutex> unique(mutex);
-			allowed = false;
-			for (auto& task : tasks)
-			{
-				schedule::get()->clear_timeout(task.second);
-				if (task.first.is_pending())
-					task.first.set(false);
-			}
-			tasks.clear();
-		}
-		bool server_relay::has_distinct_url(const std::string_view& type) const
+		bool connection_instance::has_distinct_url(const std::string_view& type) const
 		{
 			if (type.empty() || type == "auto")
 				return !urls.empty();
@@ -1264,11 +1043,7 @@ namespace tangent
 			auto it = urls.find(key_lookup_cast(type));
 			return it != urls.end();
 		}
-		bool server_relay::is_activity_allowed() const
-		{
-			return allowed;
-		}
-		const string& server_relay::get_node_url(const std::string_view& type) const
+		const string& connection_instance::get_url(const std::string_view& type) const
 		{
 			VI_ASSERT(!urls.empty(), "node does not have any urls");
 			auto it = urls.find(key_lookup_cast(type));
@@ -1281,120 +1056,108 @@ namespace tangent
 
 			return urls.begin()->second;
 		}
-		string server_relay::get_node_url(const std::string_view& type, const std::string_view& endpoint) const
+		string connection_instance::get_url(const std::string_view& type, const std::string_view& path) const
 		{
-			if (stringify::starts_with(endpoint, "http"))
-				return string(endpoint);
+			if (stringify::starts_with(path, "http"))
+				return string(path);
 
-			string URL = get_node_url(type);
-			if (URL.empty() || endpoint.empty())
-				return URL;
+			string url = get_url(type);
+			if (url.empty() || path.empty())
+				return url;
 
-			if (URL.back() == '/' && endpoint.front() == '/')
-				URL.erase(URL.end() - 1);
-			else if (URL.back() != '/' && endpoint.front() != '/')
-				URL += '/';
-			URL += endpoint;
-			return URL;
+			if (url.back() == '/' && path.front() == '/')
+				url.erase(url.end() - 1);
+			else if (url.back() != '/' && path.front() != '/')
+				url += '/';
+			url += path;
+			return url;
 		}
-		std::string_view server_relay::get_cache_type(cache_policy cache)
+
+		string address_util::encode_tag_address(const std::string_view& address, const std::string_view& destination_tag)
 		{
-			switch (cache)
+			auto split = address.rfind('#');
+			size_t address_size = split == string::npos ? address.size() : split;
+			if (destination_tag.empty() || destination_tag == "0")
+				return string(address.substr(0, address_size));
+
+			return stringify::text("%.*s#%.*s", (int)address_size, address.data(), (int)destination_tag.size(), destination_tag.data());
+		}
+		std::pair<string, string> address_util::decode_tag_address(const std::string_view& address_destination_tag)
+		{
+			auto split = address_destination_tag.rfind('#');
+			if (split == string::npos || split + 1 >= address_destination_tag.size())
+				return std::make_pair(string(address_destination_tag), string());
+
+			return std::make_pair(string(address_destination_tag.substr(0, split)), string(address_destination_tag.substr(split + 1)));
+		}
+
+		translation::translation(const algorithm::asset_id& new_asset) noexcept : native_asset(algorithm::asset::base_id_of(new_asset)), round_robin_index(crypto::random()), allow_any_token(true)
+		{
+		}
+		translation::~translation() noexcept
+		{
+		}
+		expects_promise_rt<format::tree> translation::execute_rpc(const std::string_view& method, const format::tree& args, cache_policy cache, const std::string_view& path)
+		{
+			auto* instance = bridge::get()->get_network_instance(native_asset);
+			auto exception = remote_exception("failed to fetch the response");
+			for (size_t i = 0; instance != nullptr && i < instance->connections.size(); i++)
 			{
-				case cache_policy::no_cache:
-					return "no_cache";
-				case cache_policy::no_cache_no_throttling:
-					return "no_cache_no_throttling";
-				case cache_policy::temporary_cache:
-					return "temporary_cache";
-				case cache_policy::blob_cache:
-					return "blob_cache";
-				case cache_policy::lifetime_cache:
-					return "lifetime_cache";
-				default:
-					return "unset";
-			}
-		}
-
-		relay_backend::relay_backend(const algorithm::asset_id& new_asset) noexcept : native_asset(algorithm::asset::base_id_of(new_asset)), round_robin_index(crypto::random()), allow_any_token(true), interact(nullptr)
-		{
-		}
-		relay_backend::~relay_backend() noexcept
-		{
-		}
-		expects_promise_rt<format::tree> relay_backend::execute_rpc(const std::string_view& method, const format::tree& args, cache_policy cache, const std::string_view& path)
-		{
-			auto* nodes = superchain::server_node::get()->get_nodes(native_asset);
-			if (!nodes || nodes->empty())
-				coreturn expects_rt<format::tree>(remote_exception("node not found"));
-
-			while (true)
-			{
-				server_relay::error_reporter reporter;
-				auto* node = *nodes->at((++round_robin_index) % nodes->size());
-				auto result = coawait(node->execute_rpc(native_asset, reporter, method, args, cache, path, false));
-				if (interact) interact(node);
+				bridge::error_reporter reporter;
+				auto& connection = instance->connections[(++round_robin_index) % instance->connections.size()];
+				auto result = coawait(bridge::get()->execute_rpc(native_asset, connection, reporter, method, args, cache, path, false));
+				exception = result || !result.error().is_retry() ? exception : result.error();
 				if (result || !result.error().is_retry())
 					coreturn result;
 			}
-
-			coreturn expects_rt<format::tree>(remote_exception("node not found"));
+			coreturn expects_rt<format::tree>(std::move(exception));
 		}
-		expects_promise_rt<format::tree> relay_backend::execute_rpc_multi(const std::string_view& method, const format::tree& args, cache_policy cache, const std::string_view& path)
+		expects_promise_rt<format::tree> translation::execute_rpc_multi(const std::string_view& method, const format::tree& args, cache_policy cache, const std::string_view& path)
 		{
-			auto* nodes = superchain::server_node::get()->get_nodes(native_asset);
-			if (!nodes || nodes->empty())
-				coreturn expects_rt<format::tree>(remote_exception("node not found"));
-
-			while (true)
+			auto* instance = bridge::get()->get_network_instance(native_asset);
+			auto exception = remote_exception("failed to fetch the response");
+			for (size_t i = 0; instance != nullptr && i < instance->connections.size(); i++)
 			{
-				server_relay::error_reporter reporter;
-				auto* node = *nodes->at((++round_robin_index) % nodes->size());
-				auto result = coawait(node->execute_rpc(native_asset, reporter, method, args, cache, path, true));
-				if (interact) interact(node);
+				bridge::error_reporter reporter;
+				auto& connection = instance->connections[(++round_robin_index) % instance->connections.size()];
+				auto result = coawait(bridge::get()->execute_rpc(native_asset, connection, reporter, method, args, cache, path, true));
+				exception = result || !result.error().is_retry() ? exception : result.error();
 				if (result || !result.error().is_retry())
 					coreturn result;
 			}
-
-			coreturn expects_rt<format::tree>(remote_exception("node not found"));
+			coreturn expects_rt<format::tree>(std::move(exception));
 		}
-		expects_promise_rt<format::tree> relay_backend::execute_rest(const std::string_view& method, const std::string_view& path, const format::tree& args, cache_policy cache)
+		expects_promise_rt<format::tree> translation::execute_rest(const std::string_view& method, const std::string_view& path, const format::tree& args, cache_policy cache)
 		{
-			auto* nodes = superchain::server_node::get()->get_nodes(native_asset);
-			if (!nodes || nodes->empty())
-				coreturn expects_rt<format::tree>(remote_exception("node not found"));
-
-			while (true)
+			auto* instance = bridge::get()->get_network_instance(native_asset);
+			auto exception = remote_exception("failed to fetch the response");
+			for (size_t i = 0; instance != nullptr && i < instance->connections.size(); i++)
 			{
-				server_relay::error_reporter reporter;
-				auto* node = *nodes->at((++round_robin_index) % nodes->size());
-				auto result = coawait(node->execute_rest(native_asset, reporter, method, path, args, cache));
-				if (interact) interact(node);
+				bridge::error_reporter reporter;
+				auto& connection = instance->connections[(++round_robin_index) % instance->connections.size()];
+				auto result = coawait(bridge::get()->execute_rest(native_asset, connection, reporter, method, path, args, cache));
+				exception = result || !result.error().is_retry() ? exception : result.error();
 				if (result || !result.error().is_retry())
 					coreturn result;
 			}
-
-			coreturn expects_rt<format::tree>(remote_exception("node not found"));
+			coreturn expects_rt<format::tree>(std::move(exception));
 		}
-		expects_promise_rt<format::tree> relay_backend::execute_http(const std::string_view& method, const std::string_view& path, const std::string_view& type, const std::string_view& body, cache_policy cache)
+		expects_promise_rt<format::tree> translation::execute_http(const std::string_view& method, const std::string_view& path, const std::string_view& type, const std::string_view& body, cache_policy cache)
 		{
-			auto* nodes = superchain::server_node::get()->get_nodes(native_asset);
-			if (!nodes || nodes->empty())
-				coreturn expects_rt<format::tree>(remote_exception("node not found"));
-
-			while (true)
+			auto* instance = bridge::get()->get_network_instance(native_asset);
+			auto exception = remote_exception("failed to fetch the response");
+			for (size_t i = 0; instance != nullptr && i < instance->connections.size(); i++)
 			{
-				server_relay::error_reporter reporter;
-				auto* node = *nodes->at((++round_robin_index) % nodes->size());
-				auto result = coawait(node->execute_http(native_asset, reporter, method, path, type, body, cache));
-				if (interact) interact(node);
+				bridge::error_reporter reporter;
+				auto& connection = instance->connections[(++round_robin_index) % instance->connections.size()];
+				auto result = coawait(bridge::get()->execute_http(native_asset, connection, reporter, method, path, type, body, cache));
+				exception = result || !result.error().is_retry() ? exception : result.error();
 				if (result || !result.error().is_retry())
 					coreturn result;
 			}
-
-			coreturn expects_rt<format::tree>(remote_exception("node not found"));
+			coreturn expects_rt<format::tree>(std::move(exception));
 		}
-		expects_lr<algorithm::composition::cpubkey_t> relay_backend::to_composite_public_key(const std::string_view& public_key)
+		expects_lr<algorithm::composition::cpubkey_t> translation::to_composite_public_key(const std::string_view& public_key)
 		{
 			auto result = decode_public_key(public_key);
 			if (!result)
@@ -1402,42 +1165,40 @@ namespace tangent
 
 			return expects_lr<algorithm::composition::cpubkey_t>(algorithm::composition::to_cstorage<algorithm::composition::cpubkey_t>(*result));
 		}
-		expects_lr<btree_map<string, wallet_link>> relay_backend::find_linked_addresses(const hash_set<string>& addresses)
+		expects_lr<btree_map<string, wallet_link>> translation::find_linked_addresses(const hash_set<string>& addresses)
 		{
 			if (addresses.empty())
 				return expects_lr<btree_map<string, wallet_link>>(layer_exception("no addresses supplied"));
 
-			auto* server = superchain::server_node::get();
-			auto* implementation = server->get_chain(native_asset);
+			auto* implementation = bridge::get()->get_network(native_asset);
 			if (!implementation)
 				return expects_lr<btree_map<string, wallet_link>>(layer_exception("chain not found"));
 
-			auto results = server->get_links_by_addresses(native_asset, addresses);
+			auto results = bridge::get()->get_links_by_addresses(native_asset, addresses);
 			if (!results || results->empty())
 				return expects_lr<btree_map<string, wallet_link>>(layer_exception("no addresses found"));
 
 			auto result = btree_map<string, wallet_link>(results->begin(), results->end());
 			return expects_lr<btree_map<string, wallet_link>>(std::move(result));
 		}
-		expects_lr<btree_map<string, wallet_link>> relay_backend::find_linked_addresses(const algorithm::pubkeyhash_t& owner, size_t offset, size_t count)
+		expects_lr<btree_map<string, wallet_link>> translation::find_linked_addresses(const algorithm::pubkeyhash_t& owner, size_t offset, size_t count)
 		{
-			auto* server = superchain::server_node::get();
-			auto* implementation = server->get_chain(native_asset);
+			auto* implementation = bridge::get()->get_network(native_asset);
 			if (!implementation)
 				return expects_lr<btree_map<string, wallet_link>>(layer_exception("chain not found"));
 
-			auto results = server->get_links_by_owner(native_asset, owner, offset, count);
+			auto results = bridge::get()->get_links_by_owner(native_asset, owner, offset, count);
 			if (!results || results->empty())
 				return expects_lr<btree_map<string, wallet_link>>(layer_exception("no addresses found"));
 
 			auto result = btree_map<string, wallet_link>(results->begin(), results->end());
 			return expects_lr<btree_map<string, wallet_link>>(std::move(result));
 		}
-		expects_lr<void> relay_backend::verify_node_compatibility(server_relay* node)
+		expects_lr<void> translation::verify_node_compatibility(connection_instance* node)
 		{
 			return expectation::met;
 		}
-		decimal relay_backend::to_value(const decimal& value) const
+		decimal translation::to_value(const decimal& value) const
 		{
 			if (value.is_zero_or_nan())
 				return value;
@@ -1446,7 +1207,7 @@ namespace tangent
 			normalized.truncate((uint32_t)get_chainparams().divisibility.to_string().size() - 1);
 			return normalized;
 		}
-		uint256_t relay_backend::to_baseline_value(const decimal& value) const
+		uint256_t translation::to_baseline_value(const decimal& value) const
 		{
 			if (value.is_zero_or_nan())
 				return uint256_t(0);
@@ -1454,7 +1215,7 @@ namespace tangent
 			decimal baseline = value * get_chainparams().divisibility;
 			return uint256_t(baseline.truncate(0).to_string());
 		}
-		decimal relay_backend::from_baseline_value(const uint256_t& value) const
+		decimal translation::from_baseline_value(const uint256_t& value) const
 		{
 			if (!value)
 				return decimal::zero();
@@ -1462,21 +1223,21 @@ namespace tangent
 			return value.to_decimal() / get_chainparams().divisibility;
 		}
 
-		relay_backend_utxo::balance_query::balance_query(const decimal& new_min_native_value, const hash_map<algorithm::asset_id, decimal>& new_min_token_values) : min_native_value(new_min_native_value), min_token_values(new_min_token_values)
+		translation_utxo::balance_query::balance_query(const decimal& new_min_native_value, const hash_map<algorithm::asset_id, decimal>& new_min_token_values) : min_native_value(new_min_native_value), min_token_values(new_min_token_values)
 		{
 		}
 
-		relay_backend_utxo::relay_backend_utxo(const algorithm::asset_id& new_asset) noexcept : relay_backend(new_asset)
+		translation_utxo::translation_utxo(const algorithm::asset_id& new_asset) noexcept : translation(new_asset)
 		{
 		}
-		expects_promise_rt<decimal> relay_backend_utxo::calculate_balance(const algorithm::asset_id& for_asset, const wallet_link& link)
+		expects_promise_rt<decimal> translation_utxo::calculate_balance(const algorithm::asset_id& for_asset, const wallet_link& link)
 		{
 			decimal balance = 0.0;
 			auto outputs = calculate_utxo(link, optional::none);
 			if (!outputs)
 				return expects_promise_rt<decimal>(std::move(balance));
 
-			auto contract_address = superchain::server_node::get()->get_contract_address(for_asset);
+			auto contract_address = bridge::get()->get_contract_address(for_asset);
 			if (contract_address)
 			{
 				for (auto& output : *outputs)
@@ -1494,11 +1255,10 @@ namespace tangent
 
 			return expects_promise_rt<decimal>(std::move(balance));
 		}
-		expects_lr<vector<coin_utxo>> relay_backend_utxo::calculate_utxo(const wallet_link& link, option<balance_query>&& query)
+		expects_lr<vector<coin_utxo>> translation_utxo::calculate_utxo(const wallet_link& link, option<balance_query>&& query)
 		{
 			vector<coin_utxo> values;
 			decimal current_value = decimal::zero();
-			auto* server = superchain::server_node::get();
 			auto continue_accumulation = [&]()
 			{
 				if (!query)
@@ -1515,7 +1275,7 @@ namespace tangent
 			while (continue_accumulation())
 			{
 				const size_t count = 64;
-				auto outputs = server->get_utxos(native_asset, link, values.size(), count);
+				auto outputs = bridge::get()->get_utxos(native_asset, link, values.size(), count);
 				if (!outputs || outputs->empty())
 					break;
 
@@ -1549,11 +1309,11 @@ namespace tangent
 
 			return expects_lr<vector<coin_utxo>>(std::move(values));
 		}
-		expects_lr<coin_utxo> relay_backend_utxo::get_utxo(const std::string_view& transaction_id, uint64_t index)
+		expects_lr<coin_utxo> translation_utxo::get_utxo(const std::string_view& transaction_id, uint64_t index)
 		{
-			return superchain::server_node::get()->get_utxo(native_asset, transaction_id, index);
+			return bridge::get()->get_utxo(native_asset, transaction_id, index);
 		}
-		expects_lr<void> relay_backend_utxo::update_utxo(const computed_transaction& computed)
+		expects_lr<void> translation_utxo::update_utxo(const computed_transaction& computed)
 		{
 			for (auto& [hash, output] : computed.inputs)
 			{
@@ -1577,13 +1337,12 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<void> relay_backend_utxo::receive_utxo(const coin_utxo& output, uint64_t receiver_block_id)
+		expects_lr<void> translation_utxo::receive_utxo(const coin_utxo& output, uint64_t receiver_block_id)
 		{
 			if (output.transaction_id.empty() || output.index == std::numeric_limits<uint64_t>::max())
 				return expects_lr<void>(layer_exception("output must have a transaction id"));
 
-			auto* server = superchain::server_node::get();
-			auto* implementation = server->get_chain(native_asset);
+			auto* implementation = bridge::get()->get_network(native_asset);
 			if (!implementation)
 				return expects_lr<void>(layer_exception("chain not found"));
 
@@ -1598,7 +1357,7 @@ namespace tangent
 			if (!address)
 				return expects_lr<void>(std::move(address.error()));
 
-			auto link = server->get_link(native_asset, *address);
+			auto link = bridge::get()->get_link(native_asset, *address);
 			if (!link)
 				return expects_lr<void>(layer_exception("transaction output is not being watched"));
 
@@ -1615,22 +1374,21 @@ namespace tangent
 				}
 			}
 
-			return server->receive_utxo(native_asset, copy, receiver_block_id);
+			return bridge::get()->receive_utxo(native_asset, copy, receiver_block_id);
 		}
-		expects_lr<void> relay_backend_utxo::spend_utxo(const std::string_view& transaction_id, uint64_t index, uint64_t spender_block_id)
+		expects_lr<void> translation_utxo::spend_utxo(const std::string_view& transaction_id, uint64_t index, uint64_t spender_block_id)
 		{
 			if (transaction_id.empty() || index == std::numeric_limits<uint64_t>::max())
 				return expects_lr<void>(layer_exception("output must have a transaction id"));
 
-			return superchain::server_node::get()->spend_utxo(native_asset, transaction_id, index, spender_block_id);
+			return bridge::get()->spend_utxo(native_asset, transaction_id, index, spender_block_id);
 		}
-		decimal relay_backend_utxo::get_utxo_value(const vector<coin_utxo>& values, option<string>&& contract_address)
+		decimal translation_utxo::get_utxo_value(const vector<coin_utxo>& values, option<string>&& contract_address)
 		{
 			decimal value = 0.0;
 			if (contract_address)
 			{
-				auto* server = superchain::server_node::get();
-				auto* implementation = server->get_chain(native_asset);
+				auto* implementation = bridge::get()->get_network(native_asset);
 				if (!implementation)
 					return value;
 
@@ -1644,8 +1402,7 @@ namespace tangent
 
 				for (auto& item : values)
 				{
-					auto* server = superchain::server_node::get();
-					auto* implementation = server->get_chain(native_asset);
+					auto* implementation = bridge::get()->get_network(native_asset);
 					for (auto& [hash, token] : item.tokens)
 					{
 						if (token.contract_address == *address)
@@ -1660,27 +1417,1253 @@ namespace tangent
 			}
 			return value;
 		}
-		relay_backend_utxo* relay_backend_utxo::from_relay(relay_backend* base)
+		translation_utxo* translation_utxo::from(translation* base)
 		{
-			return base->get_chainparams().routing == routing_policy::utxo ? (relay_backend_utxo*)base : nullptr;
+			return base->get_chainparams().routing == routing_policy::utxo ? (translation_utxo*)base : nullptr;
 		}
 
-		string address_util::encode_tag_address(const std::string_view& address, const std::string_view& destination_tag)
+		bridge::bridge() noexcept
 		{
-			auto split = address.rfind('#');
-			size_t address_size = split == string::npos ? address.size() : split;
-			if (destination_tag.empty() || destination_tag == "0")
-				return string(address.substr(0, address_size));
+			auto& chains = get_registrations();
+			for (auto& chain : chains)
+				chain.second(chain.first);
 
-			return stringify::text("%.*s#%.*s", (int)address_size, address.data(), (int)destination_tag.size(), destination_tag.data());
+			if (protocol::now().user.superchain.logging)
+			{
+				auto* output = console::get();
+				output->add_colorization("spends", std_color::red);
+				output->add_colorization("receives", std_color::green);
+				output->add_colorization("pending", std_color::orange);
+				output->add_colorization("finalized", std_color::green);
+			}
+
+			auto& config = protocol::now().user.superchain.options;
+			if (!config || !config->is_map())
+				return;
+
+			auto* protocols = config->child("protocols");
+			if (protocols != nullptr)
+			{
+				for (auto& root : protocols->childs())
+				{
+					algorithm::asset_id asset = algorithm::asset::id_of(root.key);
+					auto* instance = get_network_instance(asset);
+					if (!instance)
+					{
+						VI_ERR("failed to configure %s server: asset not found", algorithm::asset::name_of(asset).c_str());
+						continue;
+					}
+
+					auto* peers = root.child("peers");
+					if (peers && !peers->childs().empty())
+					{
+						hash_map<std::string_view, double> sources;
+						for (auto& child : peers->childs())
+						{
+							if (child.is_map())
+							{
+								hash_map<string, string> urls;
+								for (auto& protocol : child.childs())
+									urls[protocol.key] = protocol.value.as_blob();
+								urls.erase("keep_alive");
+								urls.erase("rps");
+
+								size_t size = urls.size();
+								auto rps = child.child_var("rps").as_double();
+								auto keep_alive = child.has("keep_alive") ? child.child_var("keep_alive").as_boolean() : true;
+								if (add_network_connection(asset, std::move(urls), rps, keep_alive) && protocol::now().user.superchain.logging)
+									VI_INFO("%s server %i urls added (rps: %.2f)", algorithm::asset::name_of(asset).c_str(), (int)size, rps);
+								else if (protocol::now().user.superchain.logging)
+									VI_ERR("failed to add %s server %i urls", algorithm::asset::name_of(asset).c_str(), (int)size);
+							}
+							else if (child.is_list())
+							{
+								auto url = child.childs().size() > 0 ? child.childs()[0].value.as_blob() : child.value.as_blob();
+								auto rps = child.childs().size() > 1 ? child.childs()[1].value.as_double() : 0.0;
+								auto keep_alive = child.childs().size() > 2 ? child.childs()[2].value.as_boolean() : true;
+								if (add_network_connection(asset, url, rps, keep_alive) && protocol::now().user.superchain.logging)
+									VI_INFO("%s server url \"%.*s\" added (rps: %.2f)", algorithm::asset::name_of(asset).c_str(), (int)url.size(), url.data(), rps);
+								else if (protocol::now().user.superchain.logging)
+									VI_ERR("failed to add %s server url: \"%.*s\"", algorithm::asset::name_of(asset).c_str(), (int)url.size(), url.data());
+							}
+							else
+							{
+								auto url = child.value.as_blob();
+								if (add_network_connection(asset, url, 0.0, true) && protocol::now().user.superchain.logging)
+									VI_INFO("%s server url \"%.*s\" added", algorithm::asset::name_of(asset).c_str(), (int)url.size(), url.data());
+								else if (protocol::now().user.superchain.logging)
+									VI_ERR("failed to add %s server url: \"%.*s\"", algorithm::asset::name_of(asset).c_str(), (int)url.size(), url.data());
+							}
+						}
+					}
+
+					auto* props = (format::tree*)root.child("strategy.props");
+					if (props != nullptr && !props->is_none())
+						instance->props = *props;
+
+					auto* batching = root.child("strategy.batching");
+					if (batching != nullptr && batching->value.is_integer())
+						instance->options.blocks_batching = batching->value.as_uint64();
+
+					auto* tip = root.child("strategy.tip");
+					if (tip != nullptr && tip->value.is_integer())
+						scan_from_block_height(asset, tip->value.as_uint64());
+					else if (tip != nullptr)
+						scan_from_block_height(asset, optional::none);
+				}
+			}
 		}
-		std::pair<string, string> address_util::decode_tag_address(const std::string_view& address_destination_tag)
+		bridge::~bridge() noexcept
 		{
-			auto split = address_destination_tag.rfind('#');
-			if (split == string::npos || split + 1 >= address_destination_tag.size())
-				return std::make_pair(string(address_destination_tag), string());
+		}
+		expects_promise_rt<format::tree> bridge::execute_rpc(const algorithm::asset_id& asset, connection_instance& connection, error_reporter& reporter, const std::string_view& method, const format::tree& args, cache_policy cache, const std::string_view& path, bool multi)
+		{
+			if (reporter.type.empty())
+				reporter.type = "jrpc";
+			if (reporter.method.empty())
+				reporter.method = method;
 
-			return std::make_pair(string(address_destination_tag.substr(0, split)), string(address_destination_tag.substr(split + 1)));
+			auto category = cache_type_of(cache);
+			auto setup = format::tree::map();
+			setup.set("jsonrpc", format::variable("2.0"));
+			setup.set("method", format::variable(method));
+			if (multi && args.fields && args.fields->size() > 1)
+			{
+				auto multi_setup = format::tree::list();
+				for (auto& request : *args.fields)
+				{
+					auto* sub_setup = multi_setup.push(setup);
+					sub_setup->set("params", request);
+					sub_setup->set("id", format::variable(string(category) + to_string(multi_setup.childs().size())));
+				}
+				setup = std::move(multi_setup);
+			}
+			else
+			{
+				setup.set("params", multi && args.fields ? args.fields->front() : args);
+				setup.set("id", format::variable(category));
+			}
+
+			auto response = coawait(execute_rest(asset, connection, reporter, "POST", path, setup, cache));
+			if (!response)
+				coreturn expects_rt<format::tree>(std::move(response.error()));
+
+			auto to_response = [&reporter](format::tree& response) -> expects_rt<format::tree>
+			{
+				if (response.has("error.code"))
+				{
+					string code = response.child_var("error.code").as_blob();
+					string description = response.has("error.message") ? response.child_var("error.message").as_blob() : "no error description";
+					return expects_rt<format::tree>(remote_exception(normalize_error(expects_system<http::response_frame>(system_exception()), reporter, code, description)));
+				}
+				else if (response.has("result.error_code"))
+				{
+					string code = response.child_var("result.error_code").as_blob();
+					string description = response.has("result.error_message") ? response.child_var("result.error_message").as_blob() : "no error description";
+					return expects_rt<format::tree>(remote_exception(normalize_error(expects_system<http::response_frame>(system_exception()), reporter, code, description)));
+				}
+
+				auto* result = (format::tree*)response.child("result");
+				if (!result)
+					return expects_rt<format::tree>(format::tree());
+
+				return expects_rt<format::tree>(std::move(*result));
+			};
+			if (!multi)
+				coreturn to_response(*response);
+
+			format::tree results;
+			if (args.fields && args.fields->size() > 1)
+			{
+				for (auto& subresponse : response->childs())
+				{
+					auto subresult = to_response(subresponse);
+					if (!subresult)
+						coreturn subresult;
+
+					results.push(std::move(*subresult));
+				}
+			}
+			else
+			{
+				auto subresult = to_response(*response);
+				if (!subresult)
+					coreturn subresult;
+
+				results.push(std::move(*subresult));
+			}
+			coreturn expects_rt<format::tree>(std::move(results));
+		}
+		expects_promise_rt<format::tree> bridge::execute_rest(const algorithm::asset_id& asset, connection_instance& connection, error_reporter& reporter, const std::string_view& method, const std::string_view& path, const format::tree& args, cache_policy cache)
+		{
+			if (reporter.type.empty())
+				reporter.type = "rest";
+			if (reporter.method.empty())
+				reporter.method = location(connection.get_url(reporter.type, path)).path.substr(1);
+
+			string body = (args.is_none() ? string() : args.as_json());
+			coreturn coawait(execute_http(asset, connection, reporter, method, path, "application/json", body, cache));
+		}
+		expects_promise_rt<format::tree> bridge::execute_http(const algorithm::asset_id& asset, connection_instance& connection, error_reporter& reporter, const std::string_view& method, const std::string_view& path, const std::string_view& type, const std::string_view& body, cache_policy cache)
+		{
+			if (reporter.type.empty())
+				reporter.type = "http";
+
+			string target_url = connection.get_url(reporter.type, path);
+			if (reporter.method.empty())
+				reporter.method = location(target_url).path.substr(1);
+
+			if (path.empty() && body.empty())
+				cache = cache_policy::no_cache;
+
+			string message = string(path).append(body);
+			string hash = codec::hex_encode(algorithm::hashing::hash512((uint8_t*)message.data(), message.size()));
+			if (cache != cache_policy::no_cache && cache != cache_policy::no_cache_no_throttling)
+			{
+				auto data = bridge::get()->load_cache(asset, cache, hash);
+				if (data)
+					coreturn expects_rt<format::tree>(std::move(*data));
+			}
+			
+			if (protocol::now().time.now_cpu() < connection.error_retry_after_timestamp)
+				coreturn expects_rt<format::tree>(remote_exception::retry_after(connection.error_retry_after_timestamp));
+
+			if (connection.rps > 0.0 && cache != cache_policy::no_cache_no_throttling)
+			{
+				while (protocol::now().time.now_cpu() < connection.rps_retry_after_timestamp && (!network_active || network_active()))
+				{
+					promise<void> awaiter;
+					schedule::get()->set_timeout(200, [awaiter]() mutable { awaiter.set(); });
+					coawait(std::move(awaiter));
+				}
+				connection.rps_retry_after_timestamp = protocol::now().time.now_cpu() + (uint64_t)(1000000.0 / connection.rps) / 1000;
+			}
+
+			if (!network_fetch || (network_active && !network_active()))
+				coreturn expects_rt<format::tree>(remote_exception::shutdown());
+	
+			http::fetch_frame setup;
+			setup.max_size = 16 * 1024 * 1024;
+			setup.verify_peers = (uint32_t)protocol::now().user.tcp.tls_trusted_peers;
+			setup.timeout = protocol::now().user.tcp.timeout;
+			setup.set_header("User-Agent", "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)");
+			if (!connection.keep_alive)
+				setup.set_header("Connection", "Close");
+
+			if (!body.empty())
+			{
+				setup.set_header("Content-Type", type);
+				setup.content.assign(body);
+			}
+
+			auto response = coawait(network_fetch(target_url, method, setup));
+			if (!response || response->status_code == 408 || response->status_code == 429 || response->status_code == 502 || response->status_code == 503 || response->status_code == 504)
+			{
+				if (cache == cache_policy::no_cache_no_throttling)
+					coreturn response ? expects_rt<format::tree>(remote_exception(normalize_error(response, reporter, "null", "node has rejected the request"))) : expects_rt<format::tree>(remote_exception::shutdown());
+
+				connection.error_retry_after_timestamp = protocol::now().time.now_cpu() + protocol::now().user.tcp.keep_alive;
+				coreturn expects_rt<format::tree>(remote_exception::retry_after(connection.error_retry_after_timestamp));
+			}
+
+			format::tree result;
+			auto content_type = response->get_header("Content-Type");
+			if (stringify::starts_with(content_type, "application/json") || stringify::starts_with(content_type, "application/hal+json"))
+			{
+				auto data = format::tree::from_json(std::string_view(response->content.data.data(), response->content.data.size()));
+				if (!data)
+					coreturn expects_rt<format::tree>(remote_exception(normalize_error(response, reporter, "null", "response decoding failed: " + data.error().message())));
+
+				result = std::move(*data);
+			}
+			else
+				result = format::variable::from(std::string_view(response->content.data.data(), response->content.data.size()));
+
+			if (cache != cache_policy::no_cache && cache != cache_policy::no_cache_no_throttling && (response->status_code < 400 || response->status_code == 404))
+				bridge::get()->store_cache(asset, cache, hash, result);
+
+			coreturn expects_rt<format::tree>(std::move(result));
+		}
+		expects_promise_rt<uint64_t> bridge::get_latest_block_height(const algorithm::asset_id& asset)
+		{
+			if (!algorithm::asset::is_aux(asset))
+				coreturn expects_rt<uint64_t>(remote_exception("asset not found"));
+
+			if (!has_network(asset))
+				coreturn expects_rt<uint64_t>(remote_exception("chain not active"));
+
+			auto* implementation = get_network(asset);
+			if (!implementation)
+				coreturn expects_rt<uint64_t>(remote_exception("chain not found"));
+
+			coreturn coawait(implementation->get_latest_block_height());
+		}
+		expects_promise_rt<vector<block_log>> bridge::get_block_transactions(const algorithm::asset_id& asset, uint64_t block_height, uint64_t block_count)
+		{
+			if (!algorithm::asset::is_aux(asset))
+				coreturn expects_rt<vector<block_log>>(remote_exception("asset not found"));
+
+			if (!has_network(asset))
+				coreturn expects_rt<vector<block_log>>(remote_exception("chain not active"));
+
+			auto* implementation = get_network(asset);
+			if (!implementation)
+				coreturn expects_rt<vector<block_log>>(remote_exception("chain not found"));
+
+			coreturn coawait(implementation->get_block_transactions(block_height, block_count));
+		}
+		expects_promise_rt<vector<transaction_logs>> bridge::link_transactions(const algorithm::asset_id& asset)
+		{
+			if (!algorithm::asset::is_aux(asset))
+				coreturn expects_rt<vector<transaction_logs>>(remote_exception("asset not found"));
+
+			if (!has_network(asset))
+				coreturn expects_rt<vector<transaction_logs>>(remote_exception("chain not active"));
+
+			auto* instance = get_network_instance(asset);
+			if (!instance)
+				coreturn expects_rt<vector<transaction_logs>>(remote_exception("chain not found"));
+
+			uint64_t time = protocol::now().time.now_cpu();
+			auto* implementation = *instance->translation;
+			auto* options = &instance->options;
+			if (network_active && !network_active())
+				coreturn expects_rt<vector<transaction_logs>>(remote_exception::shutdown());
+			else if (time < options->state.retry_after_time)
+				coreturn expects_rt<vector<transaction_logs>>(remote_exception::retry_after(options->state.retry_after_time));
+
+			format::tree tip_now, tip_min, tip_max;
+			auto to_delayed_block_height = [&](uint64_t block_height, bool zero_as_min)
+			{
+				auto latency = implementation->get_chainparams().sync_latency;
+				return block_height > latency ? block_height - latency : (zero_as_min ? 0 : 1);
+			};
+			{
+				storages::superchainstate state = storages::superchainstate(asset);
+				auto tip_set = state.get_property("TIP:SET").or_else(format::tree());
+				tip_min = state.get_property("TIP:MIN").or_else(format::tree());
+				if (tip_set.value.is_integer())
+				{
+					uint64_t tip = to_delayed_block_height(tip_set.value.as_uint64(), !tip_set.value.as_uint64());
+					options->set_checkpoint_from_block(tip);
+					state.set_property("TIP:SET", format::variable());
+					state.set_property("TIP:NOW", format::variable());
+					state.set_property("TIP:MAX", format::variable());
+				}
+				else
+				{
+					tip_now = state.get_property("TIP:NOW").or_else(format::tree());
+					tip_max = state.get_property("TIP:MAX").or_else(format::tree());
+					if (tip_now.value.is_integer() && (!options->state.inital_block_height || !options->state.index_block_height))
+						options->set_checkpoint_from_block(tip_now.value.as_uint64() + 1);
+				}
+			}
+
+			options->state.retry_after_time = 0;
+			if (!options->has_target_block_height())
+			{
+				auto latest_block_height = coawait(implementation->get_latest_block_height());
+				if (!latest_block_height)
+					coreturn expects_rt<vector<transaction_logs>>(std::move(latest_block_height.error()));
+
+				*latest_block_height = to_delayed_block_height(*latest_block_height, true);
+				options->set_checkpoint_to_block(*latest_block_height);
+			}
+
+			auto block_count = std::max<uint64_t>(1, options->blocks_batching);
+			if (!options->has_next_block_height(block_count))
+			{
+				options->state.retry_after_time = protocol::now().time.now_cpu() + protocol::now().user.superchain.polling_frequency;
+				options->set_checkpoint_from_block(options->state.target_block_height + 1);
+				coreturn expects_rt<vector<transaction_logs>>(remote_exception::retry_after(options->state.retry_after_time));
+			}
+
+			auto logs = vector<transaction_logs>();
+			auto block_height = options->get_next_block_height(block_count);
+			auto block_batch = coawait(implementation->get_block_transactions(block_height, block_count));
+			if (!block_batch || block_batch->empty())
+				coreturn expects_rt<vector<transaction_logs>>(block_batch ? remote_exception("failed to find new block data") : block_batch.error());
+
+			auto* utxo_implementation = translation_utxo::from(implementation);
+			for (auto& [block_hash, transactions] : *block_batch)
+			{
+				transaction_logs log;
+				log.block_height = block_height + (uint64_t)logs.size();
+				log.block_hash = block_hash.empty() ? to_string(log.block_height) : block_hash;
+				for (auto& item : transactions.childs())
+				{
+					auto computed = coawait(implementation->link_transaction(log.block_height, log.block_hash, item));
+					if (computed)
+					{
+						computed->block_id = log.block_height;
+						normalize_transaction_id(asset, &computed->transaction_id);
+						log.receipts.push_back(std::move(*computed));
+					}
+				}
+
+				hash_set<string> transaction_ids;
+				auto state = storages::superchainstate(asset);
+				for (auto& new_transaction : log.receipts)
+				{
+					state.add_incoming_transaction(new_transaction);
+					transaction_ids.insert(algorithm::asset::handle_of(asset) + ":" + new_transaction.transaction_id);
+					if (utxo_implementation != nullptr)
+						utxo_implementation->update_utxo(new_transaction);
+				}
+				logs.push_back(std::move(log));
+			}
+
+			auto state = storages::superchainstate(asset);
+			if (!tip_now.value.is_integer() || tip_now.value.as_uint64() != block_height)
+				state.set_property("TIP:NOW", format::variable(block_height));
+			if (!tip_min.value.is_integer() || tip_min.value.as_uint64() > block_height && block_height > 0)
+				state.set_property("TIP:MIN", format::variable(block_height));
+			if (!tip_max.value.is_integer() || tip_max.value.as_uint64() < options->state.target_block_height)
+				state.set_property("TIP:MAX", format::variable(options->state.target_block_height));
+
+			coreturn expects_rt<vector<transaction_logs>>(std::move(logs));
+		}
+		expects_promise_rt<computed_transaction> bridge::link_transaction(const algorithm::asset_id& asset, uint64_t block_height, const std::string_view& block_hash, format::tree& transaction_data)
+		{
+			if (!algorithm::asset::is_aux(asset))
+				coreturn expects_rt<computed_transaction>(remote_exception("asset not found"));
+
+			if (!block_height)
+				coreturn expects_rt<computed_transaction>(remote_exception("txs not found"));
+
+			if (!has_network(asset))
+				coreturn expects_rt<computed_transaction>(remote_exception("chain not active"));
+
+			auto* implementation = get_network(asset);
+			if (!implementation)
+				coreturn expects_rt<computed_transaction>(remote_exception("chain not found"));
+
+			coreturn coawait(implementation->link_transaction(block_height, block_hash, transaction_data));
+		}
+		expects_promise_rt<decimal> bridge::calculate_balance(const algorithm::asset_id& asset, const wallet_link& link)
+		{
+			if (!algorithm::asset::is_aux(asset))
+				coreturn expects_rt<decimal>(remote_exception("asset not found"));
+
+			auto normalized_link = normalize_link(asset, link);
+			if (!normalized_link)
+				coreturn expects_rt<decimal>(remote_exception(std::move(normalized_link.error().message())));
+
+			if (!has_network(asset))
+				coreturn expects_rt<decimal>(remote_exception("chain not active"));
+
+			auto* implementation = get_network(asset);
+			if (!implementation)
+				coreturn expects_rt<decimal>(remote_exception("chain not found"));
+
+			coreturn coawait(implementation->calculate_balance(asset, *normalized_link));
+		}
+		expects_promise_rt<void> bridge::broadcast_transaction(const algorithm::asset_id& asset, const uint256_t& external_id, const finalized_transaction& finalized)
+		{
+			if (!algorithm::asset::is_aux(asset))
+				coreturn expects_rt<void>(remote_exception("asset not found"));
+
+			if (!finalized.is_valid())
+				coreturn expects_rt<void>(remote_exception("transaction is not valid"));
+
+			if (!has_network(asset))
+				coreturn expects_rt<void>(remote_exception("chain not active"));
+
+			auto* implementation = get_network(asset);
+			if (!implementation)
+				coreturn expects_rt<void>(remote_exception("chain not found"));
+
+			auto* server = bridge::get();
+			auto new_transaction = finalized.as_computed();
+			server->normalize_transaction_id(asset, &new_transaction.transaction_id);
+			new_transaction.block_id = 0;
+			{
+				storages::superchainstate state = storages::superchainstate(asset);
+				auto duplicate_transaction = state.get_computed_transaction(new_transaction.transaction_id, external_id, algorithm::hashing::hash256i(new_transaction.transaction_id));
+				if (duplicate_transaction)
+					coreturn expects_rt<void>(remote_exception("transaction is in dangling state (reverting due to double spending possibility)"));
+
+				auto status = state.add_outgoing_transaction(new_transaction, external_id);
+				if (!status)
+					coreturn expects_rt<void>(remote_exception(std::move(status.error().message())));
+			}
+
+			if (protocol::now().user.superchain.logging)
+				VI_INFO("%s broadcast transaction: %s (ref: %s)", algorithm::asset::blockchain_of(asset).c_str(), finalized.as_tree().as_json().c_str(), algorithm::encoding::encode_0xhex256(external_id).c_str());
+
+			auto result = coawait(implementation->broadcast_transaction(finalized));
+			if (!result)
+				coreturn result;
+
+			auto* utxo_implementation = translation_utxo::from(implementation);
+			if (utxo_implementation != nullptr)
+				utxo_implementation->update_utxo(finalized.prepared.as_pseudo_computed());
+
+			coreturn result;
+		}
+		expects_promise_rt<prepared_transaction> bridge::prepare_transaction(const algorithm::asset_id& asset, const wallet_link& from_link, const value_transfer& to, const decimal& max_fee)
+		{
+			if (!algorithm::asset::is_aux(asset))
+				coreturn expects_rt<prepared_transaction>(remote_exception("asset not found"));
+
+			if (!has_network(asset))
+				coreturn expects_rt<prepared_transaction>(remote_exception("chain not active"));
+
+			auto* implementation = get_network(asset);
+			if (!implementation)
+				coreturn expects_rt<prepared_transaction>(remote_exception("chain not found"));
+
+			auto normalized_to = normalize_value(implementation, to);
+			auto blockchain = algorithm::asset::blockchain_of(asset);
+			if (!normalized_to.is_valid())
+				coreturn expects_rt<prepared_transaction>(remote_exception("receiver address not valid"));
+
+			if (!algorithm::asset::is_aux(normalized_to.asset) || algorithm::asset::blockchain_of(normalized_to.asset) != blockchain)
+				coreturn expects_rt<prepared_transaction>(remote_exception("receiver asset not valid"));
+
+			auto normalized_from_link = normalize_link(asset, from_link);
+			if (!normalized_from_link)
+				coreturn expects_rt<prepared_transaction>(remote_exception(std::move(normalized_from_link.error().message())));
+
+			auto normalized_max_fee = normalize_value(implementation, max_fee);
+			if (protocol::now().user.superchain.logging)
+			{
+				VI_INFO(
+					"%s build transaction: %s (fee: %s %s)\n"
+					"  send from %s (%s)\n"
+					"  send %s %s to %s",
+					blockchain.c_str(),
+					algorithm::signing::encode_address(normalized_from_link->owner).c_str(),
+					normalized_max_fee.to_string().c_str(),
+					blockchain.c_str(),
+					normalized_from_link->public_key.empty() ? "none" : normalized_from_link->public_key.c_str(),
+					normalized_from_link->address.empty() ? "unaddressable" : normalized_from_link->address.c_str(),
+					normalized_to.value.to_string().c_str(), algorithm::asset::name_of(normalized_to.asset).c_str(), normalized_to.address.c_str());
+			}
+
+			auto result = coawait(implementation->prepare_transaction(*normalized_from_link, normalized_to, normalized_max_fee));
+			if (protocol::now().user.superchain.logging)
+				VI_INFO("%s built transaction: %s", blockchain.c_str(), result ? result->as_tree().as_json().c_str() : result.error().what());
+			coreturn result;
+		}
+		expects_lr<finalized_transaction> bridge::finalize_transaction(const algorithm::asset_id& asset, prepared_transaction&& prepared)
+		{
+			if (!algorithm::asset::is_aux(asset))
+				return layer_exception("asset not found");
+
+			auto status = prepared.as_status();
+			if (status != prepared_transaction::status::requires_finalization)
+				return layer_exception(status == prepared_transaction::status::invalid ? "transaction is not valid for finalization" : "transaction does not require finalization");
+
+			auto* implementation = get_network(asset);
+			if (!implementation)
+				return layer_exception("chain not found");
+
+			auto blockchain = algorithm::asset::blockchain_of(asset);
+			auto base_asset = algorithm::asset::base_id_of(asset);
+			for (auto& input : prepared.inputs)
+			{
+				auto input_asset = input.utxo.get_asset(base_asset);
+				if (!algorithm::asset::is_aux(input_asset) || algorithm::asset::blockchain_of(input_asset) != blockchain)
+					return layer_exception("input asset not valid");
+
+				for (auto& [input_token_hash, input_token] : input.utxo.tokens)
+				{
+					if (!algorithm::asset::is_aux(input_token.get_asset(base_asset)))
+						return layer_exception("invalid input token asset");
+				}
+			}
+
+			for (auto& output : prepared.outputs)
+			{
+				auto output_asset = output.get_asset(base_asset);
+				if (!algorithm::asset::is_aux(output_asset) || algorithm::asset::blockchain_of(output_asset) != blockchain)
+					return layer_exception("invalid output asset");
+
+				for (auto& [output_token_hash, output_token] : output.tokens)
+				{
+					if (!algorithm::asset::is_aux(output_token.get_asset(base_asset)))
+						return layer_exception("invalid output token asset");
+				}
+			}
+
+			return implementation->finalize_transaction(std::move(prepared));
+		}
+		expects_lr<computed_transaction> bridge::get_computed_transaction(const algorithm::asset_id& asset, const std::string_view& transaction_id, const uint256_t& external_id, const uint256_t& optimized_id)
+		{
+			if (!algorithm::asset::is_aux(asset))
+				return layer_exception("asset not found");
+
+			storages::superchainstate state = storages::superchainstate(asset);
+			return state.get_computed_transaction(transaction_id, external_id, optimized_id);
+		}
+		expects_lr<computed_wallet> bridge::compute_wallet(const algorithm::asset_id& asset, const uint8_t* seed, size_t seed_size)
+		{
+			if (!algorithm::asset::is_aux(asset))
+				return expects_lr<computed_wallet>(layer_exception("asset not found"));
+
+			auto* implementation = get_network(asset);
+			if (!implementation)
+				return expects_lr<computed_wallet>(layer_exception("chain not found"));
+
+			auto& chain = implementation->get_chainparams();
+			auto keypair = algorithm::composition::derive_keypair(chain.composition, seed, seed_size);
+			if (!keypair)
+				return keypair.error();
+
+			computed_wallet wallet;
+			wallet.seed.resize(seed_size);
+			memcpy(wallet.seed.data(), seed, seed_size);
+			wallet.secret_key = std::move(keypair->secret_key);
+			wallet.public_key = std::move(keypair->public_key);
+			wallet.encoded_seed = secret_box::secure(algorithm::encoding::encode_0xhex256(std::string_view((char*)wallet.seed.data(), wallet.seed.size())));
+
+			auto encoded_secret_key = implementation->encode_secret_key(secret_box::view(std::string_view((char*)wallet.secret_key.data(), wallet.secret_key.size())));
+			if (!encoded_secret_key)
+				return encoded_secret_key.error();
+
+			auto encoded_public_key = implementation->encode_public_key(std::string_view((char*)wallet.public_key.data(), wallet.public_key.size()));
+			if (!encoded_public_key)
+				return encoded_public_key.error();
+
+			auto encoded_addresses = implementation->to_addresses(*encoded_public_key);
+			if (!encoded_addresses)
+				return encoded_addresses.error();
+
+			wallet.encoded_secret_key = std::move(*encoded_secret_key);
+			wallet.encoded_public_key = std::move(*encoded_public_key);
+			wallet.encoded_addresses = std::move(*encoded_addresses);
+			for (auto& [index, address] : wallet.encoded_addresses)
+			{
+				auto decoded_address = implementation->decode_address(address);
+				if (!decoded_address)
+					return decoded_address.error();
+
+				wallet.addresses[index] = std::move(*decoded_address);
+			}
+
+			return expects_lr<computed_wallet>(std::move(wallet));
+		}
+		expects_lr<secret_box> bridge::encode_secret_key(const algorithm::asset_id& asset, const secret_box& secret_key)
+		{
+			if (!algorithm::asset::is_aux(asset))
+				return expects_lr<secret_box>(layer_exception("asset not found"));
+
+			if (secret_key.empty())
+				return expects_lr<secret_box>(layer_exception("secret key not found"));
+
+			auto* implementation = get_network(asset);
+			if (!implementation)
+				return expects_lr<secret_box>(layer_exception("chain not found"));
+
+			return implementation->encode_secret_key(secret_key);
+		}
+		expects_lr<secret_box> bridge::decode_secret_key(const algorithm::asset_id& asset, const secret_box& secret_key)
+		{
+			if (!algorithm::asset::is_aux(asset))
+				return expects_lr<secret_box>(layer_exception("asset not found"));
+
+			if (secret_key.empty())
+				return expects_lr<secret_box>(layer_exception("secret key not found"));
+
+			auto* implementation = get_network(asset);
+			if (!implementation)
+				return expects_lr<secret_box>(layer_exception("chain not found"));
+
+			return implementation->decode_secret_key(secret_key);
+		}
+		expects_lr<string> bridge::encode_public_key(const algorithm::asset_id& asset, const std::string_view& public_key)
+		{
+			if (!algorithm::asset::is_aux(asset))
+				return expects_lr<string>(layer_exception("asset not found"));
+
+			if (public_key.empty())
+				return expects_lr<string>(layer_exception("public key not found"));
+
+			auto* implementation = get_network(asset);
+			if (!implementation)
+				return expects_lr<string>(layer_exception("chain not found"));
+
+			return implementation->encode_public_key(public_key);
+		}
+		expects_lr<string> bridge::decode_public_key(const algorithm::asset_id& asset, const std::string_view& public_key)
+		{
+			if (!algorithm::asset::is_aux(asset))
+				return expects_lr<string>(layer_exception("asset not found"));
+
+			if (stringify::is_empty_or_whitespace(public_key))
+				return expects_lr<string>(layer_exception("public key not found"));
+
+			auto* implementation = get_network(asset);
+			if (!implementation)
+				return expects_lr<string>(layer_exception("chain not found"));
+
+			return implementation->decode_public_key(public_key);
+		}
+		expects_lr<string> bridge::encode_address(const algorithm::asset_id& asset, const std::string_view& public_key_hash)
+		{
+			if (!algorithm::asset::is_aux(asset))
+				return expects_lr<string>(layer_exception("asset not found"));
+
+			if (public_key_hash.empty())
+				return expects_lr<string>(layer_exception("public key hash not found"));
+
+			auto* implementation = get_network(asset);
+			if (!implementation)
+				return expects_lr<string>(layer_exception("chain not found"));
+
+			return implementation->encode_address(public_key_hash);
+		}
+		expects_lr<string> bridge::decode_address(const algorithm::asset_id& asset, const std::string_view& address)
+		{
+			if (!algorithm::asset::is_aux(asset))
+				return expects_lr<string>(layer_exception("asset not found"));
+
+			if (stringify::is_empty_or_whitespace(address))
+				return expects_lr<string>(layer_exception("address not found"));
+
+			auto* implementation = get_network(asset);
+			if (!implementation)
+				return expects_lr<string>(layer_exception("chain not found"));
+
+			return implementation->decode_address(address);
+		}
+		expects_lr<string> bridge::encode_transaction_id(const algorithm::asset_id& asset, const std::string_view& transaction_id)
+		{
+			if (!algorithm::asset::is_aux(asset))
+				return expects_lr<string>(layer_exception("asset not found"));
+
+			if (transaction_id.empty())
+				return expects_lr<string>(layer_exception("transaction id not found"));
+
+			auto* implementation = get_network(asset);
+			if (!implementation)
+				return expects_lr<string>(layer_exception("chain not found"));
+
+			return implementation->encode_transaction_id(transaction_id);
+		}
+		expects_lr<string> bridge::decode_transaction_id(const algorithm::asset_id& asset, const std::string_view& transaction_id)
+		{
+			if (!algorithm::asset::is_aux(asset))
+				return expects_lr<string>(layer_exception("asset not found"));
+
+			if (stringify::is_empty_or_whitespace(transaction_id))
+				return expects_lr<string>(layer_exception("transaction id not found"));
+
+			auto* implementation = get_network(asset);
+			if (!implementation)
+				return expects_lr<string>(layer_exception("chain not found"));
+
+			return implementation->decode_transaction_id(transaction_id);
+		}
+		expects_lr<void> bridge::normalize_secret_key(const algorithm::asset_id& asset, secret_box* secret_key)
+		{
+			VI_ASSERT(secret_key != nullptr, "secret key should be set");
+			auto decoded = decode_secret_key(asset, *secret_key);
+			if (!decoded)
+				return decoded.error();
+
+			auto encoded = encode_secret_key(asset, *decoded);
+			if (!encoded)
+				return encoded.error();
+
+			*secret_key = std::move(*encoded);
+			return expectation::met;
+		}
+		expects_lr<void> bridge::normalize_public_key(const algorithm::asset_id& asset, string* public_key)
+		{
+			VI_ASSERT(public_key != nullptr, "public key should be set");
+			auto decoded = decode_public_key(asset, *public_key);
+			if (!decoded)
+				return decoded.error();
+
+			auto encoded = encode_public_key(asset, *decoded);
+			if (!encoded)
+				return encoded.error();
+
+			*public_key = std::move(*encoded);
+			return expectation::met;
+		}
+		expects_lr<void> bridge::normalize_address(const algorithm::asset_id& asset, string* address)
+		{
+			VI_ASSERT(address != nullptr, "address should be set");
+			auto decoded = decode_address(asset, *address);
+			if (!decoded)
+				return decoded.error();
+
+			auto encoded = encode_address(asset, *decoded);
+			if (!encoded)
+				return encoded.error();
+
+			*address = std::move(*encoded);
+			return expectation::met;
+		}
+		expects_lr<void> bridge::normalize_transaction_id(const algorithm::asset_id& asset, string* transaction_id)
+		{
+			VI_ASSERT(transaction_id != nullptr, "transaction id should be set");
+			auto decoded = decode_transaction_id(asset, *transaction_id);
+			if (!decoded)
+				return decoded.error();
+
+			auto encoded = encode_transaction_id(asset, *decoded);
+			if (!encoded)
+				return encoded.error();
+
+			*transaction_id = std::move(*encoded);
+			return expectation::met;
+		}
+		expects_lr<algorithm::composition::cpubkey_t> bridge::to_composite_public_key(const algorithm::asset_id& asset, const std::string_view& public_key)
+		{
+			if (!algorithm::asset::is_aux(asset))
+				return expects_lr<algorithm::composition::cpubkey_t>(layer_exception("asset not found"));
+
+			if (public_key.empty())
+				return expects_lr<algorithm::composition::cpubkey_t>(layer_exception("public key not found"));
+
+			auto* implementation = get_network(asset);
+			if (!implementation)
+				return expects_lr<algorithm::composition::cpubkey_t>(layer_exception("chain not found"));
+
+			return implementation->to_composite_public_key(public_key);
+		}
+		expects_lr<address_map> bridge::to_addresses(const algorithm::asset_id& asset, const std::string_view& public_key)
+		{
+			if (!algorithm::asset::is_aux(asset))
+				return expects_lr<address_map>(layer_exception("asset not found"));
+
+			if (public_key.empty())
+				return expects_lr<address_map>(layer_exception("public key not found"));
+
+			auto* implementation = get_network(asset);
+			if (!implementation)
+				return expects_lr<address_map>(layer_exception("chain not found"));
+
+			return implementation->to_addresses(public_key);
+		}
+		expects_lr<void> bridge::scan_from_block_height(const algorithm::asset_id& asset, option<uint64_t>&& block_height)
+		{
+			if (!algorithm::asset::is_aux(asset))
+				return expects_lr<void>(layer_exception("asset not found"));
+
+			storages::superchainstate state = storages::superchainstate(asset);
+			return state.set_property("TIP:SET", block_height ? format::variable(*block_height) : format::variable());
+		}
+		expects_lr<void> bridge::enable_contract_address(const algorithm::asset_id& asset, const std::string_view& contract_address)
+		{
+			if (!algorithm::asset::is_aux(asset))
+				return expects_lr<void>(layer_exception("asset not found"));
+
+			if (contract_address.empty())
+				return expects_lr<void>(layer_exception("contract address not found"));
+
+			auto* implementation = get_network(asset);
+			if (!implementation)
+				return expects_lr<void>(layer_exception("chain not found"));
+
+			storages::superchainstate state = storages::superchainstate(asset);
+			auto key = algorithm::asset::token_of(asset);
+			auto value = state.get_property(key);
+			if (!value)
+				value = format::tree::list();
+
+			hash_set<string> addresses;
+			for (auto& item : value->childs())
+				addresses.insert(item.value.as_blob());
+
+			auto address = string(contract_address);
+			normalize_address(asset, &address);
+			if (addresses.find(address) != addresses.end())
+				return expectation::met;
+
+			value->push(format::variable(address));
+			return state.set_property(key, std::move(*value));
+		}
+		expects_lr<void> bridge::enable_link(const algorithm::asset_id& asset, const wallet_link& link)
+		{
+			if (!algorithm::asset::is_aux(asset))
+				return expects_lr<void>(layer_exception("asset not found"));
+
+			if (!link.has_all())
+				return expects_lr<void>(layer_exception("link not found"));
+
+			auto* implementation = get_network(asset);
+			if (!implementation)
+				return expects_lr<void>(layer_exception("chain not found"));
+
+			auto copy = link;
+			auto status = normalize_public_key(asset, &copy.public_key);
+			if (!status)
+				return status;
+
+			status = normalize_address(asset, &copy.address);
+			if (!status)
+				return status;
+
+			storages::superchainstate state = storages::superchainstate(asset);
+			auto candidate_link = state.get_link(copy.address);
+			if (candidate_link && candidate_link->as_hash() == copy.as_hash())
+				return expectation::met;
+
+			return state.set_link(copy);
+		}
+		expects_lr<void> bridge::disable_link(const algorithm::asset_id& asset, const wallet_link& link)
+		{
+			if (!algorithm::asset::is_aux(asset))
+				return expects_lr<void>(layer_exception("asset not found"));
+
+			if (!link.has_all())
+				return expects_lr<void>(layer_exception("address not found"));
+
+			auto* implementation = get_network(asset);
+			if (!implementation)
+				return expects_lr<void>(layer_exception("chain not found"));
+
+			auto copy = link;
+			auto status = normalize_public_key(asset, &copy.public_key);
+			if (!status)
+				return status;
+
+			status = normalize_address(asset, &copy.address);
+			if (!status)
+				return status;
+
+			storages::superchainstate state = storages::superchainstate(asset);
+			return state.clear_link(copy);
+		}
+		expects_lr<wallet_link> bridge::normalize_link(const algorithm::asset_id& asset, const wallet_link& link)
+		{
+			if (link.has_address())
+			{
+				auto result = get_links_by_addresses(asset, { link.address });
+				if (result && !result->empty())
+					return expects_lr<wallet_link>(std::move(result->begin()->second));
+			}
+
+			if (link.has_public_key())
+			{
+				auto result = get_links_by_public_keys(asset, { link.public_key });
+				if (result && !result->empty())
+					return expects_lr<wallet_link>(std::move(result->begin()->second));
+			}
+
+			if (link.has_owner())
+			{
+				auto result = get_links_by_owner(asset, link.owner, 0, 1);
+				if (result && !result->empty())
+					return expects_lr<wallet_link>(std::move(result->begin()->second));
+			}
+
+			return layer_exception("link not found");
+		}
+		expects_lr<uint64_t> bridge::get_earliest_scanned_block_height(const algorithm::asset_id& asset)
+		{
+			if (!algorithm::asset::is_aux(asset))
+				return expects_lr<uint64_t>(layer_exception("asset not found"));
+
+			storages::superchainstate state = storages::superchainstate(asset);
+			auto earliest_block_height = state.get_property("TIP:MIN");
+			if (!earliest_block_height || !earliest_block_height->value.is_integer())
+				return expects_lr<uint64_t>(layer_exception("block not found"));
+
+			return expects_lr<uint64_t>(earliest_block_height->value.as_uint64());
+		}
+		expects_lr<uint64_t> bridge::get_latest_known_block_height(const algorithm::asset_id& asset)
+		{
+			if (!algorithm::asset::is_aux(asset))
+				return expects_lr<uint64_t>(layer_exception("asset not found"));
+
+			uint64_t block_height = 0;
+			storages::superchainstate state = storages::superchainstate(asset);
+			auto latest_block_height = state.get_property("TIP:MAX");
+			if (latest_block_height)
+			{
+				uint64_t possible_block_height = latest_block_height->value.as_uint64();
+				if (possible_block_height > block_height)
+					block_height = possible_block_height;
+			}
+
+			auto checkpoint_block_height = state.get_property("TIP:NOW");
+			if (checkpoint_block_height)
+			{
+				uint64_t possible_block_height = checkpoint_block_height->value.as_uint64();
+				if (possible_block_height > block_height)
+					block_height = possible_block_height;
+			}
+
+			if (!block_height)
+				return expects_lr<uint64_t>(layer_exception("block not found"));
+
+			return expects_lr<uint64_t>(block_height);
+		}
+		expects_lr<wallet_link> bridge::get_link(const algorithm::asset_id& asset, const std::string_view& address)
+		{
+			storages::superchainstate state = storages::superchainstate(asset);
+			return state.get_link(address);
+		}
+		expects_lr<hash_map<string, wallet_link>> bridge::get_links_by_owner(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, size_t offset, size_t count)
+		{
+			storages::superchainstate state = storages::superchainstate(asset);
+			return state.get_links_by_owner(owner, offset, count);
+		}
+		expects_lr<hash_map<string, wallet_link>> bridge::get_links_by_public_keys(const algorithm::asset_id& asset, const hash_set<string>& public_keys)
+		{
+			storages::superchainstate state = storages::superchainstate(asset);
+			return state.get_links_by_public_keys(public_keys);
+		}
+		expects_lr<hash_map<string, wallet_link>> bridge::get_links_by_addresses(const algorithm::asset_id& asset, const hash_set<string>& addresses)
+		{
+			storages::superchainstate state = storages::superchainstate(asset);
+			return state.get_links_by_addresses(addresses);
+		}
+		expects_lr<void> bridge::receive_utxo(const algorithm::asset_id& asset, const coin_utxo& value, uint64_t block_id)
+		{
+			storages::superchainstate state = storages::superchainstate(asset);
+			return state.receive_utxo(value, block_id);
+		}
+		expects_lr<void> bridge::spend_utxo(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint64_t index, uint64_t block_id)
+		{
+			storages::superchainstate state = storages::superchainstate(asset);
+			return state.spend_utxo(transaction_id, index, block_id);
+		}
+		expects_lr<void> bridge::revive_utxo(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint64_t index)
+		{
+			storages::superchainstate state = storages::superchainstate(asset);
+			return state.revive_utxo(transaction_id, index);
+		}
+		expects_lr<void> bridge::revive_utxo_tree(const algorithm::asset_id& asset, const computed_transaction& computed)
+		{
+			storages::superchainstate state = storages::superchainstate(asset);
+			for (auto& [input_hash, input] : computed.inputs)
+			{
+				auto result = state.revive_utxo(input.transaction_id, input.index);
+				if (!result)
+					return result;
+			}
+
+			for (auto& [output_hash, output] : computed.outputs)
+			{
+				auto result = state.revive_utxo(output.transaction_id, output.index);
+				if (!result)
+					return result;
+
+				auto child = state.get_computed_transaction(output.transaction_id, 0, 0);
+				if (!child)
+					continue;
+
+				result = revive_utxo_tree(asset, *child);
+				if (!result)
+					return result;
+			}
+
+			return expectation::met;
+		}
+		expects_lr<void> bridge::update_utxo_tree(const algorithm::asset_id& asset, const computed_transaction& computed)
+		{
+			auto* implementation = get_network(asset);
+			if (!implementation)
+				return layer_exception("chain not found");
+
+			auto* utxo_implementation = translation_utxo::from(implementation);
+			if (!utxo_implementation)
+				return expectation::met;
+
+			return utxo_implementation->update_utxo(computed);
+		}
+		expects_lr<coin_utxo> bridge::get_utxo(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint64_t index)
+		{
+			storages::superchainstate state = storages::superchainstate(asset);
+			return state.get_utxo(transaction_id, index);
+		}
+		expects_lr<vector<coin_utxo>> bridge::get_utxos(const algorithm::asset_id& asset, const wallet_link& link, size_t offset, size_t count)
+		{
+			storages::superchainstate state = storages::superchainstate(asset);
+			return state.get_utxos(link, offset, count);
+		}
+		expects_lr<format::tree> bridge::load_cache(const algorithm::asset_id& asset, cache_policy policy, const std::string_view& key)
+		{
+			storages::superchainstate state = storages::superchainstate(asset);
+			return state.get_cache(policy, key);
+		}
+		expects_lr<void> bridge::store_cache(const algorithm::asset_id& asset, cache_policy policy, const std::string_view& key, const format::tree& value)
+		{
+			storages::superchainstate state = storages::superchainstate(asset);
+			return state.set_cache(policy, key, value);
+		}
+		option<string> bridge::get_contract_address(const algorithm::asset_id& asset)
+		{
+			if (!algorithm::asset::is_aux(asset))
+				return optional::none;
+
+			auto blockchain = algorithm::asset::blockchain_of(asset);
+			auto token = algorithm::asset::token_of(asset);
+			storages::superchainstate state = storages::superchainstate(asset);
+			auto value = state.get_property(token);
+			if (!value || value->childs().empty())
+				return optional::none;
+
+			auto target_checksum = algorithm::asset::checksum_of(asset);
+			for (auto& item : value->childs())
+			{
+				auto candidate_address = item.value.as_blob();
+				auto candidate_checksum = algorithm::asset::checksum_of(algorithm::asset::id_of(blockchain, token, candidate_address));
+				if (candidate_checksum == target_checksum)
+					return candidate_address;
+			}
+
+			return value->childs()[0].value.as_blob();
+		}
+		vector<algorithm::asset_id> bridge::get_assets(bool observing_only)
+		{
+			vector<algorithm::asset_id> assets;
+			assets.reserve(networks.size());
+			for (auto& node : networks)
+			{
+				if (!observing_only || !node.second.connections.empty())
+					assets.push_back(algorithm::asset::id_of(node.first));
+			}
+			return assets;
+		}
+		hash_map<algorithm::asset_id, translation::chainparams> bridge::get_assets_with_params()
+		{
+			hash_map<algorithm::asset_id, translation::chainparams> result;
+			result.reserve(networks.size());
+			for (auto& next : networks)
+				result[algorithm::asset::id_of(next.first)] = next.second.translation->get_chainparams();
+			return result;
+		}
+		const hash_map<string, bridge::invocation_callback>& bridge::get_registrations()
+		{
+			if (!registrations.empty())
+				return registrations;
+
+			registrations =
+			{
+				{ "ADA", chain<translations::cardano>(this) },
+				{ "BTC", chain<translations::bitcoin>(this) },
+				{ "ETH", chain<translations::ethereum>(this) },
+				{ "SOL", chain<translations::solana>(this) },
+				{ "TRX", chain<translations::tron>(this) },
+				{ "XRP", chain<translations::ripple>(this) },
+				{ "XLM", chain<translations::stellar>(this) },
+#ifdef TAN_TEST
+				{ "BCH", chain<translations::bitcoin_cash>(this) },
+				{ "BTG", chain<translations::bitcoin_gold>(this) },
+				{ "BSV", chain<translations::bitcoin_sv>(this) },
+				{ "DASH", chain<translations::dash>(this) },
+				{ "DGB", chain<translations::digibyte>(this) },
+				{ "DOGE", chain<translations::dogecoin>(this) },
+				{ "LTC", chain<translations::litecoin>(this) },
+				{ "XEC", chain<translations::ecash>(this) },
+				{ "ZEC", chain<translations::zcash>(this) },
+				{ "ARB", chain<translations::arbitrum>(this) },
+				{ "AVAX", chain<translations::avalanche>(this) },
+				{ "BASE", chain<translations::base>(this) },
+				{ "BLAST", chain<translations::blast>(this) },
+				{ "BNB", chain<translations::bnb>(this) },
+				{ "CELO", chain<translations::celo>(this) },
+				{ "ETC", chain<translations::ethereum_classic>(this) },
+				{ "GNO", chain<translations::gnosis>(this) },
+				{ "LINEA", chain<translations::linea>(this) },
+				{ "MATIC", chain<translations::polygon>(this) },
+				{ "OP", chain<translations::optimism>(this) },
+				{ "S", chain<translations::sonic>(this) },
+				{ "ZK", chain<translations::zksync>(this) },
+				{ "XMR", chain<translations::monero>(this) },
+#endif
+			};
+			return registrations;
+		}
+		hash_map<string, network_instance>& bridge::get_networks()
+		{
+			return networks;
+		}
+		translation* bridge::get_network(const algorithm::asset_id& asset)
+		{
+			auto it = networks.find(algorithm::asset::blockchain_of(asset));
+			return it != networks.end() ? *it->second.translation : nullptr;
+		}
+		network_instance* bridge::get_network_instance(const algorithm::asset_id& asset)
+		{
+			auto it = networks.find(algorithm::asset::blockchain_of(asset));
+			return it != networks.end() ? &it->second : nullptr;
+		}
+		const translation::chainparams* bridge::get_network_params(const algorithm::asset_id& asset)
+		{
+			auto it = networks.find(algorithm::asset::blockchain_of(asset));
+			if (it != networks.end())
+			{
+				auto& params = it->second.translation->get_chainparams();
+				return &params;
+			}
+
+			return nullptr;
+		}
+		connection_instance* bridge::add_network_connection(const algorithm::asset_id& asset, const std::string_view& url, double rps, bool keep_alive)
+		{
+			return add_network_connection(asset, { { "auto", string(url) } }, rps, keep_alive);
+		}
+		connection_instance* bridge::add_network_connection(const algorithm::asset_id& asset, hash_map<string, string>&& urls, double rps, bool keep_alive)
+		{
+			auto it = networks.find(algorithm::asset::blockchain_of(asset));
+			VI_PANIC(it != networks.end(), "must add a network before adding a connection");
+			it->second.connections.emplace_back();
+			auto& next = it->second.connections.back();
+			next.urls = std::move(urls);
+			next.keep_alive = keep_alive;
+			next.rps = rps;
+
+			for (auto& [type, path] : next.urls)
+				stringify::trim(path);
+
+			return &next;
+		}
+		format::tree* bridge::add_network_props(const algorithm::asset_id& asset, const format::tree& value)
+		{
+			auto it = networks.find(algorithm::asset::blockchain_of(asset));
+			VI_PANIC(it != networks.end(), "must add a network before adding props");
+			it->second.props = std::move(value);
+			return &it->second.props;
+		}
+		format::tree* bridge::get_network_props(const algorithm::asset_id& asset)
+		{
+			auto it = networks.find(algorithm::asset::blockchain_of(asset));
+			if (it != networks.end())
+				return &it->second.props;
+
+			return nullptr;
+		}
+		void bridge::add_network_instance(const algorithm::asset_id& asset, translation* instance)
+		{
+			auto& network = networks[algorithm::asset::blockchain_of(asset)];
+			network.asset = algorithm::asset::base_id_of(asset);
+			network.translation = instance;
+		}
+		void bridge::remove_network(const algorithm::asset_id& asset)
+		{
+			networks.erase(algorithm::asset::blockchain_of(asset));
+		}
+		bool bridge::has_network(const algorithm::asset_id& asset, bool and_connections)
+		{
+			auto target = networks.find(algorithm::asset::blockchain_of(asset));
+			return target != networks.end() && (!and_connections || !target->second.connections.empty());
+		}
+		std::string_view bridge::cache_type_of(cache_policy cache)
+		{
+			switch (cache)
+			{
+				case cache_policy::no_cache:
+					return "no_cache";
+				case cache_policy::no_cache_no_throttling:
+					return "no_cache_no_throttling";
+				case cache_policy::temporary_cache:
+					return "temporary_cache";
+				case cache_policy::blob_cache:
+					return "blob_cache";
+				case cache_policy::lifetime_cache:
+					return "lifetime_cache";
+				default:
+					return "unset";
+			}
 		}
 	}
 }

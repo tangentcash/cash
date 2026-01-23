@@ -1,5 +1,4 @@
 #include "bitcoin.h"
-#include "../service/superchain.h"
 #include "../policy/compositions.h"
 #include "../internal/bitcoincash.h"
 #undef min
@@ -203,7 +202,7 @@ namespace tangent
 				return index < scripts.size() && index < public_keys.size() && index < values.size() && index < types.size();
 			}
 
-			bitcoin::bitcoin(const algorithm::asset_id& new_asset) noexcept : relay_backend_utxo(new_asset)
+			bitcoin::bitcoin(const algorithm::asset_id& new_asset) noexcept : translation_utxo(new_asset)
 			{
 				btc_ecc_set_context(algorithm::signing::get_context());
 				netdata.composition = algorithm::composition::type::secp256k1;
@@ -779,7 +778,7 @@ namespace tangent
 			expects_lr<string> bitcoin::encode_address(const std::string_view& public_key_hash)
 			{
 				auto* chain = get_chain();
-				auto* options = superchain::server_node::get()->get_specifications(native_asset);
+				auto* options = bridge::get()->get_network_props(native_asset);
 				auto type = public_key_hash[0];
 				auto data = public_key_hash.substr(1);
 				size_t types = (size_t)get_address_type() | resolve_address_types(options);
@@ -949,7 +948,7 @@ namespace tangent
 			expects_lr<address_map> bitcoin::to_addresses(const std::string_view& from_public_key)
 			{
 				auto* chain = get_chain();
-				auto* options = superchain::server_node::get()->get_specifications(native_asset);
+				auto* options = bridge::get()->get_network_props(native_asset);
 				size_t types = (size_t)get_address_type() | resolve_address_types(options);
 				address_map addresses;
 				btc_pubkey public_key;

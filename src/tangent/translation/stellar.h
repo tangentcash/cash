@@ -10,7 +10,7 @@ namespace tangent
 	{
 		namespace translations
 		{
-			class stellar : public relay_backend
+			class stellar : public translation
 			{
 			public:
 				enum class asset_type : uint32_t

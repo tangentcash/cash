@@ -1,5 +1,4 @@
 #include "solana.h"
-#include "../service/superchain.h"
 #include <sodium.h>
 extern "C"
 {
@@ -60,7 +59,7 @@ namespace tangent
 				return "sendTransaction";
 			}
 
-			solana::solana(const algorithm::asset_id& new_asset) noexcept : relay_backend(new_asset)
+			solana::solana(const algorithm::asset_id& new_asset) noexcept : translation(new_asset)
 			{
 				netdata.composition = algorithm::composition::type::ed25519;
 				netdata.routing = routing_policy::account;
@@ -96,16 +95,31 @@ namespace tangent
 				}
 
 				auto block_data = coawait(execute_rpc_multi(nd_call::get_block(), std::move(map), cache_policy::blob_cache));
-				if (!block_data)
+				if (!block_data && block_data.error().message().find("was skipped, or missing") == std::string::npos)
 					coreturn block_data.error();
 
 				vector<block_log> results;
-				for (auto& block : block_data->childs())
+				if (!block_data)
 				{
-					auto* transactions = (format::tree*)block.child("transactions");
-					auto& log = results.emplace_back();
-					log.block_hash = block.child_var("blockhash").as_blob();
-					log.transactions = transactions ? std::move(*transactions) : format::tree::list();
+					for (uint64_t i = 0; i < block_count; i++)
+					{
+						auto& log = results.emplace_back();
+						log.block_hash = to_string(block_height + i);
+						log.transactions = format::tree::list();
+					}
+
+					if (protocol::now().user.superchain.logging)
+						VI_WARN("skipping solana block(s) at height %" PRIu64 ": %s", block_height, block_data.error().what());
+				}
+				else
+				{
+					for (auto& block : block_data->childs())
+					{
+						auto* transactions = (format::tree*)block.child("transactions");
+						auto& log = results.emplace_back();
+						log.block_hash = block.child_var("blockhash").as_blob();
+						log.transactions = transactions ? std::move(*transactions) : format::tree::list();
+					}
 				}
 				coreturn expects_rt<vector<block_log>>(std::move(results));
 			}
@@ -305,7 +319,7 @@ namespace tangent
 				{
 					auto symbol = coawait(get_token_symbol(contract_address));
 					auto token_asset = algorithm::asset::id_of(blockchain, symbol.or_else(contract_address), contract_address);
-					superchain::server_node::get()->enable_contract_address(token_asset, contract_address);
+					bridge::get()->enable_contract_address(token_asset, contract_address);
 
 					auto& prev_balances = prev_token_state[contract_address];
 					for (auto& [owner, next_balance] : balances)
@@ -366,7 +380,7 @@ namespace tangent
 				}
 				else
 				{
-					auto contract_address = superchain::server_node::get()->get_contract_address(asset);
+					auto contract_address = bridge::get()->get_contract_address(asset);
 					if (!contract_address)
 						coreturn expects_rt<decimal>(remote_exception("contract address not found"));
 
@@ -403,7 +417,7 @@ namespace tangent
 				if (fee_value > max_fee)
 					coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
 
-				auto contract_address = superchain::server_node::get()->get_contract_address(to.asset);
+				auto contract_address = bridge::get()->get_contract_address(to.asset);
 				option<token_account> from_token = optional::none;
 				option<token_account> to_token = optional::none;
 				if (contract_address)

@@ -1,6 +1,5 @@
 #include "rpc.h"
 #include "consensus.h"
-#include "superchain.h"
 #include "../kernel/script.h"
 #include "../policy/transactions.h"
 #include "../storage/mempoolstate.h"
@@ -2488,7 +2487,7 @@ namespace tangent
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
 
-			auto params = superchain::server_node::get()->get_chainparams(asset);
+			auto params = superchain::bridge::get()->get_network_params(asset);
 			if (!params)
 				return server_response().error(error_codes::not_found, "asset not valid");
 
@@ -2634,7 +2633,7 @@ namespace tangent
 			if (!list)
 				return server_response().error(error_codes::not_found, "data not found");
 
-			auto params = superchain::server_node::get()->get_chainparams(asset);
+			auto params = superchain::bridge::get()->get_network_params(asset);
 			if (!params)
 				return server_response().error(error_codes::not_found, "asset not valid");
 
@@ -3264,15 +3263,15 @@ namespace tangent
 		}
 		server_response server_node::validatorstate_get_blockchains(http::connection* base, format::variables&& args)
 		{
-			auto* server = superchain::server_node::get();
+			auto* bridge = superchain::bridge::get();
 			auto data = format::tree::list();
-			for (auto& asset : server->get_chains())
+			for (auto& [asset, params] : bridge->get_assets_with_params())
 			{
-				auto* next = data.push(algorithm::asset::serialize(asset.first));
-				next->set("divisibility", format::variable(asset.second.divisibility));
-				next->set("transaction_finality", format::variable(asset.second.sync_latency));
-				next->set("transaction_expires", format::variable(asset.second.transaction_expires));
-				switch (asset.second.composition)
+				auto* next = data.push(algorithm::asset::serialize(asset));
+				next->set("divisibility", format::variable(params.divisibility));
+				next->set("transaction_finality", format::variable(params.sync_latency));
+				next->set("transaction_expires", format::variable(params.transaction_expires));
+				switch (params.composition)
 				{
 					case algorithm::composition::type::ed25519:
 						next->set("composition_policy", format::variable("ed25519"));
@@ -3290,7 +3289,7 @@ namespace tangent
 						next->set("composition_policy", format::variable());
 						break;
 				}
-				switch (asset.second.tokenization)
+				switch (params.tokenization)
 				{
 					case tangent::superchain::token_policy::none:
 						next->set("token_policy", format::variable("none"));
@@ -3305,7 +3304,7 @@ namespace tangent
 						next->set("token_policy", format::variable());
 						break;
 				}
-				switch (asset.second.routing)
+				switch (params.routing)
 				{
 					case tangent::superchain::routing_policy::account:
 						next->set("routing_policy", format::variable("account"));
@@ -3374,9 +3373,6 @@ namespace tangent
 			{
 				auto* consensus = data.set("consensus", format::tree::map());
 				consensus->set("port", format::variable(protocol::now().user.consensus.port));
-				consensus->set("time_offset", format::variable(protocol::now().user.consensus.time_offset));
-				consensus->set("max_inbound_connection", format::variable(protocol::now().user.consensus.max_inbound_connections));
-				consensus->set("max_outbound_connection", format::variable(protocol::now().user.consensus.max_outbound_connections));
 			}
 
 			if (protocol::now().user.discovery.server)
@@ -3385,13 +3381,11 @@ namespace tangent
 				discovery->set("port", format::variable(protocol::now().user.discovery.port));
 			}
 
-			if (protocol::now().user.superchain.server)
+			if (protocol::now().user.superchain.listener)
 			{
 				auto* superchain = data.set("superchain", format::tree::map());
-				superchain->set("relaying_timeout", format::variable(protocol::now().user.superchain.relaying_timeout));
-				superchain->set("relaying_retry_timeout", format::variable(protocol::now().user.superchain.relaying_retry_timeout));
-				auto array = superchain->set("nodes", format::tree::list());
-				for (auto& asset : superchain::server_node::get()->get_assets())
+				auto array = superchain->set("listeners", format::tree::list());
+				for (auto& asset : superchain::bridge::get()->get_assets())
 					array->push(algorithm::asset::serialize(asset));
 			}
 

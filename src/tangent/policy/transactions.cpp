@@ -1,6 +1,6 @@
 #include "transactions.h"
 #include "../kernel/script.h"
-#include "../service/superchain.h"
+#include "../kernel/superchain.h"
 #define MOCKUP_FAIL "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
 #define MOCKUP_LOST "0xbeefdeadbeefdeadbeefdeadbeefdeadbeefdead"
 
@@ -1223,7 +1223,7 @@ namespace tangent
 						coreturn remote_exception("failed to coordinate participants after several retries");
 
 					dispatcher->push_cache(executor, aggregation_state.as_message());
-					coreturn remote_exception::retry();
+					coreturn remote_exception::retry_later();
 				}
 
 				btree_set<algorithm::pubkeyhash_t> deferred_participants;
@@ -1804,7 +1804,7 @@ namespace tangent
 			if (!proof.block_id)
 				return layer_exception("transaction has no block reference");
 
-			auto chain = superchain::server_node::get()->get_chainparams(asset);
+			auto chain = superchain::bridge::get()->get_network_params(asset);
 			if (!chain)
 				return layer_exception("invalid operation");
 
@@ -1850,7 +1850,7 @@ namespace tangent
 			if (!validation)
 				return validation.error();
 
-			auto* chain = superchain::server_node::get()->get_chainparams(asset);
+			auto* chain = superchain::bridge::get()->get_network_params(asset);
 			if (!chain)
 				return layer_exception("invalid chain");
 
@@ -2284,7 +2284,7 @@ namespace tangent
 		}
 		void attestate::set_finalized_proof(uint64_t block_id, const std::string_view& transaction_id, const vector<superchain::value_transfer>& inputs, const vector<superchain::value_transfer>& outputs)
 		{
-			auto* chain = superchain::server_node::get()->get_chainparams(asset);
+			auto* chain = superchain::bridge::get()->get_network_params(asset);
 			superchain::computed_transaction witness;
 			witness.transaction_id = transaction_id;
 			witness.block_id = block_id;
@@ -2491,7 +2491,7 @@ namespace tangent
 					return delegation.error();
 			}
 
-			auto* params = superchain::server_node::get()->get_chainparams(asset);
+			auto* params = superchain::bridge::get()->get_network_params(asset);
 			if (!params)
 				return layer_exception("invalid operation");
 
@@ -2573,7 +2573,7 @@ namespace tangent
 						break;
 					}
 
-					auto* chain = superchain::server_node::get()->get_chain(asset);
+					auto* chain = superchain::bridge::get()->get_network(asset);
 					if (!chain)
 						return layer_exception("invalid operation");
 
@@ -2639,7 +2639,7 @@ namespace tangent
 
 			return coasync<expects_rt<void>>([this, executor, dispatcher, runner_wallet]() -> expects_promise_rt<void>
 			{
-				auto* chain = superchain::server_node::get()->get_chainparams(asset);
+				auto* chain = superchain::bridge::get()->get_network_params(asset);
 				if (!chain)
 					coreturn remote_exception("invalid operation");
 
@@ -2675,7 +2675,7 @@ namespace tangent
 							coreturn remote_exception("failed to coordinate participants after several retries");
 
 						dispatcher->push_cache(executor, state.as_message());
-						coreturn remote_exception::retry();
+						coreturn remote_exception::retry_later();
 					}
 
 					for (auto& participant : state.participants)
@@ -2878,7 +2878,7 @@ namespace tangent
 			if (group_signature.empty())
 				return layer_exception("invalid group signature");
 
-			auto* chain = superchain::server_node::get()->get_chainparams(asset);
+			auto* chain = superchain::bridge::get()->get_network_params(asset);
 			if (!chain)
 				return layer_exception("invalid operation");
 
@@ -2911,9 +2911,9 @@ namespace tangent
 				return parent.error();
 
 			auto* parent_transaction = (route*)*parent->transaction;
-			auto* server = superchain::server_node::get();
-			auto* chain = server->get_chain(asset);
-			auto* params = server->get_chainparams(asset);
+			auto* server = superchain::bridge::get();
+			auto* chain = server->get_network(asset);
+			auto* params = server->get_network_params(asset);
 			if (!chain || !params)
 				return layer_exception("invalid operation");
 
@@ -3069,7 +3069,7 @@ namespace tangent
 			if (manager.empty())
 				return layer_exception("invalid manager");
 
-			auto* chain = superchain::server_node::get()->get_chainparams(asset);
+			auto* chain = superchain::bridge::get()->get_network_params(asset);
 			if (!chain)
 				return layer_exception("invalid operation");
 
@@ -3218,13 +3218,13 @@ namespace tangent
 			if (policy && policy->queue_transaction_hash != executor->receipt.transaction_hash)
 			{
 				if (only_if_not_in_queue && policy->queue_transaction_hash > 0)
-					return expects_promise_rt<void>(remote_exception::retry());
+					return expects_promise_rt<void>(remote_exception::retry_later());
 			}
 
 			return coasync<expects_rt<void>>([this, executor, dispatcher, runner_wallet]() mutable -> expects_promise_rt<void>
 			{
-				auto* server = superchain::server_node::get();
-				auto* chain = server->get_chainparams(asset);
+				auto* server = superchain::bridge::get();
+				auto* chain = server->get_network_params(asset);
 				auto cancel = [this, executor, dispatcher, runner_wallet](remote_exception&& error) -> expects_rt<void>
 				{
 					auto* transaction = memory::init<broadcast>();
@@ -3351,7 +3351,7 @@ namespace tangent
 						coreturn remote_exception("failed to coordinate participants after several retries");
 
 					dispatcher->push_cache(executor, state.as_message());
-					coreturn remote_exception::retry();
+					coreturn remote_exception::retry_later();
 				}
 				else if (!result)
 					coreturn cancel(std::move(result.error()));
@@ -3664,7 +3664,7 @@ namespace tangent
 			if (prepared.as_status() == superchain::prepared_transaction::status::invalid)
 				return layer_exception("invalid prepared transaction");
 
-			auto server = superchain::server_node::get();
+			auto server = superchain::bridge::get();
 			auto base_asset = algorithm::asset::base_id_of(transaction->asset);
 			auto required_output_witness = btree_map<string, states::witness_account>();
 			auto required_output_value = btree_map<algorithm::asset_id, decimal>();
@@ -3919,7 +3919,7 @@ namespace tangent
 			if (!token_transfer)
 				return token_transfer.error();
 
-			return superchain::server_node::get()->revive_utxo_tree(base_asset, parent_transaction->proof->as_computed());
+			return superchain::bridge::get()->revive_utxo_tree(base_asset, parent_transaction->proof->as_computed());
 		}
 		bool anticast::store_body(format::wo_stream* stream) const
 		{
@@ -4039,12 +4039,12 @@ namespace tangent
 		}
 		expects_promise_rt<superchain::prepared_transaction> resolver::prepare_transaction(const algorithm::asset_id& asset, const superchain::wallet_link& from_link, const superchain::value_transfer& to, const decimal& max_fee)
 		{
-			auto* server = superchain::server_node::get();
+			auto* server = superchain::bridge::get();
 			bool may_mock_up = protocol::now().is(network_type::regtest);
-			if (!may_mock_up || server->has_support(asset))
+			if (!may_mock_up || server->has_network(asset, true))
 				return server->prepare_transaction(asset, from_link, to, max_fee);
 
-			auto chain = server->get_chainparams(asset);
+			auto chain = server->get_network_params(asset);
 			if (!chain)
 				return expects_promise_rt<superchain::prepared_transaction>(remote_exception("invalid operation"));
 
@@ -4081,9 +4081,9 @@ namespace tangent
 		}
 		expects_lr<superchain::finalized_transaction> resolver::finalize_transaction(const algorithm::asset_id& asset, superchain::prepared_transaction&& prepared)
 		{
-			auto* server = superchain::server_node::get();
+			auto* server = superchain::bridge::get();
 			bool may_mock_up = protocol::now().is(network_type::regtest);
-			if (!may_mock_up || server->has_support(asset))
+			if (!may_mock_up || server->has_network(asset, true))
 				return server->finalize_transaction(asset, std::move(prepared));
 
 			auto transaction_id = algorithm::encoding::encode_0xhex256(prepared.as_hash());
@@ -4094,9 +4094,9 @@ namespace tangent
 		}
 		expects_promise_rt<void> resolver::broadcast_transaction(const algorithm::asset_id& asset, const uint256_t& external_id, superchain::finalized_transaction&& finalized, ledger::dispatcher_context* dispatcher, const ledger::wallet* runner_wallet)
 		{
-			auto* server = superchain::server_node::get();
+			auto* server = superchain::bridge::get();
 			bool may_mock_up = protocol::now().is(network_type::regtest);
-			if (!may_mock_up || server->has_support(asset))
+			if (!may_mock_up || server->has_network(asset, true))
 			{
 				auto preserved = memory::init<superchain::finalized_transaction>(std::move(finalized));
 				return server->broadcast_transaction(asset, external_id, *preserved).then<expects_rt<void>>([preserved](expects_rt<void>&& status) mutable -> expects_rt<void>

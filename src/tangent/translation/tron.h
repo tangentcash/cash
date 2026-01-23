@@ -36,7 +36,7 @@ namespace tangent
 				virtual expects_promise_rt<decimal> calculate_balance(const algorithm::asset_id& for_asset, const wallet_link& link) override;
 				virtual expects_promise_rt<prepared_transaction> prepare_transaction(const wallet_link& from_link, const value_transfer& to, const decimal& max_fee) override;
 				virtual expects_lr<finalized_transaction> finalize_transaction(superchain::prepared_transaction&& prepared) override;
-				virtual expects_lr<void> verify_node_compatibility(server_relay* node) override;
+				virtual expects_lr<void> verify_node_compatibility(connection_instance* node) override;
 				virtual const sc_chainparams_* get_chain() override;
 
 			public:

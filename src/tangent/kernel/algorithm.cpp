@@ -1,6 +1,6 @@
 #include "algorithm.h"
+#include "superchain.h"
 #include "../policy/compositions.h"
-#include "../service/superchain.h"
 #include <gmp.h>
 extern "C"
 {
@@ -1357,7 +1357,7 @@ namespace tangent
 				return false;
 
 			bool onchain = auxiliary_only ? false : blockchain == protocol::now().policy.token;
-			auto* chain = onchain ? nullptr : superchain::server_node::get()->get_chain(value);
+			auto* chain = onchain ? nullptr : superchain::bridge::get()->get_network(value);
 			if (!onchain && !chain)
 				return false;
 

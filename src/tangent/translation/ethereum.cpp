@@ -1,5 +1,4 @@
 #include "ethereum.h"
-#include "../service/superchain.h"
 #include <secp256k1_recovery.h>
 #include <gmp.h>
 extern "C"
@@ -324,7 +323,7 @@ namespace tangent
 				return "eth_sendRawTransaction";
 			}
 
-			ethereum::ethereum(const algorithm::asset_id& new_asset) noexcept : relay_backend(new_asset)
+			ethereum::ethereum(const algorithm::asset_id& new_asset) noexcept : translation(new_asset)
 			{
 				netdata.composition = algorithm::composition::type::secp256k1;
 				netdata.routing = routing_policy::account;
@@ -599,7 +598,7 @@ namespace tangent
 							auto& token_output = outputs[to][token_asset];
 							token_input = token_input.is_nan() ? token_value : (token_input + token_value);
 							token_output = token_output.is_nan() ? token_value : (token_output + token_value);
-							superchain::server_node::get()->enable_contract_address(token_asset, contract_address);
+							bridge::get()->enable_contract_address(token_asset, contract_address);
 						}
 					}
 				}
@@ -652,7 +651,7 @@ namespace tangent
 				uint256_t vgas_premium = 0;
 				if (!legacy.eip_155)
 				{
-					auto max_priority_fee_per_gas_value = legacy.priority_gas ? expects_rt<format::tree>(remote_exception::retry()) : coawait(execute_rpc(nd_call::max_priority_fee_per_gas(), { }, cache_policy::no_cache));
+					auto max_priority_fee_per_gas_value = legacy.priority_gas ? expects_rt<format::tree>(remote_exception::retry_later()) : coawait(execute_rpc(nd_call::max_priority_fee_per_gas(), { }, cache_policy::no_cache));
 					if (!max_priority_fee_per_gas_value)
 					{
 						auto block_number = coawait(get_latest_block_height());
@@ -685,7 +684,7 @@ namespace tangent
 				params.set("gasPrice", format::variable(uint256_to_hex(vgas_price)));
 				params.set("from", format::variable(decode_non_eth_address(from_link.address)));
 
-				auto contract_address = superchain::server_node::get()->get_contract_address(to.asset);
+				auto contract_address = bridge::get()->get_contract_address(to.asset);
 				decimal divisibility = netdata.divisibility;
 				if (contract_address)
 				{
@@ -734,7 +733,7 @@ namespace tangent
 			}
 			expects_promise_rt<decimal> ethereum::calculate_balance(const algorithm::asset_id& for_asset, const wallet_link& link)
 			{
-				auto contract_address = superchain::server_node::get()->get_contract_address(for_asset);
+				auto contract_address = bridge::get()->get_contract_address(for_asset);
 				decimal divisibility = netdata.divisibility;
 				if (contract_address)
 				{
@@ -794,7 +793,7 @@ namespace tangent
 				if (fee_value > max_fee)
 					coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
 
-				auto contract_address = superchain::server_node::get()->get_contract_address(to.asset);
+				auto contract_address = bridge::get()->get_contract_address(to.asset);
 				if (contract_address)
 				{
 					auto balance = coawait(calculate_balance(to.asset, from_link));

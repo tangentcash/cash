@@ -1,5 +1,4 @@
 #include "stellar.h"
-#include "../service/superchain.h"
 #include <sodium.h>
 extern "C"
 {
@@ -260,7 +259,7 @@ namespace tangent
 				return "/transactions";
 			}
 
-			stellar::stellar(const algorithm::asset_id& new_asset, chain_config* new_config) noexcept : relay_backend(new_asset)
+			stellar::stellar(const algorithm::asset_id& new_asset, chain_config* new_config) noexcept : translation(new_asset)
 			{
 				if (new_config != nullptr)
 					config = *new_config;
@@ -393,7 +392,7 @@ namespace tangent
 						string token = transaction_data.child_var("asset_code").as_blob();
 						string issuer = transaction_data.child_var("asset_issuer").as_blob();
 						token_asset = algorithm::asset::id_of(algorithm::asset::blockchain_of(native_asset), token, issuer);
-						superchain::server_node::get()->enable_contract_address(token_asset, issuer);
+						bridge::get()->enable_contract_address(token_asset, issuer);
 					}
 					else
 					{
@@ -454,7 +453,7 @@ namespace tangent
 				if (balance == account->balances.end())
 					coreturn expects_rt<decimal>(decimal::zero());
 
-				auto contract_address = superchain::server_node::get()->get_contract_address(for_asset);
+				auto contract_address = bridge::get()->get_contract_address(for_asset);
 				if (contract_address && balance->second.info.issuer != *contract_address)
 					coreturn expects_rt<decimal>(decimal::zero());
 
@@ -502,7 +501,7 @@ namespace tangent
 
 				option<StellarCreateAccountOp> account = optional::none;
 				option<StellarPaymentOp> payment = optional::none;
-				auto contract_address = superchain::server_node::get()->get_contract_address(to.asset);
+				auto contract_address = bridge::get()->get_contract_address(to.asset);
 				if (!*has_account)
 					account = tx_create_account_prepared(to.address, from_link.address, (uint64_t)to_stroop(to.value), !!contract_address);
 				
@@ -588,7 +587,7 @@ namespace tangent
 
 				auto& value = output.tokens.empty() ? output.value : output.tokens.begin()->second.value;
 				auto asset = output.tokens.empty() ? output.get_asset(native_asset) : output.tokens.begin()->second.get_asset(native_asset);
-				auto contract_address = superchain::server_node::get()->get_contract_address(asset);
+				auto contract_address = bridge::get()->get_contract_address(asset);
 				if (create_account)
 					account = tx_create_account_prepared(output.link.address, input.utxo.link.address, (uint64_t)to_stroop(value), !!contract_address);
 

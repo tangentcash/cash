@@ -1,5 +1,4 @@
 #include "consensus.h"
-#include "superchain.h"
 #include "../storage/mempoolstate.h"
 #include "../storage/chainstate.h"
 #include "../policy/transactions.h"
@@ -8,6 +7,7 @@
 #define TASK_TOPOLOGY_OPTIMIZATION "topology_optimization"
 #define TASK_MEMPOOL_VACUUM "mempool_vacuum"
 #define TASK_FORK_RESOLUTION "fork_resolution"
+#define TASK_SUPERCHAIN_SYNC "superchain_sync"
 #define TASK_ATTESTATION_RESOLUTION "attestation_resolution"
 #define TASK_BLOCK_DISPATCH_RETRIAL "block_dispatch_retrial"
 #define TASK_BLOCK_PRODUCTION "block_production"
@@ -81,7 +81,7 @@ namespace tangent
 			{
 				auto type_id = packed_result.size() == 1 ? type.as_uint8() : 0;
 				if (type_id == 0x1F)
-					return remote_exception::retry();
+					return remote_exception::retry_later();
 				else if (type_id == 0x2F)
 					return remote_exception::shutdown();
 
@@ -319,7 +319,7 @@ namespace tangent
 					umutex<std::recursive_mutex> unique(mutex);
 					queries.erase(session);
 					if (result.is_pending())
-						result.set(remote_exception::retry());
+						result.set(remote_exception::retry_later());
 				});
 			}
 			push_outgoing(std::move(message));
@@ -758,20 +758,21 @@ namespace tangent
 		void server_node::miner_state::reset()
 		{
 			solver = ledger::solver_context();
-			result = remote_exception::retry();
+			result = remote_exception::retry_later();
 			rewards.clear();
 			hashes.clear();
 		}
 
-		server_node::server_node() noexcept : socket_server(), control_sys("consensus-node")
+		server_node::server_node() noexcept : socket_server(), control_sys("consensus-node"), runner_descriptor(nullptr)
 		{
 		}
 		server_node::~server_node() noexcept
 		{
-			if (superchain::server_node::has_instance())
+			if (superchain::bridge::has_instance())
 			{
-				auto node_id = codec::hex_encode(std::string_view((char*)this, sizeof(this)));
-				superchain::server_node::get()->add_transaction_callback(node_id, nullptr);
+				auto* bridge = superchain::bridge::get();
+				bridge->network_active = nullptr;
+				bridge->network_fetch = nullptr;
 			}
 			clear_pending_fork(nullptr);
 		}
@@ -888,7 +889,7 @@ namespace tangent
 				node.ports.rpc = protocol::now().user.rpc.port;
 				node.services.has_consensus = protocol::now().user.consensus.server;
 				node.services.has_discovery = protocol::now().user.discovery.server;
-				node.services.has_superchain = protocol::now().user.superchain.server;
+				node.services.has_superchain = protocol::now().user.superchain.listener;
 				node.services.has_rpc = protocol::now().user.rpc.server && protocol::now().user.rpc.username.empty();
 
 				bool runner = account == runner_account;
@@ -1482,7 +1483,7 @@ namespace tangent
 			auto proof_hash = packed->at(1).as_uint256();
 			auto chainstate = storages::chainstate();
 			if (chainstate.get_latest_block_number().or_else(1) < block_number)
-				return remote_exception::retry();
+				return remote_exception::retry_later();
 
 			auto executor = ledger::executor_context(nullptr);
 			auto proof_transaction = executor.get_block_transaction<transactions::route>(proof_hash);
@@ -1534,7 +1535,7 @@ namespace tangent
 			auto proof_hash = packed->at(1).as_uint256();
 			auto chainstate = storages::chainstate();
 			if (chainstate.get_latest_block_number().or_else(1) < block_number)
-				return remote_exception::retry();
+				return remote_exception::retry_later();
 
 			auto executor = ledger::executor_context(nullptr);
 			auto proof_transaction = executor.get_block_transaction<transactions::setup>(proof_hash);
@@ -1598,7 +1599,7 @@ namespace tangent
 			auto proof_hash = packed->at(1).as_uint256();
 			auto chainstate = storages::chainstate();
 			if (chainstate.get_latest_block_number().or_else(1) < block_number)
-				return remote_exception::retry();
+				return remote_exception::retry_later();
 
 			auto executor = ledger::executor_context(nullptr);
 			auto proof_transaction = executor.get_block_transaction<transactions::setup>(proof_hash);
@@ -1636,7 +1637,7 @@ namespace tangent
 			auto proof_hash = packed->at(1).as_uint256();
 			auto chainstate = storages::chainstate();
 			if (chainstate.get_latest_block_number().or_else(1) < block_number)
-				return remote_exception::retry();
+				return remote_exception::retry_later();
 
 			auto executor = ledger::executor_context(nullptr);
 			auto proof_transaction = executor.get_block_transaction<transactions::route>(proof_hash);
@@ -1695,7 +1696,7 @@ namespace tangent
 			auto block_number = packed->at(0).as_uint64();
 			auto proof_hash = packed->at(1).as_uint256();
 			if (chainstate.get_latest_block_number().or_else(1) < block_number)
-				return remote_exception::retry();
+				return remote_exception::retry_later();
 
 			auto executor = ledger::executor_context(nullptr);
 			auto proof_transaction = executor.get_block_transaction<transactions::withdraw>(proof_hash);
@@ -1730,7 +1731,7 @@ namespace tangent
 
 			return pack_private_result({ format::variable(writer.data) }, *public_key);
 		}
-		expects_lr<void> server_node::dispatch_transaction_logs(const algorithm::asset_id& asset, const superchain::chain_supervisor_options& options, superchain::transaction_logs&& logs)
+		expects_lr<void> server_node::dispatch_transaction_logs(const algorithm::asset_id& asset, const superchain::network_options& options, superchain::transaction_logs&& logs)
 		{
 			for (auto& receipt : logs.receipts)
 			{
@@ -2285,7 +2286,7 @@ namespace tangent
 
 			auto indirect_node = find_with_neighbor_account(account);
 			if (!indirect_node)
-				return expects_promise_rt<exchange>(remote_exception::retry());
+				return expects_promise_rt<exchange>(remote_exception::retry_later());
 
 			if (protocol::now().user.consensus.logging)
 				VI_DEBUG("node %s forward query \"%.*s\" out: %s", indirect_node->peer_address().c_str(), (int)descriptor.name.size(), descriptor.name.data(), args.empty() ? "OK" : stringify::text("[%i values]", (int)args.size()).c_str());
@@ -2531,7 +2532,7 @@ namespace tangent
 							}
 							else
 							{
-								state->push_event(session, pack_query_result(remote_exception::retry()));
+								state->push_event(session, pack_query_result(remote_exception::retry_later()));
 								push_messages(std::move(state));
 							}
 							break;
@@ -2666,6 +2667,87 @@ namespace tangent
 			umutex<std::recursive_mutex> unique(sync.fork);
 			mempool.verifying = false;
 		}
+		bool server_node::run_superchain_sync()
+		{
+			if (!protocol::now().user.superchain.listener)
+				return false;
+
+			if (is_syncing())
+			{
+				VI_INFO("superchain sync: awaiting on-chain stability");
+				control_sys.upsert_timeout(TASK_SUPERCHAIN_SYNC "_runner", protocol::now().user.superchain.polling_frequency, [this]() { run_superchain_sync(); });
+				return false;
+			}
+
+			transport_layer::link_instance();
+			return control_sys.async_task_if_none(TASK_SUPERCHAIN_SYNC, [this]() -> promise<void>
+			{
+				auto* bridge = superchain::bridge::get();
+				auto& listeners = bridge->get_networks();
+				bridge->network_active = [this]() -> bool { return is_active(); };
+				VI_INFO("superchain sync: now pulling (networks: %i)", (int)listeners.size());
+			retry:
+				std::atomic<uint64_t> requests = 0;
+				bridge->network_fetch = [this, &requests](const std::string_view& location, const std::string_view& method, const http::fetch_frame& options) -> expects_promise_system<http::response_frame>
+				{
+					if (!is_active())
+						return expects_promise_system<http::response_frame>(system_exception("http fetch: shutdown (cancelled)", std::make_error_condition(std::errc::network_down)));
+
+					++requests;
+					return http::fetch(location, method, options);
+				};
+
+				std::atomic<uint64_t> retry_after_timestamp = std::numeric_limits<uint64_t>::max();
+				vector<promise<void>> pullers;
+				pullers.reserve(listeners.size());
+				for (auto& [blockchain, listener] : listeners)
+				{
+					if (listener.connections.empty())
+						continue;
+
+					pullers.push_back(coasync<void>([&]() -> promise<void>
+					{
+					pull:
+						auto result = coawait(bridge->link_transactions(listener.asset));
+						if (!result)
+						{
+							if (protocol::now().user.superchain.logging && !listener.options.state.retry_after_time)
+								VI_WARN("superchain sync %s pulling halt: %s", blockchain.c_str(), result.error().what());
+
+							if (result.error().is_retry())
+								retry_after_timestamp = std::min(retry_after_timestamp.load(), result.error().is_retry_after() ? result.error().retry_after_timestamp() : (protocol::now().time.now_cpu() + protocol::now().user.superchain.polling_frequency));
+
+							coreturn_void;
+						}
+
+						for (auto& result : *result)
+						{
+							if (protocol::now().user.superchain.logging)
+								result.report_logs(listener.asset, listener.options);
+							if (!result.receipts.empty())
+								dispatch_transaction_logs(listener.asset, listener.options, std::move(result)).report("failed to dispatch transaction logs");
+						}
+						goto pull;
+					}, true));
+				}
+
+				for (auto& puller : pullers)
+					coawait(std::move(puller));
+
+				bridge->network_fetch = nullptr;
+				if (!is_active())
+					coreturn_void;
+
+				uint64_t time = protocol::now().time.now_cpu();
+				if (retry_after_timestamp != std::numeric_limits<uint64_t>::max() && time > retry_after_timestamp)
+					goto retry;
+
+				uint64_t timeout = retry_after_timestamp != std::numeric_limits<uint64_t>::max() ? retry_after_timestamp - time : protocol::now().user.superchain.polling_frequency;
+				VI_INFO("superchain sync: awaiting pulling window (in: %" PRIu64 " ms, pulls: %" PRIu64 ")", timeout, (uint64_t)requests.load());
+				control_sys.upsert_timeout(TASK_SUPERCHAIN_SYNC "_runner", timeout, [this]() { run_superchain_sync(); });
+				coreturn_void;
+			});
+		}
 		bool server_node::run_topology_optimization()
 		{
 			return control_sys.async_task_if_none(TASK_TOPOLOGY_OPTIMIZATION, [this]() -> promise<void>
@@ -2739,7 +2821,7 @@ namespace tangent
 				if ((inputs > 0 || outputs > 0) && protocol::now().user.consensus.logging)
 					VI_INFO("network topology optimization: OK (connections: +%i / -%i)", (int)inputs, (int)outputs);
 
-				schedule::get()->set_timeout(protocol::now().policy.pow.time, [this]() { run_block_dispatcher(); });
+				control_sys.upsert_timeout(TASK_BLOCK_DISPATCHER "_runner", protocol::now().policy.pow.time, [this]() { run_block_dispatcher(); });
 				coreturn_void;
 			});
 		}
@@ -3015,12 +3097,12 @@ namespace tangent
 				umutex<std::recursive_mutex> unique(sync.fork);
 				if (!witnesses.empty())
 				{
-					auto* server = superchain::server_node::get();
+					auto* bridge = superchain::bridge::get();
 					for (auto& [asset, block_height] : witnesses)
 					{
-						auto earlist_block_height = server->get_earliest_scanned_block_height(asset);
+						auto earlist_block_height = bridge->get_earliest_scanned_block_height(asset);
 						if (!earlist_block_height || *earlist_block_height > block_height)
-							server->scan_from_block_height(asset, block_height);
+							bridge->scan_from_block_height(asset, block_height);
 					}
 					witnesses.clear();
 				}
@@ -3109,14 +3191,13 @@ namespace tangent
 			bind_query(descriptors::recover_entropy(), std::bind(&server_node::recover_entropy, this, std::placeholders::_2, std::placeholders::_3));
 			bind_query(descriptors::aggregate_public_key(), std::bind(&server_node::aggregate_public_key, this, std::placeholders::_2, std::placeholders::_3));
 			bind_query(descriptors::aggregate_signature(), std::bind(&server_node::aggregate_signature, this, std::placeholders::_2, std::placeholders::_3));
-
-			superchain::server_node::get()->add_transaction_callback(codec::hex_encode(std::string_view((char*)this, sizeof(this))), std::bind(&server_node::dispatch_transaction_logs, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
 			control_sys.interval_if_none(TASK_MEMPOOL_VACUUM "_runner", protocol::now().user.consensus.transaction_timeout, std::bind(&server_node::run_mempool_vacuum, this));
 			control_sys.interval_if_none(TASK_TOPOLOGY_OPTIMIZATION "_runner", protocol::now().user.consensus.topology_timeout, std::bind(&server_node::run_topology_optimization, this));
 			control_sys.interval_if_none(TASK_ATTESTATION_RESOLUTION "_runner", protocol::now().user.consensus.attestation_timeout, std::bind(&server_node::run_attestation_resolution, this));
 			control_sys.interval_if_none(TASK_BLOCK_DISPATCH_RETRIAL "_runner", protocol::now().user.consensus.dispatch_retry_interval, std::bind(&server_node::run_block_dispatcher, this));
 			run_topology_optimization();
 			run_mempool_vacuum();
+			run_superchain_sync();
 		}
 		void server_node::shutdown()
 		{
@@ -3345,7 +3426,7 @@ namespace tangent
 		}
 		void server_node::finalize_pending_block(uref<relay>&& from, const uint256_t& block_hash, uint64_t block_number)
 		{
-			schedule::get()->set_timeout(protocol::now().policy.pow.time, [this]() { run_block_dispatcher(); });
+			control_sys.upsert_timeout(TASK_BLOCK_DISPATCHER "_runner", protocol::now().policy.pow.time, [this]() { run_block_dispatcher(); });
 			if (!from || !mempool.dirty)
 				return;
 
@@ -3427,7 +3508,7 @@ namespace tangent
 		}
 		bool server_node::is_active()
 		{
-			return state == server_state::working;
+			return state == server_state::working && control_sys.is_active();
 		}
 		bool server_node::is_syncing()
 		{
@@ -3710,7 +3791,7 @@ namespace tangent
 
 			auto public_key = server->find_public_key(validator);
 			if (!public_key)
-				coreturn remote_exception::retry();
+				coreturn remote_exception::retry_later();
 
 			uint64_t attempt = 0;
 			auto args = pack_private_result({ format::variable(executor->receipt.block_number), format::variable(executor->receipt.transaction_hash), format::variable(state.as_message().data) }, *public_key);
@@ -3724,7 +3805,7 @@ namespace tangent
 				if (is_retry && coawait(aggregative_sleep(attempt)))
 					goto retry;
 
-				coreturn is_retry || !server->is_active() ? remote_exception::retry() : event.error();
+				coreturn is_retry || !server->is_active() ? remote_exception::retry_later() : event.error();
 			}
 
 			args = unpack_private_result(event->args, server->runner_descriptor->second.secret_key);
@@ -3765,7 +3846,7 @@ namespace tangent
 
 			auto public_key = server->find_public_key(validator);
 			if (!public_key)
-				coreturn remote_exception::retry();
+				coreturn remote_exception::retry_later();
 
 			format::wo_stream writer;
 			writer.write_string(state.public_key.optimized_view());
@@ -3785,7 +3866,7 @@ namespace tangent
 				if (is_retry && coawait(aggregative_sleep(attempt)))
 					goto retry;
 
-				coreturn is_retry || !server->is_active() ? remote_exception::retry() : event.error();
+				coreturn is_retry || !server->is_active() ? remote_exception::retry_later() : event.error();
 			}
 
 			args = unpack_private_result(event->args, server->runner_descriptor->second.secret_key);
@@ -3852,7 +3933,7 @@ namespace tangent
 
 			auto public_key = server->find_public_key(validator);
 			if (!public_key)
-				coreturn remote_exception::retry();
+				coreturn remote_exception::retry_later();
 
 			uint64_t attempt = 0;
 			auto args = pack_private_result({ format::variable(executor->receipt.block_number), format::variable(executor->receipt.transaction_hash), format::variable(state.as_message().data) }, *public_key);
@@ -3866,7 +3947,7 @@ namespace tangent
 				if (is_retry && coawait(aggregative_sleep(attempt)))
 					goto retry;
 
-				coreturn is_retry || !server->is_active() ? remote_exception::retry() : event.error();
+				coreturn is_retry || !server->is_active() ? remote_exception::retry_later() : event.error();
 			}
 
 			args = unpack_private_result(event->args, server->runner_descriptor->second.secret_key);
@@ -3917,7 +3998,7 @@ namespace tangent
 
 			auto public_key = server->find_public_key(validator);
 			if (!public_key)
-				coreturn remote_exception::retry();
+				coreturn remote_exception::retry_later();
 
 			format::wo_stream writer;
 			if (!algorithm::composition::store_compositor(state.alg, *state.compositor, &writer))
@@ -3940,7 +4021,7 @@ namespace tangent
 				if (is_retry && coawait(aggregative_sleep(attempt)))
 					goto retry;
 
-				coreturn is_retry || !server->is_active() ? remote_exception::retry() : event.error();
+				coreturn is_retry || !server->is_active() ? remote_exception::retry_later() : event.error();
 			}
 
 			args = unpack_private_result(event->args, server->runner_descriptor->second.secret_key);
@@ -3994,7 +4075,7 @@ namespace tangent
 
 			auto public_key = server->find_public_key(validator);
 			if (!public_key)
-				coreturn remote_exception::retry();
+				coreturn remote_exception::retry_later();
 
 			format::wo_stream writer;
 			if (!algorithm::composition::store_compositor(state.alg, *state.compositor, &writer))
@@ -4012,7 +4093,7 @@ namespace tangent
 				if (is_retry && coawait(aggregative_sleep(attempt)))
 					goto retry;
 
-				coreturn is_retry || !server->is_active() ? remote_exception::retry() : event.error();
+				coreturn is_retry || !server->is_active() ? remote_exception::retry_later() : event.error();
 			}
 
 			args = unpack_private_result(event->args, server->runner_descriptor->second.secret_key);
@@ -4063,7 +4144,7 @@ namespace tangent
 		{
 			auto* runner_wallet = get_runner_wallet(validator);
 			if (!runner_wallet)
-				return expects_promise_rt<void>(remote_exception::retry());
+				return expects_promise_rt<void>(remote_exception::retry_later());
 
 			return distribute_entropy_shares(this, executor, runner_wallet, state.encrypted_shares);
 		}
@@ -4101,7 +4182,7 @@ namespace tangent
 		{
 			auto* runner_wallet = get_runner_wallet(validator);
 			if (!runner_wallet)
-				return expects_promise_rt<void>(remote_exception::retry());
+				return expects_promise_rt<void>(remote_exception::retry_later());
 
 			return aggregate_entropy_shares(this, executor, runner_wallet, state.public_key, state.encrypted_shares);
 		}
@@ -4178,7 +4259,7 @@ namespace tangent
 		{
 			auto* runner_wallet = get_runner_wallet(validator);
 			if (!runner_wallet)
-				return expects_promise_rt<void>(remote_exception::retry());
+				return expects_promise_rt<void>(remote_exception::retry_later());
 
 			return recover_entropy(this, executor, runner_wallet, state.proof, state.encrypted_shares, state.encrypted_entropies);
 		}
@@ -4293,7 +4374,7 @@ namespace tangent
 		{
 			auto* runner_wallet = get_runner_wallet(validator);
 			if (!runner_wallet)
-				return expects_promise_rt<void>(remote_exception::retry());
+				return expects_promise_rt<void>(remote_exception::retry_later());
 
 			auto list = new_encrypted_distribution_shares(runner_wallet->public_key, state);
 			auto result = aggregate_public_key(this, executor, runner_wallet, list, *state.compositor);
@@ -4306,7 +4387,7 @@ namespace tangent
 			if (!route)
 				return remote_exception("invalid transaction");
 
-			auto* chain = superchain::server_node::get()->get_chainparams(route->asset);
+			auto* chain = superchain::bridge::get()->get_network_params(route->asset);
 			if (!chain)
 				return remote_exception("invalid operation");
 
@@ -4374,7 +4455,7 @@ namespace tangent
 		{
 			auto* runner_wallet = get_runner_wallet(validator);
 			if (!runner_wallet)
-				return expects_promise_rt<void>(remote_exception::retry());
+				return expects_promise_rt<void>(remote_exception::retry_later());
 
 			return aggregate_signature(this, executor, runner_wallet, **state.message, *state.compositor);
 		}

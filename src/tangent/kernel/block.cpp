@@ -1,6 +1,6 @@
 #include "block.h"
+#include "superchain.h"
 #include "../policy/transactions.h"
-#include "../service/superchain.h"
 #include "../storage/mempoolstate.h"
 #include "../storage/chainstate.h"
 
@@ -2093,7 +2093,7 @@ namespace tangent
 			if (addresses.empty())
 				return layer_exception("invalid operation");
 
-			auto* chain = superchain::server_node::get()->get_chain(asset);
+			auto* chain = superchain::bridge::get()->get_network(asset);
 			if (!chain)
 				return layer_exception("invalid operation");
 
@@ -3511,16 +3511,16 @@ namespace tangent
 		}
 		format::ro_stream dispatcher_context::pull_cache(const executor_context* executor)
 		{
-			auto* server = superchain::server_node::get();
+			auto* bridge = superchain::bridge::get();
 			auto location = stringify::text("dispatch_cache_%s", algorithm::encoding::encode_0xhex256(executor->receipt.transaction_hash).c_str());
-			auto cache = server->load_cache(executor->transaction->asset, superchain::cache_policy::lifetime_cache, location);
-			server->store_cache(executor->transaction->asset, superchain::cache_policy::lifetime_cache, location, format::tree());
+			auto cache = bridge->load_cache(executor->transaction->asset, superchain::cache_policy::lifetime_cache, location);
+			bridge->store_cache(executor->transaction->asset, superchain::cache_policy::lifetime_cache, location, format::tree());
 			return format::ro_stream(cache ? cache->value.as_string() : std::string_view());
 		}
 		void dispatcher_context::push_cache(const executor_context* executor, const format::wo_stream& message) const
 		{
 			auto location = stringify::text("dispatch_cache_%s", algorithm::encoding::encode_0xhex256(executor->receipt.transaction_hash).c_str());
-			superchain::server_node::get()->store_cache(executor->transaction->asset, superchain::cache_policy::lifetime_cache, location, format::variable(message.data));
+			superchain::bridge::get()->store_cache(executor->transaction->asset, superchain::cache_policy::lifetime_cache, location, format::variable(message.data));
 		}
 
 		void solver_context::apply_temporary_state(block_header* abstract_block, const transaction* abstract_transaction, receipt&& abstract_receipt)

@@ -1,5 +1,4 @@
 #include "ripple.h"
-#include "../service/superchain.h"
 #include "../internal/ripple.h"
 extern "C"
 {
@@ -184,7 +183,7 @@ namespace tangent
 				return "submit";
 			}
 
-			ripple::ripple(const algorithm::asset_id& new_asset) noexcept : relay_backend(new_asset)
+			ripple::ripple(const algorithm::asset_id& new_asset) noexcept : translation(new_asset)
 			{
 				netdata.composition = algorithm::composition::type::ed25519;
 				netdata.routing = routing_policy::memo;
@@ -218,7 +217,7 @@ namespace tangent
 				account_token_info info;
 				info.balance = 0.0;
 
-				auto contract_address = superchain::server_node::get()->get_contract_address(for_asset);
+				auto contract_address = bridge::get()->get_contract_address(for_asset);
 				size_t marker = 0, limit = 400;
 				while (contract_address && limit > 0)
 				{
@@ -330,7 +329,7 @@ namespace tangent
 					string issuer = amount->child_var("issuer").as_blob();
 					token_value = amount->child_var("value").as_decimal();
 					token_asset = algorithm::asset::id_of(algorithm::asset::blockchain_of(native_asset), token, issuer);
-					superchain::server_node::get()->enable_contract_address(token_asset, issuer);
+					bridge::get()->enable_contract_address(token_asset, issuer);
 				}
 				else
 					base_value = from_drop(uint256_t(amount->value.as_blob()));
@@ -440,7 +439,7 @@ namespace tangent
 				if (fee_value > max_fee)
 					coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
 
-				auto contract_address = superchain::server_node::get()->get_contract_address(to.asset);
+				auto contract_address = bridge::get()->get_contract_address(to.asset);
 				if (contract_address)
 				{
 					auto account_token_info = coawait(get_account_token_info(to.asset, *contract_address));

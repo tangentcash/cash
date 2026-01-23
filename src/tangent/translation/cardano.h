@@ -8,7 +8,7 @@ namespace tangent
 	{
 		namespace translations
 		{
-			class cardano : public relay_backend_utxo
+			class cardano : public translation_utxo
 			{
 			public:
 				class nd_call
