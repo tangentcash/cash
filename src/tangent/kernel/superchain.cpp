@@ -387,7 +387,7 @@ namespace tangent
 			data.set("link", link.as_tree());
 			if (!account)
 			{
-				data.set("transaction_id", format::variable(transaction_id));
+				data.set("transaction_id", transaction_id.empty() ? format::variable() : format::variable(transaction_id));
 				data.set("index", format::variable(index));
 			}
 			else
@@ -724,15 +724,17 @@ namespace tangent
 			{
 				if (!item.is_valid_output())
 					return status::invalid;
+				else if (!item.is_account() && !item.transaction_id.empty())
+					return status::invalid;
 			}
 
 			for (auto& item : inputs)
 			{
 				if (item.signature.empty())
-					return status::requires_signature;
+					return status::signable;
 			}
 
-			return status::requires_finalization;
+			return status::finalizeable;
 		}
 		format::tree prepared_transaction::as_tree() const
 		{
@@ -742,11 +744,11 @@ namespace tangent
 				case status::invalid:
 					status = "invalid";
 					break;
-				case status::requires_signature:
-					status = "requires_signature";
+				case status::signable:
+					status = "signable";
 					break;
-				case status::requires_finalization:
-					status = "requires_finalization";
+				case status::finalizeable:
+					status = "finalizeable";
 					break;
 				default:
 					status = "unknown";
@@ -838,7 +840,7 @@ namespace tangent
 		}
 		bool finalized_transaction::is_valid() const
 		{
-			return prepared.as_status() == prepared_transaction::status::requires_finalization && !calldata.empty() && !hashdata.empty();
+			return prepared.as_status() == prepared_transaction::status::finalizeable && !calldata.empty() && !hashdata.empty();
 		}
 		computed_transaction finalized_transaction::as_computed() const
 		{
@@ -1334,16 +1336,16 @@ namespace tangent
 				if (input.is_account() || !input.link.has_all())
 					continue;
 
-				auto result = receive_utxo(input, computed.block_id);
+				auto result = receive_utxo(computed.transaction_id, input.index, computed.block_id, input);
 				if (!result)
 					return result;
 			}
 
 			return expectation::met;
 		}
-		expects_lr<void> translation_utxo::receive_utxo(const coin_utxo& output, uint64_t receiver_block_id)
+		expects_lr<void> translation_utxo::receive_utxo(const std::string_view& transaction_id, uint64_t index, uint64_t receiver_block_id, const coin_utxo& output)
 		{
-			if (output.transaction_id.empty() || output.index == std::numeric_limits<uint64_t>::max())
+			if (transaction_id.empty() || index == std::numeric_limits<uint64_t>::max())
 				return expects_lr<void>(layer_exception("output must have a transaction id"));
 
 			auto* implementation = bridge::get()->get_network(native_asset);
@@ -1366,6 +1368,8 @@ namespace tangent
 				return expects_lr<void>(layer_exception("transaction output is not being watched"));
 
 			coin_utxo copy = output;
+			copy.transaction_id = transaction_id;
+			copy.index = index;
 			copy.link = std::move(*link);
 			for (auto& [hash, item]: copy.tokens)
 			{
@@ -1378,7 +1382,7 @@ namespace tangent
 				}
 			}
 
-			return bridge::get()->receive_utxo(native_asset, copy, receiver_block_id);
+			return bridge::get()->receive_utxo(native_asset, transaction_id, index, receiver_block_id, copy);
 		}
 		expects_lr<void> translation_utxo::spend_utxo(const std::string_view& transaction_id, uint64_t index, uint64_t spender_block_id)
 		{
@@ -1809,7 +1813,7 @@ namespace tangent
 					state.add_incoming_transaction(new_transaction);
 					transaction_ids.insert(algorithm::asset::handle_of(asset) + ":" + new_transaction.transaction_id);
 					if (utxo_implementation != nullptr)
-						utxo_implementation->update_utxo(new_transaction);
+						utxo_implementation->update_utxo(new_transaction).report("failed to update utxo set from " + new_transaction.transaction_id);
 				}
 				logs.push_back(std::move(log));
 			}
@@ -1898,7 +1902,7 @@ namespace tangent
 
 			auto* utxo_implementation = translation_utxo::from(implementation);
 			if (utxo_implementation != nullptr)
-				utxo_implementation->update_utxo(finalized.prepared.as_pseudo_computed());
+				utxo_implementation->update_utxo(finalized.prepared.as_pseudo_computed()).report("failed to update utxo set from " + new_transaction.transaction_id);
 
 			coreturn result;
 		}
@@ -1945,6 +1949,7 @@ namespace tangent
 			auto result = coawait(implementation->prepare_transaction(*normalized_from_link, normalized_to, normalized_max_fee));
 			if (protocol::now().user.superchain.logging)
 				VI_INFO("%s built transaction: %s", blockchain.c_str(), result ? result->as_tree().as_json().c_str() : result.error().what());
+
 			coreturn result;
 		}
 		expects_lr<finalized_transaction> bridge::finalize_transaction(const algorithm::asset_id& asset, prepared_transaction&& prepared)
@@ -1953,7 +1958,7 @@ namespace tangent
 				return layer_exception("asset not found");
 
 			auto status = prepared.as_status();
-			if (status != prepared_transaction::status::requires_finalization)
+			if (status != prepared_transaction::status::finalizeable)
 				return layer_exception(status == prepared_transaction::status::invalid ? "transaction is not valid for finalization" : "transaction does not require finalization");
 
 			auto* implementation = get_network(asset);
@@ -1988,7 +1993,13 @@ namespace tangent
 				}
 			}
 
-			return implementation->finalize_transaction(std::move(prepared));
+			auto finalized = implementation->finalize_transaction(std::move(prepared));
+			if (!finalized)
+				return finalized;
+			else if (!finalized->is_valid())
+				return layer_exception("transaction is not finalized properly");
+
+			return finalized;
 		}
 		expects_lr<computed_transaction> bridge::get_computed_transaction(const algorithm::asset_id& asset, const std::string_view& transaction_id, const uint256_t& external_id, const uint256_t& optimized_id)
 		{
@@ -2416,10 +2427,10 @@ namespace tangent
 			storages::superchainstate state = storages::superchainstate(asset);
 			return state.get_links_by_addresses(addresses);
 		}
-		expects_lr<void> bridge::receive_utxo(const algorithm::asset_id& asset, const coin_utxo& value, uint64_t block_id)
+		expects_lr<void> bridge::receive_utxo(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint64_t index, uint64_t block_id, const coin_utxo& value)
 		{
 			storages::superchainstate state = storages::superchainstate(asset);
-			return state.receive_utxo(value, block_id);
+			return state.receive_utxo(transaction_id, index, block_id, value);
 		}
 		expects_lr<void> bridge::spend_utxo(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint64_t index, uint64_t block_id)
 		{

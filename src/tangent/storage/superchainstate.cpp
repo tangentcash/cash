@@ -68,23 +68,27 @@ namespace tangent
 			if (parent_superchainstate == this)
 				parent_superchainstate = nullptr;
 		}
-		expects_lr<void> superchainstate::receive_utxo(const superchain::coin_utxo& value, uint64_t block_id)
+		expects_lr<void> superchainstate::receive_utxo(const std::string_view& transaction_id, uint64_t index, uint64_t block_id, const superchain::coin_utxo& value)
 		{
+			auto copy = value;
+			copy.transaction_id = transaction_id;
+			copy.index = index;
+
 			format::wo_stream message;
-			if (!value.store(&message))
+			if (!copy.store(&message))
 				return expects_lr<void>(layer_exception("utxo serialization error"));
 
 			format::wo_stream transaction_id_index;
-			transaction_id_index.write_string(value.transaction_id);
-			transaction_id_index.write_integer(value.index);
+			transaction_id_index.write_string(copy.transaction_id);
+			transaction_id_index.write_integer(copy.index);
 
 			schema_list map;
 			map.push_back(var::set::binary(transaction_id_index.data));
 			map.push_back(block_id > 0 ? var::set::integer(block_id) : var::set::null());
 			map.push_back(var::set::boolean(false));
-			map.push_back(var::set::binary(value.link.owner.view()));
-			map.push_back(var::set::string(value.link.public_key));
-			map.push_back(var::set::string(value.link.address));
+			map.push_back(var::set::binary(copy.link.owner.view()));
+			map.push_back(var::set::string(copy.link.public_key));
+			map.push_back(var::set::string(copy.link.address));
 			map.push_back(var::set::binary(message.data));
 			
 			auto cursor = get_storage().emplace_query(__func__, "INSERT OR REPLACE INTO coins (transaction_id_index, receiver_block_id, spent, owner, public_key, address, message) VALUES (?, ?, ?, ?, ?, ?, ?)", &map);

@@ -161,8 +161,8 @@ namespace tangent
 			enum class status
 			{
 				invalid,
-				requires_signature,
-				requires_finalization
+				signable,
+				finalizeable
 			};
 
 			struct signable_coin_utxo
@@ -399,7 +399,7 @@ namespace tangent
 			virtual expects_lr<vector<coin_utxo>> calculate_utxo(const wallet_link& link, option<balance_query>&& query);
 			virtual expects_lr<coin_utxo> get_utxo(const std::string_view& transaction_id, uint64_t index);
 			virtual expects_lr<void> update_utxo(const computed_transaction& computed);
-			virtual expects_lr<void> receive_utxo(const coin_utxo& output, uint64_t receiver_block_id);
+			virtual expects_lr<void> receive_utxo(const std::string_view& transaction_id, uint64_t index, uint64_t receiver_block_id, const coin_utxo& output);
 			virtual expects_lr<void> spend_utxo(const std::string_view& transaction_id, uint64_t index, uint64_t spender_block_id);
 			virtual decimal get_utxo_value(const vector<coin_utxo>& values, option<string>&& contract_address);
 
@@ -468,7 +468,7 @@ namespace tangent
 			expects_lr<hash_map<string, wallet_link>> get_links_by_public_keys(const algorithm::asset_id& asset, const hash_set<string>& public_keys);
 			expects_lr<hash_map<string, wallet_link>> get_links_by_addresses(const algorithm::asset_id& asset, const hash_set<string>& addresses);
 			expects_lr<hash_map<string, wallet_link>> get_links_by_owner(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, size_t offset, size_t count);
-			expects_lr<void> receive_utxo(const algorithm::asset_id& asset, const coin_utxo& value, uint64_t block_id);
+			expects_lr<void> receive_utxo(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint64_t index, uint64_t block_id, const coin_utxo& value);
 			expects_lr<void> spend_utxo(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint64_t index, uint64_t block_id);
 			expects_lr<void> revive_utxo(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint64_t index);
 			expects_lr<void> revive_utxo_tree(const algorithm::asset_id& asset, const computed_transaction& computed);

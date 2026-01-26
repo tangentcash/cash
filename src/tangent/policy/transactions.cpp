@@ -2218,7 +2218,16 @@ namespace tangent
 			if (!finalization)
 				return finalization.error();
 
-			return executor->emit_witness(asset, proof.block_id);
+			auto witness = executor->emit_witness(asset, proof.block_id);
+			if (!witness)
+				return witness;
+
+			return expectation::met;
+		}
+		expects_promise_rt<void> attestate::dispatch(const ledger::executor_context* executor, ledger::dispatcher_context* dispatcher) const
+		{
+			auto status = superchain::bridge::get()->update_utxo_tree(asset, proof);
+			return status ? expects_promise_rt<void>(expectation::met) : expects_promise_rt<void>(remote_exception(std::move(status.error().message())));
 		}
 		bool attestate::store_body(format::wo_stream* stream) const
 		{
@@ -2280,6 +2289,10 @@ namespace tangent
 				if (event->size() >= 2 && event->at(1).as_string().size() == sizeof(algorithm::pubkeyhash_t))
 					parties.insert(algorithm::pubkeyhash_t(event->at(1).as_blob()));
 			}
+			return true;
+		}
+		bool attestate::is_dispatchable() const
+		{
 			return true;
 		}
 		void attestate::set_finalized_proof(uint64_t block_id, const std::string_view& transaction_id, const vector<superchain::value_transfer>& inputs, const vector<superchain::value_transfer>& outputs)
@@ -3544,13 +3557,15 @@ namespace tangent
 			auto confirmation = proof ? validate_finalized_proof(executor, parent_transaction, parent->receipt, *proof) : expects_lr<void>(expectation::met);
 			if (!confirmation)
 				return confirmation.error();
-			else if (!parent_transaction->get_new_manager(parent->receipt).empty())
-				return expectation::met;
 
+			bool pays_fee = parent_transaction->get_new_manager(parent->receipt).empty();
 			auto fee_asset = algorithm::asset::base_id_of(parent_transaction->asset);
 			auto fee_value = parent_transaction->get_fee_value(executor);
 			if (!proof)
 			{
+				if (!pays_fee)
+					return expectation::met;
+
 				if (fee_asset != parent_transaction->asset)
 				{
 					auto fee_transfer = executor->apply_transfer(fee_asset, parent->receipt.from, decimal::zero(), -fee_value);
@@ -3563,7 +3578,7 @@ namespace tangent
 				if (!token_transfer)
 					return token_transfer.error();
 			}
-			else
+			else if (pays_fee)
 			{
 				auto fee_transfer = executor->apply_transfer(fee_asset, parent->receipt.from, -fee_value, -fee_value);
 				if (!fee_transfer)
@@ -3571,6 +3586,16 @@ namespace tangent
 			}
 
 			return expectation::met;
+		}
+		expects_promise_rt<void> broadcast::dispatch(const ledger::executor_context* executor, ledger::dispatcher_context* dispatcher) const
+		{
+			auto parent = proof ? executor->get_block_transaction<withdraw>(withdraw_hash) : expects_lr<ledger::block_transaction>(layer_exception("not applicable"));
+			if (!parent)
+				return expects_promise_rt<void>(expectation::met);
+
+			auto* parent_transaction = (withdraw*)*parent->transaction;
+			auto status = superchain::bridge::get()->update_utxo_tree(algorithm::asset::base_id_of(parent_transaction->asset), proof->as_computed());
+			return status ? expects_promise_rt<void>(expectation::met) : expects_promise_rt<void>(remote_exception(std::move(status.error().message())));
 		}
 		bool broadcast::store_body(format::wo_stream* stream) const
 		{
@@ -3607,6 +3632,10 @@ namespace tangent
 				proof = layer_exception(std::move(error_message));
 			}
 
+			return true;
+		}
+		bool broadcast::is_dispatchable() const
+		{
 			return true;
 		}
 		bool broadcast::recover_many(const ledger::executor_context* executor, const ledger::receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const
@@ -3915,7 +3944,19 @@ namespace tangent
 			if (!token_transfer)
 				return token_transfer.error();
 
-			return superchain::bridge::get()->revive_utxo_tree(base_asset, parent_transaction->proof->as_computed());
+			return expectation::met;
+		}
+		expects_promise_rt<void> anticast::dispatch(const ledger::executor_context* executor, ledger::dispatcher_context* dispatcher) const
+		{
+			auto parent = executor->get_block_transaction<broadcast>(broadcast_hash, true);
+			auto origin = parent ? executor->get_block_transaction<withdraw>(((broadcast*)*parent->transaction)->withdraw_hash, true) : expects_lr<ledger::block_transaction>(layer_exception("not applicable"));
+			if (!origin)
+				return expects_promise_rt<void>(expectation::met);
+
+			auto* origin_transaction = (withdraw*)*origin->transaction;
+			auto* parent_transaction = (broadcast*)*parent->transaction;
+			auto status = superchain::bridge::get()->revive_utxo_tree(algorithm::asset::base_id_of(origin_transaction->asset), parent_transaction->proof->as_computed());
+			return status ? expects_promise_rt<void>(expectation::met) : expects_promise_rt<void>(remote_exception(std::move(status.error().message())));
 		}
 		bool anticast::store_body(format::wo_stream* stream) const
 		{
@@ -3928,6 +3969,10 @@ namespace tangent
 			if (!stream.read_integer(stream.read_type(), &broadcast_hash))
 				return false;
 
+			return true;
+		}
+		bool anticast::is_dispatchable() const
+		{
 			return true;
 		}
 		bool anticast::recover_many(const ledger::executor_context* executor, const ledger::receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const
