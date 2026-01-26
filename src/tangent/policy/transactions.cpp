@@ -2567,11 +2567,7 @@ namespace tangent
 					}
 
 					if (duplicate)
-					{
-						if (!routing_address_application)
-							return layer_exception("bridge account already exists");
-						break;
-					}
+						return routing_address_application ? expects_lr<void>(expectation::met) : expects_lr<void>(layer_exception("bridge account already exists"));
 
 					auto* chain = superchain::bridge::get()->get_network(asset);
 					if (!chain)

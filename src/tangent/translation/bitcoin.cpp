@@ -1291,8 +1291,8 @@ namespace tangent
 					coreturn expects_rt<coin_utxo>(std::move(*output));
 
 				auto tx_data = coawait(get_transaction(transaction_id));
-				if (!tx_data->has("vout"))
-					coreturn expects_rt<coin_utxo>(remote_exception("transaction does not have any utxo"));
+				if (!tx_data || !tx_data->has("vout"))
+					coreturn expects_rt<coin_utxo>(tx_data ? remote_exception("transaction does not have any utxo") : tx_data.error());
 
 				auto* vout = tx_data->child("vout." + to_string(index));
 				if (!vout)

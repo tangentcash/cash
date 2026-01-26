@@ -2956,6 +2956,10 @@ namespace tangent
 					}
 				}
 
+				auto span = (double)(tip ? tip->get_slot_proof_duration_average() : 0) * algorithm::wesolowski::adjustment_scaling(position).to_double();
+				if (protocol::now().user.consensus.logging && position > 0)
+					VI_WARN("block #%" PRIu64 " solver: performing %s (number: %" PRIu64 ", leader: %" PRIu64 ", work: < ~%.2f sec.)", tip ? tip->number + 1 : 1, position < protocol::now().policy.production.max_per_block ? "leader fallback" : "network recovery", position + 1, span / 1000.0);
+
 				auto evaluation = prover.solver.block_evalution_prepare(prover.solution);
 				if (!evaluation)
 					goto next_block;
@@ -2997,7 +3001,6 @@ namespace tangent
 					std::this_thread::sleep_for(std::chrono::microseconds(iteration < iteration_threshold ? 500 : 50000));
 				}
 
-				auto span = (double)(tip ? tip->get_slot_proof_duration_average() : 0) * algorithm::wesolowski::adjustment_scaling(position).to_double();
 				auto solution = !evaluation || solution_task.is_pending() ? expects_lr<ledger::block_header>(layer_exception("orphaned")) : solution_task.get();
 				if (solution)
 				{
