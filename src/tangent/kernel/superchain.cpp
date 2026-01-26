@@ -1100,61 +1100,65 @@ namespace tangent
 		expects_promise_rt<format::tree> translation::execute_rpc(const std::string_view& method, const format::tree& args, cache_policy cache, const std::string_view& path)
 		{
 			auto* instance = bridge::get()->get_network_instance(native_asset);
-			auto exception = remote_exception("failed to fetch the response");
+			auto exception = remote_exception::retry_later();
+			auto reporter = bridge::error_reporter();
 			for (size_t i = 0; instance != nullptr && i < instance->connections.size(); i++)
 			{
-				bridge::error_reporter reporter;
 				auto& connection = instance->connections[(++round_robin_index) % instance->connections.size()];
 				auto result = coawait(bridge::get()->execute_rpc(native_asset, connection, reporter, method, args, cache, path, false));
-				exception = result || !result.error().is_retry() ? exception : result.error();
+				exception = result || result.error().is_retry() ? exception : result.error();
 				if (result || !result.error().is_retry())
 					coreturn result;
 			}
+			exception = exception.is_retry() ? normalize_error(system_exception("failed to connect", std::make_error_condition(std::errc::connection_refused)), reporter, "0", "failed to fetch the response") : exception;
 			coreturn expects_rt<format::tree>(std::move(exception));
 		}
 		expects_promise_rt<format::tree> translation::execute_rpc_multi(const std::string_view& method, const format::tree& args, cache_policy cache, const std::string_view& path)
 		{
 			auto* instance = bridge::get()->get_network_instance(native_asset);
-			auto exception = remote_exception("failed to fetch the response");
+			auto exception = remote_exception::retry_later();
+			auto reporter = bridge::error_reporter();
 			for (size_t i = 0; instance != nullptr && i < instance->connections.size(); i++)
 			{
-				bridge::error_reporter reporter;
 				auto& connection = instance->connections[(++round_robin_index) % instance->connections.size()];
 				auto result = coawait(bridge::get()->execute_rpc(native_asset, connection, reporter, method, args, cache, path, true));
-				exception = result || !result.error().is_retry() ? exception : result.error();
+				exception = result || result.error().is_retry() ? exception : result.error();
 				if (result || !result.error().is_retry())
 					coreturn result;
 			}
+			exception = exception.is_retry() ? normalize_error(system_exception("failed to connect", std::make_error_condition(std::errc::connection_refused)), reporter, "0", "failed to fetch the response") : exception;
 			coreturn expects_rt<format::tree>(std::move(exception));
 		}
 		expects_promise_rt<format::tree> translation::execute_rest(const std::string_view& method, const std::string_view& path, const format::tree& args, cache_policy cache)
 		{
 			auto* instance = bridge::get()->get_network_instance(native_asset);
-			auto exception = remote_exception("failed to fetch the response");
+			auto exception = remote_exception::retry_later();
+			auto reporter = bridge::error_reporter();
 			for (size_t i = 0; instance != nullptr && i < instance->connections.size(); i++)
 			{
-				bridge::error_reporter reporter;
 				auto& connection = instance->connections[(++round_robin_index) % instance->connections.size()];
 				auto result = coawait(bridge::get()->execute_rest(native_asset, connection, reporter, method, path, args, cache));
-				exception = result || !result.error().is_retry() ? exception : result.error();
+				exception = result || result.error().is_retry() ? exception : result.error();
 				if (result || !result.error().is_retry())
 					coreturn result;
 			}
+			exception = exception.is_retry() ? normalize_error(system_exception("failed to connect", std::make_error_condition(std::errc::connection_refused)), reporter, "0", "failed to fetch the response") : exception;
 			coreturn expects_rt<format::tree>(std::move(exception));
 		}
 		expects_promise_rt<format::tree> translation::execute_http(const std::string_view& method, const std::string_view& path, const std::string_view& type, const std::string_view& body, cache_policy cache)
 		{
 			auto* instance = bridge::get()->get_network_instance(native_asset);
-			auto exception = remote_exception("failed to fetch the response");
+			auto exception = remote_exception::retry_later();
+			auto reporter = bridge::error_reporter();
 			for (size_t i = 0; instance != nullptr && i < instance->connections.size(); i++)
 			{
-				bridge::error_reporter reporter;
 				auto& connection = instance->connections[(++round_robin_index) % instance->connections.size()];
 				auto result = coawait(bridge::get()->execute_http(native_asset, connection, reporter, method, path, type, body, cache));
-				exception = result || !result.error().is_retry() ? exception : result.error();
+				exception = result || result.error().is_retry() ? exception : result.error();
 				if (result || !result.error().is_retry())
 					coreturn result;
 			}
+			exception = exception.is_retry() ? normalize_error(system_exception("failed to connect", std::make_error_condition(std::errc::connection_refused)), reporter, "0", "failed to fetch the response") : exception;
 			coreturn expects_rt<format::tree>(std::move(exception));
 		}
 		expects_lr<algorithm::composition::cpubkey_t> translation::to_composite_public_key(const std::string_view& public_key)
@@ -1661,7 +1665,7 @@ namespace tangent
 
 			auto response = coawait(network_fetch(target_url, method, setup));
 			if (!response || response->status_code == 408 || response->status_code == 429 || response->status_code == 502 || response->status_code == 503 || response->status_code == 504)
-				coreturn expects_rt<format::tree>(remote_exception(normalize_error(response, reporter, "null", response ? string("node has rejected the request") : response.error().message())));
+				coreturn expects_rt<format::tree>(remote_exception::retry_after(protocol::now().time.now_cpu() + protocol::now().user.superchain.polling_frequency));
 
 			format::tree result;
 			auto content_type = response->get_header("Content-Type");
