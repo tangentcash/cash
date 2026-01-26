@@ -1565,7 +1565,10 @@ namespace tangent
 
 				auto* result = (format::tree*)response.child("result");
 				if (!result)
-					return expects_rt<format::tree>(format::tree());
+				{
+					string description = response.value.is_string() ? response.value.as_blob() : "no error description";
+					return expects_rt<format::tree>(remote_exception(normalize_error(expects_system<http::response_frame>(system_exception()), reporter, "null", description)));
+				}
 
 				return expects_rt<format::tree>(std::move(*result));
 			};
@@ -1658,13 +1661,7 @@ namespace tangent
 
 			auto response = coawait(network_fetch(target_url, method, setup));
 			if (!response || response->status_code == 408 || response->status_code == 429 || response->status_code == 502 || response->status_code == 503 || response->status_code == 504)
-			{
-				if (cache == cache_policy::no_cache_no_throttling)
-					coreturn response ? expects_rt<format::tree>(remote_exception(normalize_error(response, reporter, "null", "node has rejected the request"))) : expects_rt<format::tree>(remote_exception::shutdown());
-
-				connection.error_retry_after_timestamp = protocol::now().time.now_cpu() + protocol::now().user.tcp.keep_alive;
-				coreturn expects_rt<format::tree>(remote_exception::retry_after(connection.error_retry_after_timestamp));
-			}
+				coreturn expects_rt<format::tree>(remote_exception(normalize_error(response, reporter, "null", response ? string("node has rejected the request") : response.error().message())));
 
 			format::tree result;
 			auto content_type = response->get_header("Content-Type");

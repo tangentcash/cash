@@ -2676,6 +2676,7 @@ namespace tangent
 			{
 				uint64_t retry_after_timestamp = std::numeric_limits<uint64_t>::max();
 				VI_INFO("%s block pulling: resuming now", blockchain.c_str());
+			retry:
 				while (is_active())
 				{
 					auto result = coawait(bridge->link_transactions(listener->asset));
@@ -2702,12 +2703,16 @@ namespace tangent
 					}
 				}
 
-				if (is_active())
-				{
-					uint64_t timeout = std::max<uint64_t>(retry_after_timestamp != std::numeric_limits<uint64_t>::max() ? retry_after_timestamp - protocol::now().time.now_cpu() : protocol::now().user.superchain.polling_frequency, 2000);
-					VI_INFO("%s block pulling: resumes in %" PRIu64 " ms", blockchain.c_str(), timeout);
-					control_sys.upsert_timeout(task + "_runner", timeout, [this, listener]() { run_superchain_sync(listener->asset); });
-				}
+				if (!is_active())
+					coreturn_void;
+
+				uint64_t time = protocol::now().time.now_cpu();
+				uint64_t timeout = std::max<uint64_t>(retry_after_timestamp != std::numeric_limits<uint64_t>::max() ? retry_after_timestamp - std::min(time, retry_after_timestamp) : protocol::now().user.superchain.polling_frequency, 2000);
+				if (!timeout)
+					goto retry;
+
+				VI_INFO("%s block pulling: resumes in %" PRIu64 " ms", blockchain.c_str(), timeout);
+				control_sys.upsert_timeout(task + "_runner", timeout, [this, listener]() { run_superchain_sync(listener->asset); });			
 				coreturn_void;
 			});
 		}
