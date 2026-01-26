@@ -700,15 +700,6 @@ namespace tangent
 			}
 			return nullptr;
 		}
-		computed_transaction prepared_transaction::as_pseudo_computed() const
-		{
-			computed_transaction computed;
-			for (auto& output : outputs)
-				computed.outputs[output.as_hash()] = output;
-			for (auto& input : inputs)
-				computed.inputs[input.utxo.as_hash()] = input.utxo;
-			return computed;
-		}
 		prepared_transaction::status prepared_transaction::as_status() const
 		{
 			if (inputs.empty() || outputs.empty())
@@ -1902,7 +1893,7 @@ namespace tangent
 
 			auto* utxo_implementation = translation_utxo::from(implementation);
 			if (utxo_implementation != nullptr)
-				utxo_implementation->update_utxo(finalized.prepared.as_pseudo_computed()).report("failed to update utxo set from " + new_transaction.transaction_id);
+				utxo_implementation->update_utxo(new_transaction).report("failed to update utxo set from " + new_transaction.transaction_id);
 
 			coreturn result;
 		}

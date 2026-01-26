@@ -188,7 +188,6 @@ namespace tangent
 			bool store_payload(format::wo_stream* stream) const override;
 			bool load_payload(format::ro_stream& stream) override;
 			signable_coin_utxo* next_input_for_aggregation();
-			computed_transaction as_pseudo_computed() const;
 			status as_status() const;
 			format::tree as_tree() const override;
 			uint32_t as_type() const override;
