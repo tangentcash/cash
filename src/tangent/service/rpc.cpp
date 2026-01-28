@@ -52,7 +52,7 @@ namespace tangent
 
 			if (type == states::account_uniform::as_instance_typename())
 			{
-				auto data = index.as_schema();
+				auto data = schema::from_json(index.as_string());
 				if (!data)
 					return layer_exception("invalid value, expected { address: string, index: string }");
 
@@ -82,7 +82,7 @@ namespace tangent
 
 			if (type == states::witness_transaction::as_instance_typename())
 			{
-				auto data = index.as_schema();
+				auto data = schema::from_json(index.as_string());
 				if (!data)
 					return layer_exception("invalid value, expected { asset: string, transaction_id: string }");
 
@@ -97,7 +97,7 @@ namespace tangent
 		{
 			if (type == states::account_multiform::as_instance_typename())
 			{
-				auto data = column.as_schema();
+				auto data = schema::from_json(column.as_string());
 				if (!data)
 					return layer_exception("invalid column value, expected { address: string, column: string }");
 
@@ -157,7 +157,7 @@ namespace tangent
 
 			if (type == states::validator_participation_ref::as_instance_typename())
 			{
-				auto data = row.type_of() != format::viewable::invalid ? row.as_schema() : uptr(var::set::object());
+				auto data = row.type_of() != format::viewable::invalid ? uptr(schema::from_json(row.as_string()).or_else(nullptr)) : uptr(var::set::object());
 				if (!data)
 					return layer_exception("invalid value, expected { asset: string, manager: string, owner: string }");
 
@@ -196,7 +196,7 @@ namespace tangent
 
 			if (type == states::bridge_account::as_instance_typename())
 			{
-				auto data = row.type_of() != format::viewable::invalid ? row.as_schema() : uptr(var::set::object());
+				auto data = row.type_of() != format::viewable::invalid ? uptr(schema::from_json(row.as_string()).or_else(nullptr)) : uptr(var::set::object());
 				if (!data)
 					return layer_exception("invalid value, expected { asset: string, address: string }");
 
@@ -214,7 +214,7 @@ namespace tangent
 
 			if (type == states::witness_account::as_instance_typename())
 			{
-				auto data = row.type_of() != format::viewable::invalid ? row.as_schema() : uptr(var::set::object());
+				auto data = row.type_of() != format::viewable::invalid ? uptr(schema::from_json(row.as_string()).or_else(nullptr)) : uptr(var::set::object());
 				if (!data)
 					return layer_exception("invalid value, expected { asset: string, address: string }");
 
@@ -222,7 +222,7 @@ namespace tangent
 				if (column.type_of() != format::viewable::invalid && !algorithm::signing::decode_address(column.as_string(), owner))
 					return layer_exception("invalid address");
 
-				return multiform_location(states::bridge_account::as_instance_type(), states::witness_account::as_instance_row(algorithm::asset::id_of_handle(data->get_var("asset").get_blob()), data->get_var("address").get_blob()), states::witness_account::as_instance_column(owner));
+				return multiform_location(states::witness_account::as_instance_type(), states::witness_account::as_instance_row(algorithm::asset::id_of_handle(data->get_var("asset").get_blob()), data->get_var("address").get_blob()), states::witness_account::as_instance_column(owner));
 			}
 
 			return layer_exception("invalid multiform type");

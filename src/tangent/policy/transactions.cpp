@@ -1871,8 +1871,8 @@ namespace tangent
 			for (auto& [hash, input] : proof.inputs)
 			{
 				auto baseline = states::witness_account(algorithm::pubkeyhash_t(), 0, { }, nullptr);
-				auto source = depositor.empty() || withdrawer.empty() ? executor->get_witness_account(asset, input.link.address, 0).or_else(baseline) : baseline;
-				depositor = depositor.empty() && source.is_routing_account() ? source.owner : depositor;
+				auto source = depositor.empty() || withdrawer.empty() ? executor->get_witness_account_tagged(asset, input.link.address, 0).or_else(baseline) : baseline;
+				depositor = depositor.empty() && source.is_routing_account() && chain->routing == superchain::routing_policy::account ? source.owner : depositor;
 				withdrawer = withdrawer.empty() && source.is_bridge_account() ? source.manager : withdrawer;
 				fee += input.value;
 			}
@@ -1887,7 +1887,7 @@ namespace tangent
 				decimal rebate = fee;
 				for (auto& [hash, input] : proof.inputs)
 				{
-					auto source = executor->get_witness_account(asset, input.link.address, 0);
+					auto source = executor->get_witness_account_tagged(asset, input.link.address, 0);
 					if (source && source->is_bridge_account())
 					{
 						auto& bridge = bridges[source->manager];
@@ -1934,7 +1934,7 @@ namespace tangent
 
 				for (auto& [hash, output] : proof.outputs)
 				{
-					auto source = executor->get_witness_account(asset, output.link.address, 0);
+					auto source = executor->get_witness_account_tagged(asset, output.link.address, 0);
 					if (source && source->is_bridge_account())
 					{
 						auto& bridge = bridges[source->manager];
@@ -2517,7 +2517,7 @@ namespace tangent
 			bool routing_address_application = false;
 			if (!routing_address.empty())
 			{
-				auto collision = executor->get_witness_account(asset, routing_address, 0);
+				auto collision = executor->get_witness_account_tagged(asset, routing_address, 0);
 				if (collision && (!collision->is_routing_account() || collision->owner != executor->receipt.from))
 					return layer_exception("routing account address " + routing_address + " taken");
 
@@ -3189,7 +3189,7 @@ namespace tangent
 			if (!token_balance || token_balance->supply < token_value)
 				return layer_exception(algorithm::asset::handle_of(asset) + " balance is insufficient to cover token withdrawal value (value: " + token_value.to_string() + ")");
 
-			auto collision = executor->get_witness_account(fee_asset, to_address, 0);
+			auto collision = executor->get_witness_account_tagged(fee_asset, to_address, 0);
 			if (collision && (!collision->is_routing_account() || collision->owner != executor->receipt.from))
 				return layer_exception("invalid to address (not owned by sender)");
 			else if (!collision)

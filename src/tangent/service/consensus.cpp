@@ -3331,7 +3331,7 @@ namespace tangent
 			if (!validation)
 				return layer_exception(stringify::text("block %s rejected: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), validation.error().what()));
 			else if (reorganization && !protocol::now().user.consensus.reorganizable)
-				return layer_exception(stringify::text("block %s rejected: requires deep chain reorganization (disabled)", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), validation.error().what()));
+				return layer_exception(stringify::text("block %s rejected: requires deep chain reorganization (disabled)", algorithm::encoding::encode_0xhex256(candidate_hash).c_str()));
 
 			bool chain_extension = !fork_tip;
 			if (!try_acquire_checkpointer())
