@@ -277,7 +277,7 @@ namespace tangent
 				decimal max_increase = std::string_view("2.00");
 				decimal max_decrease = std::string_view("0.50");
 				decimal bump_per_priority = std::string_view("1.3625");
-				decimal bump_outside_priority = std::string_view("90.0");
+				decimal bump_outside_priority = std::string_view("60.0");
 			} pow;
 			struct
 			{
