@@ -269,7 +269,7 @@ namespace tangent
 		{
 			struct
 			{
-				string base = "83e0bd24dc6b0ee3206aa7d8aebeb7134f505341d43b5c8320d8258eb98ab96b48b21742e0dfb24d227b247d056f99d63e2b1b0ba31323b3dc395950e73ea99e";
+				std::string_view base = "83e0bd24dc6b0ee3206aa7d8aebeb7134f505341d43b5c8320d8258eb98ab96b48b21742e0dfb24d227b247d056f99d63e2b1b0ba31323b3dc395950e73ea99e";
 				uint64_t time = 12000;
 				uint64_t adjustment_time = 120000;
 				uint64_t difficulty = 2048;
