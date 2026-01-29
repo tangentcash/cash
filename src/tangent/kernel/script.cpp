@@ -3151,10 +3151,10 @@ namespace tangent
 
 			format::wo_stream stream;
 			generic_context inout = generic_context(generic);
-			void* object_value = inout.get_arg_address(0);
-			int object_type_id = inout.get_arg_type_id(0);
-			void* event_value = inout.get_arg_address(1);
-			int event_type_id = inout.get_arg_type_id(1);
+			void* object_value = inout.get_arg_address(1);
+			int object_type_id = inout.get_arg_type_id(1);
+			void* event_value = inout.get_arg_address(0);
+			int event_type_id = inout.get_arg_type_id(0);
 			auto status = marshall::store(&stream, (void*)object_value, object_type_id);
 			if (!status)
 				return contract::throw_ptr(exception_repr(exception_repr::category::argument(), std::string_view(status.error().message())));
