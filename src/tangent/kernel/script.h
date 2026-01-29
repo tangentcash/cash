@@ -120,10 +120,10 @@ namespace tangent
 			string_repr();
 			string_repr(const string_repr& other);
 			string_repr(const std::string_view& other);
-			string_repr(string_repr&& other) noexcept;
+			string_repr(string_repr&& other);
 			string_repr& operator=(const string_repr& other);
 			string_repr& operator=(const std::string_view& other);
-			string_repr& operator=(string_repr&& other) noexcept;
+			string_repr& operator=(string_repr&& other);
 			~string_repr();
 			string_repr& operator+=(const string_repr& other);
 			string_repr& operator+=(char c);
@@ -197,8 +197,8 @@ namespace tangent
 			static string_repr to_string_uint256(const uint256_t& other, int base);
 			static string_repr to_string_decimal(const decimal& other);
 			static string_repr to_string_address(const address_repr& other);
-			static void create(string_repr* base);
-			static void create_copy(string_repr* base, const string_repr& other);
+			static void construct(string_repr* base);
+			static void construct_copy(string_repr* base, const string_repr& other);
 			static void destroy(string_repr* base);
 			static uint32_t buffer_capacity_of(size_t required_size);
 		};
@@ -254,10 +254,10 @@ namespace tangent
 			int sub_type_id;
 
 		public:
-			array_repr(uint32_t length, asITypeInfo* t) noexcept;
-			array_repr(uint32_t length, void* def_val, asITypeInfo* t) noexcept;
-			array_repr(const array_repr& other) noexcept;
-			~array_repr() noexcept;
+			array_repr(uint32_t length, asITypeInfo* t);
+			array_repr(uint32_t length, void* def_val, asITypeInfo* t);
+			array_repr(const array_repr& other);
+			~array_repr();
 			asITypeInfo* get_array_object_type() const;
 			int get_array_type_id() const;
 			int get_element_type_id() const;
@@ -273,9 +273,9 @@ namespace tangent
 			void* at(uint32_t index);
 			const void* at(uint32_t index) const;
 			void set_value(uint32_t index, void* value);
-			array_repr& operator= (const array_repr&) noexcept;
+			array_repr& operator= (const array_repr&);
 			void insert_at(uint32_t index, void* value);
-			void insert_at(uint32_t index, const array_repr& other);
+			void insert_array_at(uint32_t index, const array_repr& other);
 			void insert_first(void* value);
 			void insert_last(void* value);
 			void remove_at(uint32_t index);
@@ -294,7 +294,7 @@ namespace tangent
 			void* get_data_pointer(void* buffer);
 			void copy(void* dst, void* src);
 			bool check_max_size(uint32_t num_elements);
-			void resize(int64_t delta, uint32_t at);
+			void resize_buffer(int64_t delta, uint32_t at);
 			void create_buffer(sbuffer** buf, uint32_t num_elements);
 			void delete_buffer(sbuffer* buf);
 			void copy_buffer(sbuffer* dst, sbuffer* src);
@@ -302,16 +302,16 @@ namespace tangent
 			void destroy(sbuffer* buf, uint32_t start, uint32_t end);
 
 		public:
-			static array_repr* create(asITypeInfo* t);
-			static array_repr* create(asITypeInfo* t, uint32_t length);
-			static array_repr* create(asITypeInfo* t, uint32_t length, void* default_value);
+			static array_repr* construct(asITypeInfo* t);
+			static array_repr* construct(asITypeInfo* t, uint32_t length);
+			static array_repr* construct(asITypeInfo* t, uint32_t length, void* default_value);
 			static bool template_callback(asITypeInfo* t, bool& dont_garbage_collect);
 
 		public:
 			template <typename t>
 			static array_repr* compose(const vitex::scripting::type_info& array_type, const vector<t>& objects)
 			{
-				array_repr* array = create(array_type.get_type_info(), objects.size());
+				array_repr* array = construct(array_type.get_type_info(), objects.size());
 				for (size_t i = 0; i < objects.size(); i++)
 					array->set_value((uint32_t)i, (void*)&objects[i]);
 
@@ -597,6 +597,9 @@ namespace tangent
 			bool next(void* object_value, int object_type_id);
 			bool next_index(void* object_value, int object_type_id, void* other_index_value, int other_index_type_id);
 			bool next_index_ranked(void* object_value, int object_type_id, void* other_index_value, int other_index_type_id, uint256_t* filter_value);
+			static void wrapped_next(asIScriptGeneric* generic);
+			static void wrapped_next_index(asIScriptGeneric* generic);
+			static void wrapped_next_index_ranked(asIScriptGeneric* generic);
 			ranging_slice_repr& with_offset(uint32_t new_offset);
 			ranging_slice_repr& with_count(uint32_t new_count);
 			ranging_slice_repr& where_gt(const uint256_t& new_value);
@@ -608,8 +611,6 @@ namespace tangent
 			ranging_slice_repr& order_asc();
 			ranging_slice_repr& order_desc();
 			hash_map<size_t, uptr<states::account_multiform>>& cache_ptr(const program* p);
-			static ranging_slice_repr from_column(const void* index_value, int index_type_id);
-			static ranging_slice_repr from_row(const void* index_value, int index_type_id);
 			static ranging_slice_repr from(cquery new_mode, uint8_t new_slot, const void* index_value, int index_type_id);
 		};
 
@@ -633,6 +634,7 @@ namespace tangent
 			void store_if(bool condition, const void* new_column, const void* new_row, void* new_value);
 			void store_positioned(const void* new_column, const void* new_row, void* new_value, const uint256_t& new_position);
 			void store_positioned_if(bool condition, const void* new_column, const void* new_row, void* new_value, const uint256_t& new_position);
+			static void wrapped_store_positioned_if(asIScriptGeneric* generic);
 			const void* load(const void* new_column, const void* new_row);
 			const void* try_load(const void* new_column, const void* new_row);
 			bool has(const void* new_column, const void* new_row);
@@ -667,9 +669,9 @@ namespace tangent
 			static bool multiform_into(const void* column_value, int column_type_id, const void* row_value, int row_type_id, void* object_value, int object_type_id);
 			static bool multiform_has(const void* column_value, int column_type_id, const void* row_value, int row_type_id);
 			static void multiform_get(asIScriptGeneric* generic);
-			static void log_emit(const void* object_value, int object_type_id);
-			static void log_event(const void* event_value, int event_type_id, const void* object_value, int object_type_id);
-			static bool log_into(int32_t event_index, void* object_value, int object_type_id);
+			static void log_emit(asIScriptGeneric* generic);
+			static void log_event(asIScriptGeneric* generic);
+			static void log_into(asIScriptGeneric* generic);
 			static void log_event_into(asIScriptGeneric* generic);
 			static void log_get(asIScriptGeneric* generic);
 			static void log_get_event(asIScriptGeneric* generic);
@@ -779,6 +781,7 @@ namespace tangent
 			uptr<virtual_machine> vm;
 			string compiler_log;
 			std::recursive_mutex mutex;
+			bool debugger_tools;
 			void* strings;
 
 		public:
@@ -787,6 +790,7 @@ namespace tangent
 		public:
 			factory() noexcept;
 			virtual ~factory() noexcept override;
+			void bind_debugger_tools(debugger_context* debugger);
 			void return_module(cmodule&& value);
 			expects_lr<cmodule> compile_module(const std::string_view& hashcode, const std::function<expects_lr<string>()>& unpacked_code_callback);
 			expects_lr<void> reset_properties(library& module, immediate_context* context);

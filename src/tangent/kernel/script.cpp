@@ -1,6 +1,8 @@
 #include "script.h"
 #include "../policy/transactions.h"
 #include "../storage/chainstate.h"
+#include "../internal/as_autowrapper.h"
+#include <vitex/bindings.h>
 #include <gmp.h>
 #include <iostream>
 extern "C"
@@ -67,6 +69,17 @@ namespace tangent
 		{
 			if (prev_seek < stream.seek)
 				program::request_gas_vmemory(stream.seek - prev_seek);
+		}
+		static void any_store(asIScriptGeneric* generic)
+		{
+			generic_context inout = generic_context(generic);
+			((script::bindings::any*)inout.get_object_address())->store(inout.get_arg_address(0), inout.get_arg_type_id(0));
+		}
+		static void any_retrieve(asIScriptGeneric* generic)
+		{
+			generic_context inout = generic_context(generic);
+			bool result = ((script::bindings::any*)inout.get_object_address())->retrieve(inout.get_arg_address(0), inout.get_arg_type_id(0));
+			inout.set_return_byte(result);
 		}
 
 		std::string_view exception_repr::category::generic()
@@ -205,7 +218,7 @@ namespace tangent
 			return type.empty() && text.empty();
 		}
 
-		array_repr::array_repr(uint32_t length, asITypeInfo* info) noexcept : obj_type(info), buffer(nullptr), element_size(0), sub_type_id(-1)
+		array_repr::array_repr(uint32_t length, asITypeInfo* info) : obj_type(info), buffer(nullptr), element_size(0), sub_type_id(-1)
 		{
 			VI_ASSERT(info && string(obj_type.get_name()) == SCRIPT_TYPE_ARRAY, "array type is invalid");
 			obj_type.add_ref();
@@ -222,7 +235,7 @@ namespace tangent
 			if (obj_type.flags() & (uint32_t)object_behaviours::gc)
 				obj_type.get_vm()->notify_of_new_object(this, obj_type);
 		}
-		array_repr::array_repr(const array_repr& other) noexcept : obj_type(other.obj_type), buffer(nullptr), element_size(other.element_size), sub_type_id(other.sub_type_id)
+		array_repr::array_repr(const array_repr& other) : obj_type(other.obj_type), buffer(nullptr), element_size(other.element_size), sub_type_id(other.sub_type_id)
 		{
 			VI_ASSERT(obj_type.is_valid() && string(obj_type.get_name()) == SCRIPT_TYPE_ARRAY, "array type is invalid");
 			obj_type.add_ref();
@@ -232,7 +245,7 @@ namespace tangent
 			create_buffer(&buffer, 0);
 			*this = other;
 		}
-		array_repr::array_repr(uint32_t length, void* default_value, asITypeInfo* info) noexcept : obj_type(info), buffer(nullptr), element_size(0), sub_type_id(-1)
+		array_repr::array_repr(uint32_t length, void* default_value, asITypeInfo* info) : obj_type(info), buffer(nullptr), element_size(0), sub_type_id(-1)
 		{
 			VI_ASSERT(info && string(vitex::scripting::type_info(info).get_name()) == SCRIPT_TYPE_ARRAY, "array type is invalid");
 			obj_type.add_ref();
@@ -252,7 +265,7 @@ namespace tangent
 			for (uint32_t i = 0; i < size(); i++)
 				set_value(i, default_value);
 		}
-		array_repr::~array_repr() noexcept
+		array_repr::~array_repr()
 		{
 			if (buffer)
 			{
@@ -261,7 +274,7 @@ namespace tangent
 			}
 			obj_type.release();
 		}
-		array_repr& array_repr::operator=(const array_repr& other) noexcept
+		array_repr& array_repr::operator=(const array_repr& other)
 		{
 			if (&other != this && other.get_array_object_type() == get_array_object_type())
 			{
@@ -347,7 +360,7 @@ namespace tangent
 			if (!check_max_size(num_elements))
 				return;
 
-			resize((int64_t)num_elements - (int64_t)(buffer ? buffer->num_elements : 0), (uint32_t)-1);
+			resize_buffer((int64_t)num_elements - (int64_t)(buffer ? buffer->num_elements : 0), (uint32_t)-1);
 		}
 		void array_repr::remove_range(uint32_t start, uint32_t count)
 		{
@@ -364,7 +377,7 @@ namespace tangent
 			memmove(buffer->data + start * (size_t)element_size, buffer->data + (start + count) * (size_t)element_size, (size_t)(buffer->num_elements - start - count) * (size_t)element_size);
 			buffer->num_elements -= count;
 		}
-		void array_repr::resize(int64_t delta, uint32_t where)
+		void array_repr::resize_buffer(int64_t delta, uint32_t where)
 		{
 			uint32_t buffer_size = buffer ? buffer->num_elements : 0;
 			if (delta < 0)
@@ -451,10 +464,10 @@ namespace tangent
 			if (index > (buffer ? buffer->num_elements : 0))
 				return contract::throw_ptr(exception_repr(exception_repr::category::argument(), stringify::text("range [%i; %i) is out of bounds (size: %i)", index, index + 1, buffer ? buffer->num_elements : 0)));
 
-			resize(1, index);
+			resize_buffer(1, index);
 			set_value(index, value);
 		}
-		void array_repr::insert_at(uint32_t index, const array_repr& array)
+		void array_repr::insert_array_at(uint32_t index, const array_repr& array)
 		{
 			if (index > (buffer ? buffer->num_elements : 0))
 				return contract::throw_ptr(exception_repr(exception_repr::category::argument(), stringify::text("range [%i; %i) is out of bounds (size: %i)", index, index + 1, buffer ? buffer->num_elements : 0)));
@@ -463,7 +476,7 @@ namespace tangent
 				return contract::throw_ptr(exception_repr(exception_repr::category::argument(), stringify::text("array types (%s, %s) are incompatible", obj_type.get_name().data(), array.obj_type.get_name().data())));
 
 			uint32_t new_size = array.size();
-			resize((int)new_size, index);
+			resize_buffer((int)new_size, index);
 
 			if (&array != this)
 			{
@@ -500,7 +513,7 @@ namespace tangent
 		{
 			if (index >= (buffer ? buffer->num_elements : 0))
 				return contract::throw_ptr(exception_repr(exception_repr::category::argument(), stringify::text("range [%i; %i) is out of bounds (size: %i)", index, index + 1, buffer ? buffer->num_elements : 0)));
-			resize(-1, index);
+			resize_buffer(-1, index);
 		}
 		void array_repr::remove_first()
 		{
@@ -744,7 +757,11 @@ namespace tangent
 		{
 			resize(0);
 		}
-		array_repr* array_repr::create(asITypeInfo* info, uint32_t length)
+		array_repr* array_repr::construct(asITypeInfo* info)
+		{
+			return array_repr::construct(info, (uint32_t)0);
+		}
+		array_repr* array_repr::construct(asITypeInfo* info, uint32_t length)
 		{
 			array_repr* result = new array_repr(length, info);
 			if (!result)
@@ -752,17 +769,13 @@ namespace tangent
 
 			return result;
 		}
-		array_repr* array_repr::create(asITypeInfo* info, uint32_t length, void* default_value)
+		array_repr* array_repr::construct(asITypeInfo* info, uint32_t length, void* default_value)
 		{
 			array_repr* result = new array_repr(length, default_value, info);
 			if (!result)
 				contract::throw_ptr(exception_repr(exception_repr::category::memory(), stringify::text("size %i is illegal (out of memory)", length)));
 
 			return result;
-		}
-		array_repr* array_repr::create(asITypeInfo* info)
-		{
-			return array_repr::create(info, (uint32_t)0);
 		}
 		bool array_repr::template_callback(asITypeInfo* info_context, bool& dont_garbage_collect)
 		{
@@ -866,7 +879,7 @@ namespace tangent
 			memset((void*)this, 0, sizeof(*this));
 			copy_buffer(other.data(), (uint32_t)other.size());
 		}
-		string_repr::string_repr(string_repr&& other) noexcept
+		string_repr::string_repr(string_repr&& other)
 		{
 			memset((void*)this, 0, sizeof(*this));
 			move_buffer(std::move(other));
@@ -884,7 +897,7 @@ namespace tangent
 			copy_buffer(other.data(), (uint32_t)other.size());
 			return *this;
 		}
-		string_repr& string_repr::operator=(string_repr&& other) noexcept
+		string_repr& string_repr::operator=(string_repr&& other)
 		{
 			if (this == &other)
 				return *this;
@@ -1223,7 +1236,7 @@ namespace tangent
 
 			virtual_machine* vm = virtual_machine::get();
 			asITypeInfo* array_type = vm->get_type_info_by_decl(SCRIPT_TYPE_ARRAY "<" SCRIPT_TYPE_STRING ">@").get_type_info();
-			array_repr* array = array_repr::create(array_type);
+			array_repr* array = array_repr::construct(array_type);
 			auto values = stringify::split(view(), delimiter.view());
 			array->resize((uint32_t)values.size());
 			for (size_t i = 0; i < values.size(); i++)
@@ -1333,11 +1346,11 @@ namespace tangent
 		{
 			return other.to_string();
 		}
-		void string_repr::create(string_repr* base)
+		void string_repr::construct(string_repr* base)
 		{
 			new(base) string_repr();
 		}
-		void string_repr::create_copy(string_repr* base, const string_repr& other)
+		void string_repr::construct_copy(string_repr* base, const string_repr& other)
 		{
 			new(base) string_repr(other);
 		}
@@ -2566,6 +2579,24 @@ namespace tangent
 			++offset;
 			return true;
 		}
+		void ranging_slice_repr::wrapped_next(asIScriptGeneric* generic)
+		{
+			generic_context inout = generic_context(generic);
+			bool result = ((ranging_slice_repr*)inout.get_object_address())->next(inout.get_arg_address(0), inout.get_arg_type_id(0));
+			inout.set_return_byte(result);
+		}
+		void ranging_slice_repr::wrapped_next_index(asIScriptGeneric* generic)
+		{
+			generic_context inout = generic_context(generic);
+			bool result = ((ranging_slice_repr*)inout.get_object_address())->next_index(inout.get_arg_address(0), inout.get_arg_type_id(0), inout.get_arg_address(1), inout.get_arg_type_id(1));
+			inout.set_return_byte(result);
+		}
+		void ranging_slice_repr::wrapped_next_index_ranked(asIScriptGeneric* generic)
+		{
+			generic_context inout = generic_context(generic);
+			bool result = ((ranging_slice_repr*)inout.get_object_address())->next_index_ranked(inout.get_arg_address(0), inout.get_arg_type_id(0), inout.get_arg_address(1), inout.get_arg_type_id(1), (uint256_t*)inout.get_arg_address(2));
+			inout.set_return_byte(result);
+		}
 		ranging_slice_repr& ranging_slice_repr::with_offset(uint32_t new_offset)
 		{
 			offset = new_offset;
@@ -2640,14 +2671,6 @@ namespace tangent
 			index.write_typeless((char*)&order, sizeof(order));
 			index.write_typeless(value);
 			return ((program*)p)->cache.index[mode == cquery::column || mode == cquery::column_filter ? 0 : 1][index.data];
-		}
-		ranging_slice_repr ranging_slice_repr::from_column(const void* index_value, int index_type_id)
-		{
-			return from(cquery::column, 0, index_value, index_type_id);
-		}
-		ranging_slice_repr ranging_slice_repr::from_row(const void* index_value, int index_type_id)
-		{
-			return from(cquery::row, 0, index_value, index_type_id);
 		}
 		ranging_slice_repr ranging_slice_repr::from(cquery new_mode, uint8_t new_slot, const void* index_value, int index_type_id)
 		{
@@ -2730,6 +2753,11 @@ namespace tangent
 				store_positioned(new_column, new_row, new_value, new_position);
 			else
 				erase(new_column, new_row);
+		}
+		void ranging_repr::wrapped_store_positioned_if(asIScriptGeneric* generic)
+		{
+			generic_context inout = generic_context(generic);
+			((ranging_repr*)inout.get_object_address())->store_positioned_if((bool)inout.get_arg_byte(0), inout.get_arg_address(1), inout.get_arg_address(2), inout.get_arg_address(3), *inout.get_arg_object<uint256_t>(4));
 		}
 		const void* ranging_repr::load(const void* new_column, const void* new_row)
 		{
@@ -3088,13 +3116,16 @@ namespace tangent
 			int object_type_id = inout.get_return_addressable_type_id();
 			multiform_load(column_value, column_type_id, row_value, row_type_id, object_value, object_type_id, nullptr, true);
 		}
-		void contract::log_emit(const void* object_value, int object_type_id)
+		void contract::log_emit(asIScriptGeneric* generic)
 		{
 			auto* p = program::fetch_mutable_or_throw();
 			if (!p)
 				return;
 
 			format::wo_stream stream;
+			generic_context inout = generic_context(generic);
+			void* object_value = inout.get_arg_address(0);
+			int object_type_id = inout.get_arg_type_id(0);
 			auto status = marshall::store(&stream, (void*)object_value, object_type_id);
 			if (!status)
 				return contract::throw_ptr(exception_repr(exception_repr::category::argument(), std::string_view(status.error().message())));
@@ -3112,13 +3143,18 @@ namespace tangent
 
 			p->dispatch_event(object_type_id, object_value, object_type_id);
 		}
-		void contract::log_event(const void* event_value, int event_type_id, const void* object_value, int object_type_id)
+		void contract::log_event(asIScriptGeneric* generic)
 		{
 			auto* p = program::fetch_mutable_or_throw();
 			if (!p)
 				return;
 
 			format::wo_stream stream;
+			generic_context inout = generic_context(generic);
+			void* object_value = inout.get_arg_address(0);
+			int object_type_id = inout.get_arg_type_id(0);
+			void* event_value = inout.get_arg_address(1);
+			int event_type_id = inout.get_arg_type_id(1);
 			auto status = marshall::store(&stream, (void*)object_value, object_type_id);
 			if (!status)
 				return contract::throw_ptr(exception_repr(exception_repr::category::argument(), std::string_view(status.error().message())));
@@ -3136,25 +3172,35 @@ namespace tangent
 
 			p->dispatch_event(event_type_id, object_value, object_type_id);
 		}
-		bool contract::log_into(int32_t event_index, void* object_value, int object_type_id)
+		void contract::log_into(asIScriptGeneric* generic)
 		{
 			auto* p = program::fetch_immutable_or_throw();
 			if (!p)
-				return false;
+				return;
 
+			generic_context inout = generic_context(generic);
+			int32_t event_index = inout.get_arg_dword(0);
+			void* object_value = inout.get_arg_address(1);
+			int object_type_id = inout.get_arg_type_id(1);
 			auto type = factory::get()->get_vm()->get_type_info_by_id(object_type_id);
 			auto name = type.is_valid() ? type.get_name() : std::string_view("primitive");
 			auto id = algorithm::hashing::hash32d(name);
 			auto* event = event_index < 0 ? p->executor->receipt.reverse_find_event(id, (size_t)(-event_index)) : p->executor->receipt.find_event(id, (size_t)event_index);
 			if (!event)
-				return false;
+			{
+				inout.set_return_byte(false);
+				return;
+			}
 
 			format::wo_stream writer;
 			if (!format::variables_util::serialize_flat_into(*event, &writer))
-				return false;
+			{
+				inout.set_return_byte(false);
+				return;
+			}
 
 			format::ro_stream reader = writer.ro();
-			return !!marshall::load(reader, object_value, object_type_id);
+			inout.set_return_byte(!!marshall::load(reader, object_value, object_type_id));
 		}
 		void contract::log_event_into(asIScriptGeneric* generic)
 		{
@@ -4945,394 +4991,415 @@ namespace tangent
 			ref = nullptr;
 		}
 
-		factory::factory() noexcept
+		factory::factory() noexcept : vm(new virtual_machine()), debugger_tools(false), strings(memory::init<string_repr_cache_type>())
 		{
-			strings = memory::init<string_repr_cache_type>();
-			vm = new virtual_machine();
 			vm->set_type_def("usize", "uint32");
-
-			auto pmut = vm->set_interface_class<program>("pmut");
-			auto pconst = vm->set_interface_class<program>("pconst");
-			auto array_type = vm->set_template_class<array_repr>("array<class t>", "array<t>", true);
+			auto pmut = vm->set_class_address("pmut", sizeof(program), (size_t)object_behaviours::ref | (size_t)object_behaviours::nocount);
+			auto pconst = vm->set_class_address("pconst", sizeof(program), (size_t)object_behaviours::ref | (size_t)object_behaviours::nocount);
+			auto array_type = vm->set_template_class_address("array<class t>", "array<t>", sizeof(array_repr), (size_t)object_behaviours::pattern | (size_t)object_behaviours::ref | (size_t)object_behaviours::gc);
 			auto string_type = vm->set_struct_address("string", sizeof(string_repr), (size_t)object_behaviours::value | bridge::type_traits_of<string_repr>());
-			auto uint128_type = vm->set_struct_trivial<uint128_t>("uint128", (size_t)object_behaviours::app_class_allints);
-			auto uint256_type = vm->set_struct_trivial<uint256_t>("uint256", (size_t)object_behaviours::app_class_allints);
-			auto real320_type = vm->set_struct_trivial<decimal>("real320");
-			auto payable_type = vm->set_struct_trivial<payable_repr>("payable");
-			auto address_type = vm->set_struct_trivial<address_repr>("address");
-			auto abi_type = vm->set_struct_trivial<abi_repr>("abi");
+			auto uint128_type = vm->set_struct_address("uint128", sizeof(uint128_t), (size_t)object_behaviours::value | (size_t)object_behaviours::app_class_allints | bridge::type_traits_of<uint128_t>());
+			auto uint256_type = vm->set_struct_address("uint256", sizeof(uint256_t), (size_t)object_behaviours::value | (size_t)object_behaviours::app_class_allints | bridge::type_traits_of<uint256_t>());
+			auto real320_type = vm->set_struct_address("real320", sizeof(decimal), (size_t)object_behaviours::value | bridge::type_traits_of<decimal>());
+			auto payable_type = vm->set_struct_address("payable", sizeof(payable_repr), (size_t)object_behaviours::value | bridge::type_traits_of<payable_repr>());
+			auto address_type = vm->set_struct_address("address", sizeof(address_repr), (size_t)object_behaviours::value | bridge::type_traits_of<address_repr>());
+			auto abi_type = vm->set_struct_address("abi", sizeof(abi_repr), (size_t)object_behaviours::value | bridge::type_traits_of<abi_repr>());
 			auto varying_type = vm->set_template_class_address("varying<class t>", "varying<t>", sizeof(varying_repr), (size_t)object_behaviours::pattern | (size_t)object_behaviours::value | bridge::type_traits_of<varying_repr>());
 			auto mapping_type = vm->set_template_class_address("mapping<class k, class v>", "mapping<k, v>", sizeof(mapping_repr), (size_t)object_behaviours::pattern | (size_t)object_behaviours::value | bridge::type_traits_of<mapping_repr>());
 			auto ranging_type = vm->set_template_class_address("ranging<class c, class r, class v>", "ranging<c, r, v>", sizeof(ranging_repr), (size_t)object_behaviours::pattern | (size_t)object_behaviours::value | bridge::type_traits_of<ranging_repr>());
-			auto ranging_slice_type = vm->set_struct_trivial<ranging_slice_repr>("ranging_slice");
-			array_type->set_template_callback(&array_repr::template_callback);
-			array_type->set_constructor_extern<array_repr, asITypeInfo*>("array<t>@ f(int&in)", &array_repr::create);
-			array_type->set_constructor_extern<array_repr, asITypeInfo*, uint32_t>("array<t>@ f(int&in, usize) explicit", &array_repr::create);
-			array_type->set_constructor_extern<array_repr, asITypeInfo*, uint32_t, void*>("array<t>@ f(int&in, usize, const t&in)", &array_repr::create);
-			array_type->set_operator_copy<array_repr>();
-			array_type->set_enum_refs(&array_repr::enum_references);
-			array_type->set_release_refs(&array_repr::release_references);
-			array_type->set_method<array_repr, void*, uint32_t>("t& opIndex(usize)", &array_repr::at);
-			array_type->set_method<array_repr, const void*, uint32_t>("const t& opIndex(usize) const", &array_repr::at);
-			array_type->set_method<array_repr, void*>("t& front()", &array_repr::front);
-			array_type->set_method<array_repr, const void*>("const t& front() const", &array_repr::front);
-			array_type->set_method<array_repr, void*>("t& back()", &array_repr::back);
-			array_type->set_method<array_repr, const void*>("const t& back() const", &array_repr::back);
-			array_type->set_method("bool empty() const", &array_repr::empty);
-			array_type->set_method("usize size() const", &array_repr::size);
-			array_type->set_method<array_repr, void, uint32_t>("void resize(usize)", &array_repr::resize);
-			array_type->set_method("void clear()", &array_repr::clear);
-			array_type->set_method("void push(const t&in)", &array_repr::insert_last);
-			array_type->set_method("void push_front(const t&in)", &array_repr::insert_first);
-			array_type->set_method("void pop()", &array_repr::remove_last);
-			array_type->set_method("void pop_front()", &array_repr::remove_first);
-			array_type->set_method<array_repr, void, uint32_t, void*>("void insert(usize, const t&in)", &array_repr::insert_at);
-			array_type->set_method<array_repr, void, uint32_t, const array_repr&>("void insert(usize, const array<t>&)", &array_repr::insert_at);
-			array_type->set_method("void erase(usize)", &array_repr::remove_at);
-			array_type->set_method("void erase(usize, usize)", &array_repr::remove_range);
-			array_type->set_method("void reverse()", &array_repr::reverse);
-			array_type->set_method("void swap(usize, usize)", &array_repr::swap);
-			string_type->set_constructor_extern("void f()", &string_repr::create);
-			string_type->set_constructor_extern("void f(const string&in)", &string_repr::create_copy);
-			string_type->set_destructor_extern("void f()", &string_repr::destroy);
-			string_type->set_method("string& opAssign(const string&in)", &string_repr::assign);
-			string_type->set_method("string& opAddAssign(const string&in)", &string_repr::assign_append);
-			string_type->set_method("string& opAddAssign(uint8)", &string_repr::assign_append_char);
-			string_type->set_method("string opAdd(const string&in) const", &string_repr::append);
-			string_type->set_method("string opAdd(uint8) const", &string_repr::append_char_back);
-			string_type->set_method("string opAdd_r(uint8) const", &string_repr::append_char_front);
-			string_type->set_method("int opCmp(const string&in) const", &string_repr::compare);
-			string_type->set_method("uint8& opIndex(usize)", &string_repr::at);
-			string_type->set_method("const uint8& opIndex(usize) const", &string_repr::at);
-			string_type->set_method("uint8& at(usize)", &string_repr::at);
-			string_type->set_method("const uint8& at(usize) const", &string_repr::at);
-			string_type->set_method("uint8& front()", &string_repr::front);
-			string_type->set_method("const uint8& front() const", &string_repr::front);
-			string_type->set_method("uint8& back()", &string_repr::back);
-			string_type->set_method("const uint8& back() const", &string_repr::back);
-			string_type->set_method("bool empty() const", &string_repr::empty);
-			string_type->set_method("usize size() const", &string_repr::size);
-			string_type->set_method("void clear()", &string_repr::clear);
-			string_type->set_method("string& append(const string&in)", &string_repr::assign_append);
-			string_type->set_method("string& append(uint8)", &string_repr::assign_append_char);
-			string_type->set_method("void push(uint8)", &string_repr::push_back);
-			string_type->set_method("void pop()", &string_repr::pop_back);
-			string_type->set_method("bool starts_with(const string&in, usize = 0) const", &string_repr::starts_with);
-			string_type->set_method("bool ends_with(const string&in) const", &string_repr::ends_with);
-			string_type->set_method("string substring(usize) const", &string_repr::substring);
-			string_type->set_method("string substring(usize, usize) const", &string_repr::substring_sized);
-			string_type->set_method("string& trim()", &string_repr::trim);
-			string_type->set_method("string& trim_front()", &string_repr::trim_start);
-			string_type->set_method("string& trim_back()", &string_repr::trim_end);
-			string_type->set_method("string& lower()", &string_repr::to_lower);
-			string_type->set_method("string& upper()", &string_repr::to_upper);
-			string_type->set_method("string& reverse()", &string_repr::reverse);
-			string_type->set_method("usize rfind(const string&in) const", &string_repr::rfind);
-			string_type->set_method("usize rfind(uint8) const", &string_repr::rfind_char);
-			string_type->set_method("usize rfind(const string&in, usize) const", &string_repr::rfind_offset);
-			string_type->set_method("usize rfind(uint8, usize) const", &string_repr::rfind_char_offset);
-			string_type->set_method("usize find(const string&in, usize = 0) const", &string_repr::find);
-			string_type->set_method("usize find(uint8, usize = 0) const", &string_repr::find_char);
-			string_type->set_method("usize find_first_of(const string&in, usize = 0) const", &string_repr::find_first_of);
-			string_type->set_method("usize find_first_not_of(const string&in, usize = 0) const", &string_repr::find_first_not_of);
-			string_type->set_method("usize find_last_of(const string&in) const", &string_repr::find_last_of);
-			string_type->set_method("usize find_last_not_of(const string&in) const", &string_repr::find_last_not_of);
-			string_type->set_method("usize find_last_of(const string&in, usize) const", &string_repr::find_last_of_offset);
-			string_type->set_method("usize find_last_not_of(const string&in, usize) const", &string_repr::find_last_not_of_offset);
-			string_type->set_method("array<string>@ split(const string&in) const", &string_repr::split);
-			string_type->set_method("int8 i8(int = 10)", &string_repr::from_string<int8_t>);
-			string_type->set_method("int16 i16(int = 10)", &string_repr::from_string<int16_t>);
-			string_type->set_method("int32 i32(int = 10)", &string_repr::from_string<int32_t>);
-			string_type->set_method("int64 i64(int = 10)", &string_repr::from_string<int64_t>);
-			string_type->set_method("uint8 u8(int = 10)", &string_repr::from_string<uint8_t>);
-			string_type->set_method("uint16 u16(int = 10)", &string_repr::from_string<uint16_t>);
-			string_type->set_method("uint32 u32(int = 10)", &string_repr::from_string<uint32_t>);
-			string_type->set_method("uint64 u64(int = 10)", &string_repr::from_string<uint64_t>);
-			string_type->set_method("uint128 u128(int = 10)", &string_repr::from_string_uint128);
-			string_type->set_method("uint256 u256(int = 10)", &string_repr::from_string_uint256);
-			string_type->set_method("real320 r320(int = 10)", &string_repr::from_string_decimal);
-			uint128_type->set_constructor_extern("void f()", &uint128_repr::default_construct);
-			uint128_type->set_constructor_extern("void f(const string&in)", &uint128_repr::construct_string);
-			uint128_type->set_constructor<uint128_t, int16_t>("void f(int16)");
-			uint128_type->set_constructor<uint128_t, uint16_t>("void f(uint16)");
-			uint128_type->set_constructor<uint128_t, int32_t>("void f(int32)");
-			uint128_type->set_constructor<uint128_t, uint32_t>("void f(uint32)");
-			uint128_type->set_constructor<uint128_t, int64_t>("void f(int64)");
-			uint128_type->set_constructor<uint128_t, uint64_t>("void f(uint64)");
-			uint128_type->set_constructor<uint128_t, const uint128_t&>("void f(const uint128&in)");
-			uint128_type->set_method_extern("bool opImplConv() const", &uint128_repr::to_bool);
-			uint128_type->set_method_extern("int8 i8() const", &uint128_repr::to_int8);
-			uint128_type->set_method_extern("int16 i16() const", &uint128_repr::to_int16);
-			uint128_type->set_method_extern("int32 i32() const", &uint128_repr::to_int32);
-			uint128_type->set_method_extern("int64 i64() const", &uint128_repr::to_int64);
-			uint128_type->set_method_extern("uint8 u8() const", &uint128_repr::to_uint8);
-			uint128_type->set_method_extern("uint16 u16() const", &uint128_repr::to_uint16);
-			uint128_type->set_method_extern("uint32 u32() const", &uint128_repr::to_uint32);
-			uint128_type->set_method_extern("uint64 u64() const", &uint128_repr::to_uint64);
-			uint128_type->set_method_extern("uint256 u256() const", &uint128_repr::to_uint256);
-			uint128_type->set_method("real320 r320() const", &uint128_t::to_decimal);
-			uint128_type->set_method("uint8 bits() const", &uint128_t::bits);
-			uint128_type->set_method("uint8 bytes() const", &uint128_t::bytes);
-			uint128_type->set_operator_extern(operators::mul_assign_t, (uint32_t)position::left, "uint128&", "const uint128&in", &uint128_repr::mul_eq);
-			uint128_type->set_operator_extern(operators::div_assign_t, (uint32_t)position::left, "uint128&", "const uint128&in", &uint128_repr::div_eq);
-			uint128_type->set_operator_extern(operators::add_assign_t, (uint32_t)position::left, "uint128&", "const uint128&in", &uint128_repr::add_eq);
-			uint128_type->set_operator_extern(operators::sub_assign_t, (uint32_t)position::left, "uint128&", "const uint128&in", &uint128_repr::sub_eq);
-			uint128_type->set_operator_extern(operators::pre_inc_t, (uint32_t)position::left, "uint128&", "", &uint128_repr::fpp);
-			uint128_type->set_operator_extern(operators::pre_dec_t, (uint32_t)position::left, "uint128&", "", &uint128_repr::fmm);
-			uint128_type->set_operator_extern(operators::post_inc_t, (uint32_t)position::left, "uint128&", "", &uint128_repr::pp);
-			uint128_type->set_operator_extern(operators::post_dec_t, (uint32_t)position::left, "uint128&", "", &uint128_repr::mm);
-			uint128_type->set_operator_extern(operators::equals_t, (uint32_t)position::constant, "bool", "const uint128&in", &uint128_repr::eq);
-			uint128_type->set_operator_extern(operators::cmp_t, (uint32_t)position::constant, "int", "const uint128&in", &uint128_repr::cmp);
-			uint128_type->set_operator_extern(operators::add_t, (uint32_t)position::constant, "uint128", "const uint128&in", &uint128_repr::add);
-			uint128_type->set_operator_extern(operators::sub_t, (uint32_t)position::constant, "uint128", "const uint128&in", &uint128_repr::sub);
-			uint128_type->set_operator_extern(operators::mul_t, (uint32_t)position::constant, "uint128", "const uint128&in", &uint128_repr::mul);
-			uint128_type->set_operator_extern(operators::div_t, (uint32_t)position::constant, "uint128", "const uint128&in", &uint128_repr::div);
-			uint128_type->set_operator_extern(operators::mod_t, (uint32_t)position::constant, "uint128", "const uint128&in", &uint128_repr::per);
-			uint256_type->set_constructor_extern("void f()", &uint256_repr::default_construct);
-			uint256_type->set_constructor_extern("void f(const string&in)", &uint256_repr::construct_string);
-			uint256_type->set_constructor<uint256_t, int16_t>("void f(int16)");
-			uint256_type->set_constructor<uint256_t, uint16_t>("void f(uint16)");
-			uint256_type->set_constructor<uint256_t, int32_t>("void f(int32)");
-			uint256_type->set_constructor<uint256_t, uint32_t>("void f(uint32)");
-			uint256_type->set_constructor<uint256_t, int64_t>("void f(int64)");
-			uint256_type->set_constructor<uint256_t, uint64_t>("void f(uint64)");
-			uint256_type->set_constructor<uint256_t, const uint128_t&>("void f(const uint128&in)");
-			uint256_type->set_constructor<uint256_t, const uint128_t&, const uint128_t&>("void f(const uint128&in, const uint128&in)");
-			uint256_type->set_constructor<uint256_t, const uint256_t&>("void f(const uint256&in)");
-			uint256_type->set_method_extern("bool opImplConv() const", &uint256_repr::to_bool);
-			uint256_type->set_method_extern("int8 i8() const", &uint256_repr::to_int8);
-			uint256_type->set_method_extern("int16 i16() const", &uint256_repr::to_int16);
-			uint256_type->set_method_extern("int32 i32() const", &uint256_repr::to_int32);
-			uint256_type->set_method_extern("int64 i64() const", &uint256_repr::to_int64);
-			uint256_type->set_method_extern("uint8 u8() const", &uint256_repr::to_uint8);
-			uint256_type->set_method_extern("uint16 u16() const", &uint256_repr::to_uint16);
-			uint256_type->set_method_extern("uint32 u32() const", &uint256_repr::to_uint32);
-			uint256_type->set_method_extern("uint64 u64() const", &uint256_repr::to_uint64);
-			uint256_type->set_method_extern("uint128 u128() const", &uint256_repr::to_uint128);
-			uint256_type->set_method("real320 r320() const", &uint256_t::to_decimal);
-			uint256_type->set_method("uint16 bits() const", &uint256_t::bits);
-			uint256_type->set_method("uint16 bytes() const", &uint256_t::bytes);
-			uint256_type->set_operator_extern(operators::mul_assign_t, (uint32_t)position::left, "uint256&", "const uint256&in", &uint256_repr::mul_eq);
-			uint256_type->set_operator_extern(operators::div_assign_t, (uint32_t)position::left, "uint256&", "const uint256&in", &uint256_repr::div_eq);
-			uint256_type->set_operator_extern(operators::add_assign_t, (uint32_t)position::left, "uint256&", "const uint256&in", &uint256_repr::add_eq);
-			uint256_type->set_operator_extern(operators::sub_assign_t, (uint32_t)position::left, "uint256&", "const uint256&in", &uint256_repr::sub_eq);
-			uint256_type->set_operator_extern(operators::pre_inc_t, (uint32_t)position::left, "uint256&", "", &uint256_repr::fpp);
-			uint256_type->set_operator_extern(operators::pre_dec_t, (uint32_t)position::left, "uint256&", "", &uint256_repr::fmm);
-			uint256_type->set_operator_extern(operators::post_inc_t, (uint32_t)position::left, "uint256&", "", &uint256_repr::pp);
-			uint256_type->set_operator_extern(operators::post_dec_t, (uint32_t)position::left, "uint256&", "", &uint256_repr::mm);
-			uint256_type->set_operator_extern(operators::equals_t, (uint32_t)position::constant, "bool", "const uint256&in", &uint256_repr::eq);
-			uint256_type->set_operator_extern(operators::cmp_t, (uint32_t)position::constant, "int", "const uint256&in", &uint256_repr::cmp);
-			uint256_type->set_operator_extern(operators::add_t, (uint32_t)position::constant, "uint256", "const uint256&in", &uint256_repr::add);
-			uint256_type->set_operator_extern(operators::sub_t, (uint32_t)position::constant, "uint256", "const uint256&in", &uint256_repr::sub);
-			uint256_type->set_operator_extern(operators::mul_t, (uint32_t)position::constant, "uint256", "const uint256&in", &uint256_repr::mul);
-			uint256_type->set_operator_extern(operators::div_t, (uint32_t)position::constant, "uint256", "const uint256&in", &uint256_repr::div);
-			uint256_type->set_operator_extern(operators::mod_t, (uint32_t)position::constant, "uint256", "const uint256&in", &uint256_repr::per);
-			real320_type->set_constructor_extern<decimal*>("void f()", &real320_repr::custom_constructor);
-			real320_type->set_constructor_extern<decimal*, bool>("void f(bool)", &real320_repr::custom_constructor_bool);
-			real320_type->set_constructor_extern<decimal*, int8_t>("void f(int8)", &real320_repr::custom_constructor_arithmetic<int8_t>);
-			real320_type->set_constructor_extern<decimal*, uint8_t>("void f(uint8)", &real320_repr::custom_constructor_arithmetic<uint8_t>);
-			real320_type->set_constructor_extern<decimal*, int16_t>("void f(int16)", &real320_repr::custom_constructor_arithmetic<int16_t>);
-			real320_type->set_constructor_extern<decimal*, uint16_t>("void f(uint16)", &real320_repr::custom_constructor_arithmetic<uint16_t>);
-			real320_type->set_constructor_extern<decimal*, int32_t>("void f(int32)", &real320_repr::custom_constructor_arithmetic<int32_t>);
-			real320_type->set_constructor_extern<decimal*, uint32_t>("void f(uint32)", &real320_repr::custom_constructor_arithmetic<uint32_t>);
-			real320_type->set_constructor_extern<decimal*, int64_t>("void f(int64)", &real320_repr::custom_constructor_arithmetic<int64_t>);
-			real320_type->set_constructor_extern<decimal*, uint64_t>("void f(uint64)", &real320_repr::custom_constructor_arithmetic<uint64_t>);
-			real320_type->set_constructor_extern<decimal*, const string_repr&>("void f(const string&in)", &real320_repr::custom_constructor_string);
-			real320_type->set_constructor_extern<decimal*, const uint128_t&>("void f(const uint128&in)", &real320_repr::custom_constructor_uint128);
-			real320_type->set_constructor_extern<decimal*, const uint256_t&>("void f(const uint256&in)", &real320_repr::custom_constructor_uint256);
-			real320_type->set_constructor_extern<decimal*, const decimal&>("void f(const real320&in)", &real320_repr::custom_constructor_copy);
-			real320_type->set_method_extern("bool opImplConv() const", &real320_repr::is_not_zero_or_nan);
-			real320_type->set_method("bool nan() const", &decimal::is_nan);
-			real320_type->set_method("bool zero() const", &decimal::is_zero);
-			real320_type->set_method("bool zero_or_nan() const", &decimal::is_zero_or_nan);
-			real320_type->set_method("bool positive() const", &decimal::is_positive);
-			real320_type->set_method("bool negative() const", &decimal::is_negative);
-			real320_type->set_method("int8 i8() const", &decimal::to_int8);
-			real320_type->set_method("int16 i16() const", &decimal::to_int16);
-			real320_type->set_method("int32 i32() const", &decimal::to_int32);
-			real320_type->set_method("int64 i64() const", &decimal::to_int64);
-			real320_type->set_method("uint8 u8() const", &decimal::to_uint8);
-			real320_type->set_method("uint16 u16() const", &decimal::to_uint16);
-			real320_type->set_method("uint32 u32() const", &decimal::to_uint32);
-			real320_type->set_method("uint64 u64() const", &decimal::to_uint64);
-			real320_type->set_method_extern("uint128 u128() const", &real320_repr::to_uint128);
-			real320_type->set_method_extern("uint256 u256() const", &real320_repr::to_uint256);
-			real320_type->set_operator_extern(operators::neg_t, (uint32_t)position::constant, "real320", "", &real320_repr::negate);
-			real320_type->set_operator_extern(operators::mul_assign_t, (uint32_t)position::left, "real320&", "const real320&in", &real320_repr::mul_eq);
-			real320_type->set_operator_extern(operators::div_assign_t, (uint32_t)position::left, "real320&", "const real320&in", &real320_repr::div_eq);
-			real320_type->set_operator_extern(operators::add_assign_t, (uint32_t)position::left, "real320&", "const real320&in", &real320_repr::add_eq);
-			real320_type->set_operator_extern(operators::sub_assign_t, (uint32_t)position::left, "real320&", "const real320&in", &real320_repr::sub_eq);
-			real320_type->set_operator_extern(operators::pre_inc_t, (uint32_t)position::left, "real320&", "", &real320_repr::fpp);
-			real320_type->set_operator_extern(operators::pre_dec_t, (uint32_t)position::left, "real320&", "", &real320_repr::fmm);
-			real320_type->set_operator_extern(operators::post_inc_t, (uint32_t)position::left, "real320&", "", &real320_repr::pp);
-			real320_type->set_operator_extern(operators::post_dec_t, (uint32_t)position::left, "real320&", "", &real320_repr::mm);
-			real320_type->set_operator_extern(operators::equals_t, (uint32_t)position::constant, "bool", "const real320&in", &real320_repr::eq);
-			real320_type->set_operator_extern(operators::cmp_t, (uint32_t)position::constant, "int", "const real320&in", &real320_repr::cmp);
-			real320_type->set_operator_extern(operators::add_t, (uint32_t)position::constant, "real320", "const real320&in", &real320_repr::add);
-			real320_type->set_operator_extern(operators::sub_t, (uint32_t)position::constant, "real320", "const real320&in", &real320_repr::sub);
-			real320_type->set_operator_extern(operators::mul_t, (uint32_t)position::constant, "real320", "const real320&in", &real320_repr::mul);
-			real320_type->set_operator_extern(operators::div_t, (uint32_t)position::constant, "real320", "const real320&in", &real320_repr::div);
-			real320_type->set_method_static("real320 enan()", &decimal::nan);
-			real320_type->set_method_static("real320 from(const string&in, uint8)", &real320_repr::from);
-			payable_type->set_constructor<payable_repr>("void f()");
-			payable_type->set_constructor<payable_repr, const payable_repr&>("void f(const payable&in)");
-			payable_type->set_method("bool plus(const uint256&in, const real320&in)", &payable_repr::plus);
-			payable_type->set_method("bool minus(const uint256&in, const real320&in)", &payable_repr::minus);
-			payable_type->set_method("bool minus(const real320&in)", &payable_repr::minus_total);
-			payable_type->set_method("bool has(const uint256&in) const", &payable_repr::has);
-			payable_type->set_method("real320 of(const uint256&in) const", &payable_repr::of);
-			payable_type->set_method("const real320& total() const", &payable_repr::total);
-			payable_type->set_method("uint256 opIndex(usize)", &payable_repr::at);
-			payable_type->set_method("uint256 opIndex(usize) const", &payable_repr::at);
-			payable_type->set_method("bool empty() const", &payable_repr::empty);
-			payable_type->set_method("usize size() const", &payable_repr::size);
-			address_type->set_constructor<address_repr>("void f()");
-			address_type->set_constructor<address_repr, const string_repr&>("void f(const string&in)");
-			address_type->set_constructor<address_repr, const uint256_t&>("void f(const uint256&in)");
-			address_type->set_constructor<address_repr, const address_repr&>("void f(const address&in)");
-			address_type->set_method("uint256 u256() const", &address_repr::to_public_key_hash);
-			address_type->set_method("bool empty() const", &address_repr::empty);
-			address_type->set_method("void pay(const uint256&in, const real320&in) const", &address_repr::pay);
-			address_type->set_method("void pay(const payable&in) const", &address_repr::pay_all);
-			address_type->set_method("void mint(const string&in, const real320&in, const real320&in = real320()) const", &address_repr::mint);
-			address_type->set_method("void burn(const string&in, const real320&in, const real320&in = real320()) const", &address_repr::burn);
-			address_type->set_method("real320 token_balance_of(const string&in) const", &address_repr::token_balance_of);
-			address_type->set_method("real320 token_reserve_of(const string&in) const", &address_repr::token_reserve_of);
-			address_type->set_method("real320 balance_of(const uint256&in) const", &address_repr::balance_of);
-			address_type->set_method("real320 reserve_of(const uint256&in) const", &address_repr::reserve_of);
+			auto ranging_slice_type = vm->set_struct_address("ranging_slice", sizeof(ranging_slice_repr), (size_t)object_behaviours::value | bridge::type_traits_of<ranging_slice_repr>());
+			array_type->set_behaviour_address("array<t>@ f(int&in)", behaviours::factory, WRAP_FN_PR(array_repr::construct, (asITypeInfo*), array_repr*), convention::generic_call);
+			array_type->set_behaviour_address("array<t>@ f(int&in, usize) explicit", behaviours::factory, WRAP_FN_PR(array_repr::construct, (asITypeInfo*, uint32_t), array_repr*), convention::generic_call);
+			array_type->set_behaviour_address("array<t>@ f(int&in, usize, const t&in)", behaviours::factory, WRAP_FN_PR(array_repr::construct, (asITypeInfo*, uint32_t, void*), array_repr*), convention::generic_call);
+			array_type->set_behaviour_address("bool f(int&in, bool&out)", behaviours::template_callback, WRAP_FN(array_repr::template_callback), convention::generic_call);
+			array_type->set_behaviour_address("void f()", behaviours::add_ref, WRAP_OBJ_FIRST(ref_base_class::gc_add_ref<array_repr>), convention::generic_call);
+			array_type->set_behaviour_address("void f()", behaviours::release, WRAP_OBJ_FIRST(ref_base_class::gc_release<array_repr>), convention::generic_call);
+			array_type->set_behaviour_address("void f()", behaviours::set_gc_flag, WRAP_OBJ_FIRST(ref_base_class::gc_mark_ref<array_repr>), convention::generic_call);
+			array_type->set_behaviour_address("bool f()", behaviours::get_gc_flag, WRAP_OBJ_FIRST(ref_base_class::gc_is_marked_ref<array_repr>), convention::generic_call);
+			array_type->set_behaviour_address("int f()", behaviours::get_ref_count, WRAP_OBJ_FIRST(ref_base_class::gc_get_ref_count<array_repr>), convention::generic_call);
+			array_type->set_behaviour_address("void f(int &in)", behaviours::enum_refs, WRAP_MFN(array_repr, enum_references), convention::generic_call);
+			array_type->set_behaviour_address("void f(int &in)", behaviours::release_refs, WRAP_MFN(array_repr, release_references), convention::generic_call);
+			array_type->set_operator_copy_address(WRAP_MFN(array_repr, operator=), convention::generic_call);
+			array_type->set_method_address("t& opIndex(usize)", WRAP_MFN_PR(array_repr, at, (uint32_t), void*), convention::generic_call);
+			array_type->set_method_address("const t& opIndex(usize) const", WRAP_MFN_PR(array_repr, at, (uint32_t) const, const void*), convention::generic_call);
+			array_type->set_method_address("t& front()", WRAP_MFN_PR(array_repr, front, (), void*), convention::generic_call);
+			array_type->set_method_address("const t& front() const", WRAP_MFN_PR(array_repr, front, () const, const void*), convention::generic_call);
+			array_type->set_method_address("t& back()", WRAP_MFN_PR(array_repr, back, (), void*), convention::generic_call);
+			array_type->set_method_address("const t& back() const", WRAP_MFN_PR(array_repr, back, () const, const void*), convention::generic_call);
+			array_type->set_method_address("bool empty() const", WRAP_MFN(array_repr, empty), convention::generic_call);
+			array_type->set_method_address("usize size() const", WRAP_MFN(array_repr, size), convention::generic_call);
+			array_type->set_method_address("void resize(usize)", WRAP_MFN(array_repr, resize), convention::generic_call);
+			array_type->set_method_address("void clear()", WRAP_MFN(array_repr, clear), convention::generic_call);
+			array_type->set_method_address("void push(const t&in)", WRAP_MFN(array_repr, insert_last), convention::generic_call);
+			array_type->set_method_address("void push_front(const t&in)", WRAP_MFN(array_repr, insert_first), convention::generic_call);
+			array_type->set_method_address("void pop()", WRAP_MFN(array_repr, remove_last), convention::generic_call);
+			array_type->set_method_address("void pop_front()", WRAP_MFN(array_repr, remove_first), convention::generic_call);
+			array_type->set_method_address("void insert(usize, const t&in)", WRAP_MFN(array_repr, insert_at), convention::generic_call);
+			array_type->set_method_address("void insert(usize, const array<t>&)", WRAP_MFN(array_repr, insert_array_at), convention::generic_call);
+			array_type->set_method_address("void erase(usize)", WRAP_MFN(array_repr, remove_at), convention::generic_call);
+			array_type->set_method_address("void erase(usize, usize)", WRAP_MFN(array_repr, remove_range), convention::generic_call);
+			array_type->set_method_address("void reverse()", WRAP_MFN(array_repr, reverse), convention::generic_call);
+			array_type->set_method_address("void swap(usize, usize)", WRAP_MFN(array_repr, swap), convention::generic_call);
+			string_type->set_behaviour_address("void f()", behaviours::construct, WRAP_OBJ_FIRST(string_repr::construct), convention::generic_call);
+			string_type->set_behaviour_address("void f(const string&in)", behaviours::construct, WRAP_OBJ_FIRST(string_repr::construct_copy), convention::generic_call);
+			string_type->set_behaviour_address("void f()", behaviours::destruct, WRAP_OBJ_FIRST(string_repr::destroy), convention::generic_call);
+			string_type->set_operator_copy_address(WRAP_MFN(string_repr, assign), convention::generic_call);
+			string_type->set_method_address("string& opAddAssign(const string&in)", WRAP_MFN(string_repr, assign_append), convention::generic_call);
+			string_type->set_method_address("string& opAddAssign(uint8)", WRAP_MFN(string_repr, assign_append_char), convention::generic_call);
+			string_type->set_method_address("string opAdd(const string&in) const", WRAP_MFN(string_repr, append), convention::generic_call);
+			string_type->set_method_address("string opAdd(uint8) const", WRAP_MFN(string_repr, append_char_back), convention::generic_call);
+			string_type->set_method_address("string opAdd_r(uint8) const", WRAP_MFN(string_repr, append_char_front), convention::generic_call);
+			string_type->set_method_address("int opCmp(const string&in) const", WRAP_MFN(string_repr, compare), convention::generic_call);
+			string_type->set_method_address("uint8& opIndex(usize)", WRAP_MFN(string_repr, at), convention::generic_call);
+			string_type->set_method_address("const uint8& opIndex(usize) const", WRAP_MFN(string_repr, at), convention::generic_call);
+			string_type->set_method_address("uint8& at(usize)", WRAP_MFN(string_repr, at), convention::generic_call);
+			string_type->set_method_address("const uint8& at(usize) const", WRAP_MFN(string_repr, at), convention::generic_call);
+			string_type->set_method_address("uint8& front()", WRAP_MFN(string_repr, front), convention::generic_call);
+			string_type->set_method_address("const uint8& front() const", WRAP_MFN(string_repr, front), convention::generic_call);
+			string_type->set_method_address("uint8& back()", WRAP_MFN(string_repr, back), convention::generic_call);
+			string_type->set_method_address("const uint8& back() const", WRAP_MFN(string_repr, back), convention::generic_call);
+			string_type->set_method_address("bool empty() const", WRAP_MFN(string_repr, empty), convention::generic_call);
+			string_type->set_method_address("usize size() const", WRAP_MFN(string_repr, size), convention::generic_call);
+			string_type->set_method_address("void clear()", WRAP_MFN(string_repr, clear), convention::generic_call);
+			string_type->set_method_address("string& append(const string&in)", WRAP_MFN(string_repr, assign_append), convention::generic_call);
+			string_type->set_method_address("string& append(uint8)", WRAP_MFN(string_repr, assign_append_char), convention::generic_call);
+			string_type->set_method_address("void push(uint8)", WRAP_MFN(string_repr, push_back), convention::generic_call);
+			string_type->set_method_address("void pop()", WRAP_MFN(string_repr, pop_back), convention::generic_call);
+			string_type->set_method_address("bool starts_with(const string&in, usize = 0) const", WRAP_MFN(string_repr, starts_with), convention::generic_call);
+			string_type->set_method_address("bool ends_with(const string&in) const", WRAP_MFN(string_repr, ends_with), convention::generic_call);
+			string_type->set_method_address("string substring(usize) const", WRAP_MFN(string_repr, substring), convention::generic_call);
+			string_type->set_method_address("string substring(usize, usize) const", WRAP_MFN(string_repr, substring_sized), convention::generic_call);
+			string_type->set_method_address("string& trim()", WRAP_MFN(string_repr, trim), convention::generic_call);
+			string_type->set_method_address("string& trim_front()", WRAP_MFN(string_repr, trim_start), convention::generic_call);
+			string_type->set_method_address("string& trim_back()", WRAP_MFN(string_repr, trim_end), convention::generic_call);
+			string_type->set_method_address("string& lower()", WRAP_MFN(string_repr, to_lower), convention::generic_call);
+			string_type->set_method_address("string& upper()", WRAP_MFN(string_repr, to_upper), convention::generic_call);
+			string_type->set_method_address("string& reverse()", WRAP_MFN(string_repr, reverse), convention::generic_call);
+			string_type->set_method_address("usize rfind(const string&in) const", WRAP_MFN(string_repr, rfind), convention::generic_call);
+			string_type->set_method_address("usize rfind(uint8) const", WRAP_MFN(string_repr, rfind_char), convention::generic_call);
+			string_type->set_method_address("usize rfind(const string&in, usize) const", WRAP_MFN(string_repr, rfind_offset), convention::generic_call);
+			string_type->set_method_address("usize rfind(uint8, usize) const", WRAP_MFN(string_repr, rfind_char_offset), convention::generic_call);
+			string_type->set_method_address("usize find(const string&in, usize = 0) const", WRAP_MFN(string_repr, find), convention::generic_call);
+			string_type->set_method_address("usize find(uint8, usize = 0) const", WRAP_MFN(string_repr, find_char), convention::generic_call);
+			string_type->set_method_address("usize find_first_of(const string&in, usize = 0) const", WRAP_MFN(string_repr, find_first_of), convention::generic_call);
+			string_type->set_method_address("usize find_first_not_of(const string&in, usize = 0) const", WRAP_MFN(string_repr, find_first_not_of), convention::generic_call);
+			string_type->set_method_address("usize find_last_of(const string&in) const", WRAP_MFN(string_repr, find_last_of), convention::generic_call);
+			string_type->set_method_address("usize find_last_not_of(const string&in) const", WRAP_MFN(string_repr, find_last_not_of), convention::generic_call);
+			string_type->set_method_address("usize find_last_of(const string&in, usize) const", WRAP_MFN(string_repr, find_last_of_offset), convention::generic_call);
+			string_type->set_method_address("usize find_last_not_of(const string&in, usize) const", WRAP_MFN(string_repr, find_last_not_of_offset), convention::generic_call);
+			string_type->set_method_address("array<string>@ split(const string&in) const", WRAP_MFN(string_repr, split), convention::generic_call);
+			string_type->set_method_address("int8 i8(int = 10)", WRAP_MFN(string_repr, from_string<int8_t>), convention::generic_call);
+			string_type->set_method_address("int16 i16(int = 10)", WRAP_MFN(string_repr, from_string<int16_t>), convention::generic_call);
+			string_type->set_method_address("int32 i32(int = 10)", WRAP_MFN(string_repr, from_string<int32_t>), convention::generic_call);
+			string_type->set_method_address("int64 i64(int = 10)", WRAP_MFN(string_repr, from_string<int64_t>), convention::generic_call);
+			string_type->set_method_address("uint8 u8(int = 10)", WRAP_MFN(string_repr, from_string<uint8_t>), convention::generic_call);
+			string_type->set_method_address("uint16 u16(int = 10)", WRAP_MFN(string_repr, from_string<uint16_t>), convention::generic_call);
+			string_type->set_method_address("uint32 u32(int = 10)", WRAP_MFN(string_repr, from_string<uint32_t>), convention::generic_call);
+			string_type->set_method_address("uint64 u64(int = 10)", WRAP_MFN(string_repr, from_string<uint64_t>), convention::generic_call);
+			string_type->set_method_address("uint128 u128(int = 10)", WRAP_MFN(string_repr, from_string_uint128), convention::generic_call);
+			string_type->set_method_address("uint256 u256(int = 10)", WRAP_MFN(string_repr, from_string_uint256), convention::generic_call);
+			string_type->set_method_address("real320 r320(int = 10)", WRAP_MFN(string_repr, from_string_decimal), convention::generic_call);
+			uint128_type->set_behaviour_address("void f()", behaviours::construct, WRAP_OBJ_FIRST(uint128_repr::default_construct), convention::generic_call);
+			uint128_type->set_behaviour_address("void f(int8)", behaviours::construct, WRAP_CON(uint128_t, (int8_t)), convention::generic_call);
+			uint128_type->set_behaviour_address("void f(uint8)", behaviours::construct, WRAP_CON(uint128_t, (uint8_t)), convention::generic_call);
+			uint128_type->set_behaviour_address("void f(int16)", behaviours::construct, WRAP_CON(uint128_t, (int16_t)), convention::generic_call);
+			uint128_type->set_behaviour_address("void f(uint16)", behaviours::construct, WRAP_CON(uint128_t, (uint16_t)), convention::generic_call);
+			uint128_type->set_behaviour_address("void f(int32)", behaviours::construct, WRAP_CON(uint128_t, (int32_t)), convention::generic_call);
+			uint128_type->set_behaviour_address("void f(uint32)", behaviours::construct, WRAP_CON(uint128_t, (uint32_t)), convention::generic_call);
+			uint128_type->set_behaviour_address("void f(int64)", behaviours::construct, WRAP_CON(uint128_t, (int64_t)), convention::generic_call);
+			uint128_type->set_behaviour_address("void f(uint64)", behaviours::construct, WRAP_CON(uint128_t, (uint64_t)), convention::generic_call);
+			uint128_type->set_behaviour_address("void f(const uint128&in)", behaviours::construct, WRAP_CON(uint128_t, (const uint128_t&)), convention::generic_call);
+			uint128_type->set_behaviour_address("void f(const string&in)", behaviours::construct, WRAP_OBJ_FIRST(uint128_repr::construct_string), convention::generic_call);
+			uint128_type->set_behaviour_address("void f()", behaviours::destruct, WRAP_DES(uint128_t), convention::generic_call);
+			uint128_type->set_operator_copy_address(WRAP_MFN_PR(uint128_t, operator=, (const uint128_t&), uint128_t&), convention::generic_call);
+			uint128_type->set_operator_address("uint128& opMulAssign(const uint128&in)", WRAP_OBJ_FIRST(uint128_repr::mul_eq), convention::generic_call);
+			uint128_type->set_operator_address("uint128& opDivAssign(const uint128&in)", WRAP_OBJ_FIRST(uint128_repr::div_eq), convention::generic_call);
+			uint128_type->set_operator_address("uint128& opAddAssign(const uint128&in)", WRAP_OBJ_FIRST(uint128_repr::add_eq), convention::generic_call);
+			uint128_type->set_operator_address("uint128& opSubAssign(const uint128&in)", WRAP_OBJ_FIRST(uint128_repr::sub_eq), convention::generic_call);
+			uint128_type->set_operator_address("uint128& opPreInc()", WRAP_OBJ_FIRST(uint128_repr::fpp), convention::generic_call);
+			uint128_type->set_operator_address("uint128& opPreDec()", WRAP_OBJ_FIRST(uint128_repr::fmm), convention::generic_call);
+			uint128_type->set_operator_address("uint128& opPostInc()", WRAP_OBJ_FIRST(uint128_repr::pp), convention::generic_call);
+			uint128_type->set_operator_address("uint128& opPostDec()", WRAP_OBJ_FIRST(uint128_repr::mm), convention::generic_call);
+			uint128_type->set_operator_address("bool opEquals(const uint128&in) const", WRAP_OBJ_FIRST(uint128_repr::eq), convention::generic_call);
+			uint128_type->set_operator_address("int opCmp(const uint128&in) const", WRAP_OBJ_FIRST(uint128_repr::cmp), convention::generic_call);
+			uint128_type->set_operator_address("uint128 opMul(const uint128&in) const", WRAP_OBJ_FIRST(uint128_repr::mul), convention::generic_call);
+			uint128_type->set_operator_address("uint128 opDiv(const uint128&in) const", WRAP_OBJ_FIRST(uint128_repr::div), convention::generic_call);
+			uint128_type->set_operator_address("uint128 opAdd(const uint128&in) const", WRAP_OBJ_FIRST(uint128_repr::add), convention::generic_call);
+			uint128_type->set_operator_address("uint128 opSub(const uint128&in) const", WRAP_OBJ_FIRST(uint128_repr::sub), convention::generic_call);
+			uint128_type->set_operator_address("uint128 opMod(const uint128&in) const", WRAP_OBJ_FIRST(uint128_repr::per), convention::generic_call);
+			uint128_type->set_method_address("bool opImplConv() const", WRAP_OBJ_FIRST(uint128_repr::to_bool), convention::generic_call);
+			uint128_type->set_method_address("int8 i8() const", WRAP_OBJ_FIRST(uint128_repr::to_int8), convention::generic_call);
+			uint128_type->set_method_address("int16 i16() const", WRAP_OBJ_FIRST(uint128_repr::to_int16), convention::generic_call);
+			uint128_type->set_method_address("int32 i32() const", WRAP_OBJ_FIRST(uint128_repr::to_int32), convention::generic_call);
+			uint128_type->set_method_address("int64 i64() const", WRAP_OBJ_FIRST(uint128_repr::to_int64), convention::generic_call);
+			uint128_type->set_method_address("uint8 u8() const", WRAP_OBJ_FIRST(uint128_repr::to_uint8), convention::generic_call);
+			uint128_type->set_method_address("uint16 u16() const", WRAP_OBJ_FIRST(uint128_repr::to_uint16), convention::generic_call);
+			uint128_type->set_method_address("uint32 u32() const", WRAP_OBJ_FIRST(uint128_repr::to_uint32), convention::generic_call);
+			uint128_type->set_method_address("uint64 u64() const", WRAP_OBJ_FIRST(uint128_repr::to_uint64), convention::generic_call);
+			uint128_type->set_method_address("uint256 u256() const", WRAP_OBJ_FIRST(uint128_repr::to_uint256), convention::generic_call);
+			uint128_type->set_method_address("real320 r320() const", WRAP_MFN(uint128_t, to_decimal), convention::generic_call);
+			uint128_type->set_method_address("uint8 bits() const", WRAP_MFN(uint128_t, bits), convention::generic_call);
+			uint128_type->set_method_address("uint8 bytes() const", WRAP_MFN(uint128_t, bytes), convention::generic_call);
+			uint256_type->set_behaviour_address("void f()", behaviours::construct, WRAP_OBJ_FIRST(uint256_repr::default_construct), convention::generic_call);
+			uint256_type->set_behaviour_address("void f(int8)", behaviours::construct, WRAP_CON(uint256_t, (int8_t)), convention::generic_call);
+			uint256_type->set_behaviour_address("void f(uint8)", behaviours::construct, WRAP_CON(uint256_t, (uint8_t)), convention::generic_call);
+			uint256_type->set_behaviour_address("void f(int16)", behaviours::construct, WRAP_CON(uint256_t, (int16_t)), convention::generic_call);
+			uint256_type->set_behaviour_address("void f(uint16)", behaviours::construct, WRAP_CON(uint256_t, (uint16_t)), convention::generic_call);
+			uint256_type->set_behaviour_address("void f(int32)", behaviours::construct, WRAP_CON(uint256_t, (int32_t)), convention::generic_call);
+			uint256_type->set_behaviour_address("void f(uint32)", behaviours::construct, WRAP_CON(uint256_t, (uint32_t)), convention::generic_call);
+			uint256_type->set_behaviour_address("void f(int64)", behaviours::construct, WRAP_CON(uint256_t, (int64_t)), convention::generic_call);
+			uint256_type->set_behaviour_address("void f(uint64)", behaviours::construct, WRAP_CON(uint256_t, (uint64_t)), convention::generic_call);
+			uint256_type->set_behaviour_address("void f(const uint256&in)", behaviours::construct, WRAP_CON(uint256_t, (const uint256_t&)), convention::generic_call);
+			uint256_type->set_behaviour_address("void f(const uint128&in)", behaviours::construct, WRAP_CON(uint256_t, (const uint128_t&)), convention::generic_call);
+			uint256_type->set_behaviour_address("void f(const uint128&in, const uint128&in)", behaviours::construct, WRAP_CON(uint256_t, (const uint128_t&, const uint128_t&)), convention::generic_call);
+			uint256_type->set_behaviour_address("void f(const string&in)", behaviours::construct, WRAP_OBJ_FIRST(uint256_repr::construct_string), convention::generic_call);
+			uint256_type->set_behaviour_address("void f()", behaviours::destruct, WRAP_DES(uint256_t), convention::generic_call);
+			uint256_type->set_operator_copy_address(WRAP_MFN_PR(uint256_t, operator=, (const uint256_t&), uint256_t&), convention::generic_call);
+			uint256_type->set_operator_address("uint256& opMulAssign(const uint256&in)", WRAP_OBJ_FIRST(uint256_repr::mul_eq), convention::generic_call);
+			uint256_type->set_operator_address("uint256& opDivAssign(const uint256&in)", WRAP_OBJ_FIRST(uint256_repr::div_eq), convention::generic_call);
+			uint256_type->set_operator_address("uint256& opAddAssign(const uint256&in)", WRAP_OBJ_FIRST(uint256_repr::add_eq), convention::generic_call);
+			uint256_type->set_operator_address("uint256& opSubAssign(const uint256&in)", WRAP_OBJ_FIRST(uint256_repr::sub_eq), convention::generic_call);
+			uint256_type->set_operator_address("uint256& opPreInc()", WRAP_OBJ_FIRST(uint256_repr::fpp), convention::generic_call);
+			uint256_type->set_operator_address("uint256& opPreDec()", WRAP_OBJ_FIRST(uint256_repr::fmm), convention::generic_call);
+			uint256_type->set_operator_address("uint256& opPostInc()", WRAP_OBJ_FIRST(uint256_repr::pp), convention::generic_call);
+			uint256_type->set_operator_address("uint256& opPostDec()", WRAP_OBJ_FIRST(uint256_repr::mm), convention::generic_call);
+			uint256_type->set_operator_address("bool opEquals(const uint256&in) const", WRAP_OBJ_FIRST(uint256_repr::eq), convention::generic_call);
+			uint256_type->set_operator_address("int opCmp(const uint256&in) const", WRAP_OBJ_FIRST(uint256_repr::cmp), convention::generic_call);
+			uint256_type->set_operator_address("uint256 opMul(const uint256&in) const", WRAP_OBJ_FIRST(uint256_repr::mul), convention::generic_call);
+			uint256_type->set_operator_address("uint256 opDiv(const uint256&in) const", WRAP_OBJ_FIRST(uint256_repr::div), convention::generic_call);
+			uint256_type->set_operator_address("uint256 opAdd(const uint256&in) const", WRAP_OBJ_FIRST(uint256_repr::add), convention::generic_call);
+			uint256_type->set_operator_address("uint256 opSub(const uint256&in) const", WRAP_OBJ_FIRST(uint256_repr::sub), convention::generic_call);
+			uint256_type->set_operator_address("uint256 opMod(const uint256&in) const", WRAP_OBJ_FIRST(uint256_repr::per), convention::generic_call);
+			uint256_type->set_method_address("bool opImplConv() const", WRAP_OBJ_FIRST(uint256_repr::to_bool), convention::generic_call);
+			uint256_type->set_method_address("int8 i8() const", WRAP_OBJ_FIRST(uint256_repr::to_int8), convention::generic_call);
+			uint256_type->set_method_address("int16 i16() const", WRAP_OBJ_FIRST(uint256_repr::to_int16), convention::generic_call);
+			uint256_type->set_method_address("int32 i32() const", WRAP_OBJ_FIRST(uint256_repr::to_int32), convention::generic_call);
+			uint256_type->set_method_address("int64 i64() const", WRAP_OBJ_FIRST(uint256_repr::to_int64), convention::generic_call);
+			uint256_type->set_method_address("uint8 u8() const", WRAP_OBJ_FIRST(uint256_repr::to_uint8), convention::generic_call);
+			uint256_type->set_method_address("uint16 u16() const", WRAP_OBJ_FIRST(uint256_repr::to_uint16), convention::generic_call);
+			uint256_type->set_method_address("uint32 u32() const", WRAP_OBJ_FIRST(uint256_repr::to_uint32), convention::generic_call);
+			uint256_type->set_method_address("uint64 u64() const", WRAP_OBJ_FIRST(uint256_repr::to_uint64), convention::generic_call);
+			uint256_type->set_method_address("uint128 u128() const", WRAP_OBJ_FIRST(uint256_repr::to_uint128), convention::generic_call);
+			uint256_type->set_method_address("real320 r320() const", WRAP_MFN(uint256_t, to_decimal), convention::generic_call);
+			uint256_type->set_method_address("uint16 bits() const", WRAP_MFN(uint256_t, bits), convention::generic_call);
+			uint256_type->set_method_address("uint16 bytes() const", WRAP_MFN(uint256_t, bytes), convention::generic_call);
+			real320_type->set_behaviour_address("void f()", behaviours::construct, WRAP_OBJ_FIRST(real320_repr::custom_constructor), convention::generic_call);
+			real320_type->set_behaviour_address("void f(bool)", behaviours::construct, WRAP_OBJ_FIRST(real320_repr::custom_constructor_bool), convention::generic_call);
+			real320_type->set_behaviour_address("void f(int8)", behaviours::construct, WRAP_OBJ_FIRST(real320_repr::custom_constructor_arithmetic<int8_t>), convention::generic_call);
+			real320_type->set_behaviour_address("void f(uint8)", behaviours::construct, WRAP_OBJ_FIRST(real320_repr::custom_constructor_arithmetic<uint8_t>), convention::generic_call);
+			real320_type->set_behaviour_address("void f(int16)", behaviours::construct, WRAP_OBJ_FIRST(real320_repr::custom_constructor_arithmetic<int16_t>), convention::generic_call);
+			real320_type->set_behaviour_address("void f(uint16)", behaviours::construct, WRAP_OBJ_FIRST(real320_repr::custom_constructor_arithmetic<uint16_t>), convention::generic_call);
+			real320_type->set_behaviour_address("void f(int32)", behaviours::construct, WRAP_OBJ_FIRST(real320_repr::custom_constructor_arithmetic<int32_t>), convention::generic_call);
+			real320_type->set_behaviour_address("void f(uint32)", behaviours::construct, WRAP_OBJ_FIRST(real320_repr::custom_constructor_arithmetic<uint32_t>), convention::generic_call);
+			real320_type->set_behaviour_address("void f(int64)", behaviours::construct, WRAP_OBJ_FIRST(real320_repr::custom_constructor_arithmetic<int64_t>), convention::generic_call);
+			real320_type->set_behaviour_address("void f(uint64)", behaviours::construct, WRAP_OBJ_FIRST(real320_repr::custom_constructor_arithmetic<uint64_t>), convention::generic_call);
+			real320_type->set_behaviour_address("void f(const string&in)", behaviours::construct, WRAP_OBJ_FIRST(real320_repr::custom_constructor_string), convention::generic_call);
+			real320_type->set_behaviour_address("void f(const uint128&in)", behaviours::construct, WRAP_OBJ_FIRST(real320_repr::custom_constructor_uint128), convention::generic_call);
+			real320_type->set_behaviour_address("void f(const uint256&in)", behaviours::construct, WRAP_OBJ_FIRST(real320_repr::custom_constructor_uint256), convention::generic_call);
+			real320_type->set_behaviour_address("void f(const real320&in)", behaviours::construct, WRAP_OBJ_FIRST(real320_repr::custom_constructor_copy), convention::generic_call);
+			real320_type->set_behaviour_address("void f()", behaviours::destruct, WRAP_DES(decimal), convention::generic_call);
+			real320_type->set_operator_copy_address(WRAP_MFN_PR(decimal, operator=, (const decimal&), decimal&), convention::generic_call);
+			real320_type->set_method_address("bool opImplConv() const", WRAP_OBJ_FIRST(real320_repr::is_not_zero_or_nan), convention::generic_call);
+			real320_type->set_method_address("bool nan() const", WRAP_MFN(decimal, is_nan), convention::generic_call);
+			real320_type->set_method_address("bool zero() const", WRAP_MFN(decimal, is_zero), convention::generic_call);
+			real320_type->set_method_address("bool zero_or_nan() const", WRAP_MFN(decimal, is_zero_or_nan), convention::generic_call);
+			real320_type->set_method_address("bool positive() const", WRAP_MFN(decimal, is_positive), convention::generic_call);
+			real320_type->set_method_address("bool negative() const", WRAP_MFN(decimal, is_negative), convention::generic_call);
+			real320_type->set_method_address("int8 i8() const", WRAP_MFN(decimal, to_int8), convention::generic_call);
+			real320_type->set_method_address("int16 i16() const", WRAP_MFN(decimal, to_int16), convention::generic_call);
+			real320_type->set_method_address("int32 i32() const", WRAP_MFN(decimal, to_int32), convention::generic_call);
+			real320_type->set_method_address("int64 i64() const", WRAP_MFN(decimal, to_int64), convention::generic_call);
+			real320_type->set_method_address("uint8 u8() const", WRAP_MFN(decimal, to_uint8), convention::generic_call);
+			real320_type->set_method_address("uint16 u16() const", WRAP_MFN(decimal, to_uint16), convention::generic_call);
+			real320_type->set_method_address("uint32 u32() const", WRAP_MFN(decimal, to_uint32), convention::generic_call);
+			real320_type->set_method_address("uint64 u64() const", WRAP_MFN(decimal, to_uint64), convention::generic_call);
+			real320_type->set_method_address("uint128 u128() const", WRAP_OBJ_FIRST(real320_repr::to_uint128), convention::generic_call);
+			real320_type->set_method_address("uint256 u256() const", WRAP_OBJ_FIRST(real320_repr::to_uint256), convention::generic_call);
+			real320_type->set_operator_address("real320& opMulAssign(const real320&in)", WRAP_OBJ_FIRST(real320_repr::mul_eq), convention::generic_call);
+			real320_type->set_operator_address("real320& opDivAssign(const real320&in)", WRAP_OBJ_FIRST(real320_repr::div_eq), convention::generic_call);
+			real320_type->set_operator_address("real320& opAddAssign(const real320&in)", WRAP_OBJ_FIRST(real320_repr::add_eq), convention::generic_call);
+			real320_type->set_operator_address("real320& opSubAssign(const real320&in)", WRAP_OBJ_FIRST(real320_repr::sub_eq), convention::generic_call);
+			real320_type->set_operator_address("real320& opPreInc()", WRAP_OBJ_FIRST(real320_repr::fpp), convention::generic_call);
+			real320_type->set_operator_address("real320& opPreDec()", WRAP_OBJ_FIRST(real320_repr::fmm), convention::generic_call);
+			real320_type->set_operator_address("real320& opPostInc()", WRAP_OBJ_FIRST(real320_repr::pp), convention::generic_call);
+			real320_type->set_operator_address("real320& opPostDec()", WRAP_OBJ_FIRST(real320_repr::mm), convention::generic_call);
+			real320_type->set_operator_address("bool opEquals(const real320&in) const", WRAP_OBJ_FIRST(real320_repr::eq), convention::generic_call);
+			real320_type->set_operator_address("int opCmp(const real320&in) const", WRAP_OBJ_FIRST(real320_repr::cmp), convention::generic_call);
+			real320_type->set_operator_address("real320 opMul(const real320&in) const", WRAP_OBJ_FIRST(real320_repr::mul), convention::generic_call);
+			real320_type->set_operator_address("real320 opDiv(const real320&in) const", WRAP_OBJ_FIRST(real320_repr::div), convention::generic_call);
+			real320_type->set_operator_address("real320 opAdd(const real320&in) const", WRAP_OBJ_FIRST(real320_repr::add), convention::generic_call);
+			real320_type->set_operator_address("real320 opSub(const real320&in) const", WRAP_OBJ_FIRST(real320_repr::sub), convention::generic_call);
+			real320_type->set_operator_address("real320 opNeg() const", WRAP_OBJ_FIRST(real320_repr::negate), convention::generic_call);
+			real320_type->set_method_static_address("real320 enan()", WRAP_FN(decimal::nan), convention::generic_call);
+			real320_type->set_method_static_address("real320 from(const string&in, uint8)", WRAP_FN(real320_repr::from), convention::generic_call);
+			payable_type->set_behaviour_address("void f()", behaviours::construct, WRAP_CON(payable_repr, ()), convention::generic_call);
+			payable_type->set_behaviour_address("void f(const payable&in)", behaviours::construct, WRAP_CON(payable_repr, (const payable_repr&)), convention::generic_call);
+			payable_type->set_behaviour_address("void f()", behaviours::destruct, WRAP_DES(payable_repr), convention::generic_call);
+			payable_type->set_operator_copy_address(WRAP_MFN_PR(payable_repr, operator=, (const payable_repr&), payable_repr&), convention::generic_call);
+			payable_type->set_method_address("bool plus(const uint256&in, const real320&in)", WRAP_MFN(payable_repr, plus), convention::generic_call);
+			payable_type->set_method_address("bool minus(const uint256&in, const real320&in)", WRAP_MFN(payable_repr, minus), convention::generic_call);
+			payable_type->set_method_address("bool minus(const real320&in)", WRAP_MFN(payable_repr, minus_total), convention::generic_call);
+			payable_type->set_method_address("bool has(const uint256&in) const", WRAP_MFN(payable_repr, has), convention::generic_call);
+			payable_type->set_method_address("real320 of(const uint256&in) const", WRAP_MFN(payable_repr, of), convention::generic_call);
+			payable_type->set_method_address("const real320& total() const", WRAP_MFN(payable_repr, total), convention::generic_call);
+			payable_type->set_method_address("uint256 opIndex(usize)", WRAP_MFN(payable_repr, at), convention::generic_call);
+			payable_type->set_method_address("uint256 opIndex(usize) const", WRAP_MFN(payable_repr, at), convention::generic_call);
+			payable_type->set_method_address("bool empty() const", WRAP_MFN(payable_repr, empty), convention::generic_call);
+			payable_type->set_method_address("usize size() const", WRAP_MFN(payable_repr, size), convention::generic_call);
+			address_type->set_behaviour_address("void f()", behaviours::construct, WRAP_CON(address_repr, ()), convention::generic_call);
+			address_type->set_behaviour_address("void f(const string&in)", behaviours::construct, WRAP_CON(address_repr, (const string_repr&)), convention::generic_call);
+			address_type->set_behaviour_address("void f(const uint256&in)", behaviours::construct, WRAP_CON(address_repr, (const uint256_t&)), convention::generic_call);
+			address_type->set_behaviour_address("void f(const address&in)", behaviours::construct, WRAP_CON(address_repr, (const address_repr&)), convention::generic_call);
+			address_type->set_behaviour_address("void f()", behaviours::destruct, WRAP_DES(address_repr), convention::generic_call);
+			address_type->set_operator_copy_address(WRAP_MFN_PR(address_repr, operator=, (const address_repr&), address_repr&), convention::generic_call);
+			address_type->set_method_address("uint256 u256() const", WRAP_MFN(address_repr, to_public_key_hash), convention::generic_call);
+			address_type->set_method_address("bool empty() const", WRAP_MFN(address_repr, empty), convention::generic_call);
+			address_type->set_method_address("void pay(const uint256&in, const real320&in) const", WRAP_MFN(address_repr, pay), convention::generic_call);
+			address_type->set_method_address("void pay(const payable&in) const", WRAP_MFN(address_repr, pay_all), convention::generic_call);
+			address_type->set_method_address("void mint(const string&in, const real320&in, const real320&in = real320()) const", WRAP_MFN(address_repr, mint), convention::generic_call);
+			address_type->set_method_address("void burn(const string&in, const real320&in, const real320&in = real320()) const", WRAP_MFN(address_repr, burn), convention::generic_call);
+			address_type->set_method_address("real320 token_balance_of(const string&in) const", WRAP_MFN(address_repr, token_balance_of), convention::generic_call);
+			address_type->set_method_address("real320 token_reserve_of(const string&in) const", WRAP_MFN(address_repr, token_reserve_of), convention::generic_call);
+			address_type->set_method_address("real320 balance_of(const uint256&in) const", WRAP_MFN(address_repr, balance_of), convention::generic_call);
+			address_type->set_method_address("real320 reserve_of(const uint256&in) const", WRAP_MFN(address_repr, reserve_of), convention::generic_call);
 			address_type->set_method_extern("t call<t>(const string&in, const ?&in ...) const", &address_repr::free_call, convention::generic_call);
 			address_type->set_method_extern("t paid_call<t>(const string&in, const payable&in, const ?&in ...) const", &address_repr::paid_call, convention::generic_call);
-			address_type->set_operator_extern(operators::equals_t, (uint32_t)position::constant, "bool", "const address&in", &address_repr::equals);
-			abi_type->set_constructor<abi_repr>("void f()");
-			abi_type->set_constructor<abi_repr, const string_repr&>("void f(const string&in)");
-			abi_type->set_constructor<abi_repr, const abi_repr&>("void f(const abi&in)");
-			abi_type->set_method("void merge(const string&in)", &abi_repr::merge);
-			abi_type->set_method("void seek(usize)", &abi_repr::seek);
-			abi_type->set_method("void clear()", &abi_repr::clear);
-			abi_type->set_method("void wu8(bool)", &abi_repr::wboolean);
-			abi_type->set_method("void wu160(const address&in)", &abi_repr::wuint160);
-			abi_type->set_method("void wu256(const uint256&in)", &abi_repr::wuint256);
-			abi_type->set_method("void wr320(const real320&in)", &abi_repr::wreal320);
-			abi_type->set_method("void wstr(const string&in)", &abi_repr::wstr);
-			abi_type->set_method("bool rstr(string&out)", &abi_repr::rstr);
-			abi_type->set_method("bool ru8(bool&out)", &abi_repr::rboolean);
-			abi_type->set_method("bool ru160(address&out)", &abi_repr::ruint160);
-			abi_type->set_method("bool ru256(uint256&out)", &abi_repr::ruint256);
-			abi_type->set_method("bool rr320(real320&out)", &abi_repr::rreal320);
-			abi_type->set_method("string data()", &abi_repr::data);
-			varying_type->set_template_callback(&varying_repr::template_callback);
-			varying_type->set_type_constructor<varying_repr, asITypeInfo*>("void f(int&in)");
-			varying_type->set_type_destructor<varying_repr>("void f()");
-			varying_type->set_method("void erase()", &varying_repr::erase);
-			varying_type->set_method("void opAssign(const t&in)", &varying_repr::store);
-			varying_type->set_method("void set(const t&in)", &varying_repr::store);
-			varying_type->set_method("void set_if(bool, const t&in)", &varying_repr::store_if);
-			varying_type->set_method<varying_repr, const void*>("const t& get_ref() const property", &varying_repr::load);
-			varying_type->set_method("bool empty() const", &varying_repr::empty);
-			mapping_type->set_template_callback(&mapping_repr::template_callback);
-			mapping_type->set_type_constructor<mapping_repr, asITypeInfo*>("void f(int&in)");
-			mapping_type->set_type_destructor<mapping_repr>("void f()");
-			mapping_type->set_method("void erase(const k&in)", &mapping_repr::erase);
-			mapping_type->set_method("void insert(const k&in, const v&in)", &mapping_repr::store);
-			mapping_type->set_method("void insert_if(bool, const k&in, const v&in)", &mapping_repr::store_if);
-			mapping_type->set_method<mapping_repr, const void*>("const v& opIndex(const k&in) const", &mapping_repr::load);
-			mapping_type->set_method("bool has(const k&in) const", &mapping_repr::has);
-			ranging_type->set_template_callback(&ranging_repr::template_callback);
-			ranging_type->set_type_constructor<ranging_repr, asITypeInfo*>("void f(int&in)");
-			ranging_type->set_type_destructor<ranging_repr>("void f()");
-			ranging_type->set_method("ranging_slice x(const c&in) const", &ranging_repr::from_column);
-			ranging_type->set_method("ranging_slice y(const r&in) const", &ranging_repr::from_row);
-			ranging_type->set_method("void erase(const c&in, const r&in)", &ranging_repr::erase);
-			ranging_type->set_method("void insert(const c&in, const r&in, const v&in)", &ranging_repr::store);
-			ranging_type->set_method("void insert(const c&in, const r&in, const v&in, const uint256&in)", &ranging_repr::store_positioned);
-			ranging_type->set_method("void insert_if(bool, const c&in, const r&in, const v&in)", &ranging_repr::store_if);
-			ranging_type->set_method("void insert_if(bool, const c&in, const r&in, const v&in, const uint256&in)", &ranging_repr::store_positioned_if);
-			ranging_type->set_method<ranging_repr, const void*>("const v& opIndex(const c&in, const r&in) const", &ranging_repr::load);
-			ranging_type->set_method("bool has(const c&in, const r&in) const", &ranging_repr::has);
-			ranging_type->set_method("bool has_x(const c&in) const", &ranging_repr::has_column);
-			ranging_type->set_method("bool has_y(const r&in) const", &ranging_repr::has_row);
-			ranging_slice_type->set_constructor<ranging_slice_repr>("void f()");
-			ranging_slice_type->set_method("bool next(?&out) const", &ranging_slice_repr::next);
-			ranging_slice_type->set_method("bool next(?&out, ?&out) const", &ranging_slice_repr::next_index);
-			ranging_slice_type->set_method("bool next(?&out, ?&out, uint256&out) const", &ranging_slice_repr::next_index_ranked);
-			ranging_slice_type->set_method("ranging_slice& offset(usize = 0)", &ranging_slice_repr::with_offset);
-			ranging_slice_type->set_method("ranging_slice& count(usize = 0)", &ranging_slice_repr::with_count);
-			ranging_slice_type->set_method("ranging_slice& gt(const uint256&in)", &ranging_slice_repr::where_gt);
-			ranging_slice_type->set_method("ranging_slice& gte(const uint256&in)", &ranging_slice_repr::where_gte);
-			ranging_slice_type->set_method("ranging_slice& eq(const uint256&in)", &ranging_slice_repr::where_eq);
-			ranging_slice_type->set_method("ranging_slice& neq(const uint256&in)", &ranging_slice_repr::where_neq);
-			ranging_slice_type->set_method("ranging_slice& lt(const uint256&in)", &ranging_slice_repr::where_lt);
-			ranging_slice_type->set_method("ranging_slice& lte(const uint256&in)", &ranging_slice_repr::where_lte);
-			ranging_slice_type->set_method("ranging_slice& asc()", &ranging_slice_repr::order_asc);
-			ranging_slice_type->set_method("ranging_slice& desc()", &ranging_slice_repr::order_desc);
+			address_type->set_operator_address("bool opEquals(const address&in) const", WRAP_OBJ_FIRST(address_repr::equals), convention::generic_call);
+			abi_type->set_behaviour_address("void f()", behaviours::construct, WRAP_CON(abi_repr, ()), convention::generic_call);
+			abi_type->set_behaviour_address("void f(const string&in)", behaviours::construct, WRAP_CON(abi_repr, (const string_repr&)), convention::generic_call);
+			abi_type->set_behaviour_address("void f(const address&in)", behaviours::construct, WRAP_CON(abi_repr, (const abi_repr&)), convention::generic_call);
+			abi_type->set_behaviour_address("void f()", behaviours::destruct, WRAP_DES(abi_repr), convention::generic_call);
+			abi_type->set_operator_copy_address(WRAP_MFN_PR(abi_repr, operator=, (const abi_repr&), abi_repr&), convention::generic_call);
+			abi_type->set_method_address("void merge(const string&in)", WRAP_MFN(abi_repr, merge), convention::generic_call);
+			abi_type->set_method_address("void seek(usize)", WRAP_MFN(abi_repr, seek), convention::generic_call);
+			abi_type->set_method_address("void clear()", WRAP_MFN(abi_repr, clear), convention::generic_call);
+			abi_type->set_method_address("void wu8(bool)", WRAP_MFN(abi_repr, wboolean), convention::generic_call);
+			abi_type->set_method_address("void wu160(const address&in)", WRAP_MFN(abi_repr, wuint160), convention::generic_call);
+			abi_type->set_method_address("void wu256(const uint256&in)", WRAP_MFN(abi_repr, wuint256), convention::generic_call);
+			abi_type->set_method_address("void wr320(const real320&in)", WRAP_MFN(abi_repr, wreal320), convention::generic_call);
+			abi_type->set_method_address("void wstr(const string&in)", WRAP_MFN(abi_repr, wstr), convention::generic_call);
+			abi_type->set_method_address("bool rstr(string&out)", WRAP_MFN(abi_repr, rstr), convention::generic_call);
+			abi_type->set_method_address("bool ru8(bool&out)", WRAP_MFN(abi_repr, rboolean), convention::generic_call);
+			abi_type->set_method_address("bool ru160(address&out)", WRAP_MFN(abi_repr, ruint160), convention::generic_call);
+			abi_type->set_method_address("bool ru256(uint256&out)", WRAP_MFN(abi_repr, ruint256), convention::generic_call);
+			abi_type->set_method_address("bool rr320(real320&out)", WRAP_MFN(abi_repr, rreal320), convention::generic_call);
+			abi_type->set_method_address("string data()", WRAP_MFN(abi_repr, data), convention::generic_call);
+			varying_type->set_behaviour_address("void f(int&in)", behaviours::construct, WRAP_CON(varying_repr, (asITypeInfo*)), convention::generic_call);
+			varying_type->set_behaviour_address("void f()", behaviours::destruct, WRAP_DES(varying_repr), convention::generic_call);
+			varying_type->set_behaviour_address("bool f(int&in, bool&out)", behaviours::template_callback, WRAP_FN(varying_repr::template_callback), convention::generic_call);
+			varying_type->set_method_address("void erase()", WRAP_MFN(varying_repr, erase), convention::generic_call);
+			varying_type->set_method_address("void opAssign(const t&in)", WRAP_MFN(varying_repr, store), convention::generic_call);
+			varying_type->set_method_address("void set(const t&in)", WRAP_MFN(varying_repr, store), convention::generic_call);
+			varying_type->set_method_address("void set_if(bool, const t&in)", WRAP_MFN(varying_repr, store_if), convention::generic_call);
+			varying_type->set_method_address("const t& get_ref() const property", WRAP_MFN(varying_repr, load), convention::generic_call);
+			varying_type->set_method_address("bool empty() const", WRAP_MFN(varying_repr, empty), convention::generic_call);
+			mapping_type->set_behaviour_address("void f(int&in)", behaviours::construct, WRAP_CON(mapping_repr, (asITypeInfo*)), convention::generic_call);
+			mapping_type->set_behaviour_address("void f()", behaviours::destruct, WRAP_DES(mapping_repr), convention::generic_call);
+			mapping_type->set_behaviour_address("bool f(int&in, bool&out)", behaviours::template_callback, WRAP_FN(mapping_repr::template_callback), convention::generic_call);
+			mapping_type->set_method_address("void erase(const k&in)", WRAP_MFN(mapping_repr, erase), convention::generic_call);
+			mapping_type->set_method_address("void insert(const k&in, const v&in)", WRAP_MFN(mapping_repr, store), convention::generic_call);
+			mapping_type->set_method_address("void insert_if(bool, const k&in, const v&in)", WRAP_MFN(mapping_repr, store_if), convention::generic_call);
+			mapping_type->set_method_address("const v& opIndex(const k&in) const", WRAP_MFN(mapping_repr, load), convention::generic_call);
+			mapping_type->set_method_address("bool has(const k&in) const", WRAP_MFN(mapping_repr, has), convention::generic_call);
+			ranging_type->set_behaviour_address("void f(int&in)", behaviours::construct, WRAP_CON(ranging_repr, (asITypeInfo*)), convention::generic_call);
+			ranging_type->set_behaviour_address("void f()", behaviours::destruct, WRAP_DES(ranging_repr), convention::generic_call);
+			ranging_type->set_behaviour_address("bool f(int&in, bool&out)", behaviours::template_callback, WRAP_FN(ranging_repr::template_callback), convention::generic_call);
+			ranging_type->set_method_address("ranging_slice x(const c&in) const", WRAP_MFN(ranging_repr, from_column), convention::generic_call);
+			ranging_type->set_method_address("ranging_slice y(const r&in) const", WRAP_MFN(ranging_repr, from_row), convention::generic_call);
+			ranging_type->set_method_address("void erase(const c&in, const r&in)", WRAP_MFN(ranging_repr, erase), convention::generic_call);
+			ranging_type->set_method_address("void insert(const c&in, const r&in, const v&in)", WRAP_MFN(ranging_repr, store), convention::generic_call);
+			ranging_type->set_method_address("void insert(const c&in, const r&in, const v&in, const uint256&in)", WRAP_MFN(ranging_repr, store_positioned), convention::generic_call);
+			ranging_type->set_method_address("void insert_if(bool, const c&in, const r&in, const v&in)", WRAP_MFN(ranging_repr, store_if), convention::generic_call);
+			ranging_type->set_method_extern("void insert_if(bool, const c&in, const r&in, const v&in, const uint256&in)", &ranging_repr::wrapped_store_positioned_if, convention::generic_call);
+			ranging_type->set_method_address("const v& opIndex(const c&in, const r&in) const", WRAP_MFN(ranging_repr, load), convention::generic_call);
+			ranging_type->set_method_address("bool has(const c&in, const r&in) const", WRAP_MFN(ranging_repr, has), convention::generic_call);
+			ranging_type->set_method_address("bool has_x(const c&in) const", WRAP_MFN(ranging_repr, has_column), convention::generic_call);
+			ranging_type->set_method_address("bool has_y(const r&in) const", WRAP_MFN(ranging_repr, has_row), convention::generic_call);
+			ranging_slice_type->set_behaviour_address("void f()", behaviours::construct, WRAP_CON(ranging_slice_repr, ()), convention::generic_call);
+			ranging_slice_type->set_behaviour_address("void f(const address&in)", behaviours::construct, WRAP_CON(ranging_slice_repr, (const ranging_slice_repr&)), convention::generic_call);
+			ranging_slice_type->set_behaviour_address("void f()", behaviours::destruct, WRAP_DES(ranging_slice_repr), convention::generic_call);
+			ranging_slice_type->set_operator_copy_address(WRAP_MFN_PR(ranging_slice_repr, operator=, (const ranging_slice_repr&), ranging_slice_repr&), convention::generic_call);
+			ranging_slice_type->set_method_extern("bool next(?&out) const", &ranging_slice_repr::wrapped_next, convention::generic_call);
+			ranging_slice_type->set_method_extern("bool next(?&out, ?&out) const", &ranging_slice_repr::wrapped_next_index, convention::generic_call);
+			ranging_slice_type->set_method_extern("bool next(?&out, ?&out, uint256&out) const", &ranging_slice_repr::wrapped_next_index_ranked, convention::generic_call);
+			ranging_slice_type->set_method_address("ranging_slice& offset(usize = 0)", WRAP_MFN(ranging_slice_repr, with_offset), convention::generic_call);
+			ranging_slice_type->set_method_address("ranging_slice& count(usize = 0)", WRAP_MFN(ranging_slice_repr, with_count), convention::generic_call);
+			ranging_slice_type->set_method_address("ranging_slice& gt(const uint256&in)", WRAP_MFN(ranging_slice_repr, where_gt), convention::generic_call);
+			ranging_slice_type->set_method_address("ranging_slice& gte(const uint256&in)", WRAP_MFN(ranging_slice_repr, where_gte), convention::generic_call);
+			ranging_slice_type->set_method_address("ranging_slice& eq(const uint256&in)", WRAP_MFN(ranging_slice_repr, where_eq), convention::generic_call);
+			ranging_slice_type->set_method_address("ranging_slice& neq(const uint256&in)", WRAP_MFN(ranging_slice_repr, where_neq), convention::generic_call);
+			ranging_slice_type->set_method_address("ranging_slice& lt(const uint256&in)", WRAP_MFN(ranging_slice_repr, where_lt), convention::generic_call);
+			ranging_slice_type->set_method_address("ranging_slice& lte(const uint256&in)", WRAP_MFN(ranging_slice_repr, where_lte), convention::generic_call);
+			ranging_slice_type->set_method_address("ranging_slice& asc()", WRAP_MFN(ranging_slice_repr, order_asc), convention::generic_call);
+			ranging_slice_type->set_method_address("ranging_slice& desc()", WRAP_MFN(ranging_slice_repr, order_desc), convention::generic_call);
 
 			vm->begin_namespace("log");
-			vm->set_function("void emit(const ?&in)", &contract::log_emit);
-			vm->set_function("void event(const ?&in, const ?&in)", &contract::log_event);
-			vm->set_function("bool into(int32, ?&out)", &contract::log_into);
+			vm->set_function("void emit(const ?&in)", &contract::log_emit, convention::generic_call);
+			vm->set_function("void event(const ?&in, const ?&in)", &contract::log_event, convention::generic_call);
+			vm->set_function("bool into(int32, ?&out)", &contract::log_into, convention::generic_call);
 			vm->set_function("bool event_into(const ?&in, int32, ?&out)", &contract::log_event_into, convention::generic_call);
 			vm->set_function("t get<t>(int32)", &contract::log_get, convention::generic_call);
 			vm->set_function("t get_event<t>(const ?&in, int32)", &contract::log_get_event, convention::generic_call);
 			vm->end_namespace();
 
 			vm->begin_namespace("block");
-			vm->set_function("address proposer()", &contract::block_proposer);
-			vm->set_function("uint256 parent_hash()", &contract::block_parent_hash);
-			vm->set_function("uint256 gas_use()", &contract::block_gas_use);
-			vm->set_function("uint256 gas_left()", &contract::block_gas_left);
-			vm->set_function("uint256 gas_limit()", &contract::block_gas_limit);
-			vm->set_function("uint128 difficulty()", &contract::block_difficulty);
-			vm->set_function("uint64 time()", &contract::block_time);
-			vm->set_function("uint64 time_between(uint64, uint64)", &contract::block_time_between);
-			vm->set_function("uint64 priority()", &contract::block_priority);
-			vm->set_function("uint64 number()", &contract::block_number);
+			vm->set_function_address("address proposer()", WRAP_FN(contract::block_proposer), convention::generic_call);
+			vm->set_function_address("uint256 parent_hash()", WRAP_FN(contract::block_parent_hash), convention::generic_call);
+			vm->set_function_address("uint256 gas_use()", WRAP_FN(contract::block_gas_use), convention::generic_call);
+			vm->set_function_address("uint256 gas_left()", WRAP_FN(contract::block_gas_left), convention::generic_call);
+			vm->set_function_address("uint256 gas_limit()", WRAP_FN(contract::block_gas_limit), convention::generic_call);
+			vm->set_function_address("uint128 difficulty()", WRAP_FN(contract::block_difficulty), convention::generic_call);
+			vm->set_function_address("uint64 time()", WRAP_FN(contract::block_time), convention::generic_call);
+			vm->set_function_address("uint64 time_between(uint64, uint64)", WRAP_FN(contract::block_time_between), convention::generic_call);
+			vm->set_function_address("uint64 priority()", WRAP_FN(contract::block_priority), convention::generic_call);
+			vm->set_function_address("uint64 number()", WRAP_FN(contract::block_number), convention::generic_call);
 			vm->end_namespace();
 
 			vm->begin_namespace("tx");
-			vm->set_function("bool paid()", &contract::tx_paid);
-			vm->set_function("address from()", &contract::tx_from);
-			vm->set_function("address to()", &contract::tx_to);
-			vm->set_function("payable value()", &contract::tx_value);
-			vm->set_function("string blockchain()", &contract::tx_blockchain);
-			vm->set_function("string token()", &contract::tx_token);
-			vm->set_function("string contract()", &contract::tx_contract);
-			vm->set_function("real320 gas_price()", &contract::tx_gas_price);
-			vm->set_function("uint256 gas_use()", &contract::tx_gas_use);
-			vm->set_function("uint256 gas_left()", &contract::tx_gas_left);
-			vm->set_function("uint256 gas_limit()", &contract::tx_gas_limit);
-			vm->set_function("uint256 asset()", &contract::tx_asset);
+			vm->set_function_address("bool paid()", WRAP_FN(contract::tx_paid), convention::generic_call);
+			vm->set_function_address("address from()", WRAP_FN(contract::tx_from), convention::generic_call);
+			vm->set_function_address("address to()", WRAP_FN(contract::tx_to), convention::generic_call);
+			vm->set_function_address("payable value()", WRAP_FN(contract::tx_value), convention::generic_call);
+			vm->set_function_address("string blockchain()", WRAP_FN(contract::tx_blockchain), convention::generic_call);
+			vm->set_function_address("string token()", WRAP_FN(contract::tx_token), convention::generic_call);
+			vm->set_function_address("string contract()", WRAP_FN(contract::tx_contract), convention::generic_call);
+			vm->set_function_address("real320 gas_price()", WRAP_FN(contract::tx_gas_price), convention::generic_call);
+			vm->set_function_address("uint256 gas_use()", WRAP_FN(contract::tx_gas_use), convention::generic_call);
+			vm->set_function_address("uint256 gas_left()", WRAP_FN(contract::tx_gas_left), convention::generic_call);
+			vm->set_function_address("uint256 gas_limit()", WRAP_FN(contract::tx_gas_limit), convention::generic_call);
+			vm->set_function_address("uint256 asset()", WRAP_FN(contract::tx_asset), convention::generic_call);
 			vm->end_namespace();
 
 			vm->begin_namespace("coin");
-			vm->set_function("uint256 native()", &contract::coin_native);
-			vm->set_function("uint256 token(const string&in)", &contract::coin_token);
-			vm->set_function("uint256 id_of(const string&in, const string&in = string(), const string&in = string())", &contract::coin_id_of);
-			vm->set_function("string blockchain_of(const uint256&in)", &contract::coin_blockchain_of);
-			vm->set_function("string token_of(const uint256&in)", &contract::coin_token_of);
-			vm->set_function("string contract_of(const uint256&in)", &contract::coin_checksum_of);
-			vm->set_function("string name_of(const uint256&in)", &contract::coin_name_of);
+			vm->set_function_address("uint256 native()", WRAP_FN(contract::coin_native), convention::generic_call);
+			vm->set_function_address("uint256 token(const string&in)", WRAP_FN(contract::coin_token), convention::generic_call);
+			vm->set_function_address("uint256 id_of(const string&in, const string&in = string(), const string&in = string())", WRAP_FN(contract::coin_id_of), convention::generic_call);
+			vm->set_function_address("string blockchain_of(const uint256&in)", WRAP_FN(contract::coin_blockchain_of), convention::generic_call);
+			vm->set_function_address("string token_of(const uint256&in)", WRAP_FN(contract::coin_token_of), convention::generic_call);
+			vm->set_function_address("string contract_of(const uint256&in)", WRAP_FN(contract::coin_checksum_of), convention::generic_call);
+			vm->set_function_address("string name_of(const uint256&in)", WRAP_FN(contract::coin_name_of), convention::generic_call);
 			vm->end_namespace();
 
 			vm->begin_namespace("alg");
-			vm->set_function("real320 from_r256(const uint256&in)", &contract::alg_from_r256);
-			vm->set_function("uint256 to_r256(const real320&in)", &contract::alg_to_r256);
-			vm->set_function("string from_u256(const uint256&in)", &contract::alg_from_u256);
-			vm->set_function("uint256 to_u256(const string&in)", &contract::alg_to_u256);
-			vm->set_function("string from_e16(const string&in)", &contract::alg_from_e16);
-			vm->set_function("string to_e16(const string&in)", &contract::alg_to_e16);
-			vm->set_function("address erecover160(const uint256&in, const string&in)", &contract::alg_erecover160);
-			vm->set_function("string erecover264(const uint256&in, const string&in)", &contract::alg_erecover264);
-			vm->set_function("uint256 prandom256()", &contract::alg_prandom);
-			vm->set_function("string crc32(const string&in)", &contract::alg_crc32);
-			vm->set_function("string ripemd160(const string&in)", &contract::alg_ripemd160);
-			vm->set_function("uint256 blake2b256(const string&in)", &contract::alg_blake2b256);
-			vm->set_function("string blake2b256s(const string&in)", &contract::alg_blake2b256s);
-			vm->set_function("uint256 keccak256(const string&in)", &contract::alg_keccak256);
-			vm->set_function("string keccak256s(const string&in)", &contract::alg_keccak256s);
-			vm->set_function("string keccak512(const string&in)", &contract::alg_keccak512);
-			vm->set_function("uint256 sha256(const string&in)", &contract::alg_sha256);
-			vm->set_function("string sha256s(const string&in)", &contract::alg_sha256s);
-			vm->set_function("string sha512(const string&in)", &contract::alg_sha512);
+			vm->set_function_address("real320 from_r256(const uint256&in)", WRAP_FN(contract::alg_from_r256), convention::generic_call);
+			vm->set_function_address("uint256 to_r256(const real320&in)", WRAP_FN(contract::alg_to_r256), convention::generic_call);
+			vm->set_function_address("string from_u256(const uint256&in)", WRAP_FN(contract::alg_from_u256), convention::generic_call);
+			vm->set_function_address("uint256 to_u256(const string&in)", WRAP_FN(contract::alg_to_u256), convention::generic_call);
+			vm->set_function_address("string from_e16(const string&in)", WRAP_FN(contract::alg_from_e16), convention::generic_call);
+			vm->set_function_address("string to_e16(const string&in)", WRAP_FN(contract::alg_to_e16), convention::generic_call);
+			vm->set_function_address("address erecover160(const uint256&in, const string&in)", WRAP_FN(contract::alg_erecover160), convention::generic_call);
+			vm->set_function_address("string erecover264(const uint256&in, const string&in)", WRAP_FN(contract::alg_erecover264), convention::generic_call);
+			vm->set_function_address("uint256 prandom256()", WRAP_FN(contract::alg_prandom), convention::generic_call);
+			vm->set_function_address("string crc32(const string&in)", WRAP_FN(contract::alg_crc32), convention::generic_call);
+			vm->set_function_address("string ripemd160(const string&in)", WRAP_FN(contract::alg_ripemd160), convention::generic_call);
+			vm->set_function_address("uint256 blake2b256(const string&in)", WRAP_FN(contract::alg_blake2b256), convention::generic_call);
+			vm->set_function_address("string blake2b256s(const string&in)", WRAP_FN(contract::alg_blake2b256s), convention::generic_call);
+			vm->set_function_address("uint256 keccak256(const string&in)", WRAP_FN(contract::alg_keccak256), convention::generic_call);
+			vm->set_function_address("string keccak256s(const string&in)", WRAP_FN(contract::alg_keccak256s), convention::generic_call);
+			vm->set_function_address("string keccak512(const string&in)", WRAP_FN(contract::alg_keccak512), convention::generic_call);
+			vm->set_function_address("uint256 sha256(const string&in)", WRAP_FN(contract::alg_sha256), convention::generic_call);
+			vm->set_function_address("string sha256s(const string&in)", WRAP_FN(contract::alg_sha256s), convention::generic_call);
+			vm->set_function_address("string sha512(const string&in)", WRAP_FN(contract::alg_sha512), convention::generic_call);
 			vm->end_namespace();
 
 			vm->begin_namespace("math");
@@ -5347,22 +5414,22 @@ namespace tangent
 			vm->set_function("t sqrt<t>(const t&in)", &contract::math_sqrt, convention::generic_call);
 			vm->end_namespace();
 
-			vm->set_function("void require(bool, const string&in = string())", &contract::require);
+			vm->set_function_address("void require(bool, const string&in = string())", WRAP_FN(contract::require), convention::generic_call);
 			vm->set_default_array_type("array<t>");
 			vm->set_string_factory_type("string");
 			vm->begin_namespace("string");
-			vm->set_function("string from(int8, int = 10)", &string_repr::to_string<int8_t>);
-			vm->set_function("string from(int16, int = 10)", &string_repr::to_string<int16_t>);
-			vm->set_function("string from(int32, int = 10)", &string_repr::to_string<int32_t>);
-			vm->set_function("string from(int64, int = 10)", &string_repr::to_string<int64_t>);
-			vm->set_function("string from(uint8, int = 10)", &string_repr::to_string<uint8_t>);
-			vm->set_function("string from(uint16, int = 10)", &string_repr::to_string<uint16_t>);
-			vm->set_function("string from(uint32, int = 10)", &string_repr::to_string<uint32_t>);
-			vm->set_function("string from(uint64, int = 10)", &string_repr::to_string<uint64_t>);
-			vm->set_function("string from(const uint128&in, int = 10)", &string_repr::to_string_uint128);
-			vm->set_function("string from(const uint256&in, int = 10)", &string_repr::to_string_uint256);
-			vm->set_function("string from(const real320&in)", &string_repr::to_string_decimal);
-			vm->set_function("string from(const address&in)", &string_repr::to_string_address);
+			vm->set_function_address("string from(int8, int = 10)", WRAP_FN(string_repr::to_string<int8_t>), convention::generic_call);
+			vm->set_function_address("string from(int16, int = 10)", WRAP_FN(string_repr::to_string<int16_t>), convention::generic_call);
+			vm->set_function_address("string from(int32, int = 10)", WRAP_FN(string_repr::to_string<int32_t>), convention::generic_call);
+			vm->set_function_address("string from(int64, int = 10)", WRAP_FN(string_repr::to_string<int64_t>), convention::generic_call);
+			vm->set_function_address("string from(uint8, int = 10)", WRAP_FN(string_repr::to_string<uint8_t>), convention::generic_call);
+			vm->set_function_address("string from(uint16, int = 10)", WRAP_FN(string_repr::to_string<uint16_t>), convention::generic_call);
+			vm->set_function_address("string from(uint32, int = 10)", WRAP_FN(string_repr::to_string<uint32_t>), convention::generic_call);
+			vm->set_function_address("string from(uint64, int = 10)", WRAP_FN(string_repr::to_string<uint64_t>), convention::generic_call);
+			vm->set_function_address("string from(const uint128&in, int = 10)", WRAP_FN(string_repr::to_string_uint128), convention::generic_call);
+			vm->set_function_address("string from(const uint256&in, int = 10)", WRAP_FN(string_repr::to_string_uint256), convention::generic_call);
+			vm->set_function_address("string from(const real320&in)", WRAP_FN(string_repr::to_string_decimal), convention::generic_call);
+			vm->set_function_address("string from(const address&in)", WRAP_FN(string_repr::to_string_address), convention::generic_call);
 			vm->set_property("const usize npos", &string_repr::npos);
 			vm->end_namespace();
 
@@ -5443,6 +5510,126 @@ namespace tangent
 				library(link.reset()).discard();
 			modules.clear();
 			memory::deinit((string_repr_cache_type*)strings);
+		}
+		void factory::bind_debugger_tools(debugger_context* debugger)
+		{
+			VI_ASSERT(debugger != nullptr, "debugger should be set");
+			umutex<std::mutex> unique(exclusive);
+			if (!debugger_tools)
+			{
+				auto any_type = vm->set_class_address("any", sizeof(script::bindings::any), (size_t)object_behaviours::ref | (size_t)object_behaviours::gc);
+				any_type->set_behaviour_address("any@ f()", behaviours::factory, WRAP_FN(script::bindings::any::factory1), convention::generic_call);
+				any_type->set_constructor_extern("any@ f(?&in) explicit", &script::bindings::any::factory2, convention::generic_call);
+				any_type->set_behaviour_address("void f()", behaviours::add_ref, WRAP_OBJ_FIRST(ref_base_class::gc_add_ref<script::bindings::any>), convention::generic_call);
+				any_type->set_behaviour_address("void f()", behaviours::release, WRAP_OBJ_FIRST(ref_base_class::gc_release<script::bindings::any>), convention::generic_call);
+				any_type->set_behaviour_address("void f()", behaviours::set_gc_flag, WRAP_OBJ_FIRST(ref_base_class::gc_mark_ref<script::bindings::any>), convention::generic_call);
+				any_type->set_behaviour_address("bool f()", behaviours::get_gc_flag, WRAP_OBJ_FIRST(ref_base_class::gc_is_marked_ref<script::bindings::any>), convention::generic_call);
+				any_type->set_behaviour_address("int f()", behaviours::get_ref_count, WRAP_OBJ_FIRST(ref_base_class::gc_get_ref_count<script::bindings::any>), convention::generic_call);
+				any_type->set_behaviour_address("void f(int &in)", behaviours::enum_refs, WRAP_MFN(script::bindings::any, enum_references), convention::generic_call);
+				any_type->set_behaviour_address("void f(int &in)", behaviours::release_refs, WRAP_MFN(script::bindings::any, release_references), convention::generic_call);
+				any_type->set_operator_copy_address(WRAP_MFN(script::bindings::any, operator=), convention::generic_call);
+				any_type->set_method_address("any &opAssign(any&in)", WRAP_OBJ_FIRST(script::bindings::any::assignment), convention::generic_call);
+				any_type->set_method_extern("void store(?&in)", &any_store, convention::generic_call);
+				any_type->set_method_extern("bool retrieve(?&out)", &any_retrieve, convention::generic_call);
+				debugger_tools = true;
+			}
+			debugger->add_to_string_callback("string", [](string& indent, int depth, void* object, int type_id)
+			{
+				script::string_repr& source = *(script::string_repr*)object;
+				string_stream stream;
+				stream << "\"" << source.view() << "\"";
+				stream << " (string, " << source.size() << " chars)";
+				return stream.str();
+			});
+			debugger->add_to_string_callback("uint128", [](string& indent, int depth, void* object, int type_id)
+			{
+				uint128& source = *(uint128*)object;
+				return source.to_string() + " (uint128)";
+			});
+			debugger->add_to_string_callback("uint256", [](string& indent, int depth, void* object, int type_id)
+			{
+				uint256_t& source = *(uint256_t*)object;
+				if (algorithm::asset::is_any(source))
+					return source.to_string() + " (uint256; " + algorithm::asset::name_of(source) + " as asset)";
+
+				return source.to_string() + " (uint256)";
+			});
+			debugger->add_to_string_callback("real320", [](string& indent, int depth, void* object, int type_id)
+			{
+				decimal& source = *(decimal*)object;
+				return source.to_string() + " (real320)";
+			});
+			debugger->add_to_string_callback("array", [debugger](string& indent, int depth, void* object, int type_id)
+			{
+				auto* source = (script::array_repr*)object;
+				int base_type_id = source->get_element_type_id();
+				uint32_t size = source->size();
+				string_stream stream;
+				stream << "0x" << (void*)source << " (array<t>, " << size << " elements)";
+
+				if (!depth || !size)
+					return stream.str();
+
+				if (size > 128)
+				{
+					stream << "\n";
+					indent.append("  ");
+					for (uint32_t i = 0; i < size; i++)
+					{
+						stream << indent << "[" << i << "]: " << debugger->to_string(indent, depth - 1, source->at(i), base_type_id);
+						if (i + 1 < size)
+							stream << "\n";
+					}
+					indent.erase(indent.end() - 2, indent.end());
+				}
+				else
+				{
+					stream << " [";
+					for (uint32_t i = 0; i < size; i++)
+					{
+						stream << debugger->to_string(indent, depth - 1, source->at(i), base_type_id);
+						if (i + 1 < size)
+							stream << ", ";
+					}
+					stream << "]";
+				}
+
+				return stream.str();
+			});
+			debugger->add_to_string_callback("payable", [](string& indent, int depth, void* object, int type_id)
+			{
+				auto& source = *(script::payable_repr*)object;
+				string_stream stream;
+				stream << "0x" << object << " (payable, " << source.payments.size() << " payments)";
+				if (!depth || source.payments.empty())
+					return stream.str();
+
+				stream << " [";
+				for (size_t i = 0; i < source.payments.size(); i++)
+				{
+					auto& [paying_asset, paying_value] = source.payments[i];
+					stream << paying_value.to_string() << " " << algorithm::asset::name_of(paying_asset);
+					if (i + 1 < source.payments.size())
+						stream << ", ";
+				}
+				stream << "]";
+				return stream.str();
+			});
+			debugger->add_to_string_callback("address", [](string& indent, int depth, void* object, int type_id)
+			{
+				auto& source = *(script::address_repr*)object;
+				return string(source.to_string().view()) + " (address)";
+			});
+			debugger->add_to_string_callback("abi", [](string& indent, int depth, void* object, int type_id)
+			{
+				auto& source = *(script::abi_repr*)object;
+				return source.output.encode() + " (abi)";
+			});
+			debugger->add_to_string_callback("any", [debugger](string& indent, int depth, void* object, int type_id)
+			{
+				auto* source = (script::bindings::any*)object;
+				return debugger->to_string(indent, depth - 1, source->get_address_of_object(), source->get_type_id());
+			});
 		}
 		void factory::return_module(cmodule&& value)
 		{

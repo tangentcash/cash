@@ -1665,19 +1665,19 @@ struct tests
 			TEST_BLOCK(std::bind(&generators::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), users[2].wallet.get_address(), 0.05), "0x76840d9c70d25e0b69ef55ca11045041a7eeb98c8cccc89f92c4413af1ddf73c", 10);
 			TEST_BLOCK(std::bind(&generators::deploy_stage_1, std::placeholders::_1, std::placeholders::_2, &contracts), "0x4aaa5d531d91e1135d2e2ae544bc4cdfad86eff7872ca73d40f229e7656a9dde", 11);
 			TEST_BLOCK(std::bind(&generators::deploy_stage_2, std::placeholders::_1, std::placeholders::_2, &contracts), "0x99a58b38c916855e2e4eaa63c2f6ecb60644745c81cbab1d1e775c1ae229761c", 12);
-			TEST_BLOCK(std::bind(&generators::call_stage_1, std::placeholders::_1, std::placeholders::_2, &contracts), "0xef023e25944ebb4d746ace7025087bfd25bd852021dff705d10d7b3ab93a771e", 13);
-			TEST_BLOCK(&generators::rollup_stage_1, "0xdfd5ecf89668942c9f271ca879b578308bfe26105bd660623bc20c7570eeec85", 14);
-			TEST_BLOCK(std::bind(&generators::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 0, 1), "0xd5ce23e400905d93f70687ec25191192fb6146d11046adaed1a1439dae719111", 15);
-			TEST_BLOCK_FAULT(&generators::migrate_stage_1, "0x2c20b008fce8d9beee6f8cee0aaa46e28c8baa65b1dee5df9a8740ec0287dfe0", 16);
-			TEST_BLOCK(&generators::migrate_stage_2, "0x2ef093689fa511f364101198885552b6e8210fbad19450d286ef137e9823793f", 18);
-			TEST_BLOCK(&generators::migrate_stage_3, "0x3159728cc8f54e75e8591906050a88a1708bfd00102b32c0678a0d80ca7895a1", 20);
-			TEST_BLOCK(&generators::withdraw_stage_1, "0x5e1673a1bbdafcc77f933407f67e0537b5e888576bfbd1bd10c0dc5ccb4702e2", 22);
-			TEST_BLOCK(&generators::withdraw_stage_2, "0x6a5ee487ba078e12f4f9764fc5c17b55e402d10c2f8b6e91bf55ec59dd4fa841", 24);
-			TEST_BLOCK(&generators::withdraw_stage_3, "0x2bdede904cc7df46ef2e1750adde8b268db3e8e730116ada3dae96f122364f5b", 26);
-			TEST_BLOCK(&generators::withdraw_stage_4, "0xfccebe02fedf842e23901785e5a52b39af73b284e4aae8081583d4a5cdc6158c", 27);
-			TEST_BLOCK(&generators::withdraw_stage_5, "0xbbfaf2a479a05987cc3849ffb74f56fe3e05305c335e997861d7e57a3797f783", 29);
-			TEST_BLOCK(&generators::withdraw_stage_6, "0xd94f2033ef0762d7f7164811a98487310d0ee95b749a9521f666d1c909cf9d1c", 31);
-			TEST_BLOCK(std::bind(&generators::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 1, 0), "0xe254c70b360684ecce9e2627b3f4143dd533056c9bd137f4aa3317c955d80d79", 33);
+			TEST_BLOCK(std::bind(&generators::call_stage_1, std::placeholders::_1, std::placeholders::_2, &contracts), "0xc5d85667f89af1b5e93e26e05354f40c8f987a8fb9fbd6a279e88a1f3c092665", 13);
+			TEST_BLOCK(&generators::rollup_stage_1, "0xfd4f577ad6c187df80be5361b60b94ab521719189b493172cd5de068fa3ece70", 14);
+			TEST_BLOCK(std::bind(&generators::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 0, 1), "0x44ec99ad159e33e100bc21d0ab45d5a44531d45b47c8ffc08e90bfd127cb9744", 15);
+			TEST_BLOCK_FAULT(&generators::migrate_stage_1, "0x473c928d05f67e1e307d2d1d8b8d224df16aec836286efe408837219a81ec7f7", 16);
+			TEST_BLOCK(&generators::migrate_stage_2, "0x375c1607543327cfb07c02128cf35f402323b5ffe924992b8d093af710e6dec2", 18);
+			TEST_BLOCK(&generators::migrate_stage_3, "0x137748f45e9a911c27c66a8ebe119e0ea801be81a9eec6c0ae14cf2f5c4db381", 20);
+			TEST_BLOCK(&generators::withdraw_stage_1, "0x7622cae925cdc28d326f233ddf2e7f43405bc7189f6edb0f89dad01cd6b312dc", 22);
+			TEST_BLOCK(&generators::withdraw_stage_2, "0x4e16b1394f662ffb983532955c5486706d54edd4595f22955436d3f4bb21721e", 24);
+			TEST_BLOCK(&generators::withdraw_stage_3, "0xd2055b0626927c1842a57358e3694c37fd5c7bfa2448df62320e31916bbb8d86", 26);
+			TEST_BLOCK(&generators::withdraw_stage_4, "0x17a29ca35fa62456fca0b3b1334c8a11618788ff354765e3e4bfc8d95cc62931", 27);
+			TEST_BLOCK(&generators::withdraw_stage_5, "0xa3d723a14d1bee85e0dc1fc1713dd6dbefc740cbc68d38dadf12c0b5034cbf82", 29);
+			TEST_BLOCK(&generators::withdraw_stage_6, "0x28f216e297e211ab948860eb8a57a833110baa4b648ce386a40c306cfa90b0d1", 31);
+			TEST_BLOCK(std::bind(&generators::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 1, 0), "0xf32a8dd49313c9d8b01e7254db80a5c273d22e99fde1ebc6e8d5f2fe1f9cfcc8", 33);
 			if (userdata != nullptr)
 				*userdata = std::move(users);
 			else
@@ -2001,7 +2001,8 @@ int main(int argc, char* argv[])
 			ledger::wallet wallet = ledger::wallet::from_seed(stringify::text("00000%i", *test_account - 1));
 			ledger::node node;
 			node.address = socket_address(params.user.consensus.address, params.user.consensus.port);
-			node.version = protocol::now().message.protocol_version;
+			node.major_version = protocol::now().message.major_version;
+			node.minor_version = protocol::now().message.minor_version;
 			storages::mempoolstate().apply_runner_node(std::make_pair(node, wallet));
 			console::get()->write_line(wallet.as_tree().as_json(true));
 		}

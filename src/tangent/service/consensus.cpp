@@ -875,7 +875,8 @@ namespace tangent
 				auto& [node, wallet] = descriptor;
 				fill_node_services(descriptor);
 				fill_node_neighbors(descriptor);
-				node.version = protocol::now().message.protocol_version;
+				node.major_version = protocol::now().message.major_version;
+				node.minor_version = protocol::now().message.minor_version;
 				node.ports.consensus = protocol::now().user.consensus.port;
 				node.ports.discovery = protocol::now().user.discovery.port;
 				node.ports.rpc = protocol::now().user.rpc.port;
@@ -1240,6 +1241,8 @@ namespace tangent
 				return remote_exception("invalid message");
 			else if (!algorithm::signing::recover(handshake_proof(peer_node, peer_time, nullptr), peer_wallet.public_key, peer_signature))
 				return remote_exception("invalid signature");
+			else if (peer_node.major_version != protocol::now().message.major_version)
+				return remote_exception("version " + peer_node.as_version() + " not supported");
 
 			auto mempool = storages::mempoolstate();
 			uint64_t peer_latency = peer_time > system_time ? peer_time - system_time : system_time - peer_time;
@@ -2958,7 +2961,7 @@ namespace tangent
 
 				auto span = (double)(tip ? tip->get_slot_proof_duration_average() : 0) * algorithm::wesolowski::adjustment_scaling(position).to_double();
 				if (protocol::now().user.consensus.logging && position > 0)
-					VI_WARN("block #%" PRIu64 " solver: performing %s (number: %" PRIu64 ", leader: %" PRIu64 ", work: < ~%.2f sec.)", tip ? tip->number + 1 : 1, position < protocol::now().policy.production.max_per_block ? "leader fallback" : "network recovery", position + 1, span / 1000.0);
+					VI_WARN("block solver: performing %s (number: %" PRIu64 ", leader: %" PRIu64 ", work: < ~%.2f sec.)", position < protocol::now().policy.production.max_per_block ? "leader fallback" : "network recovery", tip ? tip->number + 1 : 1, position + 1, span / 1000.0);
 
 				auto evaluation = prover.solver.block_evalution_prepare(prover.solution);
 				if (!evaluation)

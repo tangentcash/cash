@@ -9,6 +9,7 @@ set(VI_PUGIXML OFF CACHE BOOL "-")
 include(${VI_DIRECTORY}/deps/toolchain.cmake)
 
 project(tangentcash)
+add_compile_definitions(AS_MAX_PORTABILITY)
 set(CMAKE_DISABLE_IN_SOURCE_BUILD ON)
 
 if (NOT DEFINED CMAKE_RUNTIME_OUTPUT_DIRECTORY)

@@ -281,7 +281,8 @@ namespace tangent
 				stream->write_string(neighbor.optimized_view());
 			stream->write_string(address.get_ip_address().or_else(string()));
 			stream->write_integer(address.get_ip_port().or_else(0));
-			stream->write_integer(version);
+			stream->write_integer(minor_version);
+			stream->write_integer(major_version);
 			stream->write_integer(availability.latency);
 			stream->write_integer(availability.timestamp);
 			stream->write_integer(availability.calls);
@@ -323,7 +324,10 @@ namespace tangent
 			if (!stream.read_integer(stream.read_type(), &ip_port))
 				return false;
 
-			if (!stream.read_integer(stream.read_type(), &version))
+			if (!stream.read_integer(stream.read_type(), &minor_version))
+				return false;
+
+			if (!stream.read_integer(stream.read_type(), &major_version))
 				return false;
 
 			if (!stream.read_integer(stream.read_type(), &availability.latency))
@@ -421,9 +425,14 @@ namespace tangent
 		}
 		string node::as_version() const
 		{
-			uint8_t data[16]; size_t data_size = sizeof(data);
-			uint128_t(version).encode_compact(data, &data_size);
-			return "0x" + codec::hex_encode(std::string_view((char*)data, data_size));
+			uint8_t major_version_data[16], minor_version_data[16], data[32];
+			size_t major_version_data_size = sizeof(major_version_data);
+			size_t minor_version_data_size = sizeof(minor_version_data);
+			uint128_t(major_version).encode_compact(major_version_data, &major_version_data_size);
+			uint128_t(minor_version).encode_compact(minor_version_data, &minor_version_data_size);
+			memcpy(data, major_version_data, major_version_data_size);
+			memcpy(data + major_version_data_size, minor_version_data, minor_version_data_size);
+			return "0x" + codec::hex_encode(std::string_view((char*)data, major_version_data_size + minor_version_data_size));
 		}
 		uint32_t node::as_type() const
 		{

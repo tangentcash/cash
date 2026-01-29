@@ -78,7 +78,8 @@ namespace tangent
 			} services;
 
 			socket_address address;
-			uint32_t version = 0;
+			uint32_t minor_version = 0;
+			uint32_t major_version = 0;
 
 			bool store_payload(format::wo_stream* stream) const override;
 			bool load_payload(format::ro_stream& stream) override;

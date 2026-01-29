@@ -6,7 +6,6 @@
 #include "storage/chainstate.h"
 #include "kernel/script.h"
 #include "policy/transactions.h"
-#include <vitex/bindings.h>
 #include <sstream>
 #include <regex>
 
@@ -252,118 +251,10 @@ namespace tangent
 				auto* vm = module.get_vm();
 				if (attach_debugger_context)
 				{
-					static bool has_any = false;
-					script::debugger_context* debugger = new script::debugger_context();
-					debugger->add_to_string_callback("string", [](string& indent, int depth, void* object, int type_id)
-					{
-						script::string_repr& source = *(script::string_repr*)object;
-						string_stream stream;
-						stream << "\"" << source.view() << "\"";
-						stream << " (string, " << source.size() << " chars)";
-						return stream.str();
-					});
-					debugger->add_to_string_callback("uint128", [](string& indent, int depth, void* object, int type_id)
-					{
-						uint128& source = *(uint128*)object;
-						return source.to_string() + " (uint128)";
-					});
-					debugger->add_to_string_callback("uint256", [](string& indent, int depth, void* object, int type_id)
-					{
-						uint256_t& source = *(uint256_t*)object;
-						if (algorithm::asset::is_any(source))
-							return source.to_string() + " (uint256; " + algorithm::asset::name_of(source) + " as asset)";
-
-						return source.to_string() + " (uint256)";
-					});
-					debugger->add_to_string_callback("real320", [](string& indent, int depth, void* object, int type_id)
-					{
-						decimal& source = *(decimal*)object;
-						return source.to_string() + " (real320)";
-					});
-					debugger->add_to_string_callback("array", [debugger](string& indent, int depth, void* object, int type_id)
-					{
-						auto* source = (script::array_repr*)object;
-						int base_type_id = source->get_element_type_id();
-						uint32_t size = source->size();
-						string_stream stream;
-						stream << "0x" << (void*)source << " (array<t>, " << size << " elements)";
-
-						if (!depth || !size)
-							return stream.str();
-
-						if (size > 128)
-						{
-							stream << "\n";
-							indent.append("  ");
-							for (uint32_t i = 0; i < size; i++)
-							{
-								stream << indent << "[" << i << "]: " << debugger->to_string(indent, depth - 1, source->at(i), base_type_id);
-								if (i + 1 < size)
-									stream << "\n";
-							}
-							indent.erase(indent.end() - 2, indent.end());
-						}
-						else
-						{
-							stream << " [";
-							for (uint32_t i = 0; i < size; i++)
-							{
-								stream << debugger->to_string(indent, depth - 1, source->at(i), base_type_id);
-								if (i + 1 < size)
-									stream << ", ";
-							}
-							stream << "]";
-						}
-
-						return stream.str();
-					});
-					debugger->add_to_string_callback("payable", [](string& indent, int depth, void* object, int type_id)
-					{
-						auto& source = *(script::payable_repr*)object;
-						string_stream stream;
-						stream << "0x" << object << " (payable, " << source.payments.size() << " payments)";
-						if (!depth || source.payments.empty())
-							return stream.str();
-
-						stream << " [";
-						for (size_t i = 0; i < source.payments.size(); i++)
-						{
-							auto& [paying_asset, paying_value] = source.payments[i];
-							stream << paying_value.to_string() << " " << algorithm::asset::name_of(paying_asset);
-							if (i + 1 < source.payments.size())
-								stream << ", ";
-						}
-						stream << "]";
-						return stream.str();
-					});
-					debugger->add_to_string_callback("address", [](string& indent, int depth, void* object, int type_id)
-					{
-						auto& source = *(script::address_repr*)object;
-						return string(source.to_string().view()) + " (address)";
-					});
-					debugger->add_to_string_callback("abi", [](string& indent, int depth, void* object, int type_id)
-					{
-						auto& source = *(script::abi_repr*)object;
-						return source.output.encode() + " (abi)";
-					});
-					debugger->add_to_string_callback("any", [debugger](string& indent, int depth, void* object, int type_id)
-					{
-						script::bindings::any* source = (script::bindings::any*)object;
-						return debugger->to_string(indent, depth - 1, source->get_address_of_object(), source->get_type_id());
-					});
-					if (!has_any)
-					{
-						auto vany = vm->set_class<script::bindings::any>("any", true);
-						vany->set_constructor_extern("any@ f()", &script::bindings::any::factory1);
-						vany->set_constructor_extern("any@ f(?&in) explicit", &script::bindings::any::factory2);
-						vany->set_enum_refs(&script::bindings::any::enum_references);
-						vany->set_release_refs(&script::bindings::any::release_references);
-						vany->set_method_extern("any &opAssign(any&in)", &script::bindings::any::assignment);
-						vany->set_method("void store(?&in)", &script::bindings::any::store);
-						vany->set_method("bool retrieve(?&out)", &script::bindings::any::retrieve);
-						has_any = true;
-					}
+					auto* factory = script::factory::get();
+					auto* debugger = new script::debugger_context();
 					debugger->set_interrupt_callback([](bool is_interrupted) { console::get()->write_line(is_interrupted ? "program execution interrupted" : "resuming program execution"); });
+					factory->bind_debugger_tools(debugger);
 					vm->set_debugger(debugger);
 					interrupter(true);
 				}
