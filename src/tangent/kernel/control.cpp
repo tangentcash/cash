@@ -412,7 +412,7 @@ namespace tangent
 	}
 	void service_control::abort(int signal) noexcept
 	{
-		std::cout << "[srvctl] PANIC! service termination (signal code " << signal << ", state = unrecoverable, mode: abort):\n" << error_handling::get_stack_trace(0) << std::endl;
+		std::cout << "[srvctl] PANIC! service termination (signal: " << signal << ", state: unrecoverable, mode: abort):\n" << error_handling::get_stack_trace(0) << std::endl;
 		instance = nullptr;
 		os::process::abort();
 	}

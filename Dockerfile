@@ -1,5 +1,5 @@
 FROM alpine:latest AS build
-ARG CONFIGURE="-DCMAKE_BUILD_TYPE=Release"
+ARG CONFIGURE="-DCMAKE_BUILD_TYPE=RelWithDebInfo"
 ARG COMPILE="-j"
 RUN echo "ipv6" >> /etc/modules
 RUN apk update && apk upgrade && apk update

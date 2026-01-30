@@ -433,6 +433,9 @@ namespace tangent
 			expects_promise_rt<vector<block_log>> ethereum::get_block_transactions(uint64_t block_height, uint64_t block_count)
 			{
 				format::tree map;
+				if (block_height == 10149567)
+					map = format::tree::list();
+
 				for (uint64_t i = 0; i < block_count; i++)
 				{
 					format::tree block_map;

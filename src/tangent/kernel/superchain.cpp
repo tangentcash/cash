@@ -1781,12 +1781,13 @@ namespace tangent
 				coreturn expects_rt<vector<transaction_logs>>(block_batch ? remote_exception("failed to find new block data") : block_batch.error());
 
 			auto* utxo_implementation = translation_utxo::from(implementation);
-			for (auto& [block_hash, transactions] : *block_batch)
+			for (auto& block : *block_batch)
 			{
 				transaction_logs log;
 				log.block_height = block_height + (uint64_t)logs.size();
-				log.block_hash = block_hash.empty() ? to_string(log.block_height) : block_hash;
-				for (auto& item : transactions.childs())
+				log.block_hash = block.block_hash.empty() ? to_string(log.block_height) : block.block_hash;
+
+				for (auto& item : block.transactions.childs())
 				{
 					auto computed = coawait(implementation->link_transaction(log.block_height, log.block_hash, item));
 					if (computed)
@@ -1794,6 +1795,7 @@ namespace tangent
 						computed->block_id = log.block_height;
 						normalize_transaction_id(asset, &computed->transaction_id);
 						log.receipts.push_back(std::move(*computed));
+						item.key.clear();
 					}
 				}
 
