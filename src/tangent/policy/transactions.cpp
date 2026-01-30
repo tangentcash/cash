@@ -2411,19 +2411,20 @@ namespace tangent
 			if (!best_attesters)
 				return best_attesters.error();
 
-			size_t global_commitment_size = 0;
-			decimal global_commitment_stake = decimal::zero();
+			size_t min_commitment_size = 0;
+			decimal min_commitment_stake = decimal::zero();
 			for (auto& attester : *best_attesters)
 			{
-				global_commitment_stake += attester.stake;
-				++global_commitment_size;
+				min_commitment_stake += attester.stake;
+				++min_commitment_stake;
 			}
 
-			global_commitment_size = std::min(global_commitment_size, params.policy.attestation.max_per_transaction);
-			if (global_commitment_size > 0 && decimal(best_commitment_size) < decimal(global_commitment_size) * params.policy.attestation.consensus_threshold)
+			min_commitment_size = std::min(min_commitment_size, params.policy.attestation.min_per_transaction);
+			if (best_commitment_size < min_commitment_size)
 				return layer_exception("proof requires more attestations");
 
-			if (best_commitment_stake < global_commitment_stake * params.policy.attestation.consensus_threshold)
+			min_commitment_stake *= params.policy.attestation.consensus_threshold;
+			if (best_commitment_stake < min_commitment_stake)
 				return layer_exception("proof requires better attestations");
 
 			return expectation::met;
