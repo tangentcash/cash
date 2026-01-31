@@ -68,12 +68,12 @@ struct tester
 
 		data.set(t::as_instance_typename(), format::variable(algorithm::encoding::encode_0xhex256(message.hash())));
 	}
-	static ledger::block new_block_from_generator(format::tree* results, vector<account_ref>& users, std::function<void(vector<uptr<ledger::transaction>>&, vector<account_ref>&)>&& test_case, const std::string_view& test_case_call, const std::string_view& state_root_hash, uint64_t block_number, bool causes_fault = false)
+	static ledger::block_body new_block_from_generator(format::tree* results, vector<account_ref>& users, std::function<void(vector<uptr<ledger::transaction_message>>&, vector<account_ref>&)>&& test_case, const std::string_view& test_case_call, const std::string_view& state_root_hash, uint64_t block_number, bool causes_fault = false)
 	{
 		for (auto& user : users)
 			user.nonce = user.wallet.get_latest_nonce().or_else(0);
 
-		vector<uptr<ledger::transaction>> transactions;
+		vector<uptr<ledger::transaction_message>> transactions;
 		test_case(transactions, users);
 
 		auto block = new_block_from_list(results, users, std::move(transactions), causes_fault);
@@ -85,13 +85,13 @@ struct tester
 		VI_PANIC(!block_number || block_number == block.number, "block number deviation");
 		return block;
 	}
-	static ledger::block new_block_from_one(format::tree* results, vector<account_ref>& users, uptr<ledger::transaction>&& transaction, bool causes_fault = false)
+	static ledger::block_body new_block_from_one(format::tree* results, vector<account_ref>& users, uptr<ledger::transaction_message>&& transaction, bool causes_fault = false)
 	{
-		auto transactions = vector<uptr<ledger::transaction>>();
+		auto transactions = vector<uptr<ledger::transaction_message>>();
 		transactions.push_back(std::move(transaction));
 		return new_block_from_list(results, users, std::move(transactions), causes_fault);
 	}
-	static ledger::block new_block_from_list(format::tree* results, vector<account_ref>& users, vector<uptr<ledger::transaction>>&& transactions, bool causes_fault = false)
+	static ledger::block_body new_block_from_list(format::tree* results, vector<account_ref>& users, vector<uptr<ledger::transaction_message>>&& transactions, bool causes_fault = false)
 	{
 		ledger::solver_context solver;
 		for (size_t i = 0; i < transactions.size(); i++)
@@ -123,7 +123,7 @@ struct tester
 		if (results != nullptr)
 			solver.verify_block(proposal).expect("block verification failed");
 
-		transactions = vector<uptr<ledger::transaction>>();
+		transactions = vector<uptr<ledger::transaction_message>>();
 		solver.checkpoint_block(proposal).expect("block checkpoint failed");
 		if (results != nullptr)
 			results->push(proposal.as_tree());
@@ -173,7 +173,7 @@ struct tester
 
 struct generators
 {
-	static void transfer_stage_1(vector<uptr<ledger::transaction>>& transactions, vector<account_ref>& users)
+	static void transfer_stage_1(vector<uptr<ledger::transaction_message>>& transactions, vector<account_ref>& users)
 	{
 		auto& [user1, user1_nonce] = users[0];
 		auto& [user2, user2_nonce] = users[1];
@@ -204,7 +204,7 @@ struct generators
 		transfer_bitcoin->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(transfer_bitcoin);
 	}
-	static void transfer_stage_2(vector<uptr<ledger::transaction>>& transactions, vector<account_ref>& users)
+	static void transfer_stage_2(vector<uptr<ledger::transaction_message>>& transactions, vector<account_ref>& users)
 	{
 		auto& [user1, user1_nonce] = users[0];
 		auto& [user2, user2_nonce] = users[1];
@@ -225,7 +225,7 @@ struct generators
 		transfer_ripple->sign(user_test.secret_key, 0, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(transfer_ripple);
 	}
-	static void transfer_custom(vector<uptr<ledger::transaction>>& transactions, vector<account_ref>& users, size_t user_id, const algorithm::asset_id& asset, const std::string_view& address, const decimal& value)
+	static void transfer_custom(vector<uptr<ledger::transaction_message>>& transactions, vector<account_ref>& users, size_t user_id, const algorithm::asset_id& asset, const std::string_view& address, const decimal& value)
 	{
 		auto& [user1, user1_nonce] = users[user_id];
 		algorithm::pubkeyhash_t public_key_hash;
@@ -237,7 +237,7 @@ struct generators
 		transfer_asset->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(transfer_asset);
 	}
-	static void rollup_stage_1(vector<uptr<ledger::transaction>>& transactions, vector<account_ref>& users)
+	static void rollup_stage_1(vector<uptr<ledger::transaction_message>>& transactions, vector<account_ref>& users)
 	{
 		auto& [user1, user1_nonce] = users[0];
 		auto& [user2, user2_nonce] = users[1];
@@ -246,11 +246,11 @@ struct generators
 
 		auto transfer_ethereum1 = transactions::transfer();
 		transfer_ethereum1.set_to(user2.public_key_hash, 0.1);
-		VI_PANIC(multi_asset_rollup->import_internal_transaction(transfer_ethereum1, user1.secret_key), "authentication failed");
+		VI_PANIC(multi_asset_rollup->import_internal_transaction(transfer_ethereum1), "authentication failed");
 
 		auto transfer_ethereum2 = transactions::transfer();
 		transfer_ethereum2.set_to(user2.public_key_hash, 0.2);
-		VI_PANIC(multi_asset_rollup->import_internal_transaction(transfer_ethereum2, user1.secret_key), "authentication failed");
+		VI_PANIC(multi_asset_rollup->import_internal_transaction(transfer_ethereum2), "authentication failed");
 
 		auto transfer_ethereum3 = transactions::transfer();
 		transfer_ethereum3.set_to(user1.public_key_hash, 0.2);
@@ -259,12 +259,12 @@ struct generators
 		auto transfer_ripple1 = transactions::transfer();
 		transfer_ripple1.set_asset("XRP");
 		transfer_ripple1.set_to(user2.public_key_hash, 1);
-		VI_PANIC(multi_asset_rollup->import_internal_transaction(transfer_ripple1, user1.secret_key), "authentication failed");
+		VI_PANIC(multi_asset_rollup->import_internal_transaction(transfer_ripple1), "authentication failed");
 
 		auto transfer_ripple2 = transactions::transfer();
 		transfer_ripple2.set_asset("XRP");
 		transfer_ripple2.set_to(user2.public_key_hash, 2);
-		VI_PANIC(multi_asset_rollup->import_internal_transaction(transfer_ripple2, user1.secret_key), "authentication failed");
+		VI_PANIC(multi_asset_rollup->import_internal_transaction(transfer_ripple2), "authentication failed");
 
 		auto transfer_ripple3 = transactions::transfer();
 		transfer_ripple3.set_asset("XRP");
@@ -274,12 +274,12 @@ struct generators
 		auto transfer_bitcoin1 = transactions::transfer();
 		transfer_bitcoin1.set_asset("BTC");
 		transfer_bitcoin1.set_to(user2.public_key_hash, 0.001);
-		VI_PANIC(multi_asset_rollup->import_internal_transaction(transfer_bitcoin1, user1.secret_key), "authentication failed");
+		VI_PANIC(multi_asset_rollup->import_internal_transaction(transfer_bitcoin1), "authentication failed");
 
 		auto transfer_bitcoin2 = transactions::transfer();
 		transfer_bitcoin2.set_asset("BTC");
 		transfer_bitcoin2.set_to(user2.public_key_hash, 0.002);
-		VI_PANIC(multi_asset_rollup->import_internal_transaction(transfer_bitcoin2, user1.secret_key), "authentication failed");
+		VI_PANIC(multi_asset_rollup->import_internal_transaction(transfer_bitcoin2), "authentication failed");
 
 		auto transfer_bitcoin3 = transactions::transfer();
 		transfer_bitcoin3.set_asset("BTC");
@@ -289,7 +289,7 @@ struct generators
 		multi_asset_rollup->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(multi_asset_rollup);
 	}
-	static void deploy_stage_1(vector<uptr<ledger::transaction>>& transactions, vector<account_ref>& users, vector<algorithm::pubkeyhash_t>* contracts)
+	static void deploy_stage_1(vector<uptr<ledger::transaction_message>>& transactions, vector<account_ref>& users, vector<algorithm::pubkeyhash_t>* contracts)
 	{
 		auto& [user1, user1_nonce] = users[0];
 		string token_program = *algorithm::encoding::unpack_program(codec::base64_decode("eNq1VduOmzAQfd5I+YdRHirQ7qKqfcsmVf8kcmCIrBqbGjtpVPXf6yvYIShadfsGZ4a5nDMz1IwMAyjxA/lhUEKSE65Xv9erJ9I0Eo2pwZ6JK8q3BKsFV5LUKsVIXQvNHTQoSfkJOOkweR2u3VEwC0gk7OuXzzDovmdXg/xZr9arOqnEROdDizIvpZWiS1MqkUY7E6YxBjsTeTVJd1lj33z0N+uQGWxDpkpdq6LvtPr+4gHwlX+iPBQ/x22PEQ1lWZg0HeURDwVa3NVY+q4k/tRUYuGwqhcDVfSMRfkCG8oYnggD0aMkigoOr4Es6LSJeESI/pvScpB3w/FyiJ0+jS9VVBL2oH5tt5bNosxdorDBRYlbh6CysbsWc6Mlw1ii7pPBs2dM0wwkRt/YfhTQd2MDJX1EuJLYxioqU4EqJjiKlCAudunHRGnJJ5uflHzcID7kY5AIq8QDVdNZnRH9Tsmd24LiWSjY7eFIGOE1HkRbcM0MCzatiexnNVThMHiGzRbuJaR80G1La4pG4hDQp7MfVkdD4B26ffteuCVJRp9xWEfO8Yz+bLiHKhAXd92DSlguxQT4tpOZCfLGYEbaeBdcRZmeDxZyNmewT4VcEGt65kKBeemoUthsPlj45WV3DE3DPd+w5w9csUnzQPxs/GahylwWN0zvkeV/LM3tpTAxPTOBsovJAJo3KFsmLlBszO5kCzU7NXa5YAczR9+RtZb/quPrYx1vfsqzQxTVfbjRS+ouaDq59U7Teyc0fhrVdQnGgqYItaDc/oJMcbMSyzI935FCylsRE+fhs6v/F6kiAY0="));
@@ -307,7 +307,7 @@ struct generators
 		transactions.push_back(deploy2);
 		contracts->push_back(deploy2->get_account());
 	}
-	static void deploy_stage_2(vector<uptr<ledger::transaction>>& transactions, vector<account_ref>& users, vector<algorithm::pubkeyhash_t>* contracts)
+	static void deploy_stage_2(vector<uptr<ledger::transaction_message>>& transactions, vector<account_ref>& users, vector<algorithm::pubkeyhash_t>* contracts)
 	{
 		auto executor = ledger::executor_context(nullptr);
 		auto& [user2, user2_nonce] = users[1];
@@ -331,7 +331,7 @@ struct generators
 		transactions.push_back(deploy3);
 		contracts->push_back(deploy3->get_account());
 	}
-	static void call_stage_1(vector<uptr<ledger::transaction>>& transactions, vector<account_ref>& users, vector<algorithm::pubkeyhash_t>* contracts)
+	static void call_stage_1(vector<uptr<ledger::transaction_message>>& transactions, vector<account_ref>& users, vector<algorithm::pubkeyhash_t>* contracts)
 	{
 		auto& [user1, user1_nonce] = users[0];
 		auto& [user2, user2_nonce] = users[1];
@@ -371,7 +371,7 @@ struct generators
 		call7->sign(user2.secret_key, user2_nonce++);
 		transactions.push_back(call7);
 	}
-	static void setup_stage_0(vector<uptr<ledger::transaction>>& transactions, vector<account_ref>& users)
+	static void setup_stage_0(vector<uptr<ledger::transaction_message>>& transactions, vector<account_ref>& users)
 	{
 		auto& [user1, user1_nonce] = users[0];
 		auto* setup_user1 = memory::init<transactions::setup>();
@@ -398,7 +398,7 @@ struct generators
 			transactions.push_back(setup_user_n);
 		}
 	}
-	static void setup_stage_1(vector<uptr<ledger::transaction>>& transactions, vector<account_ref>& users)
+	static void setup_stage_1(vector<uptr<ledger::transaction_message>>& transactions, vector<account_ref>& users)
 	{
 		auto& [user1, user1_nonce] = users[0];
 		auto& [user2, user2_nonce] = users[1];
@@ -434,7 +434,7 @@ struct generators
 			transactions.push_back(setup_user_n);
 		}
 	}
-	static void setup_custom(vector<uptr<ledger::transaction>>& transactions, vector<account_ref>& users, size_t user_id, int8_t tx_attestation, int8_t mpc_participation)
+	static void setup_custom(vector<uptr<ledger::transaction_message>>& transactions, vector<account_ref>& users, size_t user_id, int8_t tx_attestation, int8_t mpc_participation)
 	{
 		auto& [user1, user1_nonce] = users[user_id];
 		auto* setup_user1 = memory::init<transactions::setup>();
@@ -463,7 +463,7 @@ struct generators
 		setup_user1->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(setup_user1);
 	}
-	static void route_stage_0(vector<uptr<ledger::transaction>>& transactions, vector<account_ref>& users)
+	static void route_stage_0(vector<uptr<ledger::transaction_message>>& transactions, vector<account_ref>& users)
 	{
 		auto& [user1, user1_nonce] = users[0];
 		auto* route_bitcoin = memory::init<transactions::route>();
@@ -487,7 +487,7 @@ struct generators
 		route_tron->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(route_tron);
 	}
-	static void route_stage_1(vector<uptr<ledger::transaction>>& transactions, vector<account_ref>& users)
+	static void route_stage_1(vector<uptr<ledger::transaction_message>>& transactions, vector<account_ref>& users)
 	{
 		auto& [user1, user1_nonce] = users[0];
 		auto& [user2, user2_nonce] = users[1];
@@ -510,7 +510,7 @@ struct generators
 		route_ripple2->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(route_ripple2);
 	}
-	static void route_stage_2(vector<uptr<ledger::transaction>>& transactions, vector<account_ref>& users)
+	static void route_stage_2(vector<uptr<ledger::transaction_message>>& transactions, vector<account_ref>& users)
 	{
 		auto& [user1, user1_nonce] = users[0];
 		auto& [user2, user2_nonce] = users[1];
@@ -534,7 +534,7 @@ struct generators
 		route_bitcoin->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(route_bitcoin);
 	}
-	static void attestate_stage_0(vector<uptr<ledger::transaction>>& transactions, vector<account_ref>& users)
+	static void attestate_stage_0(vector<uptr<ledger::transaction_message>>& transactions, vector<account_ref>& users)
 	{
 		auto& [user1, user1_nonce] = users[0];
 		auto executor = ledger::executor_context(nullptr);
@@ -581,7 +581,7 @@ struct generators
 			{ superchain::value_transfer(token_asset, address_tron->addresses.begin()->second, 400000) });
 		transactions.push_back(attestate_tron);
 	}
-	static void attestate_stage_1(vector<uptr<ledger::transaction>>& transactions, vector<account_ref>& users)
+	static void attestate_stage_1(vector<uptr<ledger::transaction_message>>& transactions, vector<account_ref>& users)
 	{
 		auto& [user1, user1_nonce] = users[0];
 		auto& [user2, user2_nonce] = users[1];
@@ -628,7 +628,7 @@ struct generators
 			{ superchain::value_transfer(attestate_bitcoin->asset, address_bitcoin->addresses.begin()->second, 1.0) });
 		transactions.push_back(attestate_bitcoin);
 	}
-	static void migrate_stage_1(vector<uptr<ledger::transaction>>& transactions, vector<account_ref>& users)
+	static void migrate_stage_1(vector<uptr<ledger::transaction_message>>& transactions, vector<account_ref>& users)
 	{
 		auto& [user1, user1_nonce] = users[0];
 		auto& [user2, user2_nonce] = users[1];
@@ -639,7 +639,7 @@ struct generators
 		withdrawal_ethereum_token->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(withdrawal_ethereum_token);
 	}
-	static void migrate_stage_2(vector<uptr<ledger::transaction>>& transactions, vector<account_ref>& users)
+	static void migrate_stage_2(vector<uptr<ledger::transaction_message>>& transactions, vector<account_ref>& users)
 	{
 		for (size_t i = protocol::now().policy.participation.min_per_account + 1; i < protocol::now().policy.participation.max_per_account; i++)
 		{
@@ -676,7 +676,7 @@ struct generators
 		setup_user2->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(setup_user2);
 	}
-	static void migrate_stage_3(vector<uptr<ledger::transaction>>& transactions, vector<account_ref>& users)
+	static void migrate_stage_3(vector<uptr<ledger::transaction_message>>& transactions, vector<account_ref>& users)
 	{
 		auto& [user2, user2_nonce] = users[1];
 		auto* setup_user2 = memory::init<transactions::setup>();
@@ -684,7 +684,7 @@ struct generators
 		setup_user2->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(setup_user2);
 	}
-	static void withdraw_stage_1(vector<uptr<ledger::transaction>>& transactions, vector<account_ref>& users)
+	static void withdraw_stage_1(vector<uptr<ledger::transaction_message>>& transactions, vector<account_ref>& users)
 	{
 		auto& [user1, user1_nonce] = users[0];
 		auto& [user2, user2_nonce] = users[1];
@@ -696,7 +696,7 @@ struct generators
 		withdrawal_ethereum_token->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(withdrawal_ethereum_token);
 	}
-	static void withdraw_stage_2(vector<uptr<ledger::transaction>>& transactions, vector<account_ref>& users)
+	static void withdraw_stage_2(vector<uptr<ledger::transaction_message>>& transactions, vector<account_ref>& users)
 	{
 		auto& [user1, user1_nonce] = users[0];
 		auto& [user2, user2_nonce] = users[1];
@@ -706,7 +706,7 @@ struct generators
 		withdraw_ripple->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(withdraw_ripple);
 	}
-	static void withdraw_stage_3(vector<uptr<ledger::transaction>>& transactions, vector<account_ref>& users)
+	static void withdraw_stage_3(vector<uptr<ledger::transaction_message>>& transactions, vector<account_ref>& users)
 	{
 		auto& [user1, user1_nonce] = users[0];
 		auto& [user2, user2_nonce] = users[1];
@@ -728,7 +728,7 @@ struct generators
 			transactions.push_back(anticast_ethereum_token);
 		}
 	}
-	static void withdraw_stage_4(vector<uptr<ledger::transaction>>& transactions, vector<account_ref>& users)
+	static void withdraw_stage_4(vector<uptr<ledger::transaction_message>>& transactions, vector<account_ref>& users)
 	{
 		auto& [user1, user1_nonce] = users[0];
 		auto& [user2, user2_nonce] = users[1];
@@ -740,7 +740,7 @@ struct generators
 		withdrawal_ethereum_token->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(withdrawal_ethereum_token);
 	}
-	static void withdraw_stage_5(vector<uptr<ledger::transaction>>& transactions, vector<account_ref>& users)
+	static void withdraw_stage_5(vector<uptr<ledger::transaction_message>>& transactions, vector<account_ref>& users)
 	{
 		auto& [user1, user1_nonce] = users[0];
 		auto& [user2, user2_nonce] = users[1];
@@ -769,7 +769,7 @@ struct generators
 		withdrawal_bitcoin->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(withdrawal_bitcoin);
 	}
-	static void withdraw_stage_6(vector<uptr<ledger::transaction>>& transactions, vector<account_ref>& users)
+	static void withdraw_stage_6(vector<uptr<ledger::transaction_message>>& transactions, vector<account_ref>& users)
 	{
 		auto& [user1, user1_nonce] = users[0];
 		auto& [user2, user2_nonce] = users[1];
@@ -880,12 +880,12 @@ struct tests
 		tester::new_serialization_comparison<superchain::computed_transaction>(data);
 		tester::new_serialization_comparison<superchain::prepared_transaction>(data);
 		tester::new_serialization_comparison<superchain::finalized_transaction>(data);
-		tester::new_serialization_comparison<ledger::receipt>(data);
+		tester::new_serialization_comparison<ledger::transaction_receipt>(data);
 		tester::new_serialization_comparison<ledger::wallet>(data);
 		tester::new_serialization_comparison<ledger::node>(data);
 		tester::new_serialization_comparison<ledger::block_transaction>(data);
 		tester::new_serialization_comparison<ledger::block_header>(data);
-		tester::new_serialization_comparison<ledger::block>(data);
+		tester::new_serialization_comparison<ledger::block_body>(data);
 		tester::new_serialization_comparison<ledger::block_proof>(data);
 		tester::new_serialization_comparison<states::account_nonce>(data, owner, block_number++);
 		tester::new_serialization_comparison<states::account_program>(data, owner, block_number++);
@@ -1047,7 +1047,7 @@ struct tests
 	{
 		auto* term = console::get();
 		auto wallet = ledger::wallet::from_seed();
-		vector<uptr<ledger::transaction>> transactions;
+		vector<uptr<ledger::transaction_message>> transactions;
 		vector<account_ref> users =
 		{
 			account_ref(wallet, 1),
@@ -1055,13 +1055,13 @@ struct tests
 		};
 
 		auto tx = transactions::transfer();
-		tx.gas_limit = ledger::block::get_transaction_gas_limit();
+		tx.gas_limit = ledger::block_body::get_transaction_gas_limit();
 		tx.set_to(users[1].wallet.public_key_hash, decimal("13.539899"));
 		VI_PANIC(tx.sign(users[0].wallet.secret_key, users[0].nonce++), "authentication failed");
 
 		auto tx_blob = tx.as_message().data;
 		auto tx_body = format::ro_stream(tx_blob);
-		auto tx_copy = uptr<ledger::transaction>(transactions::resolver::from_stream(tx_body));
+		auto tx_copy = uptr<ledger::transaction_message>(transactions::resolver::from_stream(tx_body));
 		auto tx_info = tx.as_tree();
 		algorithm::pubkeyhash_t recover_public_key_hash;
 		tx_info.set("raw_data", format::variable(format::util::encode_0xhex(tx_blob)));
@@ -1755,7 +1755,7 @@ struct tests
 			config.user.superchain.listener = true;
 
 			auto* bridge = superchain::bridge::get();
-			auto params = (superchain::translation::chainparams*)bridge->get_network_params(asset);
+			auto params = (superchain::translation_unit::chainparams*)bridge->get_network_params(asset);
 			protocol::change().user.superchain.polling_frequency = 3000;
 			bridge->add_network_connection(asset, hash_map<string, string>(urls), 0.0, false);
 			bridge->scan_from_block_height(asset, block_number);
@@ -1778,7 +1778,7 @@ struct tests
 
 					for (auto& logs : *result)
 					{
-						auto transactions = vector<uptr<ledger::transaction>>();
+						auto transactions = vector<uptr<ledger::transaction_message>>();
 						for (auto& receipt : logs.receipts)
 						{
 							auto* transaction = memory::init<transactions::attestate>();
@@ -1972,11 +1972,11 @@ struct tests
 
 		format::tree data = format::tree::map();
 		data.set("setup_transaction_gas_limit", algorithm::encoding::serialize_uint256(transaction.gas_limit));
-		data.set("block_commitment_limit", algorithm::encoding::serialize_uint256(ledger::block::get_commitment_limit()));
-		data.set("block_transaction_limit", algorithm::encoding::serialize_uint256(ledger::block::get_transaction_limit()));
-		data.set("block_commitment_gas_limit", algorithm::encoding::serialize_uint256(ledger::block::get_commitment_gas_limit()));
-		data.set("block_transaction_gas_limit", algorithm::encoding::serialize_uint256(ledger::block::get_transaction_gas_limit()));
-		data.set("block_total_gas_limit", algorithm::encoding::serialize_uint256(ledger::block::get_total_gas_limit()));
+		data.set("block_commitment_limit", algorithm::encoding::serialize_uint256(ledger::block_body::get_commitment_limit()));
+		data.set("block_transaction_limit", algorithm::encoding::serialize_uint256(ledger::block_body::get_transaction_limit()));
+		data.set("block_commitment_gas_limit", algorithm::encoding::serialize_uint256(ledger::block_body::get_commitment_gas_limit()));
+		data.set("block_transaction_gas_limit", algorithm::encoding::serialize_uint256(ledger::block_body::get_transaction_gas_limit()));
+		data.set("block_total_gas_limit", algorithm::encoding::serialize_uint256(ledger::block_body::get_total_gas_limit()));
 		term->write_line(data.as_json(true));
 	}
 };
@@ -2029,8 +2029,8 @@ int main(int argc, char* argv[])
 		const size_t transaction_count = 512;
 		const decimal starting_account_balance = decimal(500).truncate(12);
 		auto transactions_mutex = std::mutex();
-		auto transactions_queue = single_queue<vector<uptr<ledger::transaction>>>();
-		auto checkpoint = [&](vector<uptr<ledger::transaction>>&& transactions, vector<account_ref>& users)
+		auto transactions_queue = single_queue<vector<uptr<ledger::transaction_message>>>();
+		auto checkpoint = [&](vector<uptr<ledger::transaction_message>>&& transactions, vector<account_ref>& users)
 		{
 			static uint64_t cumulative_transaction_count = 0, cumulative_transition_count = 0;
 			auto cumulative_query_count = (uint64_t)ledger::storage_util::get_thread_invocations(); term->capture_time();
@@ -2049,7 +2049,7 @@ int main(int argc, char* argv[])
 		{
 			return std::thread([&]()
 			{
-				auto transactions_subqueue = single_queue<vector<uptr<ledger::transaction>>>();
+				auto transactions_subqueue = single_queue<vector<uptr<ledger::transaction_message>>>();
 				for (size_t i = 0; i < block_count; i++)
 				{
 					if (transactions_subqueue.empty())
@@ -2065,7 +2065,7 @@ int main(int argc, char* argv[])
 				}
 			});
 		};
-		auto feed_checkpointer = [&](vector<uptr<ledger::transaction>>&& transactions)
+		auto feed_checkpointer = [&](vector<uptr<ledger::transaction_message>>&& transactions)
 		{
 			umutex<std::mutex> unique(transactions_mutex);
 			transactions_queue.push(std::move(transactions));
@@ -2097,7 +2097,7 @@ int main(int argc, char* argv[])
 			VI_PANIC(attestation->add_commitment(user1.secret_key), "attestation failed");
 			attestation->sign(user1.secret_key, 0, decimal::zero()).expect("pre-validation failed");
 
-			auto genesis = vector<uptr<ledger::transaction>>();
+			auto genesis = vector<uptr<ledger::transaction_message>>();
 			genesis.push_back(attestation);
 			checkpoint(std::move(genesis), users);
 
@@ -2105,9 +2105,9 @@ int main(int argc, char* argv[])
 			auto checkpointer = make_checkpointer();
 			for (size_t i = 0; i < block_count; i++)
 			{
-				vector<uptr<ledger::transaction>> transactions;
+				vector<uptr<ledger::transaction_message>> transactions;
 				transactions.resize(transaction_count);
-				parallel::wail_all(parallel::for_each(transactions.begin(), transactions.end(), ELEMENTS_FEW, [&](uptr<ledger::transaction>& item)
+				parallel::wail_all(parallel::for_each(transactions.begin(), transactions.end(), ELEMENTS_FEW, [&](uptr<ledger::transaction_message>& item)
 				{
 					double balance = (double)(std::max<uint64_t>(1000, crypto::random() % 10000)) / 10000.0;
 
@@ -2118,7 +2118,7 @@ int main(int argc, char* argv[])
 					VI_PANIC(transaction->sign(user1.secret_key, user1_nonce++), "authentication failed");
 					item = transaction;
 				}));
-				VI_SORT(transactions.begin(), transactions.end(), [](const uptr<ledger::transaction>& a, const uptr<ledger::transaction>& b) { return a->nonce < b->nonce; });
+				VI_SORT(transactions.begin(), transactions.end(), [](const uptr<ledger::transaction_message>& a, const uptr<ledger::transaction_message>& b) { return a->nonce < b->nonce; });
 				feed_checkpointer(std::move(transactions));
 			}
 			if (checkpointer.joinable())
@@ -2139,7 +2139,7 @@ int main(int argc, char* argv[])
 			VI_PANIC(attestation->add_commitment(user1.secret_key), "attestation failed");
 			attestation->sign(user1.secret_key, 0, decimal::zero()).expect("pre-validation failed");
 
-			auto genesis = vector<uptr<ledger::transaction>>();
+			auto genesis = vector<uptr<ledger::transaction_message>>();
 			genesis.push_back(attestation);
 			checkpoint(std::move(genesis), users);
 
@@ -2157,19 +2157,19 @@ int main(int argc, char* argv[])
 			transfer->set_asset("BTC");
 			for (auto& sender : senders)
 				transfer->set_to(sender.wallet.public_key_hash, starting_account_balance);
-			transfer->set_gas(decimal::zero(), ledger::block::get_transaction_gas_limit());
+			transfer->set_gas(decimal::zero(), ledger::block_body::get_transaction_gas_limit());
 			VI_PANIC(transfer->sign(user1.secret_key, user1_nonce++), "authentication failed");
 
-			genesis = vector<uptr<ledger::transaction>>();
+			genesis = vector<uptr<ledger::transaction_message>>();
 			genesis.push_back(transfer);
 			checkpoint(std::move(genesis), users);
 
 			auto checkpointer = make_checkpointer();
 			for (size_t i = 0; i < block_count; i++)
 			{
-				vector<uptr<ledger::transaction>> transactions;
+				vector<uptr<ledger::transaction_message>> transactions;
 				transactions.resize(transaction_count);
-				parallel::wail_all(parallel::for_each(transactions.begin(), transactions.end(), ELEMENTS_FEW, [&](uptr<ledger::transaction>& item)
+				parallel::wail_all(parallel::for_each(transactions.begin(), transactions.end(), ELEMENTS_FEW, [&](uptr<ledger::transaction_message>& item)
 				{
 					double balance = (double)(std::max<uint64_t>(1000, crypto::random() % 10000)) / 10000.0;
 					auto& sender = senders[crypto::random() % senders.size()];
@@ -2182,7 +2182,7 @@ int main(int argc, char* argv[])
 					VI_PANIC(transaction->sign(sender.wallet.secret_key, sender.nonce++), "authentication failed");
 					item = transaction;
 				}));
-				VI_SORT(transactions.begin(), transactions.end(), [](const uptr<ledger::transaction>& a, const uptr<ledger::transaction>& b) { return a->nonce < b->nonce; });
+				VI_SORT(transactions.begin(), transactions.end(), [](const uptr<ledger::transaction_message>& a, const uptr<ledger::transaction_message>& b) { return a->nonce < b->nonce; });
 				feed_checkpointer(std::move(transactions));
 			}
 			if (checkpointer.joinable())
@@ -2202,7 +2202,7 @@ int main(int argc, char* argv[])
 			VI_PANIC(attestation->add_commitment(user1.secret_key), "attestation failed");
 			attestation->sign(user1.secret_key, 0, decimal::zero()).expect("pre-validation failed");
 
-			auto genesis = vector<uptr<ledger::transaction>>();
+			auto genesis = vector<uptr<ledger::transaction_message>>();
 			genesis.push_back(attestation);
 			checkpoint(std::move(genesis), users);
 
@@ -2215,19 +2215,19 @@ int main(int argc, char* argv[])
 			transfer->set_asset("BTC");
 			for (auto& sender : senders)
 				transfer->set_to(sender.wallet.public_key_hash, starting_account_balance);
-			transfer->set_gas(decimal::zero(), ledger::block::get_transaction_gas_limit());
+			transfer->set_gas(decimal::zero(), ledger::block_body::get_transaction_gas_limit());
 			VI_PANIC(transfer->sign(user1.secret_key, user1_nonce++), "authentication failed");
 
-			genesis = vector<uptr<ledger::transaction>>();
+			genesis = vector<uptr<ledger::transaction_message>>();
 			genesis.push_back(transfer);
 			checkpoint(std::move(genesis), users);
 
 			auto checkpointer = make_checkpointer();
 			for (size_t i = 0; i < block_count; i++)
 			{
-				vector<uptr<ledger::transaction>> transactions;
+				vector<uptr<ledger::transaction_message>> transactions;
 				transactions.resize(transaction_count);
-				parallel::wail_all(parallel::for_each(transactions.begin(), transactions.end(), ELEMENTS_FEW, [&](uptr<ledger::transaction>& item)
+				parallel::wail_all(parallel::for_each(transactions.begin(), transactions.end(), ELEMENTS_FEW, [&](uptr<ledger::transaction_message>& item)
 				{
 					double balance = (double)(std::max<uint64_t>(1000, crypto::random() % 10000)) / 10000.0;
 					auto& sender = senders[crypto::random() % senders.size()];
@@ -2242,7 +2242,7 @@ int main(int argc, char* argv[])
 					VI_PANIC(transaction->sign(sender.wallet.secret_key, sender.nonce++), "authentication failed");
 					item = transaction;
 				}));
-				VI_SORT(transactions.begin(), transactions.end(), [](const uptr<ledger::transaction>& a, const uptr<ledger::transaction>& b) { return a->nonce < b->nonce; });
+				VI_SORT(transactions.begin(), transactions.end(), [](const uptr<ledger::transaction_message>& a, const uptr<ledger::transaction_message>& b) { return a->nonce < b->nonce; });
 				feed_checkpointer(std::move(transactions));
 			}
 			if (checkpointer.joinable())

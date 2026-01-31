@@ -2409,13 +2409,10 @@ namespace tangent
 			if (!best_attesters)
 				return best_attesters.error();
 
-			size_t min_commitment_size = 0;
+			size_t min_commitment_size = best_attesters->size();
 			decimal min_commitment_stake = decimal::zero();
 			for (auto& attester : *best_attesters)
-			{
 				min_commitment_stake += attester.stake;
-				++min_commitment_stake;
-			}
 
 			min_commitment_size = std::min(min_commitment_size, params.policy.attestation.min_per_transaction);
 			if (best_commitment_size < min_commitment_size)
