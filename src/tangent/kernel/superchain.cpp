@@ -27,21 +27,13 @@ namespace tangent
 				return true;
 			};
 		}
-		static value_transfer normalize_value(translation* implementation, const value_transfer& to)
+		static value_transfer normalize_value(translation_unit* implementation, const value_transfer& to)
 		{
 			auto result = to;
 			result.value = implementation->to_value(result.value);
 			return result;
 		}
-		static computed_fee normalize_value(translation* implementation, const computed_fee& fee)
-		{
-			auto result = fee;
-			result.fee.fee_rate = implementation->to_value(result.fee.fee_rate);
-			result.gas.gas_premium = implementation->to_value(result.gas.gas_premium);
-			result.gas.gas_price = implementation->to_value(result.gas.gas_price);
-			return result;
-		}
-		static decimal normalize_value(translation* implementation, const decimal& value)
+		static decimal normalize_value(translation_unit* implementation, const decimal& value)
 		{
 			return implementation->to_value(value);
 		}
@@ -58,7 +50,7 @@ namespace tangent
 			return message.str();
 		}
 
-		wallet_link::wallet_link(const algorithm::pubkeyhash_t& new_owner, const std::string_view& new_public_key, const std::string_view& new_address) : owner(new_owner), address(new_address), public_key(new_public_key)
+		wallet_link::wallet_link(const algorithm::pubkeyhash_t& new_owner, const std::string_view& new_public_key, const std::string_view& new_address) : owner(new_owner), public_key(new_public_key), address(new_address)
 		{
 		}
 		bool wallet_link::store_payload(format::wo_stream* stream) const
@@ -1084,13 +1076,13 @@ namespace tangent
 			return std::make_pair(string(address_destination_tag.substr(0, split)), string(address_destination_tag.substr(split + 1)));
 		}
 
-		translation::translation(const algorithm::asset_id& new_asset) noexcept : native_asset(algorithm::asset::base_id_of(new_asset)), round_robin_index(crypto::random()), allow_any_token(true)
+		translation_unit::translation_unit(const algorithm::asset_id& new_asset) noexcept : native_asset(algorithm::asset::base_id_of(new_asset)), round_robin_index(crypto::random()), allow_any_token(true)
 		{
 		}
-		translation::~translation() noexcept
+		translation_unit::~translation_unit() noexcept
 		{
 		}
-		expects_promise_rt<format::tree> translation::execute_rpc(const std::string_view& method, const format::tree& args, cache_policy cache, const std::string_view& path)
+		expects_promise_rt<format::tree> translation_unit::execute_rpc(const std::string_view& method, const format::tree& args, cache_policy cache, const std::string_view& path)
 		{
 			auto* instance = bridge::get()->get_network_instance(native_asset);
 			auto exception = remote_exception::retry_later();
@@ -1106,7 +1098,7 @@ namespace tangent
 			exception = exception.is_retry() ? normalize_error(system_exception("failed to connect", std::make_error_condition(std::errc::connection_refused)), reporter, "0", "failed to fetch the response") : exception;
 			coreturn expects_rt<format::tree>(std::move(exception));
 		}
-		expects_promise_rt<format::tree> translation::execute_rpc_multi(const std::string_view& method, const format::tree& args, cache_policy cache, const std::string_view& path)
+		expects_promise_rt<format::tree> translation_unit::execute_rpc_multi(const std::string_view& method, const format::tree& args, cache_policy cache, const std::string_view& path)
 		{
 			auto* instance = bridge::get()->get_network_instance(native_asset);
 			auto exception = remote_exception::retry_later();
@@ -1122,7 +1114,7 @@ namespace tangent
 			exception = exception.is_retry() ? normalize_error(system_exception("failed to connect", std::make_error_condition(std::errc::connection_refused)), reporter, "0", "failed to fetch the response") : exception;
 			coreturn expects_rt<format::tree>(std::move(exception));
 		}
-		expects_promise_rt<format::tree> translation::execute_rest(const std::string_view& method, const std::string_view& path, const format::tree& args, cache_policy cache)
+		expects_promise_rt<format::tree> translation_unit::execute_rest(const std::string_view& method, const std::string_view& path, const format::tree& args, cache_policy cache)
 		{
 			auto* instance = bridge::get()->get_network_instance(native_asset);
 			auto exception = remote_exception::retry_later();
@@ -1138,7 +1130,7 @@ namespace tangent
 			exception = exception.is_retry() ? normalize_error(system_exception("failed to connect", std::make_error_condition(std::errc::connection_refused)), reporter, "0", "failed to fetch the response") : exception;
 			coreturn expects_rt<format::tree>(std::move(exception));
 		}
-		expects_promise_rt<format::tree> translation::execute_http(const std::string_view& method, const std::string_view& path, const std::string_view& type, const std::string_view& body, cache_policy cache)
+		expects_promise_rt<format::tree> translation_unit::execute_http(const std::string_view& method, const std::string_view& path, const std::string_view& type, const std::string_view& body, cache_policy cache)
 		{
 			auto* instance = bridge::get()->get_network_instance(native_asset);
 			auto exception = remote_exception::retry_later();
@@ -1154,7 +1146,7 @@ namespace tangent
 			exception = exception.is_retry() ? normalize_error(system_exception("failed to connect", std::make_error_condition(std::errc::connection_refused)), reporter, "0", "failed to fetch the response") : exception;
 			coreturn expects_rt<format::tree>(std::move(exception));
 		}
-		expects_lr<algorithm::composition::cpubkey_t> translation::to_composite_public_key(const std::string_view& public_key)
+		expects_lr<algorithm::composition::cpubkey_t> translation_unit::to_composite_public_key(const std::string_view& public_key)
 		{
 			auto result = decode_public_key(public_key);
 			if (!result)
@@ -1162,7 +1154,7 @@ namespace tangent
 
 			return expects_lr<algorithm::composition::cpubkey_t>(algorithm::composition::to_cstorage<algorithm::composition::cpubkey_t>(*result));
 		}
-		expects_lr<btree_map<string, wallet_link>> translation::find_linked_addresses(const hash_set<string>& addresses)
+		expects_lr<btree_map<string, wallet_link>> translation_unit::find_linked_addresses(const hash_set<string>& addresses)
 		{
 			if (addresses.empty())
 				return expects_lr<btree_map<string, wallet_link>>(layer_exception("no addresses supplied"));
@@ -1178,7 +1170,7 @@ namespace tangent
 			auto result = btree_map<string, wallet_link>(results->begin(), results->end());
 			return expects_lr<btree_map<string, wallet_link>>(std::move(result));
 		}
-		expects_lr<btree_map<string, wallet_link>> translation::find_linked_addresses(const algorithm::pubkeyhash_t& owner, size_t offset, size_t count)
+		expects_lr<btree_map<string, wallet_link>> translation_unit::find_linked_addresses(const algorithm::pubkeyhash_t& owner, size_t offset, size_t count)
 		{
 			auto* implementation = bridge::get()->get_network(native_asset);
 			if (!implementation)
@@ -1191,11 +1183,11 @@ namespace tangent
 			auto result = btree_map<string, wallet_link>(results->begin(), results->end());
 			return expects_lr<btree_map<string, wallet_link>>(std::move(result));
 		}
-		expects_lr<void> translation::verify_node_compatibility(connection_instance* node)
+		expects_lr<void> translation_unit::verify_node_compatibility(connection_instance*)
 		{
 			return expectation::met;
 		}
-		decimal translation::to_value(const decimal& value) const
+		decimal translation_unit::to_value(const decimal& value) const
 		{
 			if (value.is_zero_or_nan())
 				return value;
@@ -1204,7 +1196,7 @@ namespace tangent
 			normalized.truncate((uint32_t)get_chainparams().divisibility.to_string().size() - 1);
 			return normalized;
 		}
-		uint256_t translation::to_baseline_value(const decimal& value) const
+		uint256_t translation_unit::to_baseline_value(const decimal& value) const
 		{
 			if (value.is_zero_or_nan())
 				return uint256_t(0);
@@ -1212,7 +1204,7 @@ namespace tangent
 			decimal baseline = value * get_chainparams().divisibility;
 			return uint256_t(baseline.truncate(0).to_string());
 		}
-		decimal translation::from_baseline_value(const uint256_t& value) const
+		decimal translation_unit::from_baseline_value(const uint256_t& value) const
 		{
 			if (!value)
 				return decimal::zero();
@@ -1220,14 +1212,14 @@ namespace tangent
 			return value.to_decimal() / get_chainparams().divisibility;
 		}
 
-		translation_utxo::balance_query::balance_query(const decimal& new_min_native_value, const hash_map<algorithm::asset_id, decimal>& new_min_token_values) : min_native_value(new_min_native_value), min_token_values(new_min_token_values)
+		utxo_translation_unit::balance_query::balance_query(const decimal& new_min_native_value, const hash_map<algorithm::asset_id, decimal>& new_min_token_values) : min_token_values(new_min_token_values), min_native_value(new_min_native_value)
 		{
 		}
 
-		translation_utxo::translation_utxo(const algorithm::asset_id& new_asset) noexcept : translation(new_asset)
+		utxo_translation_unit::utxo_translation_unit(const algorithm::asset_id& new_asset) noexcept : translation_unit(new_asset)
 		{
 		}
-		expects_promise_rt<decimal> translation_utxo::calculate_balance(const algorithm::asset_id& for_asset, const wallet_link& link)
+		expects_promise_rt<decimal> utxo_translation_unit::calculate_balance(const algorithm::asset_id& for_asset, const wallet_link& link)
 		{
 			decimal balance = 0.0;
 			auto outputs = calculate_utxo(link, optional::none);
@@ -1252,7 +1244,7 @@ namespace tangent
 
 			return expects_promise_rt<decimal>(std::move(balance));
 		}
-		expects_lr<vector<coin_utxo>> translation_utxo::calculate_utxo(const wallet_link& link, option<balance_query>&& query)
+		expects_lr<vector<coin_utxo>> utxo_translation_unit::calculate_utxo(const wallet_link& link, option<balance_query>&& query)
 		{
 			vector<coin_utxo> values;
 			decimal current_value = decimal::zero();
@@ -1306,11 +1298,11 @@ namespace tangent
 
 			return expects_lr<vector<coin_utxo>>(std::move(values));
 		}
-		expects_lr<coin_utxo> translation_utxo::get_utxo(const std::string_view& transaction_id, uint64_t index)
+		expects_lr<coin_utxo> utxo_translation_unit::get_utxo(const std::string_view& transaction_id, uint64_t index)
 		{
 			return bridge::get()->get_utxo(native_asset, transaction_id, index);
 		}
-		expects_lr<void> translation_utxo::update_utxo(const computed_transaction& computed)
+		expects_lr<void> utxo_translation_unit::update_utxo(const computed_transaction& computed)
 		{
 			for (auto& [hash, output] : computed.inputs)
 			{
@@ -1334,7 +1326,7 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<void> translation_utxo::receive_utxo(const std::string_view& transaction_id, uint64_t index, uint64_t receiver_block_id, const coin_utxo& output)
+		expects_lr<void> utxo_translation_unit::receive_utxo(const std::string_view& transaction_id, uint64_t index, uint64_t receiver_block_id, const coin_utxo& output)
 		{
 			if (transaction_id.empty() || index == std::numeric_limits<uint64_t>::max())
 				return expects_lr<void>(layer_exception("output must have a transaction id"));
@@ -1375,14 +1367,14 @@ namespace tangent
 
 			return bridge::get()->receive_utxo(native_asset, transaction_id, index, receiver_block_id, copy);
 		}
-		expects_lr<void> translation_utxo::spend_utxo(const std::string_view& transaction_id, uint64_t index, uint64_t spender_block_id)
+		expects_lr<void> utxo_translation_unit::spend_utxo(const std::string_view& transaction_id, uint64_t index, uint64_t spender_block_id)
 		{
 			if (transaction_id.empty() || index == std::numeric_limits<uint64_t>::max())
 				return expects_lr<void>(layer_exception("output must have a transaction id"));
 
 			return bridge::get()->spend_utxo(native_asset, transaction_id, index, spender_block_id);
 		}
-		decimal translation_utxo::get_utxo_value(const vector<coin_utxo>& values, option<string>&& contract_address)
+		decimal utxo_translation_unit::get_utxo_value(const vector<coin_utxo>& values, option<string>&& contract_address)
 		{
 			decimal value = 0.0;
 			if (contract_address)
@@ -1401,7 +1393,6 @@ namespace tangent
 
 				for (auto& item : values)
 				{
-					auto* implementation = bridge::get()->get_network(native_asset);
 					for (auto& [hash, token] : item.tokens)
 					{
 						if (token.contract_address == *address)
@@ -1416,9 +1407,9 @@ namespace tangent
 			}
 			return value;
 		}
-		translation_utxo* translation_utxo::from(translation* base)
+		utxo_translation_unit* utxo_translation_unit::from(translation_unit* base)
 		{
-			return base->get_chainparams().routing == routing_policy::utxo ? (translation_utxo*)base : nullptr;
+			return base->get_chainparams().routing == routing_policy::utxo ? (utxo_translation_unit*)base : nullptr;
 		}
 
 		bridge::bridge() noexcept
@@ -1658,7 +1649,7 @@ namespace tangent
 				setup.content.assign(body);
 			}
 
-			auto response = coawait(network_fetch(target_url, method, setup));
+			auto response = coawait(network_fetch(asset, target_url, method, setup));
 			if (!response || response->status_code == 408 || response->status_code == 429 || response->status_code == 502 || response->status_code == 503 || response->status_code == 504)
 				coreturn expects_rt<format::tree>(remote_exception::retry_after(protocol::now().time.now_cpu() + protocol::now().user.superchain.polling_frequency));
 
@@ -1780,7 +1771,7 @@ namespace tangent
 			if (!block_batch || block_batch->empty())
 				coreturn expects_rt<vector<transaction_logs>>(block_batch ? remote_exception("failed to find new block data") : block_batch.error());
 
-			auto* utxo_implementation = translation_utxo::from(implementation);
+			auto* utxo_implementation = utxo_translation_unit::from(implementation);
 			for (auto& block : *block_batch)
 			{
 				transaction_logs log;
@@ -1814,7 +1805,7 @@ namespace tangent
 			auto state = storages::superchainstate(asset);
 			if (!tip_now.value.is_integer() || tip_now.value.as_uint64() != block_height)
 				state.set_property("TIP:NOW", format::variable(block_height));
-			if (!tip_min.value.is_integer() || tip_min.value.as_uint64() > block_height && block_height > 0)
+			if (!tip_min.value.is_integer() || (tip_min.value.as_uint64() > block_height && block_height > 0))
 				state.set_property("TIP:MIN", format::variable(block_height));
 			if (!tip_max.value.is_integer() || tip_max.value.as_uint64() < options->state.target_block_height)
 				state.set_property("TIP:MAX", format::variable(options->state.target_block_height));
@@ -1893,7 +1884,7 @@ namespace tangent
 			if (!result)
 				coreturn result;
 
-			auto* utxo_implementation = translation_utxo::from(implementation);
+			auto* utxo_implementation = utxo_translation_unit::from(implementation);
 			if (utxo_implementation != nullptr)
 				utxo_implementation->update_utxo(new_transaction).report("failed to update utxo set from " + new_transaction.transaction_id);
 
@@ -2468,7 +2459,7 @@ namespace tangent
 			if (!implementation)
 				return layer_exception("chain not found");
 
-			auto* utxo_implementation = translation_utxo::from(implementation);
+			auto* utxo_implementation = utxo_translation_unit::from(implementation);
 			if (!utxo_implementation)
 				return expectation::met;
 
@@ -2528,9 +2519,9 @@ namespace tangent
 			}
 			return assets;
 		}
-		hash_map<algorithm::asset_id, translation::chainparams> bridge::get_assets_with_params()
+		hash_map<algorithm::asset_id, translation_unit::chainparams> bridge::get_assets_with_params()
 		{
-			hash_map<algorithm::asset_id, translation::chainparams> result;
+			hash_map<algorithm::asset_id, translation_unit::chainparams> result;
 			result.reserve(networks.size());
 			for (auto& next : networks)
 				result[algorithm::asset::id_of(next.first)] = next.second.translation->get_chainparams();
@@ -2582,7 +2573,7 @@ namespace tangent
 		{
 			return networks;
 		}
-		translation* bridge::get_network(const algorithm::asset_id& asset)
+		translation_unit* bridge::get_network(const algorithm::asset_id& asset)
 		{
 			auto it = networks.find(algorithm::asset::blockchain_of(asset));
 			return it != networks.end() ? *it->second.translation : nullptr;
@@ -2592,7 +2583,7 @@ namespace tangent
 			auto it = networks.find(algorithm::asset::blockchain_of(asset));
 			return it != networks.end() ? &it->second : nullptr;
 		}
-		const translation::chainparams* bridge::get_network_params(const algorithm::asset_id& asset)
+		const translation_unit::chainparams* bridge::get_network_params(const algorithm::asset_id& asset)
 		{
 			auto it = networks.find(algorithm::asset::blockchain_of(asset));
 			if (it != networks.end())
@@ -2637,7 +2628,7 @@ namespace tangent
 
 			return nullptr;
 		}
-		void bridge::add_network_instance(const algorithm::asset_id& asset, translation* instance)
+		void bridge::add_network_instance(const algorithm::asset_id& asset, translation_unit* instance)
 		{
 			auto& network = networks[algorithm::asset::blockchain_of(asset)];
 			network.asset = algorithm::asset::base_id_of(asset);

@@ -45,7 +45,7 @@ namespace tangent
 				script::cmodule pmodule;
 				format::tree returning;
 				format::tree log;
-				ledger::block block;
+				ledger::block_body block;
 			} tracer;
 
 			script_context() : script::program(nullptr, nullptr)
@@ -66,7 +66,7 @@ namespace tangent
 			~script_context() = default;
 			expects_lr<void> assign_transaction(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& from, const algorithm::pubkeyhash_t& to, const vector<std::pair<algorithm::asset_id, decimal>>& pays, const std::string_view& function_decl, const format::variables& args)
 			{
-				ledger::receipt receipt;
+				ledger::transaction_receipt receipt;
 				receipt.from = from;
 
 				uptr<transactions::call> transaction = memory::init<transactions::call>();
@@ -75,7 +75,7 @@ namespace tangent
 				transaction->signature.blob[0] = 0xFF;
 				transaction->nonce = std::max<size_t>(1, tracer.solver.state.executor.get_account_nonce(from).or_else(states::account_nonce(algorithm::pubkeyhash_t(), nullptr)).nonce);
 				transaction->call_to(to, function_decl, format::variables(args));
-				transaction->set_gas(decimal::zero(), ledger::block::get_transaction_gas_limit());
+				transaction->set_gas(decimal::zero(), ledger::block_body::get_transaction_gas_limit());
 				tracer.contextual = std::move(transaction);
 				tracer.solver.apply_temporary_state(&tracer.block, *tracer.contextual, std::move(receipt));
 				return expectation::met;
@@ -110,7 +110,7 @@ namespace tangent
 					next->set("type", format::variable(event));
 					if (target == tracer.events.end())
 					{
-						uptr<ledger::state> temp = states::resolver::from_type(event);
+						uptr<ledger::transition_state> temp = states::resolver::from_type(event);
 						next->set(temp ? temp->as_typename() : "__internal__", serialize_event_args(args));
 					}
 					else
@@ -304,7 +304,6 @@ namespace tangent
 			}
 			void reset()
 			{
-				auto* container = script::factory::get();
 				state.balances.clear();
 				state.from = algorithm::pubkeyhash_t();
 				state.to = algorithm::pubkeyhash_t();
@@ -320,7 +319,7 @@ namespace tangent
 				tracer.log = format::tree();
 				tracer.events.clear();
 				tracer.pmodule.destroy();
-				tracer.block = ledger::block();
+				tracer.block = ledger::block_body();
 			}
 			bool bound() const
 			{

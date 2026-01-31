@@ -38,7 +38,7 @@ namespace tangent
 
 		struct network_options;
 
-		class translation;
+		class translation_unit;
 
 		struct wallet_link : messages::uniform
 		{
@@ -310,7 +310,7 @@ namespace tangent
 		struct network_instance
 		{
 			vector<connection_instance> connections;
-			uptr<translation> translation;
+			uptr<translation_unit> translation;
 			network_options options;
 			algorithm::asset_id asset;
 			format::tree props;
@@ -323,7 +323,7 @@ namespace tangent
 			static std::pair<string, string> decode_tag_address(const std::string_view& address_destination_tag);
 		};
 
-		class translation : public reference<translation>
+		class translation_unit : public reference<translation_unit>
 		{
 			friend class datamaster;
 
@@ -347,8 +347,8 @@ namespace tangent
 			bool allow_any_token;
 
 		public:
-			translation(const algorithm::asset_id& new_asset) noexcept;
-			virtual ~translation() noexcept;
+			translation_unit(const algorithm::asset_id& new_asset) noexcept;
+			virtual ~translation_unit() noexcept;
 			virtual expects_promise_rt<format::tree> execute_rpc(const std::string_view& method, const format::tree& args, cache_policy cache, const std::string_view& path = std::string_view());
 			virtual expects_promise_rt<format::tree> execute_rpc_multi(const std::string_view& method, const format::tree& args, cache_policy cache, const std::string_view& path = std::string_view());
 			virtual expects_promise_rt<format::tree> execute_rest(const std::string_view& method, const std::string_view& path, const format::tree& args, cache_policy cache);
@@ -379,7 +379,7 @@ namespace tangent
 			virtual const chainparams& get_chainparams() const = 0;
 		};
 
-		class translation_utxo : public translation
+		class utxo_translation_unit : public translation_unit
 		{
 		public:
 			struct balance_query
@@ -391,8 +391,8 @@ namespace tangent
 			};
 
 		public:
-			translation_utxo(const algorithm::asset_id& new_asset) noexcept;
-			virtual ~translation_utxo() = default;
+			utxo_translation_unit(const algorithm::asset_id& new_asset) noexcept;
+			virtual ~utxo_translation_unit() = default;
 			virtual expects_promise_rt<coin_utxo> get_transaction_output(const std::string_view& transaction_id, uint64_t index) = 0;
 			virtual expects_promise_rt<decimal> calculate_balance(const algorithm::asset_id& for_asset, const wallet_link& link) override;
 			virtual expects_lr<vector<coin_utxo>> calculate_utxo(const wallet_link& link, option<balance_query>&& query);
@@ -403,7 +403,7 @@ namespace tangent
 			virtual decimal get_utxo_value(const vector<coin_utxo>& values, option<string>&& contract_address);
 
 		public:
-			static translation_utxo* from(translation* base);
+			static utxo_translation_unit* from(translation_unit* base);
 		};
 
 		class bridge : public singleton<bridge>
@@ -415,7 +415,7 @@ namespace tangent
 				string method;
 			};
 
-			typedef std::function<expects_promise_system<http::response_frame>(const std::string_view&, const std::string_view&, const http::fetch_frame&)> fetch_callback;
+			typedef std::function<expects_promise_system<http::response_frame>(const algorithm::asset_id&, const std::string_view&, const std::string_view&, const http::fetch_frame&)> fetch_callback;
 			typedef std::function<bool(const std::string_view&)> invocation_callback;
 
 		protected:
@@ -478,12 +478,12 @@ namespace tangent
 			expects_lr<void> store_cache(const algorithm::asset_id& asset, cache_policy policy, const std::string_view& key, const format::tree& value);
 			option<string> get_contract_address(const algorithm::asset_id& asset);
 			vector<algorithm::asset_id> get_assets(bool observing_only = false);
-			hash_map<algorithm::asset_id, translation::chainparams> get_assets_with_params();
+			hash_map<algorithm::asset_id, translation_unit::chainparams> get_assets_with_params();
 			const hash_map<string, invocation_callback>& get_registrations();
 			hash_map<string, network_instance>& get_networks();
-			translation* get_network(const algorithm::asset_id& asset);
+			translation_unit* get_network(const algorithm::asset_id& asset);
 			network_instance* get_network_instance(const algorithm::asset_id& asset);
-			const translation::chainparams* get_network_params(const algorithm::asset_id& asset);
+			const translation_unit::chainparams* get_network_params(const algorithm::asset_id& asset);
 			connection_instance* add_network_connection(const algorithm::asset_id& asset, const std::string_view& url, double rps, bool keep_alive);
 			connection_instance* add_network_connection(const algorithm::asset_id& asset, hash_map<string, string>&& urls, double rps, bool keep_alive);
 			format::tree* add_network_props(const algorithm::asset_id& asset, const format::tree& value);
@@ -501,7 +501,7 @@ namespace tangent
 			}
 
 		private:
-			void add_network_instance(const algorithm::asset_id& asset, translation* instance);
+			void add_network_instance(const algorithm::asset_id& asset, translation_unit* instance);
 
 		public:
 			static std::string_view cache_type_of(cache_policy cache);

@@ -26,14 +26,14 @@ namespace tangent
 
 		struct state_result
 		{
-			uptr<ledger::state> value;
+			uptr<ledger::transition_state> value;
 			size_t index;
 			bool cached;
 
 			state_result() : index(0), cached(true)
 			{
 			}
-			state_result(uptr<ledger::state>&& new_value, bool new_cached, size_t new_index = 0) : value(std::move(new_value)), index(new_index), cached(new_cached)
+			state_result(uptr<ledger::transition_state>&& new_value, bool new_cached, size_t new_index = 0) : value(std::move(new_value)), index(new_index), cached(new_cached)
 			{
 			}
 			state_result(const state_result&) = delete;
@@ -60,7 +60,7 @@ namespace tangent
 			{
 				return (t*)*value;
 			}
-			ledger::state* ptr()
+			ledger::transition_state* ptr()
 			{
 				return *value;
 			}
@@ -178,9 +178,9 @@ namespace tangent
 			expects_lr<uint256_t> get_block_hash_by_number(uint64_t block_number);
 			expects_lr<decimal> get_block_gas_price(uint64_t block_number, const algorithm::asset_id& asset, double percentile);
 			expects_lr<decimal> get_block_asset_price(uint64_t block_number, const algorithm::asset_id& price_of, const algorithm::asset_id& relative_to, double percentile);
-			expects_lr<ledger::block> get_block_by_number(uint64_t block_number, size_t chunk = ELEMENTS_MANY, uint32_t details = (uint32_t)block_details::transactions | (uint32_t)block_details::block_transactions | (uint32_t)block_details::states);
-			expects_lr<ledger::block> get_block_by_hash(const uint256_t& block_hash, size_t chunk = ELEMENTS_MANY, uint32_t details = (uint32_t)block_details::transactions | (uint32_t)block_details::block_transactions | (uint32_t)block_details::states);
-			expects_lr<ledger::block> get_latest_block(size_t chunk = ELEMENTS_MANY, uint32_t details = (uint32_t)block_details::transactions | (uint32_t)block_details::block_transactions | (uint32_t)block_details::states);
+			expects_lr<ledger::block_body> get_block_by_number(uint64_t block_number, size_t chunk = ELEMENTS_MANY, uint32_t details = (uint32_t)block_details::transactions | (uint32_t)block_details::block_transactions | (uint32_t)block_details::states);
+			expects_lr<ledger::block_body> get_block_by_hash(const uint256_t& block_hash, size_t chunk = ELEMENTS_MANY, uint32_t details = (uint32_t)block_details::transactions | (uint32_t)block_details::block_transactions | (uint32_t)block_details::states);
+			expects_lr<ledger::block_body> get_latest_block(size_t chunk = ELEMENTS_MANY, uint32_t details = (uint32_t)block_details::transactions | (uint32_t)block_details::block_transactions | (uint32_t)block_details::states);
 			expects_lr<ledger::block_header> get_block_header_by_number(uint64_t block_number);
 			expects_lr<ledger::block_header> get_block_header_by_hash(const uint256_t& block_hash);
 			expects_lr<ledger::block_header> get_latest_block_header();
@@ -191,16 +191,16 @@ namespace tangent
 			expects_lr<vector<uint256_t>> get_block_hashset(uint64_t block_number, size_t count);
 			expects_lr<vector<ledger::block_header>> get_block_headers(uint64_t block_number, size_t count);
 			expects_lr<ledger::block_state> get_block_state_by_number(uint64_t block_number, size_t chunk = ELEMENTS_MANY);
-			expects_lr<vector<uptr<ledger::transaction>>> get_transactions_by_number(uint64_t block_number, size_t offset, size_t count);
-			expects_lr<vector<uptr<ledger::transaction>>> get_transactions_by_owner(uint64_t block_number, const algorithm::pubkeyhash_t& owner, int8_t direction, size_t offset, size_t count);
+			expects_lr<vector<uptr<ledger::transaction_message>>> get_transactions_by_number(uint64_t block_number, size_t offset, size_t count);
+			expects_lr<vector<uptr<ledger::transaction_message>>> get_transactions_by_owner(uint64_t block_number, const algorithm::pubkeyhash_t& owner, int8_t direction, size_t offset, size_t count);
 			expects_lr<vector<ledger::block_transaction>> get_block_transactions_by_number(uint64_t block_number, size_t offset, size_t count);
 			expects_lr<vector<ledger::block_transaction>> get_block_transactions_by_owner(uint64_t block_number, const algorithm::pubkeyhash_t& owner, int8_t direction, size_t offset, size_t count);
-			expects_lr<vector<ledger::receipt>> get_block_receipts_by_number(uint64_t block_number, size_t offset, size_t count);
+			expects_lr<vector<ledger::transaction_receipt>> get_block_receipts_by_number(uint64_t block_number, size_t offset, size_t count);
 			expects_lr<vector<ledger::block_transaction>> get_pending_block_transactions(uint64_t block_number, size_t offset, size_t count);
 			expects_lr<bool> has_non_aliased_transaction(const uint256_t& transaction_hash);
-			expects_lr<uptr<ledger::transaction>> get_transaction_by_hash(const uint256_t& transaction_hash);
+			expects_lr<uptr<ledger::transaction_message>> get_transaction_by_hash(const uint256_t& transaction_hash);
 			expects_lr<ledger::block_transaction> get_block_transaction_by_hash(const uint256_t& transaction_hash);
-			expects_lr<ledger::receipt> get_receipt_by_transaction_hash(const uint256_t& transaction_hash);
+			expects_lr<ledger::transaction_receipt> get_receipt_by_transaction_hash(const uint256_t& transaction_hash);
 			expects_lr<state_result> get_uniform(uint32_t type, const ledger::block_changelog* changelog, const std::string_view& index, uint64_t block_number);
 			expects_lr<state_result> get_multiform(uint32_t type, const ledger::block_changelog* changelog, const std::string_view& column, const std::string_view& row, uint64_t block_number);
 			expects_lr<vector<state_result>> get_multiforms_by_column(uint32_t type, ledger::block_changelog* changelog, const std::string_view& column, uint64_t block_number, size_t offset, size_t count);

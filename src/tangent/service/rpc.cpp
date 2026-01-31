@@ -14,7 +14,7 @@ namespace tangent
 			string index;
 			uint32_t type;
 
-			uniform_location(uint32_t new_type, string&& new_index) : type(new_type), index(std::move(new_index))
+			uniform_location(uint32_t new_type, string&& new_index) : index(std::move(new_index)), type(new_type)
 			{
 			}
 		};
@@ -25,7 +25,7 @@ namespace tangent
 			string column;
 			uint32_t type;
 
-			multiform_location(uint32_t new_type, string&& new_row, string&& new_column) : type(new_type), row(std::move(new_row)), column(std::move(new_column))
+			multiform_location(uint32_t new_type, string&& new_row, string&& new_column) : row(std::move(new_row)), column(std::move(new_column)), type(new_type)
 			{
 			}
 		};
@@ -281,8 +281,7 @@ namespace tangent
 		{
 			format::tree response;
 			response.set("id", request.child_var("id"));
-
-			auto* result = response.set(status == error_codes::notification ? "notification" : "result", std::move(data));
+			response.set(status == error_codes::notification ? "notification" : "result", std::move(data));
 			if (status != error_codes::response && status != error_codes::notification && !error_message.empty())
 			{
 				auto* error = response.set("error", format::tree::map());
@@ -292,7 +291,7 @@ namespace tangent
 			return response;
 		}
 
-		server_node::server_node(consensus::server_node* new_consensus_service) noexcept : control_sys("rpc-node"), node(new http::server()), consensus_service(new_consensus_service)
+		server_node::server_node(consensus::server_node* new_consensus_service) noexcept : control_sys("rpc-node"), consensus_service(new_consensus_service), node(new http::server())
 		{
 			if (consensus_service)
 				consensus_service->add_ref();
@@ -478,7 +477,7 @@ namespace tangent
 		{
 			return node->get_state() == server_state::working;
 		}
-		bool server_node::authorize(http::connection* base, http::credentials* credentials)
+		bool server_node::authorize(http::connection*, http::credentials* credentials)
 		{
 			return credentials->token == auth_token;
 		}
@@ -690,7 +689,7 @@ namespace tangent
 			});
 			return true;
 		}
-		void server_node::dispatch_accept_block(const uint256_t& block_hash, const ledger::block& block, const ledger::block_checkpoint& checkpoint)
+		void server_node::dispatch_accept_block(const uint256_t& block_hash, const ledger::block_body& block, const ledger::block_checkpoint&)
 		{
 			umutex<std::mutex> unique(mutex);
 			if (listeners.empty())
@@ -745,7 +744,7 @@ namespace tangent
 					web_socket->send(response, http::web_socket_op::text, nullptr);
 			});
 		}
-		void server_node::dispatch_accept_transaction(const uint256_t& transaction_hash, const ledger::transaction* transaction, const algorithm::pubkeyhash_t& owner)
+		void server_node::dispatch_accept_transaction(const uint256_t& transaction_hash, const ledger::transaction_message*, const algorithm::pubkeyhash_t& owner)
 		{
 			umutex<std::mutex> unique(mutex);
 			if (listeners.empty())
@@ -813,7 +812,7 @@ namespace tangent
 			unique.unlock();
 			return server_response().success(format::variable(address_index + (listener.blocks || listener.transactions ? 1 : 0)));
 		}
-		server_response server_node::web_socket_unsubscribe(http::connection* base, format::variables&& args)
+		server_response server_node::web_socket_unsubscribe(http::connection* base, format::variables&&)
 		{
 			if (!base->web_socket)
 				return server_response().error(error_codes::bad_request, "requires protocol upgrade");
@@ -823,7 +822,7 @@ namespace tangent
 			unique.unlock();
 			return server_response().success(format::variable());
 		}
-		server_response server_node::utility_encode_address(http::connection* base, format::variables&& args)
+		server_response server_node::utility_encode_address(http::connection*, format::variables&& args)
 		{
 			auto owner = format::util::decode_0xhex(args[0].as_string());
 			if (owner.size() == sizeof(algorithm::pubkeyhash_t))
@@ -831,7 +830,7 @@ namespace tangent
 
 			return server_response().error(error_codes::bad_params, "raw address not valid");
 		}
-		server_response server_node::utility_decode_address(http::connection* base, format::variables&& args)
+		server_response server_node::utility_decode_address(http::connection*, format::variables&& args)
 		{
 			algorithm::pubkeyhash_t data;
 			if (!algorithm::signing::decode_address(args[0].as_string(), data))
@@ -839,7 +838,7 @@ namespace tangent
 
 			return server_response().success(format::variable(format::util::encode_0xhex(data.view())));
 		}
-		server_response server_node::utility_decode_message(http::connection* base, format::variables&& args)
+		server_response server_node::utility_decode_message(http::connection*, format::variables&& args)
 		{
 			format::variables values;
 			auto data = format::util::decode_stream(args[0].as_string());
@@ -849,11 +848,11 @@ namespace tangent
 
 			return server_response().success(format::variables_util::serialize(values));
 		}
-		server_response server_node::utility_decode_transaction(http::connection* base, format::variables&& args)
+		server_response server_node::utility_decode_transaction(http::connection*, format::variables&& args)
 		{
 			auto data = format::util::decode_stream(args[0].as_string());
 			auto message = format::ro_stream(data);
-			uptr<ledger::transaction> candidate_tx = transactions::resolver::from_stream(message);
+			uptr<ledger::transaction_message> candidate_tx = transactions::resolver::from_stream(message);
 			if (!candidate_tx || !candidate_tx->load(message))
 				return server_response().error(error_codes::bad_params, "invalid message");
 
@@ -865,7 +864,7 @@ namespace tangent
 			result.set("signer_address", recoverable ? algorithm::signing::serialize_address(owner) : format::variable());
 			return server_response().success(std::move(result));
 		}
-		server_response server_node::utility_help(http::connection* base, format::variables&& args)
+		server_response server_node::utility_help(http::connection*, format::variables&&)
 		{
 			auto data = format::tree::map();
 			auto* params = data.set("converters", format::tree::map());
@@ -920,7 +919,7 @@ namespace tangent
 			}
 			return server_response().success(std::move(data));
 		}
-		server_response server_node::blockstate_get_blocks(http::connection* base, format::variables&& args)
+		server_response server_node::blockstate_get_blocks(http::connection*, format::variables&& args)
 		{
 			uint64_t count = args[1].as_uint64();
 			if (!count || count > protocol::now().message.pages_per_query)
@@ -937,7 +936,7 @@ namespace tangent
 				data.push(format::variable(algorithm::encoding::encode_0xhex256(item)));
 			return server_response().success(std::move(data));
 		}
-		server_response server_node::blockstate_get_block_checkpoint_hash(http::connection* base, format::variables&& args)
+		server_response server_node::blockstate_get_block_checkpoint_hash(http::connection*, format::variables&&)
 		{
 			auto chain = storages::chainstate();
 			auto block_number = chain.get_checkpoint_block_number();
@@ -950,7 +949,7 @@ namespace tangent
 
 			return server_response().success(format::variable(algorithm::encoding::encode_0xhex256(*block_hash)));
 		}
-		server_response server_node::blockstate_get_block_checkpoint_number(http::connection* base, format::variables&& args)
+		server_response server_node::blockstate_get_block_checkpoint_number(http::connection*, format::variables&&)
 		{
 			auto chain = storages::chainstate();
 			auto block_number = chain.get_checkpoint_block_number();
@@ -959,7 +958,7 @@ namespace tangent
 
 			return server_response().success(algorithm::encoding::serialize_uint256(*block_number));
 		}
-		server_response server_node::blockstate_get_block_tip_hash(http::connection* base, format::variables&& args)
+		server_response server_node::blockstate_get_block_tip_hash(http::connection*, format::variables&&)
 		{
 			auto chain = storages::chainstate();
 			auto block_header = chain.get_latest_block_header();
@@ -968,7 +967,7 @@ namespace tangent
 
 			return server_response().success(format::variable(algorithm::encoding::encode_0xhex256(block_header->as_hash())));
 		}
-		server_response server_node::blockstate_get_block_tip_number(http::connection* base, format::variables&& args)
+		server_response server_node::blockstate_get_block_tip_number(http::connection*, format::variables&&)
 		{
 			auto chain = storages::chainstate();
 			auto block_number = chain.get_latest_block_number();
@@ -977,7 +976,7 @@ namespace tangent
 
 			return server_response().success(algorithm::encoding::serialize_uint256(*block_number));
 		}
-		server_response server_node::blockstate_get_block_by_hash(http::connection* base, format::variables&& args)
+		server_response server_node::blockstate_get_block_by_hash(http::connection*, format::variables&& args)
 		{
 			uint256_t hash = args[0].as_uint256();
 			uint8_t unrolling = args.size() > 1 ? args[1].as_uint8() : 0;
@@ -1060,7 +1059,7 @@ namespace tangent
 				return server_response().success(block->as_tree());
 			}
 		}
-		server_response server_node::blockstate_get_block_by_number(http::connection* base, format::variables&& args)
+		server_response server_node::blockstate_get_block_by_number(http::connection*, format::variables&& args)
 		{
 			uint64_t number = args[0].as_uint64();
 			uint8_t unrolling = args.size() > 1 ? args[1].as_uint8() : 0;
@@ -1143,7 +1142,7 @@ namespace tangent
 				return server_response().success(block->as_tree());
 			}
 		}
-		server_response server_node::blockstate_get_raw_block_by_hash(http::connection* base, format::variables&& args)
+		server_response server_node::blockstate_get_raw_block_by_hash(http::connection*, format::variables&& args)
 		{
 			uint256_t hash = args[0].as_uint256();
 			auto chain = storages::chainstate();
@@ -1153,7 +1152,7 @@ namespace tangent
 
 			return server_response().success(format::variable(block->as_message().encode()));
 		}
-		server_response server_node::blockstate_get_raw_block_by_number(http::connection* base, format::variables&& args)
+		server_response server_node::blockstate_get_raw_block_by_number(http::connection*, format::variables&& args)
 		{
 			uint64_t number = args[0].as_uint64();
 			auto chain = storages::chainstate();
@@ -1163,7 +1162,7 @@ namespace tangent
 
 			return server_response().success(format::variable(block->as_message().encode()));
 		}
-		server_response server_node::blockstate_get_block_proof_by_hash(http::connection* base, format::variables&& args)
+		server_response server_node::blockstate_get_block_proof_by_hash(http::connection*, format::variables&& args)
 		{
 			uint256_t hash = args[0].as_uint256();
 			auto chain = storages::chainstate();
@@ -1190,7 +1189,7 @@ namespace tangent
 
 			return server_response().success(std::move(data));
 		}
-		server_response server_node::blockstate_get_block_proof_by_number(http::connection* base, format::variables&& args)
+		server_response server_node::blockstate_get_block_proof_by_number(http::connection*, format::variables&& args)
 		{
 			uint64_t number = args[0].as_uint64();
 			auto chain = storages::chainstate();
@@ -1217,7 +1216,7 @@ namespace tangent
 
 			return server_response().success(std::move(data));
 		}
-		server_response server_node::blockstate_get_block_number_by_hash(http::connection* base, format::variables&& args)
+		server_response server_node::blockstate_get_block_number_by_hash(http::connection*, format::variables&& args)
 		{
 			uint64_t number = args[0].as_uint64();
 			auto chain = storages::chainstate();
@@ -1227,7 +1226,7 @@ namespace tangent
 
 			return server_response().success(format::variable(algorithm::encoding::encode_0xhex256(*block_hash)));
 		}
-		server_response server_node::blockstate_get_block_hash_by_number(http::connection* base, format::variables&& args)
+		server_response server_node::blockstate_get_block_hash_by_number(http::connection*, format::variables&& args)
 		{
 			uint256_t hash = args[0].as_uint256();
 			auto chain = storages::chainstate();
@@ -1237,7 +1236,7 @@ namespace tangent
 
 			return server_response().success(algorithm::encoding::serialize_uint256(*block_number));
 		}
-		server_response server_node::txnstate_get_block_transactions_by_hash(http::connection* base, format::variables&& args)
+		server_response server_node::txnstate_get_block_transactions_by_hash(http::connection*, format::variables&& args)
 		{
 			uint256_t hash = args[0].as_uint256();
 			uint8_t unrolling = args.size() > 1 ? args[1].as_uint8() : 0;
@@ -1341,7 +1340,7 @@ namespace tangent
 				return server_response().success(std::move(data));
 			}
 		}
-		server_response server_node::txnstate_get_block_transactions_by_number(http::connection* base, format::variables&& args)
+		server_response server_node::txnstate_get_block_transactions_by_number(http::connection*, format::variables&& args)
 		{
 			uint64_t number = args[0].as_uint64();
 			uint8_t unrolling = args.size() > 1 ? args[1].as_uint8() : 0;
@@ -1429,7 +1428,7 @@ namespace tangent
 				return server_response().success(std::move(data));
 			}
 		}
-		server_response server_node::txnstate_get_block_receipts_by_hash(http::connection* base, format::variables&& args)
+		server_response server_node::txnstate_get_block_receipts_by_hash(http::connection*, format::variables&& args)
 		{
 			uint256_t hash = args[0].as_uint256();
 			uint8_t unrolling = args.size() > 1 ? args[1].as_uint8() : 0;
@@ -1473,7 +1472,7 @@ namespace tangent
 				return server_response().success(std::move(data));
 			}
 		}
-		server_response server_node::txnstate_get_block_receipts_by_number(http::connection* base, format::variables&& args)
+		server_response server_node::txnstate_get_block_receipts_by_number(http::connection*, format::variables&& args)
 		{
 			uint64_t number = args[0].as_uint64();
 			uint8_t unrolling = args.size() > 1 ? args[1].as_uint8() : 0;
@@ -1513,7 +1512,7 @@ namespace tangent
 				return server_response().success(std::move(data));
 			}
 		}
-		server_response server_node::txnstate_get_pending_transactions(http::connection* base, format::variables&& args)
+		server_response server_node::txnstate_get_pending_transactions(http::connection*, format::variables&& args)
 		{
 			uint64_t offset = args[0].as_uint64(), count = args[1].as_uint64();
 			if (!count || count > protocol::now().message.pages_per_query)
@@ -1555,7 +1554,7 @@ namespace tangent
 				return server_response().success(std::move(data));
 			}
 		}
-		server_response server_node::txnstate_get_transactions_by_owner(http::connection* base, format::variables&& args)
+		server_response server_node::txnstate_get_transactions_by_owner(http::connection*, format::variables&& args)
 		{
 			algorithm::pubkeyhash_t owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
@@ -1602,7 +1601,7 @@ namespace tangent
 				return server_response().success(std::move(data));
 			}
 		}
-		server_response server_node::txnstate_get_transaction_by_hash(http::connection* base, format::variables&& args)
+		server_response server_node::txnstate_get_transaction_by_hash(http::connection*, format::variables&& args)
 		{
 			uint256_t hash = args[0].as_uint256();
 			uint8_t unrolling = args.size() > 1 ? args[1].as_uint8() : 0;
@@ -1624,7 +1623,7 @@ namespace tangent
 				return server_response().success(transaction->as_tree());
 			}
 		}
-		server_response server_node::txnstate_get_raw_transaction_by_hash(http::connection* base, format::variables&& args)
+		server_response server_node::txnstate_get_raw_transaction_by_hash(http::connection*, format::variables&& args)
 		{
 			uint256_t hash = args[0].as_uint256();
 			auto chain = storages::chainstate();
@@ -1634,7 +1633,7 @@ namespace tangent
 
 			return server_response().success(format::variable((*transaction)->as_message().encode()));
 		}
-		server_response server_node::txnstate_get_receipt_by_transaction_hash(http::connection* base, format::variables&& args)
+		server_response server_node::txnstate_get_receipt_by_transaction_hash(http::connection*, format::variables&& args)
 		{
 			uint256_t hash = args[0].as_uint256();
 			auto chain = storages::chainstate();
@@ -1644,7 +1643,7 @@ namespace tangent
 
 			return server_response().success(receipt->as_tree());
 		}
-		server_response server_node::chainstate_call_transaction(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_call_transaction(http::connection*, format::variables&& args)
 		{
 			algorithm::pubkeyhash_t from;
 			if (!algorithm::signing::decode_address(args[1].as_string(), from))
@@ -1667,12 +1666,12 @@ namespace tangent
 			auto temp_transaction = transactions::call();
 			temp_transaction.asset = algorithm::asset::id_of_handle(args[0].as_string());
 			temp_transaction.call_to(to, args[3].as_string(), std::move(function_args));
-			temp_transaction.set_gas(decimal::zero(), ledger::block::get_transaction_gas_limit());
+			temp_transaction.set_gas(decimal::zero(), ledger::block_body::get_transaction_gas_limit());
 
-			auto temp_receipt = ledger::receipt();
+			auto temp_receipt = ledger::transaction_receipt();
 			temp_receipt.from = from;
 
-			ledger::block temp_block;
+			ledger::block_body temp_block;
 			temp_solver.apply_temporary_state(&temp_block, &temp_transaction, std::move(temp_receipt));
 
 			auto returning = format::tree();
@@ -1704,7 +1703,7 @@ namespace tangent
 			data.set("result", std::move(returning));
 			return server_response().success(std::move(data));
 		}
-		server_response server_node::chainstate_get_block_state_by_hash(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_block_state_by_hash(http::connection*, format::variables&& args)
 		{
 			uint256_t hash = args[0].as_uint256();
 			uint8_t unrolling = args.size() > 1 ? args[1].as_uint8() : 0;
@@ -1741,7 +1740,7 @@ namespace tangent
 				return server_response().success(std::move(data));
 			}
 		}
-		server_response server_node::chainstate_get_block_state_by_number(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_block_state_by_number(http::connection*, format::variables&& args)
 		{
 			uint64_t number = args[0].as_uint64();
 			uint8_t unrolling = args.size() > 1 ? args[1].as_uint8() : 0;
@@ -1770,7 +1769,7 @@ namespace tangent
 				return server_response().success(std::move(data));
 			}
 		}
-		server_response server_node::chainstate_get_block_gas_price_by_hash(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_block_gas_price_by_hash(http::connection*, format::variables&& args)
 		{
 			uint256_t hash = args[0].as_uint256();
 			algorithm::asset_id asset = algorithm::asset::id_of_handle(args[1].as_string());
@@ -1786,7 +1785,7 @@ namespace tangent
 
 			return server_response().success(format::variable(*price));
 		}
-		server_response server_node::chainstate_get_block_gas_price_by_number(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_block_gas_price_by_number(http::connection*, format::variables&& args)
 		{
 			uint64_t number = args[0].as_uint64();
 			algorithm::asset_id asset = algorithm::asset::id_of_handle(args[1].as_string());
@@ -1798,7 +1797,7 @@ namespace tangent
 
 			return server_response().success(format::variable(*price));
 		}
-		server_response server_node::chainstate_get_block_asset_price_by_hash(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_block_asset_price_by_hash(http::connection*, format::variables&& args)
 		{
 			uint256_t hash = args[0].as_uint256();
 			algorithm::asset_id asset1 = algorithm::asset::id_of_handle(args[1].as_string());
@@ -1815,7 +1814,7 @@ namespace tangent
 
 			return server_response().success(format::variable(*price));
 		}
-		server_response server_node::chainstate_get_block_asset_price_by_number(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_block_asset_price_by_number(http::connection*, format::variables&& args)
 		{
 			uint64_t number = args[0].as_uint64();
 			algorithm::asset_id asset1 = algorithm::asset::id_of_handle(args[1].as_string());
@@ -1828,7 +1827,7 @@ namespace tangent
 
 			return server_response().success(format::variable(*price));
 		}
-		server_response server_node::chainstate_get_uniform(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_uniform(http::connection*, format::variables&& args)
 		{
 			auto location = as_uniform_location(args[0].as_string(), args[1]);
 			if (!location)
@@ -1841,7 +1840,7 @@ namespace tangent
 
 			return server_response().success(uniform->value->as_tree());
 		}
-		server_response server_node::chainstate_get_multiform(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_multiform(http::connection*, format::variables&& args)
 		{
 			auto location = as_multiform_location(args[0].as_string(), args[1], args[2]);
 			if (!location)
@@ -1854,7 +1853,7 @@ namespace tangent
 
 			return server_response().success(multiform->value->as_tree());
 		}
-		server_response server_node::chainstate_get_multiforms_by_column(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_multiforms_by_column(http::connection*, format::variables&& args)
 		{
 			auto location = as_multiform_location(args[0].as_string(), args[1], format::variable());
 			if (!location)
@@ -1874,7 +1873,7 @@ namespace tangent
 				data.push(item.value->as_tree());
 			return server_response().success(std::move(data));
 		}
-		server_response server_node::chainstate_get_multiforms_by_column_filter(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_multiforms_by_column_filter(http::connection*, format::variables&& args)
 		{
 			auto location = as_multiform_location(args[0].as_string(), args[1], format::variable());
 			if (!location)
@@ -1886,7 +1885,7 @@ namespace tangent
 
 			auto filter = storages::result_filter::from(args[2].as_string(), args[3].as_uint256(), args[4].as_decimal().to_int8());
 			auto chain = storages::chainstate();
-			auto list = chain.get_multiforms_by_column(location->type, nullptr, location->column, 0, offset, count);
+			auto list = chain.get_multiforms_by_column_filter(location->type, nullptr, location->column, filter, 0, storages::result_range_window(offset, count));
 			if (!list)
 				return server_response().error(error_codes::not_found, "multiform not found");
 
@@ -1895,7 +1894,7 @@ namespace tangent
 				data.push(item.value->as_tree());
 			return server_response().success(std::move(data));
 		}
-		server_response server_node::chainstate_get_multiforms_by_row(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_multiforms_by_row(http::connection*, format::variables&& args)
 		{
 			auto location = as_multiform_location(args[0].as_string(), format::variable(), args[1]);
 			if (!location)
@@ -1915,7 +1914,7 @@ namespace tangent
 				data.push(item.value->as_tree());
 			return server_response().success(std::move(data));
 		}
-		server_response server_node::chainstate_get_multiforms_by_row_filter(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_multiforms_by_row_filter(http::connection*, format::variables&& args)
 		{
 			auto location = as_multiform_location(args[0].as_string(), format::variable(), args[1]);
 			if (!location)
@@ -1936,7 +1935,7 @@ namespace tangent
 				data.push(item.value->as_tree());
 			return server_response().success(std::move(data));
 		}
-		server_response server_node::chainstate_get_multiforms_count_by_column(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_multiforms_count_by_column(http::connection*, format::variables&& args)
 		{
 			auto location = as_multiform_location(args[0].as_string(), args[1], format::variable());
 			if (!location)
@@ -1949,7 +1948,7 @@ namespace tangent
 
 			return server_response().success(algorithm::encoding::serialize_uint256(*count));
 		}
-		server_response server_node::chainstate_get_multiforms_count_by_column_filter(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_multiforms_count_by_column_filter(http::connection*, format::variables&& args)
 		{
 			auto location = as_multiform_location(args[0].as_string(), args[1], format::variable());
 			if (!location)
@@ -1963,7 +1962,7 @@ namespace tangent
 
 			return server_response().success(algorithm::encoding::serialize_uint256(*count));
 		}
-		server_response server_node::chainstate_get_multiforms_count_by_row(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_multiforms_count_by_row(http::connection*, format::variables&& args)
 		{
 			auto location = as_multiform_location(args[0].as_string(), format::variable(), args[1]);
 			if (!location)
@@ -1976,7 +1975,7 @@ namespace tangent
 
 			return server_response().success(algorithm::encoding::serialize_uint256(*count));
 		}
-		server_response server_node::chainstate_get_multiforms_count_by_row_filter(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_multiforms_count_by_row_filter(http::connection*, format::variables&& args)
 		{
 			auto location = as_multiform_location(args[0].as_string(), format::variable(), args[1]);
 			if (!location)
@@ -1990,7 +1989,7 @@ namespace tangent
 
 			return server_response().success(algorithm::encoding::serialize_uint256(*count));
 		}
-		server_response server_node::chainstate_get_account_nonce(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_account_nonce(http::connection*, format::variables&& args)
 		{
 			algorithm::pubkeyhash_t owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
@@ -2001,7 +2000,7 @@ namespace tangent
 			auto* value = (states::account_nonce*)(state ? state->ptr() : nullptr);
 			return server_response().success(algorithm::encoding::serialize_uint256(value ? value->nonce : 1));
 		}
-		server_response server_node::chainstate_get_account_program(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_account_program(http::connection*, format::variables&& args)
 		{
 			algorithm::pubkeyhash_t owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
@@ -2011,7 +2010,7 @@ namespace tangent
 			auto state = chain.get_uniform(states::account_program::as_instance_type(), nullptr, states::account_program::as_instance_index(owner), 0);
 			return server_response().success(state ? state->value->as_tree() : format::variable());
 		}
-		server_response server_node::chainstate_get_account_uniform(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_account_uniform(http::connection*, format::variables&& args)
 		{
 			algorithm::pubkeyhash_t owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
@@ -2021,7 +2020,7 @@ namespace tangent
 			auto state = chain.get_uniform(states::account_uniform::as_instance_type(), nullptr, states::account_uniform::as_instance_index(owner, args[1].as_string()), 0);
 			return server_response().success(state ? state->value->as_tree() : format::variable());
 		}
-		server_response server_node::chainstate_get_account_multiform(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_account_multiform(http::connection*, format::variables&& args)
 		{
 			algorithm::pubkeyhash_t owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
@@ -2031,7 +2030,7 @@ namespace tangent
 			auto state = chain.get_multiform(states::account_multiform::as_instance_type(), nullptr, states::account_multiform::as_instance_column(owner, args[1].as_string()), states::account_multiform::as_instance_row(owner, args[2].as_string()), 0);
 			return server_response().success(state ? state->value->as_tree() : format::variable());
 		}
-		server_response server_node::chainstate_get_account_multiforms(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_account_multiforms(http::connection*, format::variables&& args)
 		{
 			algorithm::pubkeyhash_t owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
@@ -2051,7 +2050,7 @@ namespace tangent
 				data.push(item.value->as_tree());
 			return server_response().success(std::move(data));
 		}
-		server_response server_node::chainstate_get_account_delegation(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_account_delegation(http::connection*, format::variables&& args)
 		{
 			algorithm::pubkeyhash_t owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
@@ -2070,7 +2069,7 @@ namespace tangent
 			}
 			return server_response().success(std::move(result));
 		}
-		server_response server_node::chainstate_get_account_balance(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_account_balance(http::connection*, format::variables&& args)
 		{
 			algorithm::pubkeyhash_t owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
@@ -2081,7 +2080,7 @@ namespace tangent
 			auto state = chain.get_multiform(states::account_balance::as_instance_type(), nullptr, states::account_balance::as_instance_column(owner), states::account_balance::as_instance_row(asset), 0);
 			return server_response().success(state ? state->value->as_tree() : format::variable());
 		}
-		server_response server_node::chainstate_get_account_balances(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_account_balances(http::connection*, format::variables&& args)
 		{
 			algorithm::pubkeyhash_t owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
@@ -2101,7 +2100,7 @@ namespace tangent
 				data.push(item.value->as_tree());
 			return server_response().success(std::move(data));
 		}
-		server_response server_node::chainstate_get_validator_production(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_validator_production(http::connection*, format::variables&& args)
 		{
 			algorithm::pubkeyhash_t owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
@@ -2111,7 +2110,7 @@ namespace tangent
 			auto state = chain.get_multiform(states::validator_production::as_instance_type(), nullptr, states::validator_production::as_instance_column(owner), states::validator_production::as_instance_row(), 0);
 			return server_response().success(state ? state->value->as_tree() : format::variable());
 		}
-		server_response server_node::chainstate_get_validator_production_with_rewards(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_validator_production_with_rewards(http::connection*, format::variables&& args)
 		{
 			algorithm::pubkeyhash_t owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
@@ -2140,7 +2139,7 @@ namespace tangent
 			}
 			return server_response().success(std::move(result));
 		}
-		server_response server_node::chainstate_get_best_validator_producers(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_best_validator_producers(http::connection*, format::variables&& args)
 		{
 			uint256_t commitment = args[0].as_uint256();
 			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
@@ -2158,7 +2157,7 @@ namespace tangent
 				data.push(item.value->as_tree());
 			return server_response().success(std::move(data));
 		}
-		server_response server_node::chainstate_get_validator_production_reward(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_validator_production_reward(http::connection*, format::variables&& args)
 		{
 			algorithm::pubkeyhash_t owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
@@ -2169,7 +2168,7 @@ namespace tangent
 			auto state = chain.get_multiform(states::validator_production_reward::as_instance_type(), nullptr, states::validator_production_reward::as_instance_column(owner), states::validator_production_reward::as_instance_row(asset), 0);
 			return server_response().success(state ? state->value->as_tree() : format::variable());
 		}
-		server_response server_node::chainstate_get_validator_production_rewards(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_validator_production_rewards(http::connection*, format::variables&& args)
 		{
 			algorithm::pubkeyhash_t owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
@@ -2189,7 +2188,7 @@ namespace tangent
 				data.push(item.value->as_tree());
 			return server_response().success(std::move(data));
 		}
-		server_response server_node::chainstate_get_validator_participation(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_validator_participation(http::connection*, format::variables&& args)
 		{
 			algorithm::pubkeyhash_t owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
@@ -2199,7 +2198,7 @@ namespace tangent
 			auto state = chain.get_multiform(states::validator_participation::as_instance_type(), nullptr, states::validator_participation::as_instance_column(owner), states::validator_participation::as_instance_row(), 0);
 			return server_response().success(state ? state->value->as_tree() : format::variable());
 		}
-		server_response server_node::chainstate_get_validator_participation_with_rewards(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_validator_participation_with_rewards(http::connection*, format::variables&& args)
 		{
 			algorithm::pubkeyhash_t owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
@@ -2228,7 +2227,7 @@ namespace tangent
 			}
 			return server_response().success(std::move(result));
 		}
-		server_response server_node::chainstate_get_validator_participations(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_validator_participations(http::connection*, format::variables&& args)
 		{
 			algorithm::pubkeyhash_t owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
@@ -2248,7 +2247,7 @@ namespace tangent
 				data.push(item.value->as_tree());
 			return server_response().success(std::move(data));
 		}
-		server_response server_node::chainstate_get_best_validator_participations(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_best_validator_participations(http::connection*, format::variables&& args)
 		{
 			uint256_t commitment = args[0].as_uint256();
 			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
@@ -2266,7 +2265,7 @@ namespace tangent
 				data.push(item.value->as_tree());
 			return server_response().success(std::move(data));
 		}
-		server_response server_node::chainstate_get_validator_participation_reward(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_validator_participation_reward(http::connection*, format::variables&& args)
 		{
 			algorithm::pubkeyhash_t owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
@@ -2277,7 +2276,7 @@ namespace tangent
 			auto state = chain.get_multiform(states::validator_participation_reward::as_instance_type(), nullptr, states::validator_participation_reward::as_instance_column(owner), states::validator_participation_reward::as_instance_row(asset), 0);
 			return server_response().success(state ? state->value->as_tree() : format::variable());
 		}
-		server_response server_node::chainstate_get_validator_participation_rewards(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_validator_participation_rewards(http::connection*, format::variables&& args)
 		{
 			algorithm::pubkeyhash_t owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
@@ -2297,7 +2296,7 @@ namespace tangent
 				data.push(item.value->as_tree());
 			return server_response().success(std::move(data));
 		}
-		server_response server_node::chainstate_get_validator_participation_ref(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_validator_participation_ref(http::connection*, format::variables&& args)
 		{
 			algorithm::pubkeyhash_t owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
@@ -2310,12 +2309,12 @@ namespace tangent
 
 			if (!algorithm::signing::decode_address(args[3].as_string(), ref.owner))
 				return server_response().error(error_codes::bad_params, "account address not valid");
-			
+
 			auto chain = storages::chainstate();
 			auto state = chain.get_multiform(states::validator_participation_ref::as_instance_type(), nullptr, states::validator_participation_ref::as_instance_column(owner), states::validator_participation_ref::as_instance_row(ref), 0);
 			return server_response().success(state ? state->value->as_tree() : format::variable());
 		}
-		server_response server_node::chainstate_get_validator_participation_refs(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_validator_participation_refs(http::connection*, format::variables&& args)
 		{
 			algorithm::pubkeyhash_t owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
@@ -2335,7 +2334,7 @@ namespace tangent
 				data.push(item.value->as_tree());
 			return server_response().success(std::move(data));
 		}
-		server_response server_node::chainstate_get_validator_attestation(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_validator_attestation(http::connection*, format::variables&& args)
 		{
 			algorithm::pubkeyhash_t owner;
 			auto asset = algorithm::asset::id_of_handle(args[0].as_string());
@@ -2346,7 +2345,7 @@ namespace tangent
 			auto state = chain.get_multiform(states::validator_attestation::as_instance_type(), nullptr, states::validator_attestation::as_instance_column(owner), states::validator_attestation::as_instance_row(asset), 0);
 			return server_response().success(state ? state->value->as_tree() : format::variable());
 		}
-		server_response server_node::chainstate_get_validator_attestation_with_rewards(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_validator_attestation_with_rewards(http::connection*, format::variables&& args)
 		{
 			algorithm::pubkeyhash_t owner;
 			auto asset = algorithm::asset::id_of_handle(args[0].as_string());
@@ -2381,7 +2380,7 @@ namespace tangent
 			}
 			return server_response().success(std::move(result));
 		}
-		server_response server_node::chainstate_get_validator_attestations(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_validator_attestations(http::connection*, format::variables&& args)
 		{
 			algorithm::pubkeyhash_t owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
@@ -2401,7 +2400,7 @@ namespace tangent
 				data.push(item.value->as_tree());
 			return server_response().success(std::move(data));
 		}
-		server_response server_node::chainstate_get_validator_attestations_with_rewards(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_validator_attestations_with_rewards(http::connection*, format::variables&& args)
 		{
 			algorithm::pubkeyhash_t owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
@@ -2455,7 +2454,7 @@ namespace tangent
 			}
 			return server_response().success(std::move(data));
 		}
-		server_response server_node::chainstate_get_best_validator_attestations(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_best_validator_attestations(http::connection*, format::variables&& args)
 		{
 			auto asset = algorithm::asset::id_of_handle(args[0].as_string());
 			uint256_t commitment = args[1].as_uint256();
@@ -2474,7 +2473,7 @@ namespace tangent
 				data.push(item.value->as_tree());
 			return server_response().success(std::move(data));
 		}
-		server_response server_node::chainstate_get_best_validator_attestations_for_selection(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_best_validator_attestations_for_selection(http::connection*, format::variables&& args)
 		{
 			auto asset = algorithm::asset::id_of_handle(args[0].as_string());
 			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
@@ -2519,7 +2518,7 @@ namespace tangent
 					if (accounts->size() != count || next->has("master"))
 						break;
 				}
-				
+
 				auto tokens = next->set("balances", format::tree::list());
 				while (true)
 				{
@@ -2540,7 +2539,7 @@ namespace tangent
 			}
 			return server_response().success(std::move(data));
 		}
-		server_response server_node::chainstate_get_validator_attestation_reward(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_validator_attestation_reward(http::connection*, format::variables&& args)
 		{
 			algorithm::pubkeyhash_t owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
@@ -2551,7 +2550,7 @@ namespace tangent
 			auto state = chain.get_multiform(states::validator_attestation_reward::as_instance_type(), nullptr, states::validator_attestation_reward::as_instance_column(owner), states::validator_attestation_reward::as_instance_row(asset), 0);
 			return server_response().success(state ? state->value->as_tree() : format::variable());
 		}
-		server_response server_node::chainstate_get_validator_attestation_rewards(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_validator_attestation_rewards(http::connection*, format::variables&& args)
 		{
 			algorithm::pubkeyhash_t owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
@@ -2571,7 +2570,7 @@ namespace tangent
 				data.push(item.value->as_tree());
 			return server_response().success(std::move(data));
 		}
-		server_response server_node::chainstate_get_bridge_balance(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_bridge_balance(http::connection*, format::variables&& args)
 		{
 			algorithm::pubkeyhash_t owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
@@ -2582,7 +2581,7 @@ namespace tangent
 			auto state = chain.get_multiform(states::bridge_balance::as_instance_type(), nullptr, states::bridge_balance::as_instance_column(owner), states::bridge_balance::as_instance_row(asset), 0);
 			return server_response().success(state ? state->value->as_tree() : format::variable());
 		}
-		server_response server_node::chainstate_get_bridge_balances(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_bridge_balances(http::connection*, format::variables&& args)
 		{
 			algorithm::pubkeyhash_t owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
@@ -2602,7 +2601,7 @@ namespace tangent
 				data.push(item.value->as_tree());
 			return server_response().success(std::move(data));
 		}
-		server_response server_node::chainstate_get_best_bridge_balances(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_best_bridge_balances(http::connection*, format::variables&& args)
 		{
 			auto asset = algorithm::asset::id_of_handle(args[0].as_string());
 			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
@@ -2620,7 +2619,7 @@ namespace tangent
 				data.push(item.value->as_tree());
 			return server_response().success(std::move(data));
 		}
-		server_response server_node::chainstate_get_best_bridge_balances_for_selection(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_best_bridge_balances_for_selection(http::connection*, format::variables&& args)
 		{
 			auto asset = algorithm::asset::id_of_handle(args[0].as_string());
 			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
@@ -2689,7 +2688,7 @@ namespace tangent
 			}
 			return server_response().success(std::move(data));
 		}
-		server_response server_node::chainstate_get_bridge_account(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_bridge_account(http::connection*, format::variables&& args)
 		{
 			algorithm::pubkeyhash_t proposer;
 			if (!algorithm::signing::decode_address(args[1].as_string(), proposer))
@@ -2705,7 +2704,7 @@ namespace tangent
 			auto* value = (states::bridge_account*)(state ? state->ptr() : nullptr);
 			return server_response().success(value ? value->as_tree() : format::tree());
 		}
-		server_response server_node::chainstate_get_bridge_accounts(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_bridge_accounts(http::connection*, format::variables&& args)
 		{
 			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
 			if (!count || count > protocol::now().message.pages_per_query)
@@ -2726,7 +2725,7 @@ namespace tangent
 				data.push(item.value->as_tree());
 			return server_response().success(std::move(data));
 		}
-		server_response server_node::chainstate_get_witness_program(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_witness_program(http::connection*, format::variables&& args)
 		{
 			auto chain = storages::chainstate();
 			auto state = chain.get_uniform(states::witness_program::as_instance_type(), nullptr, states::witness_program::as_instance_index(format::util::decode_0xhex(args[0].as_string())), 0);
@@ -2738,13 +2737,13 @@ namespace tangent
 			data.set("storage", code ? format::variable(*code) : format::variable());
 			return server_response().success(std::move(data));
 		}
-		server_response server_node::chainstate_get_witness_event(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_witness_event(http::connection*, format::variables&& args)
 		{
 			auto chain = storages::chainstate();
 			auto state = chain.get_uniform(states::witness_event::as_instance_type(), nullptr, states::witness_event::as_instance_index(args[0].as_uint256()), 0);
 			return server_response().success(state ? state->value->as_tree() : format::variable());
 		}
-		server_response server_node::chainstate_get_witness_account(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_witness_account(http::connection*, format::variables&& args)
 		{
 			algorithm::pubkeyhash_t owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
@@ -2755,7 +2754,7 @@ namespace tangent
 			auto state = chain.get_multiform(states::witness_account::as_instance_type(), nullptr, states::witness_account::as_instance_column(owner), states::witness_account::as_instance_row(asset, args[2].as_string()), 0);
 			return server_response().success(state ? state->value->as_tree() : format::variable());
 		}
-		server_response server_node::chainstate_get_witness_account_tagged(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_witness_account_tagged(http::connection*, format::variables&& args)
 		{
 			auto asset = algorithm::asset::id_of_handle(args[0].as_string());
 			auto executor = ledger::executor_context(nullptr);
@@ -2765,7 +2764,7 @@ namespace tangent
 
 			return server_response().success(result->as_tree());
 		}
-		server_response server_node::chainstate_get_witness_accounts(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_witness_accounts(http::connection*, format::variables&& args)
 		{
 			algorithm::pubkeyhash_t owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
@@ -2785,7 +2784,7 @@ namespace tangent
 				data.push(item.value->as_tree());
 			return server_response().success(std::move(data));
 		}
-		server_response server_node::chainstate_get_witness_accounts_by_purpose(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_witness_accounts_by_purpose(http::connection*, format::variables&& args)
 		{
 			algorithm::pubkeyhash_t owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
@@ -2817,21 +2816,21 @@ namespace tangent
 				data.push(item.value->as_tree());
 			return server_response().success(std::move(data));
 		}
-		server_response server_node::chainstate_get_witness_transaction(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_witness_transaction(http::connection*, format::variables&& args)
 		{
 			auto asset = algorithm::asset::id_of_handle(args[0].as_string());
 			auto chain = storages::chainstate();
 			auto state = chain.get_uniform(states::witness_transaction::as_instance_type(), nullptr, states::witness_transaction::as_instance_index(asset, args[1].as_string()), 0);
 			return server_response().success(state ? state->value->as_tree() : format::variable());
 		}
-		server_response server_node::chainstate_get_asset_holders(http::connection* base, format::variables&& args)
+		server_response server_node::chainstate_get_asset_holders(http::connection*, format::variables&& args)
 		{
 			auto chain = storages::chainstate();
 			auto asset = algorithm::asset::id_of_handle(args[0].as_string());
 			auto count = chain.get_multiforms_count_by_row_filter(states::account_balance::as_instance_type(), nullptr, states::account_balance::as_instance_row(asset), storages::result_filter::greater_equal(args[1].as_uint256(), -1), 0);
 			return server_response().success(format::variable(count.or_else(0)));
 		}
-		server_response server_node::mempoolstate_add_node(http::connection* base, format::variables&& args)
+		server_response server_node::mempoolstate_add_node(http::connection*, format::variables&& args)
 		{
 			auto endpoint = system_endpoint(args[0].as_string());
 			if (!endpoint.is_valid())
@@ -2844,7 +2843,7 @@ namespace tangent
 
 			return server_response().success(format::variable());
 		}
-		server_response server_node::mempoolstate_clear_node(http::connection* base, format::variables&& args)
+		server_response server_node::mempoolstate_clear_node(http::connection*, format::variables&& args)
 		{
 			auto endpoint = system_endpoint(args[0].as_string());
 			if (!endpoint.is_valid())
@@ -2857,7 +2856,7 @@ namespace tangent
 
 			return server_response().success(format::variable());
 		}
-		server_response server_node::mempoolstate_get_closest_node(http::connection* base, format::variables&& args)
+		server_response server_node::mempoolstate_get_closest_node(http::connection*, format::variables&& args)
 		{
 			size_t offset = args.size() > 0 ? args[0].as_uint64() : 0;
 			auto mempool = storages::mempoolstate();
@@ -2870,7 +2869,7 @@ namespace tangent
 			result.set("wallet", validator->second.as_public_tree());
 			return server_response().success(std::move(result));
 		}
-		server_response server_node::mempoolstate_get_closest_node_counter(http::connection* base, format::variables&& args)
+		server_response server_node::mempoolstate_get_closest_node_counter(http::connection*, format::variables&&)
 		{
 			auto mempool = storages::mempoolstate();
 			auto count = mempool.get_nodes_count();
@@ -2879,7 +2878,7 @@ namespace tangent
 
 			return server_response().success(algorithm::encoding::serialize_uint256(*count));
 		}
-		server_response server_node::mempoolstate_get_node(http::connection* base, format::variables&& args)
+		server_response server_node::mempoolstate_get_node(http::connection*, format::variables&& args)
 		{
 			auto endpoint = system_endpoint(args[0].as_string());
 			if (!endpoint.is_valid())
@@ -2895,7 +2894,7 @@ namespace tangent
 			result.set("wallet", validator->second.as_public_tree());
 			return server_response().success(std::move(result));
 		}
-		server_response server_node::mempoolstate_get_addresses(http::connection* base, format::variables&& args)
+		server_response server_node::mempoolstate_get_addresses(http::connection*, format::variables&& args)
 		{
 			uint64_t offset = args[0].as_uint64(), count = args[1].as_uint64();
 			if (!count || count > protocol::now().message.items_per_query)
@@ -2934,7 +2933,7 @@ namespace tangent
 				data.push(format::variable(system_endpoint::to_uri(address)));
 			return server_response().success(std::move(data));
 		}
-		server_response server_node::mempoolstate_get_gas_price(http::connection* base, format::variables&& args)
+		server_response server_node::mempoolstate_get_gas_price(http::connection*, format::variables&& args)
 		{
 			algorithm::asset_id asset = algorithm::asset::id_of_handle(args[0].as_string());
 			double percentile = args.size() > 1 ? args[1].as_double() : 0.50;
@@ -2944,14 +2943,14 @@ namespace tangent
 			auto tip = chain.get_latest_block_header();
 			auto price = mempool.get_gas_price(asset, percentile);
 			if (!mempool_only && !price && tip)
-				price = chain.get_block_gas_price(tip->number, asset, percentile);		
+				price = chain.get_block_gas_price(tip->number, asset, percentile);
 
 			auto result = format::tree::map();
 			result.set("price", format::variable(price ? *price : decimal::zero()));
 			result.set("paid", format::variable(tip && tip->network_congestion()));
 			return server_response().success(std::move(result));
 		}
-		server_response server_node::mempoolstate_get_asset_price(http::connection* base, format::variables&& args)
+		server_response server_node::mempoolstate_get_asset_price(http::connection*, format::variables&& args)
 		{
 			algorithm::asset_id asset1 = algorithm::asset::id_of_handle(args[0].as_string());
 			algorithm::asset_id asset2 = algorithm::asset::id_of_handle(args[1].as_string());
@@ -2963,29 +2962,29 @@ namespace tangent
 
 			return server_response().success(format::variable(*price));
 		}
-		server_response server_node::mempoolstate_simulate_transaction(http::connection* base, format::variables&& args)
+		server_response server_node::mempoolstate_simulate_transaction(http::connection*, format::variables&& args)
 		{
 			auto data = format::util::decode_stream(args[0].as_string());
 			auto message = format::ro_stream(data);
-			uptr<ledger::transaction> candidate_tx = transactions::resolver::from_stream(message);
+			uptr<ledger::transaction_message> candidate_tx = transactions::resolver::from_stream(message);
 			if (!candidate_tx || !candidate_tx->load(message))
 				return server_response().error(error_codes::bad_params, "invalid message");
 
-			auto receipt = ledger::receipt();
+			auto receipt = ledger::transaction_receipt();
 			auto gas_limit = ledger::executor_context::calculate_tx_gas(*candidate_tx, &receipt);
 			if (!gas_limit)
 				return server_response().error(error_codes::bad_params, gas_limit.error().message());
 
 			return server_response().success(receipt.as_tree());
 		}
-		server_response server_node::mempoolstate_submit_transaction(http::connection* base, format::variables&& args, ledger::transaction* prebuilt)
+		server_response server_node::mempoolstate_submit_transaction(http::connection*, format::variables&& args, ledger::transaction_message* prebuilt)
 		{
 			if (!consensus_service)
 				return server_response().error(error_codes::bad_request, "validator node disabled");
 
 			auto data = prebuilt ? string() : format::util::decode_stream(args[0].as_string());
 			auto message = format::ro_stream(data);
-			uptr<ledger::transaction> candidate_tx = prebuilt ? prebuilt : transactions::resolver::from_stream(message);
+			uptr<ledger::transaction_message> candidate_tx = prebuilt ? prebuilt : transactions::resolver::from_stream(message);
 			if (!prebuilt)
 			{
 				if (!candidate_tx || !candidate_tx->load(message))
@@ -2999,7 +2998,7 @@ namespace tangent
 
 			return server_response().success(format::variable(algorithm::encoding::encode_0xhex256(candidate_hash)));
 		}
-		server_response server_node::mempoolstate_reject_transaction(http::connection* base, format::variables&& args)
+		server_response server_node::mempoolstate_reject_transaction(http::connection*, format::variables&& args)
 		{
 			uint256_t hash = args[0].as_uint256();
 			auto mempool = storages::mempoolstate();
@@ -3009,7 +3008,7 @@ namespace tangent
 
 			return server_response().success(format::variable());
 		}
-		server_response server_node::mempoolstate_get_transaction_by_hash(http::connection* base, format::variables&& args)
+		server_response server_node::mempoolstate_get_transaction_by_hash(http::connection*, format::variables&& args)
 		{
 			uint256_t hash = args[0].as_uint256();
 			auto mempool = storages::mempoolstate();
@@ -3019,7 +3018,7 @@ namespace tangent
 
 			return server_response().success((*transaction)->as_tree());
 		}
-		server_response server_node::mempoolstate_get_raw_transaction_by_hash(http::connection* base, format::variables&& args)
+		server_response server_node::mempoolstate_get_raw_transaction_by_hash(http::connection*, format::variables&& args)
 		{
 			uint256_t hash = args[0].as_uint256();
 			auto mempool = storages::mempoolstate();
@@ -3029,16 +3028,16 @@ namespace tangent
 
 			return server_response().success(format::variable((*transaction)->as_message().encode()));
 		}
-		server_response server_node::mempoolstate_get_next_account_nonce(http::connection* base, format::variables&& args)
+		server_response server_node::mempoolstate_get_next_account_nonce(http::connection*, format::variables&& args)
 		{
 			algorithm::pubkeyhash_t owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
 				return server_response().error(error_codes::bad_params, "owner address not valid");
-			
+
 			auto wallet = ledger::wallet::from_public_key_hash(owner);
 			return server_response().success(format::variable(wallet.get_latest_nonce().or_else(0)));
 		}
-		server_response server_node::mempoolstate_get_transactions(http::connection* base, format::variables&& args)
+		server_response server_node::mempoolstate_get_transactions(http::connection*, format::variables&& args)
 		{
 			uint8_t flags = args[0].as_boolean() ? (uint8_t)storages::transaction_queue::commitment : 0;
 			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
@@ -3062,7 +3061,7 @@ namespace tangent
 
 			return server_response().success(std::move(data));
 		}
-		server_response server_node::mempoolstate_get_transactions_by_owner(http::connection* base, format::variables&& args)
+		server_response server_node::mempoolstate_get_transactions_by_owner(http::connection*, format::variables&& args)
 		{
 			algorithm::pubkeyhash_t owner;
 			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
@@ -3098,7 +3097,7 @@ namespace tangent
 				return server_response().success(std::move(data));
 			}
 		}
-		server_response server_node::validatorstate_compact(http::connection* base, format::variables&& args)
+		server_response server_node::validatorstate_compact(http::connection*, format::variables&& args)
 		{
 			auto chain = storages::chainstate();
 			auto status = chain.compact(args[0].as_uint64());
@@ -3107,7 +3106,7 @@ namespace tangent
 
 			return server_response().success(format::variable());
 		}
-		server_response server_node::validatorstate_revert(http::connection* base, format::variables&& args)
+		server_response server_node::validatorstate_revert(http::connection*, format::variables&& args)
 		{
 			auto chain = storages::chainstate();
 			auto block = chain.get_block_by_number(args[0].as_uint64());
@@ -3142,7 +3141,7 @@ namespace tangent
 			result.set("is_fork", format::variable(checkpoint->is_fork));
 			return server_response().success(std::move(result));
 		}
-		server_response server_node::validatorstate_reorganize(http::connection* base, format::variables&& args)
+		server_response server_node::validatorstate_reorganize(http::connection*, format::variables&&)
 		{
 			auto chain = storages::chainstate();
 			auto checkpoint = ledger::block_checkpoint();
@@ -3165,7 +3164,7 @@ namespace tangent
 			result.set("is_fork", format::variable(checkpoint.is_fork));
 			return server_response().success(std::move(result));
 		}
-		server_response server_node::validatorstate_verify(http::connection* base, format::variables&& args)
+		server_response server_node::validatorstate_verify(http::connection*, format::variables&& args)
 		{
 			uint64_t count = args[1].as_uint64();
 			uint64_t current_number = args[0].as_uint64();
@@ -3173,7 +3172,6 @@ namespace tangent
 			bool validate = args.size() > 2 ? args[2].as_boolean() : false;
 			auto chain = storages::chainstate();
 			auto checkpoint_number = chain.get_checkpoint_block_number().or_else(0);
-			auto tip_number = chain.get_latest_block_number().or_else(0);
 			auto parent_block = current_number > 1 ? chain.get_block_header_by_number(current_number - 1) : expects_lr<ledger::block_header>(layer_exception());
 			auto data = format::tree::list();
 			while (current_number < target_number)
@@ -3208,7 +3206,7 @@ namespace tangent
 			}
 			return server_response().success(std::move(data));
 		}
-		server_response server_node::validatorstate_accept_node(http::connection* base, format::variables&& args)
+		server_response server_node::validatorstate_accept_node(http::connection*, format::variables&& args)
 		{
 			if (!consensus_service)
 				return server_response().error(error_codes::bad_request, "validator node disabled");
@@ -3223,7 +3221,7 @@ namespace tangent
 
 			return server_response().success(format::variable());
 		}
-		server_response server_node::validatorstate_reject_node(http::connection* base, format::variables&& args)
+		server_response server_node::validatorstate_reject_node(http::connection*, format::variables&& args)
 		{
 			if (!consensus_service)
 				return server_response().error(error_codes::bad_request, "validator node disabled");
@@ -3240,7 +3238,7 @@ namespace tangent
 			node->abort("manually closed");
 			return server_response().success(format::variable());
 		}
-		server_response server_node::validatorstate_get_node(http::connection* base, format::variables&& args)
+		server_response server_node::validatorstate_get_node(http::connection*, format::variables&& args)
 		{
 			if (!consensus_service)
 				return server_response().error(error_codes::bad_request, "validator node disabled");
@@ -3261,7 +3259,7 @@ namespace tangent
 			result.set("network", node->as_tree());
 			return server_response().success(std::move(result));
 		}
-		server_response server_node::validatorstate_get_blockchains(http::connection* base, format::variables&& args)
+		server_response server_node::validatorstate_get_blockchains(http::connection*, format::variables&&)
 		{
 			auto* bridge = superchain::bridge::get();
 			auto data = format::tree::list();
@@ -3322,7 +3320,7 @@ namespace tangent
 			}
 			return server_response().success(std::move(data));
 		}
-		server_response server_node::validatorstate_get_wallet(http::connection* base, format::variables&& args)
+		server_response server_node::validatorstate_get_wallet(http::connection*, format::variables&&)
 		{
 			if (!consensus_service)
 				return server_response().error(error_codes::bad_request, "validator node disabled");
@@ -3330,7 +3328,7 @@ namespace tangent
 			auto& [validator, wallet] = *consensus_service->runner_descriptor;
 			return server_response().success(wallet.as_tree());
 		}
-		server_response server_node::validatorstate_set_wallet(http::connection* base, format::variables&& args)
+		server_response server_node::validatorstate_set_wallet(http::connection*, format::variables&& args)
 		{
 			if (!consensus_service)
 				return server_response().error(error_codes::bad_request, "validator node disabled");
@@ -3360,7 +3358,7 @@ namespace tangent
 
 			return server_response().success(wallet.as_tree());
 		}
-		server_response server_node::validatorstate_status(http::connection* base, format::variables&& args)
+		server_response server_node::validatorstate_status(http::connection*, format::variables&&)
 		{
 			if (!consensus_service)
 				return server_response().error(error_codes::bad_request, "validator node disabled");
@@ -3462,7 +3460,7 @@ namespace tangent
 			data.set("checkpoint", algorithm::encoding::serialize_uint256(chain.get_checkpoint_block_number().or_else(0)));
 			return server_response().success(std::move(data));
 		}
-		server_response server_node::validatorstate_submit_block(http::connection* base, format::variables&& args)
+		server_response server_node::validatorstate_submit_block(http::connection*, format::variables&&)
 		{
 			if (!consensus_service)
 				return server_response().error(error_codes::bad_request, "validator node disabled");

@@ -776,12 +776,12 @@ namespace tangent
 		class factory : public singleton<factory>
 		{
 		private:
-			hash_map<string, cmodule> modules;
-			uptr<compiler> compiler;
-			uptr<virtual_machine> vm;
-			string compiler_log;
 			std::recursive_mutex mutex;
-			bool debugger_tools;
+			hash_map<string, cmodule> modules;
+			uptr<virtual_machine> vm;
+			uptr<compiler> vmc;
+			string vmc_log;
+			bool vmc_tools;
 			void* strings;
 
 		public:

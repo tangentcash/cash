@@ -202,7 +202,7 @@ namespace tangent
 				return index < scripts.size() && index < public_keys.size() && index < values.size() && index < types.size();
 			}
 
-			bitcoin::bitcoin(const algorithm::asset_id& new_asset) noexcept : translation_utxo(new_asset)
+			bitcoin::bitcoin(const algorithm::asset_id& new_asset) noexcept : utxo_translation_unit(new_asset)
 			{
 				btc_ecc_set_context(algorithm::signing::get_context());
 				netdata.composition = algorithm::composition::type::secp256k1;
@@ -272,7 +272,7 @@ namespace tangent
 				}
 				coreturn expects_rt<vector<block_log>>(std::move(results));
 			}
-			expects_promise_rt<computed_transaction> bitcoin::link_transaction(uint64_t block_height, const std::string_view& block_hash, format::tree& transaction_data)
+			expects_promise_rt<computed_transaction> bitcoin::link_transaction(uint64_t, const std::string_view&, format::tree& transaction_data)
 			{
 				if (!transaction_data.is_map())
 				{
@@ -657,7 +657,7 @@ namespace tangent
 				size_t index = 0;
 				for (auto& input : *possible_inputs)
 				{
-					auto hash = prepare_transaction_input(context, input, index);
+					auto hash = prepare_transaction_input(context, index);
 					if (!hash)
 						coreturn expects_rt<prepared_transaction>(remote_exception(std::move(hash.error().message())));
 
@@ -721,7 +721,7 @@ namespace tangent
 				size_t index = 0;
 				for (auto& input : prepared.inputs)
 				{
-					auto hash = prepare_transaction_input(context, input.utxo, index);
+					auto hash = prepare_transaction_input(context, index);
 					if (!hash)
 						return hash.error();
 					else if (input.message.size() != hash->size() || memcmp(input.message.data(), hash->data(), hash->size()) != 0)
@@ -892,7 +892,6 @@ namespace tangent
 			}
 			expects_lr<string> bitcoin::decode_address(const std::string_view& address)
 			{
-				auto* chain = get_chain();
 				uint8_t data[256]; size_t data_size = sizeof(data) - 1;
 				switch (parse_address(address, data + 1, &data_size))
 				{
@@ -1015,7 +1014,7 @@ namespace tangent
 			{
 				return netdata;
 			}
-			expects_lr<string> bitcoin::prepare_transaction_input(btc_tx_context& context, const coin_utxo& output, size_t index)
+			expects_lr<string> bitcoin::prepare_transaction_input(btc_tx_context& context, size_t index)
 			{
 				if (!context.is_in_range(index))
 					return layer_exception("invalid context input index");
@@ -1408,7 +1407,7 @@ namespace tangent
 				}
 				if (chain->bech32_hrp[0] == '\0' || stringify::starts_with(address, chain->bech32_hrp))
 				{
-					int32_t witness_version = 0; char hrp_actual[84] = { 0 };
+					int32_t witness_version = 0;
 					if (bech32_address_decode(&witness_version, data, &data_size, chain->bech32_hrp, address_data.c_str()))
 					{
 						if (data_out && data_size_out)

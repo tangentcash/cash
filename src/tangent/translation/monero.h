@@ -10,7 +10,7 @@ namespace tangent
 	{
 		namespace translations
 		{
-			class monero : public translation_utxo
+			class monero : public utxo_translation_unit
 			{
 			public:
 				class nd_call

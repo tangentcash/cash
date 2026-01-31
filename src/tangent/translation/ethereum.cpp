@@ -323,7 +323,7 @@ namespace tangent
 				return "eth_sendRawTransaction";
 			}
 
-			ethereum::ethereum(const algorithm::asset_id& new_asset) noexcept : translation(new_asset)
+			ethereum::ethereum(const algorithm::asset_id& new_asset) noexcept : translation_unit(new_asset)
 			{
 				netdata.composition = algorithm::composition::type::secp256k1;
 				netdata.routing = routing_policy::account;
@@ -499,7 +499,7 @@ namespace tangent
 				}
 				coreturn expects_rt<vector<block_log>>(std::move(results));
 			}
-			expects_promise_rt<computed_transaction> ethereum::link_transaction(uint64_t block_height, const std::string_view& block_hash, format::tree& transaction_data)
+			expects_promise_rt<computed_transaction> ethereum::link_transaction(uint64_t, const std::string_view&, format::tree& transaction_data)
 			{
 				auto* chain = get_chain();
 				string data = transaction_data.child_var("input").as_blob();

@@ -59,7 +59,7 @@ namespace tangent
 				return "sendTransaction";
 			}
 
-			solana::solana(const algorithm::asset_id& new_asset) noexcept : translation(new_asset)
+			solana::solana(const algorithm::asset_id& new_asset) noexcept : translation_unit(new_asset)
 			{
 				netdata.composition = algorithm::composition::type::ed25519;
 				netdata.routing = routing_policy::account;
@@ -123,7 +123,7 @@ namespace tangent
 				}
 				coreturn expects_rt<vector<block_log>>(std::move(results));
 			}
-			expects_promise_rt<computed_transaction> solana::link_transaction(uint64_t block_height, const std::string_view& block_hash, format::tree& transaction_data)
+			expects_promise_rt<computed_transaction> solana::link_transaction(uint64_t, const std::string_view&, format::tree& transaction_data)
 			{
 				auto* error = transaction_data.child("meta.status.Err");
 				if (error != nullptr)

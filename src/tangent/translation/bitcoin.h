@@ -12,7 +12,7 @@ namespace tangent
 	{
 		namespace translations
 		{
-			class bitcoin : public translation_utxo
+			class bitcoin : public utxo_translation_unit
 			{
 			public:
 				enum class address_format
@@ -95,7 +95,7 @@ namespace tangent
 				virtual expects_lr<string> decode_transaction_id(const std::string_view& transaction_id) override;
 				virtual expects_lr<address_map> to_addresses(const std::string_view& public_key) override;
 				virtual const chainparams& get_chainparams() const override;
-				virtual expects_lr<string> prepare_transaction_input(btc_tx_context& context, const coin_utxo& output, size_t index);
+				virtual expects_lr<string> prepare_transaction_input(btc_tx_context& context, size_t index);
 				virtual expects_lr<void> finalize_transaction_input(btc_tx_context& context, const prepared_transaction::signable_coin_utxo& output, size_t index);
 				virtual expects_lr<void> add_transaction_input(btc_tx_context& context, const coin_utxo& output, const std::string_view& public_key);
 				virtual expects_lr<void> add_transaction_output(btc_tx_context& context, const std::string_view& address, const decimal& value);

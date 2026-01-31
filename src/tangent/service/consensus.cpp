@@ -278,7 +278,7 @@ namespace tangent
 			bytes_used_in_window += bytes;
 		}
 
-		relay::relay(node_type new_type, void* new_instance) : aborted(false), type(new_type), instance(new_instance), counter(0), bandwidth(1000 * 1000 * protocol::now().user.tcp.mbps_per_socket), deferred_pull(INVALID_TASK_ID), handshake_time(protocol::now().time.now())
+		relay::relay(node_type new_type, void* new_instance) : aborted(false), type(new_type), instance(new_instance), counter(0), bandwidth(1000 * 1000 * protocol::now().user.tcp.mbps_per_socket), handshake_time(protocol::now().time.now()), deferred_pull(INVALID_TASK_ID)
 		{
 			VI_ASSERT(instance != nullptr, "instance should be set");
 			switch (type)
@@ -898,7 +898,7 @@ namespace tangent
 			runner_descriptor = &it->second;
 			return expectation::met;
 		}
-		expects_lr<void> server_node::accept_local_transaction(const ledger::wallet* signer_wallet, uptr<ledger::transaction>&& candidate_tx, uint256_t* output_hash)
+		expects_lr<void> server_node::accept_local_transaction(const ledger::wallet* signer_wallet, uptr<ledger::transaction_message>&& candidate_tx, uint256_t* output_hash)
 		{
 			VI_ASSERT(signer_wallet != nullptr, "signer wallet should be set");
 			umutex<std::recursive_mutex> unique(sync.account);
@@ -921,7 +921,7 @@ namespace tangent
 
 			return status;
 		}
-		expects_lr<void> server_node::accept_transaction(uref<relay>&& from, uptr<ledger::transaction>&& candidate_tx)
+		expects_lr<void> server_node::accept_transaction(uref<relay>&& from, uptr<ledger::transaction_message>&& candidate_tx)
 		{
 			algorithm::pubkeyhash_t owner;
 			auto purpose = candidate_tx->as_typename();
@@ -970,7 +970,7 @@ namespace tangent
 
 			return broadcast_transaction(uref(from), std::move(candidate_tx), owner);
 		}
-		expects_lr<void> server_node::accept_attestation(uref<relay>&& from, const uint256_t& attestation_hash)
+		expects_lr<void> server_node::accept_attestation(const uint256_t& attestation_hash)
 		{
 			umutex<std::recursive_mutex> unique(sync.attestation);
 			auto mempool = storages::mempoolstate();
@@ -1007,7 +1007,7 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<void> server_node::accept_committed_attestation(uref<relay>&& from, const algorithm::asset_id& asset, const superchain::computed_transaction& proof, const algorithm::hashsig_t& signature)
+		expects_lr<void> server_node::accept_committed_attestation(const algorithm::asset_id& asset, const superchain::computed_transaction& proof, const algorithm::hashsig_t& signature)
 		{
 			umutex<std::recursive_mutex> unique(sync.attestation);
 			auto mempool = storages::mempoolstate();
@@ -1015,14 +1015,14 @@ namespace tangent
 			if (!status)
 				return status.error();
 
-			return accept_attestation(nullptr, proof.as_attestation_hash());
+			return accept_attestation(proof.as_attestation_hash());
 		}
-		expects_lr<void> server_node::broadcast_transaction(uref<relay>&& from, uptr<ledger::transaction>&& candidate_tx, const algorithm::pubkeyhash_t& owner)
+		expects_lr<void> server_node::broadcast_transaction(uref<relay>&& from, uptr<ledger::transaction_message>&& candidate_tx, const algorithm::pubkeyhash_t& owner)
 		{
 			auto purpose = candidate_tx->as_typename();
 			auto candidate_hash = candidate_tx->as_hash();
 			auto mempool = storages::mempoolstate();
-			auto action = mempool.add_transaction(**candidate_tx, false);
+			auto action = mempool.add_transaction(**candidate_tx);
 			if (!action)
 			{
 				if (protocol::now().user.consensus.logging)
@@ -1095,7 +1095,7 @@ namespace tangent
 				if (event && !event->args.empty())
 				{
 					format::ro_stream transaction_message = format::ro_stream(event->args.front().as_string());
-					uptr<ledger::transaction> candidate = tangent::transactions::resolver::from_stream(transaction_message);
+					uptr<ledger::transaction_message> candidate = tangent::transactions::resolver::from_stream(transaction_message);
 					if (candidate && candidate->load(transaction_message))
 						accept_transaction(std::move(state), std::move(candidate));
 				}
@@ -1124,7 +1124,7 @@ namespace tangent
 			if (!validation)
 				return remote_exception(std::move(validation.error().message()));
 
-			auto finalization = accept_committed_attestation(uref(state), asset, proof, commitment_signature);
+			auto finalization = accept_committed_attestation(asset, proof, commitment_signature);
 			if (finalization)
 				return expectation::met;
 
@@ -1180,7 +1180,7 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_rt<void> server_node::check_socket(uref<relay>&& state, const exchange& event)
+		expects_rt<void> server_node::check_socket(uref<relay>&&, const exchange& event)
 		{
 			if (!event.args.empty())
 				return remote_exception("invalid args");
@@ -1217,7 +1217,7 @@ namespace tangent
 				if (address)
 					state->as_descriptor()->first.availability.neighbors.insert(public_key);
 				else
-					state->as_descriptor()->first.availability.neighbors.erase(public_key);	
+					state->as_descriptor()->first.availability.neighbors.erase(public_key);
 			}
 
 			umutex<std::recursive_mutex> unique(sync.neighbor);
@@ -1321,7 +1321,7 @@ namespace tangent
 
 			return build_state_exchange(std::move(state));
 		}
-		expects_rt<format::variables> server_node::fetch_headers(uref<relay>&& state, const exchange& event)
+		expects_rt<format::variables> server_node::fetch_headers(uref<relay>&&, const exchange& event)
 		{
 			if (event.args.size() != 2)
 				return remote_exception("invalid arguments");
@@ -1346,7 +1346,7 @@ namespace tangent
 
 			return expects_rt<format::variables>(std::move(result));
 		}
-		expects_rt<format::variables> server_node::fetch_block(uref<relay>&& state, const exchange& event)
+		expects_rt<format::variables> server_node::fetch_block(uref<relay>&&, const exchange& event)
 		{
 			if (event.args.size() != 1)
 				return remote_exception("invalid arguments");
@@ -1359,7 +1359,7 @@ namespace tangent
 			auto block = chain.get_block_by_hash(block_hash, ELEMENTS_MANY, (uint32_t)storages::block_details::transactions | (uint32_t)storages::block_details::block_transactions);
 			if (block)
 				return format::variables({ format::variable(block->as_message().data) });
-			
+
 			umutex<std::recursive_mutex> unique(sync.tip);
 			auto it = pending_blocks.find(block_hash);
 			if (it != pending_blocks.end())
@@ -1367,7 +1367,7 @@ namespace tangent
 
 			return format::variables();
 		}
-		expects_rt<format::variables> server_node::fetch_blocks(uref<relay>&& state, const exchange& event)
+		expects_rt<format::variables> server_node::fetch_blocks(uref<relay>&&, const exchange& event)
 		{
 			if (event.args.size() != 2)
 				return remote_exception("invalid arguments");
@@ -1401,7 +1401,7 @@ namespace tangent
 
 			return expects_rt<format::variables>(std::move(result));
 		}
-		expects_rt<format::variables> server_node::fetch_mempool(uref<relay>&& state, const exchange& event)
+		expects_rt<format::variables> server_node::fetch_mempool(uref<relay>&&, const exchange& event)
 		{
 			if (event.args.size() != 1)
 				return remote_exception("invalid arguments");
@@ -1421,7 +1421,7 @@ namespace tangent
 
 			return expects_rt<format::variables>(std::move(result));
 		}
-		expects_rt<format::variables> server_node::fetch_transaction(uref<relay>&& state, const exchange& event)
+		expects_rt<format::variables> server_node::fetch_transaction(uref<relay>&&, const exchange& event)
 		{
 			if (event.args.size() != 1)
 				return remote_exception("invalid arguments");
@@ -1442,7 +1442,7 @@ namespace tangent
 
 			return format::variables();
 		}
-		expects_rt<format::variables> server_node::fetch_transactions(uref<relay>&& state, const exchange& event)
+		expects_rt<format::variables> server_node::fetch_transactions(uref<relay>&&, const exchange& event)
 		{
 			if (event.args.empty() || event.args.size() > protocol::now().message.transactions_per_query)
 				return remote_exception("invalid arguments");
@@ -1466,7 +1466,7 @@ namespace tangent
 			}
 			return expects_rt<format::variables>(std::move(result));
 		}
-		expects_rt<format::variables> server_node::distribute_entropy_shares(uref<relay>&& state, const exchange& event)
+		expects_rt<format::variables> server_node::distribute_entropy_shares(uref<relay>&&, const exchange& event)
 		{
 			auto packed = unpack_private_result(event.args, event.callee);
 			if (!packed)
@@ -1518,7 +1518,7 @@ namespace tangent
 
 			return pack_private_result({ format::variable(encrypted_shares.size()) }, *public_key);
 		}
-		expects_rt<format::variables> server_node::aggregate_entropy_shares(uref<relay>&& state, const exchange& event)
+		expects_rt<format::variables> server_node::aggregate_entropy_shares(uref<relay>&&, const exchange& event)
 		{
 			auto packed = unpack_private_result(event.args, event.callee);
 			if (!packed)
@@ -1582,7 +1582,7 @@ namespace tangent
 
 			return pack_private_result({ format::variable(writer.data) }, *public_key);
 		}
-		expects_rt<format::variables> server_node::recover_entropy(uref<relay>&& state, const exchange& event)
+		expects_rt<format::variables> server_node::recover_entropy(uref<relay>&&, const exchange& event)
 		{
 			auto packed = unpack_private_result(event.args, event.callee);
 			if (!packed)
@@ -1620,7 +1620,7 @@ namespace tangent
 
 			return pack_private_result({ format::variable(compositor.proof.optimized_view()) }, *public_key);
 		}
-		expects_rt<format::variables> server_node::aggregate_public_key(uref<relay>&& state, const exchange& event)
+		expects_rt<format::variables> server_node::aggregate_public_key(uref<relay>&&, const exchange& event)
 		{
 			auto packed = unpack_private_result(event.args, event.callee);
 			if (!packed)
@@ -1679,7 +1679,7 @@ namespace tangent
 
 			return pack_private_result({ format::variable(writer.data) }, *public_key);
 		}
-		expects_rt<format::variables> server_node::aggregate_signature(uref<relay>&& state, const exchange& event)
+		expects_rt<format::variables> server_node::aggregate_signature(uref<relay>&&, const exchange& event)
 		{
 			auto packed = unpack_private_result(event.args, event.callee);
 			if (!packed)
@@ -1726,7 +1726,7 @@ namespace tangent
 
 			return pack_private_result({ format::variable(writer.data) }, *public_key);
 		}
-		expects_lr<void> server_node::dispatch_transaction_logs(const algorithm::asset_id& asset, const superchain::network_options& options, superchain::transaction_logs&& logs)
+		expects_lr<void> server_node::dispatch_transaction_logs(const algorithm::asset_id& asset, superchain::transaction_logs&& logs)
 		{
 			for (auto& receipt : logs.receipts)
 			{
@@ -1740,7 +1740,7 @@ namespace tangent
 					if (!transactions::attestate::commit_to_proof(receipt, wallet.secret_key, commitment_hash, commitment_signature))
 						continue;
 
-					auto finalization = accept_committed_attestation(nullptr, asset, receipt, commitment_signature);
+					auto finalization = accept_committed_attestation(asset, receipt, commitment_signature);
 					if (finalization)
 						continue;
 
@@ -2101,7 +2101,7 @@ namespace tangent
 							for (auto& transaction : subresult->args)
 							{
 								format::ro_stream transaction_message = format::ro_stream(transaction.as_string());
-								uptr<ledger::transaction> candidate = tangent::transactions::resolver::from_stream(transaction_message);
+								uptr<ledger::transaction_message> candidate = tangent::transactions::resolver::from_stream(transaction_message);
 								if (candidate && candidate->load(transaction_message))
 									accept_transaction(uref(state), std::move(candidate));
 							}
@@ -2241,7 +2241,7 @@ namespace tangent
 						auto status = accept_block(uref(new_tip.state), tip, new_tip_fork_hash);
 						if (!status)
 							coreturn remote_exception(std::move(status.error().message()));
-						
+
 						if (!is_active())
 							break;
 					}
@@ -2250,7 +2250,7 @@ namespace tangent
 				if (best_tip_hash > 0)
 				{
 					broadcast_pending_block(uref(new_tip.state), best_tip_hash, new_tip_number - 1);
-					finalize_pending_block(uref(new_tip.state), best_tip_hash, new_tip_number - 1);
+					finalize_pending_block(uref(new_tip.state));
 				}
 
 				coreturn expectation::met;
@@ -2395,7 +2395,7 @@ namespace tangent
 				{
 					if (size.error() != std::errc::operation_would_block)
 						return abort_node(std::move(state), "connection reset");
-					
+
 					multiplexer::get()->when_readable(stream, [this, state](socket_poll event) mutable
 					{
 						if (packet::is_done(event))
@@ -2479,7 +2479,7 @@ namespace tangent
 								VI_WARN("node %s query \"%.*s\" error out: %s", state->peer_address().c_str(), (int)it->second.name.size(), it->second.name.data(), result.what().c_str());
 							else if (result && protocol::now().user.consensus.logging)
 								VI_DEBUG("node %s query \"%.*s\" result out: %s", state->peer_address().c_str(), (int)it->second.name.size(), it->second.name.data(), result ? result->empty() ? "OK" : stringify::text("[%i values]", (int)result->size()).c_str() : "RETRY");
-							
+
 							state->push_event(message.session, pack_query_result(result));
 							push_messages(uref(state));
 							break;
@@ -2503,7 +2503,6 @@ namespace tangent
 								message.args.erase(message.args.begin());
 								query(uref(forward_state), method, std::move(message.args), protocol::now().user.tcp.timeout).when([this, state, forward_state, method, session](expects_rt<exchange>&& result) mutable
 								{
-									auto* descriptor = state->as_descriptor();
 									if (!result && protocol::now().user.consensus.logging)
 										VI_WARN("node %s forward query \"%.*s\" error in: %s", forward_state->peer_address().c_str(), (int)method.name.size(), method.name.data(), result.what().c_str());
 									else if (result && protocol::now().user.consensus.logging)
@@ -2701,7 +2700,7 @@ namespace tangent
 							if (protocol::now().user.superchain.logging)
 								result.report_logs(listener->asset, listener->options);
 							if (!result.receipts.empty())
-								dispatch_transaction_logs(listener->asset, listener->options, std::move(result)).report("failed to dispatch transaction logs");
+								dispatch_transaction_logs(listener->asset, std::move(result)).report("failed to dispatch transaction logs");
 						}
 					}
 				}
@@ -2715,7 +2714,7 @@ namespace tangent
 					goto retry;
 
 				VI_INFO("%s block pulling: resumes in %" PRIu64 " ms", blockchain.c_str(), timeout);
-				control_sys.upsert_timeout(task + "_runner", timeout, [this, listener]() { run_superchain_sync(listener->asset); });			
+				control_sys.upsert_timeout(task + "_runner", timeout, [this, listener]() { run_superchain_sync(listener->asset); });
 				coreturn_void;
 			});
 		}
@@ -2798,7 +2797,7 @@ namespace tangent
 		}
 		bool server_node::run_mempool_vacuum()
 		{
-			return control_sys.task_if_none(TASK_MEMPOOL_VACUUM, [this](system_task&& task)
+			return control_sys.task_if_none(TASK_MEMPOOL_VACUUM, [this](system_task&&)
 			{
 				if (is_syncing())
 					return;
@@ -2845,7 +2844,7 @@ namespace tangent
 		}
 		bool server_node::run_attestation_resolution()
 		{
-			return control_sys.task_if_none(TASK_ATTESTATION_RESOLUTION, [this](system_task&& task)
+			return control_sys.task_if_none(TASK_ATTESTATION_RESOLUTION, [this](system_task&&)
 			{
 				size_t offset = 0, resolutions = 0;
 				auto mempool = storages::mempoolstate();
@@ -2857,7 +2856,7 @@ namespace tangent
 				if (attestation_hash)
 				{
 					++resolutions;
-					auto status = accept_attestation(nullptr, *attestation_hash);
+					auto status = accept_attestation(*attestation_hash);
 					if (status)
 						goto retry;
 					else if (protocol::now().user.consensus.logging)
@@ -2913,7 +2912,7 @@ namespace tangent
 				mempool.waiting = false;
 			}
 
-			return control_sys.task_if_none(TASK_BLOCK_PRODUCTION, [this](system_task&& task)
+			return control_sys.task_if_none(TASK_BLOCK_PRODUCTION, [this](system_task&&)
 			{
 				auto chain = storages::chainstate();
 				auto mempool = storages::mempoolstate();
@@ -3172,7 +3171,7 @@ namespace tangent
 			{
 				auto* bridge = superchain::bridge::get();
 				bridge->network_active = [this]() -> bool { return is_active(); };
-				bridge->network_fetch = [this](const std::string_view& location, const std::string_view& method, const http::fetch_frame& options) -> expects_promise_system<http::response_frame>
+				bridge->network_fetch = [this](const algorithm::asset_id&, const std::string_view& location, const std::string_view& method, const http::fetch_frame& options) -> expects_promise_system<http::response_frame>
 				{
 					if (!is_active())
 						return expects_promise_system<http::response_frame>(system_exception("http fetch: shutdown (cancelled)", std::make_error_condition(std::errc::network_down)));
@@ -3204,7 +3203,6 @@ namespace tangent
 		}
 		void server_node::clear_pending_fork(relay* state)
 		{
-			auto* queue = schedule::get();
 			umutex<std::recursive_mutex> unique(sync.fork);
 			if (state)
 			{
@@ -3260,7 +3258,6 @@ namespace tangent
 			auto tip_hash = tip_block ? tip_block->as_hash() : (uint256_t)0;
 			auto best_tip_work = tip_block ? tip_block->absolute_work : (uint256_t)0;
 			auto parent_block = tip_hash == candidate.block.parent_hash ? tip_block : chain.get_block_header_by_hash(candidate.block.parent_hash);
-			auto parent_hash = parent_block ? parent_block->as_hash() : (uint256_t)0;
 			int64_t branch_length = (int64_t)candidate.block.number - (int64_t)(tip_block ? tip_block->number : 0);
 			branch_length = fork_branch ? std::abs(branch_length) : branch_length;
 			if (branch_length < 0 || (!fork_branch && candidate.block.absolute_work < best_tip_work))
@@ -3311,7 +3308,7 @@ namespace tangent
 				}
 				if (!better_than_prev_fork)
 					return layer_exception(stringify::text("block %s rejected: inferior fork orphan", algorithm::encoding::encode_0xhex256(candidate_hash).c_str()));
-				
+
 				/*
 					<+> - <+> - <+> - <+> - <+> - <+> ----
 														  \
@@ -3349,7 +3346,7 @@ namespace tangent
 
 			if (!mutation)
 				return layer_exception(stringify::text("block %s checkpoint failed: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), mutation.error().what()));
-			
+
 			if (protocol::now().user.consensus.logging)
 			{
 				if (mutation->is_fork)
@@ -3368,7 +3365,7 @@ namespace tangent
 			for (auto& transaction : candidate.block.transactions)
 			{
 				if (find_descriptor(transaction.receipt.from))
-					accept_proposal_transaction(candidate.block, transaction);
+					accept_proposal_transaction(transaction);
 			}
 
 			umutex<std::recursive_mutex> unique(sync.fork);
@@ -3383,10 +3380,10 @@ namespace tangent
 
 			unique.unlock();
 			if (chain_extension)
-				finalize_pending_block(std::move(from), candidate_hash, candidate.block.number);
+				finalize_pending_block(std::move(from));
 			return expectation::met;
 		}
-		void server_node::append_pending_block(uref<relay>&& from, const uint256_t& block_hash, ledger::block* tip)
+		void server_node::append_pending_block(uref<relay>&& from, const uint256_t& block_hash, ledger::block_body* tip)
 		{
 			VI_ASSERT(tip != nullptr, "tip should be set");
 			uint64_t block_number = tip->number;
@@ -3409,7 +3406,7 @@ namespace tangent
 			if (notifications > 0 && protocol::now().user.consensus.logging)
 				VI_DEBUG("block %s broadcasted to %i nodes (height: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(block_hash).c_str(), (int)notifications, block_number);
 		}
-		void server_node::finalize_pending_block(uref<relay>&& from, const uint256_t& block_hash, uint64_t block_number)
+		void server_node::finalize_pending_block(uref<relay>&& from)
 		{
 			control_sys.upsert_timeout(TASK_BLOCK_DISPATCHER "_runner", protocol::now().policy.pow.time, [this]() { run_block_dispatcher(); });
 			if (!from || !mempool.dirty)
@@ -3418,7 +3415,7 @@ namespace tangent
 			mempool.dirty = false;
 			synchronize_mempool_with(std::move(from));
 		}
-		bool server_node::accept_proposal_transaction(const ledger::block& checkpoint_block, const ledger::block_transaction& transaction)
+		bool server_node::accept_proposal_transaction(const ledger::block_transaction& transaction)
 		{
 			uint32_t type = transaction.transaction->as_type();
 			auto purpose = transaction.transaction->as_typename();
@@ -3939,7 +3936,7 @@ namespace tangent
 			if (!args)
 				coreturn args.error();
 
-			if (args->size() != 1 )
+			if (args->size() != 1)
 				coreturn remote_exception("encrypted shares recovery confirmation not received");
 
 			state.proof = algorithm::hashsig_t(args->front().as_string());
@@ -4121,7 +4118,7 @@ namespace tangent
 			auto it = validators.find(validator);
 			return it != validators.end() ? &it->second : nullptr;
 		}
-		expects_promise_rt<void> local_dispatcher_context::aggregate_validators(const btree_set<algorithm::pubkeyhash_t>& validators)
+		expects_promise_rt<void> local_dispatcher_context::aggregate_validators(const btree_set<algorithm::pubkeyhash_t>&)
 		{
 			return expects_promise_rt<void>(expectation::met);
 		}
@@ -4207,7 +4204,7 @@ namespace tangent
 				auto secret = dispatcher->recover_secret_entropy(runner_wallet, migration.account.asset, migration.account.manager, migration.account.owner);
 				if (!secret)
 					return remote_exception(std::move(secret.error().message()));
-				
+
 				auto ref_hash = secret->as_ref_hash(); bool must_update = false;
 				for (auto& [broadcast_hash, participant] : setup->migrations)
 				{

@@ -685,7 +685,7 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<void> mempoolstate::add_transaction(const ledger::transaction& value, bool resurrection)
+		expects_lr<void> mempoolstate::add_transaction(const ledger::transaction_message& value)
 		{
 			format::wo_stream message;
 			if (!value.store(&message))
@@ -903,7 +903,7 @@ namespace tangent
 
 			return nonce.get_integer();
 		}
-		expects_lr<uptr<ledger::transaction>> mempoolstate::get_transaction_by_hash(const uint256_t& transaction_hash)
+		expects_lr<uptr<ledger::transaction_message>> mempoolstate::get_transaction_by_hash(const uint256_t& transaction_hash)
 		{
 			uint8_t hash[32];
 			transaction_hash.encode(hash);
@@ -913,18 +913,18 @@ namespace tangent
 
 			auto cursor = get_peer_storage().emplace_query(__func__, "SELECT hash, message FROM transactions WHERE hash = ?", &map);
 			if (!cursor || cursor->error_or_empty())
-				return expects_lr<uptr<ledger::transaction>>(layer_exception(ledger::storage_util::error_of(cursor)));
+				return expects_lr<uptr<ledger::transaction_message>>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 			auto blob = (*cursor)["message"].get().get_blob();
 			auto message = format::ro_stream(blob);
-			uptr<ledger::transaction> value = transactions::resolver::from_stream(message);
+			uptr<ledger::transaction_message> value = transactions::resolver::from_stream(message);
 			if (!value || !value->load(message))
-				return expects_lr<uptr<ledger::transaction>>(layer_exception("transaction deserialization error"));
+				return expects_lr<uptr<ledger::transaction_message>>(layer_exception("transaction deserialization error"));
 
 			finalize_checksum(**value, (*cursor)["hash"].get());
 			return value;
 		}
-		expects_lr<vector<uptr<ledger::transaction>>> mempoolstate::get_best_transactions_from_queue(uint8_t flags, size_t offset, size_t count)
+		expects_lr<vector<uptr<ledger::transaction_message>>> mempoolstate::get_best_transactions_from_queue(uint8_t flags, size_t offset, size_t count)
 		{
 			schema_list map;
 			map.push_back(var::set::integer(count));
@@ -940,11 +940,11 @@ namespace tangent
 
 			auto cursor = get_peer_storage().emplace_query(__func__, command, &map);
 			if (!cursor || cursor->error())
-				return expects_lr<vector<uptr<ledger::transaction>>>(layer_exception(ledger::storage_util::error_of(cursor)));
+				return expects_lr<vector<uptr<ledger::transaction_message>>>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 			auto& response = cursor->first();
 			size_t size = response.size();
-			vector<uptr<ledger::transaction>> values;
+			vector<uptr<ledger::transaction_message>> values;
 			values.reserve(size);
 
 			for (size_t i = 0; i < size; i++)
@@ -952,7 +952,7 @@ namespace tangent
 				auto row = response[i];
 				auto blob = row["message"].get().get_blob();
 				auto message = format::ro_stream(blob);
-				uptr<ledger::transaction> value = transactions::resolver::from_stream(message);
+				uptr<ledger::transaction_message> value = transactions::resolver::from_stream(message);
 				if (value && value->load(message))
 				{
 					finalize_checksum(**value, row["hash"].get());
@@ -962,7 +962,7 @@ namespace tangent
 
 			return values;
 		}
-		expects_lr<vector<uptr<ledger::transaction>>> mempoolstate::get_transactions_by_owner(const algorithm::pubkeyhash_t& owner, int8_t direction, size_t offset, size_t count)
+		expects_lr<vector<uptr<ledger::transaction_message>>> mempoolstate::get_transactions_by_owner(const algorithm::pubkeyhash_t& owner, int8_t direction, size_t offset, size_t count)
 		{
 			schema_list map;
 			map.push_back(var::set::binary(owner.view()));
@@ -972,11 +972,11 @@ namespace tangent
 
 			auto cursor = get_peer_storage().emplace_query(__func__, "SELECT message FROM transactions WHERE owner = ? ORDER BY nonce $? LIMIT ? OFFSET ?", &map);
 			if (!cursor || cursor->error())
-				return expects_lr<vector<uptr<ledger::transaction>>>(layer_exception(ledger::storage_util::error_of(cursor)));
+				return expects_lr<vector<uptr<ledger::transaction_message>>>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 			auto& response = cursor->first();
 			size_t size = response.size();
-			vector<uptr<ledger::transaction>> values;
+			vector<uptr<ledger::transaction_message>> values;
 			values.reserve(size);
 
 			for (size_t i = 0; i < size; i++)
@@ -984,7 +984,7 @@ namespace tangent
 				auto row = response[i];
 				auto blob = row["message"].get().get_blob();
 				auto message = format::ro_stream(blob);
-				uptr<ledger::transaction> value = transactions::resolver::from_stream(message);
+				uptr<ledger::transaction_message> value = transactions::resolver::from_stream(message);
 				if (value && value->load(message))
 				{
 					finalize_checksum(**value, row["hash"].get());

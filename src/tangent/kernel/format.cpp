@@ -29,7 +29,7 @@ namespace tangent
 			value.encode(data);
 
 			uint8_t base[sizeof(data)];
-			for (int i = 0; i < sizeof(base); ++i)
+			for (size_t i = 0; i < sizeof(base); ++i)
 				base[i] = data[31 - i];
 
 			size_t begin = buffer.size();
@@ -556,7 +556,6 @@ namespace tangent
 		}
 		wo_stream& wo_stream::write_typeless(const uint256_t& value)
 		{
-			uint8_t size = util::get_integer_size(util::get_integer_type(value));
 			return write_typeless(value, util::get_integer_size(util::get_integer_type(value)));
 		}
 		wo_stream& wo_stream::write_typeless(const uint256_t& value, size_t size)

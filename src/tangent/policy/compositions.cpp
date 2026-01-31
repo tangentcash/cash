@@ -561,7 +561,8 @@ namespace tangent
 				if (!calculate_nonce(&k, message_hash, secret_key, ++index))
 					goto retry_nonce;
 
-				curve_point r = { 0 };
+				curve_point r;
+				memset(&r, 0, sizeof(r));
 				if (cumulative_r.empty())
 				{
 					if (scalar_multiply(&secp256k1, &k, &r) != 0)
@@ -1075,7 +1076,8 @@ namespace tangent
 				if (!calculate_nonce(&k, message_hash, group_public_key, secret_key, ++index))
 					goto retry_nonce;
 
-				curve_point r = { 0 };
+				curve_point r;
+				memset(&r, 0, sizeof(r));
 				if (scalar_multiply(&secp256k1, &k, &r) != 0)
 					goto retry_nonce;
 

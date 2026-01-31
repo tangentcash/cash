@@ -30,7 +30,7 @@ namespace tangent
 				return "/construction/submit";
 			}
 
-			cardano::cardano(const algorithm::asset_id& new_asset) noexcept : translation_utxo(new_asset)
+			cardano::cardano(const algorithm::asset_id& new_asset) noexcept : utxo_translation_unit(new_asset)
 			{
 				netdata.composition = algorithm::composition::type::ed25519;
 				netdata.routing = routing_policy::utxo;
@@ -106,7 +106,7 @@ namespace tangent
 				uint64_t block_slot = block_data->child_var("block.metadata.slotNo").as_uint64();
 				coreturn expects_rt<uint64_t>(block_slot);
 			}
-			expects_promise_rt<computed_transaction> cardano::link_transaction(uint64_t block_height, const std::string_view& block_hash, format::tree& transaction_data)
+			expects_promise_rt<computed_transaction> cardano::link_transaction(uint64_t, const std::string_view&, format::tree& transaction_data)
 			{
 				auto* operations_data = transaction_data.child("operations");
 				if (!operations_data || operations_data->childs().empty())

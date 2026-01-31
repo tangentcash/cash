@@ -96,7 +96,6 @@ namespace tangent
 			auto* production_argument = query.get("production");
 			auto* participation_argument = query.get("participation");
 			auto* attestation_argument = query.get("attestation");
-			auto* offset_argument = query.get("offset");
 			auto* count_argument = query.get("count");
 			uint64_t count = count_argument && count_argument->value.is(var_type::integer) ? count_argument->value.get_integer() : protocol::now().message.items_per_query;
 			if (!count || count > protocol::now().message.items_per_query)

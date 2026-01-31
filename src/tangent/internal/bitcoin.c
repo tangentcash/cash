@@ -1020,12 +1020,10 @@ void utils_hex_to_bin(const char* str, unsigned char* out, int inLen, int* outLe
         return;
     }
 
-    uint8_t c;
     int i;
     memset(out, 0, bLen);
     for (i = 0; i < bLen; i++)
     {
-        c = 0;
         if (str[i * 2] >= '0' && str[i * 2] <= '9')
         {
             *out = (str[i * 2] - '0') << 4;
@@ -3273,7 +3271,7 @@ btc_bool btc_tx_add_address_out(btc_tx* tx, const sc_chainparams* chain, int64_t
     }
 
     btc_free(buf);
-    return true;
+    return success;
 }
 
 btc_bool btc_tx_add_p2pk_out(btc_tx* tx, int64_t amount, const uint8_t* pubkey, size_t pubkey_size)
@@ -3456,7 +3454,6 @@ enum btc_tx_sign_result btc_tx_hash_input(btc_tx* tx_in_out, uint32_t sighashtyp
     if ((size_t)inputindex >= tx_in_out->vin->len)
         return BTC_SIGN_INPUTINDEX_OUT_OF_RANGE;
 
-    btc_tx_in* tx_in = vector_idx(tx_in_out->vin, inputindex);
     switch (type)
     {
         case BTC_TX_PUBKEY:

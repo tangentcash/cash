@@ -34,7 +34,7 @@ namespace tangent
 		{
 			format::wo_stream message;
 			string index;
-			const ledger::uniform* context;
+			const ledger::uniform_state* context;
 			const ledger::block_state::state_change* change;
 		};
 
@@ -54,7 +54,7 @@ namespace tangent
 			string column;
 			string row;
 			uint8_t rank[32];
-			const ledger::multiform* context;
+			const ledger::multiform_state* context;
 			const ledger::block_state::state_change* change;
 		};
 
@@ -76,7 +76,7 @@ namespace tangent
 				if (change.state->as_level() == ledger::state_level::multiform && change.state->as_type() == type)
 				{
 					multiform_blob blob;
-					blob.context = (ledger::multiform*)*change.state;
+					blob.context = (ledger::multiform_state*)*change.state;
 					blob.change = &change;
 					blobs->emplace_back(std::move(blob));
 				}
@@ -92,7 +92,7 @@ namespace tangent
 						continue;
 
 					multiform_blob blob;
-					blob.context = (ledger::multiform*)*change.state;
+					blob.context = (ledger::multiform_state*)*change.state;
 					blob.change = &change;
 					if (column)
 					{
@@ -146,19 +146,14 @@ namespace tangent
 			writer->storage = multiform_storage;
 			return expectation::met;
 		}
-		static void finalize_checksum(messages::uniform& message, const variant& column)
-		{
-			if (column.size() == sizeof(uint256_t))
-				message.checksum.decode(column.get_binary());
-		}
 		static void finalize_checksum(messages::authentic& message, const variant& column)
 		{
 			if (column.size() == sizeof(uint256_t))
 				message.checksum.decode(column.get_binary());
 		}
-		static uptr<ledger::state> state_from_blob(uint64_t block_number, uint32_t type, const std::string_view& index_or_column, const std::string_view& row_or_none, const std::string_view& optimized_blob)
+		static uptr<ledger::transition_state> state_from_blob(uint64_t block_number, uint32_t type, const std::string_view& index_or_column, const std::string_view& row_or_none, const std::string_view& optimized_blob)
 		{
-			auto state = uptr<ledger::state>(states::resolver::from_type(type));
+			auto state = uptr<ledger::transition_state>(states::resolver::from_type(type));
 			if (!state)
 				return nullptr;
 
@@ -167,7 +162,7 @@ namespace tangent
 				case ledger::state_level::uniform:
 				{
 					auto message = format::ro_stream(index_or_column);
-					if (!index_or_column.empty() && !((ledger::uniform*)*state)->load_index(message))
+					if (!index_or_column.empty() && !((ledger::uniform_state*)*state)->load_index(message))
 						return nullptr;
 
 					message = format::ro_stream(optimized_blob);
@@ -182,11 +177,11 @@ namespace tangent
 				case ledger::state_level::multiform:
 				{
 					auto message = format::ro_stream(index_or_column);
-					if (!index_or_column.empty() && !((ledger::multiform*)*state)->load_column(message))
+					if (!index_or_column.empty() && !((ledger::multiform_state*)*state)->load_column(message))
 						return nullptr;
 
 					message = format::ro_stream(row_or_none);
-					if (!row_or_none.empty() && !((ledger::multiform*)*state)->load_row(message))
+					if (!row_or_none.empty() && !((ledger::multiform_state*)*state)->load_row(message))
 						return nullptr;
 
 					message = format::ro_stream(optimized_blob);
@@ -728,7 +723,7 @@ namespace tangent
 					if (change.state->as_level() == ledger::state_level::uniform && change.state->as_type() == type)
 					{
 						uniform_blob blob;
-						blob.context = (ledger::uniform*)*change.state;
+						blob.context = (ledger::uniform_state*)*change.state;
 						blob.change = &change;
 						blobs.emplace_back(std::move(blob));
 					}
@@ -1340,7 +1335,7 @@ namespace tangent
 					auto transaction_hash = row["transaction_hash"].get();
 					auto transaction_blob = blob_storage.load(__func__, get_transaction_label(transaction_hash.get_binary())).or_else(string());
 					auto message = format::ro_stream(transaction_blob);
-					uptr<ledger::transaction> value = transactions::resolver::from_stream(message);
+					uptr<ledger::transaction_message> value = transactions::resolver::from_stream(message);
 					if (value && value->load(message) && value->asset == asset)
 						next = std::move(value->gas_price);
 					else
@@ -1370,23 +1365,23 @@ namespace tangent
 
 			return algorithm::arithmetic::divide(*b, *a);
 		}
-		expects_lr<ledger::block> chainstate::get_block_by_number(uint64_t block_number, size_t chunk, uint32_t details)
+		expects_lr<ledger::block_body> chainstate::get_block_by_number(uint64_t block_number, size_t chunk, uint32_t details)
 		{
 			schema_list map;
 			map.push_back(var::set::integer(block_number));
 
 			auto cursor = get_block_storage().emplace_query(__func__, "SELECT block_hash FROM blocks WHERE block_number = ?", &map);
 			if (!cursor || cursor->error_or_empty())
-				return expects_lr<ledger::block>(layer_exception(ledger::storage_util::error_of(cursor)));
+				return expects_lr<ledger::block_body>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 			ledger::block_header header;
 			auto block_hash = (*cursor)["block_hash"].get();
 			auto block_blob = get_blob_storage().load(__func__, get_block_label(block_hash.get_binary())).or_else(string());
 			auto message = format::ro_stream(block_blob);
 			if (!header.load(message))
-				return expects_lr<ledger::block>(layer_exception("block header deserialization error"));
+				return expects_lr<ledger::block_body>(layer_exception("block header deserialization error"));
 
-			ledger::block result = ledger::block(header);
+			ledger::block_body result = ledger::block_body(header);
 			if ((details & (uint32_t)block_details::transactions || details & (uint32_t)block_details::block_transactions) && chunk > 0)
 			{
 				auto resolve = resolve_block_transactions(result.transactions, result.number, details & (uint32_t)block_details::block_transactions, chunk);
@@ -1396,7 +1391,7 @@ namespace tangent
 			finalize_checksum(header, block_hash);
 			return result;
 		}
-		expects_lr<ledger::block> chainstate::get_block_by_hash(const uint256_t& block_hash, size_t chunk, uint32_t details)
+		expects_lr<ledger::block_body> chainstate::get_block_by_hash(const uint256_t& block_hash, size_t chunk, uint32_t details)
 		{
 			uint8_t hash[32];
 			block_hash.encode(hash);
@@ -1405,9 +1400,9 @@ namespace tangent
 			auto block_blob = get_blob_storage().load(__func__, get_block_label(hash)).or_else(string());
 			auto message = format::ro_stream(block_blob);
 			if (!header.load(message))
-				return expects_lr<ledger::block>(layer_exception("block header deserialization error"));
+				return expects_lr<ledger::block_body>(layer_exception("block header deserialization error"));
 
-			ledger::block result = ledger::block(header);
+			ledger::block_body result = ledger::block_body(header);
 			if ((details & (uint32_t)block_details::transactions || details & (uint32_t)block_details::block_transactions) && chunk > 0)
 			{
 				auto resolve = resolve_block_transactions(result.transactions, result.number, details & (uint32_t)block_details::block_transactions, chunk);
@@ -1417,20 +1412,20 @@ namespace tangent
 			finalize_checksum(header, var::binary(hash, sizeof(hash)));
 			return result;
 		}
-		expects_lr<ledger::block> chainstate::get_latest_block(size_t chunk, uint32_t details)
+		expects_lr<ledger::block_body> chainstate::get_latest_block(size_t chunk, uint32_t details)
 		{
 			auto cursor = get_block_storage().query(__func__, "SELECT block_hash FROM blocks ORDER BY block_number DESC LIMIT 1");
 			if (!cursor || cursor->error_or_empty())
-				return expects_lr<ledger::block>(layer_exception(ledger::storage_util::error_of(cursor)));
+				return expects_lr<ledger::block_body>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 			ledger::block_header header;
 			auto block_hash = (*cursor)["block_hash"].get();
 			auto block_blob = get_blob_storage().load(__func__, get_block_label(block_hash.get_binary())).or_else(string());
 			auto message = format::ro_stream(block_blob);
 			if (!header.load(message))
-				return expects_lr<ledger::block>(layer_exception("block header deserialization error"));
+				return expects_lr<ledger::block_body>(layer_exception("block header deserialization error"));
 
-			ledger::block result = ledger::block(header);
+			ledger::block_body result = ledger::block_body(header);
 			if ((details & (uint32_t)block_details::transactions || details & (uint32_t)block_details::block_transactions) && chunk > 0)
 			{
 				auto resolve = resolve_block_transactions(result.transactions, result.number, details & (uint32_t)block_details::block_transactions, chunk);
@@ -1807,7 +1802,7 @@ namespace tangent
 			result.commit();
 			return expects_lr<ledger::block_state>(std::move(result));
 		}
-		expects_lr<vector<uptr<ledger::transaction>>> chainstate::get_transactions_by_number(uint64_t block_number, size_t offset, size_t count)
+		expects_lr<vector<uptr<ledger::transaction_message>>> chainstate::get_transactions_by_number(uint64_t block_number, size_t offset, size_t count)
 		{
 			schema_list map;
 			map.push_back(var::set::integer(block_number));
@@ -1816,11 +1811,11 @@ namespace tangent
 
 			auto cursor = get_tx_storage().emplace_query(__func__, "SELECT transaction_hash FROM transactions WHERE block_number = ? ORDER BY block_nonce LIMIT ? OFFSET ?", &map);
 			if (!cursor || cursor->error())
-				return expects_lr<vector<uptr<ledger::transaction>>>(layer_exception(ledger::storage_util::error_of(cursor)));
+				return expects_lr<vector<uptr<ledger::transaction_message>>>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 			auto& response = cursor->first();
 			size_t size = response.size();
-			vector<uptr<ledger::transaction>> values;
+			vector<uptr<ledger::transaction_message>> values;
 			values.resize(size);
 
 			auto& blob_storage = get_blob_storage();
@@ -1836,14 +1831,14 @@ namespace tangent
 					finalize_checksum(**value, transaction_hash);
 			}));
 
-			values.erase(std::remove_if(values.begin(), values.end(), [](const uptr<ledger::transaction>& a) { return !a; }), values.end());
+			values.erase(std::remove_if(values.begin(), values.end(), [](const uptr<ledger::transaction_message>& a) { return !a; }), values.end());
 			return values;
 		}
-		expects_lr<vector<uptr<ledger::transaction>>> chainstate::get_transactions_by_owner(uint64_t block_number, const algorithm::pubkeyhash_t& owner, int8_t direction, size_t offset, size_t count)
+		expects_lr<vector<uptr<ledger::transaction_message>>> chainstate::get_transactions_by_owner(uint64_t block_number, const algorithm::pubkeyhash_t& owner, int8_t direction, size_t offset, size_t count)
 		{
 			auto location = resolve_account_location(owner);
 			if (!location)
-				return expects_lr<vector<uptr<ledger::transaction>>>(vector<uptr<ledger::transaction>>());
+				return expects_lr<vector<uptr<ledger::transaction_message>>>(vector<uptr<ledger::transaction_message>>());
 
 			schema_list map;
 			map.push_back(var::set::integer(*location));
@@ -1854,9 +1849,9 @@ namespace tangent
 
 			auto cursor = get_party_storage().emplace_query(__func__, "SELECT transaction_number FROM parties WHERE transaction_account_number = ? AND block_number <= ? ORDER BY transaction_number $? LIMIT ? OFFSET ?", &map);
 			if (!cursor || cursor->error())
-				return expects_lr<vector<uptr<ledger::transaction>>>(layer_exception(ledger::storage_util::error_of(cursor)));
+				return expects_lr<vector<uptr<ledger::transaction_message>>>(layer_exception(ledger::storage_util::error_of(cursor)));
 			else if (cursor->empty())
-				return expects_lr<vector<uptr<ledger::transaction>>>(vector<uptr<ledger::transaction>>());
+				return expects_lr<vector<uptr<ledger::transaction_message>>>(vector<uptr<ledger::transaction_message>>());
 
 			string dynamic_query = "SELECT transaction_hash FROM transactions WHERE transaction_number IN (";
 			for (auto row : cursor->first())
@@ -1867,11 +1862,11 @@ namespace tangent
 
 			cursor = get_tx_storage().query(__func__, dynamic_query);
 			if (!cursor || cursor->error())
-				return expects_lr<vector<uptr<ledger::transaction>>>(layer_exception(ledger::storage_util::error_of(cursor)));
+				return expects_lr<vector<uptr<ledger::transaction_message>>>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 			auto& response = cursor->first();
 			size_t size = response.size();
-			vector<uptr<ledger::transaction>> values;
+			vector<uptr<ledger::transaction_message>> values;
 			values.resize(size);
 
 			auto& blob_storage = get_blob_storage();
@@ -1887,7 +1882,7 @@ namespace tangent
 					finalize_checksum(**value, transaction_hash);
 			}));
 
-			values.erase(std::remove_if(values.begin(), values.end(), [](const uptr<ledger::transaction>& a) { return !a; }), values.end());
+			values.erase(std::remove_if(values.begin(), values.end(), [](const uptr<ledger::transaction_message>& a) { return !a; }), values.end());
 			return values;
 		}
 		expects_lr<vector<ledger::block_transaction>> chainstate::get_block_transactions_by_number(uint64_t block_number, size_t offset, size_t count)
@@ -1977,7 +1972,7 @@ namespace tangent
 			values.erase(std::remove_if(values.begin(), values.end(), [](const ledger::block_transaction& a) { return !a.transaction; }), values.end());
 			return values;
 		}
-		expects_lr<vector<ledger::receipt>> chainstate::get_block_receipts_by_number(uint64_t block_number, size_t offset, size_t count)
+		expects_lr<vector<ledger::transaction_receipt>> chainstate::get_block_receipts_by_number(uint64_t block_number, size_t offset, size_t count)
 		{
 			schema_list map;
 			map.push_back(var::set::integer(block_number));
@@ -1986,18 +1981,18 @@ namespace tangent
 
 			auto cursor = get_tx_storage().emplace_query(__func__, "SELECT transaction_hash FROM transactions WHERE block_number = ? ORDER BY block_nonce LIMIT ? OFFSET ?", &map);
 			if (!cursor || cursor->error())
-				return expects_lr<vector<ledger::receipt>>(layer_exception(ledger::storage_util::error_of(cursor)));
+				return expects_lr<vector<ledger::transaction_receipt>>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 			auto& response = cursor->first();
 			size_t size = response.size();
-			vector<ledger::receipt> values;
+			vector<ledger::transaction_receipt> values;
 			values.reserve(size);
 
 			auto& blob_storage = get_blob_storage();
 			for (size_t i = 0; i < size; i++)
 			{
 				auto row = response[i];
-				ledger::receipt value;
+				ledger::transaction_receipt value;
 				auto transaction_hash = row["transaction_hash"].get();
 				auto receipt_blob = blob_storage.load(__func__, get_receipt_label(transaction_hash.get_binary())).or_else(string());
 				auto message = format::ro_stream(receipt_blob);
@@ -2056,7 +2051,7 @@ namespace tangent
 
 			return expects_lr<bool>(!cursor->first().empty());
 		}
-		expects_lr<uptr<ledger::transaction>> chainstate::get_transaction_by_hash(const uint256_t& transaction_hash)
+		expects_lr<uptr<ledger::transaction_message>> chainstate::get_transaction_by_hash(const uint256_t& transaction_hash)
 		{
 			uint8_t hash[32];
 			transaction_hash.encode(hash);
@@ -2078,14 +2073,14 @@ namespace tangent
 
 			cursor = get_tx_storage().emplace_query(__func__, dynamic_query, &map);
 			if (!cursor || cursor->error_or_empty())
-				return expects_lr<uptr<ledger::transaction>>(layer_exception(ledger::storage_util::error_of(cursor)));
+				return expects_lr<uptr<ledger::transaction_message>>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 			auto parent_transaction_hash = (*cursor)["transaction_hash"].get();
 			auto transaction_blob = get_blob_storage().load(__func__, get_transaction_label(parent_transaction_hash.get_binary())).or_else(string());
 			auto transaction_message = format::ro_stream(transaction_blob);
-			uptr<ledger::transaction> value = transactions::resolver::from_stream(transaction_message);
+			uptr<ledger::transaction_message> value = transactions::resolver::from_stream(transaction_message);
 			if (!value || !value->load(transaction_message))
-				return expects_lr<uptr<ledger::transaction>>(layer_exception("transaction deserialization error"));
+				return expects_lr<uptr<ledger::transaction_message>>(layer_exception("transaction deserialization error"));
 
 			finalize_checksum(**value, parent_transaction_hash);
 			return value;
@@ -2128,16 +2123,16 @@ namespace tangent
 			finalize_checksum(**value.transaction, parent_transaction_hash);
 			return value;
 		}
-		expects_lr<ledger::receipt> chainstate::get_receipt_by_transaction_hash(const uint256_t& transaction_hash)
+		expects_lr<ledger::transaction_receipt> chainstate::get_receipt_by_transaction_hash(const uint256_t& transaction_hash)
 		{
 			uint8_t hash[32];
 			transaction_hash.encode(hash);
 
-			ledger::receipt value;
+			ledger::transaction_receipt value;
 			auto receipt_blob = get_blob_storage().load(__func__, get_receipt_label(hash)).or_else(string());
 			auto receipt_message = format::ro_stream(receipt_blob);
 			if (!value.load(receipt_message))
-				return expects_lr<ledger::receipt>(layer_exception("receipt deserialization error"));
+				return expects_lr<ledger::transaction_receipt>(layer_exception("receipt deserialization error"));
 
 			return value;
 		}
@@ -2317,7 +2312,7 @@ namespace tangent
 				if (!next_state)
 				{
 					if (next_state && changelog != nullptr)
-						((ledger::block_changelog*)changelog)->incoming.erase(type, column, ((ledger::multiform*)*next_state)->as_row());
+						((ledger::block_changelog*)changelog)->incoming.erase(type, column, ((ledger::multiform_state*)*next_state)->as_row());
 					continue;
 				}
 				else if (changelog != nullptr)
@@ -2409,7 +2404,7 @@ namespace tangent
 				if (!next_state)
 				{
 					if (next_state && changelog != nullptr)
-						((ledger::block_changelog*)changelog)->incoming.erase(type, column, ((ledger::multiform*)*next_state)->as_row());
+						((ledger::block_changelog*)changelog)->incoming.erase(type, column, ((ledger::multiform_state*)*next_state)->as_row());
 					continue;
 				}
 				else if (changelog != nullptr)
@@ -2484,7 +2479,7 @@ namespace tangent
 				if (!next_state)
 				{
 					if (next_state && changelog != nullptr)
-						((ledger::block_changelog*)changelog)->incoming.erase(type, ((ledger::multiform*)*next_state)->as_column(), row);
+						((ledger::block_changelog*)changelog)->incoming.erase(type, ((ledger::multiform_state*)*next_state)->as_column(), row);
 					continue;
 				}
 				else if (changelog != nullptr)
@@ -2576,7 +2571,7 @@ namespace tangent
 				if (!next_state)
 				{
 					if (next_state && changelog != nullptr)
-						((ledger::block_changelog*)changelog)->incoming.erase(type, ((ledger::multiform*)*next_state)->as_column(), row);
+						((ledger::block_changelog*)changelog)->incoming.erase(type, ((ledger::multiform_state*)*next_state)->as_column(), row);
 					continue;
 				}
 				else if (changelog != nullptr)

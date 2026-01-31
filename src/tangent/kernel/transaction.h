@@ -6,11 +6,11 @@ namespace tangent
 {
 	namespace ledger
 	{
-		struct state;
 		struct block_header;
 		struct executor_context;
 		struct dispatcher_context;
-		struct receipt;
+		struct transaction_receipt;
+		struct transition_state;
 
 		enum class state_level
 		{
@@ -18,7 +18,7 @@ namespace tangent
 			multiform
 		};
 
-		struct transaction : messages::authentic
+		struct transaction_message : messages::authentic
 		{
 			algorithm::asset_id asset = 0;
 			decimal gas_price;
@@ -32,7 +32,7 @@ namespace tangent
 			virtual bool load_payload(format::ro_stream& stream) override;
 			virtual bool store_body(format::wo_stream* stream) const = 0;
 			virtual bool load_body(format::ro_stream& stream) = 0;
-			virtual bool recover_many(const executor_context* executor, const receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const;
+			virtual bool recover_many(const executor_context* executor, const transaction_receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const;
 			virtual bool recover_aliases(btree_set<uint256_t>& aliases) const;
 			virtual bool sign(const algorithm::seckey_t& secret_key) override;
 			virtual bool sign(const algorithm::seckey_t& secret_key, uint64_t new_nonce);
@@ -48,16 +48,16 @@ namespace tangent
 			virtual std::string_view as_typename() const override = 0;
 		};
 
-		struct commitment : transaction
+		struct commitment_message : transaction_message
 		{
-			commitment();
+			commitment_message();
 			virtual expects_lr<void> execute(executor_context* executor) const override;
 			virtual bool store_payload(format::wo_stream* stream) const override;
 			virtual bool load_payload(format::ro_stream& stream) override;
 			virtual bool is_commitment() const override;
 		};
 
-		struct receipt final : messages::uniform
+		struct transaction_receipt final : messages::uniform
 		{
 			vector<std::pair<uint32_t, format::variables>> events;
 			algorithm::pubkeyhash_t from;
@@ -110,14 +110,14 @@ namespace tangent
 			}
 		};
 
-		struct state : messages::uniform
+		struct transition_state : messages::uniform
 		{
 			uint64_t block_number = 0;
 
-			state(uint64_t new_block_number);
-			state(const block_header* new_block_header);
-			virtual ~state() = default;
-			virtual expects_lr<void> transition(const state* prev_state) = 0;
+			transition_state(uint64_t new_block_number);
+			transition_state(const block_header* new_block_header);
+			virtual ~transition_state() = default;
+			virtual expects_lr<void> transition(const transition_state* prev_state) = 0;
 			virtual bool store(format::wo_stream* stream) const override;
 			virtual bool load(format::ro_stream& stream) override;
 			virtual bool store_optimized(format::wo_stream* stream) const;
@@ -133,10 +133,10 @@ namespace tangent
 			virtual std::string_view as_typename() const override = 0;
 		};
 
-		struct uniform : state
+		struct uniform_state : transition_state
 		{
-			uniform(uint64_t new_block_number);
-			uniform(const block_header* new_block_header);
+			uniform_state(uint64_t new_block_number);
+			uniform_state(const block_header* new_block_header);
 			virtual bool store_payload(format::wo_stream* stream) const override;
 			virtual bool load_payload(format::ro_stream& stream) override;
 			virtual bool store_index(format::wo_stream* stream) const = 0;
@@ -146,10 +146,10 @@ namespace tangent
 			virtual string as_index() const;
 		};
 
-		struct multiform : state
+		struct multiform_state : transition_state
 		{
-			multiform(uint64_t new_block_number);
-			multiform(const block_header* new_block_header);
+			multiform_state(uint64_t new_block_number);
+			multiform_state(const block_header* new_block_header);
 			virtual bool store_payload(format::wo_stream* stream) const override;
 			virtual bool load_payload(format::ro_stream& stream) override;
 			virtual bool store_column(format::wo_stream* stream) const = 0;

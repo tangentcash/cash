@@ -10,7 +10,7 @@ namespace tangent
 	{
 		namespace translations
 		{
-			class solana : public translation
+			class solana : public translation_unit
 			{
 			public:
 				struct token_account

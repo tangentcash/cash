@@ -607,7 +607,7 @@ void btc_tx_copy(btc_tx* dest, const btc_tx* src);
 int btc_tx_deserialize(const unsigned char* tx_serialized, size_t inlen, btc_tx* tx, size_t* consumed_length, btc_bool allow_witness);
 //!serialize a lbc bitcoin data structure into a p2p serialized buffer
 void btc_tx_serialize(cstring* s, const btc_tx* tx, btc_bool allow_witness);
-void btc_tx_hash(const btc_tx* tx, uint8_t* hashout);
+void btc_tx_hash(const btc_tx* tx, uint256 hashout);
 btc_bool btc_tx_sighash(const btc_tx* tx_to, const enum btc_sig_version sigversion, uint32_t hashtype, const btc_tx_witness_stack* vin_stack, uint32_t input_index, const uint256 leaf_hash, uint256 hash);
 btc_bool btc_tx_add_address_out(btc_tx* tx, const sc_chainparams* chain, int64_t amount, const char* address);
 btc_bool btc_tx_add_p2sh_hash160_out(btc_tx* tx, int64_t amount, uint160 hash160);

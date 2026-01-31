@@ -180,10 +180,7 @@ namespace tangent
 
 		task = schedule::get()->set_task([this, id = std::move(id), callback = std::move(callback)]() mutable
 		{
-			coasync<void>([this, callback = std::move(callback)]() mutable -> promise<void>
-			{
-				coreturn coawait(callback());
-			}).when([this, id = std::move(id)]() mutable
+			coasync<void>(std::move(callback)).when([this, id = std::move(id)]() mutable
 			{
 				clear_task(id);
 			});
@@ -401,7 +398,7 @@ namespace tangent
 	void service_control::shutdown(int signal) noexcept
 	{
 		if (protocol::now().user.logs.control_logging)
-			VI_INFO("service shutdown (signal code: %i, state = OK)", signal);
+			VI_INFO("service shutdown (signal: %i, state: OK)", signal);
 
 		instance = nullptr;
 		if (signal != os::process::get_signal_id(signal_code::SIG_INT) && signal != os::process::get_signal_id(signal_code::SIG_TERM))
@@ -413,13 +410,15 @@ namespace tangent
 	void service_control::abort(int signal) noexcept
 	{
 		std::cout << "[srvctl] PANIC! service termination (signal: " << signal << ", state: unrecoverable, mode: abort):\n" << error_handling::get_stack_trace(0) << std::endl;
+		std::cout << std::flush;
+		std::cout.flush();
 		instance = nullptr;
 		os::process::abort();
 	}
 	int service_control::launch() noexcept
 	{
 		schedule::desc policy;
-		policy.ping = [this]() { return exit_code == 0xFFFFFFFF; };
+		policy.ping = [this]() { return exit_code == (int)0xFFFFFFFF; };
 		policy.max_recycles = 0;
 
 		if (protocol::now().user.storage.computation_threads_ratio > 0.0)

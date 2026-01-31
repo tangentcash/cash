@@ -46,19 +46,6 @@ namespace tangent
 				buffer[3] = (uint8_t)((data >> 0) & 0xFF);
 				tx_append(tx, buffer, sizeof(buffer));
 			}
-			static void tx_append_uint64(vector<uint8_t>& tx, uint64_t data)
-			{
-				uint8_t buffer[sizeof(uint64_t)];
-				buffer[0] = (uint8_t)(data >> 56);
-				buffer[1] = (uint8_t)(data >> 48);
-				buffer[2] = (uint8_t)(data >> 40);
-				buffer[3] = (uint8_t)(data >> 32);
-				buffer[4] = (uint8_t)(data >> 24);
-				buffer[5] = (uint8_t)(data >> 16);
-				buffer[6] = (uint8_t)(data >> 8);
-				buffer[7] = (uint8_t)(data >> 0);
-				tx_append(tx, buffer, sizeof(buffer));
-			}
 			static void tx_append_amount(vector<uint8_t>& tx, ripple* implementation, const std::string_view& asset, const std::string_view& issuer, const decimal& token_value, uint64_t base_value)
 			{
 				bool is_token = (!asset.empty() && !issuer.empty());
@@ -183,7 +170,7 @@ namespace tangent
 				return "submit";
 			}
 
-			ripple::ripple(const algorithm::asset_id& new_asset) noexcept : translation(new_asset)
+			ripple::ripple(const algorithm::asset_id& new_asset) noexcept : translation_unit(new_asset)
 			{
 				netdata.composition = algorithm::composition::type::ed25519;
 				netdata.routing = routing_policy::memo;

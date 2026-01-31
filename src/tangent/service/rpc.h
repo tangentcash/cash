@@ -104,8 +104,8 @@ namespace tangent
 			bool ws_receive(http::web_socket_frame* web_socket, http::web_socket_op opcode, const std::string_view& buffer);
 			void ws_disconnect(http::web_socket_frame* web_socket);
 			bool dispatch_response(http::connection* base, format::tree&& requests, option<format::tree>&& responses, size_t index, std::function<void(http::connection*, option<format::tree>&&)>&& callback);
-			void dispatch_accept_block(const uint256_t& hash, const ledger::block& block, const ledger::block_checkpoint& checkpoint);
-			void dispatch_accept_transaction(const uint256_t& hash, const ledger::transaction* transaction, const algorithm::pubkeyhash_t& owner);
+			void dispatch_accept_block(const uint256_t& hash, const ledger::block_body& block, const ledger::block_checkpoint& checkpoint);
+			void dispatch_accept_transaction(const uint256_t& hash, const ledger::transaction_message* transaction, const algorithm::pubkeyhash_t& owner);
 			server_response web_socket_subscribe(http::connection* base, format::variables&& args);
 			server_response web_socket_unsubscribe(http::connection* base, format::variables&& args);
 			server_response utility_encode_address(http::connection* base, format::variables&& args);
@@ -204,7 +204,7 @@ namespace tangent
 			server_response mempoolstate_get_gas_price(http::connection* base, format::variables&& args);
 			server_response mempoolstate_get_asset_price(http::connection* base, format::variables&& args);
 			server_response mempoolstate_simulate_transaction(http::connection* base, format::variables&& args);
-			server_response mempoolstate_submit_transaction(http::connection* base, format::variables&& args, ledger::transaction* prebuilt);
+			server_response mempoolstate_submit_transaction(http::connection* base, format::variables&& args, ledger::transaction_message* prebuilt);
 			server_response mempoolstate_reject_transaction(http::connection* base, format::variables&& args);
 			server_response mempoolstate_get_transaction_by_hash(http::connection* base, format::variables&& args);
 			server_response mempoolstate_get_raw_transaction_by_hash(http::connection* base, format::variables&& args);

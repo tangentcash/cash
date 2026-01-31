@@ -107,7 +107,7 @@ namespace tangent
 			expects_lr<uint256_t> pull_best_attestation_hash(size_t offset);
 			expects_lr<attestation_tree> get_attestation(const uint256_t& attestation_hash);
 			expects_lr<void> remove_attestation(const uint256_t& attestation_hash);
-			expects_lr<void> add_transaction(const ledger::transaction& value, bool resurrection);
+			expects_lr<void> add_transaction(const ledger::transaction_message& value);
 			expects_lr<void> remove_transactions(const hash_set<uint256_t>& transaction_hashes);
 			expects_lr<size_t> expire_transactions();
 			expects_lr<size_t> get_transactions_count();
@@ -117,9 +117,9 @@ namespace tangent
 			expects_lr<bool> has_transaction(const uint256_t& transaction_hash);
 			expects_lr<uint64_t> get_lowest_transaction_nonce(const algorithm::pubkeyhash_t& owner);
 			expects_lr<uint64_t> get_highest_transaction_nonce(const algorithm::pubkeyhash_t& owner);
-			expects_lr<uptr<ledger::transaction>> get_transaction_by_hash(const uint256_t& transaction_hash);
-			expects_lr<vector<uptr<ledger::transaction>>> get_best_transactions_from_queue(uint8_t transaction_queue_flags, size_t offset, size_t count);
-			expects_lr<vector<uptr<ledger::transaction>>> get_transactions_by_owner(const algorithm::pubkeyhash_t& owner, int8_t direction, size_t offset, size_t count);
+			expects_lr<uptr<ledger::transaction_message>> get_transaction_by_hash(const uint256_t& transaction_hash);
+			expects_lr<vector<uptr<ledger::transaction_message>>> get_best_transactions_from_queue(uint8_t transaction_queue_flags, size_t offset, size_t count);
+			expects_lr<vector<uptr<ledger::transaction_message>>> get_transactions_by_owner(const algorithm::pubkeyhash_t& owner, int8_t direction, size_t offset, size_t count);
 			expects_lr<vector<uint256_t>> get_transaction_hashset(size_t offset, size_t count);
 			ledger::storage_index_ptr& get_peer_storage();
 			ledger::storage_index_ptr& get_secret_storage();

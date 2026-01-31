@@ -259,7 +259,7 @@ namespace tangent
 				return "/transactions";
 			}
 
-			stellar::stellar(const algorithm::asset_id& new_asset, chain_config* new_config) noexcept : translation(new_asset)
+			stellar::stellar(const algorithm::asset_id& new_asset, chain_config* new_config) noexcept : translation_unit(new_asset)
 			{
 				if (new_config != nullptr)
 					config = *new_config;
@@ -371,7 +371,7 @@ namespace tangent
 				}
 				coreturn expects_rt<vector<block_log>>(std::move(results));
 			}
-			expects_promise_rt<computed_transaction> stellar::link_transaction(uint64_t block_height, const std::string_view& block_hash, format::tree& transaction_data)
+			expects_promise_rt<computed_transaction> stellar::link_transaction(uint64_t, const std::string_view&, format::tree& transaction_data)
 			{
 				bool is_successful = transaction_data.child_var("successful").as_boolean() || transaction_data.child_var("transaction_successful").as_boolean();
 				if (!is_successful)

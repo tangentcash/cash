@@ -154,7 +154,7 @@ namespace tangent
 				return "/get_o_indexes.bin";
 			}
 
-			monero::monero(const algorithm::asset_id& new_asset) noexcept : translation_utxo(new_asset)
+			monero::monero(const algorithm::asset_id& new_asset) noexcept : utxo_translation_unit(new_asset)
 			{
 				netdata.composition = algorithm::composition::type::ed25519_clsag;
 				netdata.routing = routing_policy::utxo;
@@ -285,7 +285,7 @@ namespace tangent
 
 				return expects_promise_rt<coin_utxo>(std::move(*result));
 			}
-			expects_promise_rt<computed_transaction> monero::link_transaction(uint64_t block_height, const std::string_view& block_hash, format::tree& transaction_data)
+			expects_promise_rt<computed_transaction> monero::link_transaction(uint64_t, const std::string_view&, format::tree& transaction_data)
 			{
 				auto info = decode_transaction_info(transaction_data);
 				auto inputs = decode_transaction_inputs(transaction_data);
@@ -301,22 +301,16 @@ namespace tangent
 				computed_transaction result;
 				result.transaction_id = info.hash;
 
-				bool is_coinbase = false;
 				for (size_t i = 0; i < inputs.size(); i++)
 				{
 					auto& input = inputs[i];
-					if (!input.is_coinbase)
-					{
-						if (info.key_offset_indices.size() == inputs.size() && info.key_offset_indices[i] < input.key_offsets.size())
-						{
-							auto& key_offset = input.key_offsets[info.key_offset_indices[i]];
-							auto utxo = get_utxo(to_string(key_offset, 16), 0);
-							if (utxo)
-								result.add_input(std::move(*utxo));
-						}
-					}
-					else
-						is_coinbase = true;
+					if (input.is_coinbase || info.key_offset_indices.size() != inputs.size() || info.key_offset_indices[i] >= input.key_offsets.size())
+						continue;
+
+					auto& key_offset = input.key_offsets[info.key_offset_indices[i]];
+					auto utxo = get_utxo(to_string(key_offset, 16), 0);
+					if (utxo)
+						result.add_input(std::move(*utxo));
 				}
 
 				while (true)
@@ -333,7 +327,6 @@ namespace tangent
 
 						uint8_t private_view_key[32];
 						uint8_t* public_spend_key = (uint8_t*)public_spend_view_key->data();
-						uint8_t* public_view_key = (uint8_t*)public_spend_view_key->data() + 32;
 						derive_known_private_view_key(public_spend_key, private_view_key);
 						for (auto& transaction_public_key : info.public_keys)
 						{
@@ -573,6 +566,7 @@ namespace tangent
 			}
 			expects_lr<finalized_transaction> monero::finalize_transaction(prepared_transaction&& prepared)
 			{
+				(void)prepared;
 				return layer_exception("not implemented");
 			}
 			expects_lr<secret_box> monero::encode_secret_key(const secret_box& secret_key)
@@ -606,7 +600,6 @@ namespace tangent
 			}
 			expects_lr<secret_box> monero::decode_secret_key(const secret_box& secret_key)
 			{
-				bool use_publicly_known_keypair = false;
 				auto signing_keypair = secret_key.expose<KEY_LIMIT>();
 				uint8_t private_spend_key[32], private_view_key[32];
 				size_t split = signing_keypair.view.find(':');
@@ -657,7 +650,6 @@ namespace tangent
 			}
 			expects_lr<string> monero::decode_public_key(const std::string_view& public_key)
 			{
-				bool use_publicly_known_keypair = false;
 				uint8_t public_spend_key[32], public_view_key[32];
 				size_t split = public_key.find(':');
 				auto raw_spend_key = codec::hex_decode(public_key.substr(0, split));
@@ -1028,6 +1020,7 @@ namespace tangent
 				ge_p2 m2;
 				ge_scalarmult(&m2, ephimeral_private_key, &m3);
 				ge_tobytes(key_image, &m2);
+				(void)public_view_key;
 				return false;
 			}
 			bool monero::generate_derivation_key(const uint8_t transaction_public_key[32], const uint8_t private_view_key[32], uint8_t derivation_key[32])

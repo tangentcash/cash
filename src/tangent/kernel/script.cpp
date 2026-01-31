@@ -45,7 +45,7 @@ namespace tangent
 				if (exp > 0)
 				{
 					len -= negative;
-					if (exp >= len)
+					if (exp >= (mp_exp_t)len)
 					{
 						result.resize(exp + negative);
 						memset(result.data() + negative + len, '0', exp - len);
@@ -190,7 +190,6 @@ namespace tangent
 			string_stream stream;
 			stream << '\n';
 
-			virtual_machine* vm = context->get_vm();
 			size_t callstack_size = context->get_callstack_size();
 			size_t top_callstack_size = callstack_size;
 			for (size_t i = 0; i < callstack_size; i++)
@@ -235,7 +234,7 @@ namespace tangent
 			if (obj_type.flags() & (uint32_t)object_behaviours::gc)
 				obj_type.get_vm()->notify_of_new_object(this, obj_type);
 		}
-		array_repr::array_repr(const array_repr& other) : obj_type(other.obj_type), buffer(nullptr), element_size(other.element_size), sub_type_id(other.sub_type_id)
+		array_repr::array_repr(const array_repr& other) : reference<array_repr>(), obj_type(other.obj_type), buffer(nullptr), element_size(other.element_size), sub_type_id(other.sub_type_id)
 		{
 			VI_ASSERT(obj_type.is_valid() && string(obj_type.get_name()) == SCRIPT_TYPE_ARRAY, "array type is invalid");
 			obj_type.add_ref();
@@ -295,9 +294,9 @@ namespace tangent
 			if (ptr == 0)
 				return;
 
-			if ((sub_type_id & ~(uint32_t)type_id::mask_seqnbr_t) && !(sub_type_id & (uint32_t)type_id::handle_t))
+			if ((sub_type_id & ~(int32_t)type_id::mask_seqnbr_t) && !(sub_type_id & (int32_t)type_id::handle_t))
 				obj_type.get_vm()->assign_object(ptr, value, obj_type.get_sub_type());
-			else if (sub_type_id & (uint32_t)type_id::handle_t)
+			else if (sub_type_id & (int32_t)type_id::handle_t)
 			{
 				void* swap = *(void**)ptr;
 				*(void**)ptr = *(void**)value;
@@ -305,15 +304,15 @@ namespace tangent
 				if (swap)
 					obj_type.get_vm()->release_object(swap, obj_type.get_sub_type());
 			}
-			else if (sub_type_id == (uint32_t)type_id::float_t || sub_type_id == (uint32_t)type_id::double_t)
+			else if (sub_type_id == (int32_t)type_id::float_t || sub_type_id == (int32_t)type_id::double_t)
 				contract::throw_ptr(exception_repr(exception_repr::category::argument(), "floating point value not permitted"));
-			else if (sub_type_id == (uint32_t)type_id::bool_t || sub_type_id == (uint32_t)type_id::int8_t || sub_type_id == (uint32_t)type_id::uint8_t)
+			else if (sub_type_id == (int32_t)type_id::bool_t || sub_type_id == (int32_t)type_id::int8_t || sub_type_id == (int32_t)type_id::uint8_t)
 				*(char*)ptr = *(char*)value;
-			else if (sub_type_id == (uint32_t)type_id::int16_t || sub_type_id == (uint32_t)type_id::uint16_t)
+			else if (sub_type_id == (int32_t)type_id::int16_t || sub_type_id == (int32_t)type_id::uint16_t)
 				*(short*)ptr = *(short*)value;
-			else if (sub_type_id == (uint32_t)type_id::int32_t || sub_type_id == (uint32_t)type_id::uint32_t || sub_type_id > (uint32_t)type_id::double_t)
+			else if (sub_type_id == (int32_t)type_id::int32_t || sub_type_id == (int32_t)type_id::uint32_t || sub_type_id > (int32_t)type_id::double_t)
 				*(int*)ptr = *(int*)value;
-			else if (sub_type_id == (uint32_t)type_id::int64_t || sub_type_id == (uint32_t)type_id::uint64_t)
+			else if (sub_type_id == (int32_t)type_id::int64_t || sub_type_id == (int32_t)type_id::uint64_t)
 				*(int64_t*)ptr = *(int64_t*)value;
 		}
 		uint32_t array_repr::size() const
@@ -3153,7 +3152,6 @@ namespace tangent
 			generic_context inout = generic_context(generic);
 			void* object_value = inout.get_arg_address(1);
 			int object_type_id = inout.get_arg_type_id(1);
-			void* event_value = inout.get_arg_address(0);
 			int event_type_id = inout.get_arg_type_id(0);
 			auto status = marshall::store(&stream, (void*)object_value, object_type_id);
 			if (!status)
@@ -4877,7 +4875,7 @@ namespace tangent
 					}
 					else if (name == SCRIPT_TYPE_REAL320)
 					{
-						auto* data = new (value) decimal(stream.value.as_decimal());
+						new (value) decimal(stream.value.as_decimal());
 						unique.reset();
 						program::request_gas_vmemory(sizeof(uint256_t));
 						return expectation::met;
@@ -4991,7 +4989,7 @@ namespace tangent
 			ref = nullptr;
 		}
 
-		factory::factory() noexcept : vm(new virtual_machine()), debugger_tools(false), strings(memory::init<string_repr_cache_type>())
+		factory::factory() noexcept : vm(new virtual_machine()), vmc_tools(false), strings(memory::init<string_repr_cache_type>())
 		{
 			vm->set_type_def("usize", "uint32");
 			auto pmut = vm->set_class_address("pmut", sizeof(program), (size_t)object_behaviours::ref | (size_t)object_behaviours::nocount);
@@ -5504,8 +5502,8 @@ namespace tangent
 		}
 		factory::~factory() noexcept
 		{
-			if (compiler)
-				compiler->unlink_module();
+			if (vmc)
+				vmc->unlink_module();
 			for (auto& [id, link] : modules)
 				library(link.reset()).discard();
 			modules.clear();
@@ -5515,7 +5513,7 @@ namespace tangent
 		{
 			VI_ASSERT(debugger != nullptr, "debugger should be set");
 			umutex<std::mutex> unique(exclusive);
-			if (!debugger_tools)
+			if (!vmc_tools)
 			{
 				auto any_type = vm->set_class_address("any", sizeof(script::bindings::any), (size_t)object_behaviours::ref | (size_t)object_behaviours::gc);
 				any_type->set_behaviour_address("any@ f()", behaviours::factory, WRAP_FN(script::bindings::any::factory1), convention::generic_call);
@@ -5531,9 +5529,9 @@ namespace tangent
 				any_type->set_method_address("any &opAssign(any&in)", WRAP_OBJ_FIRST(script::bindings::any::assignment), convention::generic_call);
 				any_type->set_method_extern("void store(?&in)", &any_store, convention::generic_call);
 				any_type->set_method_extern("bool retrieve(?&out)", &any_retrieve, convention::generic_call);
-				debugger_tools = true;
+				vmc_tools = true;
 			}
-			debugger->add_to_string_callback("string", [](string& indent, int depth, void* object, int type_id)
+			debugger->add_to_string_callback("string", [](string&, int, void* object, int)
 			{
 				script::string_repr& source = *(script::string_repr*)object;
 				string_stream stream;
@@ -5541,12 +5539,12 @@ namespace tangent
 				stream << " (string, " << source.size() << " chars)";
 				return stream.str();
 			});
-			debugger->add_to_string_callback("uint128", [](string& indent, int depth, void* object, int type_id)
+			debugger->add_to_string_callback("uint128", [](string&, int, void* object, int)
 			{
 				uint128& source = *(uint128*)object;
 				return source.to_string() + " (uint128)";
 			});
-			debugger->add_to_string_callback("uint256", [](string& indent, int depth, void* object, int type_id)
+			debugger->add_to_string_callback("uint256", [](string&, int, void* object, int)
 			{
 				uint256_t& source = *(uint256_t*)object;
 				if (algorithm::asset::is_any(source))
@@ -5554,12 +5552,12 @@ namespace tangent
 
 				return source.to_string() + " (uint256)";
 			});
-			debugger->add_to_string_callback("real320", [](string& indent, int depth, void* object, int type_id)
+			debugger->add_to_string_callback("real320", [](string&, int, void* object, int)
 			{
 				decimal& source = *(decimal*)object;
 				return source.to_string() + " (real320)";
 			});
-			debugger->add_to_string_callback("array", [debugger](string& indent, int depth, void* object, int type_id)
+			debugger->add_to_string_callback("array", [debugger](string& indent, int depth, void* object, int)
 			{
 				auto* source = (script::array_repr*)object;
 				int base_type_id = source->get_element_type_id();
@@ -5596,7 +5594,7 @@ namespace tangent
 
 				return stream.str();
 			});
-			debugger->add_to_string_callback("payable", [](string& indent, int depth, void* object, int type_id)
+			debugger->add_to_string_callback("payable", [](string&, int depth, void* object, int)
 			{
 				auto& source = *(script::payable_repr*)object;
 				string_stream stream;
@@ -5615,17 +5613,17 @@ namespace tangent
 				stream << "]";
 				return stream.str();
 			});
-			debugger->add_to_string_callback("address", [](string& indent, int depth, void* object, int type_id)
+			debugger->add_to_string_callback("address", [](string&, int, void* object, int)
 			{
 				auto& source = *(script::address_repr*)object;
 				return string(source.to_string().view()) + " (address)";
 			});
-			debugger->add_to_string_callback("abi", [](string& indent, int depth, void* object, int type_id)
+			debugger->add_to_string_callback("abi", [](string&, int, void* object, int)
 			{
 				auto& source = *(script::abi_repr*)object;
 				return source.output.encode() + " (abi)";
 			});
-			debugger->add_to_string_callback("any", [debugger](string& indent, int depth, void* object, int type_id)
+			debugger->add_to_string_callback("any", [debugger](string& indent, int depth, void* object, int)
 			{
 				auto* source = (script::bindings::any*)object;
 				return debugger->to_string(indent, depth - 1, source->get_address_of_object(), source->get_type_id());
@@ -5661,48 +5659,48 @@ namespace tangent
 				return expects_lr<cmodule>(std::move(result));
 			}
 
-			compiler_log.clear();
-			vm->set_compiler_error_callback([this](const std::string_view& message) { compiler_log.append(message).append("\r\n"); });
-			if (!compiler)
-				compiler = vm->create_compiler();
+			vmc_log.clear();
+			vm->set_compiler_error_callback([this](const std::string_view& message) { vmc_log.append(message).append("\r\n"); });
+			if (!vmc)
+				vmc = vm->create_compiler();
 			else
-				compiler->clear();
+				vmc->clear();
 
-			auto preparation = compiler->prepare(hashcode, hashcode, true, true);
+			auto preparation = vmc->prepare(hashcode, hashcode, true, true);
 			if (!preparation)
 			{
-				compiler_log.append(SCRIPT_VM " preparation: " + preparation.error().message() + "\r\n");
+				vmc_log.append(SCRIPT_VM " preparation: " + preparation.error().message() + "\r\n");
 			error:
 				vm->set_compiler_error_callback(nullptr);
-				stringify::replace(compiler_log, hashcode, SCRIPT_VM "c");
-				return layer_exception(string(compiler_log));
+				stringify::replace(vmc_log, hashcode, SCRIPT_VM "c");
+				return layer_exception(string(vmc_log));
 			}
 
-			if (!compiler->is_cached())
+			if (!vmc->is_cached())
 			{
 				auto code = unpacked_code_callback();
 				if (!code)
 					return code.error();
 
-				auto injection = compiler->load_code(hashcode, *code);
+				auto injection = vmc->load_code(hashcode, *code);
 				if (!injection)
 				{
-					compiler_log.append(SCRIPT_VM " generation: " + injection.error().message() + "\r\n");
+					vmc_log.append(SCRIPT_VM " generation: " + injection.error().message() + "\r\n");
 					goto error;
 				}
 			}
 
-			auto compilation = compiler->compile_sync();
+			auto compilation = vmc->compile_sync();
 			if (!compilation)
 			{
-				compiler_log.append(SCRIPT_VM " compilation: " + compilation.error().message() + "\r\n");
+				vmc_log.append(SCRIPT_VM " compilation: " + compilation.error().message() + "\r\n");
 				goto error;
 			}
 
-			auto module = cmodule(compiler->unlink_module());
+			auto module = cmodule(vmc->unlink_module());
 			if (module->get_properties_count() > std::numeric_limits<uint16_t>::max())
 			{
-				compiler_log.append(SCRIPT_VM " property validation: too many global properties\r\n");
+				vmc_log.append(SCRIPT_VM " property validation: too many global properties\r\n");
 				goto error;
 			}
 
@@ -5712,7 +5710,7 @@ namespace tangent
 				auto status = module->get_property(i, &info);
 				if (!status)
 				{
-					compiler_log.append(SCRIPT_VM " property validation: " + status.error().message() + "\r\n");
+					vmc_log.append(SCRIPT_VM " property validation: " + status.error().message() + "\r\n");
 					goto error;
 				}
 
@@ -5721,7 +5719,7 @@ namespace tangent
 				if (name != SCRIPT_TYPE_VARYING && name != SCRIPT_TYPE_MAPPING && name != SCRIPT_TYPE_RANGING)
 				{
 					auto decl = module->get_property_decl(i, true);
-					compiler_log.append(stringify::text(SCRIPT_VM " illegal property declaration \"%.*s\"\r\n", (int)decl.size(), decl.data()));
+					vmc_log.append(stringify::text(SCRIPT_VM " illegal property declaration \"%.*s\"\r\n", (int)decl.size(), decl.data()));
 					goto error;
 				}
 			}
@@ -5778,7 +5776,7 @@ namespace tangent
 			virtual_machine::global_exclusive_unlock();
 			return reinterpret_cast<const void*>(&it->first);
 		}
-		int factory::from_string_constant(void* context, const void* object, char* buffer, size_t* buffer_size)
+		int factory::from_string_constant(void*, const void* object, char* buffer, size_t* buffer_size)
 		{
 			if (buffer_size != nullptr)
 				*buffer_size = reinterpret_cast<const string_repr*>(object)->size();
@@ -5938,7 +5936,7 @@ namespace tangent
 			transaction.gas_limit = executor->get_gas_left();
 			transaction.nonce = 0;
 
-			ledger::receipt receipt;
+			ledger::transaction_receipt receipt;
 			receipt.transaction_hash = transaction.as_hash();
 			receipt.absolute_gas_use = executor->block->gas_use;
 			receipt.block_number = executor->block->number;
@@ -6071,12 +6069,12 @@ namespace tangent
 					frames.emplace_back([i, index, &args, this](immediate_context* coroutine) { coroutine->set_arg_object(i, (program*)this); });
 				}
 			}
-			return std::move(frames);
+			return expects_lr<vector<std::function<void(immediate_context*)>>>(std::move(frames));
 		}
-		void program::dispatch_event(int event_type_id, const void* object_value, int object_type_id)
+		void program::dispatch_event(int, const void*, int)
 		{
 		}
-		void program::dispatch_exception(immediate_context* coroutine)
+		void program::dispatch_exception(immediate_context*)
 		{
 		}
 		void program::dispatch_coroutine(immediate_context* coroutine)

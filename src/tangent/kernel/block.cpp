@@ -25,7 +25,7 @@ namespace tangent
 			}
 		}
 
-		block_transaction::block_transaction(uptr<ledger::transaction>&& new_transaction, ledger::receipt&& new_receipt) : transaction(std::move(new_transaction)), receipt(std::move(new_receipt))
+		block_transaction::block_transaction(uptr<transaction_message>&& new_transaction, transaction_receipt&& new_receipt) : transaction(std::move(new_transaction)), receipt(std::move(new_receipt))
 		{
 			VI_ASSERT(transaction, "transaction should be set");
 		}
@@ -91,7 +91,7 @@ namespace tangent
 		block_state::state_change::state_change() noexcept : erase(false)
 		{
 		}
-		block_state::state_change::state_change(uptr<ledger::state>&& new_state, bool new_erase) noexcept : state(std::move(new_state)), erase(new_erase)
+		block_state::state_change::state_change(uptr<transition_state>&& new_state, bool new_erase) noexcept : state(std::move(new_state)), erase(new_erase)
 		{
 		}
 		block_state::state_change::state_change(const state_change& other) noexcept : state(other.state ? states::resolver::from_copy(*other.state) : nullptr), erase(other.erase)
@@ -150,31 +150,31 @@ namespace tangent
 				pending[index] = change;
 			return *this;
 		}
-		option<uptr<state>> block_state::find(uint32_t type, const std::string_view& index) const
+		option<uptr<transition_state>> block_state::find(uint32_t type, const std::string_view& index) const
 		{
 			auto location = index_of(type, index);
 			auto it = pending.find(location);
 			if (it != pending.end())
-				return it->second.empty() ? option<uptr<state>>(nullptr) : option<uptr<state>>(states::resolver::from_copy(*it->second.state));
+				return it->second.empty() ? option<uptr<transition_state>>(nullptr) : option<uptr<transition_state>>(states::resolver::from_copy(*it->second.state));
 
 			it = finalized.find(location);
 			if (it != finalized.end())
-				return it->second.empty() ? option<uptr<state>>(nullptr) : option<uptr<state>>(states::resolver::from_copy(*it->second.state));
+				return it->second.empty() ? option<uptr<transition_state>>(nullptr) : option<uptr<transition_state>>(states::resolver::from_copy(*it->second.state));
 
-			return option<uptr<state>>(optional::none);
+			return option<uptr<transition_state>>(optional::none);
 		}
-		option<uptr<state>> block_state::find(uint32_t type, const std::string_view& column, const std::string_view& row) const
+		option<uptr<transition_state>> block_state::find(uint32_t type, const std::string_view& column, const std::string_view& row) const
 		{
 			auto location = index_of(type, column, row);
 			auto it = pending.find(location);
 			if (it != pending.end())
-				return it->second.empty() ? option<uptr<state>>(nullptr) : option<uptr<state>>(states::resolver::from_copy(*it->second.state));
+				return it->second.empty() ? option<uptr<transition_state>>(nullptr) : option<uptr<transition_state>>(states::resolver::from_copy(*it->second.state));
 
 			it = finalized.find(location);
 			if (it != finalized.end())
-				return it->second.empty() ? option<uptr<state>>(nullptr) : option<uptr<state>>(states::resolver::from_copy(*it->second.state));
+				return it->second.empty() ? option<uptr<transition_state>>(nullptr) : option<uptr<transition_state>>(states::resolver::from_copy(*it->second.state));
 
-			return option<uptr<state>>(optional::none);
+			return option<uptr<transition_state>>(optional::none);
 		}
 		void block_state::erase(uint32_t type, const std::string_view& index)
 		{
@@ -188,7 +188,7 @@ namespace tangent
 			change.state.destroy();
 			change.erase = true;
 		}
-		bool block_state::push(state* value, bool will_delete)
+		bool block_state::push(transition_state* value, bool will_delete)
 		{
 			VI_ASSERT(value != nullptr, "value should be set");
 			auto copy = states::resolver::from_copy(value);
@@ -200,7 +200,7 @@ namespace tangent
 			change.erase = will_delete;
 			return true;
 		}
-		bool block_state::emplace(uptr<state>&& value, bool will_delete)
+		bool block_state::emplace(uptr<transition_state>&& value, bool will_delete)
 		{
 			VI_ASSERT(value, "value should be set");
 			auto location = index_of(*value);
@@ -209,19 +209,19 @@ namespace tangent
 			change.erase = will_delete;
 			return true;
 		}
-		string block_state::index_of(state* value) const
+		string block_state::index_of(transition_state* value) const
 		{
 			VI_ASSERT(value != nullptr, "value should be set");
 			switch (value->as_level())
 			{
 				case state_level::uniform:
 				{
-					auto* base = (uniform*)value;
+					auto* base = (uniform_state*)value;
 					return index_of(value->as_type(), base->as_index());
 				}
 				case state_level::multiform:
 				{
-					auto* base = (multiform*)value;
+					auto* base = (multiform_state*)value;
 					return index_of(value->as_type(), base->as_column(), base->as_row());
 				}
 				default:
@@ -613,7 +613,6 @@ namespace tangent
 		{
 			auto prev_duration = parent_block ? parent_block->get_slot_proof_duration_average() : 0;
 			auto prev_target = parent_block ? parent_block->difficulty : protocol::now().policy.pow.difficulty;
-			auto next_target = algorithm::wesolowski::adjust(prev_target, prev_duration, number);
 			if (parent_block && parent_block->priority > 0)
 				prev_target = algorithm::wesolowski::scale(prev_target, 1.0 / parent_block->get_proof_difficulty_multiplier());
 
@@ -759,10 +758,10 @@ namespace tangent
 			return ending_block_number > 0 && block_number <= ending_block_number;
 		}
 
-		block::block(const block_header& other) : block_header(other)
+		block_body::block_body(const block_header& other) : block_header(other)
 		{
 		}
-		expects_lr<void> block::verify_integrity(const block_header* parent_block, const block_state* state) const
+		expects_lr<void> block_body::verify_integrity(const block_header* parent_block, const block_state* state) const
 		{
 			if (transaction_count != (uint32_t)transactions.size())
 				return layer_exception("invalid transactions count");
@@ -804,7 +803,7 @@ namespace tangent
 
 			return expectation::met;
 		}
-		bool block::store_payload(format::wo_stream* stream) const
+		bool block_body::store_payload(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			if (!store_header_payload(stream))
@@ -815,7 +814,7 @@ namespace tangent
 
 			return true;
 		}
-		bool block::load_payload(format::ro_stream& stream)
+		bool block_body::load_payload(format::ro_stream& stream)
 		{
 			if (!load_header_payload(stream))
 				return false;
@@ -825,15 +824,15 @@ namespace tangent
 
 			return true;
 		}
-		bool block::store_header_payload(format::wo_stream* stream) const
+		bool block_body::store_header_payload(format::wo_stream* stream) const
 		{
 			return block_header::store_payload(stream);
 		}
-		bool block::load_header_payload(format::ro_stream& stream)
+		bool block_body::load_header_payload(format::ro_stream& stream)
 		{
 			return block_header::load_payload(stream);
 		}
-		bool block::store_body_payload(format::wo_stream* stream) const
+		bool block_body::store_body_payload(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_integer((uint32_t)transactions.size());
@@ -841,7 +840,7 @@ namespace tangent
 				item.store_payload(stream);
 			return true;
 		}
-		bool block::load_body_payload(format::ro_stream& stream)
+		bool block_body::load_body_payload(format::ro_stream& stream)
 		{
 			uint32_t transactions_size;
 			if (!stream.read_integer(stream.read_type(), &transactions_size))
@@ -860,7 +859,7 @@ namespace tangent
 
 			return true;
 		}
-		void block::recalculate(const block_header* parent_block, const block_state* state)
+		void block_body::recalculate(const block_header* parent_block, const block_state* state)
 		{
 			auto task_queue1 = parallel::for_each(transactions.begin(), transactions.end(), ELEMENTS_FEW, [](block_transaction& item) { item.receipt.as_hash(); });
 			if (state != nullptr)
@@ -904,7 +903,7 @@ namespace tangent
 			slot_gas_use = (cumulative && parent_block ? parent_block->slot_gas_use : uint256_t(0)) + gas_use;
 			transaction_count = (uint32_t)transactions.size();
 		}
-		format::tree block::as_tree() const
+		format::tree block_body::as_tree() const
 		{
 			auto data = block_header::as_tree();
 			auto* transactions_data = data.set("transactions", format::tree::list());
@@ -912,11 +911,11 @@ namespace tangent
 				transactions_data->push(item.as_tree());
 			return data;
 		}
-		block_header block::as_header() const
+		block_header block_body::as_header() const
 		{
 			return block_header(*this);
 		}
-		block_proof block::as_proof(const block_header* parent_block, const block_state* state) const
+		block_proof block_body::as_proof(const block_header* parent_block, const block_state* state) const
 		{
 			auto proof = block_proof();
 			proof.transaction_root = transaction_root;
@@ -947,7 +946,7 @@ namespace tangent
 			proof.state_tree = algorithm::merkle_tree::from(std::move(proof.state_tree.nodes));
 			return proof;
 		}
-		uint256_t block::as_hash(bool renew) const
+		uint256_t block_body::as_hash(bool renew) const
 		{
 			return as_header().as_hash(renew);
 		}
@@ -1115,10 +1114,10 @@ namespace tangent
 		executor_context::executor_context(block_changelog* new_changelog) : solver(nullptr), transaction(nullptr), changelog(new_changelog), block(nullptr), options((uint8_t)flags::unrestricted)
 		{
 		}
-		executor_context::executor_context(block_changelog* new_changelog, const solver_context* new_solver, block_header* new_block_header, const ledger::transaction* new_transaction, ledger::receipt&& new_receipt) : solver(new_solver), transaction(new_transaction), changelog(new_changelog), block(new_block_header), receipt(std::move(new_receipt)), options(0)
+		executor_context::executor_context(block_changelog* new_changelog, const solver_context* new_solver, block_header* new_block_header, const transaction_message* new_transaction, transaction_receipt&& new_receipt) : solver(new_solver), transaction(new_transaction), changelog(new_changelog), block(new_block_header), receipt(std::move(new_receipt)), options(0)
 		{
 		}
-		executor_context::executor_context(const executor_context& other) : changelog(other.changelog), solver(other.solver), receipt(other.receipt), block(other.block), options(other.options)
+		executor_context::executor_context(const executor_context& other) : solver(other.solver), changelog(other.changelog), block(other.block), receipt(other.receipt), options(other.options)
 		{
 			transaction = other.transaction ? transactions::resolver::from_copy(other.transaction) : nullptr;
 		}
@@ -1135,7 +1134,7 @@ namespace tangent
 			options = other.options;
 			return *this;
 		}
-		expects_lr<void> executor_context::query(state* next, bool paid_in_full)
+		expects_lr<void> executor_context::query(transition_state* next, bool paid_in_full)
 		{
 			if (!next)
 				return layer_exception("state not found");
@@ -1145,7 +1144,7 @@ namespace tangent
 			size_t bytes = next->as_message().data.size();
 			return burn_gas(bytes * (size_t)gas_cost::read_byte + (size_t)gas_cost::query_result);
 		}
-		expects_lr<void> executor_context::load(state* next, bool paid)
+		expects_lr<void> executor_context::load(transition_state* next, bool paid)
 		{
 			if (!next)
 				return layer_exception("state not found");
@@ -1155,7 +1154,7 @@ namespace tangent
 			size_t bytes = next->as_message().data.size();
 			return burn_gas(bytes * (size_t)gas_cost::read_byte);
 		}
-		expects_lr<void> executor_context::store(state* next, bool paid)
+		expects_lr<void> executor_context::store(transition_state* next, bool paid)
 		{
 			if (!next)
 				return layer_exception("invalid state");
@@ -1170,13 +1169,13 @@ namespace tangent
 				return layer_exception("invalid state changelog");
 
 			auto chain = storages::chainstate();
-			auto prev = uptr<state>();
+			auto prev = uptr<transition_state>();
 			auto type = next->as_type();
 			switch (next->as_level())
 			{
 				case state_level::uniform:
 				{
-					prev = chain.get_uniform(type, changelog, ((uniform*)next)->as_index(), get_validation_nonce()).or_else(storages::state_result()).value;
+					prev = chain.get_uniform(type, changelog, ((uniform_state*)next)->as_index(), get_validation_nonce()).or_else(storages::state_result()).value;
 					auto status = next->transition(*prev);
 					if (!status)
 						return status;
@@ -1184,7 +1183,7 @@ namespace tangent
 				}
 				case state_level::multiform:
 				{
-					prev = chain.get_multiform(type, changelog, ((multiform*)next)->as_column(), ((multiform*)next)->as_row(), get_validation_nonce()).or_else(storages::state_result()).value;
+					prev = chain.get_multiform(type, changelog, ((multiform_state*)next)->as_column(), ((multiform_state*)next)->as_row(), get_validation_nonce()).or_else(storages::state_result()).value;
 					auto status = next->transition(*prev);
 					if (!status)
 						return status;
@@ -1728,7 +1727,7 @@ namespace tangent
 					auto stake_value = stake;
 					if (stake_value.is_negative())
 						stake_value = std::max(stake_value, -new_state.stake);
-					
+
 					new_state.stake += stake_value;
 					auto transfer = apply_transfer(algorithm::asset::native(), owner, type == staker::reward_or_penalty ? stake_value : decimal::zero(), stake_value);
 					if (!transfer)
@@ -1741,7 +1740,7 @@ namespace tangent
 					{
 						if (!stake.is_negative())
 							return layer_exception("invalid stake");
-						
+
 						new_state.stake += stake;
 						if (new_state.stake.is_negative())
 							new_state.stake = decimal::zero();
@@ -2727,14 +2726,14 @@ namespace tangent
 
 			return transaction->gas_price * get_gas_use().to_decimal();
 		}
-		expects_lr<uint256_t> executor_context::calculate_tx_gas(const ledger::transaction* transaction, ledger::receipt* out_receipt)
+		expects_lr<uint256_t> executor_context::calculate_tx_gas(const transaction_message* transaction, transaction_receipt* out_receipt)
 		{
 			VI_ASSERT(transaction != nullptr, "transaction should be set");
 			algorithm::pubkeyhash_t owner;
 			if (!transaction->recover_hash(owner))
 				return layer_exception("invalid signature");
 
-			auto* reference = (ledger::transaction*)transaction;
+			auto* reference = (transaction_message*)transaction;
 			auto initial_checksum = transaction->checksum;
 			auto initial_gas_limit = transaction->gas_limit;
 			auto revert_transaction = [&]()
@@ -2743,9 +2742,9 @@ namespace tangent
 				reference->gas_limit = initial_gas_limit;
 			};
 			reference->checksum = 0;
-			reference->gas_limit = transaction->is_commitment() ? block::get_commitment_gas_limit() : block::get_transaction_gas_limit();
+			reference->gas_limit = transaction->is_commitment() ? block_body::get_commitment_gas_limit() : block_body::get_transaction_gas_limit();
 
-			ledger::block temp_block;
+			ledger::block_body temp_block;
 			solver_context temp_solver;
 			temp_solver.apply_temporary_state(&temp_block, transaction, { });
 
@@ -2766,7 +2765,7 @@ namespace tangent
 			revert_transaction();
 			return gas;
 		}
-		expects_lr<void> executor_context::validate_tx(const ledger::transaction* new_transaction, const uint256_t& new_transaction_hash, algorithm::pubkeyhash_t& owner)
+		expects_lr<void> executor_context::validate_tx(const transaction_message* new_transaction, const uint256_t& new_transaction_hash, algorithm::pubkeyhash_t& owner)
 		{
 			VI_ASSERT(new_transaction, "transaction should be set");
 			owner.clear();
@@ -2776,10 +2775,10 @@ namespace tangent
 			auto chain = storages::chainstate();
 			return new_transaction->validate(chain.get_latest_block_number().or_else(1));
 		}
-		expects_lr<executor_context> executor_context::execute_tx(const solver_context* new_solver, block_header* new_block, block_changelog* changelog, const ledger::transaction* new_transaction, const uint256_t& new_transaction_hash, const algorithm::pubkeyhash_t& owner, size_t transaction_size, uint8_t options, option<ledger::receipt>&& from_receipt)
+		expects_lr<executor_context> executor_context::execute_tx(const solver_context* new_solver, block_header* new_block, block_changelog* changelog, const transaction_message* new_transaction, const uint256_t& new_transaction_hash, const algorithm::pubkeyhash_t& owner, size_t transaction_size, uint8_t options, option<transaction_receipt>&& from_receipt)
 		{
 			VI_ASSERT(new_solver && new_block && new_transaction, "block, env, transaction should be set");
-			auto new_receipt = from_receipt ? std::move(*from_receipt) : ledger::receipt();
+			auto new_receipt = from_receipt ? std::move(*from_receipt) : transaction_receipt();
 			new_receipt.transaction_hash = new_transaction_hash;
 			new_receipt.absolute_gas_use = new_block->gas_use;
 			new_receipt.block_number = new_block->number;
@@ -3484,7 +3483,7 @@ namespace tangent
 			inputs.clear();
 			repeaters.clear();
 		}
-		void dispatcher_context::emit_transaction(const wallet* runner_wallet, uptr<transaction>&& value)
+		void dispatcher_context::emit_transaction(const wallet* runner_wallet, uptr<transaction_message>&& value)
 		{
 			VI_ASSERT(runner_wallet, "runner wallet should be set");
 			VI_ASSERT(value, "transaction should be set");
@@ -3505,7 +3504,7 @@ namespace tangent
 				error.append(1, '\n');
 			error.append(stringify::text("in transaction %s dispatch reverted: %.*s", algorithm::encoding::encode_0xhex256(transaction_hash).c_str(), (int)error_message.size(), error_message.data()));
 		}
-		vector<std::pair<const ledger::wallet*, uptr<transaction>>>& dispatcher_context::get_sendable_transactions()
+		vector<std::pair<const ledger::wallet*, uptr<transaction_message>>>& dispatcher_context::get_sendable_transactions()
 		{
 			return outputs;
 		}
@@ -3523,7 +3522,7 @@ namespace tangent
 			superchain::bridge::get()->store_cache(executor->transaction->asset, superchain::cache_policy::lifetime_cache, location, format::variable(message.data));
 		}
 
-		void solver_context::apply_temporary_state(block_header* abstract_block, const transaction* abstract_transaction, receipt&& abstract_receipt)
+		void solver_context::apply_temporary_state(block_header* abstract_block, const transaction_message* abstract_transaction, transaction_receipt&& abstract_receipt)
 		{
 			VI_ASSERT(abstract_block != nullptr, "abstract block should be set");
 			VI_ASSERT(abstract_transaction != nullptr, "abstract transaction should be set");
@@ -3548,7 +3547,7 @@ namespace tangent
 			memset(state.public_key_hash.blob, 0xFF, sizeof(algorithm::pubkeyhash_t));
 			memset(state.secret_key.blob, 0xFF, sizeof(algorithm::seckey_t));
 		}
-		option<uint64_t> solver_context::apply_validator_state(const std::function<ledger::wallet*(size_t)>& try_producer, option<const block_header*>&& parent_block)
+		option<uint64_t> solver_context::apply_validator_state(const std::function<ledger::wallet* (size_t)>& try_producer, option<const block_header*>&& parent_block)
 		{
 			nonces.clear();
 			state = state_variables();
@@ -3616,7 +3615,7 @@ namespace tangent
 
 			return optional::none;
 		}
-		size_t solver_context::try_include_transactions(vector<uptr<transaction>>&& candidates, hash_set<uint256_t>* hashes)
+		size_t solver_context::try_include_transactions(vector<uptr<transaction_message>>&& candidates, hash_set<uint256_t>* hashes)
 		{
 			if (candidates.empty())
 				return 0;
@@ -3664,7 +3663,7 @@ namespace tangent
 				state.transaction_gas_limit = max_transaction_gas_limit;
 			return prev_pending_size - transactions.pending.size();
 		}
-		solver_context::queued_transaction& solver_context::force_include_transaction(uptr<transaction>&& candidate)
+		solver_context::queued_transaction& solver_context::force_include_transaction(uptr<transaction_message>&& candidate)
 		{
 			VI_ASSERT(candidate, "candidate should be set");
 			auto& info = transactions.pending.emplace_back();
@@ -3702,7 +3701,7 @@ namespace tangent
 		{
 			auto* parent_block = tip.address();
 			auto position = std::find_if(producers.begin(), producers.end(), [this](const states::validator_production& a) { return a.owner == state.public_key_hash; });
-			solution.block = ledger::block();
+			solution.block = ledger::block_body();
 			solution.block.set_parent_block(parent_block);
 			solution.block.priority = (uint64_t)(position == producers.end() ? protocol::now().policy.production.max_per_block : std::distance(producers.begin(), position));
 			solution.block.difficulty = algorithm::wesolowski::scale(solution.block.get_proof_slot_target(parent_block), solution.block.get_proof_difficulty_multiplier());
@@ -3875,7 +3874,7 @@ namespace tangent
 
 			return solution.block.verify_integrity(parent_block, &solution.state);
 		}
-		expects_lr<void> solver_context::validate_solved_block(const block_header* parent_block, const block& child_block, block_evaluation* evaluated_result)
+		expects_lr<void> solver_context::validate_solved_block(const block_header* parent_block, const block_body& child_block, block_evaluation* evaluated_result)
 		{
 			if (parent_block && (parent_block->number != child_block.number - 1 || parent_block->as_hash() != child_block.parent_hash))
 				return layer_exception("invalid parent block");
@@ -3914,7 +3913,7 @@ namespace tangent
 					return layer_exception("transaction " + algorithm::encoding::encode_0xhex256(transaction.receipt.transaction_hash) + " not found in block");
 
 				auto& child = it->second;
-				if (transaction.receipt.from != child.second->owner != 0)
+				if (transaction.receipt.from != child.second->owner)
 					return layer_exception("transaction " + algorithm::encoding::encode_0xhex256(transaction.receipt.transaction_hash) + " public key recovery failed");
 
 				transaction.receipt.block_time = child.first->receipt.block_time;
@@ -3980,7 +3979,7 @@ namespace tangent
 						{
 							if (finalized_transactions.find(item->as_hash()) == finalized_transactions.end())
 							{
-								auto status = mempool.add_transaction(**item, true);
+								auto status = mempool.add_transaction(**item);
 								status.report("transaction resurrection failed");
 								mutation.mempool_transactions += status ? 1 : 0;
 							}
@@ -4029,7 +4028,7 @@ namespace tangent
 
 			return mutation;
 		}
-		solver_context::queued_transaction solver_context::precompute_transaction_element(uptr<transaction>&& candidate)
+		solver_context::queued_transaction solver_context::precompute_transaction_element(uptr<transaction_message>&& candidate)
 		{
 			solver_context::queued_transaction result;
 			result.candidate = std::move(candidate);
@@ -4053,9 +4052,9 @@ namespace tangent
 				item.candidate->recover_hash(item.owner);
 			}));
 		}
-		void solver_context::sort_transaction_list(vector<uptr<transaction>>& candidates)
+		void solver_context::sort_transaction_list(vector<uptr<transaction_message>>& candidates)
 		{
-			VI_SORT(candidates.begin(), candidates.end(), [](const uptr<transaction>& a, const uptr<transaction>& b) { return a->nonce < b->nonce; });
+			VI_SORT(candidates.begin(), candidates.end(), [](const uptr<transaction_message>& a, const uptr<transaction_message>& b) { return a->nonce < b->nonce; });
 		}
 		bool solver_context::requires_reorganization(const block_evaluation& solution)
 		{

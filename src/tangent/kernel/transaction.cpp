@@ -5,7 +5,7 @@ namespace tangent
 {
 	namespace ledger
 	{
-		expects_lr<void> transaction::validate(uint64_t block_number) const
+		expects_lr<void> transaction_message::validate(uint64_t block_number) const
 		{
 			if (!algorithm::asset::is_any(asset))
 				return layer_exception("invalid asset");
@@ -16,7 +16,7 @@ namespace tangent
 			if (!gas_limit)
 				return layer_exception("gas limit requirement not met (min: 1)");
 
-			uint256_t max_gas_limit = is_commitment() ? block::get_commitment_gas_limit() : block::get_transaction_gas_limit();
+			uint256_t max_gas_limit = is_commitment() ? block_header::get_commitment_gas_limit() : block_header::get_transaction_gas_limit();
 			if (gas_limit > max_gas_limit)
 				return layer_exception("gas limit requirement not met (max: " + max_gas_limit.to_string() + ")");
 
@@ -33,7 +33,7 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<void> transaction::execute(executor_context* executor) const
+		expects_lr<void> transaction_message::execute(executor_context* executor) const
 		{
 			auto nonce_requirement = executor->verify_account_nonce();
 			if (!nonce_requirement)
@@ -41,11 +41,11 @@ namespace tangent
 
 			return executor->verify_gas_transfer_balance();
 		}
-		expects_promise_rt<void> transaction::dispatch(const executor_context* executor, dispatcher_context* dispatcher) const
+		expects_promise_rt<void> transaction_message::dispatch(const executor_context* executor, dispatcher_context* dispatcher) const
 		{
 			return expects_promise_rt<void>(remote_exception("invalid operation"));
 		}
-		bool transaction::store_payload(format::wo_stream* stream) const
+		bool transaction_message::store_payload(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_integer(asset);
@@ -54,7 +54,7 @@ namespace tangent
 			stream->write_integer(nonce);
 			return store_body(stream);
 		}
-		bool transaction::load_payload(format::ro_stream& stream)
+		bool transaction_message::load_payload(format::ro_stream& stream)
 		{
 			if (!stream.read_integer(stream.read_type(), &asset))
 				return false;
@@ -70,26 +70,26 @@ namespace tangent
 
 			return load_body(stream);
 		}
-		bool transaction::recover_many(const executor_context* executor, const ledger::receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const
+		bool transaction_message::recover_many(const executor_context* executor, const transaction_receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const
 		{
 			return true;
 		}
-		bool transaction::recover_aliases(btree_set<uint256_t>& aliases) const
+		bool transaction_message::recover_aliases(btree_set<uint256_t>& aliases) const
 		{
 			return true;
 		}
-		bool transaction::sign(const algorithm::seckey_t& secret_key)
+		bool transaction_message::sign(const algorithm::seckey_t& secret_key)
 		{
 			return authentic::sign(secret_key);
 		}
-		bool transaction::sign(const algorithm::seckey_t& secret_key, uint64_t new_nonce)
+		bool transaction_message::sign(const algorithm::seckey_t& secret_key, uint64_t new_nonce)
 		{
 			nonce = new_nonce;
 			return sign(secret_key);
 		}
-		expects_lr<void> transaction::sign(const algorithm::seckey_t& secret_key, uint64_t new_nonce, const decimal& price)
+		expects_lr<void> transaction_message::sign(const algorithm::seckey_t& secret_key, uint64_t new_nonce, const decimal& price)
 		{
-			set_gas(price, is_commitment() ? block::get_commitment_gas_limit() : block::get_transaction_gas_limit());
+			set_gas(price, is_commitment() ? block_header::get_commitment_gas_limit() : block_header::get_transaction_gas_limit());
 			if (!sign(secret_key, new_nonce))
 				return layer_exception("authentification failed");
 
@@ -106,7 +106,7 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<void> transaction::set_optimal_gas(const decimal& price)
+		expects_lr<void> transaction_message::set_optimal_gas(const decimal& price)
 		{
 			auto optimal_gas = ledger::executor_context::calculate_tx_gas(this);
 			if (!optimal_gas)
@@ -115,28 +115,28 @@ namespace tangent
 			set_gas(price, *optimal_gas);
 			return expectation::met;
 		}
-		void transaction::set_gas(const decimal& price, const uint256_t& limit)
+		void transaction_message::set_gas(const decimal& price, const uint256_t& limit)
 		{
 			gas_price = price;
 			gas_limit = limit;
 		}
-		void transaction::set_asset(const std::string_view& blockchain, const std::string_view& token, const std::string_view& contract_address)
+		void transaction_message::set_asset(const std::string_view& blockchain, const std::string_view& token, const std::string_view& contract_address)
 		{
 			asset = algorithm::asset::id_of(blockchain, token, contract_address);
 		}
-		bool transaction::is_commitment() const
+		bool transaction_message::is_commitment() const
 		{
 			return false;
 		}
-		bool transaction::is_dispatchable() const
+		bool transaction_message::is_dispatchable() const
 		{
 			return false;
 		}
-		uint256_t transaction::gas_asset() const
+		uint256_t transaction_message::gas_asset() const
 		{
 			return algorithm::asset::base_id_of(asset);
 		}
-		format::tree transaction::as_tree() const
+		format::tree transaction_message::as_tree() const
 		{
 			format::tree data;
 			data.set("hash", format::variable(algorithm::encoding::encode_0xhex256(as_hash())));
@@ -149,15 +149,15 @@ namespace tangent
 			return data;
 		}
 
-		commitment::commitment() : transaction()
+		commitment_message::commitment_message() : transaction_message()
 		{
 			gas_price = decimal::zero();
 		}
-		expects_lr<void> commitment::execute(executor_context* executor) const
+		expects_lr<void> commitment_message::execute(executor_context* executor) const
 		{
 			return executor->verify_account_nonce();
 		}
-		bool commitment::store_payload(format::wo_stream* stream) const
+		bool commitment_message::store_payload(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_integer(asset);
@@ -165,7 +165,7 @@ namespace tangent
 			stream->write_integer(nonce);
 			return store_body(stream);
 		}
-		bool commitment::load_payload(format::ro_stream& stream)
+		bool commitment_message::load_payload(format::ro_stream& stream)
 		{
 			if (!stream.read_integer(stream.read_type(), &asset))
 				return false;
@@ -179,12 +179,12 @@ namespace tangent
 
 			return load_body(stream);
 		}
-		bool commitment::is_commitment() const
+		bool commitment_message::is_commitment() const
 		{
 			return true;
 		}
 
-		bool receipt::store_payload(format::wo_stream* stream) const
+		bool transaction_receipt::store_payload(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_integer(transaction_hash);
@@ -203,7 +203,7 @@ namespace tangent
 			}
 			return true;
 		}
-		bool receipt::load_payload(format::ro_stream& stream)
+		bool transaction_receipt::load_payload(format::ro_stream& stream)
 		{
 			if (!stream.read_integer(stream.read_type(), &transaction_hash))
 				return false;
@@ -248,11 +248,11 @@ namespace tangent
 
 			return true;
 		}
-		void receipt::emit_event(uint32_t type, format::variables&& values)
+		void transaction_receipt::emit_event(uint32_t type, format::variables&& values)
 		{
 			events.emplace_back(std::make_pair(type, std::move(values)));
 		}
-		const format::variables* receipt::find_event(uint32_t type, size_t offset) const
+		const format::variables* transaction_receipt::find_event(uint32_t type, size_t offset) const
 		{
 			for (auto& item : events)
 			{
@@ -261,7 +261,7 @@ namespace tangent
 			}
 			return nullptr;
 		}
-		const format::variables* receipt::reverse_find_event(uint32_t type, size_t offset) const
+		const format::variables* transaction_receipt::reverse_find_event(uint32_t type, size_t offset) const
 		{
 			for (auto it = events.rbegin(); it != events.rend(); ++it)
 			{
@@ -271,7 +271,7 @@ namespace tangent
 			}
 			return nullptr;
 		}
-		option<string> receipt::get_error_messages() const
+		option<string> transaction_receipt::get_error_messages() const
 		{
 			string messages;
 			size_t offset = 0;
@@ -290,7 +290,7 @@ namespace tangent
 			messages.pop_back();
 			return messages;
 		}
-		format::tree receipt::as_tree() const
+		format::tree transaction_receipt::as_tree() const
 		{
 			format::tree data;
 			data.set("hash", format::variable(algorithm::encoding::encode_0xhex256(as_hash())));
@@ -310,38 +310,38 @@ namespace tangent
 			}
 			return data;
 		}
-		uint32_t receipt::as_type() const
+		uint32_t transaction_receipt::as_type() const
 		{
 			return as_instance_type();
 		}
-		std::string_view receipt::as_typename() const
+		std::string_view transaction_receipt::as_typename() const
 		{
 			return as_instance_typename();
 		}
-		uint32_t receipt::as_instance_type()
+		uint32_t transaction_receipt::as_instance_type()
 		{
 			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
 			return hash;
 		}
-		std::string_view receipt::as_instance_typename()
+		std::string_view transaction_receipt::as_instance_typename()
 		{
 			return "receipt";
 		}
 
-		state::state(uint64_t new_block_number) : block_number(new_block_number)
+		transition_state::transition_state(uint64_t new_block_number) : block_number(new_block_number)
 		{
 		}
-		state::state(const block_header* new_block_header) : block_number(new_block_header ? new_block_header->number : 0)
+		transition_state::transition_state(const block_header* new_block_header) : block_number(new_block_header ? new_block_header->number : 0)
 		{
 		}
-		bool state::store(format::wo_stream* stream) const
+		bool transition_state::store(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_integer(as_type());
 			stream->write_integer(block_number);
 			return store_payload(stream);
 		}
-		bool state::load(format::ro_stream& stream)
+		bool transition_state::load(format::ro_stream& stream)
 		{
 			uint32_t type;
 			if (!stream.read_integer(stream.read_type(), &type) || type != as_type())
@@ -355,14 +355,14 @@ namespace tangent
 
 			return true;
 		}
-		bool state::store_optimized(format::wo_stream* stream) const
+		bool transition_state::store_optimized(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_integer(as_type());
 			stream->write_integer(block_number);
 			return store_data(stream);
 		}
-		bool state::load_optimized(format::ro_stream& stream)
+		bool transition_state::load_optimized(format::ro_stream& stream)
 		{
 			uint32_t type;
 			if (!stream.read_integer(stream.read_type(), &type) || type != as_type())
@@ -376,32 +376,32 @@ namespace tangent
 
 			return true;
 		}
-		bool state::is_permanent() const
+		bool transition_state::is_permanent() const
 		{
 			return false;
 		}
 
-		uniform::uniform(uint64_t new_block_number) : state(new_block_number)
+		uniform_state::uniform_state(uint64_t new_block_number) : transition_state(new_block_number)
 		{
 		}
-		uniform::uniform(const block_header* new_block_header) : state(new_block_header)
+		uniform_state::uniform_state(const block_header* new_block_header) : transition_state(new_block_header)
 		{
 		}
-		bool uniform::store_payload(format::wo_stream* stream) const
+		bool uniform_state::store_payload(format::wo_stream* stream) const
 		{
 			if (!store_index(stream))
 				return false;
 
 			return store_data(stream);
 		}
-		bool uniform::load_payload(format::ro_stream& stream)
+		bool uniform_state::load_payload(format::ro_stream& stream)
 		{
 			if (!load_index(stream))
 				return false;
 
 			return load_data(stream);
 		}
-		format::tree uniform::as_tree() const
+		format::tree uniform_state::as_tree() const
 		{
 			format::tree data;
 			data.set("hash", format::variable(algorithm::encoding::encode_0xhex256(as_hash())));
@@ -410,24 +410,24 @@ namespace tangent
 			data.set("index", format::variable(format::util::encode_0xhex(as_index())));
 			return data;
 		}
-		state_level uniform::as_level() const
+		state_level uniform_state::as_level() const
 		{
 			return state_level::uniform;
 		}
-		string uniform::as_index() const
+		string uniform_state::as_index() const
 		{
 			format::wo_stream message;
 			store_index(&message);
 			return message.data;
 		}
 
-		multiform::multiform(uint64_t new_block_number) : state(new_block_number)
+		multiform_state::multiform_state(uint64_t new_block_number) : transition_state(new_block_number)
 		{
 		}
-		multiform::multiform(const block_header* new_block_header) : state(new_block_header)
+		multiform_state::multiform_state(const block_header* new_block_header) : transition_state(new_block_header)
 		{
 		}
-		bool multiform::store_payload(format::wo_stream* stream) const
+		bool multiform_state::store_payload(format::wo_stream* stream) const
 		{
 			if (!store_column(stream))
 				return false;
@@ -437,7 +437,7 @@ namespace tangent
 
 			return store_data(stream);
 		}
-		bool multiform::load_payload(format::ro_stream& stream)
+		bool multiform_state::load_payload(format::ro_stream& stream)
 		{
 			if (!load_column(stream))
 				return false;
@@ -447,7 +447,7 @@ namespace tangent
 
 			return load_data(stream);
 		}
-		format::tree multiform::as_tree() const
+		format::tree multiform_state::as_tree() const
 		{
 			format::tree data;
 			data.set("hash", format::variable(algorithm::encoding::encode_0xhex256(as_hash())));
@@ -458,17 +458,17 @@ namespace tangent
 			data.set("rank", algorithm::encoding::serialize_uint256(as_rank()));
 			return data;
 		}
-		state_level multiform::as_level() const
+		state_level multiform_state::as_level() const
 		{
 			return state_level::multiform;
 		}
-		string multiform::as_column() const
+		string multiform_state::as_column() const
 		{
 			format::wo_stream message;
 			store_column(&message);
 			return message.data;
 		}
-		string multiform::as_row() const
+		string multiform_state::as_row() const
 		{
 			format::wo_stream message;
 			store_row(&message);

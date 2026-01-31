@@ -219,8 +219,8 @@ namespace tangent
 
 			struct
 			{
-				std::function<void(const uint256_t&, const ledger::block&, const ledger::block_checkpoint&)> accept_block;
-				std::function<void(const uint256_t&, const ledger::transaction*, const algorithm::pubkeyhash_t&)> accept_transaction;
+				std::function<void(const uint256_t&, const ledger::block_body&, const ledger::block_checkpoint&)> accept_block;
+				std::function<void(const uint256_t&, const ledger::transaction_message*, const algorithm::pubkeyhash_t&)> accept_transaction;
 			} events;
 
 		private:
@@ -244,7 +244,7 @@ namespace tangent
 			hash_map<uint256_t, neighbor_callback> neighbors;
 			hash_map<uint8_t, callable> callables;
 			hash_map<void*, uref<relay>> nodes;
-			hash_map<uint256_t, ledger::block*> pending_blocks;
+			hash_map<uint256_t, ledger::block_body*> pending_blocks;
 			hash_set<outbound_node*> pending_nodes;
 			forwarder inventory;
 			system_control control_sys;
@@ -258,11 +258,11 @@ namespace tangent
 			server_node() noexcept;
 			virtual ~server_node() noexcept override;
 			expects_lr<void> accept_local_accounts(const vector<ledger::wallet>& accounts);
-			expects_lr<void> accept_local_transaction(const ledger::wallet* signer_wallet, uptr<ledger::transaction>&& candidate_tx, uint256_t* output_hash = nullptr);
-			expects_lr<void> accept_transaction(uref<relay>&& from, uptr<ledger::transaction>&& candidate_t);
-			expects_lr<void> accept_attestation(uref<relay>&& from, const uint256_t& attestation_hash);
-			expects_lr<void> accept_committed_attestation(uref<relay>&& from, const algorithm::asset_id& asset, const superchain::computed_transaction& proof, const algorithm::hashsig_t& signature);
-			expects_lr<void> broadcast_transaction(uref<relay>&& from, uptr<ledger::transaction>&& candidate_tx, const algorithm::pubkeyhash_t& owner);
+			expects_lr<void> accept_local_transaction(const ledger::wallet* signer_wallet, uptr<ledger::transaction_message>&& candidate_tx, uint256_t* output_hash = nullptr);
+			expects_lr<void> accept_transaction(uref<relay>&& from, uptr<ledger::transaction_message>&& candidate_t);
+			expects_lr<void> accept_attestation(const uint256_t& attestation_hash);
+			expects_lr<void> accept_committed_attestation(const algorithm::asset_id& asset, const superchain::computed_transaction& proof, const algorithm::hashsig_t& signature);
+			expects_lr<void> broadcast_transaction(uref<relay>&& from, uptr<ledger::transaction_message>&& candidate_tx, const algorithm::pubkeyhash_t& owner);
 			expects_rt<void> check_socket(uref<relay>&& state, const exchange& event);
 			expects_rt<void> broadcast_block_hash(uref<relay>&& state, const exchange& event);
 			expects_rt<void> broadcast_transaction_hash(uref<relay>&& state, const exchange& event);
@@ -282,7 +282,7 @@ namespace tangent
 			expects_rt<format::variables> recover_entropy(uref<relay>&& state, const exchange& event);
 			expects_rt<format::variables> aggregate_public_key(uref<relay>&& state, const exchange& event);
 			expects_rt<format::variables> aggregate_signature(uref<relay>&& state, const exchange& event);
-			expects_lr<void> dispatch_transaction_logs(const algorithm::asset_id& asset, const superchain::network_options& options, superchain::transaction_logs&& logs);
+			expects_lr<void> dispatch_transaction_logs(const algorithm::asset_id& asset, superchain::transaction_logs&& logs);
 			expects_lr<socket_address> find_node_from_mempool();
 			expects_promise_rt<socket_address> find_node_from_discovery();
 			expects_promise_rt<uref<relay>> connect_to_physical_node(const socket_address& address);
@@ -339,11 +339,11 @@ namespace tangent
 			void announce_peer(uref<relay>&& state, bool available);
 			void fill_node_services(relay_descriptor& descriptor);
 			void fill_node_neighbors(relay_descriptor& descriptor);
-			void append_pending_block(uref<relay>&& from, const uint256_t& block_hash, ledger::block* tip);
+			void append_pending_block(uref<relay>&& from, const uint256_t& block_hash, ledger::block_body* tip);
 			void erase_pending_block(const uint256_t& block_hash);
 			void broadcast_pending_block(uref<relay>&& from, const uint256_t& block_hash, uint64_t block_number);
-			void finalize_pending_block(uref<relay>&& from, const uint256_t& block_hash, uint64_t block_number);
-			bool accept_proposal_transaction(const ledger::block& checkpoint_block, const ledger::block_transaction& transaction);
+			void finalize_pending_block(uref<relay>&& from);
+			bool accept_proposal_transaction(const ledger::block_transaction& transaction);
 			void pull_messages(uref<relay>&& state);
 			void push_messages(uref<relay>&& state);
 			void abort_node(uref<relay>&& state, const std::string_view& message);

@@ -145,7 +145,7 @@ namespace Cardano
 		virtual ~PlutusJsonSchema();
 		void addSchemaJson(std::string json);
 		std::vector<uint8_t> const& getCborSchemaJson() const;
-		uint8_t const* const getHash32CborSchemaJson();
+		uint8_t* getHash32CborSchemaJson();
 
 
 	private:
@@ -373,7 +373,7 @@ namespace Cardano
 		uint16_t const& getNativeScriptsCount() const;
 
 
-		ScriptType const getGlobalReferencesScriptsType() const;
+		ScriptType getGlobalReferencesScriptsType() const;
 
 		std::vector<uint8_t> const& getInputs() const;
 		std::vector<uint8_t> const& getInputsReferences() const;
@@ -537,22 +537,22 @@ namespace Cardano
 		std::vector <uint8_t> cborTransaction;
 	};
 
-	unsigned int const bytes_structure_cbornumber(uint64_t number) noexcept;
+	unsigned int bytes_structure_cbornumber(uint64_t number) noexcept;
 	void addUint64toVector(std::vector <uint8_t>& bytesvector, uint64_t const& numero);
 	void addUint16toVector(std::vector <uint8_t>& bytesvector, uint16_t const& numero);
 	void addUint16toVector(std::vector <uint8_t>*& bytesvector, uint16_t*& numero);
 	void replaceUint16toVector(uint8_t* bytesvector, uint16_t const& numero) noexcept;
-	uint64_t const extract8bytestoUint64(uint8_t  const* const array8bytes) noexcept;
-	uint16_t const extract2bytestoUint16(uint8_t  const* const array2bytes) noexcept;
-	bool const existen_coincidencias(uint8_t const* data1, uint8_t const* data2, uint16_t const data_len, uint16_t const ciclos, uint16_t const salto) noexcept;
-	bool const existen_coincidencias_output(uint8_t const* data, uint8_t const* output, uint16_t const data_len, uint16_t const ciclos, uint16_t const salto) noexcept;
-	uint8_t const* const hexchararray2uint8array(std::string const& string_hex, std::size_t* hexchararray2uint8array_len) noexcept; // free memory with delete[]
+	uint64_t extract8bytestoUint64(uint8_t  const* const array8bytes) noexcept;
+	uint16_t extract2bytestoUint16(uint8_t  const* const array2bytes) noexcept;
+	bool existen_coincidencias(uint8_t const* data1, uint8_t const* data2, uint16_t const data_len, uint16_t const ciclos, uint16_t const salto) noexcept;
+	bool existen_coincidencias_output(uint8_t const* data, uint8_t const* output, uint16_t const data_len, uint16_t const ciclos, uint16_t const salto) noexcept;
+	uint8_t* hexchararray2uint8array(std::string const& string_hex, std::size_t* hexchararray2uint8array_len) noexcept; // free memory with delete[]
 
-	bool const bech32_encode(char const* const hrp, uint8_t const* const data, uint16_t const data_len, std::string& encode_out) noexcept;
+	bool bech32_encode(char const* const hrp, uint8_t const* const data, uint16_t const data_len, std::string& encode_out) noexcept;
 	///  bech32_decode { (char)bech32_code } = (uint8_t)data[data_len] ; data_len puede ser nullprt, data_len <= 57 bytes
-	bool const bech32_decode(char const* const bech32_code, uint8_t* const data_out, uint16_t* const data_out_len) noexcept;
+	bool bech32_decode(char const* const bech32_code, uint8_t* const data_out, uint16_t* const data_out_len) noexcept;
 	///  bech32_decode { (char)bech32_code } = (uint8_t)data[data_len] ; data_len puede ser nullprt
-	bool const bech32_decode_extended(char const* const bech32_code, uint8_t* const data_out, uint16_t* const data_out_len, uint16_t max_size) noexcept;
+	bool bech32_decode_extended(char const* const bech32_code, uint8_t* const data_out, uint16_t* const data_out_len, uint16_t max_size) noexcept;
 
 	//for generate all key
 	bool getRawKey(InputKey input_key_type, uint8_t const* const input_key, Wallet wallet_type, OutputKey output_key_type, uint32_t const account_path, Role role_path, uint32_t const address_index_path, uint8_t* const output_key) noexcept;

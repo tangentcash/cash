@@ -34,7 +34,6 @@ static void f4jumbleXor(char* buffer, size_t buffer_size, const char* mask, size
 
 static void f4jumbleG(uint8_t i, char* left, size_t left_size, char* right, size_t right_size)
 {
-    uint8_t zero = 0;
     size_t prefix_size = sizeof(F4JUMBLE_G_PREFIX) - 1;
     uint8_t personal[sizeof(F4JUMBLE_G_PREFIX) - 1 + sizeof(uint8_t) * 3];
     memcpy(personal, F4JUMBLE_G_PREFIX, prefix_size);

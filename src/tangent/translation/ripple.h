@@ -10,7 +10,7 @@ namespace tangent
 	{
 		namespace translations
 		{
-			class ripple : public translation
+			class ripple : public translation_unit
 			{
 			public:
 				struct transaction_buffer

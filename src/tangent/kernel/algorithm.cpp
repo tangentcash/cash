@@ -160,7 +160,6 @@ namespace tangent
 
 				uint64_t end_time = protocol::now().time.now();
 				uint64_t delta_time = end_time - start_time;
-				int64_t delta_target = std::abs((int64_t)delta_time - (int64_t)target_time);
 				if (algorithm::arithmetic::divide(delta_time, target_time) < 0.05)
 				{
 					if (!target_nonce--)
@@ -627,7 +626,7 @@ namespace tangent
 				}
 
 				current_word[j] = 0;
-				if (i < mnemonic.size() != 0)
+				if (i < mnemonic.size())
 					i++;
 
 				k = 0;

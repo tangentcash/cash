@@ -6,13 +6,13 @@ namespace tangent
 {
 	namespace states
 	{
-		account_nonce::account_nonce(const algorithm::pubkeyhash_t& new_owner, uint64_t new_block_number) : ledger::uniform(new_block_number), owner(new_owner), nonce(0)
+		account_nonce::account_nonce(const algorithm::pubkeyhash_t& new_owner, uint64_t new_block_number) : uniform_state(new_block_number), owner(new_owner), nonce(0)
 		{
 		}
-		account_nonce::account_nonce(const algorithm::pubkeyhash_t& new_owner, const ledger::block_header* new_block_header) : ledger::uniform(new_block_header), owner(new_owner), nonce(0)
+		account_nonce::account_nonce(const algorithm::pubkeyhash_t& new_owner, const ledger::block_header* new_block_header) : uniform_state(new_block_header), owner(new_owner), nonce(0)
 		{
 		}
-		expects_lr<void> account_nonce::transition(const ledger::state* prev_state)
+		expects_lr<void> account_nonce::transition(const transition_state* prev_state)
 		{
 			if (owner.empty())
 				return layer_exception("invalid state owner");
@@ -55,7 +55,7 @@ namespace tangent
 		}
 		format::tree account_nonce::as_tree() const
 		{
-			auto data = ledger::uniform::as_tree();
+			auto data = uniform_state::as_tree();
 			data.set("owner", algorithm::signing::serialize_address(owner));
 			data.set("nonce", algorithm::encoding::serialize_uint256(nonce));
 			return data;
@@ -84,13 +84,13 @@ namespace tangent
 			return message.data;
 		}
 
-		account_program::account_program(const algorithm::pubkeyhash_t& new_owner, uint64_t new_block_number) : ledger::uniform(new_block_number), owner(new_owner)
+		account_program::account_program(const algorithm::pubkeyhash_t& new_owner, uint64_t new_block_number) : uniform_state(new_block_number), owner(new_owner)
 		{
 		}
-		account_program::account_program(const algorithm::pubkeyhash_t& new_owner, const ledger::block_header* new_block_header) : ledger::uniform(new_block_header), owner(new_owner)
+		account_program::account_program(const algorithm::pubkeyhash_t& new_owner, const ledger::block_header* new_block_header) : uniform_state(new_block_header), owner(new_owner)
 		{
 		}
-		expects_lr<void> account_program::transition(const ledger::state* prev_state)
+		expects_lr<void> account_program::transition(const transition_state* prev_state)
 		{
 			if (owner.empty())
 				return layer_exception("invalid state owner");
@@ -126,7 +126,7 @@ namespace tangent
 		}
 		format::tree account_program::as_tree() const
 		{
-			auto data = ledger::uniform::as_tree();
+			auto data = uniform_state::as_tree();
 			data.set("owner", algorithm::signing::serialize_address(owner));
 			data.set("hashcode", format::variable(format::util::encode_0xhex(hashcode)));
 			return data;
@@ -155,13 +155,13 @@ namespace tangent
 			return message.data;
 		}
 
-		account_uniform::account_uniform(const algorithm::pubkeyhash_t& new_owner, const std::string_view& new_index, uint64_t new_block_number) : ledger::uniform(new_block_number), owner(new_owner), index(new_index)
+		account_uniform::account_uniform(const algorithm::pubkeyhash_t& new_owner, const std::string_view& new_index, uint64_t new_block_number) : uniform_state(new_block_number), owner(new_owner), index(new_index)
 		{
 		}
-		account_uniform::account_uniform(const algorithm::pubkeyhash_t& new_owner, const std::string_view& new_index, const ledger::block_header* new_block_header) : ledger::uniform(new_block_header), owner(new_owner), index(new_index)
+		account_uniform::account_uniform(const algorithm::pubkeyhash_t& new_owner, const std::string_view& new_index, const ledger::block_header* new_block_header) : uniform_state(new_block_header), owner(new_owner), index(new_index)
 		{
 		}
-		expects_lr<void> account_uniform::transition(const ledger::state* prev_state)
+		expects_lr<void> account_uniform::transition(const transition_state* prev_state)
 		{
 			if (owner.empty())
 				return layer_exception("invalid state owner");
@@ -207,7 +207,7 @@ namespace tangent
 		}
 		format::tree account_uniform::as_tree() const
 		{
-			auto data = ledger::uniform::as_tree();
+			auto data = uniform_state::as_tree();
 			data.set("owner", algorithm::signing::serialize_address(owner));
 			data.set("index", format::variable(format::util::encode_0xhex(index)));
 			data.set("data", format::variable(format::util::encode_0xhex(this->data)));
@@ -237,13 +237,13 @@ namespace tangent
 			return message.data;
 		}
 
-		account_multiform::account_multiform(const algorithm::pubkeyhash_t& new_owner, const std::string_view& new_column, const std::string_view& new_row, uint64_t new_block_number) : ledger::multiform(new_block_number), owner(new_owner), column(new_column), row(new_row), filter(0)
+		account_multiform::account_multiform(const algorithm::pubkeyhash_t& new_owner, const std::string_view& new_column, const std::string_view& new_row, uint64_t new_block_number) : multiform_state(new_block_number), owner(new_owner), column(new_column), row(new_row), filter(0)
 		{
 		}
-		account_multiform::account_multiform(const algorithm::pubkeyhash_t& new_owner, const std::string_view& new_column, const std::string_view& new_row, const ledger::block_header* new_block_header) : ledger::multiform(new_block_header), owner(new_owner), column(new_column), row(new_row), filter(0)
+		account_multiform::account_multiform(const algorithm::pubkeyhash_t& new_owner, const std::string_view& new_column, const std::string_view& new_row, const ledger::block_header* new_block_header) : multiform_state(new_block_header), owner(new_owner), column(new_column), row(new_row), filter(0)
 		{
 		}
-		expects_lr<void> account_multiform::transition(const ledger::state* prev_state)
+		expects_lr<void> account_multiform::transition(const transition_state* prev_state)
 		{
 			if (owner.empty())
 				return layer_exception("invalid state owner");
@@ -314,7 +314,7 @@ namespace tangent
 		}
 		format::tree account_multiform::as_tree() const
 		{
-			auto data = ledger::multiform::as_tree();
+			auto data = multiform_state::as_tree();
 			data.set("owner", algorithm::signing::serialize_address(owner));
 			data.set("column", format::variable(format::util::encode_0xhex(column)));
 			data.set("row", format::variable(format::util::encode_0xhex(row)));
@@ -355,13 +355,13 @@ namespace tangent
 			return message.data;
 		}
 
-		account_delegation::account_delegation(const algorithm::pubkeyhash_t& new_owner, uint64_t new_block_number) : ledger::uniform(new_block_number), owner(new_owner), delegations(0)
+		account_delegation::account_delegation(const algorithm::pubkeyhash_t& new_owner, uint64_t new_block_number) : uniform_state(new_block_number), owner(new_owner), delegations(0)
 		{
 		}
-		account_delegation::account_delegation(const algorithm::pubkeyhash_t& new_owner, const ledger::block_header* new_block_header) : ledger::uniform(new_block_header), owner(new_owner), delegations(0)
+		account_delegation::account_delegation(const algorithm::pubkeyhash_t& new_owner, const ledger::block_header* new_block_header) : uniform_state(new_block_header), owner(new_owner), delegations(0)
 		{
 		}
-		expects_lr<void> account_delegation::transition(const ledger::state* prev_state)
+		expects_lr<void> account_delegation::transition(const transition_state* prev_state)
 		{
 			if (owner.empty())
 				return layer_exception("invalid state owner");
@@ -424,7 +424,7 @@ namespace tangent
 		}
 		format::tree account_delegation::as_tree() const
 		{
-			auto data = ledger::uniform::as_tree();
+			auto data = uniform_state::as_tree();
 			data.set("owner", algorithm::signing::serialize_address(owner));
 			data.set("delegations", algorithm::encoding::serialize_uint256(delegations));
 			return data;
@@ -453,13 +453,13 @@ namespace tangent
 			return message.data;
 		}
 
-		account_balance::account_balance(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, uint64_t new_block_number) : ledger::multiform(new_block_number), owner(new_owner), asset(new_asset)
+		account_balance::account_balance(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, uint64_t new_block_number) : multiform_state(new_block_number), owner(new_owner), asset(new_asset)
 		{
 		}
-		account_balance::account_balance(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, const ledger::block_header* new_block_header) : ledger::multiform(new_block_header), owner(new_owner), asset(new_asset)
+		account_balance::account_balance(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, const ledger::block_header* new_block_header) : multiform_state(new_block_header), owner(new_owner), asset(new_asset)
 		{
 		}
-		expects_lr<void> account_balance::transition(const ledger::state* prev_state)
+		expects_lr<void> account_balance::transition(const transition_state* prev_state)
 		{
 			if (owner.empty())
 				return layer_exception("invalid state owner");
@@ -541,7 +541,7 @@ namespace tangent
 		}
 		format::tree account_balance::as_tree() const
 		{
-			auto data = ledger::multiform::as_tree();
+			auto data = multiform_state::as_tree();
 			data.set("owner", algorithm::signing::serialize_address(owner));
 			data.set("asset", algorithm::asset::serialize(asset));
 			data.set("supply", format::variable(supply));
@@ -583,20 +583,20 @@ namespace tangent
 			return message.data;
 		}
 
-		validator_production::validator_production(const algorithm::pubkeyhash_t& new_owner, uint64_t new_block_number) : ledger::multiform(new_block_number), owner(new_owner)
+		validator_production::validator_production(const algorithm::pubkeyhash_t& new_owner, uint64_t new_block_number) : multiform_state(new_block_number), owner(new_owner)
 		{
 		}
-		validator_production::validator_production(const algorithm::pubkeyhash_t& new_owner, const ledger::block_header* new_block_header) : ledger::multiform(new_block_header), owner(new_owner)
+		validator_production::validator_production(const algorithm::pubkeyhash_t& new_owner, const ledger::block_header* new_block_header) : multiform_state(new_block_header), owner(new_owner)
 		{
 		}
-		expects_lr<void> validator_production::transition(const ledger::state* prev_state)
+		expects_lr<void> validator_production::transition(const transition_state* prev_state)
 		{
 			if (owner.empty())
 				return layer_exception("invalid state owner");
 
 			if (stake.is_negative())
 				return layer_exception("invalid stake");
-			else if (!stake.is_nan() && !ledger::block::is_genesis_epoch(block_number) && stake < protocol::now().policy.production.min_stake_value)
+			else if (!stake.is_nan() && !ledger::block_header::is_genesis_epoch(block_number) && stake < protocol::now().policy.production.min_stake_value)
 				return layer_exception(stringify::text("minimum stake requirement not met (%s %s)", protocol::now().policy.production.min_stake_value.to_string().c_str(), protocol::now().policy.token.c_str()));
 
 			return expectation::met;
@@ -642,7 +642,7 @@ namespace tangent
 		}
 		format::tree validator_production::as_tree() const
 		{
-			auto data = ledger::multiform::as_tree();
+			auto data = multiform_state::as_tree();
 			data.set("owner", algorithm::signing::serialize_address(owner));
 			data.set("stake", format::variable(stake));
 			return data;
@@ -688,13 +688,13 @@ namespace tangent
 			return algorithm::arithmetic::fixed256(threshold) + 1;
 		}
 
-		validator_production_reward::validator_production_reward(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, uint64_t new_block_number) : ledger::multiform(new_block_number), owner(new_owner), asset(new_asset)
+		validator_production_reward::validator_production_reward(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, uint64_t new_block_number) : multiform_state(new_block_number), owner(new_owner), asset(new_asset)
 		{
 		}
-		validator_production_reward::validator_production_reward(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, const ledger::block_header* new_block_header) : ledger::multiform(new_block_header), owner(new_owner), asset(new_asset)
+		validator_production_reward::validator_production_reward(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, const ledger::block_header* new_block_header) : multiform_state(new_block_header), owner(new_owner), asset(new_asset)
 		{
 		}
-		expects_lr<void> validator_production_reward::transition(const ledger::state* prev_state)
+		expects_lr<void> validator_production_reward::transition(const transition_state* prev_state)
 		{
 			if (owner.empty())
 				return layer_exception("invalid state owner");
@@ -749,7 +749,7 @@ namespace tangent
 		}
 		format::tree validator_production_reward::as_tree() const
 		{
-			auto data = ledger::multiform::as_tree();
+			auto data = multiform_state::as_tree();
 			data.set("owner", algorithm::signing::serialize_address(owner));
 			data.set("asset", algorithm::asset::serialize(asset));
 			data.set("reward", format::variable(reward));
@@ -789,13 +789,13 @@ namespace tangent
 			return message.data;
 		}
 
-		validator_participation::validator_participation(const algorithm::pubkeyhash_t& new_owner, uint64_t new_block_number) : ledger::multiform(new_block_number), owner(new_owner)
+		validator_participation::validator_participation(const algorithm::pubkeyhash_t& new_owner, uint64_t new_block_number) : multiform_state(new_block_number), owner(new_owner)
 		{
 		}
-		validator_participation::validator_participation(const algorithm::pubkeyhash_t& new_owner, const ledger::block_header* new_block_header) : ledger::multiform(new_block_header), owner(new_owner)
+		validator_participation::validator_participation(const algorithm::pubkeyhash_t& new_owner, const ledger::block_header* new_block_header) : multiform_state(new_block_header), owner(new_owner)
 		{
 		}
-		expects_lr<void> validator_participation::transition(const ledger::state* prev_state)
+		expects_lr<void> validator_participation::transition(const transition_state* prev_state)
 		{
 			if (owner.empty())
 				return layer_exception("invalid state owner");
@@ -848,7 +848,7 @@ namespace tangent
 		}
 		format::tree validator_participation::as_tree() const
 		{
-			auto data = ledger::multiform::as_tree();
+			auto data = multiform_state::as_tree();
 			data.set("owner", algorithm::signing::serialize_address(owner));
 			data.set("stake", format::variable(stake));
 			return data;
@@ -890,13 +890,13 @@ namespace tangent
 			return message.data;
 		}
 
-		validator_participation_reward::validator_participation_reward(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, uint64_t new_block_number) : ledger::multiform(new_block_number), owner(new_owner), asset(new_asset)
+		validator_participation_reward::validator_participation_reward(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, uint64_t new_block_number) : multiform_state(new_block_number), owner(new_owner), asset(new_asset)
 		{
 		}
-		validator_participation_reward::validator_participation_reward(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, const ledger::block_header* new_block_header) : ledger::multiform(new_block_header), owner(new_owner), asset(new_asset)
+		validator_participation_reward::validator_participation_reward(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, const ledger::block_header* new_block_header) : multiform_state(new_block_header), owner(new_owner), asset(new_asset)
 		{
 		}
-		expects_lr<void> validator_participation_reward::transition(const ledger::state* prev_state)
+		expects_lr<void> validator_participation_reward::transition(const transition_state* prev_state)
 		{
 			if (owner.empty())
 				return layer_exception("invalid state owner");
@@ -951,7 +951,7 @@ namespace tangent
 		}
 		format::tree validator_participation_reward::as_tree() const
 		{
-			auto data = ledger::multiform::as_tree();
+			auto data = multiform_state::as_tree();
 			data.set("owner", algorithm::signing::serialize_address(owner));
 			data.set("asset", algorithm::asset::serialize(asset));
 			data.set("reward", format::variable(reward));
@@ -991,13 +991,13 @@ namespace tangent
 			return message.data;
 		}
 
-		validator_participation_ref::validator_participation_ref(const algorithm::pubkeyhash_t& new_owner, const ref_value& new_ref, uint64_t new_block_number) : ledger::multiform(new_block_number), ref(new_ref), owner(new_owner)
+		validator_participation_ref::validator_participation_ref(const algorithm::pubkeyhash_t& new_owner, const ref_value& new_ref, uint64_t new_block_number) : multiform_state(new_block_number), ref(new_ref), owner(new_owner)
 		{
 		}
-		validator_participation_ref::validator_participation_ref(const algorithm::pubkeyhash_t& new_owner, const ref_value& new_ref, const ledger::block_header* new_block_header) : ledger::multiform(new_block_header), ref(new_ref), owner(new_owner)
+		validator_participation_ref::validator_participation_ref(const algorithm::pubkeyhash_t& new_owner, const ref_value& new_ref, const ledger::block_header* new_block_header) : multiform_state(new_block_header), ref(new_ref), owner(new_owner)
 		{
 		}
-		expects_lr<void> validator_participation_ref::transition(const ledger::state* prev_state)
+		expects_lr<void> validator_participation_ref::transition(const transition_state* prev_state)
 		{
 			if (owner.empty())
 				return layer_exception("invalid state owner");
@@ -1060,7 +1060,7 @@ namespace tangent
 		}
 		format::tree validator_participation_ref::as_tree() const
 		{
-			auto data = ledger::multiform::as_tree();
+			auto data = multiform_state::as_tree();
 			data.set("owner", algorithm::signing::serialize_address(owner));
 			auto* ref_data = data.set("ref", format::variable());
 			ref_data->set("asset", algorithm::asset::serialize(ref.asset));
@@ -1102,13 +1102,13 @@ namespace tangent
 			return message.data;
 		}
 
-		validator_attestation::validator_attestation(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, uint64_t new_block_number) : ledger::multiform(new_block_number), owner(new_owner), asset(algorithm::asset::base_id_of(new_asset))
+		validator_attestation::validator_attestation(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, uint64_t new_block_number) : multiform_state(new_block_number), owner(new_owner), asset(algorithm::asset::base_id_of(new_asset))
 		{
 		}
-		validator_attestation::validator_attestation(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, const ledger::block_header* new_block_header) : ledger::multiform(new_block_header), owner(new_owner), asset(algorithm::asset::base_id_of(new_asset))
+		validator_attestation::validator_attestation(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, const ledger::block_header* new_block_header) : multiform_state(new_block_header), owner(new_owner), asset(algorithm::asset::base_id_of(new_asset))
 		{
 		}
-		expects_lr<void> validator_attestation::transition(const ledger::state* prev_state)
+		expects_lr<void> validator_attestation::transition(const transition_state* prev_state)
 		{
 			if (owner.empty())
 				return layer_exception("invalid state owner");
@@ -1242,7 +1242,7 @@ namespace tangent
 		}
 		format::tree validator_attestation::as_tree() const
 		{
-			auto data = ledger::multiform::as_tree();
+			auto data = multiform_state::as_tree();
 			data.set("owner", algorithm::signing::serialize_address(owner));
 			data.set("asset", algorithm::asset::serialize(asset));
 			data.set("participation_threshold", format::variable(participation_threshold));
@@ -1293,13 +1293,13 @@ namespace tangent
 			return message.data;
 		}
 
-		validator_attestation_reward::validator_attestation_reward(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, uint64_t new_block_number) : ledger::multiform(new_block_number), owner(new_owner), asset(new_asset)
+		validator_attestation_reward::validator_attestation_reward(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, uint64_t new_block_number) : multiform_state(new_block_number), owner(new_owner), asset(new_asset)
 		{
 		}
-		validator_attestation_reward::validator_attestation_reward(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, const ledger::block_header* new_block_header) : ledger::multiform(new_block_header), owner(new_owner), asset(new_asset)
+		validator_attestation_reward::validator_attestation_reward(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, const ledger::block_header* new_block_header) : multiform_state(new_block_header), owner(new_owner), asset(new_asset)
 		{
 		}
-		expects_lr<void> validator_attestation_reward::transition(const ledger::state* prev_state)
+		expects_lr<void> validator_attestation_reward::transition(const transition_state* prev_state)
 		{
 			if (owner.empty())
 				return layer_exception("invalid state owner");
@@ -1354,7 +1354,7 @@ namespace tangent
 		}
 		format::tree validator_attestation_reward::as_tree() const
 		{
-			auto data = ledger::multiform::as_tree();
+			auto data = multiform_state::as_tree();
 			data.set("owner", algorithm::signing::serialize_address(owner));
 			data.set("asset", algorithm::asset::serialize(asset));
 			data.set("reward", format::variable(reward));
@@ -1394,13 +1394,13 @@ namespace tangent
 			return message.data;
 		}
 
-		bridge_balance::bridge_balance(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, uint64_t new_block_number) : ledger::multiform(new_block_number), owner(new_owner), asset(new_asset)
+		bridge_balance::bridge_balance(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, uint64_t new_block_number) : multiform_state(new_block_number), owner(new_owner), asset(new_asset)
 		{
 		}
-		bridge_balance::bridge_balance(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, const ledger::block_header* new_block_header) : ledger::multiform(new_block_header), owner(new_owner), asset(new_asset)
+		bridge_balance::bridge_balance(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, const ledger::block_header* new_block_header) : multiform_state(new_block_header), owner(new_owner), asset(new_asset)
 		{
 		}
-		expects_lr<void> bridge_balance::transition(const ledger::state* prev_state)
+		expects_lr<void> bridge_balance::transition(const transition_state* prev_state)
 		{
 			if (owner.empty())
 				return layer_exception("invalid state owner");
@@ -1458,7 +1458,7 @@ namespace tangent
 		}
 		format::tree bridge_balance::as_tree() const
 		{
-			auto data = ledger::multiform::as_tree();
+			auto data = multiform_state::as_tree();
 			data.set("owner", algorithm::signing::serialize_address(owner));
 			data.set("asset", algorithm::asset::serialize(asset));
 			data.set("supply", format::variable(supply));
@@ -1498,13 +1498,13 @@ namespace tangent
 			return message.data;
 		}
 
-		bridge_account::bridge_account(const algorithm::pubkeyhash_t& new_manager, const algorithm::asset_id& new_asset, const algorithm::pubkeyhash_t& new_owner, uint64_t new_block_number) : ledger::multiform(new_block_number), owner(new_owner), manager(new_manager), asset(algorithm::asset::base_id_of(new_asset))
+		bridge_account::bridge_account(const algorithm::pubkeyhash_t& new_manager, const algorithm::asset_id& new_asset, const algorithm::pubkeyhash_t& new_owner, uint64_t new_block_number) : multiform_state(new_block_number), owner(new_owner), manager(new_manager), asset(algorithm::asset::base_id_of(new_asset))
 		{
 		}
-		bridge_account::bridge_account(const algorithm::pubkeyhash_t& new_manager, const algorithm::asset_id& new_asset, const algorithm::pubkeyhash_t& new_owner, const ledger::block_header* new_block_header) : ledger::multiform(new_block_header), owner(new_owner), manager(new_manager), asset(algorithm::asset::base_id_of(new_asset))
+		bridge_account::bridge_account(const algorithm::pubkeyhash_t& new_manager, const algorithm::asset_id& new_asset, const algorithm::pubkeyhash_t& new_owner, const ledger::block_header* new_block_header) : multiform_state(new_block_header), owner(new_owner), manager(new_manager), asset(algorithm::asset::base_id_of(new_asset))
 		{
 		}
-		expects_lr<void> bridge_account::transition(const ledger::state* prev_state)
+		expects_lr<void> bridge_account::transition(const transition_state* prev_state)
 		{
 			if (owner.empty())
 				return layer_exception("invalid state owner");
@@ -1597,8 +1597,7 @@ namespace tangent
 		}
 		format::tree bridge_account::as_tree() const
 		{
-			auto* chain = superchain::bridge::get()->get_network_params(asset);
-			auto data = ledger::multiform::as_tree();
+			auto data = multiform_state::as_tree();
 			data.set("owner", algorithm::signing::serialize_address(owner));
 			data.set("manager", algorithm::signing::serialize_address(manager));
 			data.set("asset", algorithm::asset::serialize(asset));
@@ -1642,13 +1641,13 @@ namespace tangent
 			return message.data;
 		}
 
-		witness_program::witness_program(const std::string_view& new_hashcode, uint64_t new_block_number) : ledger::uniform(new_block_number), hashcode(new_hashcode)
+		witness_program::witness_program(const std::string_view& new_hashcode, uint64_t new_block_number) : uniform_state(new_block_number), hashcode(new_hashcode)
 		{
 		}
-		witness_program::witness_program(const std::string_view& new_hashcode, const ledger::block_header* new_block_header) : ledger::uniform(new_block_header), hashcode(new_hashcode)
+		witness_program::witness_program(const std::string_view& new_hashcode, const ledger::block_header* new_block_header) : uniform_state(new_block_header), hashcode(new_hashcode)
 		{
 		}
-		expects_lr<void> witness_program::transition(const ledger::state* prev_state)
+		expects_lr<void> witness_program::transition(const transition_state* prev_state)
 		{
 			if (prev_state != nullptr)
 				return layer_exception("program already exists");
@@ -1693,7 +1692,7 @@ namespace tangent
 		}
 		format::tree witness_program::as_tree() const
 		{
-			auto data = ledger::uniform::as_tree();
+			auto data = uniform_state::as_tree();
 			data.set("hashcode", format::variable(format::util::encode_0xhex(hashcode)));
 			data.set("storage", format::variable(format::util::encode_0xhex(storage)));
 			return data;
@@ -1738,13 +1737,13 @@ namespace tangent
 			return algorithm::hashing::ppc512(storage);
 		}
 
-		witness_event::witness_event(const uint256_t& new_parent_transaction_hash, uint64_t new_block_number) : ledger::uniform(new_block_number), parent_transaction_hash(new_parent_transaction_hash)
+		witness_event::witness_event(const uint256_t& new_parent_transaction_hash, uint64_t new_block_number) : uniform_state(new_block_number), parent_transaction_hash(new_parent_transaction_hash)
 		{
 		}
-		witness_event::witness_event(const uint256_t& new_parent_transaction_hash, const ledger::block_header* new_block_header) : ledger::uniform(new_block_header), parent_transaction_hash(new_parent_transaction_hash)
+		witness_event::witness_event(const uint256_t& new_parent_transaction_hash, const ledger::block_header* new_block_header) : uniform_state(new_block_header), parent_transaction_hash(new_parent_transaction_hash)
 		{
 		}
-		expects_lr<void> witness_event::transition(const ledger::state* prev_state)
+		expects_lr<void> witness_event::transition(const transition_state* prev_state)
 		{
 			if (!parent_transaction_hash)
 				return layer_exception("invalid parent transaction hash");
@@ -1785,7 +1784,7 @@ namespace tangent
 		}
 		format::tree witness_event::as_tree() const
 		{
-			auto data = ledger::uniform::as_tree();
+			auto data = uniform_state::as_tree();
 			data.set("parent_transaction_hash", format::variable(algorithm::encoding::encode_0xhex256(parent_transaction_hash)));
 			data.set("child_transaction_hash", format::variable(algorithm::encoding::encode_0xhex256(child_transaction_hash)));
 			return data;
@@ -1814,13 +1813,13 @@ namespace tangent
 			return message.data;
 		}
 
-		witness_account::witness_account(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, const address_map& new_addresses, uint64_t new_block_number) : ledger::multiform(new_block_number), owner(new_owner), asset(algorithm::asset::base_id_of(new_asset)), addresses(new_addresses)
+		witness_account::witness_account(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, const address_map& new_addresses, uint64_t new_block_number) : multiform_state(new_block_number), owner(new_owner), asset(algorithm::asset::base_id_of(new_asset)), addresses(new_addresses)
 		{
 		}
-		witness_account::witness_account(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, const address_map& new_addresses, const ledger::block_header* new_block_header) : ledger::multiform(new_block_header), owner(new_owner), asset(algorithm::asset::base_id_of(new_asset)), addresses(new_addresses)
+		witness_account::witness_account(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, const address_map& new_addresses, const ledger::block_header* new_block_header) : multiform_state(new_block_header), owner(new_owner), asset(algorithm::asset::base_id_of(new_asset)), addresses(new_addresses)
 		{
 		}
-		expects_lr<void> witness_account::transition(const ledger::state* prev_state)
+		expects_lr<void> witness_account::transition(const transition_state* prev_state)
 		{
 			if (owner.empty())
 				return layer_exception("invalid state owner");
@@ -1951,7 +1950,7 @@ namespace tangent
 		}
 		format::tree witness_account::as_tree() const
 		{
-			auto data = ledger::multiform::as_tree();
+			auto data = multiform_state::as_tree();
 			data.set("owner", algorithm::signing::serialize_address(owner));
 			data.set("manager", algorithm::signing::serialize_address(manager));
 			data.set("asset", algorithm::asset::serialize(asset));
@@ -2006,13 +2005,13 @@ namespace tangent
 			return message.data;
 		}
 
-		witness_transaction::witness_transaction(const algorithm::asset_id& new_asset, const std::string_view& new_transaction_id, uint64_t new_block_number) : ledger::uniform(new_block_number), asset(algorithm::asset::base_id_of(new_asset)), transaction_id(new_transaction_id)
+		witness_transaction::witness_transaction(const algorithm::asset_id& new_asset, const std::string_view& new_transaction_id, uint64_t new_block_number) : uniform_state(new_block_number), asset(algorithm::asset::base_id_of(new_asset)), transaction_id(new_transaction_id)
 		{
 		}
-		witness_transaction::witness_transaction(const algorithm::asset_id& new_asset, const std::string_view& new_transaction_id, const ledger::block_header* new_block_header) : ledger::uniform(new_block_header), asset(algorithm::asset::base_id_of(new_asset)), transaction_id(new_transaction_id)
+		witness_transaction::witness_transaction(const algorithm::asset_id& new_asset, const std::string_view& new_transaction_id, const ledger::block_header* new_block_header) : uniform_state(new_block_header), asset(algorithm::asset::base_id_of(new_asset)), transaction_id(new_transaction_id)
 		{
 		}
-		expects_lr<void> witness_transaction::transition(const ledger::state* prev_state)
+		expects_lr<void> witness_transaction::transition(const transition_state* prev_state)
 		{
 			auto* prev = (witness_account*)prev_state;
 			if (!prev && !algorithm::asset::is_aux(asset, true))
@@ -2054,7 +2053,7 @@ namespace tangent
 		}
 		format::tree witness_transaction::as_tree() const
 		{
-			auto data = ledger::uniform::as_tree();
+			auto data = uniform_state::as_tree();
 			data.set("asset", algorithm::asset::serialize(asset));
 			data.set("transaction_id", format::variable(transaction_id));
 			return data;
@@ -2083,7 +2082,7 @@ namespace tangent
 			return message.data;
 		}
 
-		ledger::state* resolver::from_stream(format::ro_stream& stream)
+		ledger::transition_state* resolver::from_stream(format::ro_stream& stream)
 		{
 			uint32_t type; size_t seek = stream.seek;
 			if (!stream.read_integer(stream.read_type(), &type))
@@ -2092,7 +2091,7 @@ namespace tangent
 			stream.seek = seek;
 			return from_type(type);
 		}
-		ledger::state* resolver::from_type(uint32_t hash)
+		ledger::transition_state* resolver::from_type(uint32_t hash)
 		{
 			if (hash == account_nonce::as_instance_type())
 				return memory::init<account_nonce>(algorithm::pubkeyhash_t(), nullptr);
@@ -2134,7 +2133,7 @@ namespace tangent
 				return memory::init<witness_transaction>(0, std::string_view(), nullptr);
 			return nullptr;
 		}
-		ledger::state* resolver::from_copy(const ledger::state* base)
+		ledger::transition_state* resolver::from_copy(const ledger::transition_state* base)
 		{
 			VI_ASSERT(base != nullptr, "base should be set");
 			uint32_t hash = base->as_type();
@@ -2143,7 +2142,7 @@ namespace tangent
 				value_copy(hash, base, result);
 			return result;
 		}
-		void resolver::value_copy(uint32_t hash, const ledger::state* from, ledger::state* to)
+		void resolver::value_copy(uint32_t hash, const ledger::transition_state* from, ledger::transition_state* to)
 		{
 			VI_ASSERT(to != nullptr, "to should be set");
 			if (hash == account_nonce::as_instance_type())
@@ -2185,7 +2184,7 @@ namespace tangent
 			else if (hash == witness_transaction::as_instance_type())
 				*(witness_transaction*)to = from ? witness_transaction(*(const witness_transaction*)from) : witness_transaction(0, std::string_view(), nullptr);
 		}
-		bool resolver::will_delete(const ledger::state* base, uptr<ledger::state>& cache)
+		bool resolver::will_delete(const ledger::transition_state* base, uptr<ledger::transition_state>& cache)
 		{
 			VI_ASSERT(base != nullptr, "base should be set");
 			if (base->is_permanent())
@@ -2201,8 +2200,8 @@ namespace tangent
 			{
 				case ledger::state_level::uniform:
 				{
-					auto maybe_unique = (ledger::uniform*)base;
-					auto non_unique = (ledger::uniform*)*cache;
+					auto maybe_unique = (ledger::uniform_state*)base;
+					auto non_unique = (ledger::uniform_state*)*cache;
 					if (!non_unique)
 						return true;
 
@@ -2218,8 +2217,8 @@ namespace tangent
 				}
 				case ledger::state_level::multiform:
 				{
-					auto maybe_unique = (ledger::multiform*)base;
-					auto non_unique = (ledger::multiform*)*cache;
+					auto maybe_unique = (ledger::multiform_state*)base;
+					auto non_unique = (ledger::multiform_state*)*cache;
 					if (!non_unique)
 						return true;
 

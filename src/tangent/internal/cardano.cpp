@@ -24,7 +24,7 @@ namespace Cardano
 		out[1] = static_cast<uint8_t>(index >> 16);
 		out[0] = static_cast<uint8_t>(index >> 24);
 	}
-	bool const pbkdf2_hmac512_libsodium(uint8_t const* const key, std::size_t key_len, uint8_t const* const salt, std::size_t salt_len, uint64_t const iterations, std::size_t out_len, uint8_t* const out) noexcept
+	bool pbkdf2_hmac512_libsodium(uint8_t const* const key, std::size_t key_len, uint8_t const* const salt, std::size_t salt_len, uint64_t const iterations, std::size_t out_len, uint8_t* const out) noexcept
 	{
 
 		std::memset(out, 0, out_len);
@@ -502,7 +502,7 @@ namespace Cardano
 
 		return *this;
 	};
-	CborSerialize& CborSerialize::addBool(bool const b)
+	CborSerialize& CborSerialize::addBool(bool b)
 	{
 		bytes_cbor_data.push_back(b ? 0xf5 : 0xf4);
 		return *this;
@@ -1536,7 +1536,7 @@ namespace Cardano
 		return cborschema;
 
 	};
-	uint8_t const* const PlutusJsonSchema::getHash32CborSchemaJson()
+	uint8_t* PlutusJsonSchema::getHash32CborSchemaJson()
 	{
 
 		crypto_generichash_blake2b(datum_hash, 32, cborschema.data(), cborschema.size(), nullptr, 0);
@@ -1814,14 +1814,10 @@ namespace Cardano
 
 		std::vector<uint8_t> const& cbor_units = unitscbor->getCbor();
 		std::vector<uint8_t> const& cbor_plutusdata = Json_p->getCborSchemaJson();
-
-		uint16_t numero_wdrls = withdrawals_count - 1;
-		if (numero_wdrls < 0)
-		{
+		if (!withdrawals_count)
 			throw std::invalid_argument("Error in addRedeemer: no previous Withdrawals found");
-		}
 
-		addUint16toVector(redeemer_withdrawals, numero_wdrls);
+		addUint16toVector(redeemer_withdrawals, withdrawals_count - 1);
 		redeemer_withdrawals.push_back(static_cast<uint8_t>(3));                                          // tag = 3
 		addUint64toVector(redeemer_withdrawals, cbor_plutusdata.size());                                 // plutusdata_len
 		redeemer_withdrawals.insert(redeemer_withdrawals.end(), cbor_plutusdata.begin(), cbor_plutusdata.end()); // plutusdata
@@ -2086,14 +2082,10 @@ namespace Cardano
 
 		std::vector<uint8_t> const& cbor_units = unitscbor->getCbor();
 		std::vector<uint8_t> const& cbor_plutusdata = Json_p->getCborSchemaJson();
-
-		uint16_t numero_certs = cbor_certificates_count - 1;
-		if (numero_certs < 0)
-		{
+		if (!cbor_certificates_count)
 			throw std::invalid_argument("Error in addRedeemer: no previous Certificates found");
-		}
 
-		addUint16toVector(redeemer_cert, numero_certs);
+		addUint16toVector(redeemer_cert, cbor_certificates_count - 1);
 		redeemer_cert.push_back(static_cast<uint8_t>(2));                                    // tag = 2
 		addUint64toVector(redeemer_cert, cbor_plutusdata.size());                           // plutusdata_len
 		redeemer_cert.insert(redeemer_cert.end(), cbor_plutusdata.begin(), cbor_plutusdata.end());  // plutusdata
@@ -2426,13 +2418,10 @@ namespace Cardano
 		std::unique_ptr<PlutusJsonSchema> Json_p(new PlutusJsonSchema());
 		Json_p->addSchemaJson(json_datum);
 		std::vector<uint8_t> const& cbor_datum = Json_p->getCborSchemaJson();
-
-		uint16_t numero_txin = tx_input_count - 1;
-		if (numero_txin < 0)
-		{
+		if (!tx_input_count)
 			throw std::invalid_argument("Error in addDatum: no previous Tx Input found");
-		}
-		addUint16toVector(datum_input, numero_txin);
+		
+		addUint16toVector(datum_input, tx_input_count - 1);
 		addUint64toVector(datum_input, cbor_datum.size());
 		datum_input.insert(datum_input.end(), cbor_datum.begin(), cbor_datum.end());
 		++datum_input_count;
@@ -2477,14 +2466,10 @@ namespace Cardano
 
 		std::vector<uint8_t> const& cbor_units = unitscbor->getCbor();
 		std::vector<uint8_t> const& cbor_plutusdata = Json_p->getCborSchemaJson();
-
-		uint16_t numero_txin = tx_input_count - 1;
-		if (numero_txin < 0)
-		{
+		if (!tx_input_count)
 			throw std::invalid_argument("Error in addRedeemer: no previous Tx Inputs found");
-		}
 
-		addUint16toVector(redeemer_input, numero_txin);                                /// Index_redeemer , LANZAR ERROR SI tx_input_count=0
+		addUint16toVector(redeemer_input, tx_input_count - 1);                                /// Index_redeemer , LANZAR ERROR SI tx_input_count=0
 		redeemer_input.push_back(static_cast<uint8_t>(0));                                    // tag = 0
 		addUint64toVector(redeemer_input, cbor_plutusdata.size());                                  // plutusdata_len
 		redeemer_input.insert(redeemer_input.end(), cbor_plutusdata.begin(), cbor_plutusdata.end()); // plutusdata
@@ -2791,7 +2776,7 @@ namespace Cardano
 	{
 		return witnessmap_countbit;
 	}
-	ScriptType const TransactionsInputs::getGlobalReferencesScriptsType() const
+	ScriptType TransactionsInputs::getGlobalReferencesScriptsType() const
 	{
 		return globalreferencescript;
 	}
@@ -3975,7 +3960,7 @@ namespace Cardano
 		return cborTransaction;
 	}
 
-	unsigned int const bytes_structure_cbornumber(uint64_t number) noexcept
+	unsigned int bytes_structure_cbornumber(uint64_t number) noexcept
 	{
 		if (number < 0x18)
 		{//0...23
@@ -4030,19 +4015,19 @@ namespace Cardano
 		*bytesvector = ((numero >> 8) & 0xff);
 		*(bytesvector + 1) = ((numero) & 0xff);
 	}
-	uint64_t const extract8bytestoUint64(uint8_t const* const array8bytes) noexcept
+	uint64_t extract8bytestoUint64(uint8_t const* const array8bytes) noexcept
 	{
 
 		return ((static_cast<uint64_t>(*array8bytes) << 56) | (static_cast<uint64_t>(*(array8bytes + 1)) << 48) | (static_cast<uint64_t>(*(array8bytes + 2)) << 40) | (static_cast<uint64_t>(*(array8bytes + 3)) << 32) | (static_cast<uint64_t>(*(array8bytes + 4)) << 24) | (static_cast<uint64_t>(*(array8bytes + 5)) << 16) | (static_cast<uint64_t>(*(array8bytes + 6)) << 8) | (static_cast<uint64_t>(*(array8bytes + 7))));
 
 	}
-	uint16_t const extract2bytestoUint16(uint8_t  const* const array2bytes) noexcept
+	uint16_t extract2bytestoUint16(uint8_t  const* const array2bytes) noexcept
 	{
 
 		return ((static_cast<uint16_t>(*(array2bytes)) << 8) | (static_cast<uint16_t>(*(array2bytes + 1))));
 
 	}
-	bool const existen_coincidencias(uint8_t const* data1, uint8_t const* data2, uint16_t const data_len, uint16_t const ciclos, uint16_t const salto) noexcept
+	bool existen_coincidencias(uint8_t const* data1, uint8_t const* data2, uint16_t const data_len, uint16_t const ciclos, uint16_t const salto) noexcept
 	{
 		uint16_t buff_sizet = 0;
 		for (int e = 0; e < ciclos; e++)
@@ -4064,7 +4049,7 @@ namespace Cardano
 
 		return false;
 	}
-	bool const existen_coincidencias_output(uint8_t const* data, uint8_t const* output, uint16_t const data_len, uint16_t const ciclos, uint16_t const salto) noexcept
+	bool existen_coincidencias_output(uint8_t const* data, uint8_t const* output, uint16_t const data_len, uint16_t const ciclos, uint16_t const salto) noexcept
 	{
 		uint16_t buff_sizet = 0;
 		uint16_t addr_keyhash_buffer_len = 0;
@@ -4089,7 +4074,7 @@ namespace Cardano
 
 		return false;
 	}
-	static bool const is_only_hex(std::string const& string_hex)
+	static bool is_only_hex(std::string const& string_hex)
 	{
 		for (char c : string_hex)
 		{
@@ -4122,7 +4107,7 @@ namespace Cardano
 		}
 		return true;
 	}
-	uint8_t const* const hexchararray2uint8array(std::string const& string_hex, std::size_t* const hexchararray2uint8array_len) noexcept
+	uint8_t* hexchararray2uint8array(std::string const& string_hex, std::size_t* const hexchararray2uint8array_len) noexcept
 	{
 		//se crea una memoria dinamica para un nuevo array char_hexa[]
 
@@ -4150,7 +4135,7 @@ namespace Cardano
 	};
 
 	///concat_data= data1 || data2 || add_bytes
-	static uint8_t* const concat_data(uint8_t const* const data1, uint16_t const* const data1_len, uint8_t const* const data2, uint16_t const* const data2_len, uint16_t const add_bytes, uint16_t* const data_out_len) noexcept
+	static uint8_t* concat_data(uint8_t const* const data1, uint16_t const* const data1_len, uint8_t const* const data2, uint16_t const* const data2_len, uint16_t const add_bytes, uint16_t* const data_out_len) noexcept
 	{
 		*data_out_len = (*data2_len) + (*data1_len) + add_bytes;  // se espera que el valor no supere los 65535 bytes de largo
 		uint8_t* data_out = new (std::nothrow) uint8_t[*data_out_len]();
@@ -4172,7 +4157,7 @@ namespace Cardano
 		return data_out;
 	}
 	/// Encode
-	static uint8_t* const convert_bits(uint8_t const* const data, uint16_t const* const data_len, uint16_t const fromBits, uint16_t const toBits, uint16_t* const convert_bits_len) noexcept
+	static uint8_t* convert_bits(uint8_t const* const data, uint16_t const* const data_len, uint16_t const fromBits, uint16_t const toBits, uint16_t* const convert_bits_len) noexcept
 	{
 		uint16_t acc = 0;
 		uint16_t bits = 0;
@@ -4214,7 +4199,7 @@ namespace Cardano
 
 	}
 	///Decode cardano addr
-	static bool const decode_bits(uint8_t const* const data, uint16_t const data_len, uint16_t const fromBits, uint16_t const toBits, uint8_t* const bits_out, uint16_t* const bits_out_len, uint16_t max_size) noexcept
+	static bool decode_bits(uint8_t const* const data, uint16_t const data_len, uint16_t const fromBits, uint16_t const toBits, uint8_t* const bits_out, uint16_t* const bits_out_len, uint16_t max_size) noexcept
 	{
 		uint16_t blen = 0;
 		uint16_t acc = 0;
@@ -4261,7 +4246,7 @@ namespace Cardano
 
 		return true;
 	}
-	static bool const IsValidHrp(char const* const hrp, uint8_t* const hrp_len) noexcept
+	static bool IsValidHrp(char const* const hrp, uint8_t* const hrp_len) noexcept
 	{
 		*hrp_len = 0;
 		//comprueba si el largo de la cadena esta entre 1 a 83
@@ -4288,7 +4273,7 @@ namespace Cardano
 		}
 		return true;
 	}
-	static bool const IsValidStringBench32(char const* const bech32_code, uint16_t* const bech32_code_pos_separator, uint16_t* const bech32_code_lenght) noexcept
+	static bool IsValidStringBench32(char const* const bech32_code, uint16_t* const bech32_code_pos_separator, uint16_t* const bech32_code_lenght) noexcept
 	{
 		bool lower = false;
 		bool upper = false;
@@ -4343,7 +4328,7 @@ namespace Cardano
 			if (b & 16) { *polymod_out ^= 0x2a1462b3; };
 		}
 	}
-	static uint8_t* const bech32_hrp_expand(char const* const hrp, uint8_t const* const hrp_len, uint16_t* const bech32_hrp_expand_len) noexcept
+	static uint8_t* bech32_hrp_expand(char const* const hrp, uint8_t const* const hrp_len, uint16_t* const bech32_hrp_expand_len) noexcept
 	{
 
 		uint16_t len = ((*hrp_len) * 2) + 1;
@@ -4362,7 +4347,7 @@ namespace Cardano
 
 		return hrp_e;
 	}
-	static bool const bech32_verify_checksum(char const* const hrp, uint8_t const* const hrp_len, uint8_t const* const data, uint16_t const data_len) noexcept
+	static bool bech32_verify_checksum(char const* const hrp, uint8_t const* const hrp_len, uint8_t const* const data, uint16_t const data_len) noexcept
 	{
 		uint16_t hrp_expand_len;
 		uint16_t v_len = 0;
@@ -4397,7 +4382,7 @@ namespace Cardano
 		return false;
 
 	}
-	static bool const bech32_create_checksum(char const* const hrp, uint8_t const* const hrp_len, uint8_t const* const data, uint16_t const* const data_len, uint8_t* const checksum) noexcept
+	static bool bech32_create_checksum(char const* const hrp, uint8_t const* const hrp_len, uint8_t const* const data, uint16_t const* const data_len, uint8_t* const checksum) noexcept
 	{
 		uint16_t hrp_expand_len;
 		uint16_t v_len = 0;
@@ -4433,7 +4418,7 @@ namespace Cardano
 
 		return true;
 	}
-	bool const bech32_encode(char const* const hrp, uint8_t const* const data, uint16_t const data_len, std::string& encode_out) noexcept
+	bool bech32_encode(char const* const hrp, uint8_t const* const data, uint16_t const data_len, std::string& encode_out) noexcept
 	{
 
 		encode_out.clear();
@@ -4492,7 +4477,7 @@ namespace Cardano
 
 		return true;
 	}
-	bool const bech32_decode(char const* const bech32_code, uint8_t* const data_out, uint16_t* const data_out_len) noexcept
+	bool bech32_decode(char const* const bech32_code, uint8_t* const data_out, uint16_t* const data_out_len) noexcept
 	{
 		uint16_t bech32_code_lenght = 0;
 		uint16_t pos_separator = 0;
@@ -4537,7 +4522,7 @@ namespace Cardano
 		return true;
 
 	}
-	bool const bech32_decode_extended(char const* const bech32_code, uint8_t* const data_out, uint16_t* const data_out_len, uint16_t max_size) noexcept
+	bool bech32_decode_extended(char const* const bech32_code, uint8_t* const data_out, uint16_t* const data_out_len, uint16_t max_size) noexcept
 	{
 		uint16_t bech32_code_lenght = 0;
 		uint16_t pos_separator = 0;

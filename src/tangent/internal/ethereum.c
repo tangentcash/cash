@@ -123,7 +123,7 @@ int eth_hex_pad_left(char* dest, const char* str, int len, size_t width)
     if (len < 0)
         len = (int)strlen(str);
 
-    if (dest == NULL || str == NULL || len == 0 || len > width)
+    if (dest == NULL || str == NULL || len == 0 || len > (int)width)
         return -1;
 
     if (eth_is_hex(str, len) != 1)
@@ -144,10 +144,7 @@ int eth_hex_pad_right(char* dest, const char* str, int len, size_t width)
     if (len < 0)
         len = (int)strlen(str);
 
-    if (str == NULL || len == 0 || len > width)
-        return -1;
-
-    if (dest == NULL || str == NULL || len == 0 || len > width)
+    if (dest == NULL || str == NULL || len == 0 || len > (int)width)
         return -1;
 
     if (eth_is_hex(str, len) == 0)
@@ -220,7 +217,7 @@ int eth_hex_to_bytes(uint8_t** dest, const char* hex, int len)
         len -= 1;
     }
 
-    for (i = 0; i < len; i += 2)
+    for (i = 0; i < (size_t)len; i += 2)
         buf[k++] = (ethc_hexcharb((hex[i])) << 4)
         | ethc_hexcharb((hex[i + 1]));
 
