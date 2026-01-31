@@ -1828,6 +1828,8 @@ namespace tangent
 			{
 				if (!commitment_hash)
 					return layer_exception("invalid commitment hash");
+				else if (signatures.size() > protocol::now().policy.attestation.max_per_transaction)
+					return layer_exception("too many commitment attesters");
 
 				for (auto& signature : signatures)
 				{
@@ -2409,14 +2411,9 @@ namespace tangent
 			if (!best_attesters)
 				return best_attesters.error();
 
-			size_t min_commitment_size = best_attesters->size();
 			decimal min_commitment_stake = decimal::zero();
 			for (auto& attester : *best_attesters)
 				min_commitment_stake += attester.stake;
-
-			min_commitment_size = std::min(min_commitment_size, params.policy.attestation.min_per_transaction);
-			if (best_commitment_size < min_commitment_size)
-				return layer_exception("proof requires more attestations");
 
 			min_commitment_stake *= params.policy.attestation.consensus_threshold;
 			if (best_commitment_stake < min_commitment_stake)
@@ -2424,19 +2421,20 @@ namespace tangent
 
 			return expectation::met;
 		}
-		void attestate::strip_commitments(const ledger::executor_context* executor, const algorithm::asset_id& asset, btree_map<uint256_t, btree_set<algorithm::hashsig_t>>& commitments)
+		void attestate::optimize_proof_commitments(const ledger::executor_context* executor, const algorithm::asset_id& asset, btree_map<uint256_t, btree_set<algorithm::hashsig_t>>& commitments)
 		{
 			btree_set<algorithm::pubkeyhash_t> duplicates;
-			btree_map<uint256_t, btree_set<algorithm::hashsig_t>> stripped_out;
+			btree_map<uint256_t, btree_set<algorithm::hashsig_t>> removals;
 			for (auto& [commitment_hash, signatures] : commitments)
 			{
+				vector<std::pair<algorithm::hashsig_t, decimal>> weights;
 				for (auto& signature : signatures)
 				{
 					algorithm::pubkeyhash_t attester;
 					if (!algorithm::signing::recover_hash(commitment_hash, attester, signature))
 					{
 					strip_out:
-						stripped_out[commitment_hash].insert(signature);
+						removals[commitment_hash].insert(signature);
 						continue;
 					}
 					else if (duplicates.find(attester) != duplicates.end())
@@ -2446,11 +2444,16 @@ namespace tangent
 					if (!attestation)
 						goto strip_out;
 
+					weights.push_back(std::make_pair(signature, std::move(attestation->stake)));
 					duplicates.insert(attester);
 				}
+				
+				std::sort(weights.begin(), weights.end(), [](const std::pair<algorithm::hashsig_t, decimal>& a, const std::pair<algorithm::hashsig_t, decimal>& b) { return a.second > b.second; });
+				for (size_t i = protocol::now().policy.attestation.max_per_transaction; i < weights.size(); i++)
+					removals[commitment_hash].insert(weights[i].first);
 			}
 
-			for (auto& [commitment_hash, signatures] : stripped_out)
+			for (auto& [commitment_hash, signatures] : removals)
 			{
 				for (auto& signature : signatures)
 					commitments[commitment_hash].erase(signature);

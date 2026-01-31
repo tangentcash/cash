@@ -990,7 +990,7 @@ namespace tangent
 
 			uint256_t best_commitment_hash = 0;
 			btree_map<uint256_t, btree_set<algorithm::pubkeyhash_t>> attesters;
-			transactions::attestate::strip_commitments(&executor, batch->asset, batch->commitments);
+			transactions::attestate::optimize_proof_commitments(&executor, batch->asset, batch->commitments);
 			auto verification = transactions::attestate::verify_proof_commitment(&executor, batch->asset, batch->commitments, best_commitment_hash, attesters);
 			if (!verification)
 				return verification;

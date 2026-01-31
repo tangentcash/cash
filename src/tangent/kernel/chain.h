@@ -283,7 +283,6 @@ namespace tangent
 			{
 				uint64_t withdrawal_time = 345600000;
 				uint64_t max_per_transaction = 32;
-				uint64_t min_per_transaction = 8;
 				decimal min_stake_value = std::string_view("900");
 				decimal max_reward_increase = std::string_view("0.80");
 				decimal consensus_threshold = std::string_view("0.70");
