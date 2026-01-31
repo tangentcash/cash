@@ -188,67 +188,73 @@ namespace tangent
 				format::tree map;
 				map.push(std::move(params));
 
-				account_info info;
-				auto account_data = coawait(execute_rpc(nd_call::account_info(), std::move(map), cache_policy::no_cache));
-				if (account_data)
+				return execute_rpc(nd_call::account_info(), std::move(map), cache_policy::no_cache).then<expects_rt<account_info>>([this](expects_rt<format::tree>&& account_data) -> expects_rt<account_info>
 				{
-					info.balance = from_drop(uint256_t(account_data->child_var("account_data.Balance").as_blob()));
-					info.sequence = account_data->child_var("account_data.Sequence").as_uint64();
-				}
-				else
-					info.balance = decimal::zero();
-				coreturn expects_rt<ripple::account_info>(std::move(info));
+					account_info info;
+					if (account_data)
+					{
+						info.balance = from_drop(uint256_t(account_data->child_var("account_data.Balance").as_blob()));
+						info.sequence = account_data->child_var("account_data.Sequence").as_uint64();
+					}
+					else
+						info.balance = decimal::zero();
+					return expects_rt<ripple::account_info>(std::move(info));
+				});
 			}
 			expects_promise_rt<ripple::account_token_info> ripple::get_account_token_info(const algorithm::asset_id& for_asset, const std::string_view& address)
 			{
-				account_token_info info;
-				info.balance = 0.0;
-
-				auto contract_address = bridge::get()->get_contract_address(for_asset);
-				size_t marker = 0, limit = 400;
-				while (contract_address && limit > 0)
+				string ref_address = string(address);
+				return coasync<expects_rt<account_token_info>>([this, for_asset, ref_address = std::move(ref_address)]() mutable -> expects_promise_rt<account_token_info>
 				{
-					auto params = format::tree::map();
-					params.set("account", format::variable(address));
-					params.set("ledger_index", format::variable("current"));
-					params.set("deletion_blockers_only", format::variable(false));
-					params.set("marker", format::variable(marker));
-					params.set("limit", format::variable(limit));
+					account_token_info info;
+					info.balance = 0.0;
 
-					format::tree map;
-					map.push(std::move(params));
-
-					auto account_data = coawait(execute_rpc(nd_call::account_objects(), std::move(map), cache_policy::no_cache));
-					if (!account_data)
-						break;
-
-					auto* objects = account_data->child("account_objects");
-					if (!objects || objects->childs().empty())
-						break;
-
-					string issuer_checksum = contract_address->substr(contract_address->size() - 6);
-					for (auto& object : objects->childs())
+					auto contract_address = bridge::get()->get_contract_address(for_asset);
+					size_t marker = 0, limit = 400;
+					while (contract_address && limit > 0)
 					{
-						string token = object.child_var("Balance.currency").as_blob();
-						if (token != algorithm::asset::token_of(for_asset))
-							continue;
+						auto params = format::tree::map();
+						params.set("account", format::variable(ref_address));
+						params.set("ledger_index", format::variable("current"));
+						params.set("deletion_blockers_only", format::variable(false));
+						params.set("marker", format::variable(marker));
+						params.set("limit", format::variable(limit));
 
-						string issuer = object.child_var("Balance.issuer").as_blob();
-						if (issuer.substr(issuer.size() - 6) != issuer_checksum)
-							continue;
+						format::tree map;
+						map.push(std::move(params));
 
-						info.balance = object.child_var("Balance.value").as_decimal();
-						limit = 0;
-						break;
+						auto account_data = coawait(execute_rpc(nd_call::account_objects(), std::move(map), cache_policy::no_cache));
+						if (!account_data)
+							break;
+
+						auto* objects = account_data->child("account_objects");
+						if (!objects || objects->childs().empty())
+							break;
+
+						string issuer_checksum = contract_address->substr(contract_address->size() - 6);
+						for (auto& object : objects->childs())
+						{
+							string token = object.child_var("Balance.currency").as_blob();
+							if (token != algorithm::asset::token_of(for_asset))
+								continue;
+
+							string issuer = object.child_var("Balance.issuer").as_blob();
+							if (issuer.substr(issuer.size() - 6) != issuer_checksum)
+								continue;
+
+							info.balance = object.child_var("Balance.value").as_decimal();
+							limit = 0;
+							break;
+						}
+
+						size_t size = objects->childs().size();
+						marker += size;
+						if (size < limit)
+							break;
 					}
 
-					size_t size = objects->childs().size();
-					marker += size;
-					if (size < limit)
-						break;
-				}
-
-				coreturn expects_rt<ripple::account_token_info>(std::move(info));
+					coreturn expects_rt<ripple::account_token_info>(std::move(info));
+				});
 			}
 			expects_promise_rt<ripple::ledger_sequence_info> ripple::get_ledger_sequence_info()
 			{
@@ -258,50 +264,54 @@ namespace tangent
 				format::tree map;
 				map.push(std::move(params));
 
-				auto block_data = coawait(execute_rpc(nd_call::ledger(), std::move(map), cache_policy::no_cache));
-				if (!block_data)
-					coreturn expects_rt<ripple::ledger_sequence_info>(block_data.error());
+				return execute_rpc(nd_call::ledger(), std::move(map), cache_policy::no_cache).then<expects_rt<ledger_sequence_info>>([](expects_rt<format::tree>&& block_data) -> expects_rt<ledger_sequence_info>
+				{
+					if (!block_data)
+						return expects_rt<ripple::ledger_sequence_info>(block_data.error());
 
-				ledger_sequence_info info;
-				info.index = block_data->child_var("ledger_index").as_uint64();
-				info.sequence = info.index + 20;
-				coreturn expects_rt<ripple::ledger_sequence_info>(std::move(info));
+					ledger_sequence_info info;
+					info.index = block_data->child_var("ledger_index").as_uint64();
+					info.sequence = info.index + 20;
+					return expects_rt<ripple::ledger_sequence_info>(std::move(info));
+				});
 			}
 			expects_promise_rt<uint64_t> ripple::get_latest_block_height()
 			{
-				auto ledger_sequence_info = coawait(get_ledger_sequence_info());
-				if (!ledger_sequence_info)
-					coreturn expects_rt<uint64_t>(ledger_sequence_info.error());
-
-				coreturn expects_rt<uint64_t>(ledger_sequence_info->index);
+				return get_ledger_sequence_info().then<expects_rt<uint64_t>>([](expects_rt<ledger_sequence_info>&& info) -> expects_rt<uint64_t>
+				{
+					return info ? expects_rt<uint64_t>(info->index) : expects_rt<uint64_t>(info.error());
+				});
 			}
 			expects_promise_rt<vector<block_log>> ripple::get_block_transactions(uint64_t block_height, uint64_t block_count)
 			{
-				vector<block_log> results;
-				for (uint64_t i = 0; i < block_count; i++)
+				return coasync<expects_rt<vector<block_log>>>([this, block_height, block_count]() -> expects_promise_rt<vector<block_log>>
 				{
-					auto map = format::tree::list();
-					auto params = map.push(format::tree::map());
-					params->set("ledger_index", format::variable(block_height));
-					params->set("transactions", format::variable(true));
-					params->set("expand", format::variable(true));
+					vector<block_log> results;
+					for (uint64_t i = 0; i < block_count; i++)
+					{
+						auto map = format::tree::list();
+						auto params = map.push(format::tree::map());
+						params->set("ledger_index", format::variable(block_height));
+						params->set("transactions", format::variable(true));
+						params->set("expand", format::variable(true));
 
-					auto block_data = coawait(execute_rpc(nd_call::ledger(), std::move(map), cache_policy::blob_cache));
-					if (!block_data)
-						coreturn block_data.error();
+						auto block_data = coawait(execute_rpc(nd_call::ledger(), std::move(map), cache_policy::blob_cache));
+						if (!block_data)
+							coreturn block_data.error();
 
-					auto* transactions = (format::tree*)block_data->child("ledger.transactions");
-					auto& log = results.emplace_back();
-					log.block_hash = block_data->child_var("ledger_hash").as_blob();
-					log.transactions = transactions ? std::move(*transactions) : format::tree::list();
-				}
-				coreturn expects_rt<vector<block_log>>(std::move(results));
+						auto* transactions = (format::tree*)block_data->child("ledger.transactions");
+						auto& log = results.emplace_back();
+						log.block_hash = block_data->child_var("ledger_hash").as_blob();
+						log.transactions = transactions ? std::move(*transactions) : format::tree::list();
+					}
+					coreturn expects_rt<vector<block_log>>(std::move(results));
+				});
 			}
 			expects_promise_rt<computed_transaction> ripple::link_transaction(uint64_t block_height, const std::string_view& block_hash, format::tree& transaction_data)
 			{
 				string tx_result = transaction_data.child_var("metaData.TransactionResult").as_blob();
 				if (tx_result != "tesSUCCESS")
-					coreturn expects_rt<computed_transaction>(remote_exception("tx reverted"));
+					return expects_rt<computed_transaction>(remote_exception("tx reverted"));
 
 				string tx_hash = transaction_data.child_var("hash").as_blob();
 				string type = transaction_data.child_var("TransactionType").as_blob();
@@ -310,7 +320,7 @@ namespace tangent
 				decimal fee_value = from_drop(uint256_t(transaction_data.child_var("Fee").as_blob()));
 				auto* amount = transaction_data.child("Amount");
 				if (type != "Payment" || !amount)
-					coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
+					return expects_rt<computed_transaction>(remote_exception("tx not involved"));
 
 				decimal base_value = 0.0, token_value = 0.0;
 				algorithm::asset_id token_asset = native_asset;
@@ -328,7 +338,7 @@ namespace tangent
 				auto destination_tag = transaction_data.child_var("DestinationTag").as_blob();
 				auto discovery = find_linked_addresses({ from, to });
 				if (!discovery || discovery->empty())
-					coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
+					return expects_rt<computed_transaction>(remote_exception("tx not involved"));
 
 				computed_transaction tx;
 				tx.transaction_id = tx_hash;
@@ -356,25 +366,23 @@ namespace tangent
 					tx.add_input(coin_utxo(target_from_link != discovery->end() ? target_from_link->second : wallet_link::from_address(from), std::move(inputs)));	
 				if (!outputs.empty())
 					tx.add_output(coin_utxo(std::move(to_link), std::move(outputs)));		
-				coreturn expects_rt<computed_transaction>(std::move(tx));
+				return expects_rt<computed_transaction>(std::move(tx));
 			}
 			expects_promise_rt<decimal> ripple::calculate_balance(const algorithm::asset_id& for_asset, const wallet_link& link)
 			{
 				if (!algorithm::asset::token_of(for_asset).empty())
 				{
-					auto account = coawait(get_account_token_info(for_asset, link.address));
-					if (!account)
-						coreturn expects_rt<decimal>(std::move(account.error()));
-
-					coreturn expects_rt<decimal>(std::move(account->balance));
+					return get_account_token_info(for_asset, link.address).then<expects_rt<decimal>>([](expects_rt<account_token_info>&& account) -> expects_rt<decimal>
+					{
+						return account ? expects_rt<decimal>(std::move(account->balance)) : expects_rt<decimal>(std::move(account.error()));
+					});
 				}
 				else
 				{
-					auto account = coawait(get_account_info(link.address));
-					if (!account)
-						coreturn expects_rt<decimal>(std::move(account.error()));
-
-					coreturn expects_rt<decimal>(std::move(account->balance));
+					return get_account_info(link.address).then<expects_rt<decimal>>([](expects_rt<account_info>&& account) -> expects_rt<decimal>
+					{
+						return account ? expects_rt<decimal>(std::move(account->balance)) : expects_rt<decimal>(std::move(account.error()));
+					});
 				}
 			}
 			expects_promise_rt<void> ripple::broadcast_transaction(const finalized_transaction& finalized)
@@ -386,99 +394,105 @@ namespace tangent
 				format::tree map;
 				map.push(std::move(params));
 
-				auto hex_data = coawait(execute_rpc(nd_call::submit_transaction(), std::move(map), cache_policy::no_cache_no_throttling));
-				if (!hex_data)
-					coreturn expects_rt<void>(std::move(hex_data.error()));
+				return execute_rpc(nd_call::submit_transaction(), std::move(map), cache_policy::no_cache_no_throttling).then<expects_rt<void>>([](expects_rt<format::tree>&& hex_data) -> expects_rt<void>
+				{
+					if (!hex_data)
+						return expects_rt<void>(std::move(hex_data.error()));
 
-				string error_message = hex_data->child_var("engine_result_message").as_blob();
-				bool is_accepted = hex_data->child_var("accepted").as_boolean();
-				if (is_accepted)
-					coreturn expects_rt<void>(expectation::met);
-				else if (error_message.empty())
-					error_message = "broadcast error";
+					string error_message = hex_data->child_var("engine_result_message").as_blob();
+					bool is_accepted = hex_data->child_var("accepted").as_boolean();
+					if (is_accepted)
+						return expects_rt<void>(expectation::met);
+					
+					if (error_message.empty())
+						error_message = "broadcast error";
 
-				coreturn expects_rt<void>(remote_exception(std::move(error_message)));
+					return expects_rt<void>(remote_exception(std::move(error_message)));
+				});
 			}
 			expects_promise_rt<prepared_transaction> ripple::prepare_transaction(const wallet_link& from_link, const value_transfer& to, const decimal& max_fee)
 			{
-				auto account_info = coawait(get_account_info(from_link.address));
-				if (!account_info)
-					coreturn expects_rt<prepared_transaction>(std::move(account_info.error()));
-
-				auto ledger_info = coawait(get_ledger_sequence_info());
-				if (!ledger_info)
-					coreturn expects_rt<prepared_transaction>(std::move(ledger_info.error()));
-
-				format::tree map;
-				map.push(format::tree::map());
-
-				auto server_info = coawait(execute_rpc(nd_call::server_info(), std::move(map), cache_policy::no_cache));
-				if (!server_info)
-					coreturn expects_rt<prepared_transaction>(std::move(server_info.error()));
-
-				decimal fee_cushion = 1.2;
-				decimal base_constant_fee = server_info->child_var("info.validated_ledger.base_fee_xrp").as_decimal();
-				if (!base_constant_fee.is_positive())
-					base_constant_fee = get_base_fee_xrp();
-
-				decimal load_factor = server_info->child_var("info.load_factor").as_decimal();
-				if (!load_factor.is_positive())
-					load_factor = 1.0;
-
-				auto fee = computed_fee::flat_fee(base_constant_fee * load_factor * fee_cushion);
-				decimal fee_value = fee.get_max_fee();
-				if (fee_value > max_fee)
-					coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
-
-				auto contract_address = bridge::get()->get_contract_address(to.asset);
-				if (contract_address)
+				return coasync<expects_rt<prepared_transaction>>([this, from_link, to, max_fee]() -> expects_promise_rt<prepared_transaction>
 				{
-					auto account_token_info = coawait(get_account_token_info(to.asset, *contract_address));
-					if (!account_token_info || account_token_info->balance < to.value)
-						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", (account_token_info ? account_token_info->balance : decimal(0.0)).to_string().c_str(), to.value.to_string().c_str())));
-				}
+					auto account_info = coawait(get_account_info(from_link.address));
+					if (!account_info)
+						coreturn expects_rt<prepared_transaction>(std::move(account_info.error()));
 
-				auto total_value = contract_address ? fee_value : (to.value + fee_value);
-				if (account_info->balance < total_value || total_value.is_negative())
-					coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", account_info->balance.to_string().c_str(), total_value.to_string().c_str())));
+					auto ledger_info = coawait(get_ledger_sequence_info());
+					if (!ledger_info)
+						coreturn expects_rt<prepared_transaction>(std::move(ledger_info.error()));
 
-				auto [output_address, output_tag] = address_util::decode_tag_address(to.address);
-				transaction_buffer buffer;
-				buffer.transaction_type = 0;
-				buffer.flags = 0;
-				buffer.sequence = (uint32_t)account_info->sequence;
-				buffer.destination_tag = from_string<uint32_t>(output_tag).or_else(0);
-				buffer.last_ledger_sequence = (uint32_t)ledger_info->sequence;
-				buffer.fee = (uint64_t)to_drop(fee_value);
-				buffer.signing_pub_key = from_link.public_key;
-				buffer.account = from_link.address;
-				buffer.destination = output_address;
-				if (contract_address)
-				{
-					buffer.amount.token_value = to.value;
-					buffer.amount.asset = algorithm::asset::token_of(to.asset);
-					buffer.amount.issuer = *contract_address;
-				}
-				else
-					buffer.amount.base_value = (uint64_t)to_drop(to.value);
+					format::tree map;
+					map.push(format::tree::map());
 
-				auto signing_public_key = decode_public_key(from_link.public_key);
-				if (!signing_public_key)
-					coreturn expects_rt<prepared_transaction>(remote_exception(std::move(signing_public_key.error().message())));
+					auto server_info = coawait(execute_rpc(nd_call::server_info(), std::move(map), cache_policy::no_cache));
+					if (!server_info)
+						coreturn expects_rt<prepared_transaction>(std::move(server_info.error()));
 
-				auto public_key = algorithm::composition::to_cstorage<algorithm::composition::cpubkey_t>(*signing_public_key);
-				auto message = tx_serialize(&buffer, true);
-				prepared_transaction result;
-				if (contract_address)
-					result.requires_account_input(algorithm::composition::type::ed25519, wallet_link(from_link), public_key, message.data(), message.size(), { { to.asset, to.value }, { native_asset, fee_value } });
-				else
-					result.requires_account_input(algorithm::composition::type::ed25519, wallet_link(from_link), public_key, message.data(), message.size(), { { native_asset, total_value } });
-				result.requires_account_output(to.address, { { to.asset, to.value } });
-				result.requires_abi(format::variable(contract_address.or_else(string())));
-				result.requires_abi(format::variable(buffer.sequence));
-				result.requires_abi(format::variable(buffer.last_ledger_sequence));
-				result.requires_abi(format::variable(buffer.fee));
-				coreturn expects_rt<prepared_transaction>(std::move(result));
+					decimal fee_cushion = 1.2;
+					decimal base_constant_fee = server_info->child_var("info.validated_ledger.base_fee_xrp").as_decimal();
+					if (!base_constant_fee.is_positive())
+						base_constant_fee = get_base_fee_xrp();
+
+					decimal load_factor = server_info->child_var("info.load_factor").as_decimal();
+					if (!load_factor.is_positive())
+						load_factor = 1.0;
+
+					auto fee = computed_fee::flat_fee(base_constant_fee * load_factor * fee_cushion);
+					decimal fee_value = fee.get_max_fee();
+					if (fee_value > max_fee)
+						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
+
+					auto contract_address = bridge::get()->get_contract_address(to.asset);
+					if (contract_address)
+					{
+						auto account_token_info = coawait(get_account_token_info(to.asset, *contract_address));
+						if (!account_token_info || account_token_info->balance < to.value)
+							coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", (account_token_info ? account_token_info->balance : decimal(0.0)).to_string().c_str(), to.value.to_string().c_str())));
+					}
+
+					auto total_value = contract_address ? fee_value : (to.value + fee_value);
+					if (account_info->balance < total_value || total_value.is_negative())
+						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", account_info->balance.to_string().c_str(), total_value.to_string().c_str())));
+
+					auto [output_address, output_tag] = address_util::decode_tag_address(to.address);
+					transaction_buffer buffer;
+					buffer.transaction_type = 0;
+					buffer.flags = 0;
+					buffer.sequence = (uint32_t)account_info->sequence;
+					buffer.destination_tag = from_string<uint32_t>(output_tag).or_else(0);
+					buffer.last_ledger_sequence = (uint32_t)ledger_info->sequence;
+					buffer.fee = (uint64_t)to_drop(fee_value);
+					buffer.signing_pub_key = from_link.public_key;
+					buffer.account = from_link.address;
+					buffer.destination = output_address;
+					if (contract_address)
+					{
+						buffer.amount.token_value = to.value;
+						buffer.amount.asset = algorithm::asset::token_of(to.asset);
+						buffer.amount.issuer = *contract_address;
+					}
+					else
+						buffer.amount.base_value = (uint64_t)to_drop(to.value);
+
+					auto signing_public_key = decode_public_key(from_link.public_key);
+					if (!signing_public_key)
+						coreturn expects_rt<prepared_transaction>(remote_exception(std::move(signing_public_key.error().message())));
+
+					auto public_key = algorithm::composition::to_cstorage<algorithm::composition::cpubkey_t>(*signing_public_key);
+					auto message = tx_serialize(&buffer, true);
+					prepared_transaction result;
+					if (contract_address)
+						result.requires_account_input(algorithm::composition::type::ed25519, wallet_link(from_link), public_key, message.data(), message.size(), { { to.asset, to.value }, { native_asset, fee_value } });
+					else
+						result.requires_account_input(algorithm::composition::type::ed25519, wallet_link(from_link), public_key, message.data(), message.size(), { { native_asset, total_value } });
+					result.requires_account_output(to.address, { { to.asset, to.value } });
+					result.requires_abi(format::variable(contract_address.or_else(string())));
+					result.requires_abi(format::variable(buffer.sequence));
+					result.requires_abi(format::variable(buffer.last_ledger_sequence));
+					result.requires_abi(format::variable(buffer.fee));
+					coreturn expects_rt<prepared_transaction>(std::move(result));
+				});
 			}
 			expects_lr<finalized_transaction> ripple::finalize_transaction(superchain::prepared_transaction&& prepared)
 			{

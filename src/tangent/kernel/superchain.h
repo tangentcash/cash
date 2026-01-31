@@ -349,9 +349,9 @@ namespace tangent
 		public:
 			translation_unit(const algorithm::asset_id& new_asset) noexcept;
 			virtual ~translation_unit() noexcept;
-			virtual expects_promise_rt<format::tree> execute_rpc(const std::string_view& method, const format::tree& args, cache_policy cache, const std::string_view& path = std::string_view());
-			virtual expects_promise_rt<format::tree> execute_rpc_multi(const std::string_view& method, const format::tree& args, cache_policy cache, const std::string_view& path = std::string_view());
-			virtual expects_promise_rt<format::tree> execute_rest(const std::string_view& method, const std::string_view& path, const format::tree& args, cache_policy cache);
+			virtual expects_promise_rt<format::tree> execute_rpc(const std::string_view& method, format::tree&& args, cache_policy cache, const std::string_view& path = std::string_view());
+			virtual expects_promise_rt<format::tree> execute_rpc_multi(const std::string_view& method, format::tree&& args, cache_policy cache, const std::string_view& path = std::string_view());
+			virtual expects_promise_rt<format::tree> execute_rest(const std::string_view& method, const std::string_view& path, format::tree&& args, cache_policy cache);
 			virtual expects_promise_rt<format::tree> execute_http(const std::string_view& method, const std::string_view& path, const std::string_view& type, const std::string_view& body, cache_policy cache);
 			virtual expects_promise_rt<uint64_t> get_latest_block_height() = 0;
 			virtual expects_promise_rt<vector<block_log>> get_block_transactions(uint64_t block_height, uint64_t block_count) = 0;

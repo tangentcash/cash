@@ -191,24 +191,26 @@ namespace tangent
 				auto args = format::tree::map();
 				args.set("detail", format::variable(false));
 
-				auto block_data = coawait(execute_rest("POST", trx_nd_call::get_block(), args, cache_policy::no_cache));
-				if (!block_data)
-					coreturn expects_rt<tron::trx_tx_block_header_info>(std::move(block_data.error()));
+				return execute_rest("POST", trx_nd_call::get_block(), std::move(args), cache_policy::no_cache).then<expects_rt<trx_tx_block_header_info>>([](expects_rt<format::tree>&& block_data) -> expects_rt<trx_tx_block_header_info>
+				{
+					if (!block_data)
+						return expects_rt<tron::trx_tx_block_header_info>(std::move(block_data.error()));
 
-				auto ref_block_bytes = block_data->child_var("block_header.raw_data.number").as_uint128().to_string(16);
-				while (ref_block_bytes.size() < 4)
-					ref_block_bytes.insert(ref_block_bytes.begin(), '0');
+					auto ref_block_bytes = block_data->child_var("block_header.raw_data.number").as_uint128().to_string(16);
+					while (ref_block_bytes.size() < 4)
+						ref_block_bytes.insert(ref_block_bytes.begin(), '0');
 
-				auto ref_block_hash = block_data->child_var("blockID").as_blob();
-				if (ref_block_hash.size() < 32)
-					coreturn expects_rt<tron::trx_tx_block_header_info>(remote_exception("invalid ref block hash"));
+					auto ref_block_hash = block_data->child_var("blockID").as_blob();
+					if (ref_block_hash.size() < 32)
+						return expects_rt<tron::trx_tx_block_header_info>(remote_exception("invalid ref block hash"));
 
-				trx_tx_block_header_info info;
-				info.ref_block_bytes = ref_block_bytes.substr(ref_block_bytes.size() - 4);
-				info.ref_block_hash = ref_block_hash.substr(16, 16);
-				info.timestamp = block_data->child_var("block_header.raw_data.timestamp").as_uint64();
-				info.expiration = info.timestamp + 60 * 1000;
-				coreturn expects_rt<tron::trx_tx_block_header_info>(std::move(info));
+					trx_tx_block_header_info info;
+					info.ref_block_bytes = ref_block_bytes.substr(ref_block_bytes.size() - 4);
+					info.ref_block_hash = ref_block_hash.substr(16, 16);
+					info.timestamp = block_data->child_var("block_header.raw_data.timestamp").as_uint64();
+					info.expiration = info.timestamp + 60 * 1000;
+					return expects_rt<tron::trx_tx_block_header_info>(std::move(info));
+				});
 			}
 			expects_lr<void> tron::verify_node_compatibility(connection_instance* node)
 			{
@@ -220,294 +222,306 @@ namespace tangent
 
 				return expectation::met;
 			}
-			expects_promise_rt<computed_transaction> tron::link_transaction(uint64_t block_height, const std::string_view& block_hash, format::tree& transaction_data)
+			expects_promise_rt<computed_transaction> tron::link_transaction(uint64_t, const std::string_view&, format::tree& transaction_data)
 			{
-				auto* chain = get_chain();
-				string data = transaction_data.child_var("input").as_blob();
-				if (stringify::starts_with(data, chain->bech32_hrp))
-					data.erase(0, strlen(chain->bech32_hrp));
-
-				string tx_hash = transaction_data.child_var("hash").as_blob();
-				string from = encode_eth_address(transaction_data.child_var("from").as_blob());
-				string to = encode_eth_address(transaction_data.child_var("to").as_blob());
-				decimal base_value = to_eth(hex_to_uint256(transaction_data.child_var("value").as_blob()), netdata.divisibility);
-
-				computed_transaction result;
-				result.transaction_id = tx_hash;
-
-				hash_map<string, hash_map<algorithm::asset_id, decimal>> inputs;
-				hash_map<string, hash_map<algorithm::asset_id, decimal>> outputs;
-				if (base_value.is_positive())
+				return coasync<expects_rt<computed_transaction>>([this, &transaction_data]() -> expects_promise_rt<computed_transaction>
 				{
-					inputs[from][native_asset] = base_value;
-					outputs[to][native_asset] = base_value;
-				}
+					auto* chain = get_chain();
+					string data = transaction_data.child_var("input").as_blob();
+					if (stringify::starts_with(data, chain->bech32_hrp))
+						data.erase(0, strlen(chain->bech32_hrp));
 
-				hash_set<string> addresses;
-				addresses.reserve(inputs.size() + outputs.size());
-				for (auto& next : inputs)
-					addresses.insert(next.first);
-				for (auto& next : outputs)
-					addresses.insert(next.first);
+					string tx_hash = transaction_data.child_var("hash").as_blob();
+					string from = encode_eth_address(transaction_data.child_var("from").as_blob());
+					string to = encode_eth_address(transaction_data.child_var("to").as_blob());
+					decimal base_value = to_eth(hex_to_uint256(transaction_data.child_var("value").as_blob()), netdata.divisibility);
 
-				if (!data.empty())
-				{
-					auto* logs = (format::tree*)transaction_data.child("logs");
-					if (!logs)
+					computed_transaction result;
+					result.transaction_id = tx_hash;
+
+					hash_map<string, hash_map<algorithm::asset_id, decimal>> inputs;
+					hash_map<string, hash_map<algorithm::asset_id, decimal>> outputs;
+					if (base_value.is_positive())
 					{
-						auto tx_receipt = coawait(get_transaction_receipt(transaction_data.child_var("hash").as_blob(), true));
-						if (tx_receipt)
-						{
-							logs = (format::tree*)tx_receipt->child("logs");
-							if (logs != nullptr)
-								transaction_data.set("logs", std::move(*logs));
-							transaction_data.set("receipt", *tx_receipt);
-						}
-						else
-							transaction_data.set("receipt", format::variable());
+						inputs[from][native_asset] = base_value;
+						outputs[to][native_asset] = base_value;
 					}
 
-					if (logs != nullptr && !logs->childs().empty())
+					hash_set<string> addresses;
+					addresses.reserve(inputs.size() + outputs.size());
+					for (auto& next : inputs)
+						addresses.insert(next.first);
+					for (auto& next : outputs)
+						addresses.insert(next.first);
+
+					if (!data.empty())
 					{
-						for (auto& invocation : logs->childs())
+						auto* logs = (format::tree*)transaction_data.child("logs");
+						if (!logs)
 						{
-							auto* topics = invocation.child("topics");
-							if (topics && topics->childs().size() == 3 && is_token_transfer(topics->child_var(0).as_blob()))
+							auto tx_receipt = coawait(get_transaction_receipt(transaction_data.child_var("hash").as_blob(), true));
+							if (tx_receipt)
 							{
-								addresses.insert(encode_eth_address(normalize_topic_address(topics->child_var(1).as_blob())));
-								addresses.insert(encode_eth_address(normalize_topic_address(topics->child_var(2).as_blob())));
+								logs = (format::tree*)tx_receipt->child("logs");
+								if (logs != nullptr)
+									transaction_data.set("logs", std::move(*logs));
+								transaction_data.set("receipt", *tx_receipt);
 							}
-							else if (topics && topics->childs().size() == 2 && is_token_transfer(topics->child_var(0).as_blob()))
-								addresses.insert(encode_eth_address(topics->child_var(1).as_blob()));
+							else
+								transaction_data.set("receipt", format::variable());
 						}
-					}
-				}
 
-				auto discovery = find_linked_addresses(addresses);
-				if (!discovery || discovery->empty())
-					coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
-
-				if (!data.empty())
-				{
-					auto* logs = transaction_data.child("logs");
-					if (logs != nullptr && !logs->childs().empty())
-					{
-						for (auto& invocation : logs->childs())
+						if (logs != nullptr && !logs->childs().empty())
 						{
-							auto* topics = invocation.child("topics");
-							if (!topics || (topics->childs().size() != 2 && topics->childs().size() != 3) || !is_token_transfer(topics->child_var(0).as_blob()))
-								continue;
-
-							auto contract_address = encode_eth_address(invocation.child_var("address").as_blob());
-							auto symbol = coawait(get_contract_symbol(contract_address));
-							if (!symbol)
-								continue;
-
-							auto token_asset = algorithm::asset::id_of(algorithm::asset::blockchain_of(native_asset), *symbol, contract_address);
-							decimal divisibility = coawait(get_contract_divisibility(contract_address)).or_else(netdata.divisibility);
-							decimal token_value = to_eth(hex_to_uint256(invocation.child_var("data").as_blob()), divisibility);
-							if (topics->childs().size() == 3)
+							for (auto& invocation : logs->childs())
 							{
-								from = encode_eth_address(normalize_topic_address(topics->child_var(1).as_blob()));
-								to = encode_eth_address(normalize_topic_address(topics->child_var(2).as_blob()));
+								auto* topics = invocation.child("topics");
+								if (topics && topics->childs().size() == 3 && is_token_transfer(topics->child_var(0).as_blob()))
+								{
+									addresses.insert(encode_eth_address(normalize_topic_address(topics->child_var(1).as_blob())));
+									addresses.insert(encode_eth_address(normalize_topic_address(topics->child_var(2).as_blob())));
+								}
+								else if (topics && topics->childs().size() == 2 && is_token_transfer(topics->child_var(0).as_blob()))
+									addresses.insert(encode_eth_address(topics->child_var(1).as_blob()));
 							}
-							else if (topics->childs().size() == 2)
-								to = encode_eth_address(topics->child_var(1).as_blob());
-
-							auto& token_input = inputs[from][token_asset];
-							auto& token_output = outputs[to][token_asset];
-							token_input = token_input.is_nan() ? token_value : (token_input + token_value);
-							token_output = token_output.is_nan() ? token_value : (token_output + token_value);
-							bridge::get()->enable_contract_address(token_asset, contract_address);
 						}
 					}
-				}
 
-				addresses.clear();
-				for (auto& next : inputs)
-					addresses.insert(next.first);
-				for (auto& next : outputs)
-					addresses.insert(next.first);
+					auto discovery = find_linked_addresses(addresses);
+					if (!discovery || discovery->empty())
+						coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
 
-				discovery = find_linked_addresses(addresses);
-				if (!discovery || discovery->empty())
-					coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
+					if (!data.empty())
+					{
+						auto* logs = transaction_data.child("logs");
+						if (logs != nullptr && !logs->childs().empty())
+						{
+							for (auto& invocation : logs->childs())
+							{
+								auto* topics = invocation.child("topics");
+								if (!topics || (topics->childs().size() != 2 && topics->childs().size() != 3) || !is_token_transfer(topics->child_var(0).as_blob()))
+									continue;
 
-				auto args = format::tree::map();
-				args.set("value", format::variable(tx_hash.starts_with("0x") ? std::string_view(tx_hash).substr(2) : std::string_view(tx_hash)));
+								auto contract_address = encode_eth_address(invocation.child_var("address").as_blob());
+								auto symbol = coawait(get_contract_symbol(contract_address));
+								if (!symbol)
+									continue;
 
-				auto info = coawait(execute_rest("POST", trx_nd_call::get_transaction_info_by_id(), args, cache_policy::blob_cache));
-				if (!info)
-					coreturn expects_rt<computed_transaction>(remote_exception("tx not found"));
+								auto token_asset = algorithm::asset::id_of(algorithm::asset::blockchain_of(native_asset), *symbol, contract_address);
+								decimal divisibility = coawait(get_contract_divisibility(contract_address)).or_else(netdata.divisibility);
+								decimal token_value = to_eth(hex_to_uint256(invocation.child_var("data").as_blob()), divisibility);
+								if (topics->childs().size() == 3)
+								{
+									from = encode_eth_address(normalize_topic_address(topics->child_var(1).as_blob()));
+									to = encode_eth_address(normalize_topic_address(topics->child_var(2).as_blob()));
+								}
+								else if (topics->childs().size() == 2)
+									to = encode_eth_address(topics->child_var(1).as_blob());
 
-				auto receipt_result = info->child_var("receipt.result").as_blob(), tx_result = info->child_var("result").as_blob();
-				if ((!receipt_result.empty() && receipt_result != "SUCCESS") || (!tx_result.empty() && tx_result != "SUCCESS"))
-					coreturn expects_rt<computed_transaction>(remote_exception("tx reverted"));
+								auto& token_input = inputs[from][token_asset];
+								auto& token_output = outputs[to][token_asset];
+								token_input = token_input.is_nan() ? token_value : (token_input + token_value);
+								token_output = token_output.is_nan() ? token_value : (token_output + token_value);
+								bridge::get()->enable_contract_address(token_asset, contract_address);
+							}
+						}
+					}
 
-				auto fee_value = to_eth(info->child_var("fee").as_uint64(), netdata.divisibility);
-				if (fee_value.is_positive())
-				{
-					auto& input_value = inputs[from][native_asset];
-					input_value = input_value.is_nan() ? fee_value : (input_value + fee_value);
-				}
+					addresses.clear();
+					for (auto& next : inputs)
+						addresses.insert(next.first);
+					for (auto& next : outputs)
+						addresses.insert(next.first);
 
-				for (auto& [address, values] : inputs)
-				{
-					auto target_link = discovery->find(address);
-					auto input = coin_utxo(target_link != discovery->end() ? target_link->second : wallet_link::from_address(address), std::move(values));
-					result.add_input(std::move(input));
-				}
+					discovery = find_linked_addresses(addresses);
+					if (!discovery || discovery->empty())
+						coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
 
-				for (auto& [address, values] : outputs)
-				{
-					auto target_link = discovery->find(address);
-					auto output = coin_utxo(target_link != discovery->end() ? target_link->second : wallet_link::from_address(address), std::move(values));
-					result.add_output(std::move(output));
-				}
+					auto args = format::tree::map();
+					args.set("value", format::variable(tx_hash.starts_with("0x") ? std::string_view(tx_hash).substr(2) : std::string_view(tx_hash)));
 
-				coreturn expects_rt<computed_transaction>(std::move(result));
+					auto info = coawait(execute_rest("POST", trx_nd_call::get_transaction_info_by_id(), std::move(args), cache_policy::blob_cache));
+					if (!info)
+						coreturn expects_rt<computed_transaction>(remote_exception("tx not found"));
+
+					auto receipt_result = info->child_var("receipt.result").as_blob(), tx_result = info->child_var("result").as_blob();
+					if ((!receipt_result.empty() && receipt_result != "SUCCESS") || (!tx_result.empty() && tx_result != "SUCCESS"))
+						coreturn expects_rt<computed_transaction>(remote_exception("tx reverted"));
+
+					auto fee_value = to_eth(info->child_var("fee").as_uint64(), netdata.divisibility);
+					if (fee_value.is_positive())
+					{
+						auto& input_value = inputs[from][native_asset];
+						input_value = input_value.is_nan() ? fee_value : (input_value + fee_value);
+					}
+
+					for (auto& [address, values] : inputs)
+					{
+						auto target_link = discovery->find(address);
+						auto input = coin_utxo(target_link != discovery->end() ? target_link->second : wallet_link::from_address(address), std::move(values));
+						result.add_input(std::move(input));
+					}
+
+					for (auto& [address, values] : outputs)
+					{
+						auto target_link = discovery->find(address);
+						auto output = coin_utxo(target_link != discovery->end() ? target_link->second : wallet_link::from_address(address), std::move(values));
+						result.add_output(std::move(output));
+					}
+
+					coreturn expects_rt<computed_transaction>(std::move(result));
+				});
 			}
 			expects_promise_rt<decimal> tron::calculate_balance(const algorithm::asset_id& for_asset, const wallet_link& link)
 			{
-				auto contract_address = bridge::get()->get_contract_address(for_asset);
-				decimal divisibility = netdata.divisibility;
-				if (contract_address)
+				return coasync<expects_rt<decimal>>([this, for_asset, link]() -> expects_promise_rt<decimal>
 				{
-					auto contract_divisibility = coawait(get_contract_divisibility(*contract_address));
-					if (contract_divisibility)
-						divisibility = *contract_divisibility;
-				}
+					auto contract_address = bridge::get()->get_contract_address(for_asset);
+					decimal divisibility = netdata.divisibility;
+					if (contract_address)
+					{
+						auto contract_divisibility = coawait(get_contract_divisibility(*contract_address));
+						if (contract_divisibility)
+							divisibility = *contract_divisibility;
+					}
 
-				const char* method = nullptr;
-				format::tree params;
-				if (contract_address)
-				{
-					method = nd_call::call();
-					params = format::tree::map();
-					params.set("to", format::variable(decode_non_eth_address(*contract_address)));
-					params.set("data", format::variable(encode_0xhex(translations::ethereum::sc_call::balance_of(decode_non_eth_address(link.address)))));
-				}
-				else
-				{
-					method = nd_call::get_balance();
-					params = format::variable(decode_non_eth_address(link.address));
-				}
+					const char* method = nullptr;
+					format::tree params;
+					if (contract_address)
+					{
+						method = nd_call::call();
+						params = format::tree::map();
+						params.set("to", format::variable(decode_non_eth_address(*contract_address)));
+						params.set("data", format::variable(encode_0xhex(translations::ethereum::sc_call::balance_of(decode_non_eth_address(link.address)))));
+					}
+					else
+					{
+						method = nd_call::get_balance();
+						params = format::variable(decode_non_eth_address(link.address));
+					}
 
-				format::tree map;
-				map.push(params);
-				map.push(format::variable("latest"));
+					format::tree map;
+					map.push(params);
+					map.push(format::variable("latest"));
 
-				auto confirmed_balance = coawait(execute_rpc(method, std::move(map), cache_policy::no_cache));
-				if (!confirmed_balance)
-					coreturn expects_rt<decimal>(std::move(confirmed_balance.error()));
+					auto confirmed_balance = coawait(execute_rpc(method, std::move(map), cache_policy::no_cache));
+					if (!confirmed_balance)
+						coreturn expects_rt<decimal>(std::move(confirmed_balance.error()));
 
-				decimal balance = to_eth(hex_to_uint256(confirmed_balance->value.as_blob()), divisibility);
-				coreturn expects_rt<decimal>(std::move(balance));
+					decimal balance = to_eth(hex_to_uint256(confirmed_balance->value.as_blob()), divisibility);
+					coreturn expects_rt<decimal>(std::move(balance));
+				});
 			}
 			expects_promise_rt<void> tron::broadcast_transaction(const finalized_transaction& finalized)
 			{
 				auto native_data = codec::decompress(codec::hex_decode(finalized.calldata));
 				if (!native_data)
-					coreturn expects_rt<void>(remote_exception(std::move(native_data.error().message())));
+					return expects_rt<void>(remote_exception(std::move(native_data.error().message())));
 
 				auto transaction_data = format::tree::from_json(*native_data);
 				if (!transaction_data)
-					coreturn expects_rt<void>(remote_exception(std::move(transaction_data.error().message())));
+					return expects_rt<void>(remote_exception(std::move(transaction_data.error().message())));
 
-				uint64_t retry_timeout = 2000;
-				auto result = expects_rt<format::tree>(remote_exception::retry_later());
-				for (size_t i = 0; i < 6; i++)
+				return coasync<expects_rt<void>>([this, transaction_data = std::move(transaction_data)]() mutable -> expects_promise_rt<void>
 				{
-					result = coawait(execute_rest("POST", trx_nd_call::broadcast_transaction(), *transaction_data, cache_policy::no_cache));
-					if (result)
-						break;
-					
-					auto error_message = result.what();
-					if (result.error().is_retry() || result.error().is_shutdown() || stringify::to_lower(error_message).find("java.lang.nullpointerexception") == std::string::npos)
+					uint64_t retry_timeout = 2000;
+					auto result = expects_rt<format::tree>(remote_exception::retry_later());
+					for (size_t i = 0; i < 6; i++)
+					{
+						result = coawait(execute_rest("POST", trx_nd_call::broadcast_transaction(), format::tree(*transaction_data), cache_policy::no_cache));
+						if (result)
+							break;
+
+						auto error_message = result.what();
+						if (result.error().is_retry() || result.error().is_shutdown() || stringify::to_lower(error_message).find("java.lang.nullpointerexception") == std::string::npos)
+							coreturn expects_rt<void>(std::move(result.error()));
+
+						coawait(sleep_async(retry_timeout));
+					}
+					if (!result)
 						coreturn expects_rt<void>(std::move(result.error()));
-					
-					coawait(sleep_async(retry_timeout));
-				}
-				if (!result)
-					coreturn expects_rt<void>(std::move(result.error()));
 
-				bool success = result->child_var("result").as_boolean();
-				string code = result->child_var("code").as_blob();
-				string message = result->child_var("message").as_blob();
-				if (code.empty())
-					code = result->child_var("Error").as_blob();
-				if (!success)
-					coreturn expects_rt<void>(remote_exception(message.empty() ? code : code + ": " + codec::hex_decode(message)));
+					bool success = result->child_var("result").as_boolean();
+					string code = result->child_var("code").as_blob();
+					string message = result->child_var("message").as_blob();
+					if (code.empty())
+						code = result->child_var("Error").as_blob();
+					if (!success)
+						coreturn expects_rt<void>(remote_exception(message.empty() ? code : code + ": " + codec::hex_decode(message)));
 
-				coreturn expects_rt<void>(expectation::met);
+					coreturn expects_rt<void>(expectation::met);
+				});
 			}
 			expects_promise_rt<prepared_transaction> tron::prepare_transaction(const wallet_link& from_link, const value_transfer& to, const decimal& max_fee)
 			{
-				auto chain_id = coawait(get_chain_id());
-				if (!chain_id)
-					coreturn expects_rt<prepared_transaction>(std::move(chain_id.error()));
-
-				auto fee = coawait(estimate_transaction_fee(from_link, to));
-				if (!fee)
-					coreturn expects_rt<prepared_transaction>(std::move(fee.error()));
-
-				auto contract_address = bridge::get()->get_contract_address(to.asset);
-				if (contract_address)
-					fee->gas.gas_limit *= 4;
-
-				decimal fee_value = fee->get_max_fee();
-				if (fee_value > max_fee)
-					coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
-
-				if (contract_address)
+				return coasync<expects_rt<prepared_transaction>>([this, from_link, to, max_fee]() -> expects_promise_rt<prepared_transaction>
 				{
-					auto balance = coawait(calculate_balance(to.asset, from_link));
-					if (!balance || *balance < fee_value)
-						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", (balance ? *balance : decimal(0.0)).to_string().c_str(), fee_value.to_string().c_str())));
-				}
+					auto chain_id = coawait(get_chain_id());
+					if (!chain_id)
+						coreturn expects_rt<prepared_transaction>(std::move(chain_id.error()));
 
-				auto total_value = contract_address ? fee_value : (to.value + fee_value);
-				auto balance = coawait(calculate_balance(native_asset, from_link));
-				if (!balance || *balance < total_value || total_value.is_negative())
-					coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", (balance ? *balance : decimal(0.0)).to_string().c_str(), total_value.to_string().c_str())));
+					auto fee = coawait(estimate_transaction_fee(from_link, to));
+					if (!fee)
+						coreturn expects_rt<prepared_transaction>(std::move(fee.error()));
 
-				auto block_header = coawait(get_block_header_for_tx());
-				if (!block_header)
-					coreturn expects_rt<prepared_transaction>(std::move(block_header.error()));
+					auto contract_address = bridge::get()->get_contract_address(to.asset);
+					if (contract_address)
+						fee->gas.gas_limit *= 4;
 
-				decimal divisibility = netdata.divisibility;
-				if (contract_address)
-				{
-					auto contract_divisibility = coawait(get_contract_divisibility(*contract_address));
-					if (contract_divisibility)
-						divisibility = *contract_divisibility;
-				}
+					decimal fee_value = fee->get_max_fee();
+					if (fee_value > max_fee)
+						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
 
-				auto public_key = to_composite_public_key(from_link.public_key);
-				if (!public_key)
-					coreturn expects_rt<prepared_transaction>(remote_exception(std::move(public_key.error().message())));
+					if (contract_address)
+					{
+						auto balance = coawait(calculate_balance(to.asset, from_link));
+						if (!balance || *balance < fee_value)
+							coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", (balance ? *balance : decimal(0.0)).to_string().c_str(), fee_value.to_string().c_str())));
+					}
 
-				auto eth_contract_address = contract_address ? decode_non_eth_address_pf(*contract_address) : string();
-				auto eth_like_from_address = decode_non_eth_address_pf(from_link.address);
-				auto eth_like_to_address = decode_non_eth_address_pf(to.address);
-				auto eth_to_address = decode_non_eth_address_pf(to.address, false);
-				auto eth_value = from_eth(to.value, divisibility);
-				auto fee_limit = from_eth(std::max(fee_value, max_fee), netdata.divisibility);
-				auto transaction = tx_serialize(*block_header, eth_contract_address, eth_like_from_address, eth_like_to_address, eth_to_address, eth_value, fee_limit);
-				prepared_transaction result;
-				if (contract_address)
-					result.requires_account_input(algorithm::composition::type::secp256k1, wallet_link(from_link), *public_key, (uint8_t*)transaction.raw_transaction_id.data(), transaction.raw_transaction_id.size(), { { to.asset, to.value }, { native_asset, fee_value } });
-				else
-					result.requires_account_input(algorithm::composition::type::secp256k1, wallet_link(from_link), *public_key, (uint8_t*)transaction.raw_transaction_id.data(), transaction.raw_transaction_id.size(), { { native_asset, total_value } });
-				result.requires_account_output(to.address, { { to.asset, to.value } });
-				result.requires_abi(format::variable(contract_address.or_else(string())));
-				result.requires_abi(format::variable(block_header->ref_block_bytes));
-				result.requires_abi(format::variable(block_header->ref_block_hash));
-				result.requires_abi(format::variable((uint64_t)block_header->expiration));
-				result.requires_abi(format::variable((uint64_t)block_header->timestamp));
-				result.requires_abi(format::variable(divisibility));
-				result.requires_abi(format::variable(fee_limit));
-				coreturn expects_rt<prepared_transaction>(std::move(result));
+					auto total_value = contract_address ? fee_value : (to.value + fee_value);
+					auto balance = coawait(calculate_balance(native_asset, from_link));
+					if (!balance || *balance < total_value || total_value.is_negative())
+						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", (balance ? *balance : decimal(0.0)).to_string().c_str(), total_value.to_string().c_str())));
+
+					auto block_header = coawait(get_block_header_for_tx());
+					if (!block_header)
+						coreturn expects_rt<prepared_transaction>(std::move(block_header.error()));
+
+					decimal divisibility = netdata.divisibility;
+					if (contract_address)
+					{
+						auto contract_divisibility = coawait(get_contract_divisibility(*contract_address));
+						if (contract_divisibility)
+							divisibility = *contract_divisibility;
+					}
+
+					auto public_key = to_composite_public_key(from_link.public_key);
+					if (!public_key)
+						coreturn expects_rt<prepared_transaction>(remote_exception(std::move(public_key.error().message())));
+
+					auto eth_contract_address = contract_address ? decode_non_eth_address_pf(*contract_address) : string();
+					auto eth_like_from_address = decode_non_eth_address_pf(from_link.address);
+					auto eth_like_to_address = decode_non_eth_address_pf(to.address);
+					auto eth_to_address = decode_non_eth_address_pf(to.address, false);
+					auto eth_value = from_eth(to.value, divisibility);
+					auto fee_limit = from_eth(std::max(fee_value, max_fee), netdata.divisibility);
+					auto transaction = tx_serialize(*block_header, eth_contract_address, eth_like_from_address, eth_like_to_address, eth_to_address, eth_value, fee_limit);
+					prepared_transaction result;
+					if (contract_address)
+						result.requires_account_input(algorithm::composition::type::secp256k1, wallet_link(from_link), *public_key, (uint8_t*)transaction.raw_transaction_id.data(), transaction.raw_transaction_id.size(), { { to.asset, to.value }, { native_asset, fee_value } });
+					else
+						result.requires_account_input(algorithm::composition::type::secp256k1, wallet_link(from_link), *public_key, (uint8_t*)transaction.raw_transaction_id.data(), transaction.raw_transaction_id.size(), { { native_asset, total_value } });
+					result.requires_account_output(to.address, { { to.asset, to.value } });
+					result.requires_abi(format::variable(contract_address.or_else(string())));
+					result.requires_abi(format::variable(block_header->ref_block_bytes));
+					result.requires_abi(format::variable(block_header->ref_block_hash));
+					result.requires_abi(format::variable((uint64_t)block_header->expiration));
+					result.requires_abi(format::variable((uint64_t)block_header->timestamp));
+					result.requires_abi(format::variable(divisibility));
+					result.requires_abi(format::variable(fee_limit));
+					coreturn expects_rt<prepared_transaction>(std::move(result));
+				});
 			}
 			expects_lr<finalized_transaction> tron::finalize_transaction(superchain::prepared_transaction&& prepared)
 			{

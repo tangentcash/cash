@@ -3171,13 +3171,7 @@ namespace tangent
 			{
 				auto* bridge = superchain::bridge::get();
 				bridge->network_active = [this]() -> bool { return is_active(); };
-				bridge->network_fetch = [this](const algorithm::asset_id&, const std::string_view& location, const std::string_view& method, const http::fetch_frame& options) -> expects_promise_system<http::response_frame>
-				{
-					if (!is_active())
-						return expects_promise_system<http::response_frame>(system_exception("http fetch: shutdown (cancelled)", std::make_error_condition(std::errc::network_down)));
-
-					return http::fetch(location, method, options);
-				};
+				bridge->network_fetch = [this](const algorithm::asset_id&, const std::string_view& location, const std::string_view& method, const http::fetch_frame& options) -> expects_promise_system<http::response_frame> { return http::fetch(location, method, options); };
 				transport_layer::link_instance();
 				for (auto& [blockchain, listener] : bridge->get_networks())
 					run_superchain_sync(listener.asset);
@@ -3724,24 +3718,23 @@ namespace tangent
 			if (protocol::now().user.consensus.logging)
 				VI_INFO("logical connection: connect to %i validators", (int)validators.size());
 
-			return coasync<expects_rt<void>>([this, &validators]() mutable -> expects_promise_rt<void>
+			hash_set<algorithm::pubkeyhash_t> required_accounts;
+			required_accounts.reserve(validators.size());
+			required_accounts.insert(validators.begin(), validators.end());
+			return server->connect_to_logical_nodes(std::move(required_accounts)).then<expects_rt<void>>([](expects_rt<hash_set<algorithm::pubkeyhash_t>>&& result) mutable -> expects_rt<void>
 			{
-				hash_set<algorithm::pubkeyhash_t> required_accounts;
-				required_accounts.reserve(validators.size());
-				required_accounts.insert(validators.begin(), validators.end());
-
-				auto result = coawait(server->connect_to_logical_nodes(std::move(required_accounts)));
-				if (!result)
+				if (result)
+				{
+					if (protocol::now().user.consensus.logging)
+						VI_INFO("logical connection: %i validators connected", (int)result->size());
+					return expectation::met;
+				}
+				else
 				{
 					if (protocol::now().user.consensus.logging)
 						VI_ERR("logical connection failed: %s", result.what().c_str());
-
-					coreturn result.error();
+					return result.error();
 				}
-				else if (protocol::now().user.consensus.logging)
-					VI_INFO("logical connection: %i validators connected", (int)result->size());
-
-				coreturn expectation::met;
 			});
 		}
 		expects_promise_rt<void> dispatcher_context::distribute_entropy_shares(const ledger::executor_context* executor, entropy_distribution_state& state, const algorithm::pubkeyhash_t& validator)
@@ -3749,221 +3742,232 @@ namespace tangent
 			if (protocol::now().user.consensus.logging)
 				VI_DEBUG("mpc entropy shares distribution: inquiry to %s", algorithm::signing::encode_address(validator).c_str());
 
-			return coasync<expects_rt<void>>([this, executor, &state, &validator]() mutable -> expects_promise_rt<void>
+			return distribute_entropy_shares_internal(executor, state, validator).then<expects_rt<void>>([&state, validator](expects_rt<void>&& result) mutable -> expects_rt<void>
 			{
-				auto result = coawait(distribute_entropy_shares_internal(executor, state, validator));
-				if (!result)
+				if (result)
+				{
+					if (protocol::now().user.consensus.logging)
+						VI_INFO("mpc entropy shares distribution: OK (to: %s, shares: %i)", algorithm::signing::encode_address(validator).c_str(), (int)state.encrypted_shares.size());
+
+					return expectation::met;
+				}
+				else
 				{
 					if (protocol::now().user.consensus.logging)
 						VI_INFO("mpc entropy shares distribution failed: %s (to: %s)", result.what().c_str(), algorithm::signing::encode_address(validator).c_str());
 
-					coreturn result.error();
+					return result.error();
 				}
-				else if (protocol::now().user.consensus.logging)
-					VI_INFO("mpc entropy shares distribution: OK (to: %s, shares: %i)", algorithm::signing::encode_address(validator).c_str(), (int)state.encrypted_shares.size());
-
-				coreturn expectation::met;
 			});
 		}
 		expects_promise_rt<void> dispatcher_context::distribute_entropy_shares_internal(const ledger::executor_context* executor, entropy_distribution_state& state, const algorithm::pubkeyhash_t& validator)
 		{
 			auto* runner_wallet = get_runner_wallet(validator);
 			if (runner_wallet != nullptr)
-				coreturn local_dispatcher_context::distribute_entropy_shares(this, executor, runner_wallet, state.encrypted_shares);
+				return local_dispatcher_context::distribute_entropy_shares(this, executor, runner_wallet, state.encrypted_shares);
 
 			auto public_key = server->find_public_key(validator);
 			if (!public_key)
-				coreturn remote_exception::retry_later();
+				return expects_promise_rt<void>(remote_exception::retry_later());
 
-			uint64_t attempt = 0;
-			auto args = pack_private_result({ format::variable(executor->receipt.block_number), format::variable(executor->receipt.transaction_hash), format::variable(state.as_message().data) }, *public_key);
-			if (!args)
-				coreturn args.error();
-		retry:
-			auto event = coawait(server->indirect_query(validator, descriptors::distribute_entropy_shares(), format::variables(*args), protocol::now().user.consensus.response_timeout));
-			if (!event)
+			return coasync<expects_rt<void>>([this, executor, &state, validator, public_key = std::move(public_key)]() mutable -> expects_promise_rt<void>
 			{
-				bool is_retry = server->is_active() && (event.error().is_retry() || event.error().is_shutdown());
-				if (is_retry && coawait(aggregative_sleep(attempt)))
-					goto retry;
+				uint64_t attempt = 0;
+				auto args = pack_private_result({ format::variable(executor->receipt.block_number), format::variable(executor->receipt.transaction_hash), format::variable(state.as_message().data) }, *public_key);
+				if (!args)
+					coreturn args.error();
+			retry:
+				auto event = coawait(server->indirect_query(validator, descriptors::distribute_entropy_shares(), format::variables(*args), protocol::now().user.consensus.response_timeout));
+				if (!event)
+				{
+					bool is_retry = server->is_active() && (event.error().is_retry() || event.error().is_shutdown());
+					if (is_retry && coawait(aggregative_sleep(attempt)))
+						goto retry;
 
-				coreturn is_retry || !server->is_active() ? remote_exception::retry_later() : event.error();
-			}
+					coreturn is_retry || !server->is_active() ? remote_exception::retry_later() : event.error();
+				}
 
-			args = unpack_private_result(event->args, server->runner_descriptor->second.secret_key);
-			if (!args)
-				coreturn args.error();
+				args = unpack_private_result(event->args, server->runner_descriptor->second.secret_key);
+				if (!args)
+					coreturn args.error();
 
-			if (args->size() != 1 || args->front().as_uint8() != (uint8_t)state.encrypted_shares.size())
-				coreturn remote_exception("encrypted shares distribution confirmation not received");
+				if (args->size() != 1 || args->front().as_uint8() != (uint8_t)state.encrypted_shares.size())
+					coreturn remote_exception("encrypted shares distribution confirmation not received");
 
-			coreturn expectation::met;
+				coreturn expectation::met;
+			});
 		}
 		expects_promise_rt<void> dispatcher_context::aggregate_entropy_shares(const ledger::executor_context* executor, entropy_aggregation_state& state, const algorithm::pubkeyhash_t& validator)
 		{
 			if (protocol::now().user.consensus.logging)
 				VI_DEBUG("mpc entropy shares aggregation: inquiry to %s", algorithm::signing::encode_address(validator).c_str());
 
-			return coasync<expects_rt<void>>([this, executor, &state, &validator]() mutable -> expects_promise_rt<void>
+			return aggregate_entropy_shares_internal(executor, state, validator).then<expects_rt<void>>([&state, validator](expects_rt<void>&& result) mutable -> expects_rt<void>
 			{
-				auto result = coawait(aggregate_entropy_shares_internal(executor, state, validator));
-				if (!result)
+				if (result)
+				{
+					if (protocol::now().user.consensus.logging)
+						VI_INFO("mpc entropy shares aggregation: OK (to: %s, shares: %i)", algorithm::signing::encode_address(validator).c_str(), (int)state.encrypted_shares.size());
+
+					return expectation::met;
+				}
+				else
 				{
 					if (protocol::now().user.consensus.logging)
 						VI_INFO("mpc entropy shares aggregation failed: %s (to: %s)", result.what().c_str(), algorithm::signing::encode_address(validator).c_str());
 
-					coreturn result.error();
+					return result.error();
 				}
-				else if (protocol::now().user.consensus.logging)
-					VI_INFO("mpc entropy shares aggregation: OK (to: %s, shares: %i)", algorithm::signing::encode_address(validator).c_str(), (int)state.encrypted_shares.size());
-
-				coreturn expectation::met;
 			});
 		}
 		expects_promise_rt<void> dispatcher_context::aggregate_entropy_shares_internal(const ledger::executor_context* executor, entropy_aggregation_state& state, const algorithm::pubkeyhash_t& validator)
 		{
 			auto* runner_wallet = get_runner_wallet(validator);
 			if (runner_wallet != nullptr)
-				coreturn local_dispatcher_context::aggregate_entropy_shares(this, executor, runner_wallet, state.public_key, state.encrypted_shares);
+				return local_dispatcher_context::aggregate_entropy_shares(this, executor, runner_wallet, state.public_key, state.encrypted_shares);
 
 			auto public_key = server->find_public_key(validator);
 			if (!public_key)
-				coreturn remote_exception::retry_later();
+				return expects_promise_rt<void>(remote_exception::retry_later());
 
-			format::wo_stream writer;
-			writer.write_string(state.public_key.optimized_view());
-			writer.write_integer((uint16_t)state.encrypted_shares.size());
-			for (auto& [ref_hash, encrypted_shares] : state.encrypted_shares)
-				writer.write_integer(ref_hash);
-
-			uint64_t attempt = 0;
-			auto args = pack_private_result({ format::variable(executor->receipt.block_number), format::variable(executor->receipt.transaction_hash), format::variable(state.as_message().data) }, *public_key);
-			if (!args)
-				coreturn args.error();
-		retry:
-			auto event = coawait(server->indirect_query(validator, descriptors::aggregate_entropy_shares(), format::variables(*args), protocol::now().user.consensus.response_timeout));
-			if (!event)
+			return coasync<expects_rt<void>>([this, executor, &state, validator, public_key = std::move(public_key)]() mutable -> expects_promise_rt<void>
 			{
-				bool is_retry = server->is_active() && (event.error().is_retry() || event.error().is_shutdown());
-				if (is_retry && coawait(aggregative_sleep(attempt)))
-					goto retry;
-
-				coreturn is_retry || !server->is_active() ? remote_exception::retry_later() : event.error();
-			}
-
-			args = unpack_private_result(event->args, server->runner_descriptor->second.secret_key);
-			if (!args)
-				coreturn args.error();
-
-			auto message = format::ro_stream(args->front().as_string());
-			for (uint16_t i = 0; i < state.encrypted_shares.size(); i++)
-			{
-				uint256_t ref_hash;
-				if (!message.read_integer(message.read_type(), &ref_hash))
-					coreturn remote_exception("invalid encrypted share ref hash");
-
-				uint16_t encrypted_values_size;
-				if (!message.read_integer(message.read_type(), &encrypted_values_size))
-					coreturn remote_exception("invalid encrypted share values size");
-
-				auto encrypted_values = state.encrypted_shares.find(ref_hash);
-				if (encrypted_values == state.encrypted_shares.end())
-					coreturn remote_exception("ref hash not found in provided encrypted shares");
-
-				for (uint16_t i = 0; i < encrypted_values_size; i++)
+				uint64_t attempt = 0;
+				auto args = pack_private_result({ format::variable(executor->receipt.block_number), format::variable(executor->receipt.transaction_hash), format::variable(state.as_message().data) }, *public_key);
+				if (!args)
+					coreturn args.error();
+			retry:
+				auto event = coawait(server->indirect_query(validator, descriptors::aggregate_entropy_shares(), format::variables(*args), protocol::now().user.consensus.response_timeout));
+				if (!event)
 				{
-					algorithm::pubkeyhash_t item; string intermediate;
-					if (!message.read_string(message.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, item.blob, sizeof(item)))
-						coreturn remote_exception("invalid encrypted share value participant");
+					bool is_retry = server->is_active() && (event.error().is_retry() || event.error().is_shutdown());
+					if (is_retry && coawait(aggregative_sleep(attempt)))
+						goto retry;
 
-					string encrypted_value;
-					if (!message.read_string(message.read_type(), &encrypted_value))
-						coreturn remote_exception("invalid encrypted share value data");
-
-					encrypted_values->second[item] = std::move(encrypted_value);
+					coreturn is_retry || !server->is_active() ? remote_exception::retry_later() : event.error();
 				}
-			}
 
-			coreturn expectation::met;
+				args = unpack_private_result(event->args, server->runner_descriptor->second.secret_key);
+				if (!args)
+					coreturn args.error();
+
+				auto message = format::ro_stream(args->front().as_string());
+				for (uint16_t i = 0; i < state.encrypted_shares.size(); i++)
+				{
+					uint256_t ref_hash;
+					if (!message.read_integer(message.read_type(), &ref_hash))
+						coreturn remote_exception("invalid encrypted share ref hash");
+
+					uint16_t encrypted_values_size;
+					if (!message.read_integer(message.read_type(), &encrypted_values_size))
+						coreturn remote_exception("invalid encrypted share values size");
+
+					auto encrypted_values = state.encrypted_shares.find(ref_hash);
+					if (encrypted_values == state.encrypted_shares.end())
+						coreturn remote_exception("ref hash not found in provided encrypted shares");
+
+					for (uint16_t i = 0; i < encrypted_values_size; i++)
+					{
+						algorithm::pubkeyhash_t item; string intermediate;
+						if (!message.read_string(message.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, item.blob, sizeof(item)))
+							coreturn remote_exception("invalid encrypted share value participant");
+
+						string encrypted_value;
+						if (!message.read_string(message.read_type(), &encrypted_value))
+							coreturn remote_exception("invalid encrypted share value data");
+
+						encrypted_values->second[item] = std::move(encrypted_value);
+					}
+				}
+
+				coreturn expectation::met;
+			});
 		}
 		expects_promise_rt<void> dispatcher_context::recover_entropy(const ledger::executor_context* executor, entropy_recovery_state& state, const algorithm::pubkeyhash_t& validator)
 		{
 			if (protocol::now().user.consensus.logging)
 				VI_DEBUG("mpc entropy recovery: inquiry to %s", algorithm::signing::encode_address(validator).c_str());
 
-			return coasync<expects_rt<void>>([this, executor, &state, &validator]() mutable -> expects_promise_rt<void>
+			return recover_entropy_internal(executor, state, validator).then<expects_rt<void>>([&state, validator](expects_rt<void>&& result) mutable -> expects_rt<void>
 			{
-				auto result = coawait(recover_entropy_internal(executor, state, validator));
-				if (!result)
+				if (result)
+				{
+					if (protocol::now().user.consensus.logging)
+						VI_INFO("mpc entropy recovery: OK (to: %s, entropies: %i, shares: %i)", algorithm::signing::encode_address(validator).c_str(), (int)state.encrypted_entropies.size(), (int)state.encrypted_shares.size());
+
+					return expectation::met;
+				}
+				else
 				{
 					if (protocol::now().user.consensus.logging)
 						VI_INFO("mpc entropy recovery failed: %s (to: %s)", result.what().c_str(), algorithm::signing::encode_address(validator).c_str());
 
-					coreturn result.error();
+					return result.error();
 				}
-				else if (protocol::now().user.consensus.logging)
-					VI_INFO("mpc entropy recovery: OK (to: %s, entropies: %i, shares: %i)", algorithm::signing::encode_address(validator).c_str(), (int)state.encrypted_entropies.size(), (int)state.encrypted_shares.size());
-
-				coreturn expectation::met;
 			});
 		}
 		expects_promise_rt<void> dispatcher_context::recover_entropy_internal(const ledger::executor_context* executor, entropy_recovery_state& state, const algorithm::pubkeyhash_t& validator)
 		{
 			auto* runner_wallet = get_runner_wallet(validator);
 			if (runner_wallet != nullptr)
-				coreturn local_dispatcher_context::recover_entropy(this, executor, runner_wallet, state.proof, state.encrypted_shares, state.encrypted_entropies);
+				return local_dispatcher_context::recover_entropy(this, executor, runner_wallet, state.proof, state.encrypted_shares, state.encrypted_entropies);
 
 			auto public_key = server->find_public_key(validator);
 			if (!public_key)
-				coreturn remote_exception::retry_later();
+				return expects_promise_rt<void>(remote_exception::retry_later());
 
-			uint64_t attempt = 0;
-			auto args = pack_private_result({ format::variable(executor->receipt.block_number), format::variable(executor->receipt.transaction_hash), format::variable(state.as_message().data) }, *public_key);
-			if (!args)
-				coreturn args.error();
-		retry:
-			auto event = coawait(server->indirect_query(validator, descriptors::aggregate_signature(), format::variables(*args), protocol::now().user.consensus.response_timeout));
-			if (!event)
+			return coasync<expects_rt<void>>([this, executor, &state, validator, public_key = std::move(public_key)]() mutable -> expects_promise_rt<void>
 			{
-				bool is_retry = server->is_active() && (event.error().is_retry() || event.error().is_shutdown());
-				if (is_retry && coawait(aggregative_sleep(attempt)))
-					goto retry;
+				uint64_t attempt = 0;
+				auto args = pack_private_result({ format::variable(executor->receipt.block_number), format::variable(executor->receipt.transaction_hash), format::variable(state.as_message().data) }, *public_key);
+				if (!args)
+					coreturn args.error();
+			retry:
+				auto event = coawait(server->indirect_query(validator, descriptors::aggregate_signature(), format::variables(*args), protocol::now().user.consensus.response_timeout));
+				if (!event)
+				{
+					bool is_retry = server->is_active() && (event.error().is_retry() || event.error().is_shutdown());
+					if (is_retry && coawait(aggregative_sleep(attempt)))
+						goto retry;
 
-				coreturn is_retry || !server->is_active() ? remote_exception::retry_later() : event.error();
-			}
+					coreturn is_retry || !server->is_active() ? remote_exception::retry_later() : event.error();
+				}
 
-			args = unpack_private_result(event->args, server->runner_descriptor->second.secret_key);
-			if (!args)
-				coreturn args.error();
+				args = unpack_private_result(event->args, server->runner_descriptor->second.secret_key);
+				if (!args)
+					coreturn args.error();
 
-			if (args->size() != 1)
-				coreturn remote_exception("encrypted shares recovery confirmation not received");
+				if (args->size() != 1)
+					coreturn remote_exception("encrypted shares recovery confirmation not received");
 
-			state.proof = algorithm::hashsig_t(args->front().as_string());
-			if (state.proof.empty())
-				coreturn remote_exception("group secret recovery confirmation failed");
+				state.proof = algorithm::hashsig_t(args->front().as_string());
+				if (state.proof.empty())
+					coreturn remote_exception("group secret recovery confirmation failed");
 
-			coreturn expectation::met;
+				coreturn expectation::met;
+			});
 		}
 		expects_promise_rt<void> dispatcher_context::aggregate_public_key(const ledger::executor_context* executor, public_state& state, const algorithm::pubkeyhash_t& validator)
 		{
 			if (protocol::now().user.consensus.logging)
 				VI_DEBUG("mpc public key aggregation: inquiry to %s", algorithm::signing::encode_address(validator).c_str());
 
-			return coasync<expects_rt<void>>([this, executor, &state, &validator]() mutable -> expects_promise_rt<void>
+			return aggregate_public_key_internal(executor, state, validator).then<expects_rt<void>>([&state, validator](expects_rt<void>&& result) mutable -> expects_rt<void>
 			{
-				auto result = coawait(aggregate_public_key_internal(executor, state, validator));
-				if (!result)
+				if (result)
+				{
+					if (protocol::now().user.consensus.logging)
+						VI_INFO("mpc public key aggregation: OK (to: %s, shares: %i, stack: %i)", algorithm::signing::encode_address(validator).c_str(), (int)state.encrypted_shares.size(), state.compositor ? (int)state.compositor->steps_left() : 0);
+
+					return expectation::met;
+				}
+				else
 				{
 					if (protocol::now().user.consensus.logging)
 						VI_INFO("mpc public key aggregation failed: %s (to: %s)", result.what().c_str(), algorithm::signing::encode_address(validator).c_str());
 
-					coreturn result.error();
+					return result.error();
 				}
-				else if (protocol::now().user.consensus.logging)
-					VI_INFO("mpc public key aggregation: OK (to: %s, shares: %i, stack: %i)", algorithm::signing::encode_address(validator).c_str(), (int)state.encrypted_shares.size(), state.compositor ? (int)state.compositor->steps_left() : 0);
-
-				coreturn expectation::met;
 			});
 		}
 		expects_promise_rt<void> dispatcher_context::aggregate_public_key_internal(const ledger::executor_context* executor, public_state& state, const algorithm::pubkeyhash_t& validator)
@@ -3975,118 +3979,126 @@ namespace tangent
 				auto status = local_dispatcher_context::aggregate_public_key(this, executor, runner_wallet, list, *state.compositor);
 				if (status)
 					local_dispatcher_context::apply_encrypted_distribution_shares(state, validator, list);
-				coreturn status;
+				return status;
 			}
 
 			auto public_key = server->find_public_key(validator);
 			if (!public_key)
-				coreturn remote_exception::retry_later();
+				return expects_promise_rt<void>(remote_exception::retry_later());
 
-			format::wo_stream writer;
-			if (!algorithm::composition::store_compositor(state.alg, *state.compositor, &writer))
-				coreturn remote_exception("out state machine not valid");
-
-			auto list = local_dispatcher_context::new_encrypted_distribution_shares(*public_key, state);
-			writer.write_integer((uint8_t)list.size());
-			for (auto& [public_key, encrypted_share] : list)
-				writer.write_string(public_key.optimized_view());
-
-			uint64_t attempt = 0;
-			auto args = pack_private_result({ format::variable(executor->receipt.block_number), format::variable(executor->receipt.transaction_hash), format::variable(writer.data) }, *public_key);
-			if (!args)
-				coreturn args.error();
-		retry:
-			auto event = coawait(server->indirect_query(validator, descriptors::aggregate_public_key(), format::variables(*args), protocol::now().user.consensus.response_timeout));
-			if (!event)
+			return coasync<expects_rt<void>>([this, executor, &state, validator, public_key = std::move(public_key)]() mutable -> expects_promise_rt<void>
 			{
-				bool is_retry = server->is_active() && (event.error().is_retry() || event.error().is_shutdown());
-				if (is_retry && coawait(aggregative_sleep(attempt)))
-					goto retry;
+				format::wo_stream writer;
+				if (!algorithm::composition::store_compositor(state.alg, *state.compositor, &writer))
+					coreturn remote_exception("out state machine not valid");
 
-				coreturn is_retry || !server->is_active() ? remote_exception::retry_later() : event.error();
-			}
+				auto list = local_dispatcher_context::new_encrypted_distribution_shares(*public_key, state);
+				writer.write_integer((uint8_t)list.size());
+				for (auto& [public_key, encrypted_share] : list)
+					writer.write_string(public_key.optimized_view());
 
-			args = unpack_private_result(event->args, server->runner_descriptor->second.secret_key);
-			if (!args)
-				coreturn args.error();
+				uint64_t attempt = 0;
+				auto args = pack_private_result({ format::variable(executor->receipt.block_number), format::variable(executor->receipt.transaction_hash), format::variable(writer.data) }, *public_key);
+				if (!args)
+					coreturn args.error();
+			retry:
+				auto event = coawait(server->indirect_query(validator, descriptors::aggregate_public_key(), format::variables(*args), protocol::now().user.consensus.response_timeout));
+				if (!event)
+				{
+					bool is_retry = server->is_active() && (event.error().is_retry() || event.error().is_shutdown());
+					if (is_retry && coawait(aggregative_sleep(attempt)))
+						goto retry;
 
-			auto message = format::ro_stream(args->front().as_string());
-			if (!state.load_compositor_transition(message))
-				coreturn remote_exception("compositor transition failed (possible attack)");
+					coreturn is_retry || !server->is_active() ? remote_exception::retry_later() : event.error();
+				}
 
-			auto encrypted_share_public_key = list.begin();
-			for (size_t i = 0; i < list.size(); i++)
-			{
-				string encrypted_share;
-				if (!message.read_string(message.read_type(), &encrypted_share))
-					coreturn remote_exception("encrypted share aggregation failed (possible attack)");
+				args = unpack_private_result(event->args, server->runner_descriptor->second.secret_key);
+				if (!args)
+					coreturn args.error();
 
-				encrypted_share_public_key->second = std::move(encrypted_share);
-				++encrypted_share_public_key;
-			}
+				auto message = format::ro_stream(args->front().as_string());
+				if (!state.load_compositor_transition(message))
+					coreturn remote_exception("compositor transition failed (possible attack)");
 
-			local_dispatcher_context::apply_encrypted_distribution_shares(state, validator, list);
-			coreturn expectation::met;
+				auto encrypted_share_public_key = list.begin();
+				for (size_t i = 0; i < list.size(); i++)
+				{
+					string encrypted_share;
+					if (!message.read_string(message.read_type(), &encrypted_share))
+						coreturn remote_exception("encrypted share aggregation failed (possible attack)");
+
+					encrypted_share_public_key->second = std::move(encrypted_share);
+					++encrypted_share_public_key;
+				}
+
+				local_dispatcher_context::apply_encrypted_distribution_shares(state, validator, list);
+				coreturn expectation::met;
+			});
 		}
 		expects_promise_rt<void> dispatcher_context::aggregate_signature(const ledger::executor_context* executor, signature_state& state, const algorithm::pubkeyhash_t& validator)
 		{
 			if (protocol::now().user.consensus.logging)
 				VI_DEBUG("mpc signature aggregation: inquiry to %s", algorithm::signing::encode_address(validator).c_str());
 
-			return coasync<expects_rt<void>>([this, executor, &state, &validator]() mutable -> expects_promise_rt<void>
+			return aggregate_signature_internal(executor, state, validator).then<expects_rt<void>>([&state, validator](expects_rt<void>&& result) mutable -> expects_rt<void>
 			{
-				auto result = coawait(aggregate_signature_internal(executor, state, validator));
-				if (!result)
+				if (result)
+				{
+					if (protocol::now().user.consensus.logging)
+						VI_INFO("mpc signature aggregation: OK (to: %s, stack: %i)", algorithm::signing::encode_address(validator).c_str(), state.compositor ? (int)state.compositor->steps_left() : 0);
+
+					return expectation::met;
+				}
+				else
 				{
 					if (protocol::now().user.consensus.logging)
 						VI_INFO("mpc signature aggregation failed: %s (to: %s)", result.what().c_str(), algorithm::signing::encode_address(validator).c_str());
 
-					coreturn result.error();
+					return result.error();
 				}
-				else if (protocol::now().user.consensus.logging)
-					VI_INFO("mpc signature aggregation: OK (to: %s, stack: %i)", algorithm::signing::encode_address(validator).c_str(), state.compositor ? (int)state.compositor->steps_left() : 0);
-
-				coreturn expectation::met;
 			});
 		}
 		expects_promise_rt<void> dispatcher_context::aggregate_signature_internal(const ledger::executor_context* executor, signature_state& state, const algorithm::pubkeyhash_t& validator)
 		{
 			auto* runner_wallet = get_runner_wallet(validator);
 			if (runner_wallet != nullptr)
-				coreturn local_dispatcher_context::aggregate_signature(this, executor, runner_wallet, **state.message, *state.compositor);
+				return local_dispatcher_context::aggregate_signature(this, executor, runner_wallet, **state.message, *state.compositor);
 
 			auto public_key = server->find_public_key(validator);
 			if (!public_key)
-				coreturn remote_exception::retry_later();
+				return expects_promise_rt<void>(remote_exception::retry_later());
 
-			format::wo_stream writer;
-			if (!algorithm::composition::store_compositor(state.alg, *state.compositor, &writer))
-				coreturn remote_exception("out state machine not valid");
-
-			uint64_t attempt = 0;
-			auto args = pack_private_result({ format::variable(executor->receipt.block_number), format::variable(executor->receipt.transaction_hash), format::variable(state.message->as_message().data), format::variable(writer.data) }, *public_key);
-			if (!args)
-				coreturn args.error();
-		retry:
-			auto event = coawait(server->indirect_query(validator, descriptors::aggregate_signature(), format::variables(*args), protocol::now().user.consensus.response_timeout));
-			if (!event)
+			return coasync<expects_rt<void>>([this, executor, &state, validator, public_key = std::move(public_key)]() mutable -> expects_promise_rt<void>
 			{
-				bool is_retry = server->is_active() && (event.error().is_retry() || event.error().is_shutdown());
-				if (is_retry && coawait(aggregative_sleep(attempt)))
-					goto retry;
+				format::wo_stream writer;
+				if (!algorithm::composition::store_compositor(state.alg, *state.compositor, &writer))
+					coreturn remote_exception("out state machine not valid");
 
-				coreturn is_retry || !server->is_active() ? remote_exception::retry_later() : event.error();
-			}
+				uint64_t attempt = 0;
+				auto args = pack_private_result({ format::variable(executor->receipt.block_number), format::variable(executor->receipt.transaction_hash), format::variable(state.message->as_message().data), format::variable(writer.data) }, *public_key);
+				if (!args)
+					coreturn args.error();
+			retry:
+				auto event = coawait(server->indirect_query(validator, descriptors::aggregate_signature(), format::variables(*args), protocol::now().user.consensus.response_timeout));
+				if (!event)
+				{
+					bool is_retry = server->is_active() && (event.error().is_retry() || event.error().is_shutdown());
+					if (is_retry && coawait(aggregative_sleep(attempt)))
+						goto retry;
 
-			args = unpack_private_result(event->args, server->runner_descriptor->second.secret_key);
-			if (!args)
-				coreturn args.error();
+					coreturn is_retry || !server->is_active() ? remote_exception::retry_later() : event.error();
+				}
 
-			auto message = format::ro_stream(args->front().as_string());
-			if (!state.load_compositor_transition(message))
-				coreturn remote_exception("compositor transition failed (possible attack)");
+				args = unpack_private_result(event->args, server->runner_descriptor->second.secret_key);
+				if (!args)
+					coreturn args.error();
 
-			coreturn expectation::met;
+				auto message = format::ro_stream(args->front().as_string());
+				if (!state.load_compositor_transition(message))
+					coreturn remote_exception("compositor transition failed (possible attack)");
+
+				coreturn expectation::met;
+			});
 		}
 
 		local_dispatcher_context::local_dispatcher_context(const vector<ledger::wallet>& new_validators)

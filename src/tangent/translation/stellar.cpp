@@ -273,195 +273,214 @@ namespace tangent
 			}
 			expects_promise_rt<stellar::asset_info> stellar::get_asset_info(const std::string_view& address, const std::string_view& code)
 			{
-				auto asset_data = coawait(execute_rest("GET", nd_call::get_assets(address, code), format::tree(), cache_policy::lifetime_cache));
-				if (!asset_data)
-					coreturn expects_rt<stellar::asset_info>(std::move(asset_data.error()));
-
-				auto* records = asset_data->child("_embedded.records");
-				if (!records)
-					coreturn expects_rt<stellar::asset_info>(remote_exception("contract address not found"));
-
-				for (auto& asset : records->childs())
+				string ref_address = string(address);
+				return execute_rest("GET", nd_call::get_assets(address, code), format::tree(), cache_policy::lifetime_cache).then<expects_rt<asset_info>>([ref_address = std::move(ref_address)](expects_rt<format::tree>&& asset_data) mutable -> expects_rt<asset_info>
 				{
-					asset_info info;
-					info.code = asset.child_var("asset_code").as_blob();
-					info.issuer = asset.child_var("asset_isser").as_blob();
-					info.type = asset.child_var("asset_type").as_blob();
-					if (info.issuer == address)
-						coreturn expects_rt<stellar::asset_info>(std::move(info));
-				}
+					if (!asset_data)
+						return expects_rt<stellar::asset_info>(std::move(asset_data.error()));
 
-				coreturn expects_rt<stellar::asset_info>(remote_exception("contract address not found"));
+					auto* records = asset_data->child("_embedded.records");
+					if (!records)
+						return expects_rt<stellar::asset_info>(remote_exception("contract address not found"));
+
+					for (auto& asset : records->childs())
+					{
+						asset_info info;
+						info.code = asset.child_var("asset_code").as_blob();
+						info.issuer = asset.child_var("asset_isser").as_blob();
+						info.type = asset.child_var("asset_type").as_blob();
+						if (info.issuer == ref_address)
+							return expects_rt<stellar::asset_info>(std::move(info));
+					}
+
+					return expects_rt<stellar::asset_info>(remote_exception("contract address not found"));
+				});
 			}
 			expects_promise_rt<stellar::account_info> stellar::get_account_info(const std::string_view& address)
 			{
-				auto account_data = coawait(execute_rest("GET", nd_call::get_accounts(address), format::tree(), cache_policy::no_cache));
-				if (!account_data)
-					coreturn expects_rt<stellar::account_info>(std::move(account_data.error()));
-
-				account_info info;
-				info.sequence = account_data->child_var("sequence").as_uint64();
-				if (account_data->has("balances"))
+				return execute_rest("GET", nd_call::get_accounts(address), format::tree(), cache_policy::no_cache).then<expects_rt<account_info>>([this](expects_rt<format::tree>&& account_data) -> expects_rt<account_info>
 				{
-					auto blockchain = algorithm::asset::blockchain_of(native_asset);
-					for (auto& item : account_data->child("balances")->childs())
+					if (!account_data)
+						return expects_rt<stellar::account_info>(std::move(account_data.error()));
+
+					account_info info;
+					info.sequence = account_data->child_var("sequence").as_uint64();
+					if (account_data->has("balances"))
 					{
-						asset_balance balance;
-						balance.info.type = item.child_var("asset_type").as_blob();
-						balance.info.code = item.child_var("asset_code").as_blob();
-						balance.info.issuer = item.child_var("asset_issuer").as_blob();
-						balance.balance = item.child_var("balance").as_decimal();
-						if (balance.info.code.empty())
+						auto blockchain = algorithm::asset::blockchain_of(native_asset);
+						for (auto& item : account_data->child("balances")->childs())
 						{
-							if (balance.info.type == "native")
-								info.balances[native_asset] = balance;
-						}
-						else
-						{
-							auto token_asset = algorithm::asset::id_of(blockchain, balance.info.code, balance.info.issuer);
-							info.balances[token_asset] = balance;
+							asset_balance balance;
+							balance.info.type = item.child_var("asset_type").as_blob();
+							balance.info.code = item.child_var("asset_code").as_blob();
+							balance.info.issuer = item.child_var("asset_issuer").as_blob();
+							balance.balance = item.child_var("balance").as_decimal();
+							if (balance.info.code.empty())
+							{
+								if (balance.info.type == "native")
+									info.balances[native_asset] = balance;
+							}
+							else
+							{
+								auto token_asset = algorithm::asset::id_of(blockchain, balance.info.code, balance.info.issuer);
+								info.balances[token_asset] = balance;
+							}
 						}
 					}
-				}
 
-				coreturn expects_rt<stellar::account_info>(std::move(info));
+					return expects_rt<stellar::account_info>(std::move(info));
+				});
 			}
 			expects_promise_rt<string> stellar::get_transaction_memo(const std::string_view& tx_id)
 			{
-				auto tx_data = coawait(execute_rest("GET", nd_call::get_transactions(format::util::clear_0xhex(tx_id)), format::tree(), cache_policy::blob_cache));
-				if (!tx_data)
-					coreturn expects_rt<string>(std::move(tx_data.error()));
+				return execute_rest("GET", nd_call::get_transactions(format::util::clear_0xhex(tx_id)), format::tree(), cache_policy::blob_cache).then<expects_rt<string>>([](expects_rt<format::tree>&& tx_data) -> expects_rt<string>
+				{
+					if (!tx_data)
+						return expects_rt<string>(std::move(tx_data.error()));
 
-				string memo = tx_data->child_var("memo").as_blob();
-				if (memo.empty())
-					coreturn expects_rt<string>(remote_exception("transaction memo not found"));
+					string memo = tx_data->child_var("memo").as_blob();
+					if (memo.empty())
+						return expects_rt<string>(remote_exception("transaction memo not found"));
 
-				coreturn expects_rt<string>(std::move(memo));
+					return expects_rt<string>(std::move(memo));
+				});
 			}
 			expects_promise_rt<bool> stellar::is_account_exists(const std::string_view& address)
 			{
-				auto account_data = coawait(execute_rest("GET", nd_call::get_accounts(address), format::tree(), cache_policy::no_cache));
-				if (!account_data && (account_data.error().is_retry() || account_data.error().is_shutdown()))
-					coreturn expects_rt<bool>(account_data.error());
+				return execute_rest("GET", nd_call::get_accounts(address), format::tree(), cache_policy::no_cache).then<expects_rt<bool>>([](expects_rt<format::tree>&& account_data) -> expects_rt<bool>
+				{
+					if (!account_data && (account_data.error().is_retry() || account_data.error().is_shutdown()))
+						return expects_rt<bool>(account_data.error());
 
-				coreturn expects_rt<bool>(account_data && account_data->has("account_id"));
+					return expects_rt<bool>(account_data && account_data->has("account_id"));
+				});
 			}
 			expects_promise_rt<uint64_t> stellar::get_latest_block_height()
 			{
-				auto last_block_data = coawait(execute_rest("GET", nd_call::get_last_ledger(), format::tree(), cache_policy::no_cache));
-				if (!last_block_data)
-					coreturn expects_rt<uint64_t>(std::move(last_block_data.error()));
+				return execute_rest("GET", nd_call::get_last_ledger(), format::tree(), cache_policy::no_cache).then<expects_rt<uint64_t>>([](expects_rt<format::tree>&& last_block_data) -> expects_rt<uint64_t>
+				{
+					if (!last_block_data)
+						return expects_rt<uint64_t>(std::move(last_block_data.error()));
 
-				uint64_t block_height = (uint64_t)last_block_data->child_var("_embedded.records.0.sequence").as_uint64();
-				coreturn expects_rt<uint64_t>(block_height);
+					uint64_t block_height = (uint64_t)last_block_data->child_var("_embedded.records.0.sequence").as_uint64();
+					return expects_rt<uint64_t>(block_height);
+				});
 			}
 			expects_promise_rt<vector<block_log>> stellar::get_block_transactions(uint64_t block_height, uint64_t block_count)
 			{
-				vector<block_log> results;
-				for (uint64_t i = 0; i < block_count; i++)
+				return coasync<expects_rt<vector<block_log>>>([this, block_height, block_count]() -> expects_promise_rt<vector<block_log>>
 				{
-					auto block_data = coawait(execute_rest("GET", nd_call::get_ledger_operations(block_height + i), format::tree(), cache_policy::blob_cache));
-					if (!block_data)
-						coreturn block_data.error();
+					vector<block_log> results;
+					for (uint64_t i = 0; i < block_count; i++)
+					{
+						auto block_data = coawait(execute_rest("GET", nd_call::get_ledger_operations(block_height + i), format::tree(), cache_policy::blob_cache));
+						if (!block_data)
+							coreturn block_data.error();
 
-					auto* transactions = (format::tree*)block_data->child("_embedded.records");
-					auto& log = results.emplace_back();
-					log.block_hash = to_string(block_height + i);
-					log.transactions = transactions ? std::move(*transactions) : format::tree::list();
-				}
-				coreturn expects_rt<vector<block_log>>(std::move(results));
+						auto* transactions = (format::tree*)block_data->child("_embedded.records");
+						auto& log = results.emplace_back();
+						log.block_hash = to_string(block_height + i);
+						log.transactions = transactions ? std::move(*transactions) : format::tree::list();
+					}
+					coreturn expects_rt<vector<block_log>>(std::move(results));
+				});
 			}
 			expects_promise_rt<computed_transaction> stellar::link_transaction(uint64_t, const std::string_view&, format::tree& transaction_data)
 			{
-				bool is_successful = transaction_data.child_var("successful").as_boolean() || transaction_data.child_var("transaction_successful").as_boolean();
-				if (!is_successful)
-					coreturn expects_rt<computed_transaction>(remote_exception("tx reverted"));
-
-				algorithm::asset_id token_asset = native_asset;
-				string tx_hash = transaction_data.child_var("transaction_hash").as_blob();
-				string tx_type = transaction_data.child_var("type").as_blob();
-				decimal fee_value = from_stroop(get_base_stroop_fee());
-				decimal base_value = 0.0, token_value = 0.0;
-				string from = string(), to = string();
-				bool is_payment = (tx_type == "payment");
-				bool is_create_account = (!is_payment && tx_type == "create_account");
-				bool is_native_token = (transaction_data.child_var("asset_type").as_blob() != "native");
-				if (is_payment)
+				return coasync<expects_rt<computed_transaction>>([this, &transaction_data]() -> expects_promise_rt<computed_transaction>
 				{
-					from = transaction_data.child_var("from").as_blob();
-					to = transaction_data.child_var("to").as_blob();
-					token_value = transaction_data.child_var("amount").as_decimal();
-					if (is_native_token)
+					bool is_successful = transaction_data.child_var("successful").as_boolean() || transaction_data.child_var("transaction_successful").as_boolean();
+					if (!is_successful)
+						coreturn expects_rt<computed_transaction>(remote_exception("tx reverted"));
+
+					algorithm::asset_id token_asset = native_asset;
+					string tx_hash = transaction_data.child_var("transaction_hash").as_blob();
+					string tx_type = transaction_data.child_var("type").as_blob();
+					decimal fee_value = from_stroop(get_base_stroop_fee());
+					decimal base_value = 0.0, token_value = 0.0;
+					string from = string(), to = string();
+					bool is_payment = (tx_type == "payment");
+					bool is_create_account = (!is_payment && tx_type == "create_account");
+					bool is_native_token = (transaction_data.child_var("asset_type").as_blob() != "native");
+					if (is_payment)
 					{
-						string token = transaction_data.child_var("asset_code").as_blob();
-						string issuer = transaction_data.child_var("asset_issuer").as_blob();
-						token_asset = algorithm::asset::id_of(algorithm::asset::blockchain_of(native_asset), token, issuer);
-						bridge::get()->enable_contract_address(token_asset, issuer);
+						from = transaction_data.child_var("from").as_blob();
+						to = transaction_data.child_var("to").as_blob();
+						token_value = transaction_data.child_var("amount").as_decimal();
+						if (is_native_token)
+						{
+							string token = transaction_data.child_var("asset_code").as_blob();
+							string issuer = transaction_data.child_var("asset_issuer").as_blob();
+							token_asset = algorithm::asset::id_of(algorithm::asset::blockchain_of(native_asset), token, issuer);
+							bridge::get()->enable_contract_address(token_asset, issuer);
+						}
+						else
+						{
+							base_value = token_value;
+							token_value = 0.0;
+						}
 					}
-					else
+					else if (is_create_account)
 					{
-						base_value = token_value;
-						token_value = 0.0;
+						from = transaction_data.child_var("funder").as_blob();
+						to = transaction_data.child_var("account").as_blob();
+						base_value = transaction_data.child_var("starting_balance").as_decimal();
 					}
-				}
-				else if (is_create_account)
-				{
-					from = transaction_data.child_var("funder").as_blob();
-					to = transaction_data.child_var("account").as_blob();
-					base_value = transaction_data.child_var("starting_balance").as_decimal();
-				}
 
-				auto discovery = find_linked_addresses({ from, to });
-				if (!discovery || discovery->empty())
-					coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
+					auto discovery = find_linked_addresses({ from, to });
+					if (!discovery || discovery->empty())
+						coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
 
-				computed_transaction tx;
-				tx.transaction_id = tx_hash;
+					computed_transaction tx;
+					tx.transaction_id = tx_hash;
 
-				auto total_value = base_value + fee_value;
-				auto target_from_link = discovery->find(from);
-				auto target_to_link = discovery->find(to);
-				auto to_link = target_to_link != discovery->end() ? target_to_link->second : wallet_link::from_address(to);
-				if (target_to_link != discovery->end())
-				{
-					auto memo = coawait(get_transaction_memo(tx_hash));
-					if (memo && !memo->empty())
-						to_link.address = address_util::encode_tag_address(to, *memo);
-				}
+					auto total_value = base_value + fee_value;
+					auto target_from_link = discovery->find(from);
+					auto target_to_link = discovery->find(to);
+					auto to_link = target_to_link != discovery->end() ? target_to_link->second : wallet_link::from_address(to);
+					if (target_to_link != discovery->end())
+					{
+						auto memo = coawait(get_transaction_memo(tx_hash));
+						if (memo && !memo->empty())
+							to_link.address = address_util::encode_tag_address(to, *memo);
+					}
 
-				hash_map<algorithm::asset_id, decimal> inputs;
-				hash_map<algorithm::asset_id, decimal> outputs;
-				if (total_value.is_positive())
-				{
-					inputs[native_asset] = total_value;
-					outputs[native_asset] = base_value;
-				}
-				if (token_value.is_positive())
-				{
-					inputs[token_asset] = token_value;
-					outputs[token_asset] = token_value;
-				}
-				if (!inputs.empty())
-					tx.add_input(coin_utxo(target_from_link != discovery->end() ? target_from_link->second : wallet_link::from_address(from), std::move(inputs)));
-				if (!outputs.empty())
-					tx.add_output(coin_utxo(std::move(to_link), std::move(outputs)));
-				coreturn expects_rt<computed_transaction>(std::move(tx));
+					hash_map<algorithm::asset_id, decimal> inputs;
+					hash_map<algorithm::asset_id, decimal> outputs;
+					if (total_value.is_positive())
+					{
+						inputs[native_asset] = total_value;
+						outputs[native_asset] = base_value;
+					}
+					if (token_value.is_positive())
+					{
+						inputs[token_asset] = token_value;
+						outputs[token_asset] = token_value;
+					}
+					if (!inputs.empty())
+						tx.add_input(coin_utxo(target_from_link != discovery->end() ? target_from_link->second : wallet_link::from_address(from), std::move(inputs)));
+					if (!outputs.empty())
+						tx.add_output(coin_utxo(std::move(to_link), std::move(outputs)));
+					coreturn expects_rt<computed_transaction>(std::move(tx));
+				});
 			}
 			expects_promise_rt<decimal> stellar::calculate_balance(const algorithm::asset_id& for_asset, const wallet_link& link)
 			{
-				auto account = coawait(get_account_info(link.address));
-				if (!account)
-					coreturn expects_rt<decimal>(std::move(account.error()));
+				return get_account_info(link.address).then<expects_rt<decimal>>([for_asset](expects_rt<account_info>&& account) -> expects_rt<decimal>
+				{
+					if (!account)
+						return expects_rt<decimal>(std::move(account.error()));
 
-				auto balance = account->balances.find(for_asset);
-				if (balance == account->balances.end())
-					coreturn expects_rt<decimal>(decimal::zero());
+					auto balance = account->balances.find(for_asset);
+					if (balance == account->balances.end())
+						return expects_rt<decimal>(decimal::zero());
 
-				auto contract_address = bridge::get()->get_contract_address(for_asset);
-				if (contract_address && balance->second.info.issuer != *contract_address)
-					coreturn expects_rt<decimal>(decimal::zero());
+					auto contract_address = bridge::get()->get_contract_address(for_asset);
+					if (contract_address && balance->second.info.issuer != *contract_address)
+						return expects_rt<decimal>(decimal::zero());
 
-				coreturn expects_rt<decimal>(balance->second.balance);
+					return expects_rt<decimal>(balance->second.balance);
+				});
 			}
 			expects_promise_rt<void> stellar::broadcast_transaction(const finalized_transaction& finalized)
 			{
@@ -470,97 +489,102 @@ namespace tangent
 
 				const char* type = "application/x-www-form-urlencoded";
 				string body = args->encode(type);
-				auto hex_data = coawait(execute_http("POST", nd_call::submit_transaction(), type, body, cache_policy::no_cache_no_throttling));
-				if (!hex_data)
-					coreturn expects_rt<void>(std::move(hex_data.error()));
-
-				string detail = hex_data->child_var("detail").as_blob();
-				if (!detail.empty())
+				return execute_http("POST", nd_call::submit_transaction(), type, body, cache_policy::no_cache_no_throttling).then<expects_rt<void>>([](expects_rt<format::tree>&& hex_data) -> expects_rt<void>
 				{
-					string code = hex_data->child_var("extras.result_codes.transaction").as_blob();
-					coreturn expects_rt<void>(remote_exception(std::move(code.empty() ? detail : code)));
-				}
+					if (!hex_data)
+						return expects_rt<void>(std::move(hex_data.error()));
 
-				coreturn expects_rt<void>(expectation::met);
+					string detail = hex_data->child_var("detail").as_blob();
+					if (!detail.empty())
+					{
+						string code = hex_data->child_var("extras.result_codes.transaction").as_blob();
+						return expects_rt<void>(remote_exception(std::move(code.empty() ? detail : code)));
+					}
+
+					return expects_rt<void>(expectation::met);
+				});
 			}
 			expects_promise_rt<prepared_transaction> stellar::prepare_transaction(const wallet_link& from_link, const value_transfer& to, const decimal& max_fee)
 			{
-				auto account_info = coawait(get_account_info(from_link.address));
-				if (!account_info)
-					coreturn expects_rt<prepared_transaction>(std::move(account_info.error()));
-
-				auto& params = get_params();
-				uint8_t decoded_public_key[256]; size_t decoded_public_key_size = sizeof(decoded_public_key);
-				if (!decode_key(params.ed25519_public_key, from_link.public_key, decoded_public_key, &decoded_public_key_size))
-					coreturn expects_rt<prepared_transaction>(remote_exception("input public key invalid"));
-
-				auto [address, memo] = address_util::decode_tag_address(to.address);
-				auto memo_id = from_string<uint64_t>(memo);
-				if (memo.size() > 28 || (!memo.empty() && !memo_id))
-					coreturn expects_rt<prepared_transaction>(remote_exception("input memo invalid"));
-
-				auto has_account = coawait(is_account_exists(to.address));
-				if (!has_account)
-					coreturn expects_rt<prepared_transaction>(has_account.error());
-
-				option<StellarCreateAccountOp> account = optional::none;
-				option<StellarPaymentOp> payment = optional::none;
-				auto contract_address = bridge::get()->get_contract_address(to.asset);
-				if (!*has_account)
-					account = tx_create_account_prepared(to.address, from_link.address, (uint64_t)to_stroop(to.value), !!contract_address);
-				
-				if (contract_address)
+				return coasync<expects_rt<prepared_transaction>>([this, from_link, to, max_fee]() -> expects_promise_rt<prepared_transaction>
 				{
+					auto account_info = coawait(get_account_info(from_link.address));
+					if (!account_info)
+						coreturn expects_rt<prepared_transaction>(std::move(account_info.error()));
+
+					auto& params = get_params();
+					uint8_t decoded_public_key[256]; size_t decoded_public_key_size = sizeof(decoded_public_key);
+					if (!decode_key(params.ed25519_public_key, from_link.public_key, decoded_public_key, &decoded_public_key_size))
+						coreturn expects_rt<prepared_transaction>(remote_exception("input public key invalid"));
+
+					auto [address, memo] = address_util::decode_tag_address(to.address);
+					auto memo_id = from_string<uint64_t>(memo);
+					if (memo.size() > 28 || (!memo.empty() && !memo_id))
+						coreturn expects_rt<prepared_transaction>(remote_exception("input memo invalid"));
+
+					auto has_account = coawait(is_account_exists(to.address));
+					if (!has_account)
+						coreturn expects_rt<prepared_transaction>(has_account.error());
+
+					option<StellarCreateAccountOp> account = optional::none;
+					option<StellarPaymentOp> payment = optional::none;
+					auto contract_address = bridge::get()->get_contract_address(to.asset);
+					if (!*has_account)
+						account = tx_create_account_prepared(to.address, from_link.address, (uint64_t)to_stroop(to.value), !!contract_address);
+
+					if (contract_address)
+					{
+						auto token = account_info->balances.find(to.asset);
+						if (token == account_info->balances.end())
+							coreturn expects_rt<prepared_transaction>(remote_exception("insufficient funds"));
+
+						asset_type token_type = to_asset_type(token->second.info.type);
+						if (token_type == asset_type::ASSET_TYPE_NATIVE)
+							coreturn expects_rt<prepared_transaction>(remote_exception("standard not supported"));
+
+						payment = tx_create_payment_prepared(to.address, from_link.address, tx_create_token_asset_prepared(token->second.info.code, token->second.info.issuer, token_type), (uint64_t)to_stroop(to.value));
+					}
+					else if (!account)
+						payment = tx_create_payment_prepared(to.address, from_link.address, tx_create_native_asset_prepared(), (uint64_t)to_stroop(to.value));
+
+					auto passphrase = get_network_passphrase();
+					auto accounts = account ? vector<StellarCreateAccountOp>({ *account }) : vector<StellarCreateAccountOp>();
+					auto payments = payment ? vector<StellarPaymentOp>({ *payment }) : vector<StellarPaymentOp>();
+					StellarSignTx transaction = tx_create_transaction(from_link.address, passphrase, account_info->sequence + 1, memo_id.or_else(0), !memo.empty(), accounts.size(), payments.size(), get_base_stroop_fee());
+					decimal fee_value = from_stroop(transaction.fee);
+					if (fee_value > max_fee)
+						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
+
+					hash_map<algorithm::asset_id, decimal> inputs = { { to.asset, to.value } };
+					auto& fee_input = inputs[native_asset];
+					fee_input = fee_input.is_nan() ? fee_value : (fee_input + fee_value);
+					transaction = tx_create_transaction(from_link.address, passphrase, account_info->sequence + 1, memo_id.or_else(0), !memo.empty(), accounts.size(), payments.size(), get_base_stroop_fee());
+					for (auto& [token_asset, send_value] : inputs)
+					{
+						auto& total_value = token_asset == native_asset ? inputs[native_asset] : inputs[token_asset];
+						auto balance_value = account_info->balances.find(token_asset);
+						if (balance_value == account_info->balances.end() || balance_value->second.balance < total_value)
+							coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", (balance_value != account_info->balances.end() ? balance_value->second.balance : decimal(0.0)).to_string().c_str(), total_value.to_string().c_str())));
+					}
+
+					auto signing_public_key = decode_public_key(from_link.public_key);
+					if (!signing_public_key)
+						coreturn expects_rt<prepared_transaction>(remote_exception(std::move(signing_public_key.error().message())));
+
+					auto public_key = algorithm::composition::to_cstorage<algorithm::composition::cpubkey_t>(*signing_public_key);
 					auto token = account_info->balances.find(to.asset);
-					if (token == account_info->balances.end())
-						coreturn expects_rt<prepared_transaction>(remote_exception("insufficient funds"));
-
-					asset_type token_type = to_asset_type(token->second.info.type);
-					if (token_type == asset_type::ASSET_TYPE_NATIVE)
-						coreturn expects_rt<prepared_transaction>(remote_exception("standard not supported"));
-
-					payment = tx_create_payment_prepared(to.address, from_link.address, tx_create_token_asset_prepared(token->second.info.code, token->second.info.issuer, token_type), (uint64_t)to_stroop(to.value));
-				}
-				else if (!account)
-					payment = tx_create_payment_prepared(to.address, from_link.address, tx_create_native_asset_prepared(), (uint64_t)to_stroop(to.value));
-
-				auto passphrase = get_network_passphrase();
-				auto accounts = account ? vector<StellarCreateAccountOp>({ *account }) : vector<StellarCreateAccountOp>();
-				auto payments = payment ? vector<StellarPaymentOp>({ *payment }) : vector<StellarPaymentOp>();
-				StellarSignTx transaction = tx_create_transaction(from_link.address, passphrase, account_info->sequence + 1, memo_id.or_else(0), !memo.empty(), accounts.size(), payments.size(), get_base_stroop_fee());
-				decimal fee_value = from_stroop(transaction.fee);
-				if (fee_value > max_fee)
-					coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
-
-				hash_map<algorithm::asset_id, decimal> inputs = { { to.asset, to.value } };
-				auto& fee_input = inputs[native_asset];
-				fee_input = fee_input.is_nan() ? fee_value : (fee_input + fee_value);
-				transaction = tx_create_transaction(from_link.address, passphrase, account_info->sequence + 1, memo_id.or_else(0), !memo.empty(), accounts.size(), payments.size(), get_base_stroop_fee());
-				for (auto& [token_asset, send_value] : inputs)
-				{
-					auto& total_value = token_asset == native_asset ? inputs[native_asset] : inputs[token_asset];
-					auto balance_value = account_info->balances.find(token_asset);
-					if (balance_value == account_info->balances.end() || balance_value->second.balance < total_value)
-						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", (balance_value != account_info->balances.end() ? balance_value->second.balance : decimal(0.0)).to_string().c_str(), total_value.to_string().c_str())));
-				}
-
-				auto signing_public_key = decode_public_key(from_link.public_key);
-				if (!signing_public_key)
-					coreturn expects_rt<prepared_transaction>(remote_exception(std::move(signing_public_key.error().message())));
-
-				auto public_key = algorithm::composition::to_cstorage<algorithm::composition::cpubkey_t>(*signing_public_key);
-				auto token = account_info->balances.find(to.asset);
-				vector<uint8_t> raw_data = tx_data_from_signature(transaction, accounts, payments);
-				prepared_transaction result;
-				result.requires_account_input(algorithm::composition::type::ed25519, wallet_link(from_link), public_key, raw_data.data(), raw_data.size(), hash_map<algorithm::asset_id, decimal>(inputs));
-				result.requires_account_output(to.address, { { to.asset, to.value } });
-				result.requires_abi(format::variable(transaction.sequence_number));
-				result.requires_abi(format::variable(!!account));
-				result.requires_abi(format::variable(!!payment));
-				result.requires_abi(format::variable(token != account_info->balances.end() ? token->second.info.code : string()));
-				result.requires_abi(format::variable(token != account_info->balances.end() ? token->second.info.issuer : string()));
-				result.requires_abi(format::variable((uint8_t)to_asset_type(token != account_info->balances.end() ? token->second.info.type : string())));
-				coreturn expects_rt<prepared_transaction>(std::move(result));
+					vector<uint8_t> raw_data = tx_data_from_signature(transaction, accounts, payments);
+					prepared_transaction result;
+					result.requires_account_input(algorithm::composition::type::ed25519, wallet_link(from_link), public_key, raw_data.data(), raw_data.size(), hash_map<algorithm::asset_id, decimal>(inputs));
+					result.requires_account_output(to.address, { { to.asset, to.value } });
+					result.requires_abi(format::variable(transaction.sequence_number));
+					result.requires_abi(format::variable(!!account));
+					result.requires_abi(format::variable(!!payment));
+					result.requires_abi(format::variable(token != account_info->balances.end() ? token->second.info.code : string()));
+					result.requires_abi(format::variable(token != account_info->balances.end() ? token->second.info.issuer : string()));
+					result.requires_abi(format::variable((uint8_t)to_asset_type(token != account_info->balances.end() ? token->second.info.type : string())));
+					coreturn expects_rt<prepared_transaction>(std::move(result));
+				});
 			}
 			expects_lr<finalized_transaction> stellar::finalize_transaction(superchain::prepared_transaction&& prepared)
 			{

@@ -217,212 +217,216 @@ namespace tangent
 			}
 			expects_promise_rt<uint64_t> bitcoin::get_latest_block_height()
 			{
-				auto block_count = coawait(execute_rpc(nd_call::get_block_count(), { }, cache_policy::no_cache));
-				if (!block_count)
-					coreturn expects_rt<uint64_t>(std::move(block_count.error()));
-
-				uint64_t block_height = (uint64_t)block_count->value.as_uint64();
-				coreturn expects_rt<uint64_t>(block_height);
+				return execute_rpc(nd_call::get_block_count(), format::tree::list(), cache_policy::no_cache).then<expects_rt<uint64_t>>([](expects_rt<format::tree>&& result) -> expects_rt<uint64_t>
+				{
+					return result ? expects_rt<uint64_t>((uint64_t)result->value.as_uint64()) : expects_rt<uint64_t>(std::move(result.error()));
+				});
 			}
 			expects_promise_rt<vector<block_log>> bitcoin::get_block_transactions(uint64_t block_height, uint64_t block_count)
 			{
-				format::tree hashes_map;
-				for (uint64_t i = 0; i < block_count; i++)
-					hashes_map.push(format::tree::list())->push(format::variable(block_height + 1));
-
-				auto block_ids = coawait(execute_rpc_multi(nd_call::get_block_hash(), std::move(hashes_map), cache_policy::blob_cache));
-				if (!block_ids)
-					coreturn block_ids.error();
-
-				format::tree map;
-				for (auto& block_hash : block_ids->childs())
+				return coasync<expects_rt<vector<block_log>>>([this, block_height, block_count]() -> expects_promise_rt<vector<block_log>>
 				{
-					format::tree block_map;
-					block_map.push(format::variable(block_hash.value.as_blob()));
-					block_map.push(legacy.get_block ? format::variable(true) : format::variable(legacy.enormous_block_size ? (uint8_t)1 : (uint8_t)2));
-					map.push(std::move(block_map));
-				}
+					format::tree hashes_map;
+					for (uint64_t i = 0; i < block_count; i++)
+						hashes_map.push(format::tree::list())->push(format::variable(block_height + 1));
 
-				auto block_data = coawait(execute_rpc_multi(nd_call::get_block(), std::move(map), cache_policy::temporary_cache));
-				if (!block_data)
-				{
-					map.childs().clear();
+					auto block_ids = coawait(execute_rpc_multi(nd_call::get_block_hash(), std::move(hashes_map), cache_policy::blob_cache));
+					if (!block_ids)
+						coreturn block_ids.error();
+
+					format::tree map;
 					for (auto& block_hash : block_ids->childs())
 					{
-						format::tree legacy_block_map;
-						legacy_block_map.push(format::variable(block_hash.value.as_blob()));
-						legacy_block_map.push(format::variable(true));
-						map.push(std::move(legacy_block_map));
+						format::tree block_map;
+						block_map.push(format::variable(block_hash.value.as_blob()));
+						block_map.push(legacy.get_block ? format::variable(true) : format::variable(legacy.enormous_block_size ? (uint8_t)1 : (uint8_t)2));
+						map.push(std::move(block_map));
 					}
 
-					block_data = coawait(execute_rpc_multi(nd_call::get_block(), std::move(map), cache_policy::temporary_cache));
+					auto block_data = coawait(execute_rpc_multi(nd_call::get_block(), std::move(map), cache_policy::temporary_cache));
 					if (!block_data)
-						coreturn block_data.error();
-					
-					legacy.get_block = 1;
-				}
+					{
+						map.childs().clear();
+						for (auto& block_hash : block_ids->childs())
+						{
+							format::tree legacy_block_map;
+							legacy_block_map.push(format::variable(block_hash.value.as_blob()));
+							legacy_block_map.push(format::variable(true));
+							map.push(std::move(legacy_block_map));
+						}
 
-				vector<block_log> results;
-				for (auto& block : block_data->childs())
-				{
-					auto* transactions = (format::tree*)block.child("tx");
-					auto& log = results.emplace_back();
-					log.block_hash = block.child_var("hash").as_blob();
-					log.transactions = transactions ? std::move(*transactions) : format::tree::list();
-				}
-				coreturn expects_rt<vector<block_log>>(std::move(results));
+						block_data = coawait(execute_rpc_multi(nd_call::get_block(), std::move(map), cache_policy::temporary_cache));
+						if (!block_data)
+							coreturn block_data.error();
+
+						legacy.get_block = 1;
+					}
+
+					vector<block_log> results;
+					for (auto& block : block_data->childs())
+					{
+						auto* transactions = (format::tree*)block.child("tx");
+						auto& log = results.emplace_back();
+						log.block_hash = block.child_var("hash").as_blob();
+						log.transactions = transactions ? std::move(*transactions) : format::tree::list();
+					}
+					coreturn expects_rt<vector<block_log>>(std::move(results));
+				});
 			}
 			expects_promise_rt<computed_transaction> bitcoin::link_transaction(uint64_t, const std::string_view&, format::tree& transaction_data)
 			{
-				if (!transaction_data.is_map())
+				return coasync<expects_rt<computed_transaction>>([this, &transaction_data]() -> expects_promise_rt<computed_transaction>
 				{
-					auto transaction_data_postload = coawait(get_transaction(transaction_data.value.as_blob()));
-					if (!transaction_data_postload)
-						coreturn expects_rt<computed_transaction>(std::move(transaction_data_postload.error()));
-
-					transaction_data = std::move(*transaction_data_postload);
-				}
-
-				hash_set<string> addresses;
-				auto* tx_inputs = transaction_data.child("vin");
-				if (tx_inputs != nullptr)
-				{
-					for (auto& input : tx_inputs->childs())
+					if (!transaction_data.is_map())
 					{
-						if (input.has("txid") && input.has("vout"))
+						auto transaction_data_postload = coawait(get_transaction(transaction_data.value.as_blob()));
+						if (!transaction_data_postload)
+							coreturn expects_rt<computed_transaction>(std::move(transaction_data_postload.error()));
+
+						transaction_data = std::move(*transaction_data_postload);
+					}
+
+					hash_set<string> addresses;
+					auto* tx_inputs = transaction_data.child("vin");
+					if (tx_inputs != nullptr)
+					{
+						for (auto& input : tx_inputs->childs())
 						{
-							auto output = get_utxo(input.child_var("txid").as_blob(), input.child_var("vout").as_uint64());
-							if (output && output->link.has_all())
-								addresses.insert(output->link.address);
+							if (input.has("txid") && input.has("vout"))
+							{
+								auto output = get_utxo(input.child_var("txid").as_blob(), input.child_var("vout").as_uint64());
+								if (output && output->link.has_all())
+									addresses.insert(output->link.address);
+							}
 						}
 					}
-				}
 
-				auto* tx_outputs = transaction_data.child("vout");
-				if (tx_outputs != nullptr)
-				{
-					for (auto& output : tx_outputs->childs())
+					auto* tx_outputs = transaction_data.child("vout");
+					if (tx_outputs != nullptr)
 					{
-						bool is_allowed = true;
-						auto input = get_output_addresses(output, &is_allowed);
-						if (is_allowed)
+						for (auto& output : tx_outputs->childs())
 						{
-							for (auto& address : input)
-								addresses.insert(address);
+							bool is_allowed = true;
+							auto input = get_output_addresses(output, &is_allowed);
+							if (is_allowed)
+							{
+								for (auto& address : input)
+									addresses.insert(address);
+							}
 						}
 					}
-				}
 
-				if (!find_linked_addresses(addresses))
-					coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
+					if (!find_linked_addresses(addresses))
+						coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
 
-				if (tx_inputs != nullptr)
-				{
-					for (auto& input : tx_inputs->childs())
+					if (tx_inputs != nullptr)
 					{
-						if (input.has("txid") && input.has("vout"))
+						for (auto& input : tx_inputs->childs())
 						{
-							auto output = coawait(get_transaction_output(input.child_var("txid").as_blob(), input.child_var("vout").as_uint64()));
-							if (output && output->link.has_all())
-								addresses.insert(output->link.address);
+							if (input.has("txid") && input.has("vout"))
+							{
+								auto output = coawait(get_transaction_output(input.child_var("txid").as_blob(), input.child_var("vout").as_uint64()));
+								if (output && output->link.has_all())
+									addresses.insert(output->link.address);
+							}
 						}
 					}
-				}
 
-				auto discovery = find_linked_addresses(addresses);
-				if (!discovery)
-					coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
+					auto discovery = find_linked_addresses(addresses);
+					if (!discovery)
+						coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
 
-				computed_transaction tx;
-				tx.transaction_id = transaction_data.child_var("txid").as_blob();
+					computed_transaction tx;
+					tx.transaction_id = transaction_data.child_var("txid").as_blob();
 
-				bool is_coinbase = false;
-				if (tx_inputs != nullptr)
-				{
-					for (auto& input : tx_inputs->childs())
+					bool is_coinbase = false;
+					if (tx_inputs != nullptr)
 					{
-						if (!input.has("coinbase"))
+						for (auto& input : tx_inputs->childs())
 						{
-							auto output = coawait(get_transaction_output(input.child_var("txid").as_blob(), input.child_var("vout").as_uint64()));
-							if (output)
-								tx.add_input(std::move(*output));
+							if (!input.has("coinbase"))
+							{
+								auto output = coawait(get_transaction_output(input.child_var("txid").as_blob(), input.child_var("vout").as_uint64()));
+								if (output)
+									tx.add_input(std::move(*output));
+							}
+							else
+								is_coinbase = true;
 						}
-						else
-							is_coinbase = true;
 					}
-				}
 
-				if (tx_outputs != nullptr)
-				{
-					uint64_t output_index = 0;
-					for (auto& output : tx_outputs->childs())
+					if (tx_outputs != nullptr)
 					{
-						coin_utxo new_output;
-						new_output.transaction_id = tx.transaction_id;
-						new_output.value = output.child_var("value").as_decimal();
-						new_output.index = output.has("n") ? output.child_var("n").as_uint64() : output_index;
-						if (new_output.index > (uint64_t)tx.outputs.size())
-							new_output.index = output_index;
-
-						bool is_standard_output = true;
-						auto receiver_addresses = get_output_addresses(output, &is_standard_output);
-						new_output.link.address = receiver_addresses.empty() ? string() : *receiver_addresses.begin();
-						if (is_standard_output)
+						uint64_t output_index = 0;
+						for (auto& output : tx_outputs->childs())
 						{
-							auto it = discovery->find(new_output.link.address);
-							if (it != discovery->end())
-								new_output.link = std::move(it->second);
+							coin_utxo new_output;
+							new_output.transaction_id = tx.transaction_id;
+							new_output.value = output.child_var("value").as_decimal();
+							new_output.index = output.has("n") ? output.child_var("n").as_uint64() : output_index;
+							if (new_output.index > (uint64_t)tx.outputs.size())
+								new_output.index = output_index;
+
+							bool is_standard_output = true;
+							auto receiver_addresses = get_output_addresses(output, &is_standard_output);
+							new_output.link.address = receiver_addresses.empty() ? string() : *receiver_addresses.begin();
+							if (is_standard_output)
+							{
+								auto it = discovery->find(new_output.link.address);
+								if (it != discovery->end())
+									new_output.link = std::move(it->second);
+							}
+							else
+								new_output.value = decimal::nan();
+
+							tx.add_output(std::move(new_output));
+							++output_index;
 						}
-						else
-							new_output.value = decimal::nan();
 
-						tx.add_output(std::move(new_output));
-						++output_index;
+						for (auto it = tx.outputs.begin(); it != tx.outputs.end();)
+						{
+							if (it->second.value.is_nan())
+								it = tx.outputs.erase(it);
+							else
+								++it;
+						}
 					}
 
-					for (auto it = tx.outputs.begin(); it != tx.outputs.end();)
+					if (is_coinbase && !tx.outputs.empty())
 					{
-						if (it->second.value.is_nan())
-							it = tx.outputs.erase(it);
-						else
-							++it;
+						coin_utxo new_input;
+						new_input.transaction_id = tx.transaction_id + "!";
+						new_input.value = tx.outputs.begin()->second.value;
+						new_input.index = (uint32_t)tx.inputs.size();
+						tx.add_input(std::move(new_input));
 					}
-				}
 
-				if (is_coinbase && !tx.outputs.empty())
-				{
-					coin_utxo new_input;
-					new_input.transaction_id = tx.transaction_id + "!";
-					new_input.value = tx.outputs.begin()->second.value;
-					new_input.index = (uint32_t)tx.inputs.size();
-					tx.add_input(std::move(new_input));
-				}
-
-				coreturn expects_rt<computed_transaction>(std::move(tx));
+					coreturn expects_rt<computed_transaction>(std::move(tx));
+				});
 			}
 			expects_promise_rt<void> bitcoin::broadcast_transaction(const finalized_transaction& finalized)
 			{
 				format::tree map;
 				map.push(format::variable(format::util::clear_0xhex(finalized.calldata)));
 
-				auto hex_data = coawait(execute_rpc(nd_call::send_raw_transaction(), std::move(map), cache_policy::no_cache_no_throttling));
-				if (!hex_data)
+				return execute_rpc(nd_call::send_raw_transaction(), std::move(map), cache_policy::no_cache_no_throttling).then<expects_rt<void>>([](expects_rt<format::tree>&& result) -> expects_rt<void>
 				{
-					auto message = hex_data.what();
+					if (result)
+						return expects_rt<void>(expectation::met);
+
+					auto message = result.what();
 					if (stringify::find(message, "-27").found || stringify::find(message, "Transaction already in").found)
-						coreturn expects_rt<void>(expectation::met);
+						return expectation::met;
 
-					coreturn expects_rt<void>(std::move(hex_data.error()));
-				}
-
-				coreturn expects_rt<void>(expectation::met);
+					return result.error();
+				});
 			}
 			expects_promise_rt<computed_fee> bitcoin::estimate_transaction_fee(const wallet_link& from_link, const value_transfer& to)
 			{
 				auto inputs = calculate_utxo(from_link, balance_query(to.value, { }));
 				decimal input_value = inputs ? get_utxo_value(*inputs, optional::none) : 0.0;
 				if (!inputs || inputs->empty())
-					coreturn remote_exception(stringify::text("insufficient funds: %s < %s", input_value.to_string().c_str(), to.value.to_string().c_str()));
+					return expects_promise_rt<computed_fee>(remote_exception(stringify::text("insufficient funds: %s < %s", input_value.to_string().c_str(), to.value.to_string().c_str())));
 
 				vector<string> outputs = { inputs->front().link.address, to.address };
 				bool has_witness = false;
@@ -454,7 +458,7 @@ namespace tangent
 							has_witness = true;
 							break;
 						default:
-							coreturn remote_exception("invalid input address");
+							return expects_promise_rt<computed_fee>(remote_exception("invalid input address"));
 					}
 				}
 
@@ -485,217 +489,222 @@ namespace tangent
 							virtual_size += 43;
 							break;
 						default:
-							coreturn remote_exception("invalid input address");
+							return expects_promise_rt<computed_fee>(remote_exception("invalid input address"));
 					}
 				}
 
 				if (has_witness)
 					virtual_size += 0.5 + (double)inputs->size() / 4.0;
 
-				auto block_height = coawait(get_latest_block_height());
-				if (!block_height)
-					coreturn expects_rt<computed_fee>(std::move(block_height.error()));
-
-				vector<decimal> fee_rates;
-				auto min_fee_rate = get_min_relay_fee().fee.fee_rate * netdata.divisibility;
-				auto precision = std::max<uint64_t>(1, get_chainparams().sync_latency);
-				for (uint64_t i = 0; i < precision; i++)
+				return coasync<expects_rt<computed_fee>>([this, virtual_size]() -> expects_promise_rt<computed_fee>
 				{
-					uint64_t prev_block_height = *block_height - i;
-					if (!prev_block_height || prev_block_height > *block_height)
-						break;
+					auto block_height = coawait(get_latest_block_height());
+					if (!block_height)
+						coreturn expects_rt<computed_fee>(std::move(block_height.error()));
 
-					if (legacy.get_block_stats == 1)
+					vector<decimal> fee_rates;
+					auto min_fee_rate = get_min_relay_fee().fee.fee_rate * netdata.divisibility;
+					auto precision = std::max<uint64_t>(1, get_chainparams().sync_latency);
+					for (uint64_t i = 0; i < precision; i++)
 					{
-						auto blocks = coawait(get_block_transactions(prev_block_height, 1));
-						if (blocks && !blocks->empty())
+						uint64_t prev_block_height = *block_height - i;
+						if (!prev_block_height || prev_block_height > *block_height)
+							break;
+
+						if (legacy.get_block_stats == 1)
 						{
-							for (auto& transaction : blocks->begin()->transactions.childs())
+							auto blocks = coawait(get_block_transactions(prev_block_height, 1));
+							if (blocks && !blocks->empty())
 							{
-								if (!transaction.is_map())
+								for (auto& transaction : blocks->begin()->transactions.childs())
 								{
-									auto transaction_data_postload = coawait(get_transaction(transaction.value.as_blob()));
-									if (!transaction_data_postload)
-										continue;
-
-									transaction = std::move(*transaction_data_postload);
-								}
-
-								decimal fee = decimal::zero();
-								auto* tx_inputs = transaction.child("vin");
-								if (tx_inputs != nullptr)
-								{
-									for (auto& input : tx_inputs->childs())
+									if (!transaction.is_map())
 									{
-										if (!input.has("coinbase") && input.has("txid") && input.has("vout"))
-										{
-											auto output = coawait(get_transaction_output(input.child_var("txid").as_blob(), input.child_var("vout").as_uint64()));
-											if (output)
-												fee += output->value;
-										}
-										else
-											fee = decimal::nan();
+										auto transaction_data_postload = coawait(get_transaction(transaction.value.as_blob()));
+										if (!transaction_data_postload)
+											continue;
+
+										transaction = std::move(*transaction_data_postload);
 									}
-									if (fee.is_nan())
+
+									decimal fee = decimal::zero();
+									auto* tx_inputs = transaction.child("vin");
+									if (tx_inputs != nullptr)
+									{
+										for (auto& input : tx_inputs->childs())
+										{
+											if (!input.has("coinbase") && input.has("txid") && input.has("vout"))
+											{
+												auto output = coawait(get_transaction_output(input.child_var("txid").as_blob(), input.child_var("vout").as_uint64()));
+												if (output)
+													fee += output->value;
+											}
+											else
+												fee = decimal::nan();
+										}
+										if (fee.is_nan())
+											continue;
+									}
+
+									auto* tx_outputs = transaction.child("vout");
+									if (tx_outputs != nullptr)
+									{
+										for (auto& output : tx_outputs->childs())
+											fee -= output.child_var("value").as_decimal();
+									}
+
+									if (!fee.is_zero() && !fee.is_positive())
 										continue;
-								}
 
-								auto* tx_outputs = transaction.child("vout");
-								if (tx_outputs != nullptr)
-								{
-									for (auto& output : tx_outputs->childs())
-										fee -= output.child_var("value").as_decimal();
-								}
+									if (!transaction.has("size"))
+									{
+										if (transaction.has("hex"))
+											fee /= decimal(std::max<size_t>(1, transaction.child("hex")->value.as_string().size())).truncate(protocol::now().message.decimal_precision);
+										else
+											fee /= decimal(virtual_size).truncate(protocol::now().message.decimal_precision);
+									}
+									else
+										fee /= decimal(std::max<int64_t>(1, transaction.child("size")->value.as_uint64())).truncate(protocol::now().message.decimal_precision);
 
-								if (!fee.is_zero() && !fee.is_positive())
+									fee = std::min(min_fee_rate, fee);
+									fee_rates.push_back(std::move(fee));
+								}
+							}
+						}
+						else
+						{
+						retry:
+							format::tree map;
+							if (legacy.get_block_stats)
+							{
+								format::tree hash_map;
+								hash_map.push(format::variable(prev_block_height));
+
+								auto block_id = coawait(execute_rpc(nd_call::get_block_hash(), std::move(hash_map), cache_policy::blob_cache));
+								if (!block_id)
 									continue;
 
-								if (!transaction.has("size"))
-								{
-									if (transaction.has("hex"))
-										fee /= decimal(std::max<size_t>(1, transaction.child("hex")->value.as_string().size())).truncate(protocol::now().message.decimal_precision);
-									else
-										fee /= decimal(virtual_size).truncate(protocol::now().message.decimal_precision);
-								}
-								else
-									fee /= decimal(std::max<int64_t>(1, transaction.child("size")->value.as_uint64())).truncate(protocol::now().message.decimal_precision);
+								map.push(*block_id);
+							}
+							else
+								map.push(format::variable(prev_block_height));
+							map.push(format::variable());
 
-								fee = std::min(min_fee_rate, fee);
-								fee_rates.push_back(std::move(fee));
+							auto block_stats = coawait(execute_rpc(nd_call::get_block_stats(), std::move(map), cache_policy::no_cache_no_throttling));
+							if (block_stats)
+							{
+								auto avg_fee_rate = block_stats->child_var("avgfeerate").as_decimal();
+								if (avg_fee_rate.is_zero() || avg_fee_rate.is_positive())
+									fee_rates.push_back(std::max(min_fee_rate, std::move(avg_fee_rate)));
+
+								auto median_fee = block_stats->child_var("medianfee").as_decimal();
+								auto median_tx_size = block_stats->child_var("mediantxsize").as_decimal();
+								if ((median_fee.is_zero() || median_fee.is_positive()) && (median_tx_size.is_zero() || median_tx_size.is_positive()))
+									fee_rates.push_back(std::max(min_fee_rate, median_fee / median_tx_size.truncate(protocol::now().message.decimal_precision)));
+
+								auto fee_rate_50th_percentile = block_stats->child_var("feerate_percentiles.2").as_decimal();
+								if (fee_rate_50th_percentile.is_zero() || fee_rate_50th_percentile.is_positive())
+									fee_rates.push_back(std::max(min_fee_rate, std::move(fee_rate_50th_percentile)));
+							}
+							else if (!legacy.get_block_stats)
+							{
+								legacy.get_block_stats = 2;
+								goto retry;
 							}
 						}
 					}
-					else
-					{
-					retry:
-						format::tree map;
-						if (legacy.get_block_stats)
-						{
-							format::tree hash_map;
-							hash_map.push(format::variable(prev_block_height));
+					std::sort(fee_rates.begin(), fee_rates.end());
 
-							auto block_id = coawait(execute_rpc(nd_call::get_block_hash(), std::move(hash_map), cache_policy::blob_cache));
-							if (!block_id)
-								continue;
-
-							map.push(*block_id);
-						}
-						else
-							map.push(format::variable(prev_block_height));
-						map.push(format::variable());
-
-						auto block_stats = coawait(execute_rpc(nd_call::get_block_stats(), std::move(map), cache_policy::no_cache_no_throttling));
-						if (block_stats)
-						{
-							auto avg_fee_rate = block_stats->child_var("avgfeerate").as_decimal();
-							if (avg_fee_rate.is_zero() || avg_fee_rate.is_positive())
-								fee_rates.push_back(std::max(min_fee_rate, std::move(avg_fee_rate)));
-
-							auto median_fee = block_stats->child_var("medianfee").as_decimal();
-							auto median_tx_size = block_stats->child_var("mediantxsize").as_decimal();
-							if ((median_fee.is_zero() || median_fee.is_positive()) && (median_tx_size.is_zero() || median_tx_size.is_positive()))
-								fee_rates.push_back(std::max(min_fee_rate, median_fee / median_tx_size.truncate(protocol::now().message.decimal_precision)));
-
-							auto fee_rate_50th_percentile = block_stats->child_var("feerate_percentiles.2").as_decimal();
-							if (fee_rate_50th_percentile.is_zero() || fee_rate_50th_percentile.is_positive())
-								fee_rates.push_back(std::max(min_fee_rate, std::move(fee_rate_50th_percentile)));
-						}
-						else if (!legacy.get_block_stats)
-						{
-							legacy.get_block_stats = 2;
-							goto retry;
-						}
-					}
-				}
-				std::sort(fee_rates.begin(), fee_rates.end());
-
-				decimal median_fee_rate = std::max(decimal(1), fee_rates.empty() ? decimal(1) : median_of(fee_rates));
-				coreturn expects_rt<computed_fee>(computed_fee::fee_per_byte(median_fee_rate / netdata.divisibility, (size_t)std::ceil(virtual_size)));
+					decimal median_fee_rate = std::max(decimal(1), fee_rates.empty() ? decimal(1) : median_of(fee_rates));
+					coreturn expects_rt<computed_fee>(computed_fee::fee_per_byte(median_fee_rate / netdata.divisibility, (size_t)std::ceil(virtual_size)));
+				});
 			}
 			expects_promise_rt<prepared_transaction> bitcoin::prepare_transaction(const wallet_link& from_link, const value_transfer& to, const decimal& max_fee)
 			{
-				auto fee = coawait(estimate_transaction_fee(from_link, to));
-				if (!fee)
-					coreturn expects_rt<prepared_transaction>(std::move(fee.error()));
-
-				decimal fee_value = std::max(fee->get_max_fee(), get_min_relay_fee().get_max_fee());
-				if (fee_value > max_fee)
-					coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
-
-				decimal total_value = to.value + fee_value;
-				auto possible_inputs = calculate_utxo(from_link, balance_query(total_value, { }));
-				decimal input_value = possible_inputs ? get_utxo_value(*possible_inputs, optional::none) : 0.0;
-				if (!possible_inputs || possible_inputs->empty())
-					coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", input_value.to_string().c_str(), total_value.to_string().c_str())));
-
-				auto to_link = find_linked_addresses({ to.address });
-				prepared_transaction result;
-				result.requires_output(coin_utxo(to_link ? std::move(to_link->begin()->second) : wallet_link::from_address(to.address), string(), (uint32_t)result.outputs.size(), decimal(to.value)));
-				if (input_value > total_value)
-					result.requires_output(coin_utxo(wallet_link(possible_inputs->front().link), string(), (uint32_t)result.outputs.size(), decimal(input_value - total_value)));
-
-				btc_tx_context context;
-				for (auto& output : result.outputs)
+				return estimate_transaction_fee(from_link, to).then<expects_rt<prepared_transaction>>([this, from_link, to, max_fee](expects_rt<computed_fee>&& fee) -> expects_rt<prepared_transaction>
 				{
-					auto status = add_transaction_output(context, output.link.address, output.value);
-					if (!status)
-						coreturn expects_rt<prepared_transaction>(remote_exception(std::move(status.error().message())));
-				}
+					if (!fee)
+						return expects_rt<prepared_transaction>(std::move(fee.error()));
 
-				for (auto& input : *possible_inputs)
-				{
-					auto link = find_linked_addresses({ input.link.address });
-					if (!link)
-						coreturn expects_rt<prepared_transaction>(remote_exception("address " + input.link.address + " cannot be used to sign the transaction (wallet not valid)"));
+					decimal fee_value = std::max(fee->get_max_fee(), get_min_relay_fee().get_max_fee());
+					if (fee_value > max_fee)
+						return expects_rt<prepared_transaction>(remote_exception(stringify::text("fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
 
-					auto& ref = link->begin()->second;
-					auto status = add_transaction_input(context, input, ref.public_key);
-					if (!status)
-						coreturn expects_rt<prepared_transaction>(remote_exception(std::move(status.error().message())));
-				}
+					decimal total_value = to.value + fee_value;
+					auto possible_inputs = calculate_utxo(from_link, balance_query(total_value, { }));
+					decimal input_value = possible_inputs ? get_utxo_value(*possible_inputs, optional::none) : 0.0;
+					if (!possible_inputs || possible_inputs->empty())
+						return expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", input_value.to_string().c_str(), total_value.to_string().c_str())));
 
-				size_t index = 0;
-				for (auto& input : *possible_inputs)
-				{
-					auto hash = prepare_transaction_input(context, index);
-					if (!hash)
-						coreturn expects_rt<prepared_transaction>(remote_exception(std::move(hash.error().message())));
+					auto to_link = find_linked_addresses({ to.address });
+					prepared_transaction result;
+					result.requires_output(coin_utxo(to_link ? std::move(to_link->begin()->second) : wallet_link::from_address(to.address), string(), (uint32_t)result.outputs.size(), decimal(to.value)));
+					if (input_value > total_value)
+						result.requires_output(coin_utxo(wallet_link(possible_inputs->front().link), string(), (uint32_t)result.outputs.size(), decimal(input_value - total_value)));
 
-					auto signing_public_key = decode_public_key(input.link.public_key);
-					if (!signing_public_key)
-						coreturn expects_rt<prepared_transaction>(remote_exception(std::move(signing_public_key.error().message())));
-
-					switch ((btc_tx_out_type)context.types[(uint8_t)index++])
+					btc_tx_context context;
+					for (auto& output : result.outputs)
 					{
-						case BTC_TX_WITNESS_V1_TAPROOT_KEYPATH:
-						case BTC_TX_WITNESS_V1_TAPROOT_SCRIPTPATH:
+						auto status = add_transaction_output(context, output.link.address, output.value);
+						if (!status)
+							return expects_rt<prepared_transaction>(remote_exception(std::move(status.error().message())));
+					}
+
+					for (auto& input : *possible_inputs)
+					{
+						auto link = find_linked_addresses({ input.link.address });
+						if (!link)
+							return expects_rt<prepared_transaction>(remote_exception("address " + input.link.address + " cannot be used to sign the transaction (wallet not valid)"));
+
+						auto& ref = link->begin()->second;
+						auto status = add_transaction_input(context, input, ref.public_key);
+						if (!status)
+							return expects_rt<prepared_transaction>(remote_exception(std::move(status.error().message())));
+					}
+
+					size_t index = 0;
+					for (auto& input : *possible_inputs)
+					{
+						auto hash = prepare_transaction_input(context, index);
+						if (!hash)
+							return expects_rt<prepared_transaction>(remote_exception(std::move(hash.error().message())));
+
+						auto signing_public_key = decode_public_key(input.link.public_key);
+						if (!signing_public_key)
+							return expects_rt<prepared_transaction>(remote_exception(std::move(signing_public_key.error().message())));
+
+						switch ((btc_tx_out_type)context.types[(uint8_t)index++])
 						{
-							btc_pubkey pubkey;
-							btc_pubkey_init(&pubkey);
-							memcpy(&pubkey.pubkey, signing_public_key->data(), signing_public_key->size());
-							pubkey.compressed = signing_public_key->size() == BTC_ECKEY_COMPRESSED_LENGTH;
+							case BTC_TX_WITNESS_V1_TAPROOT_KEYPATH:
+							case BTC_TX_WITNESS_V1_TAPROOT_SCRIPTPATH:
+							{
+								btc_pubkey pubkey;
+								btc_pubkey_init(&pubkey);
+								memcpy(&pubkey.pubkey, signing_public_key->data(), signing_public_key->size());
+								pubkey.compressed = signing_public_key->size() == BTC_ECKEY_COMPRESSED_LENGTH;
 
-							compositions::secp256k1_scalar_t tweak;
-							btc_key_get_taproot_tweak(&pubkey, nullptr, tweak.blob);
+								compositions::secp256k1_scalar_t tweak;
+								btc_key_get_taproot_tweak(&pubkey, nullptr, tweak.blob);
 
-							auto public_key = algorithm::composition::to_cstorage<algorithm::composition::cpubkey_t>(*signing_public_key);
-							auto xonly_public_key_and_tweak = compositions::secp256k1_schnorr_compositor::to_tweaked_public_key(public_key, tweak);
-							if (!xonly_public_key_and_tweak)
-								coreturn expects_rt<prepared_transaction>(remote_exception(std::move(xonly_public_key_and_tweak.error().message())));
+								auto public_key = algorithm::composition::to_cstorage<algorithm::composition::cpubkey_t>(*signing_public_key);
+								auto xonly_public_key_and_tweak = compositions::secp256k1_schnorr_compositor::to_tweaked_public_key(public_key, tweak);
+								if (!xonly_public_key_and_tweak)
+									return expects_rt<prepared_transaction>(remote_exception(std::move(xonly_public_key_and_tweak.error().message())));
 
-							result.requires_input(algorithm::composition::type::secp256k1_schnorr, *xonly_public_key_and_tweak, (uint8_t*)hash->data(), hash->size(), std::move(input));
-							break;
-						}
-						default:
-						{
-							auto public_key = algorithm::composition::to_cstorage<algorithm::composition::cpubkey_t>(*signing_public_key);
-							result.requires_input(algorithm::composition::type::secp256k1, public_key, (uint8_t*)hash->data(), hash->size(), std::move(input));
-							break;
+								result.requires_input(algorithm::composition::type::secp256k1_schnorr, *xonly_public_key_and_tweak, (uint8_t*)hash->data(), hash->size(), std::move(input));
+								break;
+							}
+							default:
+							{
+								auto public_key = algorithm::composition::to_cstorage<algorithm::composition::cpubkey_t>(*signing_public_key);
+								result.requires_input(algorithm::composition::type::secp256k1, public_key, (uint8_t*)hash->data(), hash->size(), std::move(input));
+								break;
+							}
 						}
 					}
-				}
 
-				coreturn expects_rt<prepared_transaction>(std::move(result));
+					return expects_rt<prepared_transaction>(std::move(result));
+				});
 			}
 			expects_lr<finalized_transaction> bitcoin::finalize_transaction(superchain::prepared_transaction&& prepared)
 			{
@@ -1263,57 +1272,64 @@ namespace tangent
 			}
 			expects_promise_rt<format::tree> bitcoin::get_transaction(const std::string_view& transaction_id)
 			{
-				format::tree transaction_map;
-				transaction_map.push(format::variable(format::util::clear_0xhex(transaction_id)));
-				transaction_map.push(legacy.get_raw_transaction ? format::variable(true) : format::variable((uint8_t)2));
-
-				auto tx_data = coawait(execute_rpc(nd_call::get_raw_transaction(), std::move(transaction_map), cache_policy::blob_cache));
-				if (!tx_data)
+				string ref_transaction_id = string(transaction_id);
+				return coasync<expects_rt<format::tree>>([this, ref_transaction_id = std::move(ref_transaction_id)]() mutable -> expects_promise_rt<format::tree>
 				{
-					format::tree legacy_transaction_map;
-					legacy_transaction_map.push(format::variable(format::util::clear_0xhex(transaction_id)));
-					legacy_transaction_map.push(format::variable(true));
+					format::tree transaction_map;
+					transaction_map.push(format::variable(format::util::clear_0xhex(ref_transaction_id)));
+					transaction_map.push(legacy.get_raw_transaction ? format::variable(true) : format::variable((uint8_t)2));
 
-					tx_data = coawait(execute_rpc(nd_call::get_raw_transaction(), std::move(legacy_transaction_map), cache_policy::blob_cache));
-					if (tx_data)
-						legacy.get_raw_transaction = 1;
-				}
-				if (!tx_data)
-					coreturn expects_rt<format::tree>(remote_exception("tx not found"));
+					auto tx_data = coawait(execute_rpc(nd_call::get_raw_transaction(), std::move(transaction_map), cache_policy::blob_cache));
+					if (!tx_data)
+					{
+						format::tree legacy_transaction_map;
+						legacy_transaction_map.push(format::variable(format::util::clear_0xhex(ref_transaction_id)));
+						legacy_transaction_map.push(format::variable(true));
 
-				coreturn tx_data;
+						tx_data = coawait(execute_rpc(nd_call::get_raw_transaction(), std::move(legacy_transaction_map), cache_policy::blob_cache));
+						if (tx_data)
+							legacy.get_raw_transaction = 1;
+					}
+					if (!tx_data)
+						coreturn expects_rt<format::tree>(remote_exception("tx not found"));
+
+					coreturn tx_data;
+				});
 			}
 			expects_promise_rt<coin_utxo> bitcoin::get_transaction_output(const std::string_view& transaction_id, uint64_t index)
 			{
 				auto output = get_utxo(transaction_id, index);
 				if (output)
-					coreturn expects_rt<coin_utxo>(std::move(*output));
+					return expects_rt<coin_utxo>(std::move(*output));
 
-				auto tx_data = coawait(get_transaction(transaction_id));
-				if (!tx_data || !tx_data->has("vout"))
-					coreturn expects_rt<coin_utxo>(tx_data ? remote_exception("transaction does not have any utxo") : tx_data.error());
-
-				auto* vout = tx_data->child("vout." + to_string(index));
-				if (!vout)
-					coreturn expects_rt<coin_utxo>(remote_exception("transaction does not have specified utxo"));
-
-				coin_utxo input;
-				input.transaction_id = transaction_id;
-				input.value = vout->child_var("value").as_decimal();
-				input.index = index;
-
-				bool is_allowed = true;
-				auto addresses = get_output_addresses(*vout, &is_allowed);
-				if (is_allowed && !addresses.empty())
+				string ref_transaction_id = string(transaction_id);
+				return get_transaction(transaction_id).then<expects_rt<coin_utxo>>([this, ref_transaction_id = std::move(ref_transaction_id), index](expects_rt<format::tree>&& tx_data) mutable -> expects_rt<coin_utxo>
 				{
-					auto discovery = find_linked_addresses(addresses);
-					if (discovery && !discovery->empty())
-						input.link = std::move(discovery->begin()->second);
-					else
-						input.link = wallet_link::from_address(*addresses.begin());
-				}
+					if (!tx_data || !tx_data->has("vout"))
+						return expects_rt<coin_utxo>(tx_data ? remote_exception("transaction does not have any utxo") : tx_data.error());
 
-				coreturn expects_rt<coin_utxo>(std::move(input));
+					auto* vout = tx_data->child("vout." + to_string(index));
+					if (!vout)
+						return expects_rt<coin_utxo>(remote_exception("transaction does not have specified utxo"));
+
+					coin_utxo input;
+					input.transaction_id = std::move(ref_transaction_id);
+					input.value = vout->child_var("value").as_decimal();
+					input.index = index;
+
+					bool is_allowed = true;
+					auto addresses = get_output_addresses(*vout, &is_allowed);
+					if (is_allowed && !addresses.empty())
+					{
+						auto discovery = find_linked_addresses(addresses);
+						if (discovery && !discovery->empty())
+							input.link = std::move(discovery->begin()->second);
+						else
+							input.link = wallet_link::from_address(*addresses.begin());
+					}
+
+					return expects_rt<coin_utxo>(std::move(input));
+				});
 			}
 			hash_set<string> bitcoin::get_output_addresses(const format::tree& tx_output, bool* is_allowed)
 			{

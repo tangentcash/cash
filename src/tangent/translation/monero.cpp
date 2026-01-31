@@ -166,116 +166,123 @@ namespace tangent
 			expects_promise_rt<vector<uint64_t>> monero::get_output_indices(const std::string_view& transaction_id)
 			{
 				string request = codec::hex_decode(stringify::text("0111010101010201010404747869640a80%.*s", (int)transaction_id.size(), transaction_id.data()));
-				auto response = coawait(execute_http("POST", nd_call::get_o_indexes(), "application/octet-stream", request, cache_policy::blob_cache));
-				if (!response)
-					coreturn expects_rt<vector<uint64_t>>(response.error());
-
-				auto begin_message = std::string_view("o_indexes");
-				auto end_message = std::string_view("status");
-				auto message = response->value.as_string();
-				auto begin = message.find(begin_message), end = message.find(end_message);
-				if (begin == std::string::npos || end == std::string::npos)
-					coreturn expects_rt<vector<uint64_t>>(vector<uint64_t>());
-
-				begin += begin_message.size() + 2; end -= 1;
-				if (begin >= end)
-					coreturn expects_rt<vector<uint64_t>>(vector<uint64_t>());
-
-				begin += (end - begin) % sizeof(uint64_t);
-				auto size = (end - begin) / sizeof(uint64_t);
-				vector<uint64_t> result;
-				result.reserve(size);
-
-				for (size_t i = 0; i < size; i++)
+				return execute_http("POST", nd_call::get_o_indexes(), "application/octet-stream", request, cache_policy::blob_cache).then<expects_rt<vector<uint64_t>>>([](expects_rt<format::tree>&& response) -> expects_rt<vector<uint64_t>>
 				{
-					uint64_t index;
-#ifdef VI_ENDIAN_BIG
-					auto copy = string(message.substr(begin + sizeof(uint64_t) * i, sizeof(uint64_t)));
-					std::reverse(copy.begin(), copy.end());
-					memcpy(&index, copy.data(), copy.size());
-#else
-					auto copy = message.substr(begin + sizeof(uint64_t) * i, sizeof(uint64_t));
-					memcpy(&index, copy.data(), copy.size());
-#endif
-					result.push_back(index);
-				}
+					if (!response)
+						return expects_rt<vector<uint64_t>>(response.error());
 
-				coreturn expects_rt<vector<uint64_t>>(std::move(result));
+					auto begin_message = std::string_view("o_indexes");
+					auto end_message = std::string_view("status");
+					auto message = response->value.as_string();
+					auto begin = message.find(begin_message), end = message.find(end_message);
+					if (begin == std::string::npos || end == std::string::npos)
+						return expects_rt<vector<uint64_t>>(vector<uint64_t>());
+
+					begin += begin_message.size() + 2; end -= 1;
+					if (begin >= end)
+						return expects_rt<vector<uint64_t>>(vector<uint64_t>());
+
+					begin += (end - begin) % sizeof(uint64_t);
+					auto size = (end - begin) / sizeof(uint64_t);
+					vector<uint64_t> result;
+					result.reserve(size);
+
+					for (size_t i = 0; i < size; i++)
+					{
+						uint64_t index;
+#ifdef VI_ENDIAN_BIG
+						auto copy = string(message.substr(begin + sizeof(uint64_t) * i, sizeof(uint64_t)));
+						std::reverse(copy.begin(), copy.end());
+						memcpy(&index, copy.data(), copy.size());
+#else
+						auto copy = message.substr(begin + sizeof(uint64_t) * i, sizeof(uint64_t));
+						memcpy(&index, copy.data(), copy.size());
+#endif
+						result.push_back(index);
+					}
+
+					return expects_rt<vector<uint64_t>>(std::move(result));
+				});
 			}
 			expects_promise_rt<uint64_t> monero::get_latest_block_height()
 			{
-				auto height = coawait(execute_rest("POST", nd_call::get_height(), format::tree(), cache_policy::no_cache));
-				if (!height)
-					coreturn expects_rt<uint64_t>(height.error());
+				return execute_rest("POST", nd_call::get_height(), format::tree(), cache_policy::no_cache).then<expects_rt<uint64_t>>([](expects_rt<format::tree>&& height) -> expects_rt<uint64_t>
+				{
+					if (!height)
+						return expects_rt<uint64_t>(height.error());
 
-				uint64_t block_height = height->child_var("height").as_uint64();
-				coreturn expects_rt<uint64_t>(block_height > 1 ? block_height - 1 : 1);
+					uint64_t block_height = height->child_var("height").as_uint64();
+					return expects_rt<uint64_t>(block_height > 1 ? block_height - 1 : 1);
+				});
 			}
 			expects_promise_rt<vector<block_log>> monero::get_block_transactions(uint64_t block_height, uint64_t block_count)
 			{
-				format::tree map;
-				for (uint64_t i = 0; i < block_count; i++)
+				return coasync<expects_rt<vector<block_log>>>([this, block_height, block_count]() -> expects_promise_rt<vector<block_log>>
 				{
-					format::tree args;
-					args.set("height", format::variable(block_height));
-					args.set("fill_pow_hash", format::variable(true));
-					map.push(std::move(args));
-				}
-
-				auto block_data = coawait(execute_rpc_multi(nd_call::get_block(), std::move(map), cache_policy::temporary_cache, nd_call::json_rpc()));
-				if (!block_data)
-					coreturn block_data.error();
-
-				vector<block_log> results;
-				for (auto& block : block_data->childs())
-				{
-					auto block_blob = format::tree::from_json(block.child_var("json").as_blob());
-					if (!block_blob)
-						coreturn expects_rt<vector<block_log>>(remote_exception(std::move(block_blob.error().message())));
-
-					auto transaction_data = format::tree::list();
-					auto miner_tx = (format::tree*)block_blob->child("miner_tx");
-					if (miner_tx != nullptr)
+					format::tree map;
+					for (uint64_t i = 0; i < block_count; i++)
 					{
-						miner_tx->set("hash", block.child_var("block_header.miner_tx_hash"));
-						transaction_data.push(std::move(*miner_tx));
+						format::tree args;
+						args.set("height", format::variable(block_height));
+						args.set("fill_pow_hash", format::variable(true));
+						map.push(std::move(args));
 					}
 
-					auto transaction_hashes = (format::tree*)block_blob->child("tx_hashes");
-					if (transaction_hashes != nullptr && !transaction_hashes->childs().empty())
-					{
-						auto args = format::tree::map();
-						args.set("txs_hashes", std::move(*transaction_hashes));
-						args.set("decode_as_json", format::variable(true));
-						args.set("prune", format::variable(true));
+					auto block_data = coawait(execute_rpc_multi(nd_call::get_block(), std::move(map), cache_policy::temporary_cache, nd_call::json_rpc()));
+					if (!block_data)
+						coreturn block_data.error();
 
-						auto transactions = coawait(execute_rest("POST", nd_call::get_transactions(), args, cache_policy::blob_cache));
-						if (transactions)
+					vector<block_log> results;
+					for (auto& block : block_data->childs())
+					{
+						auto block_blob = format::tree::from_json(block.child_var("json").as_blob());
+						if (!block_blob)
+							coreturn expects_rt<vector<block_log>>(remote_exception(std::move(block_blob.error().message())));
+
+						auto transaction_data = format::tree::list();
+						auto miner_tx = (format::tree*)block_blob->child("miner_tx");
+						if (miner_tx != nullptr)
 						{
-							auto* list = transactions->child("txs");
-							if (list != nullptr)
+							miner_tx->set("hash", block.child_var("block_header.miner_tx_hash"));
+							transaction_data.push(std::move(*miner_tx));
+						}
+
+						auto transaction_hashes = (format::tree*)block_blob->child("tx_hashes");
+						if (transaction_hashes != nullptr && !transaction_hashes->childs().empty())
+						{
+							auto args = format::tree::map();
+							args.set("txs_hashes", std::move(*transaction_hashes));
+							args.set("decode_as_json", format::variable(true));
+							args.set("prune", format::variable(true));
+
+							auto transactions = coawait(execute_rest("POST", nd_call::get_transactions(), std::move(args), cache_policy::blob_cache));
+							if (transactions)
 							{
-								size_t offset = transaction_data.childs().size();
-								for (auto& transaction : list->childs())
+								auto* list = transactions->child("txs");
+								if (list != nullptr)
 								{
-									auto transaction_blob = format::tree::from_json(transaction.child_var("as_json").as_blob());
-									if (transaction_blob)
+									size_t offset = transaction_data.childs().size();
+									for (auto& transaction : list->childs())
 									{
-										transaction_blob->set("hash", transaction_hashes->child_var(transaction_data.childs().size() - offset));
-										transaction_data.push(*transaction_blob);
+										auto transaction_blob = format::tree::from_json(transaction.child_var("as_json").as_blob());
+										if (transaction_blob)
+										{
+											transaction_blob->set("hash", transaction_hashes->child_var(transaction_data.childs().size() - offset));
+											transaction_data.push(*transaction_blob);
+										}
 									}
 								}
 							}
 						}
-					}
 
-					auto& log = results.emplace_back();
-					log.block_hash = block.child_var("block_header.hash").as_blob();
-					log.transactions = std::move(transaction_data);
-					if (log.block_hash.empty())
-						log.block_hash = to_string(block_height + results.size() - 1);
-				}
-				coreturn expects_rt<vector<block_log>>(std::move(results));
+						auto& log = results.emplace_back();
+						log.block_hash = block.child_var("block_header.hash").as_blob();
+						log.transactions = std::move(transaction_data);
+						if (log.block_hash.empty())
+							log.block_hash = to_string(block_height + results.size() - 1);
+					}
+					coreturn expects_rt<vector<block_log>>(std::move(results));
+				});
 			}
 			expects_promise_rt<coin_utxo> monero::get_transaction_output(const std::string_view& transaction_id, uint64_t index)
 			{
@@ -287,282 +294,289 @@ namespace tangent
 			}
 			expects_promise_rt<computed_transaction> monero::link_transaction(uint64_t, const std::string_view&, format::tree& transaction_data)
 			{
-				auto info = decode_transaction_info(transaction_data);
-				auto inputs = decode_transaction_inputs(transaction_data);
-				auto outputs = decode_transaction_outputs(transaction_data);
-				const size_t count = 64;
-				size_t offset = 0;
-
-				hash_set<size_t> unresolved_outputs;
-				unresolved_outputs.reserve(outputs.size());
-				for (size_t i = 0; i < outputs.size(); i++)
-					unresolved_outputs.insert(i);
-
-				computed_transaction result;
-				result.transaction_id = info.hash;
-
-				for (size_t i = 0; i < inputs.size(); i++)
+				return coasync<expects_rt<computed_transaction>>([this, &transaction_data]() -> expects_promise_rt<computed_transaction>
 				{
-					auto& input = inputs[i];
-					if (input.is_coinbase || info.key_offset_indices.size() != inputs.size() || info.key_offset_indices[i] >= input.key_offsets.size())
-						continue;
+					auto info = decode_transaction_info(transaction_data);
+					auto inputs = decode_transaction_inputs(transaction_data);
+					auto outputs = decode_transaction_outputs(transaction_data);
+					const size_t count = 64;
+					size_t offset = 0;
 
-					auto& key_offset = input.key_offsets[info.key_offset_indices[i]];
-					auto utxo = get_utxo(to_string(key_offset, 16), 0);
-					if (utxo)
-						result.add_input(std::move(*utxo));
-				}
+					hash_set<size_t> unresolved_outputs;
+					unresolved_outputs.reserve(outputs.size());
+					for (size_t i = 0; i < outputs.size(); i++)
+						unresolved_outputs.insert(i);
 
-				while (true)
-				{
-					auto links = find_linked_addresses(algorithm::pubkeyhash_t(), offset, count);
-					if (!links)
-						coreturn expects_rt<computed_transaction>(remote_exception(std::move(links.error().message())));
+					computed_transaction result;
+					result.transaction_id = info.hash;
 
-					for (auto& link : *links)
+					for (size_t i = 0; i < inputs.size(); i++)
 					{
-						auto public_spend_view_key = decode_public_key(link.second.public_key);
-						if (!public_spend_view_key)
+						auto& input = inputs[i];
+						if (input.is_coinbase || info.key_offset_indices.size() != inputs.size() || info.key_offset_indices[i] >= input.key_offsets.size())
 							continue;
 
-						uint8_t private_view_key[32];
-						uint8_t* public_spend_key = (uint8_t*)public_spend_view_key->data();
-						derive_known_private_view_key(public_spend_key, private_view_key);
-						for (auto& transaction_public_key : info.public_keys)
+						auto& key_offset = input.key_offsets[info.key_offset_indices[i]];
+						auto utxo = get_utxo(to_string(key_offset, 16), 0);
+						if (utxo)
+							result.add_input(std::move(*utxo));
+					}
+
+					while (true)
+					{
+						auto links = find_linked_addresses(algorithm::pubkeyhash_t(), offset, count);
+						if (!links)
+							coreturn expects_rt<computed_transaction>(remote_exception(std::move(links.error().message())));
+
+						for (auto& link : *links)
 						{
-							uint8_t derivation_key[32];
-							if (!generate_derivation_key(transaction_public_key.blob, private_view_key, derivation_key))
+							auto public_spend_view_key = decode_public_key(link.second.public_key);
+							if (!public_spend_view_key)
 								continue;
-							
-							for (size_t i = 0; i < outputs.size(); i++)
+
+							uint8_t private_view_key[32];
+							uint8_t* public_spend_key = (uint8_t*)public_spend_view_key->data();
+							derive_known_private_view_key(public_spend_key, private_view_key);
+							for (auto& transaction_public_key : info.public_keys)
 							{
-								if (unresolved_outputs.find(i) == unresolved_outputs.end())
+								uint8_t derivation_key[32];
+								if (!generate_derivation_key(transaction_public_key.blob, private_view_key, derivation_key))
 									continue;
 
-								uint8_t output_scalar[32];
-								derivation_to_scalar(derivation_key, (uint64_t)i, output_scalar);
-
-								uint8_t output_public_key[32];
-								if (!derive_public_key(output_scalar, public_spend_key, output_public_key))
-									continue;
-
-								auto& output = outputs[i];
-								if (memcmp(output_public_key, output.key, sizeof(output.key)) != 0)
-									continue;
-
-								decimal value;
-								if (!output.ecdh_amount.empty())
+								for (size_t i = 0; i < outputs.size(); i++)
 								{
-									uint8_t mask[32] = { 0 }, amount[32] = { 0 };
-									size_t amount_size = sizeof(amount);
-									if (output.ecdh_mask.empty())
+									if (unresolved_outputs.find(i) == unresolved_outputs.end())
+										continue;
+
+									uint8_t output_scalar[32];
+									derivation_to_scalar(derivation_key, (uint64_t)i, output_scalar);
+
+									uint8_t output_public_key[32];
+									if (!derive_public_key(output_scalar, public_spend_key, output_public_key))
+										continue;
+
+									auto& output = outputs[i];
+									if (memcmp(output_public_key, output.key, sizeof(output.key)) != 0)
+										continue;
+
+									decimal value;
+									if (!output.ecdh_amount.empty())
 									{
-										char mask_tag[] = "commitment_mask";
-										constexpr size_t mask_tag_size = sizeof(mask_tag) - 1;
-										uint8_t mask_commitment[mask_tag_size + sizeof(output_scalar)];
-										memcpy(mask_commitment, mask_tag, mask_tag_size);
-										memcpy(mask_commitment + mask_tag_size, output_scalar, sizeof(output_scalar));
-										hash_to_scalar(mask_commitment, sizeof(mask_commitment), mask);
+										uint8_t mask[32] = { 0 }, amount[32] = { 0 };
+										size_t amount_size = sizeof(amount);
+										if (output.ecdh_mask.empty())
+										{
+											char mask_tag[] = "commitment_mask";
+											constexpr size_t mask_tag_size = sizeof(mask_tag) - 1;
+											uint8_t mask_commitment[mask_tag_size + sizeof(output_scalar)];
+											memcpy(mask_commitment, mask_tag, mask_tag_size);
+											memcpy(mask_commitment + mask_tag_size, output_scalar, sizeof(output_scalar));
+											hash_to_scalar(mask_commitment, sizeof(mask_commitment), mask);
 
-										char amount_tag[] = "amount";
-										constexpr size_t amount_tag_size = sizeof(amount_tag) - 1;
-										uint8_t amount_commitment[amount_tag_size + sizeof(output_scalar)];
-										memcpy(amount_commitment, amount_tag, amount_tag_size);
-										memcpy(amount_commitment + amount_tag_size, output_scalar, sizeof(output_scalar));
-										xmr_fast_hash(amount, amount_commitment, sizeof(amount_commitment));
+											char amount_tag[] = "amount";
+											constexpr size_t amount_tag_size = sizeof(amount_tag) - 1;
+											uint8_t amount_commitment[amount_tag_size + sizeof(output_scalar)];
+											memcpy(amount_commitment, amount_tag, amount_tag_size);
+											memcpy(amount_commitment + amount_tag_size, output_scalar, sizeof(output_scalar));
+											xmr_fast_hash(amount, amount_commitment, sizeof(amount_commitment));
 
-										amount_size = std::min<size_t>(output.ecdh_amount.size(), sizeof(uint64_t));
-										for (size_t i = 0; i < amount_size; i++)
-											amount[i] ^= (uint8_t)output.ecdh_amount[i];
-										for (size_t i = amount_size; i < sizeof(amount); i++)
-											amount[i] = 0;
+											amount_size = std::min<size_t>(output.ecdh_amount.size(), sizeof(uint64_t));
+											for (size_t i = 0; i < amount_size; i++)
+												amount[i] ^= (uint8_t)output.ecdh_amount[i];
+											for (size_t i = amount_size; i < sizeof(amount); i++)
+												amount[i] = 0;
+										}
+										else
+										{
+											uint8_t ecdh_mask[32] = { 0 }, ecdh_amount[32] = { 0 };
+											memcpy(ecdh_mask, output.ecdh_mask.data(), std::min(sizeof(ecdh_mask), output.ecdh_mask.size()));
+											memcpy(ecdh_amount, output.ecdh_amount.data(), std::min(sizeof(ecdh_amount), output.ecdh_amount.size()));
+
+											uint8_t mask_scalar[32], amount_scalar[32];
+											hash_to_scalar(output_scalar, sizeof(output_scalar), mask_scalar);
+											hash_to_scalar(mask_scalar, sizeof(mask_scalar), amount_scalar);
+
+											sc_sub(mask, ecdh_mask, mask_scalar);
+											sc_sub(amount, ecdh_amount, amount_scalar);
+										}
+
+										uint8_t ring_out_key[32];
+										if (!pedersen_commit(mask, amount, ring_out_key))
+											continue;
+										else if (memcmp(ring_out_key, output.ring_out_key, sizeof(output.ring_out_key)) != 0)
+											continue;
+
+										std::array<uint8_t, 32> swap_amount = { 0 };
+										memcpy(swap_amount.data(), amount, amount_size);
+										std::reverse(swap_amount.begin(), swap_amount.end());
+
+										uint256_t value256 = uint256_t(codec::hex_encode(std::string_view((char*)swap_amount.data(), swap_amount.size())), 16);
+										value = from_baseline_value(value256);
 									}
 									else
-									{
-										uint8_t ecdh_mask[32] = { 0 }, ecdh_amount[32] = { 0 };
-										memcpy(ecdh_mask, output.ecdh_mask.data(), std::min(sizeof(ecdh_mask), output.ecdh_mask.size()));
-										memcpy(ecdh_amount, output.ecdh_amount.data(), std::min(sizeof(ecdh_amount), output.ecdh_amount.size()));
+										value = from_baseline_value(output.amount);
 
-										uint8_t mask_scalar[32], amount_scalar[32];
-										hash_to_scalar(output_scalar, sizeof(output_scalar), mask_scalar);
-										hash_to_scalar(mask_scalar, sizeof(mask_scalar), amount_scalar);
-
-										sc_sub(mask, ecdh_mask, mask_scalar);
-										sc_sub(amount, ecdh_amount, amount_scalar);
-									}
-									
-									uint8_t ring_out_key[32];
-									if (!pedersen_commit(mask, amount, ring_out_key))
-										continue;
-									else if (memcmp(ring_out_key, output.ring_out_key, sizeof(output.ring_out_key)) != 0)
-										continue;
-
-									std::array<uint8_t, 32> swap_amount = { 0 };
-									memcpy(swap_amount.data(), amount, amount_size);
-									std::reverse(swap_amount.begin(), swap_amount.end());
-
-									uint256_t value256 = uint256_t(codec::hex_encode(std::string_view((char*)swap_amount.data(), swap_amount.size())), 16);
-									value = from_baseline_value(value256);
+									coin_utxo new_output;
+									new_output.transaction_id = string();
+									new_output.link = link.second;
+									new_output.value = value;
+									new_output.index = (uint64_t)i;
+									result.add_output(std::move(new_output));
 								}
-								else
-									value = from_baseline_value(output.amount);
-
-								coin_utxo new_output;
-								new_output.transaction_id = string();
-								new_output.link = link.second;
-								new_output.value = value;
-								new_output.index = (uint64_t)i;
-								result.add_output(std::move(new_output));
 							}
+
+							if (unresolved_outputs.empty())
+								break;
 						}
 
-						if (unresolved_outputs.empty())
+						offset += links->size();
+						if (links->size() != count || unresolved_outputs.empty())
 							break;
 					}
 
-					offset += links->size();
-					if (links->size() != count || unresolved_outputs.empty())
-						break;
-				}
-
-				for (auto& [output_index8, output_address] : info.output_addresses)
-				{
-					auto output_index = (size_t)output_index8;
-					if (unresolved_outputs.find(output_index) == unresolved_outputs.end())
-						continue;
-
-					auto& output = outputs[output_index];
-					if (!output.ecdh_amount.empty())
-						continue;
-
-					auto address = encode_address(output_address.view());
-					if (!address)
-						continue;
-
-					auto links = find_linked_addresses({ *address });
-					if (!links || links->empty())
-						continue;
-
-					coin_utxo new_output;
-					new_output.transaction_id = string();
-					new_output.link = links->begin()->second;
-					new_output.value = from_baseline_value(output.amount);
-					new_output.index = (uint64_t)output_index;
-					result.add_output(std::move(new_output));
-				}
-
-				if (result.inputs.empty() && result.outputs.empty())
-					coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
-
-				if (!result.outputs.empty())
-				{
-					auto indices = coawait(get_output_indices(result.transaction_id));
-					if (!indices)
-						coreturn expects_rt<computed_transaction>(indices.error());
-
-					for (auto& [hash, output] : result.outputs)
+					for (auto& [output_index8, output_address] : info.output_addresses)
 					{
-						if (output.index < indices->size())
+						auto output_index = (size_t)output_index8;
+						if (unresolved_outputs.find(output_index) == unresolved_outputs.end())
+							continue;
+
+						auto& output = outputs[output_index];
+						if (!output.ecdh_amount.empty())
+							continue;
+
+						auto address = encode_address(output_address.view());
+						if (!address)
+							continue;
+
+						auto links = find_linked_addresses({ *address });
+						if (!links || links->empty())
+							continue;
+
+						coin_utxo new_output;
+						new_output.transaction_id = string();
+						new_output.link = links->begin()->second;
+						new_output.value = from_baseline_value(output.amount);
+						new_output.index = (uint64_t)output_index;
+						result.add_output(std::move(new_output));
+					}
+
+					if (result.inputs.empty() && result.outputs.empty())
+						coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
+
+					if (!result.outputs.empty())
+					{
+						auto indices = coawait(get_output_indices(result.transaction_id));
+						if (!indices)
+							coreturn expects_rt<computed_transaction>(indices.error());
+
+						for (auto& [hash, output] : result.outputs)
 						{
-							output.transaction_id = to_string(indices->at(output.index), 16);
-							output.index = 0;
+							if (output.index < indices->size())
+							{
+								output.transaction_id = to_string(indices->at(output.index), 16);
+								output.index = 0;
+							}
+							else
+								output.index = std::numeric_limits<uint64_t>::max();
 						}
-						else
-							output.index = std::numeric_limits<uint64_t>::max();
+						for (auto it = result.outputs.begin(); it != result.outputs.end();)
+						{
+							if (it->second.index == std::numeric_limits<uint64_t>::max())
+								it = result.outputs.erase(it);
+							else
+								++it;
+						}
 					}
-					for (auto it = result.outputs.begin(); it != result.outputs.end();)
+
+					decimal sending_value = decimal::zero();
+					decimal receiving_value = decimal::zero();
+					for (auto& [hash, input] : result.inputs)
+						sending_value += input.value;
+					for (auto& [hash, output] : result.outputs)
+						receiving_value += output.value;
+
+					if (sending_value < receiving_value)
 					{
-						if (it->second.index == std::numeric_limits<uint64_t>::max())
-							it = result.outputs.erase(it);
-						else
-							++it;
+						coin_utxo new_input;
+						new_input.value = receiving_value - sending_value;
+						result.add_input(std::move(new_input));
 					}
-				}
+					else if (sending_value > receiving_value)
+					{
+						coin_utxo new_output;
+						new_output.value = sending_value - receiving_value;
+						result.add_output(std::move(new_output));
+					}
 
-				decimal sending_value = decimal::zero();
-				decimal receiving_value = decimal::zero();
-				for (auto& [hash, input] : result.inputs)
-					sending_value += input.value;
-				for (auto& [hash, output] : result.outputs)
-					receiving_value += output.value;
-
-				if (sending_value < receiving_value)
-				{
-					coin_utxo new_input;
-					new_input.value = receiving_value - sending_value;
-					result.add_input(std::move(new_input));
-				}
-				else if (sending_value > receiving_value)
-				{
-					coin_utxo new_output;
-					new_output.value = sending_value - receiving_value;
-					result.add_output(std::move(new_output));
-				}
-
-				coreturn expects_rt<computed_transaction>(std::move(result));
+					coreturn expects_rt<computed_transaction>(std::move(result));
+				});
 			}
 			expects_promise_rt<void> monero::broadcast_transaction(const finalized_transaction& finalized)
 			{
 				auto args = format::tree::map();
 				args.set("tx_as_hex", format::variable(format::util::clear_0xhex(finalized.calldata)));
+				return execute_rest("POST", nd_call::send_raw_transaction(), std::move(args), cache_policy::no_cache).then<expects_rt<void>>([](expects_rt<format::tree>&& hex_data) -> expects_rt<void>
+				{
+					if (!hex_data)
+						return expects_rt<void>(hex_data.error());
 
-				auto hex_data = coawait(execute_rest("POST", nd_call::send_raw_transaction(), args, cache_policy::no_cache));
-				if (!hex_data)
-					coreturn expects_rt<void>(hex_data.error());
+					bool double_spend = hex_data->child_var("double_spend").as_boolean();
+					bool fee_too_low = hex_data->child_var("fee_too_low").as_boolean();
+					bool invalid_input = hex_data->child_var("invalid_input").as_boolean();
+					bool invalid_output = hex_data->child_var("invalid_output").as_boolean();
+					bool low_mixin = hex_data->child_var("low_mixin").as_boolean();
+					bool overspend = hex_data->child_var("overspend").as_boolean();
+					bool too_big = hex_data->child_var("too_big").as_boolean();
+					if (double_spend)
+						return expects_rt<void>(remote_exception("transaction double spends inputs"));
+					else if (fee_too_low)
+						return expects_rt<void>(remote_exception("transaction fee is too low"));
+					else if (invalid_input)
+						return expects_rt<void>(remote_exception("transaction uses invalid input"));
+					else if (invalid_output)
+						return expects_rt<void>(remote_exception("transaction uses invalid output"));
+					else if (low_mixin)
+						return expects_rt<void>(remote_exception("transaction mixin count is too low"));
+					else if (overspend)
+						return expects_rt<void>(remote_exception("transaction overspends inputs"));
+					else if (too_big)
+						return expects_rt<void>(remote_exception("transaction is too big"));
 
-				bool double_spend = hex_data->child_var("double_spend").as_boolean();
-				bool fee_too_low = hex_data->child_var("fee_too_low").as_boolean();
-				bool invalid_input = hex_data->child_var("invalid_input").as_boolean();
-				bool invalid_output = hex_data->child_var("invalid_output").as_boolean();
-				bool low_mixin = hex_data->child_var("low_mixin").as_boolean();
-				bool overspend = hex_data->child_var("overspend").as_boolean();
-				bool too_big = hex_data->child_var("too_big").as_boolean();
-				if (double_spend)
-					coreturn expects_rt<void>(remote_exception("transaction double spends inputs"));
-				else if (fee_too_low)
-					coreturn expects_rt<void>(remote_exception("transaction fee is too low"));
-				else if (invalid_input)
-					coreturn expects_rt<void>(remote_exception("transaction uses invalid input"));
-				else if (invalid_output)
-					coreturn expects_rt<void>(remote_exception("transaction uses invalid output"));
-				else if (low_mixin)
-					coreturn expects_rt<void>(remote_exception("transaction mixin count is too low"));
-				else if (overspend)
-					coreturn expects_rt<void>(remote_exception("transaction overspends inputs"));
-				else if (too_big)
-					coreturn expects_rt<void>(remote_exception("transaction is too big"));
-
-				coreturn expects_rt<void>(expectation::met);
+					return expects_rt<void>(expectation::met);
+				});
 			}
 			expects_promise_rt<prepared_transaction> monero::prepare_transaction(const wallet_link& from_link, const value_transfer& to, const decimal& max_fee)
 			{
-				format::tree args;
-				args.set("grace_blocks", format::variable((uint8_t)10));
+				return coasync<expects_rt<prepared_transaction>>([this, from_link, to, max_fee]() -> expects_promise_rt<prepared_transaction>
+				{
+					format::tree args;
+					args.set("grace_blocks", format::variable((uint8_t)10));
 
-				auto fee_estimate = coawait(execute_rpc(nd_call::get_fee_estimate(), std::move(args), cache_policy::no_cache_no_throttling, nd_call::json_rpc()));
-				if (!fee_estimate)
-					coreturn expects_rt<prepared_transaction>(fee_estimate.error());
+					auto fee_estimate = coawait(execute_rpc(nd_call::get_fee_estimate(), std::move(args), cache_policy::no_cache_no_throttling, nd_call::json_rpc()));
+					if (!fee_estimate)
+						coreturn expects_rt<prepared_transaction>(fee_estimate.error());
 
-				auto fee = computed_fee::fee_per_kilobyte(algorithm::arithmetic::divide(fee_estimate->child_var("fee").as_decimal(), netdata.divisibility));
-				decimal fee_value = fee.get_max_fee();
-				if (fee_value > max_fee)
-					coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
+					auto fee = computed_fee::fee_per_kilobyte(algorithm::arithmetic::divide(fee_estimate->child_var("fee").as_decimal(), netdata.divisibility));
+					decimal fee_value = fee.get_max_fee();
+					if (fee_value > max_fee)
+						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
 
-				decimal total_value = to.value + fee_value;
-				auto possible_inputs = calculate_utxo(from_link, balance_query(total_value, { }));
-				decimal input_value = possible_inputs ? get_utxo_value(*possible_inputs, optional::none) : 0.0;
-				if (!possible_inputs || possible_inputs->empty())
-					coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", input_value.to_string().c_str(), total_value.to_string().c_str())));
+					decimal total_value = to.value + fee_value;
+					auto possible_inputs = calculate_utxo(from_link, balance_query(total_value, { }));
+					decimal input_value = possible_inputs ? get_utxo_value(*possible_inputs, optional::none) : 0.0;
+					if (!possible_inputs || possible_inputs->empty())
+						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", input_value.to_string().c_str(), total_value.to_string().c_str())));
 
-				auto to_link = find_linked_addresses({ to.address });
-				prepared_transaction result;
-				result.requires_output(coin_utxo(to_link ? std::move(to_link->begin()->second) : wallet_link::from_address(to.address), string(), (uint32_t)result.outputs.size(), decimal(to.value)));
-				if (input_value > total_value)
-					result.requires_output(coin_utxo(wallet_link(possible_inputs->front().link), string(), (uint32_t)result.outputs.size(), decimal(input_value - total_value)));
+					auto to_link = find_linked_addresses({ to.address });
+					prepared_transaction result;
+					result.requires_output(coin_utxo(to_link ? std::move(to_link->begin()->second) : wallet_link::from_address(to.address), string(), (uint32_t)result.outputs.size(), decimal(to.value)));
+					if (input_value > total_value)
+						result.requires_output(coin_utxo(wallet_link(possible_inputs->front().link), string(), (uint32_t)result.outputs.size(), decimal(input_value - total_value)));
 
 
 
-				coreturn expects_rt<prepared_transaction>(remote_exception("not implemented"));
+					coreturn expects_rt<prepared_transaction>(remote_exception("not implemented"));
+				});
 			}
 			expects_lr<finalized_transaction> monero::finalize_transaction(prepared_transaction&& prepared)
 			{
