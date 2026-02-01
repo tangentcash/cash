@@ -3,7 +3,7 @@ RUN apk add clang clang-dev ninja cmake libsecp256k1-dev gmp-dev libsodium-dev r
 RUN mkdir /home/tangentcash && mkdir /home/tangentcash/make
 COPY ./ /home/tangentcash/source/
 WORKDIR /home/tangentcash/source
-ARG CONFIGURE="-DCMAKE_BUILD_TYPE=Debug"
+ARG CONFIGURE="-DCMAKE_BUILD_TYPE=RelWithDebInfo"
 RUN cmake -G Ninja -S=/home/tangentcash/source -B=/home/tangentcash/make $CONFIGURE -DCMAKE_RUNTIME_OUTPUT_DIRECTORY=/usr/local/bin -DCMAKE_LIBRARY_OUTPUT_DIRECTORY=/usr/local/lib
 ARG COMPILE="-j"
 RUN cmake --build /home/tangentcash/make $COMPILE
