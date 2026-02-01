@@ -1180,47 +1180,6 @@ namespace tangent
 		{
 			return hash256i((uint8_t*)data.data(), data.size());
 		}
-		uint64_t hashing::erd64(const uint256_t& entropy, uint64_t order)
-		{
-			if (order < 2)
-				return 0;
-
-			uint32_t upper = static_cast<uint32_t>(order);
-			uint32_t lower = upper - upper / (upper <= 20 ? 5 : 20), result;
-			uint32_t seed = (uint32_t)(entropy % std::numeric_limits<uint32_t>::max());
-			mpf_t weight;
-			if (order <= 5)
-			{
-				lower = 0;
-				goto uniform_distribution;
-			}
-
-			mpf_init_set_ui(weight, (order - 1) / 2);
-			mpf_mul_ui(weight, weight, 8 * order);
-			mpf_mul_ui(weight, weight, (uint32_t)(seed % std::numeric_limits<uint32_t>::max()));
-			mpf_div_ui(weight, weight, std::numeric_limits<uint32_t>::max());
-			mpf_add_ui(weight, weight, 1);
-			mpf_sqrt(weight, weight);
-			mpf_sub_ui(weight, weight, 1);
-			mpf_div_ui(weight, weight, 2 * upper);
-			mpf_neg(weight, weight);
-			mpf_add_ui(weight, weight, 1);
-			mpf_pow_ui(weight, weight, 3);
-			mpf_mul_ui(weight, weight, upper);
-			mpf_floor(weight, weight);
-			result = mpf_get_ui(weight);
-			mpf_clear(weight);
-
-			if (result >= lower)
-			{
-			uniform_distribution:
-				result = lower + (seed % (upper - lower));
-			}
-			else if (result >= upper)
-				result = upper;
-
-			return static_cast<uint64_t>(result);
-		}
 		string hashing::ppc512(const std::string_view& unpacked_code)
 		{
 			static std::string_view lines = "\r\n";
@@ -1506,6 +1465,58 @@ namespace tangent
 			memcpy(scalar64, scalar, 32);
 			crypto_core_ed25519_scalar_reduce(scalar, scalar64);
 			convert_to_secret_key_ed25519(scalar);
+		}
+
+		exponential_distribution::exponential_distribution() : state(nullptr)
+		{
+		}
+		exponential_distribution::exponential_distribution(exponential_distribution&& other) noexcept : state(other.state)
+		{
+			other.state = nullptr;
+		}
+		exponential_distribution::~exponential_distribution()
+		{
+			if (state != nullptr)
+			{
+				mpf_clear(*(mpf_t*)state);
+				memory::deallocate((mpf_t*)state);
+			}
+		}
+		exponential_distribution& exponential_distribution::operator=(exponential_distribution&& other) noexcept
+		{
+			if (this == &other)
+				return *this;
+
+			state = other.state;
+			other.state = nullptr;
+			return *this;
+		}
+		uint32_t exponential_distribution::next(const uint256_t& entropy, uint32_t order)
+		{
+			if (order < 3)
+				return order > 1 ? (uint32_t)(entropy % order) : 0;
+
+			if (!state)
+			{
+				state = memory::allocate<mpf_t>(sizeof(mpf_t));
+				mpf_init(*(mpf_t*)state);
+			}
+
+			mpf_t& weight = *(mpf_t*)state;
+			mpf_set_ui(weight, (order - 1) / 2);
+			mpf_mul_ui(weight, weight, 8 * order);
+			mpf_mul_ui(weight, weight, (uint32_t)(entropy % std::numeric_limits<uint32_t>::max()));
+			mpf_div_ui(weight, weight, std::numeric_limits<uint32_t>::max());
+			mpf_add_ui(weight, weight, 1);
+			mpf_sqrt(weight, weight);
+			mpf_sub_ui(weight, weight, 1);
+			mpf_div_ui(weight, weight, 2 * order);
+			mpf_neg(weight, weight);
+			mpf_add_ui(weight, weight, 1);
+			mpf_pow_ui(weight, weight, 2);
+			mpf_mul_ui(weight, weight, order);
+			mpf_floor(weight, weight);
+			return mpf_get_ui(weight) % order;
 		}
 
 		uint256_t merkle_tree::branch_path::root(uint256_t hash, const hash_function hasher) const

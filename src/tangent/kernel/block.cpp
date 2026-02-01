@@ -594,17 +594,6 @@ namespace tangent
 		{
 			return priority > 0 ? (decimal(get_proof_duration()) / get_proof_difficulty_multiplier()).to_uint64() : get_proof_duration();
 		}
-		decimal block_header::get_reward_value() const
-		{
-			auto& emission = protocol::now().policy.emission;
-			if (is_genesis_epoch(number))
-				return emission.genesis_coinbase_value;
-
-			auto epoch = number / emission.epoch_length;
-			auto decay = 1 - emission.decay_rate * epoch;
-			auto coinbase = emission.coinbase_value * decay;
-			return math0::max(coinbase, emission.min_coinbase_value);
-		}
 		decimal block_header::get_proof_difficulty_multiplier() const
 		{
 			return algorithm::wesolowski::adjustment_scaling(priority);
@@ -632,7 +621,7 @@ namespace tangent
 			data.set("receipt_root", format::variable(algorithm::encoding::encode_0xhex256(receipt_root)));
 			data.set("state_root", format::variable(algorithm::encoding::encode_0xhex256(state_root)));
 			data.set("absolute_work", algorithm::encoding::serialize_uint256(absolute_work));
-			data.set("coinbase", format::variable(get_reward_value()));
+			data.set("coinbase", format::variable(block_header::get_coinbase_value(number)));
 			data.set("gas_use", algorithm::encoding::serialize_uint256(gas_use));
 			data.set("gas_limit", algorithm::encoding::serialize_uint256(gas_limit));
 			data.set("generation_time", algorithm::encoding::serialize_uint256(generation_time));
@@ -756,6 +745,17 @@ namespace tangent
 		{
 			uint64_t ending_block_number = protocol::now().policy.emission.genesis_epoch_length;
 			return ending_block_number > 0 && block_number <= ending_block_number;
+		}
+		decimal block_header::get_coinbase_value(const uint64_t block_number)
+		{
+			auto& emission = protocol::now().policy.emission;
+			if (is_genesis_epoch(block_number))
+				return emission.genesis_coinbase_value;
+
+			auto epoch = block_number / emission.epoch_length;
+			auto decay = 1 - emission.decay_rate * epoch;
+			auto coinbase = emission.coinbase_value * decay;
+			return math0::max(coinbase, emission.min_coinbase_value);
 		}
 
 		block_body::block_body(const block_header& other) : block_header(other)
@@ -1398,27 +1398,15 @@ namespace tangent
 			auto window = storages::result_index_window();
 			auto pool = chain.get_multiforms_count_by_row_filter(states::validator_production::as_instance_type(), changelog, states::validator_production::as_instance_row(), filter, nonce).or_else(0);
 			auto size = std::min(target_size, pool);
-			if (pool > target_size)
+			auto indices = btree_set<uint64_t>();
+			auto distribution = algorithm::exponential_distribution();
+			while (indices.size() < size)
 			{
-				auto indices = btree_set<uint64_t>();
-				while (indices.size() < size)
+				uint64_t index = (uint64_t)distribution.next(random->derive(), (uint32_t)size);
+				if (indices.find(index) == indices.end())
 				{
-					uint64_t index = algorithm::hashing::erd64(random->derive(), size);
-					if (indices.find(index) == indices.end())
-					{
-						window.indices.push_back(index);
-						indices.insert(index);
-					}
-				}
-			}
-			else
-			{
-				window.indices.resize(size, std::numeric_limits<uint64_t>::max());
-				for (size_t index = 0; index < size; index++)
-				{
-					size_t position;
-					do { position = (size_t)(random->derive() % window.indices.size()); } while (window.indices[position] != std::numeric_limits<uint64_t>::max());
-					window.indices[position] = (uint64_t)index;
+					window.indices.push_back(index);
+					indices.insert(index);
 				}
 			}
 
@@ -1486,8 +1474,9 @@ namespace tangent
 				return layer_exception("committee threshold not met");
 
 			auto indices = btree_set<uint64_t>();
+			auto distribution = algorithm::exponential_distribution();
 		retry:
-			uint64_t index = algorithm::hashing::erd64(random->derive(), pool);
+			uint64_t index = (uint64_t)distribution.next(random->derive(), (uint32_t)pool);
 			if (indices.find(index) != indices.end())
 				goto retry;
 
@@ -1527,31 +1516,17 @@ namespace tangent
 			if (pool < target_size)
 				return layer_exception("committee threshold not met");
 
-			size_t median_pool = (size_t)algorithm::arithmetic::ceil(decimal(pool) * decimal(protocol::now().policy.participation.stake_threshold)).to_uint64();
-			if (median_pool <= target_size + exclusion.size())
-				median_pool = pool;
-
 			vector<states::validator_participation> committee;
+			auto distribution = algorithm::exponential_distribution();
 			auto indices = btree_set<uint64_t>();
-			while (indices.size() < median_pool)
+			auto size = std::min<size_t>(target_size, pool);
+			while (indices.size() < pool)
 			{
 				auto window = storages::result_index_window();
-				auto prefetch = std::min<size_t>(target_size, median_pool);
-				if (median_pool > target_size)
+				while (window.indices.size() < size)
 				{
-					while (window.indices.size() < prefetch)
-					{
-						uint64_t index = algorithm::hashing::erd64(random->derive(), median_pool);
-						if (indices.find(index) == indices.end())
-						{
-							window.indices.push_back(index);
-							indices.insert(index);
-						}
-					}
-				}
-				else
-				{
-					for (uint64_t index = 0; index < (uint64_t)prefetch; index++)
+					uint64_t index = (uint64_t)distribution.next(random->derive(), (uint32_t)pool);
+					if (indices.find(index) == indices.end())
 					{
 						window.indices.push_back(index);
 						indices.insert(index);
@@ -1562,6 +1537,7 @@ namespace tangent
 				if (!results || results->empty())
 					break;
 
+				committee.reserve(results->size());
 				for (auto& result : *results)
 				{
 					auto& target = *(states::validator_participation*)result.ptr();
@@ -3751,7 +3727,7 @@ namespace tangent
 		expects_lr<void> solver_context::block_evalution_finalize(block_evaluation& solution, block_rewards& rewards)
 		{
 			auto& coinbase = rewards[algorithm::asset::native()];
-			coinbase = coinbase.is_nan() ? solution.block.get_reward_value() : (coinbase + solution.block.get_reward_value());
+			coinbase = coinbase.is_nan() ? block_header::get_coinbase_value(solution.block.number) : (coinbase + block_header::get_coinbase_value(solution.block.number));
 
 			bool paying_rewards = state.executor.get_validator_production(state.public_key_hash).or_else(states::validator_production(algorithm::pubkeyhash_t(), nullptr)).is_active();
 			if (paying_rewards)

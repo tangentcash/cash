@@ -187,7 +187,6 @@ namespace tangent
 			virtual uint64_t get_slot_length() const;
 			virtual uint64_t get_proof_duration() const;
 			virtual uint64_t get_proof_accounted_duration() const;
-			virtual decimal get_reward_value() const;
 			virtual decimal get_proof_difficulty_multiplier() const;
 			virtual uint64_t get_proof_slot_target(const block_header* parent_block) const;
 			virtual uint256_t as_hash(bool renew = false) const override;
@@ -206,6 +205,7 @@ namespace tangent
 			static uint256_t get_slot_total_gas_limit();
 			static uint256_t get_gas_work(const uint256_t& gas_use, const uint256_t& gas_limit, uint64_t priority);
 			static bool is_genesis_epoch(const uint64_t block_number);
+			static decimal get_coinbase_value(const uint64_t block_number);
 		};
 
 		struct block_body final : block_header

@@ -203,7 +203,6 @@ namespace tangent
 			static format::variable serialize_uint256(const uint256_t& data, bool always16 = false);
 			static expects_lr<string> pack_program(const std::string_view& unpacked_code);
 			static expects_lr<string> unpack_program(const std::string_view& packed_code);
-
 		};
 
 		class hashing
@@ -222,7 +221,6 @@ namespace tangent
 			static string hash512(const uint8_t* buffer, size_t size);
 			static uint256_t hash256i(const uint8_t* buffer, size_t size);
 			static uint256_t hash256i(const std::string_view& data);
-			static uint64_t erd64(const uint256_t& seed, uint64_t order);
 			static string ppc512(const std::string_view& unpacked_code);
 		};
 
@@ -410,6 +408,19 @@ namespace tangent
 			static void convert_to_secret_key_ed25519(uint8_t secret_key[32]);
 			static void convert_to_scalar_ed25519(const uint8_t scalar[64], uint8_t reduced_scalar[32]);
 			static void convert_to_scalar_ed25519(uint8_t scalar[32]);
+		};
+
+		struct exponential_distribution
+		{
+			void* state;
+
+			exponential_distribution();
+			exponential_distribution(const exponential_distribution&) = delete;
+			exponential_distribution(exponential_distribution&& other) noexcept;
+			~exponential_distribution();
+			exponential_distribution& operator=(const exponential_distribution& other) = delete;
+			exponential_distribution& operator=(exponential_distribution&& other) noexcept;
+			uint32_t next(const uint256_t& seed, uint32_t order);
 		};
 
 		struct merkle_tree

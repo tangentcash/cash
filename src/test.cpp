@@ -1670,14 +1670,14 @@ struct tests
 			TEST_BLOCK(std::bind(&generators::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 0, 1), "0xd5ce23e400905d93f70687ec25191192fb6146d11046adaed1a1439dae719111", 15);
 			TEST_BLOCK_FAULT(&generators::migrate_stage_1, "0x2c20b008fce8d9beee6f8cee0aaa46e28c8baa65b1dee5df9a8740ec0287dfe0", 16);
 			TEST_BLOCK(&generators::migrate_stage_2, "0x2ef093689fa511f364101198885552b6e8210fbad19450d286ef137e9823793f", 18);
-			TEST_BLOCK(&generators::migrate_stage_3, "0x3159728cc8f54e75e8591906050a88a1708bfd00102b32c0678a0d80ca7895a1", 20);
-			TEST_BLOCK(&generators::withdraw_stage_1, "0x5e1673a1bbdafcc77f933407f67e0537b5e888576bfbd1bd10c0dc5ccb4702e2", 22);
-			TEST_BLOCK(&generators::withdraw_stage_2, "0x6a5ee487ba078e12f4f9764fc5c17b55e402d10c2f8b6e91bf55ec59dd4fa841", 24);
-			TEST_BLOCK(&generators::withdraw_stage_3, "0x2bdede904cc7df46ef2e1750adde8b268db3e8e730116ada3dae96f122364f5b", 26);
-			TEST_BLOCK(&generators::withdraw_stage_4, "0xfccebe02fedf842e23901785e5a52b39af73b284e4aae8081583d4a5cdc6158c", 27);
-			TEST_BLOCK(&generators::withdraw_stage_5, "0xbbfaf2a479a05987cc3849ffb74f56fe3e05305c335e997861d7e57a3797f783", 29);
-			TEST_BLOCK(&generators::withdraw_stage_6, "0xd94f2033ef0762d7f7164811a98487310d0ee95b749a9521f666d1c909cf9d1c", 31);
-			TEST_BLOCK(std::bind(&generators::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 1, 0), "0xe254c70b360684ecce9e2627b3f4143dd533056c9bd137f4aa3317c955d80d79", 33);
+			TEST_BLOCK(&generators::migrate_stage_3, "0xd5ebe8d706c4c97c48b8c7214330f6281b47aa1f55009a268211f1521c0a6fdc", 20);
+			TEST_BLOCK(&generators::withdraw_stage_1, "0x6981640c4114c4fe4fd392b74fbfcf0366c53ccdb2cefee9aca2cbb54d13719e", 22);
+			TEST_BLOCK(&generators::withdraw_stage_2, "0x95a8a67955c4d8fd084f0a1daec650fa0592f3460332e46e89e49baa83340068", 24);
+			TEST_BLOCK(&generators::withdraw_stage_3, "0x5d2b4a56071ecb7177441bf59247619124ed68a98d15decf2bfc22cbbe26300b", 26);
+			TEST_BLOCK(&generators::withdraw_stage_4, "0x6183bf14a5957809650cb77106681890988630568f56e510045b744c2cdb77b3", 27);
+			TEST_BLOCK(&generators::withdraw_stage_5, "0xe9e60d1398df19fa93fdab96f443bc11d5483b203a89b4d976654e53b5b7b7b6", 29);
+			TEST_BLOCK(&generators::withdraw_stage_6, "0xcad15a25e9c298d9b6e64366190c88b995809e97e4504b6caf51477dd270a3b7", 31);
+			TEST_BLOCK(std::bind(&generators::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 1, 0), "0x71872ed2e8868ca2a1946f3493ab1913b3e9ce2b7927e3c60dc1dbcf9e6f6105", 33);
 			if (userdata != nullptr)
 				*userdata = std::move(users);
 			else
