@@ -792,6 +792,7 @@ namespace tangent
 			virtual ~factory() noexcept override;
 			void bind_debugger_tools(debugger_context* debugger);
 			void return_module(cmodule&& value);
+			string export_predefined_symbols();
 			expects_lr<cmodule> compile_module(const std::string_view& hashcode, const std::function<expects_lr<string>()>& unpacked_code_callback);
 			expects_lr<void> reset_properties(library& module, immediate_context* context);
 			virtual_machine* get_vm();
@@ -833,6 +834,7 @@ namespace tangent
 			static const program* fetch_immutable_or_throw(immediate_context* coroutine = immediate_context::get());
 			static bool request_gas_mop(size_t difficulty);
 			static bool request_gas_vmemory(size_t size);
+			static bool request_gas_vmemory_marshall(const format::ro_stream& stream, size_t prev_seek);
 			template <typename t>
 			static inline t* request_gas_memory(size_t size)
 			{

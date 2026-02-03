@@ -505,7 +505,7 @@ namespace tangent
 
 					return ok("compiled " + *path);
 				}
-				else if (method == "assemble")
+				else if (method == "asseemble")
 				{
 					if (args.size() < 3)
 						return err("not a valid type");
@@ -700,6 +700,22 @@ namespace tangent
 					}
 					return true;
 				}
+				else if (method == "predefined")
+				{
+					if (args.size() < 2)
+						return err("not a valid path");
+
+					auto path = os::path::resolve(args[1], directory, true);
+					if (!path)
+						return err(path.what());
+
+					auto symbols = script::factory::get()->export_predefined_symbols();
+					auto result = os::file::write(*path, (uint8_t*)symbols.data(), symbols.size());
+					if (!result)
+						return err(result.what());
+
+					return ok("assembled " + *path);
+					}
 				else if (method == "reset")
 				{
 					context.reset();
@@ -887,6 +903,7 @@ namespace tangent
 						"changelog                                               -- get call state changes log\n"
 						"receipt                                                 -- get call receipt\n"
 						"abi                                                     -- get program abi listing\n"
+						"predefined [path]                                       -- export symbols for AngelScript Language Server (as.predefined)\n"
 						"reset                                                   -- reset contract state\n"
 						"clear                                                   -- clear console output\n"
 						"help                                                    -- show this message\n");

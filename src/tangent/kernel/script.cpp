@@ -26,7 +26,7 @@ extern "C"
 #define SCRIPT_TYPE_PMUT "pmut"
 #define SCRIPT_TYPE_PCONST "pconst"
 #define SCRIPT_FUNCTION_CONSTRUCT "construct"
-#define SCRIPT_VM "script"
+#define SCRIPT_VM "program"
 
 namespace tangent
 {
@@ -64,11 +64,6 @@ namespace tangent
 			if (!result.empty() && result.back() == '.')
 				result.pop_back();
 			return result;
-		}
-		static void burn_marshalling_memory(const format::ro_stream& stream, size_t prev_seek)
-		{
-			if (prev_seek < stream.seek)
-				program::request_gas_vmemory(stream.seek - prev_seek);
 		}
 		static void any_store(asIScriptGeneric* generic)
 		{
@@ -198,12 +193,7 @@ namespace tangent
 				int line_number = context->get_line_number(i, &column_number);
 				function next = context->get_function(i);
 				auto section_name = next.get_section_name();
-				stream << "  #" << --top_callstack_size << " at " << os::path::get_filename(section_name);
-				if (line_number > 0)
-					stream << ":" << line_number;
-				if (column_number > 0)
-					stream << "," << column_number;
-				stream << " in " << (next.get_decl().empty() ? "[optimized]" : next.get_decl());
+				stream << "  #" << --top_callstack_size << " at " << os::path::get_filename(section_name) << ":" << (line_number > 0 ? line_number : 0) << ":" << (column_number > 0 ? column_number : 0) << " in \"" << (next.get_decl().empty() ? "[optimized]" : next.get_decl()) << "\"";
 				if (top_callstack_size > 0)
 					stream << "\n";
 			}
@@ -4559,35 +4549,35 @@ namespace tangent
 					if (!stream.read_boolean(stream.read_type(), (bool*)value))
 						return layer_exception("load failed for bool type");
 
-					burn_marshalling_memory(stream, seek);
+					program::request_gas_vmemory_marshall(stream, seek);
 					return expectation::met;
 				case (int)type_id::int8_t:
 				case (int)type_id::uint8_t:
 					if (!stream.read_integer(stream.read_type(), (uint8_t*)value))
 						return layer_exception("load failed for uint8 type");
 
-					burn_marshalling_memory(stream, seek);
+					program::request_gas_vmemory_marshall(stream, seek);
 					return expectation::met;
 				case (int)type_id::int16_t:
 				case (int)type_id::uint16_t:
 					if (!stream.read_integer(stream.read_type(), (uint16_t*)value))
 						return layer_exception("load failed for uint16 type");
 
-					burn_marshalling_memory(stream, seek);
+					program::request_gas_vmemory_marshall(stream, seek);
 					return expectation::met;
 				case (int)type_id::int32_t:
 				case (int)type_id::uint32_t:
 					if (!stream.read_integer(stream.read_type(), (uint32_t*)value))
 						return layer_exception("load failed for uint32 type");
 
-					burn_marshalling_memory(stream, seek);
+					program::request_gas_vmemory_marshall(stream, seek);
 					return expectation::met;
 				case (int)type_id::int64_t:
 				case (int)type_id::uint64_t:
 					if (!stream.read_integer(stream.read_type(), (uint64_t*)value))
 						return layer_exception("load failed for uint64 type");
 
-					burn_marshalling_memory(stream, seek);
+					program::request_gas_vmemory_marshall(stream, seek);
 					return expectation::met;
 				case (int)type_id::float_t:
 				case (int)type_id::double_t:
@@ -4625,7 +4615,7 @@ namespace tangent
 							((address_repr*)value)->hash = algorithm::pubkeyhash_t(data);
 
 						unique.reset();
-						burn_marshalling_memory(stream, seek);
+						program::request_gas_vmemory_marshall(stream, seek);
 						return expectation::met;
 					}
 					else if (name == SCRIPT_TYPE_PAYABLE)
@@ -4654,7 +4644,7 @@ namespace tangent
 
 						payable->recalculate();
 						unique.reset();
-						burn_marshalling_memory(stream, seek);
+						program::request_gas_vmemory_marshall(stream, seek);
 						return expectation::met;
 					}
 					else if (name == SCRIPT_TYPE_STRING)
@@ -4665,7 +4655,7 @@ namespace tangent
 
 						new (value) string_repr(data);
 						unique.reset();
-						burn_marshalling_memory(stream, seek);
+						program::request_gas_vmemory_marshall(stream, seek);
 						return expectation::met;
 					}
 					else if (name == SCRIPT_TYPE_UINT128)
@@ -4675,7 +4665,7 @@ namespace tangent
 							return layer_exception("load failed for uint128 type");
 
 						unique.reset();
-						burn_marshalling_memory(stream, seek);
+						program::request_gas_vmemory_marshall(stream, seek);
 						return expectation::met;
 					}
 					else if (name == SCRIPT_TYPE_UINT256)
@@ -4685,7 +4675,7 @@ namespace tangent
 							return layer_exception("load failed for uint256 type");
 
 						unique.reset();
-						burn_marshalling_memory(stream, seek);
+						program::request_gas_vmemory_marshall(stream, seek);
 						return expectation::met;
 					}
 					else if (name == SCRIPT_TYPE_REAL320)
@@ -4695,7 +4685,7 @@ namespace tangent
 							return layer_exception("load failed for decimal type");
 
 						unique.reset();
-						burn_marshalling_memory(stream, seek);
+						program::request_gas_vmemory_marshall(stream, seek);
 						return expectation::met;
 					}
 					else if (name == SCRIPT_TYPE_ARRAY)
@@ -4737,7 +4727,7 @@ namespace tangent
 						if (!stream.read_integer(stream.read_type(), (uint32_t*)value))
 							return layer_exception("load failed for uint32 type");
 
-						burn_marshalling_memory(stream, seek);
+						program::request_gas_vmemory_marshall(stream, seek);
 						return expectation::met;
 					}
 					return layer_exception(stringify::text("load not supported for %s type", name.data()));
@@ -5639,6 +5629,118 @@ namespace tangent
 			else
 				modules.insert(std::make_pair(string(name), std::move(value)));
 		}
+		string factory::export_predefined_symbols()
+		{
+			string_stream stream;
+			asIScriptEngine* engine = vm->get_engine();
+			for (asUINT i = 0; i < engine->GetEnumCount(); i++)
+			{
+				auto* type = engine->GetEnumByIndex(i);
+				std::string_view name_space = type->GetNamespace();
+				asUINT values_count = type->GetEnumValueCount();
+				if (values_count > 0)
+				{
+					if (!name_space.empty())
+						stream << "namespace " << name_space << "\n{\n\t";
+
+					stream << "enum " << type->GetName() << (name_space.empty() ? "\n{\n" : "\n\t{\n");
+					for (asUINT j = 0; j < values_count; ++j)
+					{
+						stream << (name_space.empty() ? "\t" : "\t\t") << type->GetEnumValueByIndex(j, nullptr);
+						if (j < values_count - 1)
+							stream << ",";
+						stream << "\n";
+					}
+					stream << (name_space.empty() ? "}\n" : "\t}\n}\n");
+				}
+				else if (!name_space.empty())
+					stream << "namespace " << name_space << " { enum " << type->GetName() << " { } }\n";
+				else
+					stream << "enum " << type->GetName() << " { }\n";
+			}
+			for (asUINT i = 0; i < engine->GetObjectTypeCount(); i++)
+			{
+				auto* type = engine->GetObjectTypeByIndex(i);
+				std::string_view name_space = type->GetNamespace();
+				asUINT behaviours_count = type->GetBehaviourCount();
+				asUINT methods_count = type->GetMethodCount();
+				asUINT properties_count = type->GetPropertyCount();
+				asUINT funcdefs_count = type->GetChildFuncdefCount();
+				bool has_children = behaviours_count > 0 || methods_count > 0 || properties_count > 0 || funcdefs_count > 0;
+				if (!name_space.empty())
+					stream << "namespace " << name_space << (has_children ? "\n{\n\t" : " { ");
+
+				stream << "class " << type->GetName();
+				if (type->GetSubTypeCount() > 0)
+				{
+					stream << "<";
+					for (asUINT j = 0; j < type->GetSubTypeCount(); ++j)
+					{
+						auto* subtype = type->GetSubType(j);
+						stream << subtype->GetName();
+						if (j < type->GetSubTypeCount() - 1)
+							stream << ", ";
+					}
+					stream << ">";
+				}
+
+				if (has_children)
+				{
+					stream << (name_space.empty() ? "\n{\n" : "\n\t{\n");
+					for (asUINT j = 0; j < behaviours_count; ++j)
+					{
+						asEBehaviours behaviours;
+						auto* behaviour = type->GetBehaviourByIndex(j, &behaviours);
+						if (behaviours == asBEHAVE_CONSTRUCT || behaviours == asBEHAVE_DESTRUCT)
+							stream << (name_space.empty() ? "\t" : "\t\t") << behaviour->GetDeclaration(false, true, true) << ";\n";
+					}
+					for (asUINT j = 0; j < methods_count; ++j)
+					{
+						auto* method = type->GetMethodByIndex(j);
+						stream << (name_space.empty() ? "\t" : "\t\t") << method->GetDeclaration(false, true, true) << (method->IsProperty() ? " property;\n" : ";\n");
+					}
+					for (asUINT j = 0; j < properties_count; ++j)
+						stream << (name_space.empty() ? "\t" : "\t\t") << type->GetPropertyDeclaration(j, true) << ";\n";
+					for (asUINT j = 0; j < funcdefs_count; ++j)
+						stream << (name_space.empty() ? "\t" : "\t\t") << "funcdef " << type->GetChildFuncdef(j)->GetFuncdefSignature()->GetDeclaration(false) << ";\n";
+					stream << (name_space.empty() ? "}\n" : "\t}\n}\n");
+				}
+				else if (!name_space.empty())
+					stream << " { } }\n";
+				else
+					stream << " { }\n";
+			}
+			for (asUINT i = 0; i < engine->GetGlobalFunctionCount(); i++)
+			{
+				auto* function = engine->GetGlobalFunctionByIndex(i);
+				std::string_view name_space = function->GetNamespace();
+				if (!name_space.empty())
+					stream << "namespace " << name_space << " { ";
+				stream << function->GetDeclaration(false, false, true) << ";";
+				stream << (name_space.empty() ? "\n" : " }\n");
+			}
+			for (asUINT i = 0; i < engine->GetGlobalPropertyCount(); i++)
+			{
+				const char* name; const char* name_space_ptr; int type_id;
+				engine->GetGlobalPropertyByIndex(i, &name, &name_space_ptr, &type_id, nullptr, nullptr, nullptr, nullptr);
+				std::string_view declaration = engine->GetTypeDeclaration(type_id, true);
+				std::string_view name_space = name_space_ptr;
+				if (!name_space.empty())
+					stream << "namespace " << name_space << " { ";
+				stream << declaration << " " << name << ";";
+				stream << (name_space.empty() ? "\n" : " }\n");
+			}
+			for (asUINT i = 0; i < engine->GetTypedefCount(); ++i)
+			{
+				auto* type = engine->GetTypedefByIndex(i);
+				std::string_view name_space = type->GetNamespace();
+				if (!name_space.empty())
+					stream << "namespace " << name_space << " { ";
+				stream << "typedef " << engine->GetTypeDeclaration(type->GetUnderlyingTypeId()) << " " << type->GetName() << ";";
+				stream << (name_space.empty() ? "\n" : " }\n");
+			}
+			return stream.str();
+		}
 		expects_lr<cmodule> factory::compile_module(const std::string_view& hashcode, const std::function<expects_lr<string>()>& unpacked_code_callback)
 		{
 			VI_ASSERT(unpacked_code_callback, "callback should be set");
@@ -5664,7 +5766,7 @@ namespace tangent
 				vmc_log.append(SCRIPT_VM " preparation: " + preparation.error().message() + "\r\n");
 			error:
 				vm->set_compiler_error_callback(nullptr);
-				stringify::replace(vmc_log, hashcode, SCRIPT_VM "c");
+				stringify::replace(vmc_log, hashcode, SCRIPT_VM);
 				return layer_exception(string(vmc_log));
 			}
 
@@ -5899,10 +6001,11 @@ namespace tangent
 				if (exception.empty())
 					return layer_exception(execution ? "execution error" : execution.error().message());
 
-				string error_message = stringify::text("(%s) ", exception.type.c_str());
+				string error_message;
+				error_message.append(1, '(').append(exception.type).append(") ");
 				error_message.append(exception.text);
 				error_message.append(exception.origin);
-				stringify::replace(error_message, name, SCRIPT_VM "c");
+				stringify::replace(error_message, name, SCRIPT_VM);
 				return layer_exception(std::move(error_message));
 			}
 
@@ -6181,6 +6284,10 @@ namespace tangent
 				}
 			}
 			return true;
+		}
+		bool program::request_gas_vmemory_marshall(const format::ro_stream& stream, size_t prev_seek)
+		{
+			return prev_seek < stream.seek ? request_gas_vmemory(stream.seek - prev_seek) : true;
 		}
 	}
 }
