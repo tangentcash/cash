@@ -48,21 +48,13 @@ set_target_properties(tangentcash PROPERTIES
     CXX_EXTENSIONS OFF
     VERSION ${PROJECT_VERSION}
     SOVERSION ${PROJECT_VERSION})
+target_precompile_headers(tangentcash PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${CMAKE_CURRENT_LIST_DIR}/src/tangent/kernel/chain.h>)
 if (MSVC)
     set(CMAKE_EXE_LINKER_FLAGS "/ENTRY:mainCRTStartup /SUBSYSTEM:CONSOLE")
+    target_compile_definitions(tangentcash PRIVATE -D_CRT_SECURE_NO_WARNINGS)
 endif()
 if (TAN_TEST)
     target_compile_definitions(tangentcash PUBLIC -DTAN_TEST)
-endif()
-
-target_precompile_headers(tangentcash PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${CMAKE_CURRENT_LIST_DIR}/src/tangent/kernel/chain.h>)
-if (MSVC)
-    target_compile_definitions(tangentcash PRIVATE -D_CRT_SECURE_NO_WARNINGS)
-    target_compile_options(tangentcash PRIVATE
-        $<$<COMPILE_LANGUAGE:CXX>:/wd4146>
-        $<$<COMPILE_LANGUAGE:CXX>:/wd4244>
-        $<$<COMPILE_LANGUAGE:CXX>:/wd4251>
-        $<$<COMPILE_LANGUAGE:CXX>:/wd4275>)
 endif()
 
 set(VI_SOURCE_EXCLUDE "as_compiler.cpp|as_tokenizer.cpp")

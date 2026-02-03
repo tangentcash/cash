@@ -394,14 +394,14 @@ namespace tangent
 			template <typename t>
 			expects_lr<block_transaction> get_block_transaction(const uint256_t& transaction_hash, bool may_have_distinct_asset = false) const
 			{
-				auto transaction = get_block_transaction_instance(transaction_hash, may_have_distinct_asset);
-				if (!transaction)
-					return transaction.error();
+				auto result = get_block_transaction_instance(transaction_hash, may_have_distinct_asset);
+				if (!result)
+					return result.error();
 
-				if (transaction->transaction->as_type() != t::as_instance_type())
+				if (result->transaction->as_type() != t::as_instance_type())
 					return layer_exception("block transaction is not " + string(t::as_instance_typename()) + " transaction");
 
-				return transaction;
+				return result;
 			}
 
 		public:

@@ -31,6 +31,8 @@
 #include <string.h>
 
 #include "memzero.h"
+#pragma warning(push)
+#pragma warning(disable: 4146)
 
 #if defined(_WIN32) || defined(_WIN64)
 #ifndef __clang__
@@ -1831,3 +1833,5 @@ void bn_print_raw(const bignum256 *x) {
 void bn_inverse(bignum256 *x, const bignum256 *prime) {
   bn_inverse_fast(x, prime);
 }
+
+#pragma warning(pop)

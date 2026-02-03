@@ -20,16 +20,16 @@ namespace tangent
 		static thread_local uint32_t thread_invocations = 0;
 		sqlite::expects_db<void> storage_util::multi_tx_begin(const std::string_view& operation, sqlite::isolation type, multi_storage_index_ptr& ptr)
 		{
-			for (auto& target : ptr)
+			for (auto& connection : ptr)
 			{
-				auto result = target->tx_begin(operation, type);
+				auto result = connection->tx_begin(operation, type);
 				if (result)
 					continue;
 
-				for (auto& target : ptr)
+				for (auto& other_connection : ptr)
 				{
-					if (target->in_transaction())
-						target->tx_rollback(operation);
+					if (other_connection->in_transaction())
+						other_connection->tx_rollback(operation);
 				}
 
 				return result;
@@ -38,9 +38,9 @@ namespace tangent
 		}
 		sqlite::expects_db<void> storage_util::multi_tx_commit(const std::string_view& operation, multi_storage_index_ptr&& ptr)
 		{
-			for (auto& target : ptr)
+			for (auto& connection : ptr)
 			{
-				auto result = target->tx_commit(operation);
+				auto result = connection->tx_commit(operation);
 				if (!result)
 				{
 					ptr.clear();
@@ -53,9 +53,9 @@ namespace tangent
 		}
 		sqlite::expects_db<void> storage_util::multi_tx_rollback(const std::string_view& operation, multi_storage_index_ptr&& ptr)
 		{
-			for (auto& target : ptr)
+			for (auto& connection : ptr)
 			{
-				auto result = target->tx_rollback(operation);
+				auto result = connection->tx_rollback(operation);
 				if (!result)
 				{
 					ptr.clear();

@@ -245,8 +245,8 @@ namespace tangent
 				mpz_t l, p;
 				mpz_init_set_ui(l, 2);
 				mpz_init(p);
-				mpz_ui_pow_ui(l, 2, difficulty);
-				mpz_ui_pow_ui(p, 2, difficulty);
+				mpz_ui_pow_ui(l, 2, (unsigned long)difficulty);
+				mpz_ui_pow_ui(p, 2, (unsigned long)difficulty);
 				mpz_powm(l, x, l, n);
 				mpz_add(l, x, l);
 
@@ -275,7 +275,7 @@ namespace tangent
 				{
 					mpz_t r;
 					mpz_init_set_ui(r, 2);
-					mpz_powm_ui(r, r, difficulty, l);
+					mpz_powm_ui(r, r, (unsigned long)difficulty, l);
 
 					mpz_t y, t, l_evaluated;
 					mpz_init(y);

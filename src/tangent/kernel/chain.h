@@ -48,6 +48,10 @@ namespace tangent
 	public:
 		layer_exception();
 		layer_exception(string&& text);
+		layer_exception(const layer_exception& other);
+		layer_exception(layer_exception&& other) noexcept;
+		layer_exception& operator=(const layer_exception& other);
+		layer_exception& operator=(layer_exception&& other) noexcept;
 		const char* what() const noexcept override;
 		string&& message() noexcept;
 	};
@@ -61,18 +65,22 @@ namespace tangent
 
 	public:
 		remote_exception(string&& text);
+		remote_exception(const remote_exception& other);
+		remote_exception(remote_exception&& other) noexcept;
+		remote_exception& operator=(const remote_exception& other);
+		remote_exception& operator=(remote_exception&& other) noexcept;
 		const char* what() const noexcept override;
 		string&& message() noexcept;
 		uint64_t retry_after_timestamp() const noexcept;
 		bool is_retry_after() const noexcept;
 		bool is_retry() const noexcept;
 		bool is_shutdown() const noexcept;
-		static remote_exception retry_later();
-		static remote_exception retry_after(uint64_t timestamp);
-		static remote_exception shutdown();
+		static remote_exception retry_later(string&& text = string());
+		static remote_exception retry_after(uint64_t timestamp, string&& text = string());
+		static remote_exception shutdown(string&& text = string());
 
 	private:
-		remote_exception(int8_t new_status, uint64_t new_retry_time);
+		remote_exception(string&& text, int8_t new_status, uint64_t new_retry_time);
 	};
 
 	template <typename v>

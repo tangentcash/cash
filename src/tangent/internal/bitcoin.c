@@ -2589,10 +2589,9 @@ int btc_tx_deserialize(const unsigned char* tx_serialized, size_t inlen, btc_tx*
     {
         /* The witness flag is present, and we support witnesses. */
         flags ^= 1;
-        for (size_t i = 0; i < tx->vin->len; i++)
+        for (size_t j = 0; j < tx->vin->len; j++)
         {
-            btc_tx_in* tx_in = vector_idx(tx->vin, i);
-            uint32_t vlen;
+            btc_tx_in* tx_in = vector_idx(tx->vin, j);
             if (!deser_varlen(&vlen, &buf)) return false;
             for (size_t j = 0; j < vlen; j++)
             {

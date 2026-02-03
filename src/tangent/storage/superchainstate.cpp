@@ -494,8 +494,8 @@ namespace tangent
 			{
 				auto row = response[i];
 				superchain::wallet_link value;
-				auto owner = row["owner"].get().get_blob();
-				value.owner = algorithm::pubkeyhash_t(owner);
+				auto owner_hash = row["owner"].get().get_blob();
+				value.owner = algorithm::pubkeyhash_t(owner_hash);
 				value.public_key = row["public_key"].get().get_blob();
 				value.address = row["address"].get().get_blob();
 				values[string(value.address)] = std::move(value);

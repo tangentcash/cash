@@ -578,9 +578,9 @@ namespace tangent
 			write(array, (uint32_t)std::min(sizeof(value), size));
 			return *this;
 		}
-		wo_stream& wo_stream::write_typeless(const void* data, size_t size)
+		wo_stream& wo_stream::write_typeless(const void* buffer, size_t size)
 		{
-			write(data, (uint32_t)size);
+			write(buffer, (uint32_t)size);
 			return *this;
 		}
 		string wo_stream::compress() const
@@ -663,18 +663,18 @@ namespace tangent
 			if (!read_type(&subtype) || !read_integer(subtype, &size) || size > protocol::now().message.max_message_size)
 				return false;
 
-			vector<char> data;
-			data.resize((size_t)size);
-			if (read((void*)data.data(), size) != size)
+			vector<char> buffer;
+			buffer.resize((size_t)size);
+			if (read((void*)buffer.data(), size) != size)
 				return false;
 
 			switch (type)
 			{
 				case viewable::string_any10:
-					value->assign(data.begin(), data.end());
+					value->assign(buffer.begin(), buffer.end());
 					return true;
 				case viewable::string_any16:
-					value->assign(util::encode_0xhex(std::string_view(data.data(), data.size())));
+					value->assign(util::encode_0xhex(std::string_view(buffer.data(), buffer.size())));
 					return true;
 				default:
 					return false;
@@ -907,14 +907,14 @@ namespace tangent
 			{
 				case viewable::string_any10:
 				{
-					auto value = string(as_string());
-					if (!variables_util::is_ascii_encoding(value))
-						return util::encode_0xhex(value);
+					auto buffer = string(as_string());
+					if (!variables_util::is_ascii_encoding(buffer))
+						return util::encode_0xhex(buffer);
 
-					stringify::replace(value, "\"", "\\\"");
-					value.insert(value.begin(), '\"');
-					value.append(1, '\"');
-					return value;
+					stringify::replace(buffer, "\"", "\\\"");
+					buffer.insert(buffer.begin(), '\"');
+					buffer.append(1, '\"');
+					return buffer;
 				}
 				case viewable::decimal_zero:
 					return ((decimal*)value.pointer)->to_string();
@@ -982,11 +982,11 @@ namespace tangent
 			{
 				case viewable::string_any10:
 				{
-					auto value = as_string();
-					if (!variables_util::is_ascii_encoding(value))
-						return var::set::string(util::encode_0xhex(value));
+					auto buffer = as_string();
+					if (!variables_util::is_ascii_encoding(buffer))
+						return var::set::string(util::encode_0xhex(buffer));
 
-					return var::set::string(value);
+					return var::set::string(buffer);
 				}
 				case viewable::decimal_zero:
 					return var::set::decimal(*(decimal*)value.pointer);

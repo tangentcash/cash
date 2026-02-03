@@ -207,11 +207,11 @@ namespace tangent
 		}
 		format::tree account_uniform::as_tree() const
 		{
-			auto data = uniform_state::as_tree();
-			data.set("owner", algorithm::signing::serialize_address(owner));
-			data.set("index", format::variable(format::util::encode_0xhex(index)));
-			data.set("data", format::variable(format::util::encode_0xhex(this->data)));
-			return data;
+			auto result = uniform_state::as_tree();
+			result.set("owner", algorithm::signing::serialize_address(owner));
+			result.set("index", format::variable(format::util::encode_0xhex(index)));
+			result.set("data", format::variable(format::util::encode_0xhex(data)));
+			return result;
 		}
 		uint32_t account_uniform::as_type() const
 		{
@@ -314,12 +314,12 @@ namespace tangent
 		}
 		format::tree account_multiform::as_tree() const
 		{
-			auto data = multiform_state::as_tree();
-			data.set("owner", algorithm::signing::serialize_address(owner));
-			data.set("column", format::variable(format::util::encode_0xhex(column)));
-			data.set("row", format::variable(format::util::encode_0xhex(row)));
-			data.set("data", format::variable(format::util::encode_0xhex(this->data)));
-			return data;
+			auto result = multiform_state::as_tree();
+			result.set("owner", algorithm::signing::serialize_address(owner));
+			result.set("column", format::variable(format::util::encode_0xhex(column)));
+			result.set("row", format::variable(format::util::encode_0xhex(row)));
+			result.set("data", format::variable(format::util::encode_0xhex(data)));
+			return result;
 		}
 		uint32_t account_multiform::as_type() const
 		{

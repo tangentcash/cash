@@ -147,7 +147,7 @@ namespace tangent
 			else if (!attempt)
 				return expectation::met;
 
-			map[1] = var::set::integer(std::pow(4, attempt));
+			map[1] = var::set::integer(algorithm::arithmetic::integer_pow<uint64_t>(4, attempt));
 			cursor = get_peer_storage().emplace_query(__func__, "UPDATE cooldowns SET expiration = expiration + ? WHERE address = ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));

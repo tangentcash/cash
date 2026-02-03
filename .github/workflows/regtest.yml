@@ -1,0 +1,12 @@
+name: Regtest
+on: [push]
+jobs:
+  build_docker_images:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+      with:
+        submodules: recursive
+    - name: Regtest
+      run: docker build -f ./regtest.Dockerfile -t regtest:staging .

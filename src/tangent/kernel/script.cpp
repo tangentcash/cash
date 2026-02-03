@@ -376,13 +376,13 @@ namespace tangent
 			memmove(buffer->data + start * (size_t)element_size, buffer->data + (start + count) * (size_t)element_size, (size_t)(buffer->num_elements - start - count) * (size_t)element_size);
 			buffer->num_elements -= count;
 		}
-		void array_repr::resize_buffer(int64_t delta, uint32_t where)
+		void array_repr::resize_buffer(int32_t delta, uint32_t where)
 		{
 			uint32_t buffer_size = buffer ? buffer->num_elements : 0;
 			if (delta < 0)
 			{
-				if (-delta > (int64_t)buffer_size)
-					delta = -(int64_t)buffer_size;
+				if (-delta > (int32_t)buffer_size)
+					delta = -(int32_t)buffer_size;
 
 				if (where > buffer_size + delta)
 					where = buffer_size + delta;
@@ -3448,7 +3448,7 @@ namespace tangent
 			}
 
 			auto copy = value;
-			copy *= (uint64_t)std::pow<uint64_t>(10, protocol::now().message.decimal_precision);
+			copy *= algorithm::arithmetic::integer_pow<uint64_t>(10, protocol::now().message.decimal_precision);
 
 			auto result = uint256_t::max();
 			if (copy < result.to_decimal())
@@ -3459,7 +3459,7 @@ namespace tangent
 		{
 			auto precision = protocol::now().message.decimal_precision;
 			auto result = value.to_decimal().truncate(precision);
-			result /= (uint64_t)std::pow<uint64_t>(10, protocol::now().message.decimal_precision);
+			result /= algorithm::arithmetic::integer_pow<uint64_t>(10, protocol::now().message.decimal_precision);
 			return result;
 		}
 		string_repr contract::alg_from_u256(const uint256_t& value)
@@ -4090,46 +4090,46 @@ namespace tangent
 			switch (type_id)
 			{
 				case (int)type_id::int8_t:
-					inout.set_return_byte(std::pow<int8_t>(*(int8_t*)a, *(int8_t*)b));
+					inout.set_return_byte(algorithm::arithmetic::integer_pow<int8_t>(*(int8_t*)a, *(int8_t*)b));
 					break;
 				case (int)type_id::uint8_t:
-					inout.set_return_byte(std::pow<uint8_t>(*(uint8_t*)a, *(uint8_t*)b));
+					inout.set_return_byte(algorithm::arithmetic::integer_pow<uint8_t>(*(uint8_t*)a, *(uint8_t*)b));
 					break;
 				case (int)type_id::int16_t:
 					if (*(int16_t*)b > (int16_t)std::numeric_limits<uint8_t>::max())
 						return contract::throw_ptr(exception_repr(exception_repr::category::argument(), "exponent overflow (max: 255)"));
 
-					inout.set_return_word(std::pow<int16_t>(*(int16_t*)a, *(int16_t*)b));
+					inout.set_return_word(algorithm::arithmetic::integer_pow<int16_t>(*(int16_t*)a, *(int16_t*)b));
 					break;
 				case (int)type_id::uint16_t:
 					if (*(uint16_t*)b > (uint16_t)std::numeric_limits<uint8_t>::max())
 						return contract::throw_ptr(exception_repr(exception_repr::category::argument(), "exponent overflow (max: 255)"));
 
-					inout.set_return_word(std::pow<uint16_t>(*(uint16_t*)a, *(uint16_t*)b));
+					inout.set_return_word(algorithm::arithmetic::integer_pow<uint16_t>(*(uint16_t*)a, *(uint16_t*)b));
 					break;
 				case (int)type_id::int32_t:
 					if (*(int32_t*)b > (int32_t)std::numeric_limits<uint8_t>::max())
 						return contract::throw_ptr(exception_repr(exception_repr::category::argument(), "exponent overflow (max: 255)"));
 
-					inout.set_return_dword(std::pow<int32_t>(*(int32_t*)a, *(int32_t*)b));
+					inout.set_return_dword(algorithm::arithmetic::integer_pow<int32_t>(*(int32_t*)a, *(int32_t*)b));
 					break;
 				case (int)type_id::uint32_t:
 					if (*(uint32_t*)b > (uint32_t)std::numeric_limits<uint8_t>::max())
 						return contract::throw_ptr(exception_repr(exception_repr::category::argument(), "exponent overflow (max: 255)"));
 
-					inout.set_return_dword(std::pow<uint32_t>(*(uint32_t*)a, *(uint32_t*)b));
+					inout.set_return_dword(algorithm::arithmetic::integer_pow<uint32_t>(*(uint32_t*)a, *(uint32_t*)b));
 					break;
 				case (int)type_id::int64_t:
 					if (*(int64_t*)b > (int64_t)std::numeric_limits<uint8_t>::max())
 						return contract::throw_ptr(exception_repr(exception_repr::category::argument(), "exponent overflow (max: 255)"));
 
-					inout.set_return_qword(std::pow<int64_t>(*(int64_t*)a, *(int64_t*)b));
+					inout.set_return_qword(algorithm::arithmetic::integer_pow<int64_t>(*(int64_t*)a, *(int64_t*)b));
 					break;
 				case (int)type_id::uint64_t:
 					if (*(uint64_t*)b > (uint64_t)std::numeric_limits<uint8_t>::max())
 						return contract::throw_ptr(exception_repr(exception_repr::category::argument(), "exponent overflow (max: 255)"));
 
-					inout.set_return_qword(std::pow<uint64_t>(*(uint64_t*)a, *(uint64_t*)b));
+					inout.set_return_qword(algorithm::arithmetic::integer_pow<uint64_t>(*(uint64_t*)a, *(uint64_t*)b));
 					break;
 				case (int)type_id::float_t:
 				case (int)type_id::double_t:
@@ -4144,12 +4144,8 @@ namespace tangent
 						uint128_t& b_v = *(uint128_t*)b;
 						if (b_v > uint128_t(std::numeric_limits<uint8_t>::max()))
 							return contract::throw_ptr(exception_repr(exception_repr::category::argument(), "exponent overflow (max: 255)"));
-
-						uint128_t r = a_v;
-						for (uint128_t i = 1; i < b_v; i++)
-							r *= a_v;
-
-						new (inout.get_address_of_return_location()) uint128_t(r);
+						
+						new (inout.get_address_of_return_location()) uint128_t(algorithm::arithmetic::integer_pow<uint128_t>(a_v, b_v));
 						break;
 					}
 					else if (name == SCRIPT_TYPE_UINT256)
@@ -4159,11 +4155,7 @@ namespace tangent
 						if (b_v > uint256_t(std::numeric_limits<uint8_t>::max()))
 							return contract::throw_ptr(exception_repr(exception_repr::category::argument(), "exponent overflow (max: 255)"));
 
-						uint256_t r = a_v;
-						for (uint256_t i = 1; i < b_v; i++)
-							r *= a_v;
-
-						new (inout.get_address_of_return_location()) uint256_t(r);
+						new (inout.get_address_of_return_location()) uint256_t(algorithm::arithmetic::integer_pow<uint256_t>(a_v, b_v));
 						break;
 					}
 					else if (name == SCRIPT_TYPE_REAL320)
@@ -4532,7 +4524,7 @@ namespace tangent
 						stream.childs().reserve(properties);
 						for (size_t i = 0; i < properties; i++)
 						{
-							std::string_view name = object.get_property_name(i);
+							std::string_view field = object.get_property_name(i);
 							void* address = object.get_address_of_property(i);
 							int type_id = object.get_property_type_id(i);
 							auto child = format::tree();
@@ -4540,7 +4532,7 @@ namespace tangent
 							if (!status)
 								return status;
 
-							stream.set(name, std::move(child));
+							stream.set(field, std::move(child));
 						}
 						return expectation::met;
 					}
@@ -4646,18 +4638,18 @@ namespace tangent
 						payable->payments.reserve((size_t)payments_size);
 						for (uint8_t i = 0; i < payments_size; i++)
 						{
-							algorithm::asset_id asset;
-							if (!stream.read_integer(stream.read_type(), &asset))
+							algorithm::asset_id payment_asset;
+							if (!stream.read_integer(stream.read_type(), &payment_asset))
 								return layer_exception("load failed for payable type");
 
-							decimal value;
-							if (!stream.read_decimal(stream.read_type(), &value))
+							decimal payment_value;
+							if (!stream.read_decimal(stream.read_type(), &payment_value))
 								return layer_exception("load failed for payable type");
 
-							if (!algorithm::asset::is_any(asset) || value.is_nan() || value.is_negative())
+							if (!algorithm::asset::is_any(payment_asset) || payment_value.is_nan() || payment_value.is_negative())
 								return layer_exception("load failed for payable type");
 
-							payable->payments.push_back(std::make_pair(std::move(asset), std::move(value)));
+							payable->payments.push_back(std::make_pair(std::move(payment_asset), std::move(payment_value)));
 						}
 
 						payable->recalculate();
@@ -4839,12 +4831,12 @@ namespace tangent
 						payable->payments.reserve(stream.childs().size());
 						for (auto& payment : stream.childs())
 						{
-							algorithm::asset_id asset = payment.child_var("asset.id").as_uint256();;
-							decimal value = payment.child_var("value").as_decimal();
-							if (!algorithm::asset::is_any(asset) || value.is_nan() || value.is_negative())
+							algorithm::asset_id payment_asset = payment.child_var("asset.id").as_uint256();;
+							decimal payment_value = payment.child_var("value").as_decimal();
+							if (!algorithm::asset::is_any(payment_asset) || payment_value.is_nan() || payment_value.is_negative())
 								return layer_exception("load failed for payable type");
 
-							payable->payments.push_back(std::make_pair(std::move(asset), std::move(value)));
+							payable->payments.push_back(std::make_pair(std::move(payment_asset), std::move(payment_value)));
 						}
 
 						payable->recalculate();
@@ -4903,10 +4895,10 @@ namespace tangent
 						size_t properties = object.get_properties_count();
 						for (size_t i = 0; i < properties; i++)
 						{
-							std::string_view name = object.get_property_name(i);
-							auto* substream = (format::tree*)stream.child(name);
+							std::string_view field = object.get_property_name(i);
+							auto* substream = (format::tree*)stream.child(field);
 							if (!substream)
-								return layer_exception(stringify::text("load failed for %s type while searching for %s property", name.data(), name.data()));
+								return layer_exception(stringify::text("load failed for %s type while searching for %s property", field.data(), field.data()));
 
 							auto status = load(*substream, object.get_address_of_property(i), object.get_property_type_id(i));
 							if (!status)
@@ -5732,7 +5724,6 @@ namespace tangent
 			if (!status)
 				return layer_exception(std::move(status.error().message()));
 
-			auto* vm = module.get_vm();
 			size_t count = module.get_properties_count();
 			for (size_t i = 0; i < count; i++)
 			{
@@ -5745,7 +5736,7 @@ namespace tangent
 				if (name == SCRIPT_TYPE_VARYING || name == SCRIPT_TYPE_MAPPING || name == SCRIPT_TYPE_RANGING)
 				{
 					auto value = (container_repr*)module.get_address_of_property(i);
-					value->slot = (uint16_t)(i + 1);
+					value->slot = (uint8_t)(i + 1);
 					value->reset();
 				}
 			}

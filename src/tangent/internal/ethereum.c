@@ -3,7 +3,6 @@
 #include <secp256k1_recovery.h>
 #include <string.h>
 #include <ctype.h>
-#include <gmp.h>
 #include "rand.h"
 #if defined(__unix__) || (defined(__APPLE__) && defined(__MACH__))
 #include <strings.h>
@@ -16,19 +15,19 @@
   dest |= (uint64_t)framebuf->buf[offset + 26] << 0x28; \
   dest |= (uint64_t)framebuf->buf[offset + 27] << 0x20; \
   dest |= (uint64_t)framebuf->buf[offset + 28] << 0x18; \
-  dest |= framebuf->buf[offset + 29] << 0x10; \
-  dest |= framebuf->buf[offset + 30] << 0x08; \
-  dest |= framebuf->buf[offset + 31];
+  dest |= (uint64_t)framebuf->buf[offset + 29] << 0x10; \
+  dest |= (uint64_t)framebuf->buf[offset + 30] << 0x08; \
+  dest |= (uint64_t)framebuf->buf[offset + 31];
 
 #define ethc_abi_buf_pr32(dest, framebuf, offset) \
   dest = (uint64_t)framebuf->buf[offset + 28] << 0x18; \
-  dest |= framebuf->buf[offset + 29] << 0x10; \
-  dest |= framebuf->buf[offset + 30] << 0x08; \
-  dest |= framebuf->buf[offset + 31];
+  dest |= (uint64_t)framebuf->buf[offset + 29] << 0x10; \
+  dest |= (uint64_t)framebuf->buf[offset + 30] << 0x08; \
+  dest |= (uint64_t)framebuf->buf[offset + 31];
 
 #define ethc_abi_buf_pr16(dest, framebuf, offset) \
-  dest = framebuf->buf[offset + 30] << 0x08; \
-  dest |= framebuf->buf[offset + 31];
+  dest = (uint16_t)framebuf->buf[offset + 30] << 0x08; \
+  dest |= (uint16_t)framebuf->buf[offset + 31];
 
 #define ethc_abi_buf_pr8(dest, framebuf, offset) \
   dest = framebuf->buf[offset + 31];
@@ -60,29 +59,6 @@ int eth_keccak256(uint8_t* dest, const uint8_t* bytes, size_t len)
 {
     keccak_256(bytes, len, dest);
     return 1;
-}
-
-int eth_keccak256p(uint8_t* dest, const uint8_t* bytes, size_t len)
-{
-    int size, r;
-    char* sig, * tmp;
-
-    if (dest == NULL || bytes == NULL)
-        return -1;
-
-    size = gmp_asprintf(&sig, "\x19" "Ethereum Signed Message:\n%llu", len);
-    tmp = realloc(sig, size + len);
-    if (tmp == NULL)
-    {
-        free(sig);
-        return -1;
-    }
-    sig = tmp;
-
-    strncpy(sig + size, (char*)bytes, len);
-    r = eth_keccak256(dest, (uint8_t*)sig, size + len);
-    free(sig);
-    return r;
 }
 
 int eth_is_hex(const char* str, int len)
@@ -867,10 +843,10 @@ int eth_rlp_uint64(struct eth_rlp* rlp, uint64_t* d)
         *d |= (uint64_t)bytes[1] << 0x30;
         *d |= (uint64_t)bytes[2] << 0x28;
         *d |= (uint64_t)bytes[3] << 0x20;
-        *d |= bytes[4] << 0x18;
-        *d |= bytes[5] << 0x10;
-        *d |= bytes[6] << 0x8;
-        *d |= bytes[7];
+        *d |= (uint64_t)bytes[4] << 0x18;
+        *d |= (uint64_t)bytes[5] << 0x10;
+        *d |= (uint64_t)bytes[6] << 0x8;
+        *d |= (uint64_t)bytes[7];
         free(bytes);
         return 1;
     }
@@ -1307,6 +1283,8 @@ int eth_abi_call(struct eth_abi* abi, char** fn, int* len)
     {
         if (len == NULL)
             fnlen = (int)strlen(*fn);
+        else
+            fnlen = *len;
 
         if (eth_keccak256(keccak, (uint8_t*)*fn, fnlen) < 0)
             return -1;
@@ -1764,7 +1742,7 @@ int eth_abi_from_hex(struct eth_abi* abi, char* hex, int len)
 {
     struct ethc_abi_frame* nframe;
 
-    if (abi == NULL || abi == NULL)
+    if (abi == NULL)
         return -1;
 
     if (ethc_abi_frame_init(&nframe) < 0)

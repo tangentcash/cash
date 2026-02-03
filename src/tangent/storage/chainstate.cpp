@@ -450,7 +450,7 @@ namespace tangent
 					if (!cursor || cursor->error())
 						return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 
-					auto response = cursor->first();
+					response = cursor->first();
 					parallel::wail_all(parallel::for_each_sequential(response.begin(), response.end(), response.size(), ELEMENTS_FEW, [&](sqlite::row row)
 					{
 						string index = row["index_hash"].get().get_blob();
@@ -495,7 +495,7 @@ namespace tangent
 					if (!cursor || cursor->error())
 						return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 
-					auto response = cursor->first();
+					response = cursor->first();
 					parallel::wail_all(parallel::for_each_sequential(response.begin(), response.end(), response.size(), ELEMENTS_FEW, [&](sqlite::row next)
 					{
 						string column = next["column_hash"].get().get_blob();
@@ -986,16 +986,10 @@ namespace tangent
 			}
 			if (must_write_transaction_data)
 			{
-				auto& tx_storage = get_tx_storage();
-				auto& account_storage = get_account_storage();
-				auto& party_storage = get_party_storage();
-				auto& alias_storage = get_alias_storage();
-				auto* tx_storage_ptr = tx_storage.ptr();
-				auto* account_storage_ptr = account_storage.ptr();
-				auto* party_storage_ptr = party_storage.ptr();
-				auto* alias_storage_ptr = alias_storage.ptr();
-				expectation_queue.emplace_back(cotask<expects_lr<void>>([&]() -> expects_lr<void>
+				expectation_queue.emplace_back(cotask<expects_lr<void>>([this, &transactions, &evaluation, &commit_transaction_data]() -> expects_lr<void>
 				{
+					auto& tx_storage = get_tx_storage();
+					auto* tx_storage_ptr = tx_storage.ptr();
 					auto* statement = *commit_transaction_data;
 					sqlite::expects_db<sqlite::cursor> cursor = sqlite::database_exception(string());
 					for (auto& data : transactions)
@@ -1015,26 +1009,15 @@ namespace tangent
 					}
 					return expectation::met;
 				}, false));
-				expectation_queue.emplace_back(cotask<expects_lr<void>>([&]() -> expects_lr<void>
-				{
-					sqlite::expects_db<void> status = expectation::met;
-					for (auto& data : transactions)
-					{
-						status = blob_storage.store(__func__, get_transaction_label(data.transaction_hash), data.transaction_message.data);
-						if (!status)
-							return layer_exception(ledger::storage_util::error_of(status));
-
-						status = blob_storage.store(__func__, get_receipt_label(data.transaction_hash), data.receipt_message.data);
-						if (!status)
-							return layer_exception(ledger::storage_util::error_of(status));
-					}
-					return expectation::met;
-				}, false));
-				expectation_queue.emplace_back(cotask<expects_lr<void>>([&]() -> expects_lr<void>
+				expectation_queue.emplace_back(cotask<expects_lr<void>>([this, &transactions, &evaluation, transaction_to_account_index, &commit_account_data, &commit_party_data]() -> expects_lr<void>
 				{
 					if (!transaction_to_account_index)
 						return expectation::met;
 
+					auto& account_storage = get_account_storage();
+					auto* account_storage_ptr = account_storage.ptr();
+					auto& party_storage = get_party_storage();
+					auto* party_storage_ptr = party_storage.ptr();
 					sqlite::expects_db<sqlite::cursor> cursor = sqlite::database_exception(string());
 					for (auto& data : transactions)
 					{
@@ -1061,11 +1044,13 @@ namespace tangent
 					}
 					return expectation::met;
 				}, false));
-				expectation_queue.emplace_back(cotask<expects_lr<void>>([&]() -> expects_lr<void>
+				expectation_queue.emplace_back(cotask<expects_lr<void>>([this, &transactions, &evaluation, transaction_to_rollup_index, &commit_alias_data]() -> expects_lr<void>
 				{
 					if (!transaction_to_rollup_index)
 						return expectation::met;
 
+					auto& alias_storage = get_alias_storage();
+					auto* alias_storage_ptr = alias_storage.ptr();
 					auto* statement = *commit_alias_data;
 					sqlite::expects_db<sqlite::cursor> cursor = sqlite::database_exception(string());
 					for (auto& data : transactions)
@@ -1080,6 +1065,21 @@ namespace tangent
 							if (!cursor || cursor->error())
 								return layer_exception(ledger::storage_util::error_of(cursor));
 						}
+					}
+					return expectation::met;
+				}, false));
+				expectation_queue.emplace_back(cotask<expects_lr<void>>([&transactions, &blob_storage]() -> expects_lr<void>
+				{
+					sqlite::expects_db<void> status = expectation::met;
+					for (auto& data : transactions)
+					{
+						status = blob_storage.store(__func__, get_transaction_label(data.transaction_hash), data.transaction_message.data);
+						if (!status)
+							return layer_exception(ledger::storage_util::error_of(status));
+
+						status = blob_storage.store(__func__, get_receipt_label(data.transaction_hash), data.receipt_message.data);
+						if (!status)
+							return layer_exception(ledger::storage_util::error_of(status));
 					}
 					return expectation::met;
 				}, false));
@@ -1558,16 +1558,16 @@ namespace tangent
 					return expects_lr<ledger::block_proof>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 				auto subresponse = cursor->first();
-				auto stride = proof.state_tree.nodes.size();
+				auto substride = proof.state_tree.nodes.size();
 				auto count = subresponse.size();
-				proof.state_tree.nodes.resize(stride + count);
+				proof.state_tree.nodes.resize(substride + count);
 				parallel::wail_all(parallel::for_loop(count, ELEMENTS_FEW, [&](size_t i)
 				{
 					auto column = subresponse[i]["column_hash"].get().get_blob();
 					auto row = subresponse[i]["row_hash"].get().get_blob();
 					auto blob = blob_storage.load(__func__, get_multiform_label(type, column, row, block_number)).or_else(string());
 					auto state = state_from_blob(block_number, type, column, row, blob);
-					proof.state_tree.nodes[stride + i] = state ? state->as_hash() : uint256_t(0);
+					proof.state_tree.nodes[substride + i] = state ? state->as_hash() : uint256_t(0);
 				}));
 			}
 

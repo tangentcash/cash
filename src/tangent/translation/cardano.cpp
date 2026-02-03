@@ -165,15 +165,15 @@ namespace tangent
 									string contract_address = token_operation.child_var("policyId").as_blob();
 									for (auto& item : tokens->childs())
 									{
-										string symbol = item.child_var("currency.symbol").as_blob();
-										if (format::util::is_hex_encoding(symbol))
-											symbol = codec::hex_decode(symbol);
+										string token_symbol = item.child_var("currency.symbol").as_blob();
+										if (format::util::is_hex_encoding(token_symbol))
+											token_symbol = codec::hex_decode(token_symbol);
 
-										auto token_asset = algorithm::asset::id_of(blockchain, symbol, contract_address);
+										auto token_asset = algorithm::asset::id_of(blockchain, token_symbol, contract_address);
 										uint8_t decimals = item.child_var("currency.decimals").as_uint8();
 										decimal divisibility = decimals > 0 ? decimal("1" + string(decimals, '0')) : decimal(1);
 										decimal token_value = algorithm::arithmetic::divide(math0::abs(item.child_var("value").as_decimal()), divisibility);
-										new_output.apply_token_value(contract_address, symbol, token_value, decimals);
+										new_output.apply_token_value(contract_address, token_symbol, token_value, decimals);
 										bridge::get()->enable_contract_address(token_asset, contract_address);
 									}
 								}
@@ -202,15 +202,15 @@ namespace tangent
 									string contract_address = token_operation.child_var("policyId").as_blob();
 									for (auto& item : tokens->childs())
 									{
-										string symbol = item.child_var("currency.symbol").as_blob();
-										if (format::util::is_hex_encoding(symbol))
-											symbol = codec::hex_decode(symbol);
+										string token_symbol = item.child_var("currency.symbol").as_blob();
+										if (format::util::is_hex_encoding(token_symbol))
+											token_symbol = codec::hex_decode(token_symbol);
 
-										auto token_asset = algorithm::asset::id_of(blockchain, symbol, contract_address);
+										auto token_asset = algorithm::asset::id_of(blockchain, token_symbol, contract_address);
 										uint8_t decimals = item.child_var("currency.decimals").as_uint8();
 										decimal divisibility = decimals > 0 ? decimal("1" + string(decimals, '0')) : decimal(1);
 										decimal token_value = algorithm::arithmetic::divide(math0::abs(item.child_var("value").as_decimal()), divisibility);
-										new_input.apply_token_value(contract_address, symbol, token_value, decimals);
+										new_input.apply_token_value(contract_address, token_symbol, token_value, decimals);
 										bridge::get()->enable_contract_address(token_asset, contract_address);
 									}
 								}
@@ -406,9 +406,9 @@ namespace tangent
 						uint8_t dummy_signature[XVK_LENGTH] = { 1 };
 						uint8_t dummy_public_key[BLAKE256_LENGTH] = { 1 };
 						uint8_t dummy_private_key[XSK_LENGTH] = { 1 };
-						for (auto& input : *possible_inputs)
+						for (auto& finalized_input : *possible_inputs)
 						{
-							builder.Body.TransactionInput.addInput(to_unprefixed_hex(input.transaction_id), input.index);
+							builder.Body.TransactionInput.addInput(to_unprefixed_hex(finalized_input.transaction_id), finalized_input.index);
 							if (!fee)
 							{
 								crypto::fill_random_bytes(dummy_public_key, sizeof(dummy_public_key));
@@ -417,10 +417,10 @@ namespace tangent
 							else
 								builder.addExtendedSigningKey(dummy_private_key);
 						}
-						for (auto& output : result.outputs)
+						for (auto& finalized_output : result.outputs)
 						{
-							builder.Body.TransactionOutput.addOutput(copy<std::string>(output.link.address), (uint64_t)to_lovelace(output.value));
-							for (auto& [token_hash, token] : output.tokens)
+							builder.Body.TransactionOutput.addOutput(copy<std::string>(finalized_output.link.address), (uint64_t)to_lovelace(finalized_output.value));
+							for (auto& [token_hash, token] : finalized_output.tokens)
 								builder.Body.TransactionOutput.addAsset(to_unprefixed_hex(token.contract_address), copy<std::string>(token.symbol), (uint64_t)uint256_t((token.value * token.get_divisibility()).truncate(0).to_string()));
 						}
 						builder.Body.addFee((uint64_t)to_lovelace(fee_value));

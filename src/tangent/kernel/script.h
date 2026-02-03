@@ -294,7 +294,7 @@ namespace tangent
 			void* get_data_pointer(void* buffer);
 			void copy(void* dst, void* src);
 			bool check_max_size(uint32_t num_elements);
-			void resize_buffer(int64_t delta, uint32_t at);
+			void resize_buffer(int32_t delta, uint32_t at);
 			void create_buffer(sbuffer** buf, uint32_t num_elements);
 			void delete_buffer(sbuffer* buf);
 			void copy_buffer(sbuffer* dst, sbuffer* src);

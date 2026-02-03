@@ -230,14 +230,10 @@ namespace tangent
 				ledger::block_evaluation solution;
 				ledger::block_rewards rewards;
 				hash_set<uint256_t> hashes;
-			} prover;
-
-			struct
-			{
 				std::atomic<bool> verifying = false;
 				std::atomic<bool> waiting = false;
 				std::atomic<bool> dirty = false;
-			} mempool;
+			} prover;
 
 		private:
 			hash_map<algorithm::asset_id, uint64_t> witnesses;

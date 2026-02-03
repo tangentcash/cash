@@ -435,9 +435,6 @@ namespace tangent
 				return coasync<expects_rt<vector<block_log>>>([this, block_height, block_count]() -> expects_promise_rt<vector<block_log>>
 				{
 					format::tree map;
-					if (block_height == 10149567)
-						map = format::tree::list();
-
 					for (uint64_t i = 0; i < block_count; i++)
 					{
 						format::tree block_map;
@@ -472,30 +469,28 @@ namespace tangent
 						map.push(std::move(logs_map));
 					}
 
-					auto logs_data = map.childs().empty() ? expects_rt<format::tree>(remote_exception::shutdown()) : coawait(execute_rpc_multi(nd_call::get_logs(), std::move(map), cache_policy::temporary_cache));
-					if (logs_data)
+					auto logs_batch = map.childs().empty() ? expects_rt<format::tree>(remote_exception::shutdown()) : coawait(execute_rpc_multi(nd_call::get_logs(), std::move(map), cache_policy::temporary_cache));
+					if (logs_batch)
 					{
 						hash_map<string, format::tree*> indices;
 						for (auto& [block, transactions] : results)
 						{
-							for (auto& item : transactions.childs())
+							for (auto& transaction : transactions.childs())
 							{
-								string tx_hash = item.child_var("hash").as_blob();
-								auto* logs = (format::tree*)item.child("logs");
-								if (!logs)
-									logs = item.set("logs", format::tree::list());
-								indices[tx_hash] = logs;
+								auto* logs = (format::tree*)transaction.child("logs");
+								if (!logs || !logs->is_list())
+									logs = transaction.set("logs", format::tree::list());
+								indices[transaction.child_var("hash").as_blob()] = logs;
 							}
 						}
 
-						for (auto& logs_list : logs_data->childs())
+						for (auto& topics : logs_batch->childs())
 						{
-							for (auto& item : logs_list.childs())
+							for (auto& topic : topics.childs())
 							{
-								string tx_hash = item.child_var("transactionHash").as_blob();
-								auto it = indices.find(tx_hash);
+								auto it = indices.find(topic.child_var("transactionHash").as_blob());
 								if (it != indices.end())
-									it->second->push(item);
+									it->second->push(topic);
 							}
 						}
 					}
@@ -540,17 +535,12 @@ namespace tangent
 
 					if (!data.empty())
 					{
-						auto* logs = (format::tree*)transaction_data.child("logs");
+						auto* logs = transaction_data.child("logs");
 						if (!logs)
 						{
 							auto tx_receipt = coawait(get_transaction_receipt(transaction_data.child_var("hash").as_blob(), true));
 							if (tx_receipt)
-							{
-								logs = (format::tree*)tx_receipt->child("logs");
-								if (logs != nullptr)
-									transaction_data.set("logs", std::move(*logs));
-								transaction_data.set("receipt", *tx_receipt);
-							}
+								logs = transaction_data.set("receipt", std::move(*tx_receipt))->child("logs");
 							else
 								transaction_data.set("receipt", format::variable());
 						}
@@ -578,6 +568,9 @@ namespace tangent
 					if (!data.empty())
 					{
 						auto* logs = transaction_data.child("logs");
+						if (!logs)
+							logs = transaction_data.child("receipt.logs");
+
 						if (logs != nullptr && !logs->childs().empty())
 						{
 							for (auto& invocation : logs->childs())
@@ -621,12 +614,12 @@ namespace tangent
 					if (!discovery || discovery->empty())
 						coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
 
-					auto* tx_receipt = (format::tree*)transaction_data.child("receipt");
+					auto* tx_receipt = transaction_data.child("receipt");
 					if (!tx_receipt)
 					{
-						auto result = coawait(get_transaction_receipt(tx_hash, true));
-						if (result)
-							tx_receipt = transaction_data.set("receipt", std::move(*result));
+						auto receipt = coawait(get_transaction_receipt(tx_hash, true));
+						if (receipt)
+							tx_receipt = transaction_data.set("receipt", std::move(*receipt));
 					}
 
 					bool is_reverted = tx_receipt && tx_receipt->is_map() ? hex_to_uint256(tx_receipt->child_var("status").as_blob()) < 1 : true;

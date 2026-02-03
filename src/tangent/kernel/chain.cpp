@@ -60,6 +60,28 @@ namespace tangent
 	layer_exception::layer_exception(string&& text) : std::exception(), error_message(std::move(text))
 	{
 	}
+	layer_exception::layer_exception(const layer_exception& other) : std::exception(), error_message(other.error_message)
+	{
+	}
+	layer_exception::layer_exception(layer_exception&& other) noexcept : std::exception(), error_message(std::move(other.error_message))
+	{
+	}
+	layer_exception& layer_exception::operator=(const layer_exception& other)
+	{
+		if (this == &other)
+			return *this;
+
+		error_message = other.error_message;
+		return *this;
+	}
+	layer_exception& layer_exception::operator=(layer_exception&& other) noexcept
+	{
+		if (this == &other)
+			return *this;
+
+		error_message = std::move(other.error_message);
+		return *this;
+	}
 	const char* layer_exception::what() const noexcept
 	{
 		return error_message.c_str();
@@ -69,26 +91,48 @@ namespace tangent
 		return std::move(error_message);
 	}
 
-	remote_exception::remote_exception(int8_t new_status, uint64_t new_retry_time) : std::exception(), error_status(new_status), error_retry_time(new_retry_time)
+	remote_exception::remote_exception(string&& text, int8_t new_status, uint64_t new_retry_time) : std::exception(), error_message(std::move(text)), error_status(new_status), error_retry_time(new_retry_time)
 	{
+		if (error_status > 0)
+			error_message = error_message.empty() ? "result currently unavailable (may retry)" : (error_message + " (may retry)");
+		else if (error_message.empty() && error_status < 0)
+			error_message = "cancelled due to a shutdown";
 	}
 	remote_exception::remote_exception(string&& text) : std::exception(), error_message(std::move(text)), error_status(0)
 	{
 	}
+	remote_exception::remote_exception(const remote_exception& other) : std::exception(), error_message(other.error_message), error_status(other.error_status), error_retry_time(other.error_retry_time)
+	{
+	}
+	remote_exception::remote_exception(remote_exception&& other) noexcept : std::exception(), error_message(std::move(other.error_message)), error_status(other.error_status), error_retry_time(other.error_retry_time)
+	{
+	}
+	remote_exception& remote_exception::operator=(const remote_exception& other)
+	{
+		if (this == &other)
+			return *this;
+
+		error_message = other.error_message;
+		error_status = other.error_status;
+		error_retry_time = other.error_retry_time;
+		return *this;
+	}
+	remote_exception& remote_exception::operator=(remote_exception&& other) noexcept
+	{
+		if (this == &other)
+			return *this;
+
+		error_message = std::move(other.error_message);
+		error_status = other.error_status;
+		error_retry_time = other.error_retry_time;
+		return *this;
+	}
 	const char* remote_exception::what() const noexcept
 	{
-		if (error_status > 0)
-			return error_retry_time > 0 ? "result currently unavailable (may retry after exact time)" : "result currently unavailable (may retry later)";
-		else if (error_status < 0)
-			return "failed due to a shutdown";
 		return error_message.c_str();
 	}
 	string&& remote_exception::message() noexcept
 	{
-		if (error_message.empty() && error_status > 0)
-			error_message = "result currently unavailable (may retry)";
-		else if (error_message.empty() && error_status < 0)
-			error_message = "failed due to a shutdown";
 		return std::move(error_message);
 	}
 	uint64_t remote_exception::retry_after_timestamp() const noexcept
@@ -107,17 +151,17 @@ namespace tangent
 	{
 		return error_status < 0;
 	}
-	remote_exception remote_exception::retry_later()
+	remote_exception remote_exception::retry_later(string&& text)
 	{
-		return remote_exception(1, 0);
+		return remote_exception(std::move(text), 1, 0);
 	}
-	remote_exception remote_exception::retry_after(uint64_t timestamp)
+	remote_exception remote_exception::retry_after(uint64_t timestamp, string&& text)
 	{
-		return remote_exception(1, timestamp);
+		return remote_exception(std::move(text), 1, timestamp);
 	}
-	remote_exception remote_exception::shutdown()
+	remote_exception remote_exception::shutdown(string&& text)
 	{
-		return remote_exception(-1, 0);
+		return remote_exception(std::move(text), -1, 0);
 	}
 
 	repository::~repository()
@@ -410,23 +454,23 @@ namespace tangent
 		if (!resource || message.empty())
 			return;
 
-		time_t time = ::time(nullptr);
+		time_t archive_time = ::time(nullptr);
 		umutex<std::recursive_mutex> unique(mutex);
 		resource->write((uint8_t*)message.data(), message.size());
 		if (message.back() != '\r' && message.back() != '\n')
 			resource->write((uint8_t*)"\n", 1);
 
-		if (!protocol::bound() || time - repack_time < (int64_t)protocol::now().user.logs.archive_repack_interval / 1000)
+		if (!protocol::bound() || archive_time - repack_time < (int64_t)protocol::now().user.logs.archive_repack_interval / 1000)
 			return;
 
 		auto state = os::file::get_properties(resource->virtual_name());
 		size_t current_size = state ? state->size : 0;
-		repack_time = time;
+		repack_time = archive_time;
 		if (current_size <= protocol::now().user.logs.archive_size)
 			return;
 
-		string path = string(resource->virtual_name());
-		resource = os::file::open_archive(path, protocol::now().user.logs.archive_size).or_else(nullptr);
+		string archive_path = string(resource->virtual_name());
+		resource = os::file::open_archive(archive_path, protocol::now().user.logs.archive_size).or_else(nullptr);
 	}
 
 	protocol::protocol(const inline_args& environment)
@@ -501,10 +545,10 @@ namespace tangent
 			value = config->child("consensus.accounts");
 			if (value != nullptr && value->is_list())
 			{
-				for (auto& account : value->childs())
+				for (auto& account_secret : value->childs())
 				{
-					if (account.value.is_string())
-						user.consensus.accounts.push_back(account.value.as_blob());
+					if (account_secret.value.is_string())
+						user.consensus.accounts.push_back(account_secret.value.as_blob());
 				}
 			}
 
@@ -708,7 +752,7 @@ namespace tangent
 
 			value = config->child("storage.flush_threads_ratio");
 			if (value != nullptr && value->value.is_decimal())
-				user.storage.flush_threads_ratio = value->value.as_uint64();
+				user.storage.flush_threads_ratio = value->value.as_double();
 
 			value = config->child("storage.compaction_threads_ratio");
 			if (value != nullptr && value->value.is_decimal())

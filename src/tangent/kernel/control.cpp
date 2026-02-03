@@ -333,9 +333,9 @@ namespace tangent
 			auto finalized_tasks = tasks->size();
 			hash_set<string> pending;
 		retry:
-			for (auto& [id, active] : *tasks)
+			for (auto& [id, running] : *tasks)
 			{
-				if (active)
+				if (running)
 					pending.insert(id);
 			}
 
@@ -409,6 +409,13 @@ namespace tangent
 	}
 	void service_control::abort(int signal) noexcept
 	{
+#ifndef NDEBUG
+		while (true)
+		{
+			std::cout << "[srvctl] PANIC! service termination (signal: " << signal << ", state: debuggable, mode: abort): waiting for a debugger\n";
+			std::this_thread::sleep_for(std::chrono::milliseconds(5000));
+		}
+#endif
 		std::cout << "[srvctl] PANIC! service termination (signal: " << signal << ", state: unrecoverable, mode: abort):\n" << error_handling::get_stack_trace(0) << std::endl;
 		std::cout << std::flush;
 		std::cout.flush();

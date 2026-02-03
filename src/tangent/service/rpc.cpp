@@ -57,12 +57,12 @@ namespace tangent
 					return layer_exception("invalid value, expected { address: string, index: string }");
 
 				auto owner_address = data->get_var("address").get_blob();
-				auto index = data->get_var("index").get_blob();
+				auto subindex = data->get_var("index").get_blob();
 				algorithm::pubkeyhash_t owner;
 				if (!algorithm::signing::decode_address(owner_address, owner))
 					return layer_exception("invalid address");
 
-				return uniform_location(states::account_uniform::as_instance_type(), states::account_uniform::as_instance_index(owner, index));
+				return uniform_location(states::account_uniform::as_instance_type(), states::account_uniform::as_instance_index(owner, subindex));
 			}
 
 			if (type == states::account_delegation::as_instance_typename())
@@ -1327,8 +1327,8 @@ namespace tangent
 						accounts_data->push(algorithm::signing::serialize_address(item.receipt.from));
 						for (auto& party : parties)
 							accounts_data->push(algorithm::signing::serialize_address(party));
-						for (auto& hash : aliases)
-							aliases_data->push(format::variable(algorithm::encoding::encode_0xhex256(hash)));
+						for (auto& alias : aliases)
+							aliases_data->push(format::variable(algorithm::encoding::encode_0xhex256(alias)));
 						data.push(std::move(tx_data));
 						parties.clear();
 						aliases.clear();
@@ -2131,8 +2131,8 @@ namespace tangent
 				if (!states)
 					break;
 
-				for (auto& state : *states)
-					rewards->push(state.ptr()->as_tree());
+				for (auto& item : *states)
+					rewards->push(item.ptr()->as_tree());
 
 				if (states->size() != count)
 					break;
@@ -2219,8 +2219,8 @@ namespace tangent
 				if (!states)
 					break;
 
-				for (auto& state : *states)
-					rewards->push(state.ptr()->as_tree());
+				for (auto& item : *states)
+					rewards->push(item.ptr()->as_tree());
 
 				if (states->size() != count)
 					break;
@@ -2367,11 +2367,11 @@ namespace tangent
 				if (!states)
 					break;
 
-				for (auto& state : *states)
+				for (auto& item : *states)
 				{
-					auto* ref = state.as<states::validator_attestation_reward>();
+					auto* ref = item.as<states::validator_attestation_reward>();
 					if (asset == algorithm::asset::base_id_of(ref->asset))
-						rewards->push(state.ptr()->as_tree());
+						rewards->push(item.ptr()->as_tree());
 				}
 
 				offset += states->size();
@@ -2498,7 +2498,7 @@ namespace tangent
 				auto* next = data.push(format::tree::map());
 				next->set("attestation", attestation->as_tree());
 
-				size_t offset = 0, count = 64;
+				offset = 0, count = 64;
 				while (params->routing == superchain::routing_policy::account)
 				{
 					auto accounts = chain.get_multiforms_by_column_filter(states::witness_account::as_instance_type(), nullptr, states::witness_account::as_instance_column(attestation->owner), storages::result_filter::equal((uint8_t)states::witness_account::account_type::bridge, -1), 0, storages::result_range_window(offset, count));
@@ -2646,7 +2646,7 @@ namespace tangent
 				auto* next = data.push(format::tree::map());
 				next->set("attestation", attestation_state ? attestation_state->value->as_tree() : format::variable());
 
-				size_t offset = 0, count = 64;
+				offset = 0, count = 64;
 				auto* attestation = (states::validator_attestation*)(attestation_state ? *attestation_state->value : nullptr);
 				while (attestation != nullptr && params->routing == superchain::routing_policy::account)
 				{
@@ -3231,11 +3231,11 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "address not valid");
 
 			umutex<std::recursive_mutex> unique(consensus_service->get_mutex());
-			auto node = consensus_service->find_by_ip_address(endpoint.address);
-			if (!node)
+			auto target = consensus_service->find_by_ip_address(endpoint.address);
+			if (!target)
 				return server_response().error(error_codes::bad_request, "node not found");
 
-			node->abort("manually closed");
+			target->abort("manually closed");
 			return server_response().success(format::variable());
 		}
 		server_response server_node::validatorstate_get_node(http::connection*, format::variables&& args)
@@ -3248,15 +3248,15 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "address not valid");
 
 			umutex<std::recursive_mutex> unique(consensus_service->get_mutex());
-			auto node = consensus_service->find_by_ip_address(endpoint.address);
-			if (!node)
+			auto target = consensus_service->find_by_ip_address(endpoint.address);
+			if (!target)
 				return server_response().error(error_codes::bad_request, "node not found");
 
-			auto* descriptor = node->as_descriptor();
+			auto* descriptor = target->as_descriptor();
 			auto result = format::tree::map();
 			result.set("validator", descriptor ? descriptor->first.as_tree() : format::variable());
 			result.set("wallet", descriptor ? descriptor->second.as_public_tree() : format::variable());
-			result.set("network", node->as_tree());
+			result.set("network", target->as_tree());
 			return server_response().success(std::move(result));
 		}
 		server_response server_node::validatorstate_get_blockchains(http::connection*, format::variables&&)
@@ -3417,13 +3417,13 @@ namespace tangent
 				data.set("tip", format::variable());
 
 			auto* connections = data.set("connections", format::tree::list());
-			for (auto& node : consensus_service->get_nodes())
+			for (auto& connection : consensus_service->get_nodes())
 			{
-				auto* descriptor = node.second->as_descriptor();
+				auto* descriptor = connection.second->as_descriptor();
 				auto node_data = format::tree::map();
 				node_data.set("validator", descriptor ? descriptor->first.as_tree() : format::variable());
 				node_data.set("wallet", descriptor ? descriptor->second.as_public_tree() : format::variable());
-				node_data.set("network", node.second->as_tree());
+				node_data.set("network", connection.second->as_tree());
 				connections->push(std::move(node_data));
 			}
 

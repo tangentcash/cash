@@ -286,7 +286,7 @@ namespace tangent
 				return copy;
 			}
 			template <typename t>
-			static t integer_sqrt(t n)
+			static t integer_sqrt(t n) noexcept
 			{
 				if (n == 0)
 					return 0;
@@ -313,6 +313,14 @@ namespace tangent
 				while (x * x > n) x--;
 				while ((x + 1) * (x + 1) <= n) x++;
 				return x;
+			}
+			template <typename t>
+			static t integer_pow(t a, t b) noexcept
+			{
+				t r = a;
+				for (t i = t(1); i < b; i++)
+					r *= a;
+				return r;
 			}
 		};
 

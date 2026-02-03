@@ -1118,11 +1118,11 @@ namespace tangent
 				{
 					auto& connection = instance->connections[(++round_robin_index) % instance->connections.size()];
 					auto result = coawait(bridge::get()->execute_rpc(native_asset, connection, reporter, ref_method, args, cache, ref_path, false));
-					exception = result || result.error().is_retry() ? exception : result.error();
 					if (result || !result.error().is_retry())
 						coreturn result;
+					else if (!result)
+						exception = std::move(result.error());
 				}
-				exception = exception.is_retry() ? normalize_error(system_exception("failed to connect", std::make_error_condition(std::errc::connection_refused)), reporter, "0", "failed to fetch the response") : exception;
 				coreturn expects_rt<format::tree>(std::move(exception));
 			});
 		}
@@ -1138,11 +1138,11 @@ namespace tangent
 				{
 					auto& connection = instance->connections[(++round_robin_index) % instance->connections.size()];
 					auto result = coawait(bridge::get()->execute_rpc(native_asset, connection, reporter, ref_method, args, cache, ref_path, true));
-					exception = result || result.error().is_retry() ? exception : result.error();
 					if (result || !result.error().is_retry())
 						coreturn result;
+					else if (!result)
+						exception = std::move(result.error());
 				}
-				exception = exception.is_retry() ? normalize_error(system_exception("failed to connect", std::make_error_condition(std::errc::connection_refused)), reporter, "0", "failed to fetch the response") : exception;
 				coreturn expects_rt<format::tree>(std::move(exception));
 			});
 		}
@@ -1158,11 +1158,11 @@ namespace tangent
 				{
 					auto& connection = instance->connections[(++round_robin_index) % instance->connections.size()];
 					auto result = coawait(bridge::get()->execute_rest(native_asset, connection, reporter, ref_method, ref_path, args, cache));
-					exception = result || result.error().is_retry() ? exception : result.error();
 					if (result || !result.error().is_retry())
 						coreturn result;
+					else if (!result)
+						exception = std::move(result.error());
 				}
-				exception = exception.is_retry() ? normalize_error(system_exception("failed to connect", std::make_error_condition(std::errc::connection_refused)), reporter, "0", "failed to fetch the response") : exception;
 				coreturn expects_rt<format::tree>(std::move(exception));
 			});
 		}
@@ -1178,11 +1178,11 @@ namespace tangent
 				{
 					auto& connection = instance->connections[(++round_robin_index) % instance->connections.size()];
 					auto result = coawait(bridge::get()->execute_http(native_asset, connection, reporter, ref_method, ref_path, ref_type, ref_body, cache));
-					exception = result || result.error().is_retry() ? exception : result.error();
 					if (result || !result.error().is_retry())
 						coreturn result;
+					else if (!result)
+						exception = std::move(result.error());
 				}
-				exception = exception.is_retry() ? normalize_error(system_exception("failed to connect", std::make_error_condition(std::errc::connection_refused)), reporter, "0", "failed to fetch the response") : exception;
 				coreturn expects_rt<format::tree>(std::move(exception));
 			});
 		}
@@ -1699,7 +1699,7 @@ namespace tangent
 
 				auto response = coawait(network_fetch(asset, target_url, method_ref, setup));
 				if (!response || response->status_code == 408 || response->status_code == 429 || response->status_code == 502 || response->status_code == 503 || response->status_code == 504)
-					coreturn expects_rt<format::tree>(remote_exception::retry_after(protocol::now().time.now_cpu() + protocol::now().user.superchain.polling_frequency));
+					coreturn expects_rt<format::tree>(remote_exception::retry_after(protocol::now().time.now_cpu() + protocol::now().user.superchain.polling_frequency, response ? string(http::utils::status_message(response->status_code)) + string(" error") : std::move(response.error().message())));
 
 				format::tree result;
 				auto content_type = response->get_header("Content-Type");

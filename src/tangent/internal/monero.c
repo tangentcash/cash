@@ -7,6 +7,8 @@
 #include "sha2.h"
 #include "sha3.h"
 #include "bitcoin.h"
+#pragma warning(push)
+#pragma warning(disable: 4146)
 
 /* sqrt(x) is such an integer y that 0 <= y <= p - 1, y % 2 = 0, and y^2 = x (mod p). */
 /* d = -121665 / 121666 */
@@ -2958,7 +2960,7 @@ static unsigned char negative(signed char b)
 {
 	unsigned long long x = b; /* 18446744073709551361..18446744073709551615: yes; 0..255: no */
 	x >>= 63; /* 1: yes; 0: no */
-	return x;
+	return (unsigned char)x;
 }
 
 static void ge_precomp_cmov(ge_precomp* t, const ge_precomp* u, unsigned char b)
@@ -3290,38 +3292,38 @@ void sc_reduce(unsigned char* s)
 	carry9 = s9 >> 21; s10 += carry9; s9 -= carry9 << 21;
 	carry10 = s10 >> 21; s11 += carry10; s10 -= carry10 << 21;
 
-	s[0] = s0 >> 0;
-	s[1] = s0 >> 8;
-	s[2] = (s0 >> 16) | (s1 << 5);
-	s[3] = s1 >> 3;
-	s[4] = s1 >> 11;
-	s[5] = (s1 >> 19) | (s2 << 2);
-	s[6] = s2 >> 6;
-	s[7] = (s2 >> 14) | (s3 << 7);
-	s[8] = s3 >> 1;
-	s[9] = s3 >> 9;
-	s[10] = (s3 >> 17) | (s4 << 4);
-	s[11] = s4 >> 4;
-	s[12] = s4 >> 12;
-	s[13] = (s4 >> 20) | (s5 << 1);
-	s[14] = s5 >> 7;
-	s[15] = (s5 >> 15) | (s6 << 6);
-	s[16] = s6 >> 2;
-	s[17] = s6 >> 10;
-	s[18] = (s6 >> 18) | (s7 << 3);
-	s[19] = s7 >> 5;
-	s[20] = s7 >> 13;
-	s[21] = s8 >> 0;
-	s[22] = s8 >> 8;
-	s[23] = (s8 >> 16) | (s9 << 5);
-	s[24] = s9 >> 3;
-	s[25] = s9 >> 11;
-	s[26] = (s9 >> 19) | (s10 << 2);
-	s[27] = s10 >> 6;
-	s[28] = (s10 >> 14) | (s11 << 7);
-	s[29] = s11 >> 1;
-	s[30] = s11 >> 9;
-	s[31] = s11 >> 17;
+	s[0] = (unsigned char)(s0 >> 0);
+	s[1] = (unsigned char)(s0 >> 8);
+	s[2] = (unsigned char)((s0 >> 16) | (s1 << 5));
+	s[3] = (unsigned char)(s1 >> 3);
+	s[4] = (unsigned char)(s1 >> 11);
+	s[5] = (unsigned char)((s1 >> 19) | (s2 << 2));
+	s[6] = (unsigned char)(s2 >> 6);
+	s[7] = (unsigned char)((s2 >> 14) | (s3 << 7));
+	s[8] = (unsigned char)(s3 >> 1);
+	s[9] = (unsigned char)(s3 >> 9);
+	s[10] = (unsigned char)((s3 >> 17) | (s4 << 4));
+	s[11] = (unsigned char)(s4 >> 4);
+	s[12] = (unsigned char)(s4 >> 12);
+	s[13] = (unsigned char)((s4 >> 20) | (s5 << 1));
+	s[14] = (unsigned char)(s5 >> 7);
+	s[15] = (unsigned char)((s5 >> 15) | (s6 << 6));
+	s[16] = (unsigned char)(s6 >> 2);
+	s[17] = (unsigned char)(s6 >> 10);
+	s[18] = (unsigned char)((s6 >> 18) | (s7 << 3));
+	s[19] = (unsigned char)(s7 >> 5);
+	s[20] = (unsigned char)(s7 >> 13);
+	s[21] = (unsigned char)(s8 >> 0);
+	s[22] = (unsigned char)(s8 >> 8);
+	s[23] = (unsigned char)((s8 >> 16) | (s9 << 5));
+	s[24] = (unsigned char)(s9 >> 3);
+	s[25] = (unsigned char)(s9 >> 11);
+	s[26] = (unsigned char)((s9 >> 19) | (s10 << 2));
+	s[27] = (unsigned char)(s10 >> 6);
+	s[28] = (unsigned char)((s10 >> 14) | (s11 << 7));
+	s[29] = (unsigned char)(s11 >> 1);
+	s[30] = (unsigned char)(s11 >> 9);
+	s[31] = (unsigned char)(s11 >> 17);
 }
 
 /* New code */
@@ -3758,38 +3760,38 @@ void sc_reduce32(unsigned char* s)
 	carry9 = s9 >> 21; s10 += carry9; s9 -= carry9 << 21;
 	carry10 = s10 >> 21; s11 += carry10; s10 -= carry10 << 21;
 
-	s[0] = s0 >> 0;
-	s[1] = s0 >> 8;
-	s[2] = (s0 >> 16) | (s1 << 5);
-	s[3] = s1 >> 3;
-	s[4] = s1 >> 11;
-	s[5] = (s1 >> 19) | (s2 << 2);
-	s[6] = s2 >> 6;
-	s[7] = (s2 >> 14) | (s3 << 7);
-	s[8] = s3 >> 1;
-	s[9] = s3 >> 9;
-	s[10] = (s3 >> 17) | (s4 << 4);
-	s[11] = s4 >> 4;
-	s[12] = s4 >> 12;
-	s[13] = (s4 >> 20) | (s5 << 1);
-	s[14] = s5 >> 7;
-	s[15] = (s5 >> 15) | (s6 << 6);
-	s[16] = s6 >> 2;
-	s[17] = s6 >> 10;
-	s[18] = (s6 >> 18) | (s7 << 3);
-	s[19] = s7 >> 5;
-	s[20] = s7 >> 13;
-	s[21] = s8 >> 0;
-	s[22] = s8 >> 8;
-	s[23] = (s8 >> 16) | (s9 << 5);
-	s[24] = s9 >> 3;
-	s[25] = s9 >> 11;
-	s[26] = (s9 >> 19) | (s10 << 2);
-	s[27] = s10 >> 6;
-	s[28] = (s10 >> 14) | (s11 << 7);
-	s[29] = s11 >> 1;
-	s[30] = s11 >> 9;
-	s[31] = s11 >> 17;
+	s[0] = (unsigned char)(s0 >> 0);
+	s[1] = (unsigned char)(s0 >> 8);
+	s[2] = (unsigned char)((s0 >> 16) | (s1 << 5));
+	s[3] = (unsigned char)(s1 >> 3);
+	s[4] = (unsigned char)(s1 >> 11);
+	s[5] = (unsigned char)((s1 >> 19) | (s2 << 2));
+	s[6] = (unsigned char)(s2 >> 6);
+	s[7] = (unsigned char)((s2 >> 14) | (s3 << 7));
+	s[8] = (unsigned char)(s3 >> 1);
+	s[9] = (unsigned char)(s3 >> 9);
+	s[10] = (unsigned char)((s3 >> 17) | (s4 << 4));
+	s[11] = (unsigned char)(s4 >> 4);
+	s[12] = (unsigned char)(s4 >> 12);
+	s[13] = (unsigned char)((s4 >> 20) | (s5 << 1));
+	s[14] = (unsigned char)(s5 >> 7);
+	s[15] = (unsigned char)((s5 >> 15) | (s6 << 6));
+	s[16] = (unsigned char)(s6 >> 2);
+	s[17] = (unsigned char)(s6 >> 10);
+	s[18] = (unsigned char)((s6 >> 18) | (s7 << 3));
+	s[19] = (unsigned char)(s7 >> 5);
+	s[20] = (unsigned char)(s7 >> 13);
+	s[21] = (unsigned char)(s8 >> 0);
+	s[22] = (unsigned char)(s8 >> 8);
+	s[23] = (unsigned char)((s8 >> 16) | (s9 << 5));
+	s[24] = (unsigned char)(s9 >> 3);
+	s[25] = (unsigned char)(s9 >> 11);
+	s[26] = (unsigned char)((s9 >> 19) | (s10 << 2));
+	s[27] = (unsigned char)(s10 >> 6);
+	s[28] = (unsigned char)((s10 >> 14) | (s11 << 7));
+	s[29] = (unsigned char)(s11 >> 1);
+	s[30] = (unsigned char)(s11 >> 9);
+	s[31] = (unsigned char)(s11 >> 17);
 }
 
 void sc_add(unsigned char* s, const unsigned char* a, const unsigned char* b)
@@ -3898,38 +3900,38 @@ void sc_add(unsigned char* s, const unsigned char* a, const unsigned char* b)
 	carry9 = s9 >> 21; s10 += carry9; s9 -= carry9 << 21;
 	carry10 = s10 >> 21; s11 += carry10; s10 -= carry10 << 21;
 
-	s[0] = s0 >> 0;
-	s[1] = s0 >> 8;
-	s[2] = (s0 >> 16) | (s1 << 5);
-	s[3] = s1 >> 3;
-	s[4] = s1 >> 11;
-	s[5] = (s1 >> 19) | (s2 << 2);
-	s[6] = s2 >> 6;
-	s[7] = (s2 >> 14) | (s3 << 7);
-	s[8] = s3 >> 1;
-	s[9] = s3 >> 9;
-	s[10] = (s3 >> 17) | (s4 << 4);
-	s[11] = s4 >> 4;
-	s[12] = s4 >> 12;
-	s[13] = (s4 >> 20) | (s5 << 1);
-	s[14] = s5 >> 7;
-	s[15] = (s5 >> 15) | (s6 << 6);
-	s[16] = s6 >> 2;
-	s[17] = s6 >> 10;
-	s[18] = (s6 >> 18) | (s7 << 3);
-	s[19] = s7 >> 5;
-	s[20] = s7 >> 13;
-	s[21] = s8 >> 0;
-	s[22] = s8 >> 8;
-	s[23] = (s8 >> 16) | (s9 << 5);
-	s[24] = s9 >> 3;
-	s[25] = s9 >> 11;
-	s[26] = (s9 >> 19) | (s10 << 2);
-	s[27] = s10 >> 6;
-	s[28] = (s10 >> 14) | (s11 << 7);
-	s[29] = s11 >> 1;
-	s[30] = s11 >> 9;
-	s[31] = s11 >> 17;
+	s[0] = (unsigned char)(s0 >> 0);
+	s[1] = (unsigned char)(s0 >> 8);
+	s[2] = (unsigned char)((s0 >> 16) | (s1 << 5));
+	s[3] = (unsigned char)(s1 >> 3);
+	s[4] = (unsigned char)(s1 >> 11);
+	s[5] = (unsigned char)((s1 >> 19) | (s2 << 2));
+	s[6] = (unsigned char)(s2 >> 6);
+	s[7] = (unsigned char)((s2 >> 14) | (s3 << 7));
+	s[8] = (unsigned char)(s3 >> 1);
+	s[9] = (unsigned char)(s3 >> 9);
+	s[10] = (unsigned char)((s3 >> 17) | (s4 << 4));
+	s[11] = (unsigned char)(s4 >> 4);
+	s[12] = (unsigned char)(s4 >> 12);
+	s[13] = (unsigned char)((s4 >> 20) | (s5 << 1));
+	s[14] = (unsigned char)(s5 >> 7);
+	s[15] = (unsigned char)((s5 >> 15) | (s6 << 6));
+	s[16] = (unsigned char)(s6 >> 2);
+	s[17] = (unsigned char)(s6 >> 10);
+	s[18] = (unsigned char)((s6 >> 18) | (s7 << 3));
+	s[19] = (unsigned char)(s7 >> 5);
+	s[20] = (unsigned char)(s7 >> 13);
+	s[21] = (unsigned char)(s8 >> 0);
+	s[22] = (unsigned char)(s8 >> 8);
+	s[23] = (unsigned char)((s8 >> 16) | (s9 << 5));
+	s[24] = (unsigned char)(s9 >> 3);
+	s[25] = (unsigned char)(s9 >> 11);
+	s[26] = (unsigned char)((s9 >> 19) | (s10 << 2));
+	s[27] = (unsigned char)(s10 >> 6);
+	s[28] = (unsigned char)((s10 >> 14) | (s11 << 7));
+	s[29] = (unsigned char)(s11 >> 1);
+	s[30] = (unsigned char)(s11 >> 9);
+	s[31] = (unsigned char)(s11 >> 17);
 }
 
 void sc_sub(unsigned char* s, const unsigned char* a, const unsigned char* b)
@@ -4038,38 +4040,38 @@ void sc_sub(unsigned char* s, const unsigned char* a, const unsigned char* b)
 	carry9 = s9 >> 21; s10 += carry9; s9 -= carry9 << 21;
 	carry10 = s10 >> 21; s11 += carry10; s10 -= carry10 << 21;
 
-	s[0] = s0 >> 0;
-	s[1] = s0 >> 8;
-	s[2] = (s0 >> 16) | (s1 << 5);
-	s[3] = s1 >> 3;
-	s[4] = s1 >> 11;
-	s[5] = (s1 >> 19) | (s2 << 2);
-	s[6] = s2 >> 6;
-	s[7] = (s2 >> 14) | (s3 << 7);
-	s[8] = s3 >> 1;
-	s[9] = s3 >> 9;
-	s[10] = (s3 >> 17) | (s4 << 4);
-	s[11] = s4 >> 4;
-	s[12] = s4 >> 12;
-	s[13] = (s4 >> 20) | (s5 << 1);
-	s[14] = s5 >> 7;
-	s[15] = (s5 >> 15) | (s6 << 6);
-	s[16] = s6 >> 2;
-	s[17] = s6 >> 10;
-	s[18] = (s6 >> 18) | (s7 << 3);
-	s[19] = s7 >> 5;
-	s[20] = s7 >> 13;
-	s[21] = s8 >> 0;
-	s[22] = s8 >> 8;
-	s[23] = (s8 >> 16) | (s9 << 5);
-	s[24] = s9 >> 3;
-	s[25] = s9 >> 11;
-	s[26] = (s9 >> 19) | (s10 << 2);
-	s[27] = s10 >> 6;
-	s[28] = (s10 >> 14) | (s11 << 7);
-	s[29] = s11 >> 1;
-	s[30] = s11 >> 9;
-	s[31] = s11 >> 17;
+	s[0] = (unsigned char)(s0 >> 0);
+	s[1] = (unsigned char)(s0 >> 8);
+	s[2] = (unsigned char)((s0 >> 16) | (s1 << 5));
+	s[3] = (unsigned char)(s1 >> 3);
+	s[4] = (unsigned char)(s1 >> 11);
+	s[5] = (unsigned char)((s1 >> 19) | (s2 << 2));
+	s[6] = (unsigned char)(s2 >> 6);
+	s[7] = (unsigned char)((s2 >> 14) | (s3 << 7));
+	s[8] = (unsigned char)(s3 >> 1);
+	s[9] = (unsigned char)(s3 >> 9);
+	s[10] = (unsigned char)((s3 >> 17) | (s4 << 4));
+	s[11] = (unsigned char)(s4 >> 4);
+	s[12] = (unsigned char)(s4 >> 12);
+	s[13] = (unsigned char)((s4 >> 20) | (s5 << 1));
+	s[14] = (unsigned char)(s5 >> 7);
+	s[15] = (unsigned char)((s5 >> 15) | (s6 << 6));
+	s[16] = (unsigned char)(s6 >> 2);
+	s[17] = (unsigned char)(s6 >> 10);
+	s[18] = (unsigned char)((s6 >> 18) | (s7 << 3));
+	s[19] = (unsigned char)(s7 >> 5);
+	s[20] = (unsigned char)(s7 >> 13);
+	s[21] = (unsigned char)(s8 >> 0);
+	s[22] = (unsigned char)(s8 >> 8);
+	s[23] = (unsigned char)((s8 >> 16) | (s9 << 5));
+	s[24] = (unsigned char)(s9 >> 3);
+	s[25] = (unsigned char)(s9 >> 11);
+	s[26] = (unsigned char)((s9 >> 19) | (s10 << 2));
+	s[27] = (unsigned char)(s10 >> 6);
+	s[28] = (unsigned char)((s10 >> 14) | (s11 << 7));
+	s[29] = (unsigned char)(s11 >> 1);
+	s[30] = (unsigned char)(s11 >> 9);
+	s[31] = (unsigned char)(s11 >> 17);
 }
 
 /*
@@ -4371,38 +4373,38 @@ void sc_mulsub(unsigned char* s, const unsigned char* a, const unsigned char* b,
 	carry9 = s9 >> 21; s10 += carry9; s9 -= carry9 << 21;
 	carry10 = s10 >> 21; s11 += carry10; s10 -= carry10 << 21;
 
-	s[0] = s0 >> 0;
-	s[1] = s0 >> 8;
-	s[2] = (s0 >> 16) | (s1 << 5);
-	s[3] = s1 >> 3;
-	s[4] = s1 >> 11;
-	s[5] = (s1 >> 19) | (s2 << 2);
-	s[6] = s2 >> 6;
-	s[7] = (s2 >> 14) | (s3 << 7);
-	s[8] = s3 >> 1;
-	s[9] = s3 >> 9;
-	s[10] = (s3 >> 17) | (s4 << 4);
-	s[11] = s4 >> 4;
-	s[12] = s4 >> 12;
-	s[13] = (s4 >> 20) | (s5 << 1);
-	s[14] = s5 >> 7;
-	s[15] = (s5 >> 15) | (s6 << 6);
-	s[16] = s6 >> 2;
-	s[17] = s6 >> 10;
-	s[18] = (s6 >> 18) | (s7 << 3);
-	s[19] = s7 >> 5;
-	s[20] = s7 >> 13;
-	s[21] = s8 >> 0;
-	s[22] = s8 >> 8;
-	s[23] = (s8 >> 16) | (s9 << 5);
-	s[24] = s9 >> 3;
-	s[25] = s9 >> 11;
-	s[26] = (s9 >> 19) | (s10 << 2);
-	s[27] = s10 >> 6;
-	s[28] = (s10 >> 14) | (s11 << 7);
-	s[29] = s11 >> 1;
-	s[30] = s11 >> 9;
-	s[31] = s11 >> 17;
+	s[0] = (unsigned char)(s0 >> 0);
+	s[1] = (unsigned char)(s0 >> 8);
+	s[2] = (unsigned char)((s0 >> 16) | (s1 << 5));
+	s[3] = (unsigned char)(s1 >> 3);
+	s[4] = (unsigned char)(s1 >> 11);
+	s[5] = (unsigned char)((s1 >> 19) | (s2 << 2));
+	s[6] = (unsigned char)(s2 >> 6);
+	s[7] = (unsigned char)((s2 >> 14) | (s3 << 7));
+	s[8] = (unsigned char)(s3 >> 1);
+	s[9] = (unsigned char)(s3 >> 9);
+	s[10] = (unsigned char)((s3 >> 17) | (s4 << 4));
+	s[11] = (unsigned char)(s4 >> 4);
+	s[12] = (unsigned char)(s4 >> 12);
+	s[13] = (unsigned char)((s4 >> 20) | (s5 << 1));
+	s[14] = (unsigned char)(s5 >> 7);
+	s[15] = (unsigned char)((s5 >> 15) | (s6 << 6));
+	s[16] = (unsigned char)(s6 >> 2);
+	s[17] = (unsigned char)(s6 >> 10);
+	s[18] = (unsigned char)((s6 >> 18) | (s7 << 3));
+	s[19] = (unsigned char)(s7 >> 5);
+	s[20] = (unsigned char)(s7 >> 13);
+	s[21] = (unsigned char)(s8 >> 0);
+	s[22] = (unsigned char)(s8 >> 8);
+	s[23] = (unsigned char)((s8 >> 16) | (s9 << 5));
+	s[24] = (unsigned char)(s9 >> 3);
+	s[25] = (unsigned char)(s9 >> 11);
+	s[26] = (unsigned char)((s9 >> 19) | (s10 << 2));
+	s[27] = (unsigned char)(s10 >> 6);
+	s[28] = (unsigned char)((s10 >> 14) | (s11 << 7));
+	s[29] = (unsigned char)(s11 >> 1);
+	s[30] = (unsigned char)(s11 >> 9);
+	s[31] = (unsigned char)(s11 >> 17);
 }
 
 /* Assumes that a != INT64_MIN */
@@ -4433,3 +4435,5 @@ int sc_isnonzero(const unsigned char* s)
 }
 
 void extern_discard(int x) { }
+
+#pragma warning(pop)

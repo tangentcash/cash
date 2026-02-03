@@ -256,17 +256,12 @@ namespace tangent
 
 					if (!data.empty())
 					{
-						auto* logs = (format::tree*)transaction_data.child("logs");
+						auto* logs = transaction_data.child("logs");
 						if (!logs)
 						{
 							auto tx_receipt = coawait(get_transaction_receipt(transaction_data.child_var("hash").as_blob(), true));
 							if (tx_receipt)
-							{
-								logs = (format::tree*)tx_receipt->child("logs");
-								if (logs != nullptr)
-									transaction_data.set("logs", std::move(*logs));
-								transaction_data.set("receipt", *tx_receipt);
-							}
+								logs = transaction_data.set("receipt", std::move(*tx_receipt))->child("logs");
 							else
 								transaction_data.set("receipt", format::variable());
 						}
@@ -294,6 +289,9 @@ namespace tangent
 					if (!data.empty())
 					{
 						auto* logs = transaction_data.child("logs");
+						if (!logs)
+							logs = transaction_data.child("receipt.logs");
+
 						if (logs != nullptr && !logs->childs().empty())
 						{
 							for (auto& invocation : logs->childs())

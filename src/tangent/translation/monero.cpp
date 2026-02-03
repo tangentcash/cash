@@ -381,10 +381,10 @@ namespace tangent
 											xmr_fast_hash(amount, amount_commitment, sizeof(amount_commitment));
 
 											amount_size = std::min<size_t>(output.ecdh_amount.size(), sizeof(uint64_t));
-											for (size_t i = 0; i < amount_size; i++)
-												amount[i] ^= (uint8_t)output.ecdh_amount[i];
-											for (size_t i = amount_size; i < sizeof(amount); i++)
-												amount[i] = 0;
+											for (size_t j = 0; j < amount_size; j++)
+												amount[j] ^= (uint8_t)output.ecdh_amount[j];
+											for (size_t j = amount_size; j < sizeof(amount); j++)
+												amount[j] = 0;
 										}
 										else
 										{

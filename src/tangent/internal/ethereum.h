@@ -88,15 +88,6 @@ struct ethc_abi_frame
 int eth_keccak256(uint8_t* dest, const uint8_t* bytes, size_t len);
 
 /*!
- * @brief Computes the keccak hash for the input data with `\x19Ethereum Signed Message:\n` prefix.
- *
- * @param[out] dest A pointer to a 32-byte array to write the hash to.
- * @param[in] bytes A pointer to the input data.
- * @param[in] len The length of the input data.
- */
-int eth_keccak256p(uint8_t* dest, const uint8_t* bytes, size_t len);
-
-/*!
  * @brief Checks whether the given string is hex or not
  *
  * @param[in] str Target string to check

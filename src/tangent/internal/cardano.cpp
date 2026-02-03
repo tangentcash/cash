@@ -3067,12 +3067,12 @@ namespace Cardano
 		return *this;
 	}
 	// ? datum = h'hash32'
-	TransactionsOutputs& TransactionsOutputs::addDatumHash(uint8_t const* const datum_hash, std::size_t const& datum_hash_len)
+	TransactionsOutputs& TransactionsOutputs::addDatumHash(uint8_t const* const new_datum_hash, std::size_t const& datum_hash_len)
 	{
 		if ((outputmap_countbit & 0x05) == 1)
 		{   // si existe un output y no existe un datumhash
 			cbor.clearCbor();
-			cbor.addBytesArray(datum_hash, datum_hash_len);
+			cbor.addBytesArray(new_datum_hash, datum_hash_len);
 			std::vector<uint8_t> const& cbor_array = cbor.getCbor();
 
 			tx_output.push_back(2); //separador
@@ -3874,9 +3874,9 @@ namespace Cardano
 
 		if (Auxiliarydata.arethereAuxiliaryData())
 		{
-			uint8_t blake256[32] = {};
-			crypto_generichash_blake2b(blake256, 32, auxiliary_data.data(), auxiliary_data.size(), nullptr, 0);
-			Body.addAuxiliaryDataHash(blake256);
+			uint8_t blake256_hash[32] = {};
+			crypto_generichash_blake2b(blake256_hash, 32, auxiliary_data.data(), auxiliary_data.size(), nullptr, 0);
+			Body.addAuxiliaryDataHash(blake256_hash);
 
 		}
 

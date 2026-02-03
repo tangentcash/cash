@@ -304,12 +304,12 @@ namespace tangent
 					break;
 			}
 
-			format::tree data = ledger::transaction_message::as_tree();
-			data.set("callable", algorithm::signing::serialize_address(get_account()));
-			data.set("from", name.empty() ? format::variable() : format::variable(name));
-			data.set("data", format::variable(format::util::encode_0xhex(this->data)));
-			data.set("args", format::variables_util::serialize(args));
-			return data;
+			format::tree result = ledger::transaction_message::as_tree();
+			result.set("callable", algorithm::signing::serialize_address(get_account()));
+			result.set("from", name.empty() ? format::variable() : format::variable(name));
+			result.set("data", format::variable(format::util::encode_0xhex(data)));
+			result.set("args", format::variables_util::serialize(args));
+			return result;
 		}
 		uint32_t deploy::as_type() const
 		{
@@ -457,9 +457,9 @@ namespace tangent
 			function = new_function;
 			callable = new_callable;
 		}
-		void call::pay_with(const algorithm::asset_id& asset, const decimal& new_value)
+		void call::pay_with(const algorithm::asset_id& new_asset, const decimal& new_value)
 		{
-			pays.push_back(std::make_pair(asset, new_value));
+			pays.push_back(std::make_pair(new_asset, new_value));
 		}
 		format::tree call::as_tree() const
 		{
@@ -782,9 +782,9 @@ namespace tangent
 			normalize_transaction(transaction, asset);
 			return import_transaction(transaction);
 		}
-		bool rollup::import_external_transaction(ledger::transaction_message& transaction, const algorithm::seckey_t& secret_key, uint64_t nonce)
+		bool rollup::import_external_transaction(ledger::transaction_message& transaction, const algorithm::seckey_t& secret_key, uint64_t account_nonce)
 		{
-			transaction.nonce = nonce > 0 ? nonce : transaction.nonce;
+			transaction.nonce = account_nonce > 0 ? account_nonce : transaction.nonce;
 			normalize_transaction(transaction, asset);
 			if (!transaction.sign(secret_key))
 				return false;
@@ -951,9 +951,9 @@ namespace tangent
 			}
 
 			attestation_setup default_setup;
-			for (auto& [asset, setup] : attestations)
+			for (auto& [attestation_asset, setup] : attestations)
 			{
-				if (!algorithm::asset::is_aux(asset, true))
+				if (!algorithm::asset::is_aux(attestation_asset, true))
 					return layer_exception("invalid attestation asset");
 
 				if (setup.stake.is_negative())
@@ -1042,13 +1042,13 @@ namespace tangent
 					return layer_exception("migrations for a participant not found");
 			}
 
-			for (auto& [asset, setup] : attestations)
+			for (auto& [attestation_asset, setup] : attestations)
 			{
-				if (!algorithm::asset::token_of(asset).empty())
+				if (!algorithm::asset::token_of(attestation_asset).empty())
 					continue;
 
-				auto prev_policy = executor->get_validator_attestation(asset, executor->receipt.from).or_else(states::validator_attestation(executor->receipt.from, asset, nullptr));
-				auto next_policy = executor->apply_validator_attestation_policy(algorithm::asset::base_id_of(asset), executor->receipt.from,
+				auto prev_policy = executor->get_validator_attestation(attestation_asset, executor->receipt.from).or_else(states::validator_attestation(executor->receipt.from, attestation_asset, nullptr));
+				auto next_policy = executor->apply_validator_attestation_policy(algorithm::asset::base_id_of(attestation_asset), executor->receipt.from,
 					setup.security_level.or_else(prev_policy.security_level),
 					setup.participation_threshold.or_else(prev_policy.participation_threshold),
 					setup.incoming_fee.or_else(prev_policy.incoming_fee),
@@ -1060,11 +1060,11 @@ namespace tangent
 
 				auto type = setup.stake.is_nan() ? ledger::executor_context::staker::unlock : ledger::executor_context::staker::lock;
 				if (type == ledger::executor_context::staker::unlock && (next_policy->accepts_account_requests || next_policy->accepts_withdrawal_requests))
-					return layer_exception(algorithm::asset::handle_of(asset) + " bridge is still active");
+					return layer_exception(algorithm::asset::handle_of(attestation_asset) + " bridge is still active");
 
 				if (type == ledger::executor_context::staker::unlock || (prev_policy.is_active() && prev_policy.accepts_withdrawal_requests != next_policy->accepts_withdrawal_requests && !next_policy->accepts_withdrawal_requests))
 				{
-					size_t offset = 0, count = 32;
+					size_t offset = 0;
 					while (true)
 					{
 						auto balances = executor->get_bridge_balances(executor->receipt.from, offset, count);
@@ -1073,10 +1073,10 @@ namespace tangent
 
 						for (auto& balance : *balances)
 						{
-							if (asset != algorithm::asset::base_id_of(balance.asset))
+							if (attestation_asset != algorithm::asset::base_id_of(balance.asset))
 								continue;
 
-							if (algorithm::asset::is_aux(asset, true))
+							if (algorithm::asset::is_aux(attestation_asset, true))
 							{
 								auto dust = executor->calculate_amount_considered_dust(balance.asset).or_else(decimal::zero());
 								if (balance.supply > dust)
@@ -1092,7 +1092,7 @@ namespace tangent
 					}
 				}
 
-				auto status = executor->apply_validator_attestation(asset, executor->receipt.from, type, setup.stake);
+				auto status = executor->apply_validator_attestation(attestation_asset, executor->receipt.from, type, setup.stake);
 				if (!status)
 					return status.error();
 			}
@@ -1299,9 +1299,9 @@ namespace tangent
 				stream->write_string(participant.optimized_view());
 			}
 			stream->write_integer((uint8_t)attestations.size());
-			for (auto& [asset, setup] : attestations)
+			for (auto& [attestation_asset, setup] : attestations)
 			{
-				stream->write_integer(asset);
+				stream->write_integer(attestation_asset);
 				stream->write_decimal(setup.stake);
 				stream->write_boolean(!!setup.accepts_account_requests);
 				stream->write_boolean(!!setup.accepts_withdrawal_requests);
@@ -1357,8 +1357,8 @@ namespace tangent
 			attestations.clear();
 			for (uint16_t i = 0; i < attestations_size; i++)
 			{
-				algorithm::asset_id asset;
-				if (!stream.read_integer(stream.read_type(), &asset))
+				algorithm::asset_id attestation_asset;
+				if (!stream.read_integer(stream.read_type(), &attestation_asset))
 					return false;
 
 				attestation_setup setup;
@@ -1405,7 +1405,7 @@ namespace tangent
 
 				if (has_security_level)
 				{
-					setup.security_level = protocol::now().policy.participation.min_per_account;
+					setup.security_level = (uint8_t)protocol::now().policy.participation.min_per_account;
 					if (!stream.read_integer(stream.read_type(), setup.security_level.address()))
 						return false;
 				}
@@ -1431,7 +1431,7 @@ namespace tangent
 						return false;
 				}
 
-				attestations[asset] = std::move(setup);
+				attestations[attestation_asset] = std::move(setup);
 			}
 
 			bool has_participation;
@@ -1497,31 +1497,31 @@ namespace tangent
 		{
 			participation = optional::none;
 		}
-		void setup::allocate_attestation_stake(const algorithm::asset_id& asset, const decimal& value)
+		void setup::allocate_attestation_stake(const algorithm::asset_id& new_asset, const decimal& new_value)
 		{
-			attestations[asset].stake = value;
+			attestations[new_asset].stake = new_value;
 		}
-		void setup::configure_attestation_security(const algorithm::asset_id& asset, uint8_t new_security_level, const decimal& new_participation_threshold, bool new_accepts_account_requests, bool new_accepts_withdrawal_requests)
+		void setup::configure_attestation_security(const algorithm::asset_id& new_asset, uint8_t new_security_level, const decimal& new_participation_threshold, bool new_accepts_account_requests, bool new_accepts_withdrawal_requests)
 		{
-			auto& setup = attestations[asset];
+			auto& setup = attestations[new_asset];
 			setup.security_level = new_security_level;
 			setup.participation_threshold = new_participation_threshold;
 			setup.accepts_account_requests = new_accepts_account_requests;
 			setup.accepts_withdrawal_requests = new_accepts_withdrawal_requests;
 		}
-		void setup::configure_attestation_reward(const algorithm::asset_id& asset, const decimal& new_incoming_fee, const decimal& new_outgoing_fee)
+		void setup::configure_attestation_reward(const algorithm::asset_id& new_asset, const decimal& new_incoming_fee, const decimal& new_outgoing_fee)
 		{
-			auto& setup = attestations[asset];
+			auto& setup = attestations[new_asset];
 			setup.incoming_fee = new_incoming_fee;
 			setup.outgoing_fee = new_outgoing_fee;
 		}
-		void setup::disable_attestation(const algorithm::asset_id& asset)
+		void setup::disable_attestation(const algorithm::asset_id& new_asset)
 		{
-			attestations[asset].stake = decimal::nan();
+			attestations[new_asset].stake = decimal::nan();
 		}
-		void setup::standby_on_attestation(const algorithm::asset_id& asset)
+		void setup::standby_on_attestation(const algorithm::asset_id& new_asset)
 		{
-			attestations.erase(asset);
+			attestations.erase(new_asset);
 		}
 		void setup::migrate_participant(const uint256_t& broadcast_hash, const algorithm::pubkeyhash_t& participant)
 		{
@@ -1550,10 +1550,10 @@ namespace tangent
 			vector<states::validator_participation_ref> refs;
 			while (true)
 			{
-				auto results = executor->get_validator_participation_refs(executor->receipt.from, refs.size(), count);
-				if (results)
-					refs.insert(refs.end(), results->begin(), results->end());
-				if (!results || results->size() != count)
+				auto ref_results = executor->get_validator_participation_refs(executor->receipt.from, refs.size(), count);
+				if (ref_results)
+					refs.insert(refs.end(), ref_results->begin(), ref_results->end());
+				if (!ref_results || ref_results->size() != count)
 					break;
 			}
 
@@ -1583,9 +1583,9 @@ namespace tangent
 				if (!parent)
 					return layer_exception("invalid migration reasoning transaction");
 
-				auto participation = executor->get_validator_participation(participant);
-				if (!participation)
-					return participation.error();
+				auto participation_ref = executor->get_validator_participation(participant);
+				if (!participation_ref)
+					return participation_ref.error();
 
 				bool has_any = false;
 				auto ref_asset = algorithm::asset::base_id_of(parent->transaction->asset);
@@ -1639,10 +1639,10 @@ namespace tangent
 			if (!attestations.empty())
 			{
 				auto* attestations_data = data.set("attestations", format::tree::list());
-				for (auto& [asset, setup] : attestations)
+				for (auto& [attestation_asset, setup] : attestations)
 				{
 					auto* attestation_data = attestations_data->push(format::tree::map());
-					attestation_data->set("asset", algorithm::asset::serialize(asset));
+					attestation_data->set("asset", algorithm::asset::serialize(attestation_asset));
 					attestation_data->set("accepts_account_requests", setup.accepts_account_requests ? format::variable(*setup.accepts_account_requests) : format::variable());
 					attestation_data->set("accepts_withdrawal_requests", setup.accepts_withdrawal_requests ? format::variable(*setup.accepts_withdrawal_requests) : format::variable());
 					attestation_data->set("security_level", setup.security_level ? format::variable(*setup.security_level) : format::variable());
@@ -1831,10 +1831,10 @@ namespace tangent
 				else if (signatures.size() > protocol::now().policy.attestation.max_per_transaction)
 					return layer_exception("too many commitment attesters");
 
-				for (auto& signature : signatures)
+				for (auto& commitment_signature : signatures)
 				{
 					algorithm::pubkeyhash_t attester;
-					if (!algorithm::signing::recover_hash(commitment_hash, attester, signature))
+					if (!algorithm::signing::recover_hash(commitment_hash, attester, commitment_signature))
 						return layer_exception("invalid commitment signature");
 					else if (attesters.find(attester) != attesters.end())
 						return layer_exception("duplicate commitment attester");
@@ -2027,11 +2027,11 @@ namespace tangent
 					{
 						for (auto& [route_account, transfers] : routes)
 						{
-							auto it = transfers.find(penalty_asset);
-							if (it != transfers.end())
+							auto transfer = transfers.find(penalty_asset);
+							if (transfer != transfers.end())
 							{
-								it->second.output_supply += amount;
-								it->second.output_reserve += amount;
+								transfer->second.output_supply += amount;
+								transfer->second.output_reserve += amount;
 							}
 						}
 					}
@@ -2240,8 +2240,8 @@ namespace tangent
 			{
 				stream->write_integer(commitment_hash);
 				stream->write_integer((uint16_t)signatures.size());
-				for (auto& signature : signatures)
-					stream->write_string(signature.optimized_view());
+				for (auto& commitment_signature : signatures)
+					stream->write_string(commitment_signature.optimized_view());
 			}
 			return true;
 		}
@@ -2335,8 +2335,8 @@ namespace tangent
 			for (auto& [commitment_hash, signatures] : commitments)
 			{
 				auto signatures_data = commitments_data->set(algorithm::encoding::encode_0xhex256(commitment_hash), format::tree::list());
-				for (auto& signature : signatures)
-					signatures_data->push(signature.empty() ? format::variable() : format::variable(format::util::encode_0xhex(signature.view())));
+				for (auto& commitment_signature : signatures)
+					signatures_data->push(commitment_signature.empty() ? format::variable() : format::variable(format::util::encode_0xhex(commitment_signature.view())));
 			}
 			data.set("proof", proof.as_tree());
 			return data;
@@ -3318,15 +3318,15 @@ namespace tangent
 						if (it == state.participants.end())
 							break;
 
-						auto result = coawait(dispatcher->aggregate_signature(executor, state, *it));
-						if (!result && (result.error().is_retry() || result.error().is_shutdown()))
+						auto subresult = coawait(dispatcher->aggregate_signature(executor, state, *it));
+						if (!subresult && (subresult.error().is_retry() || subresult.error().is_shutdown()))
 						{
 							unavailable.insert(*it);
 							if (chosen_input)
 								goto postpone;
 						}
-						else if (!result)
-							coreturn cancel(std::move(result.error()));
+						else if (!subresult)
+							coreturn cancel(std::move(subresult.error()));
 						else
 							reset = false;
 
@@ -3339,9 +3339,9 @@ namespace tangent
 						goto postpone;
 					}
 
-					auto finalization = state.compositor->to_signature(&input->signature);
-					if (!finalization)
-						coreturn cancel(remote_exception(std::move(finalization.error().message())));
+					auto subfinalization = state.compositor->to_signature(&input->signature);
+					if (!subfinalization)
+						coreturn cancel(remote_exception(std::move(subfinalization.error().message())));
 
 					input = state.message->next_input_for_aggregation();
 					state.compositor.destroy();

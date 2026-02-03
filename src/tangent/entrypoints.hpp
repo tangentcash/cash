@@ -103,7 +103,7 @@ namespace tangent
 					executor->emit_event(0, { format::variable(execution.what()) }, false);
 
 				tracer.log = format::tree::list();
-				for (auto& [event, args] : executor->receipt.events)
+				for (auto& [event, params] : executor->receipt.events)
 				{
 					auto target = tracer.events.find(tracer.log.childs().size());
 					auto* next = tracer.log.push(format::tree::map());
@@ -111,7 +111,7 @@ namespace tangent
 					if (target == tracer.events.end())
 					{
 						uptr<ledger::transition_state> temp = states::resolver::from_type(event);
-						next->set(temp ? temp->as_typename() : "__internal__", serialize_event_args(args));
+						next->set(temp ? temp->as_typename() : "__internal__", serialize_event_args(params));
 					}
 					else
 						next->set(target->second.key, target->second);
@@ -528,7 +528,7 @@ namespace tangent
 						asm_type = script_asm::tx_call;
 					else if (type == "abi")
 						asm_type = script_asm::abi;
-					else if (true || type == "code")
+					else
 						asm_type = script_asm::code;
 
 					format::variables function_args;
@@ -786,8 +786,8 @@ namespace tangent
 					for (size_t i = 0; i < execp->size(); i++)
 					{
 						auto* subcommand = execp->get(i);
-						auto method = subcommand->get_var(0).get_blob();
-						if (method != "execp")
+						auto submethod = subcommand->get_var(0).get_blob();
+						if (submethod != "execp")
 							continue;
 
 						auto subpath = os::path::resolve(subcommand->get_var(1).get_blob(), path_directory, true);
@@ -798,9 +798,9 @@ namespace tangent
 						if (!subfile)
 							return err("internal execp file error: " + subfile.what());
 
-						auto possible_execp = schema::from_json(*subfile);
-						if (!possible_execp)
-							return err("internal execp data error: " + possible_execp.what());
+						auto subpossible_execp = schema::from_json(*subfile);
+						if (!subpossible_execp)
+							return err("internal execp data error: " + subpossible_execp.what());
 
 						auto subexecp = uptr<schema>(possible_execp);
 						if (!subexecp->value.is(var_type::array))
@@ -820,7 +820,7 @@ namespace tangent
 
 					for (auto& subcommand : execp->get_childs())
 					{
-						vector<string> args;
+						vector<string> subargs;
 						for (auto& subargument : subcommand->get_childs())
 						{
 							if (subargument->value.is_object())
@@ -830,7 +830,7 @@ namespace tangent
 									auto blockchain = subargument->fetch_var("$asset.0").get_blob();
 									auto token = subargument->fetch_var("$asset.1").get_blob();
 									auto contract_address = subargument->fetch_var("$asset.2").get_blob();
-									args.push_back(algorithm::asset::id_of(blockchain, token, contract_address).to_string());
+									subargs.push_back(algorithm::asset::id_of(blockchain, token, contract_address).to_string());
 								}
 								else
 								{
@@ -841,23 +841,23 @@ namespace tangent
 
 									format::wo_stream message;
 									if (format::variables_util::serialize_flat_into(function_args, &message))
-										args.push_back(message.encode());
+										subargs.push_back(message.encode());
 									else
-										args.push_back(string());
+										subargs.push_back(string());
 								}
 							}
 							else
-								args.push_back(pack(subargument->value));
+								subargs.push_back(pack(subargument->value));
 						}
 
 						string compiled_command = "> ";
-						for (auto& argument : args)
+						for (auto& argument : subargs)
 							compiled_command.append(argument).append(1, ' ');
 						if (!compiled_command.empty())
 							compiled_command.pop_back();
 
 						ok(compiled_command);
-						if (!command_execute(args, path_directory))
+						if (!command_execute(subargs, path_directory))
 							return false;
 					}
 					return true;

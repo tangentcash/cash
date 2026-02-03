@@ -335,8 +335,8 @@ namespace tangent
 			if (priority > protocol::now().policy.production.max_per_block)
 				return layer_exception("invalid priority");
 
-			auto required_difficulty = number <= 1 || parent_block ? algorithm::wesolowski::scale(get_proof_slot_target(parent_block), get_proof_difficulty_multiplier()) : difficulty;
-			if (proof.empty() || difficulty != required_difficulty)
+			auto target_difficulty = number <= 1 || parent_block ? algorithm::wesolowski::scale(get_proof_slot_target(parent_block), get_proof_difficulty_multiplier()) : difficulty;
+			if (proof.empty() || difficulty != target_difficulty)
 				return layer_exception("invalid wesolowski target");
 
 			uint256_t gas_work = get_gas_work(gas_use, gas_limit, priority);
@@ -515,9 +515,9 @@ namespace tangent
 		}
 		void block_header::set_witness_requirement(const algorithm::asset_id& asset, uint64_t block_number)
 		{
-			auto& number = witnesses[algorithm::asset::base_id_of(asset)];
-			if (number < block_number)
-				number = block_number;
+			auto& height = witnesses[algorithm::asset::base_id_of(asset)];
+			if (height < block_number)
+				height = block_number;
 		}
 		bool block_header::network_congestion() const
 		{
@@ -917,34 +917,34 @@ namespace tangent
 		}
 		block_proof block_body::as_proof(const block_header* parent_block, const block_state* state) const
 		{
-			auto proof = block_proof();
-			proof.transaction_root = transaction_root;
-			proof.receipt_root = receipt_root;
-			proof.state_root = state_root;
-			proof.transaction_tree.nodes.reserve(transactions.size() + 1);
-			proof.receipt_tree.nodes.reserve(transactions.size() + 1);
-			proof.state_tree.nodes.reserve(state ? state->finalized.size() + 1 : 0);
+			auto result = block_proof();
+			result.transaction_root = transaction_root;
+			result.receipt_root = receipt_root;
+			result.state_root = state_root;
+			result.transaction_tree.nodes.reserve(transactions.size() + 1);
+			result.receipt_tree.nodes.reserve(transactions.size() + 1);
+			result.state_tree.nodes.reserve(state ? state->finalized.size() + 1 : 0);
 			if (parent_block != nullptr)
 			{
-				proof.transaction_tree.nodes.push_back(parent_block->transaction_root);
-				proof.receipt_tree.nodes.push_back(parent_block->receipt_root);
+				result.transaction_tree.nodes.push_back(parent_block->transaction_root);
+				result.receipt_tree.nodes.push_back(parent_block->receipt_root);
 			}
 			for (auto& item : transactions)
 			{
-				proof.transaction_tree.nodes.push_back(item.receipt.transaction_hash);
-				proof.receipt_tree.nodes.push_back(item.receipt.as_hash());
+				result.transaction_tree.nodes.push_back(item.receipt.transaction_hash);
+				result.receipt_tree.nodes.push_back(item.receipt.as_hash());
 			}
 			if (state != nullptr)
 			{
 				if (parent_block != nullptr)
-					proof.state_tree.nodes.push_back(parent_block->state_root);
+					result.state_tree.nodes.push_back(parent_block->state_root);
 				for (auto& [index, change] : state->finalized)
-					proof.state_tree.nodes.push_back(change.state->as_hash());
+					result.state_tree.nodes.push_back(change.state->as_hash());
 			}
-			proof.transaction_tree = algorithm::merkle_tree::from(std::move(proof.transaction_tree.nodes));
-			proof.receipt_tree = algorithm::merkle_tree::from(std::move(proof.receipt_tree.nodes));
-			proof.state_tree = algorithm::merkle_tree::from(std::move(proof.state_tree.nodes));
-			return proof;
+			result.transaction_tree = algorithm::merkle_tree::from(std::move(result.transaction_tree.nodes));
+			result.receipt_tree = algorithm::merkle_tree::from(std::move(result.receipt_tree.nodes));
+			result.state_tree = algorithm::merkle_tree::from(std::move(result.state_tree.nodes));
+			return result;
 		}
 		uint256_t block_body::as_hash(bool renew) const
 		{
@@ -1294,7 +1294,7 @@ namespace tangent
 			if (!transaction)
 				return layer_exception("invalid transaction");
 
-			bool gas_calculation = block != nullptr && block->number == std::numeric_limits<int64_t>::max() - 1;
+			bool gas_calculation = block != nullptr && block->number == (uint64_t)(std::numeric_limits<int64_t>::max() - 1);
 			if (gas_calculation)
 				return expectation::met;
 
@@ -3004,7 +3004,7 @@ namespace tangent
 					return false;
 
 				auto& encrypted_values = encrypted_shares[hash];
-				for (uint16_t i = 0; i < encrypted_values_size; i++)
+				for (uint16_t j = 0; j < encrypted_values_size; j++)
 				{
 					algorithm::pubkeyhash_t item; string intermediate;
 					if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, item.blob, sizeof(item)))
@@ -3078,7 +3078,7 @@ namespace tangent
 					return false;
 
 				auto& encrypted_values = encrypted_shares[hash];
-				for (uint16_t i = 0; i < encrypted_values_size; i++)
+				for (uint16_t j = 0; j < encrypted_values_size; j++)
 				{
 					algorithm::pubkeyhash_t item; string intermediate;
 					if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, item.blob, sizeof(item)))
@@ -3662,9 +3662,9 @@ namespace tangent
 			if (map_nonce == nonces.end())
 			{
 				auto chain = storages::chainstate();
-				auto state = chain.get_uniform(states::account_nonce::as_instance_type(), nullptr, states::account_nonce::as_instance_index(item.owner), 0);
-				auto* value = (states::account_nonce*)(state ? state->ptr() : nullptr);
-				auto nonce = (value ? value->nonce : 0);
+				auto nonce_state = chain.get_uniform(states::account_nonce::as_instance_type(), nullptr, states::account_nonce::as_instance_index(item.owner), 0);
+				auto* nonce_value = (states::account_nonce*)(nonce_state ? nonce_state->ptr() : nullptr);
+				auto nonce = (nonce_value ? nonce_value->nonce : 0);
 				if (item.candidate->nonce != nonce)
 					return item.candidate->nonce < nonce ? include_decision::not_executable : include_decision::not_includable;
 			}
