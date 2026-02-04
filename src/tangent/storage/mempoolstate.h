@@ -112,8 +112,7 @@ namespace tangent
 			expects_lr<size_t> expire_transactions();
 			expects_lr<size_t> get_transactions_count();
 			expects_lr<void> apply_secret_entropy(const algorithm::pubkeyhash_t& participant, const ledger::dispatcher_context::secret_entropy& entropy);
-			expects_lr<ledger::dispatcher_context::secret_entropy> get_secret_entropy(const algorithm::pubkeyhash_t& participant, const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner);
-			expects_lr<vector<states::bridge_account>> get_secret_entropies_by_manager(const algorithm::pubkeyhash_t& manager, size_t offset, size_t count);
+			expects_lr<ledger::dispatcher_context::secret_entropy> get_secret_entropy(const algorithm::pubkeyhash_t& participant, const algorithm::pubkeyhash_t& owner, const algorithm::asset_id& asset, const uint256_t& instance);
 			expects_lr<bool> has_transaction(const uint256_t& transaction_hash);
 			expects_lr<uint64_t> get_lowest_transaction_nonce(const algorithm::pubkeyhash_t& owner);
 			expects_lr<uint64_t> get_highest_transaction_nonce(const algorithm::pubkeyhash_t& owner);

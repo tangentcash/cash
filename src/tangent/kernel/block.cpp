@@ -1274,21 +1274,6 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<void> executor_context::verify_account_delegation(const algorithm::pubkeyhash_t& owner) const
-		{
-			if (!transaction || !block)
-				return layer_exception("invalid transaction or block");
-
-			auto state = get_account_delegation(owner);
-			if (!state)
-				return expectation::met;
-
-			uint64_t target_block_number = state->get_delegation_zeroing_block(block->number);
-			if (target_block_number > block->number)
-				return layer_exception("account is over delegated (retry at block: " + to_string(target_block_number) + ")");
-
-			return expectation::met;
-		}
 		expects_lr<void> executor_context::verify_gas_transfer_balance() const
 		{
 			if (!transaction)
@@ -1300,7 +1285,7 @@ namespace tangent
 
 			if (!transaction->is_commitment() && (options & (uint8_t)flags::congestion) && !transaction->gas_price.is_positive())
 				return layer_exception("must pay for gas - network congestion requirement");
-			else if (!transaction->gas_price.is_positive())
+			else if (!transaction->gas_price.is_positive() || (options & (uint8_t)flags::evaluation))
 				return expectation::met;
 
 			auto asset = transaction->gas_asset();
@@ -1344,28 +1329,6 @@ namespace tangent
 			distribution.signature = message.data;
 			distribution.value = algorithm::hashing::hash256i(*crypto::hash(digests::sha512(), distribution.signature));
 			return distribution;
-		}
-		expects_lr<decimal> executor_context::calculate_amount_considered_dust(const algorithm::asset_id& asset) const
-		{
-			auto chain = storages::chainstate();
-			auto filter = storages::result_filter::greater(0, -1);
-			auto states = chain.get_multiforms_by_row_filter(states::validator_attestation::as_instance_type(), changelog, states::validator_attestation::as_instance_row(asset), filter, get_validation_nonce(), storages::result_range_window(0, 32));
-			if (!states || states->empty())
-				return layer_exception("validator attestation required but not applicable (" + (states ? string("state not found") : states.what()) + ")");
-
-			vector<decimal> amounts;
-			amounts.reserve(states->size());
-			for (auto& state : *states)
-			{
-				auto status = ((executor_context*)this)->query(state.ptr(), !state.cached);
-				if (!status)
-					return status.error();
-
-				auto* attestation = state.as<states::validator_attestation>();
-				amounts.emplace_back(std::max(attestation->incoming_fee, attestation->outgoing_fee));
-			}
-			std::sort(amounts.begin(), amounts.end());
-			return expects_lr<decimal>(amounts.empty() ? decimal::zero() : std::move(amounts[amounts.size() / 2]));
 		}
 		expects_lr<size_t> executor_context::calculate_attesters_size(const algorithm::asset_id& asset) const
 		{
@@ -1456,7 +1419,7 @@ namespace tangent
 
 			return expects_lr<vector<states::validator_attestation>>(std::move(committee));
 		}
-		expects_lr<states::validator_attestation> executor_context::calculate_attester_for_migration(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& exclusion)
+		expects_lr<vector<states::validator_attestation>> executor_context::calculate_attesters(const algorithm::asset_id& asset, size_t target_size, const decimal& fee_threshold, btree_set<algorithm::pubkeyhash_t>& exclusion)
 		{
 			auto payment = burn_gas((uint64_t)gas_cost::query_result * 2048);
 			if (!payment)
@@ -1468,38 +1431,60 @@ namespace tangent
 
 			auto nonce = get_validation_nonce();
 			auto chain = storages::chainstate();
-			auto filter = storages::result_filter::greater(0, -1);
+			auto filter = storages::result_filter::greater_equal(fee_threshold.is_zero_or_nan() ? uint256_t(1) : states::validator_attestation::to_rank(fee_threshold), -1);
 			auto pool = chain.get_multiforms_count_by_row_filter(states::validator_attestation::as_instance_type(), changelog, states::validator_attestation::as_instance_row(asset), filter, nonce).or_else(0);
-			if (pool < 2)
+			if (pool < target_size)
 				return layer_exception("committee threshold not met");
 
-			auto indices = btree_set<uint64_t>();
+			vector<states::validator_attestation> committee;
 			auto distribution = algorithm::exponential_distribution();
-		retry:
-			uint64_t index = (uint64_t)distribution.next(random->derive(), (uint32_t)pool);
-			if (indices.find(index) != indices.end())
-				goto retry;
+			auto indices = btree_set<uint64_t>();
+			while (indices.size() < pool)
+			{
+				auto window = storages::result_index_window();
+				auto size = std::min<size_t>(target_size, pool - indices.size());
+				while (window.indices.size() < size)
+				{
+					uint64_t index = (uint64_t)distribution.next(random->derive(), (uint32_t)pool);
+					if (indices.find(index) == indices.end())
+					{
+						window.indices.push_back(index);
+						indices.insert(index);
+					}
+				}
 
-			auto window = storages::result_index_window();
-			window.indices.push_back(index);
-			indices.insert(index);
+				auto results = chain.get_multiforms_by_row_filter(states::validator_attestation::as_instance_type(), changelog, states::validator_attestation::as_instance_row(asset), filter, nonce, window);
+				if (!results || results->empty())
+					break;
 
-			auto results = chain.get_multiforms_by_row_filter(states::validator_attestation::as_instance_type(), changelog, states::validator_attestation::as_instance_row(asset), filter, nonce, window);
-			if (!results || results->empty())
+				committee.reserve(results->size());
+				for (auto& result : *results)
+				{
+					auto& target = *(states::validator_attestation*)result.ptr();
+					auto hash = algorithm::pubkeyhash_t(target.owner);
+					if (exclusion.find(hash) != exclusion.end())
+						continue;
+
+					auto status = load(result.ptr(), !result.cached);
+					if (!status)
+						return status.error();
+
+					exclusion.insert(std::move(hash));
+					committee.push_back(std::move(target));
+					if (committee.size() >= target_size)
+						break;
+				}
+
+				if (committee.size() >= target_size)
+					break;
+			}
+
+			if (committee.size() < target_size)
 				return layer_exception("committee threshold not met");
 
-			auto& result = results->front();
-			auto& target = *(states::validator_attestation*)result.ptr();
-			if (target.owner == exclusion || !target.accepts_account_requests || !target.accepts_withdrawal_requests)
-				goto retry;
-
-			auto status = load(result.ptr(), !result.cached);
-			if (!status)
-				return status.error();
-
-			return expects_lr<states::validator_attestation>(std::move(target));
+			return expects_lr<vector<states::validator_attestation>>(std::move(committee));
 		}
-		expects_lr<vector<states::validator_participation>> executor_context::calculate_participants(btree_set<algorithm::pubkeyhash_t>& exclusion, size_t target_size, const decimal& threshold)
+		expects_lr<vector<states::validator_participation>> executor_context::calculate_participants(size_t target_size, btree_set<algorithm::pubkeyhash_t>& exclusion)
 		{
 			auto payment = burn_gas((uint64_t)gas_cost::query_result * 2048);
 			if (!payment)
@@ -1511,7 +1496,7 @@ namespace tangent
 
 			auto nonce = get_validation_nonce();
 			auto chain = storages::chainstate();
-			auto filter = storages::result_filter::greater_equal(threshold.is_zero_or_nan() ? uint256_t(1) : states::validator_production::to_rank(threshold), -1);
+			auto filter = storages::result_filter::greater_equal(uint256_t(1), -1);
 			auto pool = chain.get_multiforms_count_by_row_filter(states::validator_participation::as_instance_type(), changelog, states::validator_participation::as_instance_row(), filter, nonce).or_else(0);
 			if (pool < target_size)
 				return layer_exception("committee threshold not met");
@@ -1519,10 +1504,10 @@ namespace tangent
 			vector<states::validator_participation> committee;
 			auto distribution = algorithm::exponential_distribution();
 			auto indices = btree_set<uint64_t>();
-			auto size = std::min<size_t>(target_size, pool);
 			while (indices.size() < pool)
 			{
 				auto window = storages::result_index_window();
+				auto size = std::min<size_t>(target_size, pool - indices.size());
 				while (window.indices.size() < size)
 				{
 					uint64_t index = (uint64_t)distribution.next(random->derive(), (uint32_t)pool);
@@ -1608,17 +1593,6 @@ namespace tangent
 			auto result = store(&new_state, true);
 			if (!result)
 				return result.error();
-
-			return new_state;
-		}
-		expects_lr<states::account_delegation> executor_context::apply_account_delegation(const algorithm::pubkeyhash_t& owner, uint32_t delegations)
-		{
-			states::account_delegation new_state = states::account_delegation(owner, block);
-			new_state.delegations = delegations;
-
-			auto status = store(&new_state, true);
-			if (!status)
-				return status.error();
 
 			return new_state;
 		}
@@ -1859,7 +1833,7 @@ namespace tangent
 
 			return new_state;
 		}
-		expects_lr<states::validator_participation_ref> executor_context::apply_validator_participation_ref(const algorithm::pubkeyhash_t& owner, const states::validator_participation_ref::ref_value& ref, bool active)
+		expects_lr<states::validator_participation_ref> executor_context::apply_validator_participation_ref(const algorithm::pubkeyhash_t& owner, const states::bridge_ref& ref, bool active)
 		{
 			states::validator_participation_ref new_state = states::validator_participation_ref(owner, ref, block);
 			new_state.active = active;
@@ -1870,9 +1844,10 @@ namespace tangent
 
 			return new_state;
 		}
-		expects_lr<states::validator_attestation> executor_context::apply_validator_attestation(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, staker type, const decimal& stake)
+		expects_lr<states::validator_attestation> executor_context::apply_validator_attestation(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, staker type, const decimal& stake, const decimal& min_fee)
 		{
 			states::validator_attestation new_state = get_validator_attestation(asset, owner).or_else(states::validator_attestation(owner, asset, block));
+			new_state.min_fee = min_fee;
 			switch (type)
 			{
 				case staker::lock:
@@ -1953,79 +1928,94 @@ namespace tangent
 
 			return new_state;
 		}
-		expects_lr<states::validator_attestation> executor_context::apply_validator_attestation_policy(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, uint8_t security_level, const decimal& participation_threshold, const decimal& incoming_fee, const decimal& outgoing_fee, bool accepts_account_requests, bool accepts_withdrawal_requests)
+		expects_lr<states::bridge_instance> executor_context::apply_bridge_instance(const algorithm::asset_id& asset, const uint256_t& bridge_hash, uint8_t security_level, const decimal& fee)
 		{
-			auto new_state = get_validator_attestation(asset, owner).or_else(states::validator_attestation(owner, asset, block));
-			new_state.participation_threshold = participation_threshold;
-			new_state.incoming_fee = incoming_fee;
-			new_state.outgoing_fee = outgoing_fee;
+			states::bridge_ref ref;
+			ref.asset = asset;
+			ref.hash = bridge_hash;
+
+			auto new_state = get_bridge_instance(asset, bridge_hash).or_else(states::bridge_instance(ref, block));
 			new_state.security_level = security_level;
-			new_state.accepts_account_requests = accepts_account_requests;
-			new_state.accepts_withdrawal_requests = accepts_withdrawal_requests;
+			new_state.fee_rate = fee;
 
 			auto status = store(&new_state, true);
 			if (!status)
 				return status.error();
 
-			status = emit_event<states::validator_attestation>({ format::variable(asset), format::variable(owner.view()), format::variable((uint8_t)2) });
+			status = emit_event<states::bridge_instance>({ format::variable(asset), format::variable(bridge_hash) });
 			if (!status)
 				return status.error();
 
 			return new_state;
 		}
-		expects_lr<states::validator_attestation> executor_context::apply_validator_attestation_queue(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const uint256_t& transaction_hash)
+		expects_lr<states::bridge_instance> executor_context::apply_bridge_instance_log(const algorithm::asset_id& asset, const uint256_t& bridge_hash, const uint256_t& transaction_hash)
 		{
-			auto new_state = get_validator_attestation(asset, owner).or_else(states::validator_attestation(owner, asset, block));
-			new_state.queue_transaction_hash = transaction_hash;
+			states::bridge_ref ref;
+			ref.asset = asset;
+			ref.hash = bridge_hash;
+
+			auto new_state = get_bridge_instance(asset, bridge_hash).or_else(states::bridge_instance(ref, block));
+			new_state.transaction_hash = transaction_hash;
+			++new_state.transaction_nonce;
 
 			auto status = store(&new_state, true);
 			if (!status)
 				return status.error();
 
-			status = emit_event<states::validator_attestation>({ format::variable(asset), format::variable(owner.view()), format::variable((uint8_t)1), format::variable(transaction_hash) });
+			status = emit_event<states::bridge_instance>({ format::variable(asset), format::variable(bridge_hash), format::variable(new_state.transaction_nonce), format::variable(true) });
 			if (!status)
 				return status.error();
 
 			return new_state;
 		}
-		expects_lr<states::validator_attestation> executor_context::apply_validator_attestation_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, uint64_t new_accounts)
+		expects_lr<states::bridge_instance> executor_context::apply_bridge_instance_account(const algorithm::asset_id& asset, const uint256_t& bridge_hash, const algorithm::pubkeyhash_t& owner)
 		{
-			auto new_state = get_validator_attestation(asset, owner).or_else(states::validator_attestation(owner, asset, block));
-			new_state.accounts_under_management += new_accounts;
+			states::bridge_ref ref;
+			ref.asset = asset;
+			ref.hash = bridge_hash;
+
+			auto new_state = get_bridge_instance(asset, bridge_hash).or_else(states::bridge_instance(ref, block));
+			++new_state.account_nonce;
+			if (new_state.ref.owner.empty())
+				new_state.ref.owner = owner;
 
 			auto status = store(&new_state, true);
 			if (!status)
 				return status.error();
 
-			status = emit_event<states::validator_attestation>({ format::variable(asset), format::variable(owner.view()), format::variable((uint8_t)0), format::variable(new_accounts) });
+			status = emit_event<states::bridge_instance>({ format::variable(asset), format::variable(bridge_hash), format::variable(new_state.account_nonce), format::variable(false) });
 			if (!status)
 				return status.error();
 
 			return new_state;
 		}
-		expects_lr<states::bridge_balance> executor_context::apply_bridge_balance(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const decimal& balance)
+		expects_lr<states::bridge_balance> executor_context::apply_bridge_balance(const algorithm::asset_id& asset, const uint256_t& bridge_hash, const decimal& balance)
 		{
 			if (balance.is_zero())
-				return get_bridge_balance(asset, owner).or_else(states::bridge_balance(owner, asset, block));
+				return get_bridge_balance(asset, bridge_hash).or_else(states::bridge_balance(asset, bridge_hash, block));
 
-			states::bridge_balance new_state = states::bridge_balance(owner, asset, block);
+			states::bridge_balance new_state = states::bridge_balance(asset, bridge_hash, block);
 			new_state.supply = balance;
 
 			auto status = store(&new_state, true);
 			if (!status)
 				return status.error();
 
-			status = emit_event<states::bridge_balance>({ format::variable(asset), format::variable(owner.view()), format::variable(balance) });
+			status = emit_event<states::bridge_balance>({ format::variable(asset), format::variable(bridge_hash), format::variable(balance) });
 			if (!status)
 				return status.error();
 
 			return new_state;
 		}
-		expects_lr<states::bridge_account> executor_context::apply_bridge_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const algorithm::pubkeyhash_t& manager, const algorithm::composition::cpubkey_t& public_key, btree_set<algorithm::pubkeyhash_t>&& group)
+		expects_lr<states::bridge_account> executor_context::apply_bridge_account(const algorithm::pubkeyhash_t& owner, const algorithm::asset_id& asset, const uint256_t& bridge_hash, const algorithm::composition::cpubkey_t& public_key, btree_set<algorithm::pubkeyhash_t>&& group)
 		{
-			states::bridge_account new_state = states::bridge_account(manager, asset, owner, block);
+			auto ref = states::bridge_ref();
+			ref.owner = owner;
+			ref.asset = asset;
+			ref.hash = bridge_hash;
+
+			states::bridge_account new_state = states::bridge_account(ref, block);
 			new_state.set_group(public_key, std::move(group));
-			new_state.asset = asset;
 
 			auto status = store(&new_state, true);
 			if (!status)
@@ -2055,15 +2045,15 @@ namespace tangent
 
 			return new_state;
 		}
-		expects_lr<states::witness_account> executor_context::apply_witness_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const address_map& addresses)
+		expects_lr<states::witness_account> executor_context::apply_witness_account(const algorithm::pubkeyhash_t& owner, const algorithm::asset_id& asset, const address_map& addresses)
 		{
-			return apply_witness_bridge_account(asset, owner, algorithm::pubkeyhash_t(), addresses, false);
+			return apply_witness_bridge_account(owner, asset, 0, addresses, false);
 		}
-		expects_lr<states::witness_account> executor_context::apply_witness_routing_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const address_map& addresses)
+		expects_lr<states::witness_account> executor_context::apply_witness_routing_account(const algorithm::pubkeyhash_t& owner, const algorithm::asset_id& asset, const address_map& addresses)
 		{
-			return apply_witness_bridge_account(asset, owner, algorithm::pubkeyhash_t(), addresses, true);
+			return apply_witness_bridge_account(owner, asset, 0, addresses, true);
 		}
-		expects_lr<states::witness_account> executor_context::apply_witness_bridge_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const algorithm::pubkeyhash_t& manager, const address_map& addresses, bool active)
+		expects_lr<states::witness_account> executor_context::apply_witness_bridge_account(const algorithm::pubkeyhash_t& owner, const algorithm::asset_id& asset, const uint256_t& bridge_hash, const address_map& addresses, bool active)
 		{
 			if (addresses.empty())
 				return layer_exception("invalid operation");
@@ -2082,12 +2072,16 @@ namespace tangent
 				segments[*hash][address.first] = address.second;
 			}
 
-			states::witness_account new_state = states::witness_account(algorithm::pubkeyhash_t(), 0, { }, nullptr);
+			auto ref = states::bridge_ref();
+			ref.owner = owner;
+			ref.asset = asset;
+			ref.hash = bridge_hash;
+
+			states::witness_account new_state = states::witness_account(ref, { }, nullptr);
 			for (auto& segment : segments)
 			{
-				new_state = states::witness_account(owner, asset, segment.second, block);
+				new_state = states::witness_account(ref, segment.second, block);
 				new_state.active = active;
-				new_state.manager = manager;
 
 				auto status = store(&new_state, true);
 				if (!status)
@@ -2106,9 +2100,6 @@ namespace tangent
 		expects_lr<states::witness_transaction> executor_context::apply_witness_transaction(const algorithm::asset_id& asset, const std::string_view& transaction_id)
 		{
 			states::witness_transaction new_state = states::witness_transaction(asset, transaction_id, block);
-			new_state.transaction_id = transaction_id;
-			new_state.asset = asset;
-
 			auto status = store(&new_state, true);
 			if (!status)
 				return status.error();
@@ -2260,19 +2251,6 @@ namespace tangent
 				results.emplace_back((states::account_multiform*)state.value.reset());
 			}
 			return results;
-		}
-		expects_lr<states::account_delegation> executor_context::get_account_delegation(const algorithm::pubkeyhash_t& owner) const
-		{
-			auto chain = storages::chainstate();
-			auto state = chain.get_uniform(states::account_delegation::as_instance_type(), changelog, states::account_delegation::as_instance_index(owner), get_validation_nonce());
-			if (!state)
-				return layer_exception("account delegation required but not applicable (" + state.what() + ")");
-
-			auto status = ((executor_context*)this)->load(state->ptr(), !state->cached);
-			if (!status)
-				return status.error();
-
-			return states::account_delegation(std::move(*state->as<states::account_delegation>()));
 		}
 		expects_lr<states::account_balance> executor_context::get_account_balance(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner) const
 		{
@@ -2468,10 +2446,42 @@ namespace tangent
 			}
 			return addresses;
 		}
-		expects_lr<states::bridge_balance> executor_context::get_bridge_balance(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner) const
+		expects_lr<states::bridge_instance> executor_context::get_bridge_instance(const algorithm::asset_id& asset, const uint256_t& bridge_hash) const
 		{
 			auto chain = storages::chainstate();
-			auto state = chain.get_multiform(states::bridge_balance::as_instance_type(), changelog, states::bridge_balance::as_instance_column(owner), states::bridge_balance::as_instance_row(asset), get_validation_nonce());
+			auto state = chain.get_multiform(states::bridge_instance::as_instance_type(), changelog, states::bridge_instance::as_instance_column(asset), states::bridge_instance::as_instance_row(bridge_hash), get_validation_nonce());
+			if (!state)
+				return layer_exception("bridge instance required but not applicable (" + state.what() + ")");
+
+			auto status = ((executor_context*)this)->load(state->ptr(), !state->cached);
+			if (!status)
+				return status.error();
+
+			return states::bridge_instance(std::move(*state->as<states::bridge_instance>()));
+		}
+		expects_lr<vector<states::bridge_instance>> executor_context::get_bridge_instances(const uint256_t& asset, size_t offset, size_t count) const
+		{
+			auto chain = storages::chainstate();
+			auto states = chain.get_multiforms_by_column(states::bridge_instance::as_instance_type(), changelog, states::bridge_instance::as_instance_column(asset), get_validation_nonce(), offset, count);
+			if (!states)
+				return layer_exception("bridge instance(s) required but not applicable (" + states.what() + ")");
+
+			vector<states::bridge_instance> addresses;
+			addresses.reserve(states->size());
+			for (auto& state : *states)
+			{
+				auto status = ((executor_context*)this)->query(state.ptr(), !state.cached);
+				if (!status)
+					return status.error();
+
+				addresses.emplace_back(std::move(*state.as<states::bridge_instance>()));
+			}
+			return addresses;
+		}
+		expects_lr<states::bridge_balance> executor_context::get_bridge_balance(const algorithm::asset_id& asset, const uint256_t& bridge_hash) const
+		{
+			auto chain = storages::chainstate();
+			auto state = chain.get_multiform(states::bridge_balance::as_instance_type(), changelog, states::bridge_balance::as_instance_column(asset), states::bridge_balance::as_instance_row(bridge_hash), get_validation_nonce());
 			if (!state)
 				return layer_exception("bridge balance required but not applicable (" + state.what() + ")");
 
@@ -2481,12 +2491,12 @@ namespace tangent
 
 			return states::bridge_balance(std::move(*state->as<states::bridge_balance>()));
 		}
-		expects_lr<vector<states::bridge_balance>> executor_context::get_bridge_balances(const algorithm::pubkeyhash_t& owner, size_t offset, size_t count) const
+		expects_lr<vector<states::bridge_balance>> executor_context::get_bridge_balances(const uint256_t& bridge_hash, size_t offset, size_t count) const
 		{
 			auto chain = storages::chainstate();
-			auto states = chain.get_multiforms_by_column(states::bridge_balance::as_instance_type(), changelog, states::bridge_balance::as_instance_column(owner), get_validation_nonce(), offset, count);
+			auto states = chain.get_multiforms_by_row(states::bridge_balance::as_instance_type(), changelog, states::bridge_balance::as_instance_row(bridge_hash), get_validation_nonce(), offset, count);
 			if (!states)
-				return layer_exception("validator participation ref(s) required but not applicable (" + states.what() + ")");
+				return layer_exception("bridge balance(s) required but not applicable (" + states.what() + ")");
 
 			vector<states::bridge_balance> addresses;
 			addresses.reserve(states->size());
@@ -2500,10 +2510,10 @@ namespace tangent
 			}
 			return addresses;
 		}
-		expects_lr<vector<states::bridge_account>> executor_context::get_bridge_accounts(const algorithm::pubkeyhash_t& manager, size_t offset, size_t count) const
+		expects_lr<vector<states::bridge_account>> executor_context::get_bridge_accounts(const uint256_t& bridge_hash, size_t offset, size_t count) const
 		{
 			auto chain = storages::chainstate();
-			auto states = chain.get_multiforms_by_column(states::bridge_account::as_instance_type(), changelog, states::bridge_account::as_instance_column(manager), get_validation_nonce(), offset, count);
+			auto states = chain.get_multiforms_by_row(states::bridge_account::as_instance_type(), changelog, states::bridge_account::as_instance_row(bridge_hash), get_validation_nonce(), offset, count);
 			if (!states)
 				return layer_exception("bridge account(s) required but not applicable (" + states.what() + ")");
 
@@ -2519,10 +2529,10 @@ namespace tangent
 			}
 			return addresses;
 		}
-		expects_lr<states::bridge_account> executor_context::get_bridge_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner) const
+		expects_lr<states::bridge_account> executor_context::get_bridge_account(const algorithm::pubkeyhash_t& owner, const algorithm::asset_id& asset, const uint256_t& bridge_hash) const
 		{
 			auto chain = storages::chainstate();
-			auto state = chain.get_multiform(states::bridge_account::as_instance_type(), changelog, states::bridge_account::as_instance_column(manager), states::bridge_account::as_instance_row(asset, owner), get_validation_nonce());
+			auto state = chain.get_multiform(states::bridge_account::as_instance_type(), changelog, states::bridge_account::as_instance_column(asset, owner), states::bridge_account::as_instance_row(bridge_hash), get_validation_nonce());
 			if (!state)
 				return layer_exception("bridge account required but not applicable (" + state.what() + ")");
 
@@ -2848,8 +2858,8 @@ namespace tangent
 		bool dispatcher_context::secret_entropy::store_payload(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
+			stream->write_integer(hash);
 			stream->write_integer(asset);
-			stream->write_string(manager.optimized_view());
 			stream->write_string(owner.optimized_view());
 			stream->write_string(entropy.optimized_view());
 			stream->write_integer((uint8_t)shares.size());
@@ -2863,11 +2873,10 @@ namespace tangent
 		}
 		bool dispatcher_context::secret_entropy::load_payload(format::ro_stream& stream)
 		{
-			if (!stream.read_integer(stream.read_type(), &asset))
+			if (!stream.read_integer(stream.read_type(), &hash))
 				return false;
 
-			string manager_assembly;
-			if (!stream.read_string(stream.read_type(), &manager_assembly) || !algorithm::encoding::decode_bytes(manager_assembly, manager.blob, sizeof(manager)))
+			if (!stream.read_integer(stream.read_type(), &asset))
 				return false;
 
 			string owner_assembly;
@@ -2901,9 +2910,9 @@ namespace tangent
 		format::tree dispatcher_context::secret_entropy::as_tree() const
 		{
 			format::tree data;
-			data.set("asset", algorithm::asset::serialize(asset));
-			data.set("manager", algorithm::signing::serialize_address(manager));
 			data.set("owner", algorithm::signing::serialize_address(owner));
+			data.set("asset", algorithm::asset::serialize(asset));
+			data.set("hash", algorithm::encoding::serialize_uint256(hash));
 			data.set("entropy", format::variable(algorithm::encoding::encode_0xhex256(entropy.view())));
 			auto* shares_data = data.set("shares", format::tree::list());
 			for (auto& [participant, share] : shares)
@@ -2925,7 +2934,7 @@ namespace tangent
 		}
 		uint256_t dispatcher_context::secret_entropy::as_ref_hash() const
 		{
-			return ref_hash(asset, manager, owner);
+			return ref_hash(owner, asset, hash);
 		}
 		uint32_t dispatcher_context::secret_entropy::as_instance_type()
 		{
@@ -2936,12 +2945,12 @@ namespace tangent
 		{
 			return "secret_entropy";
 		}
-		uint256_t dispatcher_context::secret_entropy::ref_hash(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner)
+		uint256_t dispatcher_context::secret_entropy::ref_hash(const algorithm::pubkeyhash_t& owner, const algorithm::asset_id& asset, const uint256_t& hash)
 		{
 			format::wo_stream message;
+			message.write_string(owner.view());
 			message.write_integer(asset);
-			message.write_string(owner.optimized_view());
-			message.write_string(manager.optimized_view());
+			message.write_integer(hash);
 			return message.hash();
 		}
 
@@ -3341,13 +3350,13 @@ namespace tangent
 			}
 			return *this;
 		}
-		expects_lr<dispatcher_context::secret_entropy> dispatcher_context::apply_secret_entropy(const wallet* runner_wallet, const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner, const algorithm::storage_type<uint8_t, 64>& entropy, btree_map<algorithm::pubkeyhash_t, secret_entropy::share_pair>&& shares)
+		expects_lr<dispatcher_context::secret_entropy> dispatcher_context::apply_secret_entropy(const wallet* runner_wallet, const algorithm::pubkeyhash_t& owner, const algorithm::asset_id& asset, const uint256_t& hash, const algorithm::storage_type<uint8_t, 64>& entropy, btree_map<algorithm::pubkeyhash_t, secret_entropy::share_pair>&& shares)
 		{
 			VI_ASSERT(runner_wallet != nullptr, "runner wallet should be set");
 			secret_entropy result;
-			result.asset = asset;
-			result.manager = manager;
 			result.owner = owner;
+			result.asset = asset;
+			result.hash = hash;
 			result.entropy = entropy;
 			result.shares = std::move(shares);
 
@@ -3358,34 +3367,32 @@ namespace tangent
 
 			return expects_lr<dispatcher_context::secret_entropy>(std::move(result));
 		}
-		expects_lr<dispatcher_context::secret_entropy> dispatcher_context::recover_secret_entropy(const wallet* runner_wallet, const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner)
+		expects_lr<dispatcher_context::secret_entropy> dispatcher_context::recover_secret_entropy(const wallet* runner_wallet, const algorithm::pubkeyhash_t& owner, const algorithm::asset_id& asset, const uint256_t& hash)
 		{
 			VI_ASSERT(runner_wallet != nullptr, "runner wallet should be set");
 			auto mempool = storages::mempoolstate();
-			auto result = mempool.get_secret_entropy(runner_wallet->public_key_hash, asset, manager, owner);
+			auto result = mempool.get_secret_entropy(runner_wallet->public_key_hash, owner, asset, hash);
 			if (result)
 				return result;
 
-			uint8_t entropy_source_1[sizeof(asset)];
-			auto entropy_source_2 = runner_wallet->secret_key.view();
-			auto entropy_source_3 = manager.view();
-			auto entropy_source_4 = owner.view();
-			auto entropy_source_5 = format::util::decode_0xhex(protocol::now().policy.pow.base);
+			uint8_t entropy_source_1[sizeof(asset)], entropy_source_2[sizeof(hash)];
+			auto entropy_source_3 = runner_wallet->secret_key.view();
+			auto entropy_source_4 = format::util::decode_0xhex(protocol::now().policy.pow.base);
 			asset.encode(entropy_source_1);
+			asset.encode(entropy_source_2);
 
 			format::wo_stream entropy_source;
 			entropy_source.write_string(algorithm::hashing::hash512(entropy_source_1, sizeof(entropy_source_1)));
-			entropy_source.write_string(algorithm::hashing::hash512((uint8_t*)entropy_source_2.data(), entropy_source_2.size()));
+			entropy_source.write_string(algorithm::hashing::hash512(entropy_source_2, sizeof(entropy_source_2)));
 			entropy_source.write_string(algorithm::hashing::hash512((uint8_t*)entropy_source_3.data(), entropy_source_3.size()));
 			entropy_source.write_string(algorithm::hashing::hash512((uint8_t*)entropy_source_4.data(), entropy_source_4.size()));
-			entropy_source.write_string(algorithm::hashing::hash512((uint8_t*)entropy_source_5.data(), entropy_source_5.size()));
 			entropy_source.write_string(algorithm::hashing::hash512((uint8_t*)entropy_source.data.data(), entropy_source.data.size()));
 
 			algorithm::storage_type<uint8_t, 64> entropy;
 			if (!algorithm::signing::derive_seed_from_password((uint8_t*)entropy_source.data.data(), entropy_source.data.size(), entropy.blob, entropy.size()))
 				return layer_exception("secret entropy source generation failed");
 
-			return apply_secret_entropy(runner_wallet, asset, manager, owner, entropy, { });
+			return apply_secret_entropy(runner_wallet, owner, asset, hash, entropy, { });
 		}
 		expects_lr<void> dispatcher_context::checkpoint()
 		{

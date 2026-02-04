@@ -784,34 +784,36 @@ namespace tangent
 			if (!encrypted_entropy_message)
 				return encrypted_entropy_message.error();
 
-			uint8_t asset_data[32];
+			uint8_t hash_data[32], asset_data[32];
+			entropy.hash.encode(hash_data);
 			entropy.asset.encode(asset_data);
 
 			schema_list map;
-			map.push_back(var::set::binary(asset_data, sizeof(asset_data)));
 			map.push_back(var::set::binary(entropy.owner.view()));
-			map.push_back(var::set::binary(entropy.manager.view()));
+			map.push_back(var::set::binary(hash_data, sizeof(hash_data)));
+			map.push_back(var::set::binary(asset_data, sizeof(asset_data)));
 			map.push_back(var::set::binary(participant.view()));
 			map.push_back(var::set::binary(*encrypted_entropy_message));
 
-			auto cursor = get_secret_storage().emplace_query(__func__, "INSERT OR REPLACE INTO secrets (asset, owner, manager, participant, entropy_message) VALUES (?, ?, ?, ?, ?)", &map);
+			auto cursor = get_secret_storage().emplace_query(__func__, "INSERT OR REPLACE INTO secrets (owner, asset, hash, participant, entropy_message) VALUES (?, ?, ?, ?, ?)", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 			
 			return expectation::met;
 		}
-		expects_lr<ledger::dispatcher_context::secret_entropy> mempoolstate::get_secret_entropy(const algorithm::pubkeyhash_t& participant, const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner)
+		expects_lr<ledger::dispatcher_context::secret_entropy> mempoolstate::get_secret_entropy(const algorithm::pubkeyhash_t& participant, const algorithm::pubkeyhash_t& owner, const algorithm::asset_id& asset, const uint256_t& hash)
 		{
-			uint8_t asset_data[32];
+			uint8_t hash_data[32], asset_data[32];
+			hash.encode(hash_data);
 			asset.encode(asset_data);
 
 			schema_list map;
-			map.push_back(var::set::binary(asset_data, sizeof(asset_data)));
 			map.push_back(var::set::binary(owner.view()));
-			map.push_back(var::set::binary(manager.view()));
+			map.push_back(var::set::binary(hash_data, sizeof(hash_data)));
+			map.push_back(var::set::binary(asset_data, sizeof(asset_data)));
 			map.push_back(var::set::binary(participant.view()));
 
-			auto cursor = get_secret_storage().emplace_query(__func__, "SELECT entropy_message FROM secrets WHERE asset = ? AND owner = ? AND manager = ? AND participant = ?", &map);
+			auto cursor = get_secret_storage().emplace_query(__func__, "SELECT entropy_message FROM secrets WHERE owner = ? AND asset = ? AND hash = ? AND participant = ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<ledger::dispatcher_context::secret_entropy>(layer_exception(ledger::storage_util::error_of(cursor)));
 			else if (cursor->empty())
@@ -827,37 +829,6 @@ namespace tangent
 				return expects_lr<ledger::dispatcher_context::secret_entropy>(layer_exception("entropy deserialization error"));
 
 			return expects_lr<ledger::dispatcher_context::secret_entropy>(std::move(entropy));
-		}
-		expects_lr<vector<states::bridge_account>> mempoolstate::get_secret_entropies_by_manager(const algorithm::pubkeyhash_t& manager, size_t offset, size_t count)
-		{
-			schema_list map;
-			if (!manager.empty())
-				map.push_back(var::set::binary(manager.view()));
-			map.push_back(var::set::integer(count));
-			map.push_back(var::set::integer(offset));
-
-			auto cursor = get_secret_storage().emplace_query(__func__, !manager.empty() ? "SELECT asset, owner FROM secrets WHERE manager = ? LIMIT ? OFFSET ?" : "SELECT asset, manager, owner FROM secrets LIMIT ? OFFSET ?", &map);
-			if (!cursor || cursor->error())
-				return expects_lr<vector<states::bridge_account>>(layer_exception(ledger::storage_util::error_of(cursor)));
-
-			auto executor = ledger::executor_context(nullptr);
-			vector<states::bridge_account> result;
-			for (auto row : cursor->first())
-			{
-				auto asset_data = row["asset"].get().get_blob();
-				if (asset_data.size() != sizeof(algorithm::asset_id))
-					continue;
-
-				algorithm::asset_id asset;
-				asset.decode((uint8_t*)asset_data.data());
-
-				auto owner = algorithm::pubkeyhash_t(row["owner"].get().get_blob());
-				auto submanager = algorithm::pubkeyhash_t(row["manager"].get().get_blob());
-				auto account = executor.get_bridge_account(asset, !manager.empty() ? manager : submanager, owner);
-				if (account)
-					result.push_back(std::move(*account));
-			}
-			return result;
 		}
 		expects_lr<bool> mempoolstate::has_transaction(const uint256_t& transaction_hash)
 		{
@@ -1172,14 +1143,13 @@ namespace tangent
 				command = VI_STRINGIFY(
 				CREATE TABLE IF NOT EXISTS secrets
 				(
-					asset BLOB(32) NOT NULL,
 					owner BLOB(20) NOT NULL,
-					manager BLOB(20) NOT NULL,
+					asset BLOB(32) NOT NULL,
+					hash BLOB(32) NOT NULL,
 					participant BLOB(20) NOT NULL,
 					entropy_message BLOB NOT NULL,
-					PRIMARY KEY (asset, owner, manager, participant)
-				) WITHOUT ROWID;
-				CREATE INDEX IF NOT EXISTS secrets_manager ON secrets (manager););
+					PRIMARY KEY (owner, asset, hash, participant)
+				) WITHOUT ROWID;);
 			}
 			
 			auto cursor = connection->query(command);

@@ -292,17 +292,17 @@ namespace tangent
 				uint64_t withdrawal_time = 345600000;
 				uint64_t max_per_transaction = 32;
 				decimal min_stake_value = std::string_view("900");
-				decimal max_reward_increase = std::string_view("0.80");
 				decimal consensus_threshold = std::string_view("0.70");
-				decimal fee_rate = std::string_view("0.15");
+				decimal fee_rate = std::string_view("0.10");
 			} attestation;
 			struct
 			{
+				uint64_t locking_time = 691200000;
 				uint64_t min_per_account = 5;
-				uint64_t max_per_account = 21;
+				uint64_t max_per_account = 23;
 				decimal min_stake_value = std::string_view("2700");
 				decimal stake_threshold = std::string_view("0.20");
-				decimal fee_rate = std::string_view("0.30");
+				decimal fee_rate = std::string_view("0.60");
 			} participation;
 			struct
 			{
@@ -322,9 +322,7 @@ namespace tangent
 			string token = "TAN";
 			uint64_t commitment_tps = 10;
 			uint64_t transaction_tps = 200;
-			uint64_t transaction_gas = 30000;
-			uint32_t delegations_max_per_account = 64;
-			uint32_t delegations_reset_time = 60000;
+			uint64_t transaction_gas = 32768;
 		} policy;
 
 	private:

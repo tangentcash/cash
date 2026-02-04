@@ -32,14 +32,14 @@ Tangent Protocol supports interoperability with other blockchains, focusing on e
 Nodes download and validate data from seeder nodes, gradually forming a list of neighboring nodes. They can also publish new network data, including transactions and blocks.
 
 - **Producer**: Acts as block producer that can create, solve and broadcast blocks to network of nodes.
-- **Attester**: Acts as an asset bridge and an oracle publishing off-chain transaction into Tangent blockchain.
+- **Attester**: Acts as a bridge coordinator and an oracle publishing off-chain transaction into Tangent blockchain.
 - **Participant**: Holds a private key share, allowing it to create deposit addresses on other blockchains and sign transactions for withdrawals. Participants are randomly selected into bridges to ensure unpredictability and fairness.
 
 ### Security
 The asset bridging process employs an N-of-N signature scheme and utilizes [Multi-Party Computation (MPC)](https://tangent.cash/docs/blockchain/bridges/02-mpc/) capabilities to build aggregated signatures or public keys which involves coordinating an array of participants of an asset bridge, ensuring robust security.
 
 ### Bridging
-Users can deposit native cryptocurrency using any bridging node of their choice. Each node sets its own flat fees for deposits and withdrawals. Users request a deposit address* from a bridging node and send assets to that address. To withdraw assets, users select a bridging node (which can be different from the one used for depositing) and send a withdrawal transaction. The assets will then be sent to the user's selected address.
+Users can deposit native cryptocurrency using any bridging node of their choice. Each bridges has its own flat fees withdrawals. Users request a deposit address* from a bridge and send assets to that address. To withdraw assets, users select a bridge (which can be different from the one used for depositing) and send a withdrawal transaction. The assets will then be sent to the user's selected address. Bridge coordinator is chosen randomly for each operation as well as bridge participants but they are chosen randomly for each account only.
 
 ###### _*EVM blockchains require submitting sender address before depositing._ 
 

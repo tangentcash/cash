@@ -1482,9 +1482,9 @@ namespace tangent
 			if (!proof_transaction)
 				return remote_exception("state proof not found");
 
-			auto public_key = find_public_key(((transactions::route*)*proof_transaction->transaction)->manager);
+			auto public_key = find_public_key(((transactions::route*)*proof_transaction->transaction)->get_attester(proof_transaction->receipt));
 			if (!public_key)
-				return remote_exception("manager public key not found");
+				return remote_exception("node public key not found");
 
 			uint8_t encrypted_shares_size;
 			auto reader = format::ro_stream(packed->at(2).as_string());
@@ -1536,7 +1536,7 @@ namespace tangent
 
 			auto public_key = find_public_key(proof_transaction->receipt.from);
 			if (!public_key)
-				return remote_exception("old participant/manager public key not found");
+				return remote_exception("node public key not found");
 
 			auto intermediate = string();
 			auto reader = format::ro_stream(packed->at(2).as_string());
@@ -1600,7 +1600,7 @@ namespace tangent
 
 			auto public_key = find_public_key(proof_transaction->receipt.from);
 			if (!public_key)
-				return remote_exception("manager public key not found");
+				return remote_exception("node public key not found");
 
 			auto reader = format::ro_stream(packed->at(2).as_string());
 			auto compositor = ledger::dispatcher_context::entropy_recovery_state();
@@ -1636,9 +1636,9 @@ namespace tangent
 			if (!proof_transaction)
 				return remote_exception("state proof not found");
 
-			auto public_key = find_public_key(((transactions::route*)*proof_transaction->transaction)->manager);
+			auto public_key = find_public_key(((transactions::route*)*proof_transaction->transaction)->get_attester(proof_transaction->receipt));
 			if (!public_key)
-				return remote_exception("manager public key not found");
+				return remote_exception("node public key not found");
 
 			auto reader = format::ro_stream(packed->at(2).as_string());
 			auto compositor = algorithm::composition::load_compositor(reader);
@@ -1695,9 +1695,9 @@ namespace tangent
 			if (!proof_transaction)
 				return remote_exception("state proof not found");
 
-			auto public_key = find_public_key(((transactions::withdraw*)*proof_transaction->transaction)->manager);
+			auto public_key = find_public_key(((transactions::withdraw*)*proof_transaction->transaction)->get_attester(proof_transaction->receipt));
 			if (!public_key)
-				return remote_exception("manager public key not found");
+				return remote_exception("node public key not found");
 
 			auto reader = format::ro_stream(packed->at(2).as_string());
 			auto message = superchain::prepared_transaction();
@@ -4157,7 +4157,7 @@ namespace tangent
 			if (!route)
 				return remote_exception("invalid transaction");
 
-			auto secret = dispatcher->recover_secret_entropy(runner_wallet, route->asset, route->manager, executor->receipt.from);
+			auto secret = dispatcher->recover_secret_entropy(runner_wallet, executor->receipt.from, route->asset, route->bridge_hash);
 			if (!secret)
 				return remote_exception(std::move(secret.error().message()));
 
@@ -4175,7 +4175,7 @@ namespace tangent
 				secret->shares[participant].input = algorithm::share_t(*decrypted_share);
 			}
 
-			secret = dispatcher->apply_secret_entropy(runner_wallet, secret->asset, secret->manager, secret->owner, secret->entropy, std::move(secret->shares));
+			secret = dispatcher->apply_secret_entropy(runner_wallet, secret->owner, secret->asset, secret->hash, secret->entropy, std::move(secret->shares));
 			if (!secret)
 				return remote_exception(std::move(secret.error().message()));
 
@@ -4222,7 +4222,7 @@ namespace tangent
 				if (migration.must_have_locally)
 					continue;
 
-				auto secret = dispatcher->recover_secret_entropy(runner_wallet, migration.account.asset, migration.account.manager, migration.account.owner);
+				auto secret = dispatcher->recover_secret_entropy(runner_wallet, migration.account.ref.owner, migration.account.ref.asset, migration.account.ref.hash);
 				if (!secret)
 					return remote_exception(std::move(secret.error().message()));
 
@@ -4250,7 +4250,7 @@ namespace tangent
 				}
 
 				if (must_update)
-					secret = dispatcher->apply_secret_entropy(runner_wallet, secret->asset, secret->manager, secret->owner, secret->entropy, std::move(secret->shares));
+					secret = dispatcher->apply_secret_entropy(runner_wallet, secret->owner, secret->asset, secret->hash, secret->entropy, std::move(secret->shares));
 
 				if (!secret)
 					return remote_exception(std::move(secret.error().message()));
@@ -4291,7 +4291,7 @@ namespace tangent
 			btree_map<uint256_t, states::bridge_account*> share_refs, entropy_refs;
 			for (auto& migration : *migrations)
 			{
-				auto ref_hash = secret_entropy::ref_hash(migration.account.asset, migration.account.manager, migration.account.owner);
+				auto ref_hash = secret_entropy::ref_hash(migration.account.ref.owner, migration.account.ref.asset, migration.account.ref.hash);
 				if (migration.must_have_locally)
 					entropy_refs[ref_hash] = &migration.account;
 				else
@@ -4336,7 +4336,7 @@ namespace tangent
 				if (!algorithm::signing::combine_shares_into_secret(shares, entropy.blob))
 					return remote_exception("entropy recovery failed");
 
-				auto status = dispatcher->apply_secret_entropy(runner_wallet, ref->second->asset, ref->second->manager, ref->second->owner, entropy, std::move(mapped_shares));
+				auto status = dispatcher->apply_secret_entropy(runner_wallet, ref->second->ref.owner, ref->second->ref.asset, ref->second->ref.hash, entropy, std::move(mapped_shares));
 				if (!status)
 					return remote_exception(std::move(status.error().message()));
 			}
@@ -4356,10 +4356,10 @@ namespace tangent
 				if (!secret.load(message))
 					return remote_exception("entropy deserialization failed");
 
-				if (secret.asset != ref->second->asset || secret.manager != ref->second->manager || secret.owner != ref->second->owner || secret.shares.size() < ref->second->group.size() - 1)
+				if (secret.owner != ref->second->ref.owner || secret.asset != ref->second->ref.asset || secret.hash != ref->second->ref.hash || secret.shares.size() < ref->second->group.size() - 1)
 					return remote_exception("invalid entropy metadata");
 
-				auto status = dispatcher->apply_secret_entropy(runner_wallet, secret.asset, secret.manager, secret.owner, secret.entropy, std::move(secret.shares));
+				auto status = dispatcher->apply_secret_entropy(runner_wallet, secret.owner, secret.asset, secret.hash, secret.entropy, std::move(secret.shares));
 				if (!status)
 					return remote_exception(std::move(status.error().message()));
 			}
@@ -4394,7 +4394,7 @@ namespace tangent
 			if (!chain)
 				return remote_exception("invalid operation");
 
-			auto secret = dispatcher->recover_secret_entropy(runner_wallet, route->asset, route->manager, executor->receipt.from);
+			auto secret = dispatcher->recover_secret_entropy(runner_wallet, executor->receipt.from, route->asset, route->bridge_hash);
 			if (!secret)
 				return remote_exception(std::move(secret.error().message()));
 
@@ -4406,7 +4406,7 @@ namespace tangent
 			if (!derivation)
 				return remote_exception(std::move(derivation.error().message()));
 
-			auto group = route->get_group(executor->receipt);
+			auto group = route->get_participants(executor->receipt);
 			if (group.size() < protocol::now().policy.participation.min_per_account)
 				return remote_exception("group is too small");
 
@@ -4448,7 +4448,7 @@ namespace tangent
 				++share;
 			}
 
-			secret = dispatcher->apply_secret_entropy(runner_wallet, secret->asset, secret->manager, secret->owner, secret->entropy, std::move(new_shares));
+			secret = dispatcher->apply_secret_entropy(runner_wallet, secret->owner, secret->asset, secret->hash, secret->entropy, std::move(new_shares));
 			if (!secret)
 				return remote_exception(std::move(secret.error().message()));
 
@@ -4480,11 +4480,11 @@ namespace tangent
 			if (!witness)
 				return remote_exception(std::move(witness.error().message()));
 
-			auto account = executor->get_bridge_account(withdraw->asset, witness->manager, witness->owner);
+			auto account = executor->get_bridge_account(witness->ref.owner, witness->ref.asset, witness->ref.hash);
 			if (!account)
 				return expectation::met;
 
-			auto secret = dispatcher->recover_secret_entropy(runner_wallet, account->asset, account->manager, account->owner);
+			auto secret = dispatcher->recover_secret_entropy(runner_wallet, account->ref.owner, account->ref.asset, account->ref.hash);
 			if (!secret)
 				return remote_exception(std::move(secret.error().message()));
 

@@ -355,104 +355,6 @@ namespace tangent
 			return message.data;
 		}
 
-		account_delegation::account_delegation(const algorithm::pubkeyhash_t& new_owner, uint64_t new_block_number) : uniform_state(new_block_number), owner(new_owner), delegations(0)
-		{
-		}
-		account_delegation::account_delegation(const algorithm::pubkeyhash_t& new_owner, const ledger::block_header* new_block_header) : uniform_state(new_block_header), owner(new_owner), delegations(0)
-		{
-		}
-		expects_lr<void> account_delegation::transition(const transition_state* prev_state)
-		{
-			if (owner.empty())
-				return layer_exception("invalid state owner");
-
-			auto* prev = (account_delegation*)prev_state;
-			uint64_t prev_block_number = block_number;
-			if (prev != nullptr)
-			{
-				delegations += prev->delegations;
-				prev_block_number = prev->block_number;
-			}
-
-			if (delegations > protocol::now().policy.delegations_max_per_account)
-			{
-				uint64_t blocks_required = protocol::now().policy.delegations_reset_time / protocol::now().policy.pow.time;
-				uint64_t blocks_passed = block_number - prev_block_number;
-				if (blocks_passed < blocks_required)
-					return layer_exception("account is over delegated");
-
-				delegations = 0;
-			}
-
-			return expectation::met;
-		}
-		bool account_delegation::store_index(format::wo_stream* stream) const
-		{
-			VI_ASSERT(stream != nullptr, "stream should be set");
-			stream->write_string(owner.optimized_view());
-			return true;
-		}
-		bool account_delegation::load_index(format::ro_stream& stream)
-		{
-			string owner_assembly;
-			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_bytes(owner_assembly, owner.blob, sizeof(owner)))
-				return false;
-
-			return true;
-		}
-		bool account_delegation::store_data(format::wo_stream* stream) const
-		{
-			VI_ASSERT(stream != nullptr, "stream should be set");
-			stream->write_integer(delegations);
-			return true;
-		}
-		bool account_delegation::load_data(format::ro_stream& stream)
-		{
-			if (!stream.read_integer(stream.read_type(), &delegations))
-				return false;
-
-			return true;
-		}
-		uint64_t account_delegation::get_delegation_zeroing_block(uint64_t current_block_number) const
-		{
-			if (delegations + 1 <= protocol::now().policy.delegations_max_per_account)
-				return block_number;
-
-			uint64_t blocks_required = protocol::now().policy.delegations_reset_time / protocol::now().policy.pow.time;
-			uint64_t blocks_passed = current_block_number > block_number ? current_block_number - block_number : 0;
-			return blocks_passed < blocks_required ? current_block_number + (blocks_required - blocks_passed) : current_block_number;
-		}
-		format::tree account_delegation::as_tree() const
-		{
-			auto data = uniform_state::as_tree();
-			data.set("owner", algorithm::signing::serialize_address(owner));
-			data.set("delegations", algorithm::encoding::serialize_uint256(delegations));
-			return data;
-		}
-		uint32_t account_delegation::as_type() const
-		{
-			return as_instance_type();
-		}
-		std::string_view account_delegation::as_typename() const
-		{
-			return as_instance_typename();
-		}
-		uint32_t account_delegation::as_instance_type()
-		{
-			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
-			return hash;
-		}
-		std::string_view account_delegation::as_instance_typename()
-		{
-			return "account_delegation";
-		}
-		string account_delegation::as_instance_index(const algorithm::pubkeyhash_t& owner)
-		{
-			format::wo_stream message;
-			account_delegation(owner, nullptr).store_index(&message);
-			return message.data;
-		}
-
 		account_balance::account_balance(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, uint64_t new_block_number) : multiform_state(new_block_number), owner(new_owner), asset(new_asset)
 		{
 		}
@@ -805,6 +707,14 @@ namespace tangent
 			else if (!stake.is_nan() && stake < protocol::now().policy.participation.min_stake_value)
 				return layer_exception(stringify::text("minimum stake requirement not met (%s %s)", protocol::now().policy.participation.min_stake_value.to_string().c_str(), protocol::now().policy.token.c_str()));
 
+			auto* prev = (validator_participation*)prev_state;
+			if (prev != nullptr && !prev->stake.is_nan() && stake.is_nan())
+			{
+				auto time_lock = time_lock_blocks(prev_state, protocol::now().policy.participation.locking_time);
+				if (time_lock > 0)
+					return layer_exception("stake is time locked for the next " + to_string(time_lock) + " blocks");
+			}
+
 			return expectation::met;
 		}
 		bool validator_participation::store_column(format::wo_stream* stream) const
@@ -991,11 +901,13 @@ namespace tangent
 			return message.data;
 		}
 
-		validator_participation_ref::validator_participation_ref(const algorithm::pubkeyhash_t& new_owner, const ref_value& new_ref, uint64_t new_block_number) : multiform_state(new_block_number), ref(new_ref), owner(new_owner)
+		validator_participation_ref::validator_participation_ref(const algorithm::pubkeyhash_t& new_owner, const bridge_ref& new_ref, uint64_t new_block_number) : multiform_state(new_block_number), ref(new_ref), owner(new_owner)
 		{
+			ref.asset = algorithm::asset::base_id_of(ref.asset);
 		}
-		validator_participation_ref::validator_participation_ref(const algorithm::pubkeyhash_t& new_owner, const ref_value& new_ref, const ledger::block_header* new_block_header) : multiform_state(new_block_header), ref(new_ref), owner(new_owner)
+		validator_participation_ref::validator_participation_ref(const algorithm::pubkeyhash_t& new_owner, const bridge_ref& new_ref, const ledger::block_header* new_block_header) : multiform_state(new_block_header), ref(new_ref), owner(new_owner)
 		{
+			ref.asset = algorithm::asset::base_id_of(ref.asset);
 		}
 		expects_lr<void> validator_participation_ref::transition(const transition_state* prev_state)
 		{
@@ -1005,7 +917,7 @@ namespace tangent
 			if (!algorithm::asset::is_aux(ref.asset, true))
 				return layer_exception("invalid participation asset");
 
-			if (ref.manager.empty() || ref.owner.empty())
+			if (!ref.hash)
 				return layer_exception("invalid participation ref");
 
 			return expectation::met;
@@ -1028,7 +940,7 @@ namespace tangent
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_integer(ref.asset);
-			stream->write_string(ref.manager.optimized_view());
+			stream->write_integer(ref.hash);
 			stream->write_string(ref.owner.optimized_view());
 			return true;
 		}
@@ -1037,11 +949,11 @@ namespace tangent
 			if (!stream.read_integer(stream.read_type(), &ref.asset))
 				return false;
 
-			string assembly;
-			if (!stream.read_string(stream.read_type(), &assembly) || !algorithm::encoding::decode_bytes(assembly, ref.manager.blob, sizeof(ref.manager)))
+			if (!stream.read_integer(stream.read_type(), &ref.hash))
 				return false;
 
-			if (!stream.read_string(stream.read_type(), &assembly) || !algorithm::encoding::decode_bytes(assembly, ref.owner.blob, sizeof(ref.owner)))
+			string owner_assembly;
+			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_bytes(owner_assembly, ref.owner.blob, sizeof(ref.owner)))
 				return false;
 
 			return true;
@@ -1062,10 +974,11 @@ namespace tangent
 		{
 			auto data = multiform_state::as_tree();
 			data.set("owner", algorithm::signing::serialize_address(owner));
+			data.set("active", format::variable(active));
 			auto* ref_data = data.set("ref", format::variable());
-			ref_data->set("asset", algorithm::asset::serialize(ref.asset));
-			ref_data->set("manager", algorithm::signing::serialize_address(ref.manager));
 			ref_data->set("owner", algorithm::signing::serialize_address(ref.owner));
+			ref_data->set("asset", algorithm::asset::serialize(ref.asset));
+			ref_data->set("hash", algorithm::encoding::serialize_uint256(ref.hash));
 			return data;
 		}
 		uint32_t validator_participation_ref::as_type() const
@@ -1092,10 +1005,10 @@ namespace tangent
 		string validator_participation_ref::as_instance_column(const algorithm::pubkeyhash_t& owner)
 		{
 			format::wo_stream message;
-			validator_participation_ref(owner, ref_value(), nullptr).store_column(&message);
+			validator_participation_ref(owner, bridge_ref(), nullptr).store_column(&message);
 			return message.data;
 		}
-		string validator_participation_ref::as_instance_row(const ref_value& ref)
+		string validator_participation_ref::as_instance_row(const bridge_ref& ref)
 		{
 			format::wo_stream message;
 			validator_participation_ref(algorithm::pubkeyhash_t(), ref, nullptr).store_row(&message);
@@ -1113,54 +1026,24 @@ namespace tangent
 			if (owner.empty())
 				return layer_exception("invalid state owner");
 
-			auto* prev = (validator_attestation*)prev_state;
-			if (prev != nullptr)
-			{
-				if (accounts_under_management < prev->accounts_under_management)
-					return layer_exception("invalid accounts count");
-
-				if (prev->queue_transaction_hash > 0 && queue_transaction_hash > 0 && prev->queue_transaction_hash != queue_transaction_hash)
-					return layer_exception("transaction queue head cannot be replaced with new transaction");
-
-				decimal threshold = 1.0 - protocol::now().policy.attestation.max_reward_increase;
-				if (incoming_fee.is_positive() && algorithm::arithmetic::divide(prev->incoming_fee, incoming_fee) < threshold)
-					return layer_exception("incoming fee increase overflows step threshold");
-
-				if (outgoing_fee.is_positive() && algorithm::arithmetic::divide(prev->outgoing_fee, outgoing_fee) < threshold)
-					return layer_exception("outgoing fee increase overflows step threshold");
-			}
-			else if (!algorithm::asset::is_aux(asset, true))
+			if (!algorithm::asset::is_aux(asset, true))
 				return layer_exception("invalid asset");
 
-			if (stake.is_nan() && queue_transaction_hash > 0)
-				return layer_exception("transaction queue must be empty before unlocking");
-
-			if (participation_threshold.is_nan() || participation_threshold.is_negative())
-				return layer_exception("invalid participation threshold");
-
-			auto min_participation_stake_value = std::max(participation_threshold - protocol::now().policy.participation.min_stake_value, decimal::zero());
-			auto min_stake_value = std::max(protocol::now().policy.attestation.min_stake_value, min_participation_stake_value * security_level);
 			if (stake.is_negative())
 				return layer_exception("invalid stake");
-			else if (!stake.is_nan() && stake < min_stake_value)
-				return layer_exception(stringify::text("minimum stake requirement not met (%s %s)", min_stake_value.to_string().c_str(), protocol::now().policy.token.c_str()));
+			else if (!stake.is_nan() && stake < protocol::now().policy.attestation.min_stake_value)
+				return layer_exception(stringify::text("minimum stake requirement not met (%s %s)", protocol::now().policy.attestation.min_stake_value.to_string().c_str(), protocol::now().policy.token.c_str()));
 
-			if (security_level > (uint8_t)protocol::now().policy.participation.max_per_account)
-				return layer_exception("security level too high");
-			else if (security_level < (uint8_t)protocol::now().policy.participation.min_per_account)
-				return layer_exception("security level too low");
+			if (min_fee.is_nan() || min_fee.is_negative())
+				return layer_exception("invalid min fee");
 
-			if (accepts_account_requests && !accepts_withdrawal_requests)
-				return layer_exception("withdrawal requests must be accepted if account creation requests are accepted");
-
-			if (incoming_fee.is_nan() || incoming_fee.is_negative())
-				return layer_exception("invalid incoming fee");
-
-			if (outgoing_fee.is_nan() || outgoing_fee.is_negative())
-				return layer_exception("invalid outgoing fee");
-
-			if (accepts_withdrawal_requests && !outgoing_fee.is_positive())
-				return layer_exception("outgoing fee must be positive when withdrawals are accepted");
+			auto* prev = (validator_attestation*)prev_state;
+			if (prev != nullptr && !prev->stake.is_nan() && stake.is_nan())
+			{
+				auto time_lock = time_lock_blocks(prev_state, protocol::now().policy.attestation.withdrawal_time);
+				if (time_lock > 0)
+					return layer_exception("stake is time locked for the next " + to_string(time_lock) + " blocks");
+			}
 
 			return expectation::met;
 		}
@@ -1194,44 +1077,16 @@ namespace tangent
 		bool validator_attestation::store_data(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
-			stream->write_decimal(participation_threshold);
 			stream->write_decimal(stake);
-			stream->write_decimal(incoming_fee);
-			stream->write_decimal(outgoing_fee);
-			stream->write_integer(queue_transaction_hash);
-			stream->write_integer(accounts_under_management);
-			stream->write_integer(security_level);
-			stream->write_boolean(accepts_account_requests);
-			stream->write_boolean(accepts_withdrawal_requests);
+			stream->write_decimal(min_fee);
 			return true;
 		}
 		bool validator_attestation::load_data(format::ro_stream& stream)
 		{
-			if (!stream.read_decimal(stream.read_type(), &participation_threshold))
-				return false;
-
 			if (!stream.read_decimal(stream.read_type(), &stake))
 				return false;
 
-			if (!stream.read_decimal(stream.read_type(), &incoming_fee))
-				return false;
-
-			if (!stream.read_decimal(stream.read_type(), &outgoing_fee))
-				return false;
-
-			if (!stream.read_integer(stream.read_type(), &queue_transaction_hash))
-				return false;
-
-			if (!stream.read_integer(stream.read_type(), &accounts_under_management))
-				return false;
-
-			if (!stream.read_integer(stream.read_type(), &security_level))
-				return false;
-
-			if (!stream.read_boolean(stream.read_type(), &accepts_account_requests))
-				return false;
-
-			if (!stream.read_boolean(stream.read_type(), &accepts_withdrawal_requests))
+			if (!stream.read_decimal(stream.read_type(), &min_fee))
 				return false;
 
 			return true;
@@ -1245,15 +1100,8 @@ namespace tangent
 			auto data = multiform_state::as_tree();
 			data.set("owner", algorithm::signing::serialize_address(owner));
 			data.set("asset", algorithm::asset::serialize(asset));
-			data.set("participation_threshold", format::variable(participation_threshold));
 			data.set("stake", format::variable(stake));
-			data.set("incoming_fee", format::variable(incoming_fee));
-			data.set("outgoing_fee", format::variable(outgoing_fee));
-			data.set("queue_transaction_hash", queue_transaction_hash > 0 ? format::variable(algorithm::encoding::encode_0xhex256(queue_transaction_hash)) : format::variable());
-			data.set("accounts_under_management", format::variable(accounts_under_management));
-			data.set("security_level", format::variable(security_level));
-			data.set("accepts_account_requests", format::variable(accepts_account_requests));
-			data.set("accepts_withdrawal_requests", format::variable(accepts_withdrawal_requests));
+			data.set("min_fee", format::variable(min_fee));
 			return data;
 		}
 		uint32_t validator_attestation::as_type() const
@@ -1269,7 +1117,7 @@ namespace tangent
 			if (!is_active())
 				return 0;
 
-			return validator_production::to_rank(stake);
+			return to_rank(min_fee);
 		}
 		uint32_t validator_attestation::as_instance_type()
 		{
@@ -1291,6 +1139,10 @@ namespace tangent
 			format::wo_stream message;
 			validator_attestation(algorithm::pubkeyhash_t(), asset, nullptr).store_row(&message);
 			return message.data;
+		}
+		uint256_t validator_attestation::to_rank(const decimal& threshold)
+		{
+			return std::max<uint256_t>(uint256_t(1), uint256_t::max() - algorithm::arithmetic::fixed256(threshold));
 		}
 
 		validator_attestation_reward::validator_attestation_reward(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, uint64_t new_block_number) : multiform_state(new_block_number), owner(new_owner), asset(new_asset)
@@ -1394,20 +1246,200 @@ namespace tangent
 			return message.data;
 		}
 
-		bridge_balance::bridge_balance(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, uint64_t new_block_number) : multiform_state(new_block_number), owner(new_owner), asset(new_asset)
+		bridge_instance::bridge_instance(const bridge_ref& new_ref, uint64_t new_block_number) : multiform_state(new_block_number), ref(new_ref)
+		{
+			ref.asset = algorithm::asset::base_id_of(ref.asset);
+		}
+		bridge_instance::bridge_instance(const bridge_ref& new_ref, const ledger::block_header* new_block_header) : multiform_state(new_block_header), ref(new_ref)
+		{
+			ref.asset = algorithm::asset::base_id_of(ref.asset);
+		}
+		expects_lr<void> bridge_instance::transition(const transition_state* prev_state)
+		{
+			if (!ref.hash)
+				return layer_exception("invalid bridge hash");
+
+			if (!algorithm::asset::is_aux(ref.asset, true))
+				return layer_exception("invalid asset");
+
+			auto* prev = (bridge_instance*)prev_state;
+			if (prev != nullptr)
+			{
+				if (!prev->ref.owner.empty() && !ref.owner.empty() && prev->ref.owner != ref.owner)
+					return layer_exception("invalid master account");
+
+				if (prev->ref.hash != ref.hash)
+					return layer_exception("invalid bridge hash");
+
+				if (prev->security_level != security_level)
+					return layer_exception("invalid security level");
+
+				if (account_nonce < prev->account_nonce)
+					return layer_exception("invalid accounts count");
+
+				if (transaction_nonce < prev->transaction_nonce)
+					return layer_exception("invalid transactions count");
+
+				if (prev->transaction_hash > 0 && !transaction_hash)
+					return layer_exception("transaction hash must not be reset");
+
+				if (prev->fee_rate != fee_rate)
+					return layer_exception("fee rate cannot be changed");
+			}
+			else
+			{
+				if (!algorithm::asset::is_aux(ref.asset, true))
+					return layer_exception("invalid asset");
+
+				if (security_level % 2 == 0)
+					return layer_exception("security level value must be odd");
+				else if (security_level > (uint8_t)protocol::now().policy.participation.max_per_account)
+					return layer_exception("security level too high");
+				else if (security_level < (uint8_t)protocol::now().policy.participation.min_per_account)
+					return layer_exception("security level too low");
+			}
+
+			if (!fee_rate.is_positive())
+				return layer_exception("invalid fee rate");
+
+			return expectation::met;
+		}
+		bool bridge_instance::store_column(format::wo_stream* stream) const
+		{
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			stream->write_integer(ref.asset);
+			return true;
+		}
+		bool bridge_instance::load_column(format::ro_stream& stream)
+		{
+			if (!stream.read_integer(stream.read_type(), &ref.asset))
+				return false;
+
+			return true;
+		}
+		bool bridge_instance::store_row(format::wo_stream* stream) const
+		{
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			stream->write_integer(ref.hash);
+			return true;
+		}
+		bool bridge_instance::load_row(format::ro_stream& stream)
+		{
+			if (!stream.read_integer(stream.read_type(), &ref.hash))
+				return false;
+
+			return true;
+		}
+		bool bridge_instance::store_data(format::wo_stream* stream) const
+		{
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			stream->write_string(ref.owner.optimized_view());
+			stream->write_decimal(fee_rate);
+			stream->write_integer(transaction_hash);
+			stream->write_integer(transaction_nonce);
+			stream->write_integer(account_nonce);
+			stream->write_integer(security_level);
+			return true;
+		}
+		bool bridge_instance::load_data(format::ro_stream& stream)
+		{
+			string owner_assembly;
+			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_bytes(owner_assembly, ref.owner.blob, sizeof(ref.owner)))
+				return false;
+
+			if (!stream.read_decimal(stream.read_type(), &fee_rate))
+				return false;
+
+			if (!stream.read_integer(stream.read_type(), &transaction_hash))
+				return false;
+
+			if (!stream.read_integer(stream.read_type(), &transaction_nonce))
+				return false;
+
+			if (!stream.read_integer(stream.read_type(), &account_nonce))
+				return false;
+
+			if (!stream.read_integer(stream.read_type(), &security_level))
+				return false;
+
+			return true;
+		}
+		bool bridge_instance::is_permanent() const
+		{
+			return true;
+		}
+		format::tree bridge_instance::as_tree() const
+		{
+			auto data = multiform_state::as_tree();
+			data.set("master", algorithm::signing::serialize_address(ref.owner));
+			data.set("asset", algorithm::asset::serialize(ref.asset));
+			data.set("bridge_hash", ref.hash > 0 ? algorithm::encoding::serialize_uint256(ref.hash) : format::variable());
+			data.set("transaction_hash", algorithm::encoding::serialize_uint256(transaction_hash));
+			data.set("transaction_nonce", format::variable(transaction_nonce));
+			data.set("account_nonce", format::variable(account_nonce));
+			data.set("security_level", format::variable(security_level));
+			data.set("fee_rate", format::variable(fee_rate));
+			return data;
+		}
+		uint32_t bridge_instance::as_type() const
+		{
+			return as_instance_type();
+		}
+		std::string_view bridge_instance::as_typename() const
+		{
+			return as_instance_typename();
+		}
+		uint256_t bridge_instance::as_rank() const
+		{
+			return security_level;
+		}
+		uint32_t bridge_instance::as_instance_type()
+		{
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
+		}
+		std::string_view bridge_instance::as_instance_typename()
+		{
+			return "bridge_instance";
+		}
+		string bridge_instance::as_instance_column(const algorithm::asset_id& asset)
+		{
+			bridge_ref ref;
+			ref.asset = asset;
+
+			format::wo_stream message;
+			bridge_instance(ref, nullptr).store_column(&message);
+			return message.data;
+		}
+		string bridge_instance::as_instance_row(const uint256_t& bridge_hash)
+		{
+			bridge_ref ref;
+			ref.hash = bridge_hash;
+
+			format::wo_stream message;
+			bridge_instance(ref, nullptr).store_row(&message);
+			return message.data;
+		}
+
+		bridge_balance::bridge_balance(const algorithm::asset_id& new_asset, const uint256_t& new_bridge_hash, uint64_t new_block_number) : multiform_state(new_block_number), asset(new_asset), bridge_hash(new_bridge_hash)
 		{
 		}
-		bridge_balance::bridge_balance(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, const ledger::block_header* new_block_header) : multiform_state(new_block_header), owner(new_owner), asset(new_asset)
+		bridge_balance::bridge_balance(const algorithm::asset_id& new_asset, const uint256_t& new_bridge_hash, const ledger::block_header* new_block_header) : multiform_state(new_block_header), asset(new_asset), bridge_hash(new_bridge_hash)
 		{
 		}
 		expects_lr<void> bridge_balance::transition(const transition_state* prev_state)
 		{
-			if (owner.empty())
+			if (!bridge_hash)
 				return layer_exception("invalid state owner");
 
 			auto* prev = (bridge_balance*)prev_state;
 			if (prev)
+			{
+				if (prev->bridge_hash != bridge_hash)
+					return layer_exception("invalid bridge hash");
+
 				supply += prev->supply;
+			}
 			else if (!algorithm::asset::is_aux(asset))
 				return layer_exception("invalid asset");
 			
@@ -1419,13 +1451,12 @@ namespace tangent
 		bool bridge_balance::store_column(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
-			stream->write_string(owner.optimized_view());
+			stream->write_integer(asset);
 			return true;
 		}
 		bool bridge_balance::load_column(format::ro_stream& stream)
 		{
-			string owner_assembly;
-			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_bytes(owner_assembly, owner.blob, sizeof(owner)))
+			if (!stream.read_integer(stream.read_type(), &asset))
 				return false;
 
 			return true;
@@ -1433,12 +1464,12 @@ namespace tangent
 		bool bridge_balance::store_row(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
-			stream->write_integer(asset);
+			stream->write_integer(bridge_hash);
 			return true;
 		}
 		bool bridge_balance::load_row(format::ro_stream& stream)
 		{
-			if (!stream.read_integer(stream.read_type(), &asset))
+			if (!stream.read_integer(stream.read_type(), &bridge_hash))
 				return false;
 
 			return true;
@@ -1459,8 +1490,8 @@ namespace tangent
 		format::tree bridge_balance::as_tree() const
 		{
 			auto data = multiform_state::as_tree();
-			data.set("owner", algorithm::signing::serialize_address(owner));
 			data.set("asset", algorithm::asset::serialize(asset));
+			data.set("bridge_hash", bridge_hash > 0 ? algorithm::encoding::serialize_uint256(bridge_hash) : format::variable());
 			data.set("supply", format::variable(supply));
 			return data;
 		}
@@ -1485,32 +1516,42 @@ namespace tangent
 		{
 			return "bridge_balance";
 		}
-		string bridge_balance::as_instance_column(const algorithm::pubkeyhash_t& owner)
+		string bridge_balance::as_instance_column(const algorithm::asset_id& asset)
 		{
 			format::wo_stream message;
-			bridge_balance(owner, 0, nullptr).store_column(&message);
+			bridge_balance(asset, 0, nullptr).store_column(&message);
 			return message.data;
 		}
-		string bridge_balance::as_instance_row(const algorithm::asset_id& asset)
+		string bridge_balance::as_instance_row(const uint256_t& bridge_hash)
 		{
 			format::wo_stream message;
-			bridge_balance(algorithm::pubkeyhash_t(), asset, nullptr).store_row(&message);
+			bridge_balance(0, bridge_hash, nullptr).store_row(&message);
 			return message.data;
 		}
 
-		bridge_account::bridge_account(const algorithm::pubkeyhash_t& new_manager, const algorithm::asset_id& new_asset, const algorithm::pubkeyhash_t& new_owner, uint64_t new_block_number) : multiform_state(new_block_number), owner(new_owner), manager(new_manager), asset(algorithm::asset::base_id_of(new_asset))
+		bridge_account::bridge_account(const bridge_ref& new_ref, uint64_t new_block_number) : multiform_state(new_block_number), ref(new_ref)
 		{
+			ref.asset = algorithm::asset::base_id_of(ref.asset);
 		}
-		bridge_account::bridge_account(const algorithm::pubkeyhash_t& new_manager, const algorithm::asset_id& new_asset, const algorithm::pubkeyhash_t& new_owner, const ledger::block_header* new_block_header) : multiform_state(new_block_header), owner(new_owner), manager(new_manager), asset(algorithm::asset::base_id_of(new_asset))
+		bridge_account::bridge_account(const bridge_ref& new_ref, const ledger::block_header* new_block_header) : multiform_state(new_block_header), ref(new_ref)
 		{
+			ref.asset = algorithm::asset::base_id_of(ref.asset);
 		}
 		expects_lr<void> bridge_account::transition(const transition_state* prev_state)
 		{
-			if (owner.empty())
+			if (ref.owner.empty())
 				return layer_exception("invalid state owner");
 
+			if (!ref.hash)
+				return layer_exception("invalid bridge hash");
+
 			auto* prev = (bridge_account*)prev_state;
-			if (!prev && !algorithm::asset::is_aux(asset, true))
+			if (prev != nullptr)
+			{
+				if (prev->ref.hash != ref.hash)
+					return layer_exception("invalid bridge hash");
+			}
+			else if (!algorithm::asset::is_aux(ref.asset, true))
 				return layer_exception("invalid asset");
 
 			if (!group.empty() && public_key.empty())
@@ -1527,13 +1568,17 @@ namespace tangent
 		bool bridge_account::store_column(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
-			stream->write_string(manager.optimized_view());
+			stream->write_integer(ref.asset);
+			stream->write_string(ref.owner.optimized_view());
 			return true;
 		}
 		bool bridge_account::load_column(format::ro_stream& stream)
 		{
-			string manager_assembly;
-			if (!stream.read_string(stream.read_type(), &manager_assembly) || !algorithm::encoding::decode_bytes(manager_assembly, manager.blob, sizeof(manager)))
+			if (!stream.read_integer(stream.read_type(), &ref.asset))
+				return false;
+
+			string owner_assembly;
+			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_bytes(owner_assembly, ref.owner.blob, sizeof(ref.owner)))
 				return false;
 
 			return true;
@@ -1541,17 +1586,12 @@ namespace tangent
 		bool bridge_account::store_row(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
-			stream->write_integer(asset);
-			stream->write_string(owner.optimized_view());
+			stream->write_integer(ref.hash);
 			return true;
 		}
 		bool bridge_account::load_row(format::ro_stream& stream)
 		{
-			if (!stream.read_integer(stream.read_type(), &asset))
-				return false;
-
-			string owner_assembly;
-			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_bytes(owner_assembly, owner.blob, sizeof(owner)))
+			if (!stream.read_integer(stream.read_type(), &ref.hash))
 				return false;
 
 			return true;
@@ -1598,9 +1638,9 @@ namespace tangent
 		format::tree bridge_account::as_tree() const
 		{
 			auto data = multiform_state::as_tree();
-			data.set("owner", algorithm::signing::serialize_address(owner));
-			data.set("manager", algorithm::signing::serialize_address(manager));
-			data.set("asset", algorithm::asset::serialize(asset));
+			data.set("owner", algorithm::signing::serialize_address(ref.owner));
+			data.set("asset", algorithm::asset::serialize(ref.asset));
+			data.set("bridge_hash", ref.hash > 0 ? algorithm::encoding::serialize_uint256(ref.hash) : format::variable());
 			data.set("public_key", public_key.empty() ? format::variable() : format::variable(format::util::encode_0xhex(std::string_view((char*)public_key.data(), public_key.size()))));
 			auto* group_data = data.set("group", format::tree::list());
 			for (auto& item : group)
@@ -1628,16 +1668,23 @@ namespace tangent
 		{
 			return "bridge_account";
 		}
-		string bridge_account::as_instance_column(const algorithm::pubkeyhash_t& manager)
+		string bridge_account::as_instance_column(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner)
 		{
+			bridge_ref ref;
+			ref.owner = owner;
+			ref.asset = asset;
+
 			format::wo_stream message;
-			bridge_account(manager, 0, algorithm::pubkeyhash_t(), nullptr).store_column(&message);
+			bridge_account(ref, nullptr).store_column(&message);
 			return message.data;
 		}
-		string bridge_account::as_instance_row(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner)
+		string bridge_account::as_instance_row(const uint256_t& bridge_hash)
 		{
+			bridge_ref ref;
+			ref.hash = bridge_hash;
+
 			format::wo_stream message;
-			bridge_account(algorithm::pubkeyhash_t(), asset, owner, nullptr).store_row(&message);
+			bridge_account(ref, nullptr).store_row(&message);
 			return message.data;
 		}
 
@@ -1813,19 +1860,21 @@ namespace tangent
 			return message.data;
 		}
 
-		witness_account::witness_account(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, const address_map& new_addresses, uint64_t new_block_number) : multiform_state(new_block_number), owner(new_owner), asset(algorithm::asset::base_id_of(new_asset)), addresses(new_addresses)
+		witness_account::witness_account(const bridge_ref& new_ref, const address_map& new_addresses, uint64_t new_block_number) : multiform_state(new_block_number), addresses(new_addresses), ref(new_ref)
 		{
+			ref.asset = algorithm::asset::base_id_of(ref.asset);
 		}
-		witness_account::witness_account(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, const address_map& new_addresses, const ledger::block_header* new_block_header) : multiform_state(new_block_header), owner(new_owner), asset(algorithm::asset::base_id_of(new_asset)), addresses(new_addresses)
+		witness_account::witness_account(const bridge_ref& new_ref, const address_map& new_addresses, const ledger::block_header* new_block_header) : multiform_state(new_block_header), addresses(new_addresses), ref(new_ref)
 		{
+			ref.asset = algorithm::asset::base_id_of(ref.asset);
 		}
 		expects_lr<void> witness_account::transition(const transition_state* prev_state)
 		{
-			if (owner.empty())
+			if (ref.owner.empty())
 				return layer_exception("invalid state owner");
 
 			auto* prev = (witness_account*)prev_state;
-			if (!prev && !algorithm::asset::is_aux(asset, true))
+			if (!prev && !algorithm::asset::is_aux(ref.asset, true))
 				return layer_exception("invalid asset");
 
 			if (addresses.empty())
@@ -1842,13 +1891,13 @@ namespace tangent
 		bool witness_account::store_column(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
-			stream->write_string(owner.optimized_view());
+			stream->write_string(ref.owner.optimized_view());
 			return true;
 		}
 		bool witness_account::load_column(format::ro_stream& stream)
 		{
 			string owner_assembly;
-			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_bytes(owner_assembly, owner.blob, sizeof(owner)))
+			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_bytes(owner_assembly, ref.owner.blob, sizeof(ref.owner)))
 				return false;
 
 			return true;
@@ -1856,14 +1905,14 @@ namespace tangent
 		bool witness_account::store_row(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
-			auto location = addresses.empty() ? string() : superchain::bridge::get()->decode_address(asset, addresses.begin()->second).or_else(string(addresses.begin()->second));
-			stream->write_integer(asset);
+			auto location = addresses.empty() ? string() : superchain::bridge::get()->decode_address(ref.asset, addresses.begin()->second).or_else(string(addresses.begin()->second));
+			stream->write_integer(ref.asset);
 			stream->write_string(location);
 			return true;
 		}
 		bool witness_account::load_row(format::ro_stream& stream)
 		{
-			if (!stream.read_integer(stream.read_type(), &asset))
+			if (!stream.read_integer(stream.read_type(), &ref.asset))
 				return false;
 
 			string location;
@@ -1877,11 +1926,11 @@ namespace tangent
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			auto* bridge = superchain::bridge::get();
 			stream->write_boolean(active);
-			stream->write_string(manager.optimized_view());
+			stream->write_integer(ref.hash);
 			stream->write_integer((uint8_t)addresses.size());
 			for (auto& address : addresses)
 			{
-				auto raw_address = bridge->decode_address(asset, address.second);
+				auto raw_address = bridge->decode_address(ref.asset, address.second);
 				stream->write_integer(address.first);
 				stream->write_string(raw_address ? *raw_address : address.second);
 			}
@@ -1892,8 +1941,7 @@ namespace tangent
 			if (!stream.read_boolean(stream.read_type(), &active))
 				return false;
 
-			string manager_assembly;
-			if (!stream.read_string(stream.read_type(), &manager_assembly) || !algorithm::encoding::decode_bytes(manager_assembly, manager.blob, sizeof(manager)))
+			if (!stream.read_integer(stream.read_type(), &ref.hash))
 				return false;
 
 			uint8_t addresses_size;
@@ -1912,7 +1960,7 @@ namespace tangent
 				if (!stream.read_string(stream.read_type(), &address))
 					return false;
 
-				auto encoded_address = bridge->encode_address(asset, address);
+				auto encoded_address = bridge->encode_address(ref.asset, address);
 				if (encoded_address)
 					addresses[version] = std::move(*encoded_address);
 				else
@@ -1927,11 +1975,11 @@ namespace tangent
 		}
 		bool witness_account::is_routing_account() const
 		{
-			return manager.empty() && !owner.empty() && active;
+			return !ref.hash && !ref.owner.empty() && active;
 		}
 		bool witness_account::is_bridge_account() const
 		{
-			return !manager.empty() && !owner.empty() && active;
+			return ref.hash > 0 && !ref.owner.empty() && active;
 		}
 		bool witness_account::is_permanent() const
 		{
@@ -1951,9 +1999,9 @@ namespace tangent
 		format::tree witness_account::as_tree() const
 		{
 			auto data = multiform_state::as_tree();
-			data.set("owner", algorithm::signing::serialize_address(owner));
-			data.set("manager", algorithm::signing::serialize_address(manager));
-			data.set("asset", algorithm::asset::serialize(asset));
+			data.set("owner", algorithm::signing::serialize_address(ref.owner));
+			data.set("asset", algorithm::asset::serialize(ref.asset));
+			data.set("bridge_hash", ref.hash > 0 ? algorithm::encoding::serialize_uint256(ref.hash) : format::variable());
 			auto* addresses_data = data.set("addresses", format::tree::list());
 			for (auto& address : addresses)
 				addresses_data->push(format::variable(address.second));
@@ -1994,14 +2042,20 @@ namespace tangent
 		}
 		string witness_account::as_instance_column(const algorithm::pubkeyhash_t& owner)
 		{
+			bridge_ref ref;
+			ref.owner = owner;
+
 			format::wo_stream message;
-			witness_account(owner, 0, { }, nullptr).store_column(&message);
+			witness_account(ref, { }, nullptr).store_column(&message);
 			return message.data;
 		}
 		string witness_account::as_instance_row(const algorithm::asset_id& asset, const std::string_view& address)
 		{
+			bridge_ref ref;
+			ref.asset = asset;
+
 			format::wo_stream message;
-			witness_account(algorithm::pubkeyhash_t(), asset, { { (uint8_t)0, string(address) } }, nullptr).store_row(&message);
+			witness_account(ref, { { (uint8_t)0, string(address) } }, nullptr).store_row(&message);
 			return message.data;
 		}
 
@@ -2013,7 +2067,7 @@ namespace tangent
 		}
 		expects_lr<void> witness_transaction::transition(const transition_state* prev_state)
 		{
-			auto* prev = (witness_account*)prev_state;
+			auto* prev = (witness_transaction*)prev_state;
 			if (!prev && !algorithm::asset::is_aux(asset, true))
 				return layer_exception("invalid asset");
 
@@ -2101,8 +2155,6 @@ namespace tangent
 				return memory::init<account_uniform>(algorithm::pubkeyhash_t(), std::string_view(), nullptr);
 			else if (hash == account_multiform::as_instance_type())
 				return memory::init<account_multiform>(algorithm::pubkeyhash_t(), std::string_view(), std::string_view(), nullptr);
-			else if (hash == account_delegation::as_instance_type())
-				return memory::init<account_delegation>(algorithm::pubkeyhash_t(), nullptr);
 			else if (hash == account_balance::as_instance_type())
 				return memory::init<account_balance>(algorithm::pubkeyhash_t(), 0, nullptr);
 			else if (hash == validator_production::as_instance_type())
@@ -2114,21 +2166,23 @@ namespace tangent
 			else if (hash == validator_participation_reward::as_instance_type())
 				return memory::init<validator_participation_reward>(algorithm::pubkeyhash_t(), 0, nullptr);
 			else if (hash == validator_participation_ref::as_instance_type())
-				return memory::init<validator_participation_ref>(algorithm::pubkeyhash_t(), validator_participation_ref::ref_value(), nullptr);
+				return memory::init<validator_participation_ref>(algorithm::pubkeyhash_t(), bridge_ref(), nullptr);
 			else if (hash == validator_attestation::as_instance_type())
 				return memory::init<validator_attestation>(algorithm::pubkeyhash_t(), 0, nullptr);
 			else if (hash == validator_attestation_reward::as_instance_type())
 				return memory::init<validator_attestation_reward>(algorithm::pubkeyhash_t(), 0, nullptr);
+			else if (hash == bridge_instance::as_instance_type())
+				return memory::init<bridge_instance>(bridge_ref(), nullptr);
 			else if (hash == bridge_balance::as_instance_type())
-				return memory::init<bridge_balance>(algorithm::pubkeyhash_t(), 0, nullptr);
+				return memory::init<bridge_balance>(0, 0,nullptr);
 			else if (hash == bridge_account::as_instance_type())
-				return memory::init<bridge_account>(algorithm::pubkeyhash_t(), 0, algorithm::pubkeyhash_t(), nullptr);
+				return memory::init<bridge_account>(bridge_ref(), nullptr);
 			else if (hash == witness_program::as_instance_type())
 				return memory::init<witness_program>(std::string_view(), nullptr);
 			else if (hash == witness_event::as_instance_type())
 				return memory::init<witness_event>(0, nullptr);
 			else if (hash == witness_account::as_instance_type())
-				return memory::init<witness_account>(algorithm::pubkeyhash_t(), 0, address_map(), nullptr);
+				return memory::init<witness_account>(bridge_ref(), address_map(), nullptr);
 			else if (hash == witness_transaction::as_instance_type())
 				return memory::init<witness_transaction>(0, std::string_view(), nullptr);
 			return nullptr;
@@ -2153,8 +2207,6 @@ namespace tangent
 				*(account_uniform*)to = from ? account_uniform(*(const account_uniform*)from) : account_uniform(algorithm::pubkeyhash_t(), std::string_view(), nullptr);
 			else if (hash == account_multiform::as_instance_type())
 				*(account_multiform*)to = from ? account_multiform(*(const account_multiform*)from) : account_multiform(algorithm::pubkeyhash_t(), std::string_view(), std::string_view(), nullptr);
-			else if (hash == account_delegation::as_instance_type())
-				*(account_delegation*)to = from ? account_delegation(*(const account_delegation*)from) : account_delegation(algorithm::pubkeyhash_t(), nullptr);
 			else if (hash == account_balance::as_instance_type())
 				*(account_balance*)to = from ? account_balance(*(const account_balance*)from) : account_balance(algorithm::pubkeyhash_t(), 0, nullptr);
 			else if (hash == validator_production::as_instance_type())
@@ -2166,21 +2218,23 @@ namespace tangent
 			else if (hash == validator_participation_reward::as_instance_type())
 				*(validator_participation_reward*)to = from ? validator_participation_reward(*(const validator_participation_reward*)from) : validator_participation_reward(algorithm::pubkeyhash_t(), 0, nullptr);
 			else if (hash == validator_participation_ref::as_instance_type())
-				*(validator_participation_ref*)to = from ? validator_participation_ref(*(const validator_participation_ref*)from) : validator_participation_ref(algorithm::pubkeyhash_t(), validator_participation_ref::ref_value(), nullptr);
+				*(validator_participation_ref*)to = from ? validator_participation_ref(*(const validator_participation_ref*)from) : validator_participation_ref(algorithm::pubkeyhash_t(), bridge_ref(), nullptr);
 			else if (hash == validator_attestation::as_instance_type())
 				*(validator_attestation*)to = from ? validator_attestation(*(const validator_attestation*)from) : validator_attestation(algorithm::pubkeyhash_t(), 0, nullptr);
 			else if (hash == validator_attestation_reward::as_instance_type())
 				*(validator_attestation_reward*)to = from ? validator_attestation_reward(*(const validator_attestation_reward*)from) : validator_attestation_reward(algorithm::pubkeyhash_t(), 0, nullptr);
+			else if (hash == bridge_instance::as_instance_type())
+				*(bridge_instance*)to = from ? bridge_instance(*(const bridge_instance*)from) : bridge_instance(bridge_ref(), nullptr);
 			else if (hash == bridge_balance::as_instance_type())
-				*(bridge_balance*)to = from ? bridge_balance(*(const bridge_balance*)from) : bridge_balance(algorithm::pubkeyhash_t(), 0, nullptr);
+				*(bridge_balance*)to = from ? bridge_balance(*(const bridge_balance*)from) : bridge_balance(0, 0, nullptr);
 			else if (hash == bridge_account::as_instance_type())
-				*(bridge_account*)to = from ? bridge_account(*(const bridge_account*)from) : bridge_account(algorithm::pubkeyhash_t(), 0, algorithm::pubkeyhash_t(), nullptr);
+				*(bridge_account*)to = from ? bridge_account(*(const bridge_account*)from) : bridge_account(bridge_ref(), nullptr);
 			else if (hash == witness_program::as_instance_type())
 				*(witness_program*)to = from ? witness_program(*(const witness_program*)from) : witness_program(std::string_view(), nullptr);
 			else if (hash == witness_event::as_instance_type())
 				*(witness_event*)to = from ? witness_event(*(const witness_event*)from) : witness_event(0, nullptr);
 			else if (hash == witness_account::as_instance_type())
-				*(witness_account*)to = from ? witness_account(*(const witness_account*)from) : witness_account(algorithm::pubkeyhash_t(), 0, address_map(), nullptr);
+				*(witness_account*)to = from ? witness_account(*(const witness_account*)from) : witness_account(bridge_ref(), address_map(), nullptr);
 			else if (hash == witness_transaction::as_instance_type())
 				*(witness_transaction*)to = from ? witness_transaction(*(const witness_transaction*)from) : witness_transaction(0, std::string_view(), nullptr);
 		}
@@ -2251,7 +2305,6 @@ namespace tangent
 				account_nonce::as_instance_type(),
 				account_program::as_instance_type(),
 				account_uniform::as_instance_type(),
-				account_delegation::as_instance_type(),
 				witness_program::as_instance_type(),
 				witness_event::as_instance_type(),
 				witness_transaction::as_instance_type()
@@ -2271,6 +2324,7 @@ namespace tangent
 				validator_participation_ref::as_instance_type(),
 				validator_attestation::as_instance_type(),
 				validator_attestation_reward::as_instance_type(),
+				bridge_instance::as_instance_type(),
 				bridge_balance::as_instance_type(),
 				bridge_account::as_instance_type(),
 				witness_account::as_instance_type(),

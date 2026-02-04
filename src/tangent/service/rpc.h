@@ -157,7 +157,6 @@ namespace tangent
 			server_response chainstate_get_account_uniform(http::connection* base, format::variables&& args);
 			server_response chainstate_get_account_multiform(http::connection* base, format::variables&& args);
 			server_response chainstate_get_account_multiforms(http::connection* base, format::variables&& args);
-			server_response chainstate_get_account_delegation(http::connection* base, format::variables&& args);
 			server_response chainstate_get_account_balance(http::connection* base, format::variables&& args);
 			server_response chainstate_get_account_balances(http::connection* base, format::variables&& args);
 			server_response chainstate_get_validator_production(http::connection* base, format::variables&& args);
@@ -178,13 +177,16 @@ namespace tangent
 			server_response chainstate_get_validator_attestations(http::connection* base, format::variables&& args);
 			server_response chainstate_get_validator_attestations_with_rewards(http::connection* base, format::variables&& args);
 			server_response chainstate_get_best_validator_attestations(http::connection* base, format::variables&& args);
-			server_response chainstate_get_best_validator_attestations_for_selection(http::connection* base, format::variables&& args);
 			server_response chainstate_get_validator_attestation_reward(http::connection* base, format::variables&& args);
 			server_response chainstate_get_validator_attestation_rewards(http::connection* base, format::variables&& args);
+			server_response chainstate_get_bridge_instance(http::connection* base, format::variables&& args);
+			server_response chainstate_get_bridge_instances(http::connection* base, format::variables&& args);
+			server_response chainstate_get_best_bridge_instances(http::connection* base, format::variables&& args);
+			server_response chainstate_get_best_bridge_instances_by_security(http::connection* base, format::variables&& args);
+			server_response chainstate_get_best_bridge_instances_by_balance(http::connection* base, format::variables&& args);
 			server_response chainstate_get_bridge_balance(http::connection* base, format::variables&& args);
 			server_response chainstate_get_bridge_balances(http::connection* base, format::variables&& args);
 			server_response chainstate_get_best_bridge_balances(http::connection* base, format::variables&& args);
-			server_response chainstate_get_best_bridge_balances_for_selection(http::connection* base, format::variables&& args);
 			server_response chainstate_get_bridge_account(http::connection* base, format::variables&& args);
 			server_response chainstate_get_bridge_accounts(http::connection* base, format::variables&& args);
 			server_response chainstate_get_witness_program(http::connection* base, format::variables&& args);

@@ -127,6 +127,7 @@ namespace tangent
 			virtual bool store_data(format::wo_stream* stream) const = 0;
 			virtual bool load_data(format::ro_stream& stream) = 0;
 			virtual bool is_permanent() const;
+			virtual uint64_t time_lock_blocks(const transition_state* prev, uint64_t milliseconds) const;
 			virtual format::tree as_tree() const override = 0;
 			virtual state_level as_level() const = 0;
 			virtual uint32_t as_type() const override = 0;

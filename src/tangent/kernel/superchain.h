@@ -45,17 +45,17 @@ namespace tangent
 			enum class search_term
 			{
 				none,
-				owner,
+				hash,
 				public_key,
 				address
 			};
 
-			algorithm::pubkeyhash_t owner;
+			uint256_t hash;
 			string public_key;
 			string address;
 
 			wallet_link() = default;
-			wallet_link(const algorithm::pubkeyhash_t& new_owner, const std::string_view& new_public_key, const std::string_view& new_address);
+			wallet_link(const uint256_t& new_hash, const std::string_view& new_public_key, const std::string_view& new_address);
 			bool store_payload(format::wo_stream* stream) const override;
 			bool load_payload(format::ro_stream& stream) override;
 			format::tree as_tree() const override;
@@ -65,14 +65,14 @@ namespace tangent
 			search_term as_search_narrow() const;
 			string as_tag_address(const std::string_view& tag = "0") const;
 			string as_name() const;
-			bool has_owner() const;
+			bool has_hash() const;
 			bool has_public_key() const;
 			bool has_address() const;
 			bool has_all() const;
 			bool has_any() const;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
-			static wallet_link from_owner(const algorithm::pubkeyhash_t& new_owner);
+			static wallet_link from_hash(const uint256_t& new_hash);
 			static wallet_link from_public_key(const std::string_view& new_public_key);
 			static wallet_link from_address(const std::string_view& new_address);
 		};
@@ -371,7 +371,7 @@ namespace tangent
 			virtual expects_lr<algorithm::composition::cpubkey_t> to_composite_public_key(const std::string_view& public_key);
 			virtual expects_lr<address_map> to_addresses(const std::string_view& public_key) = 0;
 			virtual expects_lr<btree_map<string, wallet_link>> find_linked_addresses(const hash_set<string>& addresses);
-			virtual expects_lr<btree_map<string, wallet_link>> find_linked_addresses(const algorithm::pubkeyhash_t& owner, size_t offset, size_t count);
+			virtual expects_lr<btree_map<string, wallet_link>> find_linked_addresses(const uint256_t& hash, size_t offset, size_t count);
 			virtual expects_lr<void> verify_node_compatibility(connection_instance* node);
 			virtual decimal to_value(const decimal& value) const;
 			virtual uint256_t to_baseline_value(const decimal& value) const;
@@ -466,7 +466,7 @@ namespace tangent
 			expects_lr<wallet_link> get_link(const algorithm::asset_id& asset, const std::string_view& address);
 			expects_lr<hash_map<string, wallet_link>> get_links_by_public_keys(const algorithm::asset_id& asset, const hash_set<string>& public_keys);
 			expects_lr<hash_map<string, wallet_link>> get_links_by_addresses(const algorithm::asset_id& asset, const hash_set<string>& addresses);
-			expects_lr<hash_map<string, wallet_link>> get_links_by_owner(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, size_t offset, size_t count);
+			expects_lr<hash_map<string, wallet_link>> get_links_by_hash(const algorithm::asset_id& asset, const uint256_t& hash, size_t offset, size_t count);
 			expects_lr<void> receive_utxo(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint64_t index, uint64_t block_id, const coin_utxo& value);
 			expects_lr<void> spend_utxo(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint64_t index, uint64_t block_id);
 			expects_lr<void> revive_utxo(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint64_t index);

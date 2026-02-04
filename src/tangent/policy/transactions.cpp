@@ -938,7 +938,7 @@ namespace tangent
 
 		expects_lr<void> setup::validate(uint64_t block_number) const
 		{
-			if (migrations.empty() && attestations.empty() && !participation && !production)
+			if (migrations.empty() && attestations.empty() && bridges.empty() && !participation && !production)
 				return layer_exception("invalid validator change");
 
 			for (auto& [broadcast_hash, participant] : migrations)
@@ -950,7 +950,6 @@ namespace tangent
 					return layer_exception("invalid participant");
 			}
 
-			attestation_setup default_setup;
 			for (auto& [attestation_asset, setup] : attestations)
 			{
 				if (!algorithm::asset::is_aux(attestation_asset, true))
@@ -959,16 +958,19 @@ namespace tangent
 				if (setup.stake.is_negative())
 					return layer_exception("attestation stake must not be negative");
 
-				if (setup.incoming_fee && (setup.incoming_fee->is_nan() || setup.incoming_fee->is_negative()))
-					return layer_exception("invalid incoming fee");
+				if (setup.min_fee && (setup.min_fee->is_nan() || setup.min_fee->is_negative()))
+					return layer_exception("invalid min fee");
+			}
 
-				if (setup.outgoing_fee && (setup.outgoing_fee->is_nan() || setup.outgoing_fee->is_negative()))
-					return layer_exception("invalid outgoing fee");
+			for (auto& [bridge_asset, setup] : bridges)
+			{
+				if (!algorithm::asset::is_aux(bridge_asset, true))
+					return layer_exception("invalid bridge asset");
 
-				if (setup.participation_threshold && (setup.participation_threshold->is_nan() || setup.participation_threshold->is_negative()))
-					return layer_exception("invalid participation threshold");
+				if (!setup.fee_rate.is_positive())
+					return layer_exception("invalid fee rate");
 
-				if (setup.security_level && (*setup.security_level < protocol::now().policy.participation.min_per_account || *setup.security_level > protocol::now().policy.participation.max_per_account))
+				if (setup.security_level < protocol::now().policy.participation.min_per_account || setup.security_level > protocol::now().policy.participation.max_per_account)
 					return layer_exception("invalid security level");
 			}
 
@@ -986,19 +988,6 @@ namespace tangent
 			if (!validation)
 				return validation.error();
 
-			size_t count = 32;
-			vector<states::validator_participation_ref> refs;
-			auto participation_type = participation ? (participation->is_nan() ? ledger::executor_context::staker::unlock : ledger::executor_context::staker::lock) : ledger::executor_context::staker::reward_or_penalty;
-			while (!migrations.empty() || participation_type == ledger::executor_context::staker::unlock)
-			{
-				auto results = executor->get_validator_participation_refs(executor->receipt.from, refs.size(), count);
-				if (results)
-					refs.insert(refs.end(), results->begin(), results->end());
-				if (!results || results->size() != count)
-					break;
-			}
-
-			decimal threshold = decimal::zero();
 			btree_set<uint256_t> accounts;
 			btree_set<algorithm::pubkeyhash_t> exclusion;
 			for (auto& [broadcast_hash, participant] : migrations)
@@ -1008,37 +997,79 @@ namespace tangent
 					return layer_exception("broadcast transaction not found");
 
 				auto* parent_transaction = (broadcast*)*parent->transaction;
-				if (parent_transaction->proof || parent->receipt.from != executor->receipt.from)
+				if (parent_transaction->proof)
 					return layer_exception("broadcast transaction not applicable");
 
-				bool may_perform_migration = false;
+				auto origin = executor->get_block_transaction<withdraw>(parent_transaction->withdraw_hash, true);
+				if (!origin)
+					return layer_exception("withdraw transaction not found");
+
 				auto base_asset = algorithm::asset::base_id_of(parent_transaction->asset);
-				for (auto& ref_state : refs)
+				auto requirement = executor->get_verified_validator_attestation(base_asset, executor->receipt.from);
+				if (!requirement)
+					return layer_exception("must be an active attester to request migration");
+
+				auto time_lock = protocol::now().policy.attestation.withdrawal_time / protocol::now().policy.pow.time;
+				auto time_delta = parent->receipt.block_number < executor->receipt.block_number ? executor->receipt.block_number - parent->receipt.block_number : 0;
+				if (time_delta <= time_lock)
+					return layer_exception("broadcast time lock active - retry after block number " + to_string(parent->receipt.block_number + time_lock));
+				else if (time_delta > time_lock * 2)
+					return layer_exception("permanent broadcast time lock - activated after block number " + to_string(parent->receipt.block_number + time_lock * 2));
+
+				auto* origin_transaction = (withdraw*)*origin->transaction;
+				auto bridge = executor->get_bridge_instance(base_asset, origin_transaction->bridge_hash);
+				if (!bridge)
+					return bridge.error();
+
+				if (bridge->transaction_hash > 0 && bridge->transaction_hash != broadcast_hash)
 				{
-					auto& ref = ref_state.ref;
-					if (!ref_state.active || ref.asset != base_asset || ref.manager != executor->receipt.from)
-						continue;
+					parent = executor->get_block_transaction<broadcast>(bridge->transaction_hash, true);
+					if (!parent)
+						return layer_exception("last broadcast transaction not found");
 
-					auto attestation = executor->get_verified_validator_attestation(ref.asset, ref.manager);
-					if (!attestation)
-						return attestation.error();
-
-					auto account = executor->get_bridge_account(ref.asset, ref.manager, ref.owner);
-					if (!account)
-						return account.error();
-
-					may_perform_migration = true;
-					exclusion.insert(account->group.begin(), account->group.end());
-					if (threshold < attestation->participation_threshold)
-						threshold = attestation->participation_threshold;
-
-					auto ref_hash = ledger::dispatcher_context::secret_entropy::ref_hash(ref.asset, ref.manager, ref.owner);
-					if (accounts.find(ref_hash) != accounts.end())
-						return layer_exception("migration requires migration to multiple new participants");
-
-					accounts.insert(ref_hash);
+					parent_transaction = (broadcast*)*parent->transaction;
+					if (parent_transaction->proof)
+						return layer_exception("bridge participant migration is not justified");
 				}
-				if (!may_perform_migration)
+				else if (!bridge->transaction_hash)
+					return layer_exception("bridge does not have any past withdrawals");
+
+				auto event = executor->apply_witness_event(parent->receipt.transaction_hash, parent->receipt.transaction_hash);
+				if (!event)
+					return event.error();
+
+				bool has_any = false;
+				size_t offset = 0, count = 32;
+				while (true)
+				{
+					auto results = executor->get_validator_participation_refs(participant, offset, count);
+					if (!results)
+						break;
+
+					offset += results->size();
+					for (auto& ref_state : *results)
+					{
+						auto& ref = ref_state.ref;
+						if (!ref_state.active || ref.asset != bridge->ref.asset || ref.hash != bridge->ref.hash)
+							continue;
+
+						auto account = executor->get_bridge_account(ref.owner, ref.asset, ref.hash);
+						if (!account)
+							return account.error();
+
+						has_any = true;
+						exclusion.insert(account->group.begin(), account->group.end());
+						auto ref_hash = ledger::dispatcher_context::secret_entropy::ref_hash(ref.owner, ref.asset, ref.hash);
+						if (accounts.find(ref_hash) != accounts.end())
+							return layer_exception("migration requires migration to multiple new participants");
+
+						accounts.insert(ref_hash);
+					}
+
+					if (results->size() != count)
+						break;
+				}
+				if (!has_any)
 					return layer_exception("migrations for a participant not found");
 			}
 
@@ -1047,88 +1078,70 @@ namespace tangent
 				if (!algorithm::asset::token_of(attestation_asset).empty())
 					continue;
 
-				auto prev_policy = executor->get_validator_attestation(attestation_asset, executor->receipt.from).or_else(states::validator_attestation(executor->receipt.from, attestation_asset, nullptr));
-				auto next_policy = executor->apply_validator_attestation_policy(algorithm::asset::base_id_of(attestation_asset), executor->receipt.from,
-					setup.security_level.or_else(prev_policy.security_level),
-					setup.participation_threshold.or_else(prev_policy.participation_threshold),
-					setup.incoming_fee.or_else(prev_policy.incoming_fee),
-					setup.outgoing_fee.or_else(prev_policy.outgoing_fee),
-					setup.accepts_account_requests.or_else(prev_policy.accepts_account_requests),
-					setup.accepts_withdrawal_requests.or_else(prev_policy.accepts_withdrawal_requests));
-				if (!next_policy)
-					return next_policy.error();
-
 				auto type = setup.stake.is_nan() ? ledger::executor_context::staker::unlock : ledger::executor_context::staker::lock;
-				if (type == ledger::executor_context::staker::unlock && (next_policy->accepts_account_requests || next_policy->accepts_withdrawal_requests))
-					return layer_exception(algorithm::asset::handle_of(attestation_asset) + " bridge is still active");
+				auto prev_attestation = executor->get_validator_attestation(attestation_asset, executor->receipt.from).or_else(states::validator_attestation(executor->receipt.from, attestation_asset, nullptr));
+				auto next_attestation = executor->apply_validator_attestation(attestation_asset, executor->receipt.from, type, setup.stake, setup.min_fee.or_else(prev_attestation.min_fee));
+				if (!next_attestation)
+					return next_attestation.error();
+			}
 
-				if (type == ledger::executor_context::staker::unlock || (prev_policy.is_active() && prev_policy.accepts_withdrawal_requests != next_policy->accepts_withdrawal_requests && !next_policy->accepts_withdrawal_requests))
-				{
-					size_t offset = 0;
-					while (true)
-					{
-						auto balances = executor->get_bridge_balances(executor->receipt.from, offset, count);
-						if (!balances)
-							break;
+			for (auto& [bridge_asset, setup] : bridges)
+			{
+				if (!algorithm::asset::token_of(bridge_asset).empty())
+					continue;
 
-						for (auto& balance : *balances)
-						{
-							if (attestation_asset != algorithm::asset::base_id_of(balance.asset))
-								continue;
+				auto distribution = executor->calculate_random(executor->receipt.transaction_hash);
+				if (!distribution)
+					return distribution.error();
 
-							if (algorithm::asset::is_aux(attestation_asset, true))
-							{
-								auto dust = executor->calculate_amount_considered_dust(balance.asset).or_else(decimal::zero());
-								if (balance.supply > dust)
-									return layer_exception(algorithm::asset::handle_of(balance.asset) + " bridge has non-dust custodial balance (max_dust: " + dust.to_string() + ")");
-							}
-							else if (balance.supply.is_positive())
-								return layer_exception(algorithm::asset::handle_of(balance.asset) + " bridge has custodial token balance");
-						}
+				auto cost = (uint64_t)ledger::gas_cost::write_tx_byte;
+				auto payment = executor->burn_gas(cost * cost * cost * (1 + (protocol::now().policy.participation.max_per_account - setup.security_level)));
+				if (!payment)
+					return payment.error();
 
-						offset += balances->size();
-						if (balances->size() != count)
-							break;
-					}
-				}
-
-				auto status = executor->apply_validator_attestation(attestation_asset, executor->receipt.from, type, setup.stake);
-				if (!status)
-					return status.error();
+				auto instance = executor->apply_bridge_instance(bridge_asset, distribution->derive(), setup.security_level, setup.fee_rate);
+				if (!instance)
+					return instance.error();
 			}
 
 			bool requires_self_migration = false;
+			auto participation_type = participation ? (participation->is_nan() ? ledger::executor_context::staker::unlock : ledger::executor_context::staker::lock) : ledger::executor_context::staker::reward_or_penalty;
 			if (participation_type != ledger::executor_context::staker::reward_or_penalty)
 			{
 				auto type = participation->is_nan() ? ledger::executor_context::staker::unlock : ledger::executor_context::staker::lock;
 				if (type == ledger::executor_context::staker::unlock)
 				{
 					bool has_any = false;
-					for (auto& ref_state : refs)
+					size_t offset = 0, count = 32;
+					while (true)
 					{
-						auto& ref = ref_state.ref;
-						if (!ref_state.active)
-							continue;
+						auto results = executor->get_validator_participation_refs(executor->receipt.from, offset, count);
+						if (!results)
+							break;
 
-						auto attestation = executor->get_verified_validator_attestation(ref.asset, ref.manager);
-						if (!attestation)
-							return attestation.error();
+						offset += results->size();
+						for (auto& ref_state : *results)
+						{
+							auto& ref = ref_state.ref;
+							if (!ref_state.active)
+								continue;
 
-						auto account = executor->get_bridge_account(ref.asset, ref.manager, ref.owner);
-						if (!account)
-							return account.error();
+							auto account = executor->get_bridge_account(ref.owner, ref.asset, ref.hash);
+							if (!account)
+								return account.error();
 
-						requires_self_migration = true;
-						exclusion.insert(account->group.begin(), account->group.end());
-						if (threshold < attestation->participation_threshold)
-							threshold = attestation->participation_threshold;
+							requires_self_migration = true;
+							exclusion.insert(account->group.begin(), account->group.end());
+							auto ref_hash = ledger::dispatcher_context::secret_entropy::ref_hash(ref.owner, ref.asset, ref.hash);
+							if (accounts.find(ref_hash) != accounts.end())
+								return layer_exception("migration requires migration to multiple new participants");
 
-						auto ref_hash = ledger::dispatcher_context::secret_entropy::ref_hash(ref.asset, ref.manager, ref.owner);
-						if (accounts.find(ref_hash) != accounts.end())
-							return layer_exception("migration requires migration to multiple new participants");
+							accounts.insert(ref_hash);
+							has_any = true;
+						}
 
-						accounts.insert(ref_hash);
-						has_any = true;
+						if (results->size() != count)
+							break;
 					}
 
 					if (!has_any)
@@ -1155,12 +1168,11 @@ namespace tangent
 			if (exclusion.empty())
 				return expectation::met;
 
-			auto committee = executor->calculate_participants(exclusion, 1, threshold);
+			auto committee = executor->calculate_participants(1, exclusion);
 			if (!committee)
 				return committee.error();
 
-			auto& new_manager = committee->front();
-			auto event = executor->emit_event<setup>({ format::variable(requires_self_migration), format::variable(new_manager.owner.view()) });
+			auto event = executor->emit_event<setup>({ format::variable(requires_self_migration), format::variable(committee->front().owner.view()) });
 			if (!event)
 				return event;
 
@@ -1197,7 +1209,7 @@ namespace tangent
 						if (migration.must_have_locally)
 							continue;
 
-						auto ref_hash = ledger::dispatcher_context::secret_entropy::ref_hash(migration.account.asset, migration.account.manager, migration.account.owner);
+						auto ref_hash = ledger::dispatcher_context::secret_entropy::ref_hash(migration.account.ref.owner, migration.account.ref.asset, migration.account.ref.hash);
 						migration.account.group.erase(migration.old_participant);
 						aggregation_state.participants.insert(migration.account.group.begin(), migration.account.group.end());
 						aggregation_state.encrypted_shares[ref_hash] = btree_map<algorithm::pubkeyhash_t, string>();
@@ -1263,7 +1275,7 @@ namespace tangent
 					if (!migration.must_have_locally)
 						continue;
 
-					auto secret = dispatcher->recover_secret_entropy(runner_wallet, migration.account.asset, migration.account.manager, migration.account.owner);
+					auto secret = dispatcher->recover_secret_entropy(runner_wallet, migration.account.ref.owner, migration.account.ref.asset, migration.account.ref.hash);
 					if (!secret)
 						coreturn remote_exception(std::move(secret.error().message()));
 
@@ -1303,24 +1315,16 @@ namespace tangent
 			{
 				stream->write_integer(attestation_asset);
 				stream->write_decimal(setup.stake);
-				stream->write_boolean(!!setup.accepts_account_requests);
-				stream->write_boolean(!!setup.accepts_withdrawal_requests);
-				stream->write_boolean(!!setup.security_level);
-				stream->write_boolean(!!setup.incoming_fee);
-				stream->write_boolean(!!setup.outgoing_fee);
-				stream->write_boolean(!!setup.participation_threshold);
-				if (setup.accepts_account_requests)
-					stream->write_boolean(*setup.accepts_account_requests);
-				if (setup.accepts_withdrawal_requests)
-					stream->write_boolean(*setup.accepts_withdrawal_requests);
-				if (setup.security_level)
-					stream->write_integer(*setup.security_level);
-				if (setup.incoming_fee)
-					stream->write_decimal(*setup.incoming_fee);
-				if (setup.outgoing_fee)
-					stream->write_decimal(*setup.outgoing_fee);
-				if (setup.participation_threshold)
-					stream->write_decimal(*setup.participation_threshold);
+				stream->write_boolean(!!setup.min_fee);
+				if (setup.min_fee)
+					stream->write_decimal(*setup.min_fee);
+			}
+			stream->write_integer((uint8_t)bridges.size());
+			for (auto& [bridge_asset, setup] : bridges)
+			{
+				stream->write_integer(bridge_asset);
+				stream->write_integer(setup.security_level);
+				stream->write_decimal(setup.fee_rate);
 			}
 			stream->write_boolean(!!participation);
 			if (participation)
@@ -1365,73 +1369,39 @@ namespace tangent
 				if (!stream.read_decimal(stream.read_type(), &setup.stake))
 					return false;
 
-				bool has_accepts_account_requests;
-				if (!stream.read_boolean(stream.read_type(), &has_accepts_account_requests))
+				bool has_min_fee;
+				if (!stream.read_boolean(stream.read_type(), &has_min_fee))
 					return false;
 
-				bool has_accepts_withdrawal_requests;
-				if (!stream.read_boolean(stream.read_type(), &has_accepts_withdrawal_requests))
-					return false;
-
-				bool has_security_level;
-				if (!stream.read_boolean(stream.read_type(), &has_security_level))
-					return false;
-
-				bool has_incoming_fee;
-				if (!stream.read_boolean(stream.read_type(), &has_incoming_fee))
-					return false;
-
-				bool has_outgoing_fee;
-				if (!stream.read_boolean(stream.read_type(), &has_outgoing_fee))
-					return false;
-
-				bool has_participation_threshold;
-				if (!stream.read_boolean(stream.read_type(), &has_participation_threshold))
-					return false;
-
-				if (has_accepts_account_requests)
+				if (has_min_fee)
 				{
-					setup.accepts_account_requests = true;
-					if (!stream.read_boolean(stream.read_type(), setup.accepts_account_requests.address()))
-						return false;
-				}
-
-				if (has_accepts_withdrawal_requests)
-				{
-					setup.accepts_withdrawal_requests = true;
-					if (!stream.read_boolean(stream.read_type(), setup.accepts_withdrawal_requests.address()))
-						return false;
-				}
-
-				if (has_security_level)
-				{
-					setup.security_level = (uint8_t)protocol::now().policy.participation.min_per_account;
-					if (!stream.read_integer(stream.read_type(), setup.security_level.address()))
-						return false;
-				}
-
-				if (has_incoming_fee)
-				{
-					setup.incoming_fee = decimal::zero();
-					if (!stream.read_decimal(stream.read_type(), setup.incoming_fee.address()))
-						return false;
-				}
-
-				if (has_outgoing_fee)
-				{
-					setup.outgoing_fee = decimal::zero();
-					if (!stream.read_decimal(stream.read_type(), setup.outgoing_fee.address()))
-						return false;
-				}
-
-				if (has_participation_threshold)
-				{
-					setup.participation_threshold = decimal::zero();
-					if (!stream.read_decimal(stream.read_type(), setup.participation_threshold.address()))
+					setup.min_fee = decimal::zero();
+					if (!stream.read_decimal(stream.read_type(), setup.min_fee.address()))
 						return false;
 				}
 
 				attestations[attestation_asset] = std::move(setup);
+			}
+
+			uint8_t bridges_size = 0;
+			if (!stream.read_integer(stream.read_type(), &bridges_size))
+				return false;
+
+			bridges.clear();
+			for (uint16_t i = 0; i < bridges_size; i++)
+			{
+				algorithm::asset_id bridge_asset;
+				if (!stream.read_integer(stream.read_type(), &bridge_asset))
+					return false;
+
+				bridge_setup setup;
+				if (!stream.read_integer(stream.read_type(), &setup.security_level))
+					return false;
+
+				if (!stream.read_decimal(stream.read_type(), &setup.fee_rate))
+					return false;
+
+				bridges[bridge_asset] = std::move(setup);
 			}
 
 			bool has_participation;
@@ -1497,23 +1467,14 @@ namespace tangent
 		{
 			participation = optional::none;
 		}
-		void setup::allocate_attestation_stake(const algorithm::asset_id& new_asset, const decimal& new_value)
+		void setup::allocate_attestation_stake(const algorithm::asset_id& new_asset, const decimal& new_value, const decimal& new_min_fee)
 		{
-			attestations[new_asset].stake = new_value;
-		}
-		void setup::configure_attestation_security(const algorithm::asset_id& new_asset, uint8_t new_security_level, const decimal& new_participation_threshold, bool new_accepts_account_requests, bool new_accepts_withdrawal_requests)
-		{
-			auto& setup = attestations[new_asset];
-			setup.security_level = new_security_level;
-			setup.participation_threshold = new_participation_threshold;
-			setup.accepts_account_requests = new_accepts_account_requests;
-			setup.accepts_withdrawal_requests = new_accepts_withdrawal_requests;
-		}
-		void setup::configure_attestation_reward(const algorithm::asset_id& new_asset, const decimal& new_incoming_fee, const decimal& new_outgoing_fee)
-		{
-			auto& setup = attestations[new_asset];
-			setup.incoming_fee = new_incoming_fee;
-			setup.outgoing_fee = new_outgoing_fee;
+			auto& attestation = attestations[new_asset];
+			attestation.stake = new_value;
+			if (!new_min_fee.is_nan())
+				attestation.min_fee = new_min_fee;
+			else
+				attestation.min_fee = optional::none;
 		}
 		void setup::disable_attestation(const algorithm::asset_id& new_asset)
 		{
@@ -1522,6 +1483,16 @@ namespace tangent
 		void setup::standby_on_attestation(const algorithm::asset_id& new_asset)
 		{
 			attestations.erase(new_asset);
+		}
+		void setup::allocate_bridge(const algorithm::asset_id& new_asset, uint8_t new_security_level, const decimal& new_fee_rate)
+		{
+			auto& bridge = bridges[new_asset];
+			bridge.fee_rate = new_fee_rate;
+			bridge.security_level = new_security_level;
+		}
+		void setup::unset_bridge(const algorithm::asset_id& new_asset)
+		{
+			bridges.erase(new_asset);
 		}
 		void setup::migrate_participant(const uint256_t& broadcast_hash, const algorithm::pubkeyhash_t& participant)
 		{
@@ -1546,67 +1517,86 @@ namespace tangent
 			if (!requires_self_migration && migrations.empty())
 				return expects_lr<vector<migration_ref>>(std::move(results));
 
-			size_t count = 32;
-			vector<states::validator_participation_ref> refs;
-			while (true)
-			{
-				auto ref_results = executor->get_validator_participation_refs(executor->receipt.from, refs.size(), count);
-				if (ref_results)
-					refs.insert(refs.end(), ref_results->begin(), ref_results->end());
-				if (!ref_results || ref_results->size() != count)
-					break;
-			}
-
 			if (requires_self_migration)
 			{
-				for (auto& ref_state : refs)
+				size_t offset = 0, count = 32;
+				while (true)
 				{
-					auto& ref = ref_state.ref;
-					if (!ref_state.active)
-						continue;
+					auto subresults = executor->get_validator_participation_refs(executor->receipt.from, offset, count);
+					if (!subresults)
+						break;
 
-					auto account = executor->get_bridge_account(ref.asset, ref.manager, ref.owner);
-					if (!account)
-						return account.error();
+					offset += subresults->size();
+					for (auto& ref_state : *subresults)
+					{
+						auto& ref = ref_state.ref;
+						if (!ref_state.active)
+							continue;
+						
+						auto account = executor->get_bridge_account(ref.owner, ref.asset, ref.hash);
+						if (!account)
+							return account.error();
 
-					migration_ref migration;
-					migration.account = std::move(*account);
-					migration.old_participant = receipt.from;
-					migration.must_have_locally = true;
-					results.push_back(std::move(migration));
+						migration_ref migration;
+						migration.account = std::move(*account);
+						migration.old_participant = receipt.from;
+						migration.must_have_locally = true;
+						results.push_back(std::move(migration));
+					}
+
+					if (subresults->size() != count)
+						break;
 				}
 			}
 
 			for (auto& [broadcast_hash, participant] : migrations)
 			{
+				auto event = executor->get_witness_event(broadcast_hash);
+				if (!event || event->child_transaction_hash != broadcast_hash)
+					continue;
+
 				auto parent = executor->get_block_transaction<broadcast>(broadcast_hash, true);
 				if (!parent)
-					return layer_exception("invalid migration reasoning transaction");
+					return layer_exception("broadcast transaction not found");
 
-				auto participation_ref = executor->get_validator_participation(participant);
-				if (!participation_ref)
-					return participation_ref.error();
+				auto origin = executor->get_block_transaction<withdraw>(((broadcast*)*parent->transaction)->withdraw_hash, true);
+				if (!origin)
+					return layer_exception("withdraw transaction not found");
+
+				auto bridge = executor->get_bridge_instance(algorithm::asset::base_id_of(origin->transaction->asset), ((withdraw*)*origin->transaction)->bridge_hash);
+				if (!bridge)
+					return bridge.error();
 
 				bool has_any = false;
-				auto ref_asset = algorithm::asset::base_id_of(parent->transaction->asset);
-				for (auto& ref_state : refs)
+				size_t offset = 0, count = 32;
+				while (true)
 				{
-					auto& ref = ref_state.ref;
-					if (!ref_state.active || ref.asset != ref_asset || ref.manager != receipt.from)
-						continue;
+					auto subresults = executor->get_validator_participation_refs(participant, offset, count);
+					if (!subresults)
+						break;
 
-					auto account = executor->get_bridge_account(ref.asset, ref.manager, ref.owner);
-					if (!account)
-						return account.error();
+					offset += subresults->size();
+					for (auto& ref_state : *subresults)
+					{
+						auto& ref = ref_state.ref;
+						if (!ref_state.active || ref.asset != bridge->ref.asset || ref.hash != bridge->ref.hash)
+							continue;
 
-					migration_ref migration;
-					migration.account = std::move(*account);
-					migration.old_participant = participant;
-					migration.must_have_locally = false;
-					results.push_back(std::move(migration));
-					has_any = true;
+						auto account = executor->get_bridge_account(ref.owner, ref.asset, ref.hash);
+						if (!account)
+							return account.error();
+
+						migration_ref migration;
+						migration.account = std::move(*account);
+						migration.old_participant = participant;
+						migration.must_have_locally = false;
+						results.push_back(std::move(migration));
+						has_any = true;
+					}
+
+					if (subresults->size() != count)
+						break;
 				}
-
 				if (!has_any)
 					return layer_exception("invalid migration participant");
 			}
@@ -1643,13 +1633,19 @@ namespace tangent
 				{
 					auto* attestation_data = attestations_data->push(format::tree::map());
 					attestation_data->set("asset", algorithm::asset::serialize(attestation_asset));
-					attestation_data->set("accepts_account_requests", setup.accepts_account_requests ? format::variable(*setup.accepts_account_requests) : format::variable());
-					attestation_data->set("accepts_withdrawal_requests", setup.accepts_withdrawal_requests ? format::variable(*setup.accepts_withdrawal_requests) : format::variable());
-					attestation_data->set("security_level", setup.security_level ? format::variable(*setup.security_level) : format::variable());
-					attestation_data->set("incoming_fee", setup.incoming_fee ? format::variable(*setup.incoming_fee) : format::variable());
-					attestation_data->set("outgoing_fee", setup.outgoing_fee ? format::variable(*setup.outgoing_fee) : format::variable());
-					attestation_data->set("participation_threshold", setup.participation_threshold ? format::variable(*setup.participation_threshold) : format::variable());
 					attestation_data->set("stake", format::variable(setup.stake));
+					attestation_data->set("min_fee", setup.min_fee ? format::variable(*setup.min_fee) : format::variable());
+				}
+			}
+			if (!bridges.empty())
+			{
+				auto* bridges_data = data.set("bridges", format::tree::list());
+				for (auto& [bridge_asset, setup] : bridges)
+				{
+					auto* bridge_data = bridges_data->push(format::tree::map());
+					bridge_data->set("asset", algorithm::asset::serialize(bridge_asset));
+					bridge_data->set("security_level", format::variable(setup.security_level));
+					bridge_data->set("fee_rate", format::variable(setup.fee_rate));
 				}
 			}
 			if (participation)
@@ -1719,7 +1715,7 @@ namespace tangent
 
 			for (auto& migration : *migrations)
 			{
-				auto account = executor->get_bridge_account(migration.account.asset, migration.account.manager, migration.account.owner);
+				auto account = executor->get_bridge_account(migration.account.ref.owner, migration.account.ref.asset, migration.account.ref.hash);
 				if (!account)
 					return account.error();
 
@@ -1729,20 +1725,15 @@ namespace tangent
 				if (prev_size != account->group.size())
 					return layer_exception("conflicting group migration (size changed)");
 
-				account = executor->apply_bridge_account(account->asset, account->manager, account->owner, account->public_key, std::move(account->group));
+				account = executor->apply_bridge_account(account->ref.owner, account->ref.asset, account->ref.hash, account->public_key, std::move(account->group));
 				if (!account)
 					return account.error();
 
-				auto ref = states::validator_participation_ref::ref_value();
-				ref.asset = account->asset;
-				ref.manager = account->manager;
-				ref.owner = account->owner;
-
-				auto status = executor->apply_validator_participation_ref(migration.old_participant, ref, false);
+				auto status = executor->apply_validator_participation_ref(migration.old_participant, account->ref, false);
 				if (!status)
 					return status.error();
 
-				status = executor->apply_validator_participation_ref(new_participant, ref, true);
+				status = executor->apply_validator_participation_ref(new_participant, account->ref, true);
 				if (!status)
 					return status.error();
 			}
@@ -1790,6 +1781,1360 @@ namespace tangent
 		std::string_view migrate::as_instance_typename()
 		{
 			return "migrate";
+		}
+
+		expects_lr<void> route::validate(uint64_t block_number) const
+		{
+			if (!algorithm::asset::token_of(asset).empty())
+				return layer_exception("invalid asset");
+
+			if (!bridge_hash)
+				return layer_exception("invalid bridge hash");
+
+			return ledger::commitment_message::validate(block_number);
+		}
+		expects_lr<void> route::execute(ledger::executor_context* executor) const
+		{
+			auto validation = ledger::commitment_message::execute(executor);
+			if (!validation)
+				return validation.error();
+
+			auto* params = superchain::bridge::get()->get_network_params(asset);
+			if (!params)
+				return layer_exception("invalid operation");
+
+			bool routing_address_application = !routing_address.empty();
+			if (routing_address_application)
+			{
+				auto collision = executor->get_witness_account_tagged(asset, routing_address, 0);
+				if (collision)
+					return layer_exception("routing account address " + routing_address + " taken");
+
+				auto status = executor->apply_witness_routing_account(executor->receipt.from, asset, { { (uint8_t)1, string(routing_address) } });
+				if (!status)
+					return status.error();
+			}
+
+			auto bridge = executor->get_bridge_instance(asset, bridge_hash);
+			if (!bridge)
+				return bridge.error();
+
+			switch (params->routing)
+			{
+				case superchain::routing_policy::account:
+				{
+					if (!bridge->account_nonce)
+						break;
+					
+					return routing_address_application ? expects_lr<void>(expectation::met) : expects_lr<void>(layer_exception("only one initiator bridge account may exist"));
+				}
+				case superchain::routing_policy::memo:
+				{
+					if (!bridge->account_nonce)
+						break;
+
+					auto initiator_account = executor->get_bridge_account(bridge->ref.owner, asset, bridge->ref.hash);
+					if (!initiator_account || initiator_account->public_key.empty() || initiator_account->group.empty() || initiator_account->ref.owner != bridge->ref.owner || initiator_account->ref.asset != bridge->ref.asset || initiator_account->ref.hash != bridge->ref.hash)
+						return layer_exception("initiator bridge account required");
+
+					size_t offset = 0, count = 32;
+					while (true)
+					{
+						auto duplicates = executor->get_witness_accounts_by_purpose(executor->receipt.from, states::witness_account::account_type::bridge, 0, count);
+						if (!duplicates)
+							break;
+
+						auto it = std::find_if(duplicates->begin(), duplicates->end(), [&](const states::witness_account& account) { return account.ref.owner == executor->receipt.from && account.ref.asset == asset && account.ref.hash == bridge_hash && account.active; });
+						if (it != duplicates->end())
+							return routing_address_application ? expects_lr<void>(expectation::met) : expects_lr<void>(layer_exception("bridge account already bound to this account"));
+
+						offset += duplicates->size();
+						if (duplicates->size() != count)
+							break;
+					}
+
+					auto* chain = superchain::bridge::get()->get_network(asset);
+					if (!chain)
+						return layer_exception("invalid operation");
+
+					auto encoded_public_key = chain->encode_public_key(std::string_view((char*)initiator_account->public_key.data(), initiator_account->public_key.size()));
+					if (!encoded_public_key)
+						return encoded_public_key.error();
+
+					auto addresses = chain->to_addresses(*encoded_public_key);
+					if (!addresses)
+						return addresses.error();
+
+					for (auto& address : *addresses)
+						address.second = superchain::address_util::encode_tag_address(address.second, to_string(bridge->account_nonce));
+
+					auto policy_status = executor->apply_bridge_instance_account(asset, bridge_hash, executor->receipt.from);
+					if (!policy_status)
+						return policy_status.error();
+
+					auto witness_account_status = executor->apply_witness_bridge_account(executor->receipt.from, asset, bridge_hash, *addresses);
+					if (!witness_account_status)
+						return witness_account_status.error();
+
+					return expectation::met;
+				}
+				case superchain::routing_policy::utxo:
+				{
+					auto duplicate = executor->get_bridge_account(executor->receipt.from, asset, bridge_hash);
+					if (!duplicate)
+						break;
+
+					return routing_address_application ? expects_lr<void>(expectation::met) : expects_lr<void>(layer_exception("bridge account already bound to this account"));
+				}
+				default:
+					return layer_exception("invalid operation");
+			}
+
+			btree_set<algorithm::pubkeyhash_t> exclusion;
+			auto attesters = executor->calculate_attesters(asset, 1, decimal::nan(), exclusion);
+			if (!attesters)
+				return attesters.error();
+
+			exclusion.insert(attesters->front().owner);
+			auto event = executor->emit_event<route>({ format::variable(attesters->front().owner.view()) });
+			if (!event)
+				return event;
+
+			auto participants = executor->calculate_participants(bridge->security_level, exclusion);
+			if (!participants)
+				return participants.error();
+
+			for (auto& target : *participants)
+			{
+				auto event = executor->emit_event<route>({ format::variable(target.owner.view()) });
+				if (!event)
+					return event;
+			}
+
+			return expectation::met;
+		}
+		expects_promise_rt<void> route::dispatch(const ledger::executor_context* executor, ledger::dispatcher_context* dispatcher) const
+		{
+			auto attester = get_attester(executor->receipt);
+			auto* runner_wallet = attester.empty() ? nullptr : dispatcher->get_runner_wallet(attester);
+			if (!runner_wallet)
+				return expects_promise_rt<void>(expectation::met);
+			else if (executor->get_witness_event(executor->receipt.transaction_hash))
+				return expects_promise_rt<void>(expectation::met);
+
+			return coasync<expects_rt<void>>([this, executor, dispatcher, runner_wallet]() -> expects_promise_rt<void>
+			{
+				auto* chain = superchain::bridge::get()->get_network_params(asset);
+				if (!chain)
+					coreturn remote_exception("invalid operation");
+
+				uint8_t message_hash[32];
+				challenge(executor->receipt.transaction_hash, message_hash);
+
+				size_t required_public_keys = 0;
+				auto cache = dispatcher->pull_cache(executor);
+				auto group = get_participants(executor->receipt);
+				auto state = ledger::dispatcher_context::public_state();
+				if (!state.load(cache))
+				{
+					auto compositor = algorithm::composition::make_public_key_compositor(chain->composition, message_hash, sizeof(message_hash), (uint16_t)group.size());
+					if (!compositor)
+						coreturn remote_exception(std::move(compositor.error().message()));
+
+					state.compositor = std::move(*compositor);
+					state.participants = group;
+					state.alg = chain->composition;
+					required_public_keys = state.participants.size();
+				}
+
+				auto session = coawait(dispatcher->aggregate_validators(state.participants));
+				if (!session)
+					coreturn session.error();
+
+				if (required_public_keys > 0)
+				{
+					if (state.participants.size() != required_public_keys)
+					{
+					postpone:
+						if (++state.attempt >= protocol::now().user.consensus.coordination_attempts)
+							coreturn remote_exception("failed to coordinate participants after several retries");
+
+						dispatcher->push_cache(executor, state.as_message());
+						coreturn remote_exception::retry_later();
+					}
+
+					for (auto& participant : state.participants)
+					{
+						auto public_key = dispatcher->get_public_key(participant);
+						if (public_key.empty())
+							goto postpone;
+
+						if (state.encrypted_shares.find(public_key) == state.encrypted_shares.end())
+							state.encrypted_shares[public_key] = btree_map<algorithm::pubkeyhash_t, string>();
+					}
+				}
+
+				bool reset = false;
+				auto chosen = group.begin();
+				auto unavailable = btree_set<algorithm::pubkeyhash_t>();
+				std::advance(chosen, (size_t)(algorithm::hashing::hash256i(message_hash, sizeof(message_hash)) % uint256_t(group.size())));
+				while (!state.distribution)
+				{
+					auto phase = state.compositor->next_phase();
+					if (!reset && (phase == algorithm::composition::phase::any_input_after_reset || phase == algorithm::composition::phase::chosen_input_after_reset))
+					{
+						state.participants = group;
+						reset = true;
+					}
+
+					bool uniform_input = phase == algorithm::composition::phase::any_input_after_reset || phase == algorithm::composition::phase::any_input;
+					bool chosen_input = phase == algorithm::composition::phase::chosen_input_after_reset || phase == algorithm::composition::phase::chosen_input;
+					auto it = (uniform_input ? state.participants.begin() : (chosen_input ? state.participants.find(*chosen) : state.participants.end()));
+					it = (!chosen_input && state.participants.size() > 1 && it != state.participants.end() && it->equals(*chosen) ? ++it : it);
+					if (it == state.participants.end())
+						break;
+
+					auto result = coawait(dispatcher->aggregate_public_key(executor, state, *it));
+					if (!result && (result.error().is_retry() || result.error().is_shutdown()))
+					{
+						unavailable.insert(*it);
+						if (chosen_input)
+							goto postpone;
+					}
+					else if (!result)
+						coreturn result.error();
+					else
+						reset = false;
+
+					state.participants.erase(it);
+				}
+
+				state.distribution = unavailable.empty();
+				state.participants = std::move(group);
+				if (!unavailable.empty())
+				{
+					state.participants = std::move(unavailable);
+					goto postpone;
+				}
+
+				algorithm::composition::cpubkey_t aggregated_public_key;
+				auto status = state.compositor->to_public_key(&aggregated_public_key);
+				if (!status)
+					coreturn remote_exception(std::move(status.error().message()));
+
+				algorithm::composition::chashsig_t aggregated_signature;
+				status = state.compositor->to_signature(&aggregated_signature);
+				if (!status)
+					coreturn remote_exception(std::move(status.error().message()));
+
+				auto distribution_state = ledger::dispatcher_context::entropy_distribution_state();
+				while (!state.participants.empty())
+				{
+					auto target = state.encrypted_shares.end();
+					distribution_state.encrypted_shares.clear();
+					for (auto it = state.encrypted_shares.begin(); it != state.encrypted_shares.end(); it++)
+					{
+						algorithm::pubkeyhash_t participant;
+						algorithm::signing::derive_public_key_hash(it->first, participant);
+						if (participant == *state.participants.begin())
+						{
+							distribution_state.encrypted_shares = it->second;
+							target = it;
+							break;
+						}
+					}
+					if (target == state.encrypted_shares.end())
+						coreturn remote_exception("participant requires group shares but none were shared");
+					else if (distribution_state.encrypted_shares.empty())
+						coreturn remote_exception("participant requires group shares but none were found");
+
+					auto result = coawait(dispatcher->distribute_entropy_shares(executor, distribution_state, *state.participants.begin()));
+					if (!result && (result.error().is_retry() || result.error().is_shutdown()))
+						unavailable.insert(*state.participants.begin());
+					else if (!result)
+						coreturn result.error();
+
+					state.participants.erase(state.participants.begin());
+				}
+
+				if (!unavailable.empty())
+				{
+					state.participants = std::move(unavailable);
+					goto postpone;
+				}
+
+				auto* transaction = memory::init<bind>();
+				transaction->asset = asset;
+				transaction->set_witness(executor->receipt.transaction_hash, std::move(aggregated_public_key), std::move(aggregated_signature));
+				dispatcher->emit_transaction(runner_wallet, transaction);
+				coreturn expectation::met;
+			});
+		}
+		bool route::store_body(format::wo_stream* stream) const
+		{
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			stream->write_integer(bridge_hash);
+			stream->write_string(routing_address);
+			return true;
+		}
+		bool route::load_body(format::ro_stream& stream)
+		{
+			if (!stream.read_integer(stream.read_type(), &bridge_hash))
+				return false;
+
+			if (!stream.read_string(stream.read_type(), &routing_address))
+				return false;
+
+			return true;
+		}
+		bool route::recover_many(const ledger::executor_context*, const ledger::transaction_receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const
+		{
+			auto attester = get_attester(receipt);
+			if (!attester.empty())
+				parties.insert(attester);
+
+			auto participants = get_participants(receipt);
+			parties.insert(participants.begin(), participants.end());
+			return true;
+		}
+		bool route::is_dispatchable() const
+		{
+			return true;
+		}
+		void route::set_routing_address(const std::string_view& new_address)
+		{
+			routing_address = new_address;
+		}
+		void route::set_bridge_hash(const uint256_t& new_bridge_hash)
+		{
+			bridge_hash = new_bridge_hash;
+		}
+		algorithm::pubkeyhash_t route::get_attester(const ledger::transaction_receipt& receipt) const
+		{
+			auto* event = receipt.find_event<route>();
+			if (event != nullptr && !event->empty() && event->front().as_string().size() == sizeof(algorithm::pubkeyhash_t))
+				return algorithm::pubkeyhash_t(event->front().as_blob());
+
+			return algorithm::pubkeyhash_t();
+		}
+		btree_set<algorithm::pubkeyhash_t> route::get_participants(const ledger::transaction_receipt& receipt) const
+		{
+			btree_set<algorithm::pubkeyhash_t> result;
+			auto events = receipt.find_events<route>();
+			for (size_t i = 1; i < events.size(); i++)
+			{
+				auto& event = events[i];
+				if (!event->empty() && event->front().as_string().size() == sizeof(algorithm::pubkeyhash_t))
+					result.insert(algorithm::pubkeyhash_t(event->front().as_blob()));
+			}
+			return result;
+		}
+		format::tree route::as_tree() const
+		{
+			format::tree data = ledger::commitment_message::as_tree();
+			data.set("bridge_hash", algorithm::encoding::serialize_uint256(bridge_hash));
+			data.set("routing_address", format::variable(routing_address));
+			return data;
+		}
+		uint32_t route::as_type() const
+		{
+			return as_instance_type();
+		}
+		std::string_view route::as_typename() const
+		{
+			return as_instance_typename();
+		}
+		uint32_t route::as_instance_type()
+		{
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
+		}
+		std::string_view route::as_instance_typename()
+		{
+			return "route";
+		}
+		void route::challenge(const uint256_t& route_hash, uint8_t message_hash[32])
+		{
+			VI_ASSERT(message_hash != nullptr, "message hash should be set");
+			uint8_t transaction_hash[32];
+			route_hash.encode(transaction_hash);
+			algorithm::hashing::hash256(transaction_hash, sizeof(transaction_hash), message_hash);
+		}
+
+		expects_lr<void> bind::validate(uint64_t block_number) const
+		{
+			if (!algorithm::asset::token_of(asset).empty())
+				return layer_exception("invalid asset");
+
+			if (!route_hash)
+				return layer_exception("invalid route hash");
+
+			if (group_public_key.empty())
+				return layer_exception("invalid group public key");
+
+			if (group_signature.empty())
+				return layer_exception("invalid group signature");
+
+			auto* chain = superchain::bridge::get()->get_network_params(asset);
+			if (!chain)
+				return layer_exception("invalid operation");
+
+			auto compositor = algorithm::composition::make_compositor(chain->composition);
+			if (!compositor)
+				return compositor.error();
+
+			uint8_t message_hash[32];
+			route::challenge(route_hash, message_hash);
+
+			auto& compositor_ptr = *compositor;
+			auto status = compositor_ptr->verify_signature(message_hash, sizeof(message_hash), group_signature, group_public_key);
+			if (!status)
+				return status;
+
+			return ledger::commitment_message::validate(block_number);
+		}
+		expects_lr<void> bind::execute(ledger::executor_context* executor) const
+		{
+			auto validation = ledger::commitment_message::execute(executor);
+			if (!validation)
+				return validation.error();
+
+			auto event = executor->apply_witness_event(route_hash, executor->receipt.transaction_hash);
+			if (!event)
+				return event.error();
+
+			auto parent = executor->get_block_transaction<route>(route_hash);
+			if (!parent)
+				return parent.error();
+
+			auto* parent_transaction = (route*)*parent->transaction;
+			auto* server = superchain::bridge::get();
+			auto* chain = server->get_network(asset);
+			auto* params = server->get_network_params(asset);
+			if (!chain || !params)
+				return layer_exception("invalid operation");
+
+			auto duplicate = executor->get_bridge_account(parent->receipt.from, asset, parent_transaction->bridge_hash);
+			if (duplicate)
+				return layer_exception("bridge account already exists");
+
+			auto encoded_public_key = chain->encode_public_key(std::string_view((char*)group_public_key.data(), group_public_key.size()));
+			if (!encoded_public_key)
+				return encoded_public_key.error();
+
+			auto addresses = chain->to_addresses(*encoded_public_key);
+			if (!addresses)
+				return addresses.error();
+
+			auto bridge = executor->get_bridge_instance(asset, parent_transaction->bridge_hash);
+			if (!bridge)
+				return bridge.error();
+
+			switch (params->routing)
+			{
+				case superchain::routing_policy::account:
+				case superchain::routing_policy::memo:
+				{
+					if (bridge->account_nonce > 0)
+						return layer_exception("too many accounts for a bridge");
+
+					if (params->routing == superchain::routing_policy::account)
+						break;
+
+					for (auto& address : *addresses)
+						address.second = superchain::address_util::encode_tag_address(address.second, to_string(bridge->account_nonce));
+					break;
+				}
+				default:
+					break;
+			}
+
+			auto ref = states::bridge_ref();
+			ref.owner = parent->receipt.from;
+			ref.asset = asset;
+			ref.hash = parent_transaction->bridge_hash;
+
+			auto policy_status = executor->apply_bridge_instance_account(ref.asset, ref.hash, ref.owner);
+			if (!policy_status)
+				return policy_status.error();
+
+			auto participants = parent_transaction->get_participants(parent->receipt);
+			for (auto& participant : participants)
+			{
+				auto status = executor->apply_validator_participation_ref(participant, ref, true);
+				if (!status)
+					return status.error();
+			}
+
+			auto bridge_account_status = executor->apply_bridge_account(ref.owner, ref.asset, ref.hash, group_public_key, std::move(participants));
+			if (!bridge_account_status)
+				return bridge_account_status.error();
+
+			auto witness_account_status = executor->apply_witness_bridge_account(ref.owner, ref.asset, ref.hash, *addresses);
+			if (!witness_account_status)
+				return witness_account_status.error();
+
+			return expectation::met;
+		}
+		expects_promise_rt<void> bind::dispatch(const ledger::executor_context* executor, ledger::dispatcher_context* dispatcher) const
+		{
+			auto parent = executor->get_block_transaction<route>(route_hash);
+			if (!parent)
+				return expects_promise_rt<void>(expectation::met);
+
+			auto* server = superchain::bridge::get();
+			auto* chain = server->get_network(asset);
+			auto encoded_public_key = chain->encode_public_key(std::string_view((char*)group_public_key.data(), group_public_key.size()));
+			if (!encoded_public_key)
+				return expects_promise_rt<void>(expectation::met);
+
+			auto addresses = chain->to_addresses(*encoded_public_key);
+			if (!addresses)
+				return expects_promise_rt<void>(expectation::met);
+
+			auto* parent_transaction = (route*)*parent->transaction;
+			for (auto& [type, address] : *addresses)
+			{
+				auto [base_address, tag] = superchain::address_util::decode_tag_address(address);
+				if (base_address != address)
+					server->enable_link(asset, superchain::wallet_link(parent_transaction->bridge_hash, *encoded_public_key, base_address));
+
+				server->enable_link(asset, superchain::wallet_link(parent_transaction->bridge_hash, *encoded_public_key, address));
+			}
+
+			return expects_promise_rt<void>(expectation::met);
+		}
+		void bind::set_witness(const uint256_t& new_route_hash, algorithm::composition::cpubkey_t&& new_group_public_key, algorithm::composition::chashsig_t&& new_group_signature)
+		{
+			route_hash = new_route_hash;
+			group_public_key = std::move(new_group_public_key);
+			group_signature = std::move(new_group_signature);
+		}
+		bool bind::store_body(format::wo_stream* stream) const
+		{
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			stream->write_string(std::string_view((char*)group_public_key.data(), group_public_key.size()));
+			stream->write_string(std::string_view((char*)group_signature.data(), group_signature.size()));
+			stream->write_integer(route_hash);
+			return true;
+		}
+		bool bind::load_body(format::ro_stream& stream)
+		{
+			string group_public_key_assembly;
+			if (!stream.read_string(stream.read_type(), &group_public_key_assembly))
+				return false;
+
+			string group_signature_assembly;
+			if (!stream.read_string(stream.read_type(), &group_signature_assembly))
+				return false;
+
+			if (!stream.read_integer(stream.read_type(), &route_hash))
+				return false;
+
+			group_public_key.resize(group_public_key_assembly.size());
+			group_signature.resize(group_signature_assembly.size());
+			memcpy(group_public_key.data(), group_public_key_assembly.data(), group_public_key_assembly.size());
+			memcpy(group_signature.data(), group_signature_assembly.data(), group_signature_assembly.size());
+			return true;
+		}
+		bool bind::recover_many(const ledger::executor_context* executor, const ledger::transaction_receipt&, btree_set<algorithm::pubkeyhash_t>& parties) const
+		{
+			auto parent = executor->get_block_transaction<route>(route_hash);
+			if (parent)
+				parties.insert(algorithm::pubkeyhash_t(parent->receipt.from));
+
+			return true;
+		}
+		bool bind::is_dispatchable() const
+		{
+			return true;
+		}
+		format::tree bind::as_tree() const
+		{
+			format::tree data = ledger::commitment_message::as_tree();
+			data.set("route_hash", route_hash > 0 ? format::variable(algorithm::encoding::encode_0xhex256(route_hash)) : format::variable());
+			data.set("group_public_key", format::variable(format::util::encode_0xhex(std::string_view((char*)group_public_key.data(), group_public_key.size()))));
+			data.set("group_signature", format::variable(format::util::encode_0xhex(std::string_view((char*)group_signature.data(), group_signature.size()))));
+			return data;
+		}
+		uint32_t bind::as_type() const
+		{
+			return as_instance_type();
+		}
+		std::string_view bind::as_typename() const
+		{
+			return as_instance_typename();
+		}
+		uint32_t bind::as_instance_type()
+		{
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
+		}
+		std::string_view bind::as_instance_typename()
+		{
+			return "bind";
+		}
+
+		expects_lr<void> withdraw::validate(uint64_t block_number) const
+		{
+			if (!bridge_hash)
+				return layer_exception("invalid bridge hash");
+
+			auto* chain = superchain::bridge::get()->get_network_params(asset);
+			if (!chain)
+				return layer_exception("invalid operation");
+
+			if (!algorithm::asset::is_aux(asset))
+				return layer_exception("not a valid withdrawal asset");
+
+			if (address.empty())
+				return layer_exception("invalid routing address");
+
+			if (!value.is_positive())
+				return layer_exception("invalid value");
+
+			return ledger::transaction_message::validate(block_number);
+		}
+		expects_lr<void> withdraw::execute(ledger::executor_context* executor) const
+		{
+			auto validation = transaction_message::execute(executor);
+			if (!validation)
+				return validation.error();
+
+			auto bridge = executor->get_bridge_instance(asset, bridge_hash);
+			if (!bridge)
+				return bridge.error();
+
+			btree_set<algorithm::pubkeyhash_t> exclusion;
+			auto fee_asset = algorithm::asset::base_id_of(asset);
+			auto attesters = executor->calculate_attesters(fee_asset, 1, bridge->fee_rate, exclusion);
+			if (!attesters)
+				return attesters.error();
+
+			auto event = executor->emit_event<withdraw>({ format::variable(attesters->front().owner.view()) });
+			if (!event)
+				return event;
+
+			auto token_value = value;
+			if (fee_asset != asset)
+			{
+				auto balance_requirement = executor->verify_transfer_balance(fee_asset, bridge->fee_rate);
+				if (!balance_requirement)
+					return balance_requirement.error();
+
+				auto fee_balance = executor->get_bridge_balance(fee_asset, bridge_hash);
+				if (!fee_balance || fee_balance->supply < bridge->fee_rate)
+					return layer_exception(algorithm::asset::handle_of(fee_asset) + " balance is insufficient to cover base withdrawal value (value: " + bridge->fee_rate.to_string() + ")");
+			}
+			else
+				token_value += bridge->fee_rate;
+
+			auto balance_requirement = executor->verify_transfer_balance(asset, token_value);
+			if (!balance_requirement)
+				return balance_requirement;
+
+			auto token_balance = executor->get_bridge_balance(asset, bridge_hash);
+			if (!token_balance || token_balance->supply < token_value)
+				return layer_exception(algorithm::asset::handle_of(asset) + " balance is insufficient to cover token withdrawal value (value: " + token_value.to_string() + ")");
+
+			auto collision = executor->get_witness_account_tagged(fee_asset, address, 0);
+			if (!collision)
+				collision = executor->apply_witness_routing_account(executor->receipt.from, asset, { { (uint8_t)1, string(address) } });
+			if (!collision)
+				return collision.error();
+			else if (!collision->is_routing_account() || collision->ref.owner != executor->receipt.from)
+				return layer_exception("invalid routing address");
+
+			if (fee_asset != asset)
+			{
+				auto fee_transfer = executor->apply_transfer(fee_asset, executor->receipt.from, decimal::zero(), bridge->fee_rate);
+				if (!fee_transfer)
+					return fee_transfer.error();
+			}
+
+			auto token_transfer = executor->apply_transfer(asset, executor->receipt.from, decimal::zero(), token_value);
+			if (!token_transfer)
+				return token_transfer.error();
+
+			return expectation::met;
+		}
+		expects_promise_rt<void> withdraw::dispatch(const ledger::executor_context* executor, ledger::dispatcher_context* dispatcher) const
+		{
+			auto attester = get_attester(executor->receipt);
+			auto* runner_wallet = attester.empty() ? nullptr : dispatcher->get_runner_wallet(attester);
+			if (!runner_wallet)
+				return expects_promise_rt<void>(expectation::met);
+
+			if (executor->get_witness_event(executor->receipt.transaction_hash))
+				return expects_promise_rt<void>(expectation::met);
+
+			return coasync<expects_rt<void>>([this, executor, dispatcher, runner_wallet]() mutable -> expects_promise_rt<void>
+			{
+				auto* server = superchain::bridge::get();
+				auto* chain = server->get_network_params(asset);
+				auto cancel = [this, executor, dispatcher, runner_wallet](remote_exception&& error) -> expects_rt<void>
+				{
+					auto* transaction = memory::init<broadcast>();
+					transaction->asset = asset;
+					transaction->set_proof(executor->receipt.transaction_hash, layer_exception(std::move(remote_exception(error).message())));
+					dispatcher->emit_transaction(runner_wallet, transaction);
+					return expects_rt<void>(std::move(error));
+				};
+
+				auto bridge = executor->get_bridge_instance(asset, bridge_hash);
+				if (!bridge)
+					coreturn cancel(remote_exception(std::move(bridge.error().message())));
+
+				auto cache = dispatcher->pull_cache(executor);
+				auto state = ledger::dispatcher_context::signature_state();
+				if (chain->transaction_expires || !state.load(cache))
+				{
+					auto message = coawait(resolver::prepare_transaction(algorithm::asset::base_id_of(asset), superchain::wallet_link::from_hash(bridge_hash), superchain::value_transfer(asset, address, decimal(value)), bridge->fee_rate));
+					if (!message)
+						coreturn message.error().is_retry() || message.error().is_shutdown() ? expects_rt<void>(std::move(message.error())) : cancel(std::move(message.error()));
+					else if (message->inputs.size() > std::numeric_limits<uint8_t>::max())
+						coreturn cancel(remote_exception("too many prepared inputs"));
+
+					state.message = memory::init<superchain::prepared_transaction>(std::move(*message));
+				}
+
+				auto finalization = expects_lr<superchain::finalized_transaction>(layer_exception());
+				auto result = expects_rt<void>(remote_exception::shutdown());
+				auto* input = state.message->next_input_for_aggregation();
+				while (input != nullptr)
+				{
+					auto witness = executor->get_witness_account_tagged(asset, input->utxo.link.address, 0);
+					if (!witness)
+						coreturn cancel(remote_exception(std::move(witness.error().message())));
+
+					auto account = executor->get_bridge_account(witness->ref.owner, witness->ref.asset, witness->ref.hash);
+					if (!account)
+						coreturn cancel(remote_exception(std::move(account.error().message())));
+
+					auto session = coawait(dispatcher->aggregate_validators(account->group));
+					if (!session)
+						coreturn session.error().is_retry() || session.error().is_shutdown() ? expects_rt<void>(std::move(session.error())) : cancel(std::move(session.error()));
+
+					auto chosen = account->group.begin();
+					auto unavailable = btree_set<algorithm::pubkeyhash_t>();
+					std::advance(chosen, (size_t)(algorithm::hashing::hash256i(input->message.data(), input->message.size()) % uint256_t(account->group.size())));
+					if (!state.compositor)
+					{
+						auto compositor = algorithm::composition::make_signature_compositor(input->alg, input->public_key, input->message.data(), input->message.size(), (uint16_t)account->group.size());
+						if (!compositor)
+							coreturn cancel(remote_exception(std::move(compositor.error().message())));
+
+						state.compositor = std::move(*compositor);
+						state.alg = input->alg;
+					}
+
+					bool reset = false;
+					while (true)
+					{
+						auto phase = state.compositor->next_phase();
+						if (!reset && (phase == algorithm::composition::phase::any_input_after_reset || phase == algorithm::composition::phase::chosen_input_after_reset))
+						{
+							state.participants = account->group;
+							reset = true;
+						}
+
+						bool uniform_input = phase == algorithm::composition::phase::any_input_after_reset || phase == algorithm::composition::phase::any_input;
+						bool chosen_input = phase == algorithm::composition::phase::chosen_input_after_reset || phase == algorithm::composition::phase::chosen_input;
+						auto it = (uniform_input ? state.participants.begin() : (chosen_input ? state.participants.find(*chosen) : state.participants.end()));
+						it = (!chosen_input && state.participants.size() > 1 && it != state.participants.end() && it->equals(*chosen) ? ++it : it);
+						if (it == state.participants.end())
+							break;
+
+						auto subresult = coawait(dispatcher->aggregate_signature(executor, state, *it));
+						if (!subresult && (subresult.error().is_retry() || subresult.error().is_shutdown()))
+						{
+							unavailable.insert(*it);
+							if (chosen_input)
+								goto postpone;
+						}
+						else if (!subresult)
+							coreturn cancel(std::move(subresult.error()));
+						else
+							reset = false;
+
+						state.participants.erase(it);
+					}
+
+					if (!unavailable.empty())
+					{
+						state.participants = std::move(unavailable);
+						goto postpone;
+					}
+
+					auto subfinalization = state.compositor->to_signature(&input->signature);
+					if (!subfinalization)
+						coreturn cancel(remote_exception(std::move(subfinalization.error().message())));
+
+					input = state.message->next_input_for_aggregation();
+					state.compositor.destroy();
+				}
+
+				finalization = resolver::finalize_transaction(algorithm::asset::base_id_of(asset), std::move(**state.message));
+				if (!finalization)
+					coreturn cancel(remote_exception(std::move(finalization.error().message())));
+
+				result = coawait(resolver::broadcast_transaction(algorithm::asset::base_id_of(asset), executor->receipt.transaction_hash, superchain::finalized_transaction(*finalization), dispatcher, runner_wallet));
+				if (!result && (result.error().is_retry() || result.error().is_shutdown()))
+				{
+				postpone:
+					if (++state.attempt >= protocol::now().user.consensus.coordination_attempts)
+						coreturn remote_exception("failed to coordinate participants after several retries");
+
+					dispatcher->push_cache(executor, state.as_message());
+					coreturn remote_exception::retry_later();
+				}
+				else if (!result)
+					coreturn cancel(std::move(result.error()));
+
+				auto* transaction = memory::init<broadcast>();
+				transaction->asset = asset;
+				transaction->set_proof(executor->receipt.transaction_hash, std::move(*finalization));
+				dispatcher->emit_transaction(runner_wallet, transaction);
+				coreturn expectation::met;
+			});
+		}
+		bool withdraw::store_body(format::wo_stream* stream) const
+		{
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			stream->write_integer(bridge_hash);
+			stream->write_string(address);
+			stream->write_decimal(value);
+			return true;
+		}
+		bool withdraw::load_body(format::ro_stream& stream)
+		{
+			if (!stream.read_integer(stream.read_type(), &bridge_hash))
+				return false;
+
+			if (!stream.read_string(stream.read_type(), &address))
+				return false;
+
+			if (!stream.read_decimal(stream.read_type(), &value))
+				return false;
+
+			return true;
+		}
+		bool withdraw::recover_many(const ledger::executor_context*, const ledger::transaction_receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const
+		{
+			auto attester = get_attester(receipt);
+			if (!attester.empty())
+				parties.insert(algorithm::pubkeyhash_t(attester));
+			return true;
+		}
+		void withdraw::set_routing_target(const std::string_view& new_address, const decimal& new_value)
+		{
+			address = new_address;
+			value = new_value;
+		}
+		void withdraw::set_bridge_hash(const uint256_t& new_bridge_hash)
+		{
+			bridge_hash = new_bridge_hash;
+		}
+		bool withdraw::is_dispatchable() const
+		{
+			return true;
+		}
+		algorithm::pubkeyhash_t withdraw::get_attester(const ledger::transaction_receipt& receipt) const
+		{
+			auto* event = receipt.find_event<withdraw>();
+			if (event != nullptr && !event->empty() && event->front().as_string().size() == sizeof(algorithm::pubkeyhash_t))
+				return algorithm::pubkeyhash_t(event->front().as_blob());
+
+			return algorithm::pubkeyhash_t();
+		}
+		format::tree withdraw::as_tree() const
+		{
+			format::tree data = ledger::transaction_message::as_tree();
+			data.set("bridge_hash", algorithm::encoding::serialize_uint256(bridge_hash));
+			data.set("address", format::variable(address));
+			data.set("value", format::variable(value));
+			return data;
+		}
+		uint32_t withdraw::as_type() const
+		{
+			return as_instance_type();
+		}
+		std::string_view withdraw::as_typename() const
+		{
+			return as_instance_typename();
+		}
+		uint32_t withdraw::as_instance_type()
+		{
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
+		}
+		std::string_view withdraw::as_instance_typename()
+		{
+			return "withdraw";
+		}
+
+		expects_lr<void> broadcast::validate(uint64_t block_number) const
+		{
+			if (!withdraw_hash)
+				return layer_exception("withdraw hash not valid");
+
+			return ledger::commitment_message::validate(block_number);
+		}
+		expects_lr<void> broadcast::execute(ledger::executor_context* executor) const
+		{
+			auto validation = ledger::commitment_message::execute(executor);
+			if (!validation)
+				return validation.error();
+
+			auto parent = executor->get_block_transaction<withdraw>(withdraw_hash);
+			if (!parent)
+				return layer_exception("parent transaction not found");
+
+			auto* parent_transaction = (withdraw*)*parent->transaction;
+			auto event = executor->apply_witness_event(withdraw_hash, executor->receipt.transaction_hash);
+			if (!event)
+				return event.error();
+
+			auto confirmation = proof ? validate_finalized_proof(executor, parent_transaction, parent->receipt, *proof) : expects_lr<void>(expectation::met);
+			if (!confirmation)
+				return confirmation.error();
+
+			auto fee_asset = algorithm::asset::base_id_of(parent_transaction->asset);
+			auto bridge = executor->get_bridge_instance(fee_asset, parent_transaction->bridge_hash);
+			if (!bridge)
+				return bridge.error();
+
+			if (!proof)
+			{
+				if (fee_asset != parent_transaction->asset)
+				{
+					auto fee_transfer = executor->apply_transfer(fee_asset, parent->receipt.from, decimal::zero(), -bridge->fee_rate);
+					if (!fee_transfer)
+						return fee_transfer.error();
+				}
+
+				auto token_value = parent_transaction->value + (fee_asset == parent_transaction->asset ? bridge->fee_rate : decimal::zero());
+				auto token_transfer = executor->apply_transfer(parent_transaction->asset, parent->receipt.from, decimal::zero(), -token_value);
+				if (!token_transfer)
+					return token_transfer.error();
+			}
+			else
+			{
+				auto fee_transfer = executor->apply_transfer(fee_asset, parent->receipt.from, -bridge->fee_rate, -bridge->fee_rate);
+				if (!fee_transfer)
+					return fee_transfer.error();
+
+				auto attester = parent_transaction->get_attester(parent->receipt);
+				auto attestation = executor->apply_validator_attestation_reward(fee_asset, attester, bridge->fee_rate * protocol::now().policy.attestation.fee_rate);
+				if (!attestation)
+					return attestation.error();
+			}
+
+			auto log = executor->apply_bridge_instance_log(fee_asset, parent_transaction->bridge_hash, executor->receipt.transaction_hash);
+			if (!log)
+				return log.error();
+
+			return expectation::met;
+		}
+		expects_promise_rt<void> broadcast::dispatch(const ledger::executor_context* executor, ledger::dispatcher_context*) const
+		{
+			auto parent = proof ? executor->get_block_transaction<withdraw>(withdraw_hash) : expects_lr<ledger::block_transaction>(layer_exception("not applicable"));
+			if (!parent)
+				return expects_promise_rt<void>(expectation::met);
+
+			auto* parent_transaction = (withdraw*)*parent->transaction;
+			auto status = superchain::bridge::get()->update_utxo_tree(algorithm::asset::base_id_of(parent_transaction->asset), proof->as_computed());
+			return status ? expects_promise_rt<void>(expectation::met) : expects_promise_rt<void>(remote_exception(std::move(status.error().message())));
+		}
+		bool broadcast::store_body(format::wo_stream* stream) const
+		{
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			stream->write_integer(withdraw_hash);
+			stream->write_boolean(!!proof);
+			if (proof)
+				proof->store_payload(stream);
+			else
+				stream->write_string(proof.what());
+			return true;
+		}
+		bool broadcast::load_body(format::ro_stream& stream)
+		{
+			if (!stream.read_integer(stream.read_type(), &withdraw_hash))
+				return false;
+
+			bool has_proof;
+			if (!stream.read_boolean(stream.read_type(), &has_proof))
+				return false;
+
+			if (has_proof)
+			{
+				proof = expects_lr<superchain::finalized_transaction>(superchain::finalized_transaction());
+				if (!proof->load_payload(stream))
+					return false;
+			}
+			else
+			{
+				string error_message;
+				if (!stream.read_string(stream.read_type(), &error_message))
+					return false;
+
+				proof = layer_exception(std::move(error_message));
+			}
+
+			return true;
+		}
+		bool broadcast::is_dispatchable() const
+		{
+			return true;
+		}
+		bool broadcast::recover_many(const ledger::executor_context* executor, const ledger::transaction_receipt&, btree_set<algorithm::pubkeyhash_t>& parties) const
+		{
+			auto parent = executor->get_block_transaction_instance(withdraw_hash);
+			if (!parent)
+				return false;
+
+			parties.insert(algorithm::pubkeyhash_t(parent->receipt.from));
+			return true;
+		}
+		void broadcast::set_proof(const uint256_t& new_withdraw_hash, expects_lr<superchain::finalized_transaction>&& new_proof)
+		{
+			withdraw_hash = new_withdraw_hash;
+			proof = std::move(new_proof);
+		}
+		format::tree broadcast::as_tree() const
+		{
+			format::tree data = ledger::commitment_message::as_tree();
+			data.set("withdraw_hash", format::variable(algorithm::encoding::encode_0xhex256(withdraw_hash)));
+			if (proof)
+			{
+				data.set("prepared", proof->prepared.as_tree());
+				data.set("calldata", format::variable(proof->calldata));
+				data.set("hashdata", format::variable(proof->hashdata));
+				data.set("locktime", algorithm::encoding::serialize_uint256(proof->locktime));
+			}
+			else
+				data.set("error", format::variable(proof.what()));
+			return data;
+		}
+		uint32_t broadcast::as_type() const
+		{
+			return as_instance_type();
+		}
+		std::string_view broadcast::as_typename() const
+		{
+			return as_instance_typename();
+		}
+		uint32_t broadcast::as_instance_type()
+		{
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
+		}
+		std::string_view broadcast::as_instance_typename()
+		{
+			return "broadcast";
+		}
+		expects_lr<void> broadcast::validate_possible_proof(const ledger::executor_context* executor, const withdraw* transaction, const ledger::transaction_receipt& receipt, const superchain::prepared_transaction& prepared)
+		{
+			if (prepared.as_status() == superchain::prepared_transaction::status::invalid)
+				return layer_exception("invalid prepared transaction");
+
+			auto server = superchain::bridge::get();
+			auto base_asset = algorithm::asset::base_id_of(transaction->asset);
+			auto required_output_witness = btree_map<string, states::witness_account>();
+			auto required_output_value = btree_map<algorithm::asset_id, decimal>();
+			auto normalized_address = transaction->address;
+			auto status = server->normalize_address(transaction->asset, &normalized_address);
+			if (!status)
+				return status.error();
+
+			if (required_output_witness.find(normalized_address) == required_output_witness.end())
+			{
+				auto witness = executor->get_witness_account_tagged(base_asset, normalized_address, 0);
+				if (!witness)
+					return layer_exception("transaction requires paying to unknown address");
+
+				required_output_witness.insert(std::make_pair(std::move(normalized_address), std::move(*witness)));
+			}
+
+			auto inout_witness = btree_map<string, states::witness_account>();
+			auto input_value = btree_map<algorithm::asset_id, decimal>();
+			auto output_value = btree_map<algorithm::asset_id, decimal>();
+			auto change_value = btree_map<algorithm::asset_id, decimal>();
+			auto& value = required_output_value[transaction->asset];
+			value = value.is_nan() ? transaction->value : (value + transaction->value);
+			for (auto& input : prepared.inputs)
+			{
+				auto normalized_address = input.utxo.link.address;
+				auto status = server->normalize_address(base_asset, &normalized_address);
+				if (!status)
+					return status.error();
+
+				auto it = inout_witness.find(normalized_address);
+				if (it == inout_witness.end())
+				{
+					auto witness = executor->get_witness_account_tagged(base_asset, normalized_address, 0);
+					if (!witness)
+						return layer_exception("witness transaction input spends from unknown address");
+
+					auto account = executor->get_bridge_account(witness->ref.owner, witness->ref.asset, witness->ref.hash);
+					if (!account)
+						return layer_exception("witness transaction input refers to a non-bridge account");
+
+					inout_witness.insert(std::make_pair(normalized_address, std::move(*witness)));
+					it = inout_witness.find(normalized_address);
+				}
+
+				if (!it->second.is_bridge_account() || it->second.ref.hash != transaction->bridge_hash)
+					return layer_exception("witness transaction input spends from unrelated address");
+
+				auto& value = input_value[input.utxo.get_asset(base_asset)];
+				value = value.is_nan() ? input.utxo.value : (value + input.utxo.value);
+				for (auto& [token_hash, token] : input.utxo.tokens)
+				{
+					auto& token_value = input_value[token.get_asset(base_asset)];
+					token_value = token_value.is_nan() ? token.value : (token_value + token.value);
+				}
+			}
+			for (auto& output : prepared.outputs)
+			{
+				auto normalized_address = output.link.address;
+				auto status = server->normalize_address(base_asset, &normalized_address);
+				if (!status)
+					return status.error();
+
+				auto it = inout_witness.find(normalized_address);
+				if (it == inout_witness.end())
+				{
+					auto witness = executor->get_witness_account_tagged(base_asset, normalized_address, 0);
+					if (!witness)
+						return layer_exception("witness transaction output pays to unknown address");
+
+					inout_witness.insert(std::make_pair(normalized_address, std::move(*witness)));
+					it = inout_witness.find(normalized_address);
+				}
+
+				auto change_output = required_output_witness.find(normalized_address);
+				if (change_output == required_output_witness.end())
+				{
+					if (!it->second.is_bridge_account())
+						return layer_exception("witness transaction output receives change into unrelated address");
+
+					auto account = executor->get_bridge_account(it->second.ref.owner, it->second.ref.asset, it->second.ref.hash);
+					if (!account)
+						return layer_exception("witness transaction output refers to a non-bridge account as change");
+				}
+
+				auto output_asset = output.get_asset(base_asset);
+				auto& value = change_output == required_output_witness.end() ? change_value[output_asset] : output_value[output_asset];
+				value = value.is_nan() ? output.value : (value + output.value);
+				for (auto& [token_hash, token] : output.tokens)
+				{
+					auto token_asset = token.get_asset(base_asset);
+					auto& token_value = change_output == required_output_witness.end() ? change_value[token_asset] : output_value[token_asset];
+					token_value = token_value.is_nan() ? token.value : (token_value + token.value);
+				}
+			}
+
+			if (output_value.size() < required_output_value.size())
+				return layer_exception("witness transaction doesn't have required amount of outputs");
+
+			auto bridge = executor->get_bridge_instance(base_asset, transaction->bridge_hash);
+			if (!bridge)
+				return bridge.error();
+
+			for (auto& [input_token_asset, input_token_value_ref] : input_value)
+			{
+				decimal input_token_value = input_token_value_ref.is_nan() ? decimal::zero() : input_token_value_ref;
+				decimal output_token_value = decimal::zero();
+				decimal change_token_value = decimal::zero();
+				auto it = output_value.find(input_token_asset);
+				if (it != output_value.end())
+					output_token_value = it->second.is_nan() ? decimal::zero() : it->second;
+				it = change_value.find(input_token_asset);
+				if (it != change_value.end())
+					change_token_value = it->second.is_nan() ? decimal::zero() : it->second;
+
+				auto delta_token_value = input_token_value - (output_token_value + change_token_value);
+				if (delta_token_value.is_negative())
+					return layer_exception("witness transaction output pays more that possible");
+				else if (input_token_asset == base_asset && delta_token_value > bridge->fee_rate)
+					return layer_exception("witness transaction fee overflow (max: " + bridge->fee_rate.to_string() + ")");
+			}
+
+			for (auto& [output_asset, actual_output_value] : output_value)
+			{
+				auto change_ref = change_value.find(output_asset);
+				auto max_change_value = change_ref == change_value.end() || change_ref->second.is_nan() ? decimal::zero() : change_ref->second;
+				auto it = required_output_value.find(output_asset);
+				if (it != required_output_value.end())
+				{
+					if (it->second.is_nan())
+						continue;
+					else if (output_asset != base_asset && actual_output_value != it->second)
+						return layer_exception("witness transaction output pays unexpected token value");
+					else if (output_asset == base_asset && ((actual_output_value < it->second - bridge->fee_rate) || (actual_output_value > it->second + bridge->fee_rate)))
+						return layer_exception("witness transaction output pays unexpected native value");
+				}
+				else if (output_asset == base_asset && actual_output_value > std::max(max_change_value, bridge->fee_rate))
+					return layer_exception("witness transaction output pays unexpected native value");
+				else if (output_asset != base_asset && actual_output_value != max_change_value)
+					return layer_exception("witness transaction output pays unexpected token value");
+			}
+
+			return expectation::met;
+		}
+		expects_lr<void> broadcast::validate_finalized_proof(const ledger::executor_context* executor, const withdraw* transaction, const ledger::transaction_receipt& receipt, const superchain::finalized_transaction& finalized)
+		{
+			auto validation = validate_possible_proof(executor, transaction, receipt, finalized.prepared);
+			if (!validation)
+				return validation;
+
+			if (finalized.calldata.empty())
+				return layer_exception("invalid finalized calldata");
+			else if (finalized.hashdata.empty())
+				return layer_exception("invalid finalized hashdata");
+
+			auto finalization = resolver::finalize_transaction(transaction->asset, superchain::prepared_transaction(finalized.prepared));
+			if (!finalization)
+				return finalization.error();
+
+			return expectation::met;
+		}
+
+		expects_lr<void> anticast::validate(uint64_t block_number) const
+		{
+			if (!broadcast_hash)
+				return layer_exception("broadcast hash not valid");
+
+			return ledger::transaction_message::validate(block_number);
+		}
+		expects_lr<void> anticast::execute(ledger::executor_context* executor) const
+		{
+			auto validation = transaction_message::execute(executor);
+			if (!validation)
+				return validation.error();
+
+			auto parent = executor->get_block_transaction<broadcast>(broadcast_hash, true);
+			if (!parent)
+				return layer_exception("parent transaction not found");
+
+			auto* parent_transaction = (broadcast*)*parent->transaction;
+			if (!parent_transaction->proof)
+				return layer_exception("parent transaction not valid");
+
+			auto origin = executor->get_block_transaction<withdraw>(parent_transaction->withdraw_hash, true);
+			if (!origin)
+				return layer_exception("origin transaction not found");
+
+			if (executor->receipt.from != origin->receipt.from)
+				return layer_exception("origin transaction not valid");
+
+			auto* origin_transaction = (withdraw*)*origin->transaction;
+			auto witness = executor->get_witness_transaction(origin_transaction->asset, parent_transaction->proof->hashdata);
+			if (witness)
+				return layer_exception("broadcast is considered final either by attestation or older protest");
+
+			auto time_lock = protocol::now().policy.attestation.withdrawal_time / protocol::now().policy.pow.time;
+			auto time_delta = parent->receipt.block_number < executor->receipt.block_number ? executor->receipt.block_number - parent->receipt.block_number : 0;
+			if (time_delta <= time_lock)
+				return layer_exception("broadcast time lock active - retry after block number " + to_string(parent->receipt.block_number + time_lock));
+
+			auto base_asset = algorithm::asset::base_id_of(origin_transaction->asset);
+			auto finalization = executor->apply_witness_transaction(base_asset, parent_transaction->proof->hashdata);
+			if (!finalization)
+				return finalization.error();
+
+			auto token_transfer = executor->apply_transfer(origin_transaction->asset, origin->receipt.from, decimal::zero(), -origin_transaction->value);
+			if (!token_transfer)
+				return token_transfer.error();
+
+			auto attester = origin_transaction->get_attester(origin->receipt);
+			auto bridge = executor->get_bridge_instance(base_asset, origin_transaction->bridge_hash);
+			if (!bridge)
+				return bridge.error();
+
+			auto prev_attestation = executor->get_validator_attestation_reward(base_asset, attester);
+			if (!prev_attestation)
+				return expectation::met;
+
+			auto next_attestation = executor->apply_validator_attestation_reward(base_asset, attester, -bridge->fee_rate);
+			if (!next_attestation)
+				return next_attestation.error();
+
+			auto compensation = std::max(decimal::zero(), prev_attestation->reward - next_attestation->reward);
+			if (!compensation.is_positive())
+				return expectation::met;
+
+			token_transfer = executor->apply_transfer(base_asset, origin->receipt.from, compensation, decimal::zero());
+			if (!token_transfer)
+				return token_transfer.error();
+
+			return expectation::met;
+		}
+		expects_promise_rt<void> anticast::dispatch(const ledger::executor_context* executor, ledger::dispatcher_context*) const
+		{
+			auto parent = executor->get_block_transaction<broadcast>(broadcast_hash, true);
+			auto origin = parent ? executor->get_block_transaction<withdraw>(((broadcast*)*parent->transaction)->withdraw_hash, true) : expects_lr<ledger::block_transaction>(layer_exception("not applicable"));
+			if (!origin)
+				return expects_promise_rt<void>(expectation::met);
+
+			auto* origin_transaction = (withdraw*)*origin->transaction;
+			auto* parent_transaction = (broadcast*)*parent->transaction;
+			auto status = superchain::bridge::get()->revive_utxo_tree(algorithm::asset::base_id_of(origin_transaction->asset), parent_transaction->proof->as_computed());
+			return status ? expects_promise_rt<void>(expectation::met) : expects_promise_rt<void>(remote_exception(std::move(status.error().message())));
+		}
+		bool anticast::store_body(format::wo_stream* stream) const
+		{
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			stream->write_integer(broadcast_hash);
+			return true;
+		}
+		bool anticast::load_body(format::ro_stream& stream)
+		{
+			if (!stream.read_integer(stream.read_type(), &broadcast_hash))
+				return false;
+
+			return true;
+		}
+		bool anticast::is_dispatchable() const
+		{
+			return true;
+		}
+		bool anticast::recover_many(const ledger::executor_context* executor, const ledger::transaction_receipt&, btree_set<algorithm::pubkeyhash_t>& parties) const
+		{
+			auto parent = executor->get_block_transaction_instance(broadcast_hash);
+			if (!parent)
+				return false;
+
+			parties.insert(algorithm::pubkeyhash_t(parent->receipt.from));
+			return true;
+		}
+		void anticast::set_protest(const uint256_t& new_broadcast_hash)
+		{
+			broadcast_hash = new_broadcast_hash;
+		}
+		format::tree anticast::as_tree() const
+		{
+			format::tree data = ledger::transaction_message::as_tree();
+			data.set("broadcast_hash", format::variable(algorithm::encoding::encode_0xhex256(broadcast_hash)));
+			return data;
+		}
+		uint32_t anticast::as_type() const
+		{
+			return as_instance_type();
+		}
+		std::string_view anticast::as_typename() const
+		{
+			return as_instance_typename();
+		}
+		uint32_t anticast::as_instance_type()
+		{
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
+		}
+		std::string_view anticast::as_instance_typename()
+		{
+			return "anticast";
 		}
 
 		expects_lr<void> attestate::validate(uint64_t block_number) const
@@ -1855,9 +3200,9 @@ namespace tangent
 			if (!chain)
 				return layer_exception("invalid chain");
 
-			auto collision = executor->get_witness_transaction(asset, proof.transaction_id);
-			if (collision)
-				return layer_exception("proof " + proof.transaction_id + " finalized");
+			auto witness = executor->get_witness_transaction(asset, proof.transaction_id);
+			if (witness)
+				return layer_exception("transaction is considered final and immutable");
 
 			uint256_t best_commitment_hash = 0;
 			btree_map<uint256_t, btree_set<algorithm::pubkeyhash_t>> attesters;
@@ -1867,51 +3212,53 @@ namespace tangent
 			else if (best_commitment_hash != proof.as_hash())
 				return layer_exception("provided proof is not the chosen one");
 
-			decimal fee = decimal::zero();
-			algorithm::pubkeyhash_t depositor, withdrawer;
+			decimal network_fee = decimal::zero();
+			uint256_t withdrawer_hash = 0;
+			algorithm::pubkeyhash_t depositor_account;
 			for (auto& [hash, input] : proof.inputs)
 			{
-				auto baseline = states::witness_account(algorithm::pubkeyhash_t(), 0, { }, nullptr);
-				auto source = depositor.empty() || withdrawer.empty() ? executor->get_witness_account_tagged(asset, input.link.address, 0).or_else(baseline) : baseline;
-				depositor = depositor.empty() && source.is_routing_account() && chain->routing == superchain::routing_policy::account ? source.owner : depositor;
-				withdrawer = withdrawer.empty() && source.is_bridge_account() ? source.manager : withdrawer;
-				fee += input.value;
+				auto baseline = states::witness_account(states::bridge_ref(), { }, nullptr);
+				auto source = depositor_account.empty() || !withdrawer_hash ? executor->get_witness_account_tagged(asset, input.link.address, 0).or_else(baseline) : baseline;
+				depositor_account = depositor_account.empty() && source.is_routing_account() && chain->routing == superchain::routing_policy::account ? source.ref.owner : depositor_account;
+				withdrawer_hash = !withdrawer_hash && source.is_bridge_account() ? source.ref.hash : withdrawer_hash;
+				network_fee += input.value;
 			}
 			for (auto& [hash, output] : proof.outputs)
-				fee -= output.value;
+				network_fee -= output.value;
 
-			btree_map<algorithm::pubkeyhash_t, bridge_transfer_batch> bridges;
-			btree_map<algorithm::pubkeyhash_t, btree_map<algorithm::asset_id, route_transfer>> routes;
+			auto& succeeding_attesters = attesters[best_commitment_hash];
+			btree_map<uint256_t, btree_map<algorithm::asset_id, decimal>> balances;
+			btree_map<algorithm::pubkeyhash_t, btree_map<algorithm::asset_id, internal_transfer>> transfers;
 			btree_map<algorithm::asset_id, decimal> penalties;
-			if (!withdrawer.empty())
+			btree_set<algorithm::pubkeyhash_t> participants;
+			if (withdrawer_hash > 0)
 			{
-				decimal rebate = fee;
 				for (auto& [hash, input] : proof.inputs)
 				{
 					auto source = executor->get_witness_account_tagged(asset, input.link.address, 0);
 					if (source && source->is_bridge_account())
 					{
-						auto& bridge = bridges[source->manager];
-						auto bridge_account = executor->get_bridge_account(asset, source->manager, source->owner);
-						if (!bridge_account)
-							bridge_account = executor->get_bridge_account(asset, source->manager, source->manager);
+						auto& supplies = balances[source->ref.hash];
+						auto bridge_account = executor->get_bridge_account(source->ref.owner, source->ref.asset, source->ref.hash);
 						if (bridge_account)
-							bridge.participants.insert(bridge_account->group.begin(), bridge_account->group.end());
+							participants.insert(bridge_account->group.begin(), bridge_account->group.end());
 
 						if (input.value.is_positive())
 						{
 							auto token_asset = input.get_asset(asset);
+							auto& supply = supplies[token_asset];
 							auto& penalty = penalties[token_asset];
+							supply = supply.is_nan() ? -input.value : (supply - input.value);
 							penalty = penalty.is_nan() ? input.value : (penalty + input.value);
-							bridge.transfers[token_asset].output_supply += input.value;
 						}
 
 						for (auto& [token_hash, token] : input.tokens)
 						{
 							auto token_asset = token.get_asset(asset);
+							auto& supply = supplies[token_asset];
 							auto& penalty = penalties[token_asset];
+							supply = supply.is_nan() ? -token.value : (supply - token.value);
 							penalty = penalty.is_nan() ? token.value : (penalty + token.value);
-							bridge.transfers[token_asset].output_supply += token.value;
 						}
 					}
 					else
@@ -1927,7 +3274,7 @@ namespace tangent
 							if (token.value.is_positive())
 							{
 								auto& penalty = penalties[token.get_asset(asset)];
-								penalty = penalty.is_nan() ? token.value : (penalty - token.value);
+								penalty = penalty.is_nan() ? token.value : (penalty + token.value);
 							}
 						}
 					}
@@ -1938,19 +3285,18 @@ namespace tangent
 					auto source = executor->get_witness_account_tagged(asset, output.link.address, 0);
 					if (source && source->is_bridge_account())
 					{
-						auto& bridge = bridges[source->manager];
-						auto bridge_account = executor->get_bridge_account(asset, source->manager, source->owner);
-						if (!bridge_account)
-							bridge_account = executor->get_bridge_account(asset, source->manager, source->manager);
+						auto& supplies = balances[source->ref.hash];
+						auto bridge_account = executor->get_bridge_account(source->ref.owner, source->ref.asset, source->ref.hash);
 						if (bridge_account)
-							bridge.participants.insert(bridge_account->group.begin(), bridge_account->group.end());
+							participants.insert(bridge_account->group.begin(), bridge_account->group.end());
 
 						if (output.value.is_positive())
 						{
 							auto token_asset = output.get_asset(asset);
+							auto& supply = supplies[token_asset];
 							auto& penalty = penalties[token_asset];
+							supply = supply.is_nan() ? output.value : (supply + output.value);
 							penalty = penalty.is_nan() ? -output.value : (penalty - output.value);
-							bridge.transfers[token_asset].input_supply += output.value;
 						}
 
 						for (auto& [token_hash, token] : output.tokens)
@@ -1959,35 +3305,23 @@ namespace tangent
 								continue;
 
 							auto token_asset = token.get_asset(asset);
+							auto& supply = supplies[token_asset];
 							auto& penalty = penalties[token_asset];
+							supply = supply.is_nan() ? token.value : (supply + token.value);
 							penalty = penalty.is_nan() ? -token.value : (penalty - token.value);
-							bridge.transfers[token_asset].input_supply += token.value;
 						}
 					}
 					else if (source && source->is_routing_account())
 					{
-						auto& route = routes[source->owner];
-						auto token_asset = output.get_asset(asset);
-						for (auto& [bridge_manager, bridge] : bridges)
-						{
-							auto transfer = bridge.transfers.find(token_asset);
-							auto reward = transfer != bridge.transfers.end() && transfer->second.output_supply.is_positive() ? executor->get_verified_validator_attestation(asset, bridge_manager) : expects_lr<states::validator_attestation>(layer_exception());
-							if (reward && reward->outgoing_fee.is_positive())
-							{
-								auto rebate_adjustment = std::min(rebate, reward->outgoing_fee);
-								transfer->second.outgoing_fee += reward->outgoing_fee - rebate_adjustment;
-								rebate -= rebate_adjustment;
-								break;
-							}
-						}
-
+						auto& deltas = transfers[source->ref.owner];
 						if (output.value.is_positive())
 						{
+							auto token_asset = output.get_asset(asset);
+							auto& transfer = deltas[token_asset];
 							auto& penalty = penalties[token_asset];
-							auto& route_transfer = route[token_asset];
+							transfer.output_supply += output.value;
+							transfer.output_reserve += output.value;
 							penalty = penalty.is_nan() ? -output.value : (penalty - output.value);
-							route_transfer.output_supply += output.value;
-							route_transfer.output_reserve += output.value;
 						}
 
 						for (auto& [token_hash, token] : output.tokens)
@@ -1995,55 +3329,29 @@ namespace tangent
 							if (!token.value.is_positive())
 								continue;
 
-							token_asset = token.get_asset(asset);
-							auto& route_transfer = route[token_asset];
+							auto token_asset = token.get_asset(asset);
+							auto& transfer = deltas[token_asset];
 							auto& penalty = penalties[token_asset];
-							penalty = penalty.is_nan() ? token.value : (penalty - token.value);
-							route_transfer.output_supply += token.value;
-							route_transfer.output_reserve += token.value;
+							transfer.output_supply += token.value;
+							transfer.output_reserve += token.value;
+							penalty = penalty.is_nan() ? -token.value : (penalty - token.value);
 						}
 					}
 				}
 
-				auto it = penalties.find(algorithm::asset::base_id_of(asset));
+				auto base_asset = algorithm::asset::base_id_of(asset);
+				auto it = penalties.find(base_asset);
 				if (it != penalties.end())
-					it->second -= fee;
+					it->second = std::max<decimal>(it->second - network_fee, decimal::zero());
 
-				for (auto& [penalty_asset, penalty_value] : penalties)
+				auto bridge = executor->get_bridge_instance(algorithm::asset::base_id_of(asset), withdrawer_hash);
+				if (bridge)
 				{
-					if (!penalty_value.is_positive())
-						continue;
-
-					size_t fee_payers = 0;
-					for (auto& [route_account, transfers] : routes)
-						fee_payers += transfers.find(penalty_asset) != transfers.end();
-
-					auto amount = algorithm::arithmetic::divide(penalty_value, fee_payers > 0 ? fee_payers : bridges.size());
-					if (!amount.is_positive())
-						continue;
-
-					penalty_value = decimal::zero();
-					if (fee_payers > 0)
-					{
-						for (auto& [route_account, transfers] : routes)
-						{
-							auto transfer = transfers.find(penalty_asset);
-							if (transfer != transfers.end())
-							{
-								transfer->second.output_supply += amount;
-								transfer->second.output_reserve += amount;
-							}
-						}
-					}
+					auto reward = bridge->fee_rate * (1 - protocol::now().policy.attestation.fee_rate);
+					if (it == penalties.end())
+						penalties[base_asset] = -reward;
 					else
-					{
-						for (auto& [bridge_account, batch] : bridges)
-						{
-							auto& route_transfer = routes[bridge_account][penalty_asset];
-							route_transfer.output_supply += amount;
-							route_transfer.output_reserve += amount;
-						}
-					}
+						it->second -= reward;
 				}
 			}
 			else
@@ -2054,24 +3362,19 @@ namespace tangent
 					if (!source || !source->is_bridge_account())
 						continue;
 
-					auto& bridge = bridges[source->manager];
-					auto& route = routes[depositor.empty() ? source->owner : depositor];
-					auto bridge_account = executor->get_bridge_account(asset, source->manager, source->owner);
-					if (!bridge_account)
-						bridge_account = executor->get_bridge_account(asset, source->manager, source->manager);
+					auto& supplies = balances[source->ref.hash];
+					auto& changes = transfers[depositor_account.empty() ? source->ref.owner : depositor_account];
+					auto bridge_account = executor->get_bridge_account(source->ref.owner, source->ref.asset, source->ref.hash);
 					if (bridge_account)
-						bridge.participants.insert(bridge_account->group.begin(), bridge_account->group.end());
+						participants.insert(bridge_account->group.begin(), bridge_account->group.end());
 
 					if (output.value.is_positive())
 					{
 						auto token_asset = output.get_asset(asset);
-						auto& route_transfer = route[token_asset];
-						auto& bridge_transfer = bridge.transfers[token_asset];
-						auto reward = executor->get_verified_validator_attestation(token_asset, source->manager);
-						auto reward_value = reward && reward->incoming_fee.is_positive() ? std::min(output.value, reward->incoming_fee) : decimal::zero();
-						route_transfer.input_supply += output.value - reward_value;
-						bridge_transfer.input_supply += output.value;
-						bridge_transfer.incoming_fee += reward_value;
+						auto& supply = supplies[token_asset];
+						auto& transfer = changes[token_asset];
+						supply = supply.is_nan() ? output.value : (supply + output.value);
+						transfer.input_supply += output.value;
 					}
 
 					for (auto& [token_hash, token] : output.tokens)
@@ -2079,17 +3382,18 @@ namespace tangent
 						if (token.value.is_positive())
 						{
 							auto token_asset = token.get_asset(asset);
-							route[token_asset].input_supply += token.value;
-							bridge.transfers[token_asset].input_supply += token.value;
+							auto& supply = supplies[token_asset];
+							auto& transfer = changes[token_asset];
+							supply = supply.is_nan() ? token.value : (supply + token.value);
+							transfer.input_supply += token.value;
 						}
 					}
 				}
 			}
 
-			if (routes.empty() && bridges.empty())
+			if (transfers.empty() && balances.empty())
 				return layer_exception("invalid transaction");
 
-			auto& succeeding_attesters = attesters[best_commitment_hash];
 			auto failing_attesters = btree_set<algorithm::pubkeyhash_t>();
 			for (auto& [commitment_hash, group] : attesters)
 			{
@@ -2097,15 +3401,15 @@ namespace tangent
 					failing_attesters.insert(group.begin(), group.end());
 			}
 
-			for (auto& [route_account, transfers] : routes)
+			for (auto& [transfer_account, changes] : transfers)
 			{
-				for (auto& [transfer_asset, transfer] : transfers)
+				for (auto& [transfer_asset, transfer] : changes)
 				{
 					auto supply_delta = transfer.input_supply - transfer.output_supply;
 					auto reserve_delta = transfer.input_reserve - transfer.output_reserve;
 					if (supply_delta.is_negative() || reserve_delta.is_negative())
 					{
-						auto balance = executor->get_account_balance(transfer_asset, route_account).or_else(states::account_balance(algorithm::pubkeyhash_t(), 0, nullptr));
+						auto balance = executor->get_account_balance(transfer_asset, transfer_account).or_else(states::account_balance(algorithm::pubkeyhash_t(), 0, nullptr));
 						auto supply_penalty = decimal::zero();
 						auto reserve_penalty = decimal::zero();
 						if (balance.supply < -supply_delta)
@@ -2127,91 +3431,67 @@ namespace tangent
 
 					if (!supply_delta.is_zero() || !reserve_delta.is_zero())
 					{
-						auto delta_transfer = executor->apply_transfer(transfer_asset, route_account, supply_delta, reserve_delta);
+						auto delta_transfer = executor->apply_transfer(transfer_asset, transfer_account, supply_delta, reserve_delta);
 						if (!delta_transfer)
 							return delta_transfer.error();
 					}
 				}
 			}
 
-			for (auto& [bridge_manager, batch] : bridges)
+			for (auto& [hash, supplies] : balances)
 			{
-				for (auto& [transfer_asset, transfer] : batch.transfers)
+				for (auto& [transfer_asset, transfer_value] : supplies)
 				{
-					auto& penalty = penalties[transfer_asset];
-					penalty = penalty.is_positive() ? penalty : decimal::zero();
-					auto consume_penalty = [&penalty](const decimal& delta) -> decimal
+					if (transfer_value.is_negative())
 					{
-						auto adjustment = std::max(decimal::zero(), penalty - delta);
-						auto result = std::max(decimal::zero(), delta - penalty);
-						penalty = adjustment;
-						return result;
-					};
-					if (transfer.input_supply.is_positive() || transfer.output_supply.is_positive())
-					{
-						auto supply_delta = transfer.input_supply - transfer.output_supply;
-						if (supply_delta.is_negative())
-						{
-							auto balance = executor->get_bridge_balance(transfer_asset, bridge_manager);
-							supply_delta = balance ? std::max(-balance->supply, supply_delta) : decimal::zero();
-						}
-
-						if (!supply_delta.is_zero())
-						{
-							auto bridge = executor->apply_bridge_balance(transfer_asset, bridge_manager, supply_delta);
-							if (!bridge)
-								return bridge.error();
-						}
+						auto balance = executor->get_bridge_balance(transfer_asset, hash);
+						transfer_value = balance ? std::max(-balance->supply, transfer_value) : decimal::zero();
 					}
 
-					auto total_fee = consume_penalty(transfer.incoming_fee + transfer.outgoing_fee);
-					auto attestation_cut = succeeding_attesters.empty() ? decimal::zero() : decimal(protocol::now().policy.attestation.fee_rate);
-					auto participation_cut = batch.participants.empty() ? decimal::zero() : decimal(protocol::now().policy.participation.fee_rate);
-					auto bridge_fee = total_fee * (1 - attestation_cut - participation_cut);
-					auto attestation_fee = !succeeding_attesters.empty() ? algorithm::arithmetic::divide(total_fee * attestation_cut, succeeding_attesters.size()) : decimal::zero();
-					auto participation_fee = !batch.participants.empty() ? algorithm::arithmetic::divide(total_fee * participation_cut, batch.participants.size()) : decimal::zero();
-					if (attestation_fee.is_positive())
+					auto balance = executor->apply_bridge_balance(transfer_asset, hash, transfer_value);
+					if (!balance)
+						return balance.error();
+				}
+			}
+
+			for (auto& [penalty_asset, penalty_value] : penalties)
+			{
+				if (penalty_value.is_zero_or_nan())
+					continue;
+
+				auto participation_cut = protocol::now().policy.participation.fee_rate;
+				auto attestation_cut = 1 - participation_cut;
+				if (!failing_attesters.empty() && penalty_value.is_negative())
+				{
+					auto individual_penalty = algorithm::arithmetic::divide(penalty_value * attestation_cut, failing_attesters.size());
+					for (auto& failing_attester : failing_attesters)
 					{
-						for (auto& failing_attester : failing_attesters)
-						{
-							auto prev_attestation = executor->get_validator_attestation_reward(transfer_asset, failing_attester);
-							if (!prev_attestation)
-								continue;
+						auto prev_attestation = executor->get_validator_attestation_reward(penalty_asset, failing_attester);
+						if (!prev_attestation)
+							continue;
 
-							auto next_attestation = executor->apply_validator_attestation_reward(transfer_asset, failing_attester, -attestation_fee);
-							if (!next_attestation)
-								return next_attestation.error();
+						auto next_attestation = executor->apply_validator_attestation_reward(penalty_asset, failing_attester, individual_penalty);
+						if (!next_attestation)
+							return next_attestation.error();
 
-							auto compensation_adjustment = std::max(decimal::zero(), prev_attestation->reward - next_attestation->reward);
-							if (compensation_adjustment.is_positive())
-								bridge_fee += consume_penalty(compensation_adjustment);
-						}
-
-						for (auto& succeeding_attester : succeeding_attesters)
-						{
-							auto attestation = executor->apply_validator_attestation_reward(transfer_asset, succeeding_attester, attestation_fee);
-							if (!attestation)
-								return attestation.error();
-						}
+						penalty_value -= std::max(decimal::zero(), prev_attestation->reward - next_attestation->reward);
 					}
+				}
 
-					if (penalty.is_positive() || participation_fee.is_positive())
-					{
-						auto individual_penalty = -algorithm::arithmetic::divide(penalty, batch.participants.size());
-						for (auto& participant : batch.participants)
-						{
-							auto participation = executor->apply_validator_participation_reward(transfer_asset, participant, individual_penalty.is_negative() ? individual_penalty : participation_fee);
-							if (!participation)
-								return participation.error();
-						}
-					}
+				auto individual_reward_or_penalty = algorithm::arithmetic::divide(-penalty_value * attestation_cut, succeeding_attesters.size());
+				for (auto& succeeding_attester : succeeding_attesters)
+				{
+					auto attestation = executor->apply_validator_attestation_reward(penalty_asset, succeeding_attester, individual_reward_or_penalty);
+					if (!attestation)
+						return attestation.error();
+				}	
 
-					if (bridge_fee.is_positive())
-					{
-						auto attestation = executor->apply_validator_attestation_reward(transfer_asset, bridge_manager, bridge_fee);
-						if (!attestation)
-							return attestation.error();
-					}
+				individual_reward_or_penalty = algorithm::arithmetic::divide(-penalty_value * participation_cut, participants.size());
+				for (auto& participant : participants)
+				{
+					auto participation = executor->apply_validator_participation_reward(penalty_asset, participant, individual_reward_or_penalty);
+					if (!participation)
+						return participation.error();
 				}
 			}
 
@@ -2219,11 +3499,7 @@ namespace tangent
 			if (!finalization)
 				return finalization.error();
 
-			auto witness = executor->emit_witness(asset, proof.block_id);
-			if (!witness)
-				return witness;
-
-			return expectation::met;
+			return executor->emit_witness(asset, proof.block_id);
 		}
 		expects_promise_rt<void> attestate::dispatch(const ledger::executor_context*, ledger::dispatcher_context*) const
 		{
@@ -2447,7 +3723,7 @@ namespace tangent
 					weights.push_back(std::make_pair(signature, std::move(attestation->stake)));
 					duplicates.insert(attester);
 				}
-				
+
 				std::sort(weights.begin(), weights.end(), [](const std::pair<algorithm::hashsig_t, decimal>& a, const std::pair<algorithm::hashsig_t, decimal>& b) { return a.second > b.second; });
 				for (size_t i = protocol::now().policy.attestation.max_per_transaction; i < weights.size(); i++)
 					removals[commitment_hash].insert(weights[i].first);
@@ -2473,1544 +3749,6 @@ namespace tangent
 			return algorithm::signing::sign(commitment_hash, secret_key, signature);
 		}
 
-		expects_lr<void> route::validate(uint64_t block_number) const
-		{
-			if (!algorithm::asset::token_of(asset).empty())
-				return layer_exception("invalid asset");
-
-			if (manager.empty())
-				return layer_exception("invalid manager");
-
-			return ledger::commitment_message::validate(block_number);
-		}
-		expects_lr<void> route::execute(ledger::executor_context* executor) const
-		{
-			auto validation = ledger::commitment_message::execute(executor);
-			if (!validation)
-				return validation.error();
-
-			auto may_delegate = executor->verify_account_delegation(manager);
-			if (!may_delegate)
-			{
-				auto overdelegation_fee = executor->apply_fee_transfer(algorithm::asset::native(), executor->receipt.from, protocol::now().policy.emission.min_coinbase_value);
-				if (!overdelegation_fee)
-					return layer_exception("must pay for over-delegation but " + overdelegation_fee.error().message());
-			}
-			else
-			{
-				auto delegation = executor->apply_account_delegation(manager, 1);
-				if (!delegation)
-					return delegation.error();
-			}
-
-			auto* params = superchain::bridge::get()->get_network_params(asset);
-			if (!params)
-				return layer_exception("invalid operation");
-
-			auto policy = executor->get_verified_validator_attestation(asset, manager);
-			if (!policy)
-				return policy.error();
-			else if (!policy->accepts_account_requests)
-				return layer_exception("bridge forbids account requests");
-
-			bool routing_address_application = false;
-			if (!routing_address.empty())
-			{
-				auto collision = executor->get_witness_account_tagged(asset, routing_address, 0);
-				if (collision && (!collision->is_routing_account() || collision->owner != executor->receipt.from))
-					return layer_exception("routing account address " + routing_address + " taken");
-
-				if (!collision)
-				{
-					auto status = executor->apply_witness_routing_account(asset, executor->receipt.from, { { (uint8_t)1, string(routing_address) } });
-					if (!status)
-						return status.error();
-
-					routing_address_application = true;
-				}
-			}
-
-			switch (params->routing)
-			{
-				case superchain::routing_policy::account:
-				{
-					if (!policy->accounts_under_management)
-					{
-						if (executor->receipt.from != manager)
-							return layer_exception("bridge account for manager required");
-						break;
-					}
-					else if (!routing_address_application)
-						return layer_exception("bridge account already exists (only one may exist)");
-
-					return expectation::met;
-				}
-				case superchain::routing_policy::memo:
-				{
-					if (!policy->accounts_under_management)
-					{
-						if (executor->receipt.from != manager)
-							return layer_exception("bridge account for manager required");
-						break;
-					}
-
-					auto manager_account = executor->get_bridge_account(asset, manager, manager);
-					if (!manager_account || manager_account->public_key.empty() || manager_account->group.empty() || manager_account->owner != manager || manager_account->manager != manager)
-						return layer_exception("bridge account for manager required");
-
-					size_t offset = 0, count = 32;
-					bool duplicate = false;
-					while (true)
-					{
-						auto duplicates = executor->get_witness_accounts_by_purpose(executor->receipt.from, states::witness_account::account_type::bridge, 0, count);
-						if (!duplicates)
-							break;
-
-						auto it = std::find_if(duplicates->begin(), duplicates->end(), [&](const states::witness_account& account) { return account.asset == asset && account.manager == manager && account.active; });
-						if (it != duplicates->end())
-						{
-							duplicate = true;
-							break;
-						}
-
-						offset += duplicates->size();
-						if (duplicates->size() != count)
-							break;
-					}
-
-					if (duplicate)
-						return routing_address_application ? expects_lr<void>(expectation::met) : expects_lr<void>(layer_exception("bridge account already exists"));
-
-					auto* chain = superchain::bridge::get()->get_network(asset);
-					if (!chain)
-						return layer_exception("invalid operation");
-
-					auto encoded_public_key = chain->encode_public_key(std::string_view((char*)manager_account->public_key.data(), manager_account->public_key.size()));
-					if (!encoded_public_key)
-						return encoded_public_key.error();
-
-					auto addresses = chain->to_addresses(*encoded_public_key);
-					if (!addresses)
-						return addresses.error();
-
-					for (auto& address : *addresses)
-						address.second = superchain::address_util::encode_tag_address(address.second, to_string(policy->accounts_under_management));
-
-					auto policy_status = executor->apply_validator_attestation_account(asset, manager, 1);
-					if (!policy_status)
-						return policy_status.error();
-
-					auto witness_account_status = executor->apply_witness_bridge_account(asset, executor->receipt.from, manager, *addresses);
-					if (!witness_account_status)
-						return witness_account_status.error();
-
-					return expectation::met;
-				}
-				case superchain::routing_policy::utxo:
-				{
-					auto duplicate = executor->get_bridge_account(asset, manager, executor->receipt.from);
-					if (!duplicate)
-						break;
-
-					if (!routing_address_application)
-						return layer_exception("bridge account already exists");
-
-					return expectation::met;
-				}
-				default:
-					return layer_exception("invalid operation");
-			}
-
-			btree_set<algorithm::pubkeyhash_t> exclusion;
-			auto committee = executor->calculate_participants(exclusion, policy->security_level, policy->participation_threshold);
-			if (!committee)
-				return committee.error();
-
-			for (auto& work : *committee)
-			{
-				auto event = executor->emit_event<route>({ format::variable(work.owner.view()) });
-				if (!event)
-					return event;
-			}
-
-			return expectation::met;
-		}
-		expects_promise_rt<void> route::dispatch(const ledger::executor_context* executor, ledger::dispatcher_context* dispatcher) const
-		{
-			auto* runner_wallet = dispatcher->get_runner_wallet(manager);
-			if (!runner_wallet)
-				return expects_promise_rt<void>(expectation::met);
-
-			auto* event = executor->receipt.find_event<route>();
-			if (!event || executor->get_witness_event(executor->receipt.transaction_hash))
-				return expects_promise_rt<void>(expectation::met);
-
-			return coasync<expects_rt<void>>([this, executor, dispatcher, runner_wallet]() -> expects_promise_rt<void>
-			{
-				auto* chain = superchain::bridge::get()->get_network_params(asset);
-				if (!chain)
-					coreturn remote_exception("invalid operation");
-
-				uint8_t message_hash[32];
-				challenge(executor->receipt.transaction_hash, message_hash);
-
-				size_t required_public_keys = 0;
-				auto cache = dispatcher->pull_cache(executor);
-				auto group = get_group(executor->receipt);
-				auto state = ledger::dispatcher_context::public_state();
-				if (!state.load(cache))
-				{
-					auto compositor = algorithm::composition::make_public_key_compositor(chain->composition, message_hash, sizeof(message_hash), (uint16_t)group.size());
-					if (!compositor)
-						coreturn remote_exception(std::move(compositor.error().message()));
-
-					state.compositor = std::move(*compositor);
-					state.participants = group;
-					state.alg = chain->composition;
-					required_public_keys = state.participants.size();
-				}
-
-				auto session = coawait(dispatcher->aggregate_validators(state.participants));
-				if (!session)
-					coreturn session.error();
-
-				if (required_public_keys > 0)
-				{
-					if (state.participants.size() != required_public_keys)
-					{
-					postpone:
-						if (++state.attempt >= protocol::now().user.consensus.coordination_attempts)
-							coreturn remote_exception("failed to coordinate participants after several retries");
-
-						dispatcher->push_cache(executor, state.as_message());
-						coreturn remote_exception::retry_later();
-					}
-
-					for (auto& participant : state.participants)
-					{
-						auto public_key = dispatcher->get_public_key(participant);
-						if (public_key.empty())
-							goto postpone;
-
-						if (state.encrypted_shares.find(public_key) == state.encrypted_shares.end())
-							state.encrypted_shares[public_key] = btree_map<algorithm::pubkeyhash_t, string>();
-					}
-				}
-
-				bool reset = false;
-				auto chosen = group.begin();
-				auto unavailable = btree_set<algorithm::pubkeyhash_t>();
-				std::advance(chosen, (size_t)(algorithm::hashing::hash256i(message_hash, sizeof(message_hash)) % uint256_t(group.size())));
-				while (!state.distribution)
-				{
-					auto phase = state.compositor->next_phase();
-					if (!reset && (phase == algorithm::composition::phase::any_input_after_reset || phase == algorithm::composition::phase::chosen_input_after_reset))
-					{
-						state.participants = group;
-						reset = true;
-					}
-
-					bool uniform_input = phase == algorithm::composition::phase::any_input_after_reset || phase == algorithm::composition::phase::any_input;
-					bool chosen_input = phase == algorithm::composition::phase::chosen_input_after_reset || phase == algorithm::composition::phase::chosen_input;
-					auto it = (uniform_input ? state.participants.begin() : (chosen_input ? state.participants.find(*chosen) : state.participants.end()));
-					it = (!chosen_input && state.participants.size() > 1 && it != state.participants.end() && it->equals(*chosen) ? ++it : it);
-					if (it == state.participants.end())
-						break;
-
-					auto result = coawait(dispatcher->aggregate_public_key(executor, state, *it));
-					if (!result && (result.error().is_retry() || result.error().is_shutdown()))
-					{
-						unavailable.insert(*it);
-						if (chosen_input)
-							goto postpone;
-					}
-					else if (!result)
-						coreturn result.error();
-					else
-						reset = false;
-
-					state.participants.erase(it);
-				}
-
-				state.distribution = unavailable.empty();
-				state.participants = std::move(group);
-				if (!unavailable.empty())
-				{
-					state.participants = std::move(unavailable);
-					goto postpone;
-				}
-
-				algorithm::composition::cpubkey_t aggregated_public_key;
-				auto status = state.compositor->to_public_key(&aggregated_public_key);
-				if (!status)
-					coreturn remote_exception(std::move(status.error().message()));
-
-				algorithm::composition::chashsig_t aggregated_signature;
-				status = state.compositor->to_signature(&aggregated_signature);
-				if (!status)
-					coreturn remote_exception(std::move(status.error().message()));
-
-				auto distribution_state = ledger::dispatcher_context::entropy_distribution_state();
-				while (!state.participants.empty())
-				{
-					auto target = state.encrypted_shares.end();
-					distribution_state.encrypted_shares.clear();
-					for (auto it = state.encrypted_shares.begin(); it != state.encrypted_shares.end(); it++)
-					{
-						algorithm::pubkeyhash_t participant;
-						algorithm::signing::derive_public_key_hash(it->first, participant);
-						if (participant == *state.participants.begin())
-						{
-							distribution_state.encrypted_shares = it->second;
-							target = it;
-							break;
-						}
-					}
-					if (target == state.encrypted_shares.end())
-						coreturn remote_exception("participant requires group shares but none were shared");
-					else if (distribution_state.encrypted_shares.empty())
-						coreturn remote_exception("participant requires group shares but none were found");
-
-					auto result = coawait(dispatcher->distribute_entropy_shares(executor, distribution_state, *state.participants.begin()));
-					if (!result && (result.error().is_retry() || result.error().is_shutdown()))
-						unavailable.insert(*state.participants.begin());
-					else if (!result)
-						coreturn result.error();
-
-					state.participants.erase(state.participants.begin());
-				}
-
-				if (!unavailable.empty())
-				{
-					state.participants = std::move(unavailable);
-					goto postpone;
-				}
-
-				auto* transaction = memory::init<bind>();
-				transaction->asset = asset;
-				transaction->set_witness(executor->receipt.transaction_hash, std::move(aggregated_public_key), std::move(aggregated_signature));
-				dispatcher->emit_transaction(runner_wallet, transaction);
-				coreturn expectation::met;
-			});
-		}
-		bool route::store_body(format::wo_stream* stream) const
-		{
-			VI_ASSERT(stream != nullptr, "stream should be set");
-			stream->write_string(manager.optimized_view());
-			stream->write_string(routing_address);
-			return true;
-		}
-		bool route::load_body(format::ro_stream& stream)
-		{
-			string manager_assembly;
-			if (!stream.read_string(stream.read_type(), &manager_assembly) || !algorithm::encoding::decode_bytes(manager_assembly, manager.blob, sizeof(manager)))
-				return false;
-
-			if (!stream.read_string(stream.read_type(), &routing_address))
-				return false;
-
-			return true;
-		}
-		bool route::recover_many(const ledger::executor_context*, const ledger::transaction_receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const
-		{
-			auto group = get_group(receipt);
-			parties.insert(algorithm::pubkeyhash_t(manager));
-			parties.insert(group.begin(), group.end());
-			return true;
-		}
-		bool route::is_dispatchable() const
-		{
-			return true;
-		}
-		void route::set_routing_address(const std::string_view& new_address)
-		{
-			routing_address = new_address;
-		}
-		void route::set_manager(const algorithm::pubkeyhash_t& new_manager)
-		{
-			manager = new_manager;
-		}
-		btree_set<algorithm::pubkeyhash_t> route::get_group(const ledger::transaction_receipt& receipt) const
-		{
-			btree_set<algorithm::pubkeyhash_t> result;
-			for (auto& event : receipt.find_events<route>())
-			{
-				if (!event->empty() && event->front().as_string().size() == sizeof(algorithm::pubkeyhash_t))
-					result.insert(algorithm::pubkeyhash_t(event->front().as_blob()));
-			}
-			return result;
-		}
-		format::tree route::as_tree() const
-		{
-			format::tree data = ledger::commitment_message::as_tree();
-			data.set("manager", algorithm::signing::serialize_address(manager));
-			data.set("routing_address", format::variable(routing_address));
-			return data;
-		}
-		uint32_t route::as_type() const
-		{
-			return as_instance_type();
-		}
-		std::string_view route::as_typename() const
-		{
-			return as_instance_typename();
-		}
-		uint32_t route::as_instance_type()
-		{
-			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
-			return hash;
-		}
-		std::string_view route::as_instance_typename()
-		{
-			return "route";
-		}
-		void route::challenge(const uint256_t& route_hash, uint8_t message_hash[32])
-		{
-			VI_ASSERT(message_hash != nullptr, "message hash should be set");
-			uint8_t transaction_hash[32];
-			route_hash.encode(transaction_hash);
-			algorithm::hashing::hash256(transaction_hash, sizeof(transaction_hash), message_hash);
-		}
-
-		expects_lr<void> bind::validate(uint64_t block_number) const
-		{
-			if (!algorithm::asset::token_of(asset).empty())
-				return layer_exception("invalid asset");
-
-			if (!route_hash)
-				return layer_exception("invalid route hash");
-
-			if (group_public_key.empty())
-				return layer_exception("invalid group public key");
-
-			if (group_signature.empty())
-				return layer_exception("invalid group signature");
-
-			auto* chain = superchain::bridge::get()->get_network_params(asset);
-			if (!chain)
-				return layer_exception("invalid operation");
-
-			auto compositor = algorithm::composition::make_compositor(chain->composition);
-			if (!compositor)
-				return compositor.error();
-
-			uint8_t message_hash[32];
-			route::challenge(route_hash, message_hash);
-
-			auto& compositor_ptr = *compositor;
-			auto status = compositor_ptr->verify_signature(message_hash, sizeof(message_hash), group_signature, group_public_key);
-			if (!status)
-				return status;
-
-			return ledger::commitment_message::validate(block_number);
-		}
-		expects_lr<void> bind::execute(ledger::executor_context* executor) const
-		{
-			auto validation = ledger::commitment_message::execute(executor);
-			if (!validation)
-				return validation.error();
-
-			auto event = executor->apply_witness_event(route_hash, executor->receipt.transaction_hash);
-			if (!event)
-				return event.error();
-
-			auto parent = executor->get_block_transaction<route>(route_hash);
-			if (!parent)
-				return parent.error();
-
-			auto* parent_transaction = (route*)*parent->transaction;
-			auto* server = superchain::bridge::get();
-			auto* chain = server->get_network(asset);
-			auto* params = server->get_network_params(asset);
-			if (!chain || !params)
-				return layer_exception("invalid operation");
-
-			auto duplicate = executor->get_bridge_account(asset, parent_transaction->manager, parent->receipt.from);
-			if (duplicate)
-				return layer_exception("bridge account already exists");
-
-			auto encoded_public_key = chain->encode_public_key(std::string_view((char*)group_public_key.data(), group_public_key.size()));
-			if (!encoded_public_key)
-				return encoded_public_key.error();
-
-			auto addresses = chain->to_addresses(*encoded_public_key);
-			if (!addresses)
-				return addresses.error();
-
-			auto policy = executor->get_verified_validator_attestation(asset, parent_transaction->manager);
-			if (!policy)
-				return policy.error();
-
-			switch (params->routing)
-			{
-				case superchain::routing_policy::account:
-				case superchain::routing_policy::memo:
-				{
-					if (policy->accounts_under_management > 0)
-						return layer_exception("too many accounts for a bridge");
-
-					if (params->routing == superchain::routing_policy::account)
-						break;
-
-					for (auto& address : *addresses)
-						address.second = superchain::address_util::encode_tag_address(address.second, to_string(policy->accounts_under_management));
-					break;
-				}
-				default:
-					break;
-			}
-
-			auto policy_status = executor->apply_validator_attestation_account(asset, parent_transaction->manager, 1);
-			if (!policy_status)
-				return policy_status.error();
-
-			auto ref = states::validator_participation_ref::ref_value();
-			ref.asset = asset;
-			ref.manager = parent_transaction->manager;
-			ref.owner = parent->receipt.from;
-
-			auto group = parent_transaction->get_group(parent->receipt);
-			for (auto& participant : group)
-			{
-				auto status = executor->apply_validator_participation_ref(participant, ref, true);
-				if (!status)
-					return status.error();
-			}
-
-			auto bridge_account_status = executor->apply_bridge_account(asset, ref.owner, ref.manager, group_public_key, std::move(group));
-			if (!bridge_account_status)
-				return bridge_account_status.error();
-
-			auto witness_account_status = executor->apply_witness_bridge_account(asset, ref.owner, ref.manager, *addresses);
-			if (!witness_account_status)
-				return witness_account_status.error();
-
-			for (auto& [type, address] : *addresses)
-			{
-				auto [base_address, tag] = superchain::address_util::decode_tag_address(address);
-				if (base_address != address)
-				{
-					auto status = server->enable_link(asset, superchain::wallet_link(parent_transaction->manager, *encoded_public_key, base_address));
-					if (!status)
-						return status.error();
-				}
-
-				auto status = server->enable_link(asset, superchain::wallet_link(parent_transaction->manager, *encoded_public_key, address));
-				if (!status)
-					return status.error();
-			}
-
-			return expectation::met;
-		}
-		void bind::set_witness(const uint256_t& new_route_hash, algorithm::composition::cpubkey_t&& new_group_public_key, algorithm::composition::chashsig_t&& new_group_signature)
-		{
-			route_hash = new_route_hash;
-			group_public_key = std::move(new_group_public_key);
-			group_signature = std::move(new_group_signature);
-		}
-		bool bind::store_body(format::wo_stream* stream) const
-		{
-			VI_ASSERT(stream != nullptr, "stream should be set");
-			stream->write_string(std::string_view((char*)group_public_key.data(), group_public_key.size()));
-			stream->write_string(std::string_view((char*)group_signature.data(), group_signature.size()));
-			stream->write_integer(route_hash);
-			return true;
-		}
-		bool bind::load_body(format::ro_stream& stream)
-		{
-			string group_public_key_assembly;
-			if (!stream.read_string(stream.read_type(), &group_public_key_assembly))
-				return false;
-
-			string group_signature_assembly;
-			if (!stream.read_string(stream.read_type(), &group_signature_assembly))
-				return false;
-
-			if (!stream.read_integer(stream.read_type(), &route_hash))
-				return false;
-
-			group_public_key.resize(group_public_key_assembly.size());
-			group_signature.resize(group_signature_assembly.size());
-			memcpy(group_public_key.data(), group_public_key_assembly.data(), group_public_key_assembly.size());
-			memcpy(group_signature.data(), group_signature_assembly.data(), group_signature_assembly.size());
-			return true;
-		}
-		bool bind::recover_many(const ledger::executor_context* executor, const ledger::transaction_receipt&, btree_set<algorithm::pubkeyhash_t>& parties) const
-		{
-			auto parent = executor->get_block_transaction<route>(route_hash);
-			if (!parent)
-				return false;
-
-			auto* parent_transaction = (route*)*parent->transaction;
-			parties.insert(algorithm::pubkeyhash_t(parent_transaction->manager));
-			parties.insert(algorithm::pubkeyhash_t(parent->receipt.from));
-			return true;
-		}
-		format::tree bind::as_tree() const
-		{
-			format::tree data = ledger::commitment_message::as_tree();
-			data.set("route_hash", route_hash > 0 ? format::variable(algorithm::encoding::encode_0xhex256(route_hash)) : format::variable());
-			data.set("group_public_key", format::variable(format::util::encode_0xhex(std::string_view((char*)group_public_key.data(), group_public_key.size()))));
-			data.set("group_signature", format::variable(format::util::encode_0xhex(std::string_view((char*)group_signature.data(), group_signature.size()))));
-			return data;
-		}
-		uint32_t bind::as_type() const
-		{
-			return as_instance_type();
-		}
-		std::string_view bind::as_typename() const
-		{
-			return as_instance_typename();
-		}
-		uint32_t bind::as_instance_type()
-		{
-			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
-			return hash;
-		}
-		std::string_view bind::as_instance_typename()
-		{
-			return "bind";
-		}
-
-		expects_lr<void> withdraw::validate(uint64_t block_number) const
-		{
-			if (manager.empty())
-				return layer_exception("invalid manager");
-
-			auto* chain = superchain::bridge::get()->get_network_params(asset);
-			if (!chain)
-				return layer_exception("invalid operation");
-
-			if (!algorithm::asset::is_aux(asset))
-				return layer_exception("not a valid withdrawal asset");
-
-			if (!to_address.empty() && !to_value.is_positive())
-				return layer_exception("invalid to value");
-			else if (to_address.empty() && !to_value.is_nan())
-				return layer_exception("invalid to address/value");
-
-			return ledger::transaction_message::validate(block_number);
-		}
-		expects_lr<void> withdraw::execute(ledger::executor_context* executor) const
-		{
-			auto validation = transaction_message::execute(executor);
-			if (!validation)
-				return validation.error();
-
-			bool migration = to_address.empty() && executor->receipt.from == manager;
-			if (to_address.empty() && !migration)
-				return layer_exception("must include at least one withdrawal destination");
-
-			auto policy = executor->get_verified_validator_attestation(asset, manager);
-			if (!policy)
-				return policy.error();
-			else if (!policy->accepts_withdrawal_requests && !migration)
-				return layer_exception("bridge forbids withdrawal requests");
-			else if (only_if_not_in_queue && policy->queue_transaction_hash > 0)
-				return layer_exception("bridge is in use - withdrawal will be queued");
-
-			auto token_value = get_token_value(executor, executor->receipt);
-			if (!token_value.is_positive())
-				return layer_exception("zero value withdrawal not allowed");
-
-			auto fee_asset = algorithm::asset::base_id_of(asset);
-			auto fee_value = get_fee_value(executor);
-			if (!fee_value.is_positive())
-				return layer_exception("bridge does not have a withdrawal fee - network fee cannot be paid");
-
-			if (migration)
-			{
-				auto fee_balance = executor->get_bridge_balance(fee_asset, manager);
-				if (!fee_balance || fee_balance->supply < fee_value)
-					return layer_exception(algorithm::asset::handle_of(fee_asset) + " balance is insufficient perform migration");
-
-				if (asset != fee_asset)
-				{
-					size_t offset = 0, count = 32;
-					while (true)
-					{
-						auto balances = executor->get_bridge_balances(manager, offset, count);
-						if (!balances)
-							break;
-
-						for (auto& balance : *balances)
-						{
-							if (fee_asset == balance.asset || fee_asset != algorithm::asset::base_id_of(balance.asset))
-								continue;
-
-							if (balance.supply.is_positive())
-								return layer_exception(algorithm::asset::handle_of(balance.asset) + " balance must be migrated before " + algorithm::asset::handle_of(fee_asset));
-						}
-
-						offset += balances->size();
-						if (balances->size() != count)
-							break;
-					}
-				}
-
-				auto next_policy = executor->calculate_attester_for_migration(asset, manager);
-				if (!next_policy)
-					return next_policy.error();
-
-				auto account = find_receiving_account(executor, asset, manager, next_policy->owner);
-				if (!account)
-					return account.error();
-
-				auto registration = executor->apply_validator_attestation_queue(asset, manager, executor->receipt.transaction_hash);
-				if (!registration)
-					return registration.error();
-
-				auto event = executor->emit_event<withdraw>({ format::variable(next_policy->owner.view()) });
-				if (!event)
-					return event;
-
-				return expectation::met;
-			}
-
-			if (fee_asset != asset)
-			{
-				auto balance_requirement = executor->verify_transfer_balance(fee_asset, fee_value);
-				if (!balance_requirement)
-					return balance_requirement.error();
-
-				auto fee_balance = executor->get_bridge_balance(fee_asset, manager);
-				if (!fee_balance || fee_balance->supply < fee_value)
-					return layer_exception(algorithm::asset::handle_of(fee_asset) + " balance is insufficient to cover base withdrawal value (value: " + fee_value.to_string() + ")");
-			}
-			else
-				token_value += fee_value;
-
-			auto balance_requirement = executor->verify_transfer_balance(asset, token_value);
-			if (!balance_requirement)
-				return balance_requirement;
-
-			auto token_balance = executor->get_bridge_balance(asset, manager);
-			if (!token_balance || token_balance->supply < token_value)
-				return layer_exception(algorithm::asset::handle_of(asset) + " balance is insufficient to cover token withdrawal value (value: " + token_value.to_string() + ")");
-
-			auto collision = executor->get_witness_account_tagged(fee_asset, to_address, 0);
-			if (collision && (!collision->is_routing_account() || collision->owner != executor->receipt.from))
-				return layer_exception("invalid to address (not owned by sender)");
-			else if (!collision)
-				collision = executor->apply_witness_routing_account(asset, executor->receipt.from, { { (uint8_t)1, string(to_address) } });
-			if (!collision)
-				return collision.error();
-
-			if (fee_asset != asset)
-			{
-				auto fee_transfer = executor->apply_transfer(fee_asset, executor->receipt.from, decimal::zero(), fee_value);
-				if (!fee_transfer)
-					return fee_transfer.error();
-			}
-
-			auto token_transfer = executor->apply_transfer(asset, executor->receipt.from, decimal::zero(), token_value);
-			if (!token_transfer)
-				return token_transfer.error();
-
-			auto registration = executor->apply_validator_attestation_queue(asset, manager, executor->receipt.transaction_hash);
-			if (!registration)
-				return registration.error();
-
-			return expectation::met;
-		}
-		expects_promise_rt<void> withdraw::dispatch(const ledger::executor_context* executor, ledger::dispatcher_context* dispatcher) const
-		{
-			auto* runner_wallet = dispatcher->get_runner_wallet(manager);
-			if (!runner_wallet)
-				return expects_promise_rt<void>(expectation::met);
-
-			if (executor->get_witness_event(executor->receipt.transaction_hash))
-				return expects_promise_rt<void>(expectation::met);
-
-			auto policy = executor->get_verified_validator_attestation(asset, manager);
-			if (policy && policy->queue_transaction_hash != executor->receipt.transaction_hash)
-			{
-				if (only_if_not_in_queue && policy->queue_transaction_hash > 0)
-					return expects_promise_rt<void>(remote_exception::retry_later());
-			}
-
-			return coasync<expects_rt<void>>([this, executor, dispatcher, runner_wallet]() mutable -> expects_promise_rt<void>
-			{
-				auto* server = superchain::bridge::get();
-				auto* chain = server->get_network_params(asset);
-				auto cancel = [this, executor, dispatcher, runner_wallet](remote_exception&& error) -> expects_rt<void>
-				{
-					auto* transaction = memory::init<broadcast>();
-					transaction->asset = asset;
-					transaction->set_proof(executor->receipt.transaction_hash, layer_exception(std::move(remote_exception(error).message())));
-					dispatcher->emit_transaction(runner_wallet, transaction);
-					return expects_rt<void>(std::move(error));
-				};
-
-				auto transfer = superchain::value_transfer();
-				auto new_manager = get_new_manager(executor->receipt);
-				if (!new_manager.empty())
-				{
-					if (new_manager.empty() || new_manager == manager)
-						coreturn cancel(remote_exception(remote_exception("invalid manager to migrate to")));
-
-					auto account = find_receiving_account(executor, asset, manager, new_manager);
-					if (!account)
-						coreturn cancel(remote_exception(std::move(account.error().message())));
-
-					transfer = superchain::value_transfer(asset, account->addresses.begin()->second, get_token_value(executor, executor->receipt));
-				}
-				else
-					transfer = superchain::value_transfer(asset, to_address, decimal(to_value));
-
-				auto cache = dispatcher->pull_cache(executor);
-				auto state = ledger::dispatcher_context::signature_state();
-				if (chain->transaction_expires || !state.load(cache))
-				{
-					auto message = coawait(resolver::prepare_transaction(algorithm::asset::base_id_of(asset), superchain::wallet_link::from_owner(manager), transfer, get_fee_value(executor)));
-					if (!message)
-						coreturn message.error().is_retry() || message.error().is_shutdown() ? expects_rt<void>(std::move(message.error())) : cancel(std::move(message.error()));
-					else if (message->inputs.size() > std::numeric_limits<uint8_t>::max())
-						coreturn cancel(remote_exception("too many prepared inputs"));
-
-					state.message = memory::init<superchain::prepared_transaction>(std::move(*message));
-				}
-
-				auto finalization = expects_lr<superchain::finalized_transaction>(layer_exception());
-				auto result = expects_rt<void>(remote_exception::shutdown());
-				auto* input = state.message->next_input_for_aggregation();
-				while (input != nullptr)
-				{
-					auto witness = executor->get_witness_account_tagged(asset, input->utxo.link.address, 0);
-					if (!witness)
-						coreturn cancel(remote_exception(std::move(witness.error().message())));
-
-					auto account = executor->get_bridge_account(asset, witness->manager, witness->owner);
-					if (!account)
-						coreturn cancel(remote_exception(std::move(account.error().message())));
-
-					auto session = coawait(dispatcher->aggregate_validators(account->group));
-					if (!session)
-						coreturn session.error().is_retry() || session.error().is_shutdown() ? expects_rt<void>(std::move(session.error())) : cancel(std::move(session.error()));
-
-					auto chosen = account->group.begin();
-					auto unavailable = btree_set<algorithm::pubkeyhash_t>();
-					std::advance(chosen, (size_t)(algorithm::hashing::hash256i(input->message.data(), input->message.size()) % uint256_t(account->group.size())));
-					if (!state.compositor)
-					{
-						auto compositor = algorithm::composition::make_signature_compositor(input->alg, input->public_key, input->message.data(), input->message.size(), (uint16_t)account->group.size());
-						if (!compositor)
-							coreturn cancel(remote_exception(std::move(compositor.error().message())));
-
-						state.compositor = std::move(*compositor);
-						state.alg = input->alg;
-					}
-
-					bool reset = false;
-					while (true)
-					{
-						auto phase = state.compositor->next_phase();
-						if (!reset && (phase == algorithm::composition::phase::any_input_after_reset || phase == algorithm::composition::phase::chosen_input_after_reset))
-						{
-							state.participants = account->group;
-							reset = true;
-						}
-
-						bool uniform_input = phase == algorithm::composition::phase::any_input_after_reset || phase == algorithm::composition::phase::any_input;
-						bool chosen_input = phase == algorithm::composition::phase::chosen_input_after_reset || phase == algorithm::composition::phase::chosen_input;
-						auto it = (uniform_input ? state.participants.begin() : (chosen_input ? state.participants.find(*chosen) : state.participants.end()));
-						it = (!chosen_input && state.participants.size() > 1 && it != state.participants.end() && it->equals(*chosen) ? ++it : it);
-						if (it == state.participants.end())
-							break;
-
-						auto subresult = coawait(dispatcher->aggregate_signature(executor, state, *it));
-						if (!subresult && (subresult.error().is_retry() || subresult.error().is_shutdown()))
-						{
-							unavailable.insert(*it);
-							if (chosen_input)
-								goto postpone;
-						}
-						else if (!subresult)
-							coreturn cancel(std::move(subresult.error()));
-						else
-							reset = false;
-
-						state.participants.erase(it);
-					}
-
-					if (!unavailable.empty())
-					{
-						state.participants = std::move(unavailable);
-						goto postpone;
-					}
-
-					auto subfinalization = state.compositor->to_signature(&input->signature);
-					if (!subfinalization)
-						coreturn cancel(remote_exception(std::move(subfinalization.error().message())));
-
-					input = state.message->next_input_for_aggregation();
-					state.compositor.destroy();
-				}
-
-				finalization = resolver::finalize_transaction(algorithm::asset::base_id_of(asset), std::move(**state.message));
-				if (!finalization)
-					coreturn cancel(remote_exception(std::move(finalization.error().message())));
-
-				result = coawait(resolver::broadcast_transaction(algorithm::asset::base_id_of(asset), executor->receipt.transaction_hash, superchain::finalized_transaction(*finalization), dispatcher, runner_wallet));
-				if (!result && (result.error().is_retry() || result.error().is_shutdown()))
-				{
-				postpone:
-					if (++state.attempt >= protocol::now().user.consensus.coordination_attempts)
-						coreturn remote_exception("failed to coordinate participants after several retries");
-
-					dispatcher->push_cache(executor, state.as_message());
-					coreturn remote_exception::retry_later();
-				}
-				else if (!result)
-					coreturn cancel(std::move(result.error()));
-
-				auto* transaction = memory::init<broadcast>();
-				transaction->asset = asset;
-				transaction->set_proof(executor->receipt.transaction_hash, std::move(*finalization));
-				dispatcher->emit_transaction(runner_wallet, transaction);
-				coreturn expectation::met;
-			});
-		}
-		bool withdraw::store_body(format::wo_stream* stream) const
-		{
-			VI_ASSERT(stream != nullptr, "stream should be set");
-			stream->write_boolean(only_if_not_in_queue);
-			stream->write_string(manager.optimized_view());
-			stream->write_string(to_address);
-			stream->write_decimal(to_value);
-			return true;
-		}
-		bool withdraw::load_body(format::ro_stream& stream)
-		{
-			if (!stream.read_boolean(stream.read_type(), &only_if_not_in_queue))
-				return false;
-
-			string manager_assembly;
-			if (!stream.read_string(stream.read_type(), &manager_assembly) || !algorithm::encoding::decode_bytes(manager_assembly, manager.blob, sizeof(manager)))
-				return false;
-
-			if (!stream.read_string(stream.read_type(), &to_address))
-				return false;
-
-			if (!stream.read_decimal(stream.read_type(), &to_value))
-				return false;
-
-			return true;
-		}
-		bool withdraw::recover_many(const ledger::executor_context*, const ledger::transaction_receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const
-		{
-			auto new_manager = get_new_manager(receipt);
-			parties.insert(algorithm::pubkeyhash_t(manager));
-			if (!new_manager.empty())
-				parties.insert(algorithm::pubkeyhash_t(new_manager));
-			return true;
-		}
-		void withdraw::set_to(const std::string_view& address, const decimal& value)
-		{
-			to_address = address;
-			to_value = value;
-		}
-		void withdraw::set_manager(const algorithm::pubkeyhash_t& new_manager)
-		{
-			manager = new_manager;
-		}
-		bool withdraw::is_dispatchable() const
-		{
-			return true;
-		}
-		algorithm::pubkeyhash_t withdraw::get_new_manager(const ledger::transaction_receipt& receipt) const
-		{
-			algorithm::pubkeyhash_t result;
-			auto* event = receipt.find_event<withdraw>();
-			if (event != nullptr)
-			{
-				if (!event->empty() && event->front().as_string().size() == sizeof(algorithm::pubkeyhash_t))
-					result = algorithm::pubkeyhash_t(event->front().as_blob());
-			}
-			if (result == manager)
-				result = algorithm::pubkeyhash_t();
-			return result;
-		}
-		decimal withdraw::get_token_value(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt) const
-		{
-			decimal value = 0.0;
-			if (to_address.empty() && receipt.from == manager)
-			{
-				auto bridge = executor->get_bridge_balance(asset, manager);
-				if (bridge)
-				{
-					value += bridge->supply;
-					if (algorithm::asset::is_aux(asset, true))
-					{
-						auto fee_value = get_fee_value(executor);
-						if (fee_value <= value)
-							value -= fee_value;
-					}
-				}
-			}
-			else
-				value = to_value;
-			return value;
-		}
-		decimal withdraw::get_fee_value(const ledger::executor_context* executor) const
-		{
-			auto reward = executor->get_verified_validator_attestation(algorithm::asset::base_id_of(asset), manager);
-			return reward ? reward->outgoing_fee : decimal::zero();
-		}
-		format::tree withdraw::as_tree() const
-		{
-			format::tree data = ledger::transaction_message::as_tree();
-			data.set("manager", algorithm::signing::serialize_address(manager));
-			if (!to_address.empty() && !to_value.is_nan())
-			{
-				data.set("to_address", format::variable(to_address));
-				data.set("to_value", format::variable(to_value));
-			}
-			data.set("only_if_not_in_queue", format::variable(only_if_not_in_queue));
-			return data;
-		}
-		uint32_t withdraw::as_type() const
-		{
-			return as_instance_type();
-		}
-		std::string_view withdraw::as_typename() const
-		{
-			return as_instance_typename();
-		}
-		uint32_t withdraw::as_instance_type()
-		{
-			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
-			return hash;
-		}
-		std::string_view withdraw::as_instance_typename()
-		{
-			return "withdraw";
-		}
-		expects_lr<states::witness_account> withdraw::find_receiving_account(const ledger::executor_context* executor, const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& from_manager, const algorithm::pubkeyhash_t& to_manager)
-		{
-			auto base_asset = algorithm::asset::base_id_of(asset);
-			size_t offset = 0, count = 8;
-			while (true)
-			{
-				auto candidates = executor->get_witness_accounts_by_purpose(to_manager, states::witness_account::account_type::bridge, offset, count);
-				if (!candidates)
-					return candidates.error();
-
-				auto candidate = std::find_if(candidates->begin(), candidates->end(), [&](const states::witness_account& v) { return v.asset == base_asset && v.manager == to_manager; });
-				if (candidate != candidates->end())
-					return *candidate;
-
-				offset += candidates->size();
-				if (candidates->size() < count)
-					break;
-			}
-
-			offset = 0;
-			while (true)
-			{
-				auto candidates = executor->get_witness_accounts_by_purpose(from_manager, states::witness_account::account_type::bridge, offset, count);
-				if (!candidates)
-					return candidates.error();
-
-				auto candidate = std::find_if(candidates->begin(), candidates->end(), [&](const states::witness_account& v) { return v.asset == base_asset && v.manager == to_manager; });
-				if (candidate != candidates->end())
-					return *candidate;
-
-				offset += candidates->size();
-				if (candidates->size() < count)
-					break;
-			}
-
-			return layer_exception("receiving bridge account (to) not found");
-		}
-
-		expects_lr<void> broadcast::validate(uint64_t block_number) const
-		{
-			if (!withdraw_hash)
-				return layer_exception("withdraw hash not valid");
-
-			return ledger::commitment_message::validate(block_number);
-		}
-		expects_lr<void> broadcast::execute(ledger::executor_context* executor) const
-		{
-			auto validation = ledger::commitment_message::execute(executor);
-			if (!validation)
-				return validation.error();
-
-			auto parent = executor->get_block_transaction<withdraw>(withdraw_hash);
-			if (!parent)
-				return layer_exception("parent transaction not found");
-
-			auto* parent_transaction = (withdraw*)*parent->transaction;
-			if (parent_transaction->manager != executor->receipt.from)
-				return layer_exception("parent transaction not valid");
-
-			auto event = executor->apply_witness_event(withdraw_hash, executor->receipt.transaction_hash);
-			if (!event)
-				return event.error();
-
-			auto finalization = executor->apply_validator_attestation_queue(parent_transaction->asset, parent_transaction->manager, 0);
-			if (!finalization)
-				return finalization.error();
-
-			auto confirmation = proof ? validate_finalized_proof(executor, parent_transaction, parent->receipt, *proof) : expects_lr<void>(expectation::met);
-			if (!confirmation)
-				return confirmation.error();
-
-			bool pays_fee = parent_transaction->get_new_manager(parent->receipt).empty();
-			auto fee_asset = algorithm::asset::base_id_of(parent_transaction->asset);
-			auto fee_value = parent_transaction->get_fee_value(executor);
-			if (!proof)
-			{
-				if (!pays_fee)
-					return expectation::met;
-
-				if (fee_asset != parent_transaction->asset)
-				{
-					auto fee_transfer = executor->apply_transfer(fee_asset, parent->receipt.from, decimal::zero(), -fee_value);
-					if (!fee_transfer)
-						return fee_transfer.error();
-				}
-
-				auto token_value = parent_transaction->get_token_value(executor, parent->receipt) + (fee_asset == parent_transaction->asset ? fee_value : decimal::zero());
-				auto token_transfer = executor->apply_transfer(parent_transaction->asset, parent->receipt.from, decimal::zero(), -token_value);
-				if (!token_transfer)
-					return token_transfer.error();
-			}
-			else if (pays_fee)
-			{
-				auto fee_transfer = executor->apply_transfer(fee_asset, parent->receipt.from, -fee_value, -fee_value);
-				if (!fee_transfer)
-					return fee_transfer.error();
-			}
-
-			return expectation::met;
-		}
-		expects_promise_rt<void> broadcast::dispatch(const ledger::executor_context* executor, ledger::dispatcher_context*) const
-		{
-			auto parent = proof ? executor->get_block_transaction<withdraw>(withdraw_hash) : expects_lr<ledger::block_transaction>(layer_exception("not applicable"));
-			if (!parent)
-				return expects_promise_rt<void>(expectation::met);
-
-			auto* parent_transaction = (withdraw*)*parent->transaction;
-			auto status = superchain::bridge::get()->update_utxo_tree(algorithm::asset::base_id_of(parent_transaction->asset), proof->as_computed());
-			return status ? expects_promise_rt<void>(expectation::met) : expects_promise_rt<void>(remote_exception(std::move(status.error().message())));
-		}
-		bool broadcast::store_body(format::wo_stream* stream) const
-		{
-			VI_ASSERT(stream != nullptr, "stream should be set");
-			stream->write_integer(withdraw_hash);
-			stream->write_boolean(!!proof);
-			if (proof)
-				proof->store_payload(stream);
-			else
-				stream->write_string(proof.what());
-			return true;
-		}
-		bool broadcast::load_body(format::ro_stream& stream)
-		{
-			if (!stream.read_integer(stream.read_type(), &withdraw_hash))
-				return false;
-
-			bool has_proof;
-			if (!stream.read_boolean(stream.read_type(), &has_proof))
-				return false;
-
-			if (has_proof)
-			{
-				proof = expects_lr<superchain::finalized_transaction>(superchain::finalized_transaction());
-				if (!proof->load_payload(stream))
-					return false;
-			}
-			else
-			{
-				string error_message;
-				if (!stream.read_string(stream.read_type(), &error_message))
-					return false;
-
-				proof = layer_exception(std::move(error_message));
-			}
-
-			return true;
-		}
-		bool broadcast::is_dispatchable() const
-		{
-			return true;
-		}
-		bool broadcast::recover_many(const ledger::executor_context* executor, const ledger::transaction_receipt&, btree_set<algorithm::pubkeyhash_t>& parties) const
-		{
-			auto parent = executor->get_block_transaction_instance(withdraw_hash);
-			if (!parent)
-				return false;
-
-			parties.insert(algorithm::pubkeyhash_t(parent->receipt.from));
-			return true;
-		}
-		void broadcast::set_proof(const uint256_t& new_withdraw_hash, expects_lr<superchain::finalized_transaction>&& new_proof)
-		{
-			withdraw_hash = new_withdraw_hash;
-			proof = std::move(new_proof);
-		}
-		format::tree broadcast::as_tree() const
-		{
-			format::tree data = ledger::commitment_message::as_tree();
-			data.set("withdraw_hash", format::variable(algorithm::encoding::encode_0xhex256(withdraw_hash)));
-			if (proof)
-			{
-				data.set("prepared", proof->prepared.as_tree());
-				data.set("calldata", format::variable(proof->calldata));
-				data.set("hashdata", format::variable(proof->hashdata));
-				data.set("locktime", algorithm::encoding::serialize_uint256(proof->locktime));
-			}
-			else
-				data.set("error", format::variable(proof.what()));
-			return data;
-		}
-		uint32_t broadcast::as_type() const
-		{
-			return as_instance_type();
-		}
-		std::string_view broadcast::as_typename() const
-		{
-			return as_instance_typename();
-		}
-		uint32_t broadcast::as_instance_type()
-		{
-			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
-			return hash;
-		}
-		std::string_view broadcast::as_instance_typename()
-		{
-			return "broadcast";
-		}
-		expects_lr<void> broadcast::validate_possible_proof(const ledger::executor_context* executor, const withdraw* transaction, const ledger::transaction_receipt& receipt, const superchain::prepared_transaction& prepared)
-		{
-			if (prepared.as_status() == superchain::prepared_transaction::status::invalid)
-				return layer_exception("invalid prepared transaction");
-
-			auto server = superchain::bridge::get();
-			auto base_asset = algorithm::asset::base_id_of(transaction->asset);
-			auto required_output_witness = btree_map<string, states::witness_account>();
-			auto required_output_value = btree_map<algorithm::asset_id, decimal>();
-			auto new_manager = transaction->get_new_manager(receipt);
-			if (new_manager.empty())
-			{
-				auto normalized_address = transaction->to_address;
-				auto status = server->normalize_address(transaction->asset, &normalized_address);
-				if (!status)
-					return status.error();
-
-				if (required_output_witness.find(normalized_address) == required_output_witness.end())
-				{
-					auto witness = executor->get_witness_account_tagged(base_asset, normalized_address, 0);
-					if (!witness)
-						return layer_exception("transaction requires paying to unknown address");
-
-					required_output_witness.insert(std::make_pair(std::move(normalized_address), std::move(*witness)));
-				}
-
-				auto& value = required_output_value[transaction->asset];
-				value = value.is_nan() ? transaction->to_value : (value + transaction->to_value);
-			}
-			else
-			{
-				if (!transaction->to_address.empty() || !transaction->to_value.is_nan())
-					return layer_exception("migration/withdrawal confusion");
-
-				auto witness = withdraw::find_receiving_account(executor, transaction->asset, transaction->manager, new_manager);
-				if (!witness)
-					return layer_exception("prepared transaction not possible");
-
-				auto account = executor->get_bridge_account(base_asset, witness->manager, witness->owner);
-				if (!account)
-					return layer_exception("transaction output refers to a non-bridge account");
-
-				required_output_value[transaction->asset] = decimal::nan();
-				for (auto& [type, normalized_address] : witness->addresses)
-				{
-					auto status = server->normalize_address(base_asset, &normalized_address);
-					if (!status)
-						return status.error();
-
-					required_output_witness.insert(std::make_pair(std::move(normalized_address), *witness));
-				}
-			}
-
-			auto inout_witness = btree_map<string, states::witness_account>();
-			auto input_value = btree_map<algorithm::asset_id, decimal>();
-			auto output_value = btree_map<algorithm::asset_id, decimal>();
-			auto change_value = btree_map<algorithm::asset_id, decimal>();
-			for (auto& input : prepared.inputs)
-			{
-				auto normalized_address = input.utxo.link.address;
-				auto status = server->normalize_address(base_asset, &normalized_address);
-				if (!status)
-					return status.error();
-
-				auto it = inout_witness.find(normalized_address);
-				if (it == inout_witness.end())
-				{
-					auto witness = executor->get_witness_account_tagged(base_asset, normalized_address, 0);
-					if (!witness)
-						return layer_exception("witness transaction input spends from unknown address");
-
-					auto account = executor->get_bridge_account(base_asset, witness->manager, witness->owner);
-					if (!account)
-						return layer_exception("witness transaction input refers to a non-bridge account");
-
-					inout_witness.insert(std::make_pair(normalized_address, std::move(*witness)));
-					it = inout_witness.find(normalized_address);
-				}
-
-				if (!it->second.is_bridge_account() || !it->second.manager.equals(transaction->manager))
-					return layer_exception("witness transaction input spends from unrelated address");
-
-				auto& value = input_value[input.utxo.get_asset(base_asset)];
-				value = value.is_nan() ? input.utxo.value : (value + input.utxo.value);
-				for (auto& [token_hash, token] : input.utxo.tokens)
-				{
-					auto& token_value = input_value[token.get_asset(base_asset)];
-					token_value = token_value.is_nan() ? token.value : (token_value + token.value);
-				}
-			}
-			for (auto& output : prepared.outputs)
-			{
-				auto normalized_address = output.link.address;
-				auto status = server->normalize_address(base_asset, &normalized_address);
-				if (!status)
-					return status.error();
-
-				auto it = inout_witness.find(normalized_address);
-				if (it == inout_witness.end())
-				{
-					auto witness = executor->get_witness_account_tagged(base_asset, normalized_address, 0);
-					if (!witness)
-						return layer_exception("witness transaction output pays to unknown address");
-
-					inout_witness.insert(std::make_pair(normalized_address, std::move(*witness)));
-					it = inout_witness.find(normalized_address);
-				}
-
-				auto change_output = required_output_witness.find(normalized_address);
-				if (change_output == required_output_witness.end())
-				{
-					if (!it->second.is_bridge_account())
-						return layer_exception("witness transaction output receives change into unrelated address");
-
-					auto account = executor->get_bridge_account(base_asset, it->second.manager, it->second.owner);
-					if (!account)
-						return layer_exception("witness transaction output refers to a non-bridge account as change");
-				}
-
-				auto output_asset = output.get_asset(base_asset);
-				auto& value = change_output == required_output_witness.end() ? change_value[output_asset] : output_value[output_asset];
-				value = value.is_nan() ? output.value : (value + output.value);
-				for (auto& [token_hash, token] : output.tokens)
-				{
-					auto token_asset = token.get_asset(base_asset);
-					auto& token_value = change_output == required_output_witness.end() ? change_value[token_asset] : output_value[token_asset];
-					token_value = token_value.is_nan() ? token.value : (token_value + token.value);
-				}
-			}
-
-			if (output_value.size() < required_output_value.size())
-				return layer_exception("witness transaction doesn't have required amount of outputs");
-
-			auto max_fee_value = transaction->get_fee_value(executor);
-			for (auto& [input_token_asset, input_token_value_ref] : input_value)
-			{
-				decimal input_token_value = input_token_value_ref.is_nan() ? decimal::zero() : input_token_value_ref;
-				decimal output_token_value = decimal::zero();
-				decimal change_token_value = decimal::zero();
-				auto it = output_value.find(input_token_asset);
-				if (it != output_value.end())
-					output_token_value = it->second.is_nan() ? decimal::zero() : it->second;
-				it = change_value.find(input_token_asset);
-				if (it != change_value.end())
-					change_token_value = it->second.is_nan() ? decimal::zero() : it->second;
-
-				auto delta_token_value = input_token_value - (output_token_value + change_token_value);
-				if (delta_token_value.is_negative())
-					return layer_exception("witness transaction output pays more that possible");
-				else if (input_token_asset == base_asset && delta_token_value > max_fee_value)
-					return layer_exception("witness transaction fee overflow (max: " + max_fee_value.to_string() + ")");
-			}
-
-			for (auto& [output_asset, actual_output_value] : output_value)
-			{
-				auto change_ref = change_value.find(output_asset);
-				auto max_change_value = change_ref == change_value.end() || change_ref->second.is_nan() ? decimal::zero() : change_ref->second;
-				auto it = required_output_value.find(output_asset);
-				if (it != required_output_value.end())
-				{
-					if (it->second.is_nan())
-						continue;
-					else if (output_asset != base_asset && actual_output_value != it->second)
-						return layer_exception("witness transaction output pays unexpected token value");
-					else if (output_asset == base_asset && ((actual_output_value < it->second - max_fee_value) || (actual_output_value > it->second + max_fee_value)))
-						return layer_exception("witness transaction output pays unexpected native value");
-				}
-				else if (output_asset == base_asset && actual_output_value > std::max(max_change_value, max_fee_value))
-					return layer_exception("witness transaction output pays unexpected native value");
-				else if (output_asset != base_asset && actual_output_value != max_change_value)
-					return layer_exception("witness transaction output pays unexpected token value");
-			}
-
-			return expectation::met;
-		}
-		expects_lr<void> broadcast::validate_finalized_proof(const ledger::executor_context* executor, const withdraw* transaction, const ledger::transaction_receipt& receipt, const superchain::finalized_transaction& finalized)
-		{
-			auto validation = validate_possible_proof(executor, transaction, receipt, finalized.prepared);
-			if (!validation)
-				return validation;
-
-			if (finalized.calldata.empty())
-				return layer_exception("invalid finalized calldata");
-			else if (finalized.hashdata.empty())
-				return layer_exception("invalid finalized hashdata");
-
-			auto finalization = resolver::finalize_transaction(transaction->asset, superchain::prepared_transaction(finalized.prepared));
-			if (!finalization)
-				return finalization.error();
-
-			return expectation::met;
-		}
-
-		expects_lr<void> anticast::validate(uint64_t block_number) const
-		{
-			if (!broadcast_hash)
-				return layer_exception("broadcast hash not valid");
-
-			return ledger::transaction_message::validate(block_number);
-		}
-		expects_lr<void> anticast::execute(ledger::executor_context* executor) const
-		{
-			auto validation = transaction_message::execute(executor);
-			if (!validation)
-				return validation.error();
-
-			auto parent = executor->get_block_transaction<broadcast>(broadcast_hash, true);
-			if (!parent)
-				return layer_exception("parent transaction not found");
-
-			auto* parent_transaction = (broadcast*)*parent->transaction;
-			if (!parent_transaction->proof)
-				return layer_exception("parent transaction not valid");
-
-			auto origin = executor->get_block_transaction<withdraw>(parent_transaction->withdraw_hash, true);
-			if (!origin)
-				return layer_exception("origin transaction not found");
-
-			if (executor->receipt.from != origin->receipt.from)
-				return layer_exception("origin transaction not valid");
-
-			auto* origin_transaction = (withdraw*)*origin->transaction;
-			if (executor->get_witness_transaction(origin_transaction->asset, parent_transaction->proof->hashdata))
-				return layer_exception("broadcast is considered final either by attestation or older protest");
-
-			auto time_lock = protocol::now().policy.attestation.withdrawal_time / protocol::now().policy.pow.time;
-			auto time_delta = parent->receipt.block_number < executor->receipt.block_number ? executor->receipt.block_number - parent->receipt.block_number : 0;
-			if (time_delta <= time_lock)
-				return layer_exception("broadcast time lock active - retry after block number " + to_string(parent->receipt.block_number + time_lock));
-
-			auto base_asset = algorithm::asset::base_id_of(origin_transaction->asset);
-			auto finalization = executor->apply_witness_transaction(base_asset, parent_transaction->proof->hashdata);
-			if (!finalization)
-				return finalization.error();
-
-			auto token_value = origin_transaction->get_token_value(executor, origin->receipt);
-			auto token_transfer = executor->apply_transfer(origin_transaction->asset, origin->receipt.from, decimal::zero(), -token_value);
-			if (!token_transfer)
-				return token_transfer.error();
-
-			auto attestation = executor->get_verified_validator_attestation(base_asset, origin_transaction->manager);
-			if (!attestation)
-				return expectation::met;
-
-			auto prev_attestation = executor->get_validator_attestation_reward(base_asset, origin_transaction->manager);
-			if (!prev_attestation)
-				return expectation::met;
-
-			auto next_attestation = executor->apply_validator_attestation_reward(base_asset, origin_transaction->manager, -attestation->outgoing_fee);
-			if (!next_attestation)
-				return next_attestation.error();
-
-			auto compensation = std::max(decimal::zero(), prev_attestation->reward - next_attestation->reward);
-			if (!compensation.is_positive())
-				return expectation::met;
-
-			token_transfer = executor->apply_transfer(base_asset, origin->receipt.from, compensation, decimal::zero());
-			if (!token_transfer)
-				return token_transfer.error();
-
-			return expectation::met;
-		}
-		expects_promise_rt<void> anticast::dispatch(const ledger::executor_context* executor, ledger::dispatcher_context*) const
-		{
-			auto parent = executor->get_block_transaction<broadcast>(broadcast_hash, true);
-			auto origin = parent ? executor->get_block_transaction<withdraw>(((broadcast*)*parent->transaction)->withdraw_hash, true) : expects_lr<ledger::block_transaction>(layer_exception("not applicable"));
-			if (!origin)
-				return expects_promise_rt<void>(expectation::met);
-
-			auto* origin_transaction = (withdraw*)*origin->transaction;
-			auto* parent_transaction = (broadcast*)*parent->transaction;
-			auto status = superchain::bridge::get()->revive_utxo_tree(algorithm::asset::base_id_of(origin_transaction->asset), parent_transaction->proof->as_computed());
-			return status ? expects_promise_rt<void>(expectation::met) : expects_promise_rt<void>(remote_exception(std::move(status.error().message())));
-		}
-		bool anticast::store_body(format::wo_stream* stream) const
-		{
-			VI_ASSERT(stream != nullptr, "stream should be set");
-			stream->write_integer(broadcast_hash);
-			return true;
-		}
-		bool anticast::load_body(format::ro_stream& stream)
-		{
-			if (!stream.read_integer(stream.read_type(), &broadcast_hash))
-				return false;
-
-			return true;
-		}
-		bool anticast::is_dispatchable() const
-		{
-			return true;
-		}
-		bool anticast::recover_many(const ledger::executor_context* executor, const ledger::transaction_receipt&, btree_set<algorithm::pubkeyhash_t>& parties) const
-		{
-			auto parent = executor->get_block_transaction_instance(broadcast_hash);
-			if (!parent)
-				return false;
-
-			parties.insert(algorithm::pubkeyhash_t(parent->receipt.from));
-			return true;
-		}
-		void anticast::set_protest(const uint256_t& new_broadcast_hash)
-		{
-			broadcast_hash = new_broadcast_hash;
-		}
-		format::tree anticast::as_tree() const
-		{
-			format::tree data = ledger::transaction_message::as_tree();
-			data.set("broadcast_hash", format::variable(algorithm::encoding::encode_0xhex256(broadcast_hash)));
-			return data;
-		}
-		uint32_t anticast::as_type() const
-		{
-			return as_instance_type();
-		}
-		std::string_view anticast::as_typename() const
-		{
-			return as_instance_typename();
-		}
-		uint32_t anticast::as_instance_type()
-		{
-			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
-			return hash;
-		}
-		std::string_view anticast::as_instance_typename()
-		{
-			return "anticast";
-		}
-
 		ledger::transaction_message* resolver::from_stream(format::ro_stream& stream)
 		{
 			uint32_t type; size_t seek = stream.seek;
@@ -4034,8 +3772,6 @@ namespace tangent
 				return memory::init<setup>();
 			else if (hash == migrate::as_instance_type())
 				return memory::init<migrate>();
-			else if (hash == attestate::as_instance_type())
-				return memory::init<attestate>();
 			else if (hash == route::as_instance_type())
 				return memory::init<route>();
 			else if (hash == bind::as_instance_type())
@@ -4046,6 +3782,8 @@ namespace tangent
 				return memory::init<broadcast>();
 			else if (hash == anticast::as_instance_type())
 				return memory::init<anticast>();
+			else if (hash == attestate::as_instance_type())
+				return memory::init<attestate>();
 			return nullptr;
 		}
 		ledger::transaction_message* resolver::from_copy(const ledger::transaction_message* base)
@@ -4063,8 +3801,6 @@ namespace tangent
 				return memory::init<setup>(*(const setup*)base);
 			else if (hash == migrate::as_instance_type())
 				return memory::init<migrate>(*(const migrate*)base);
-			else if (hash == attestate::as_instance_type())
-				return memory::init<attestate>(*(const attestate*)base);
 			else if (hash == route::as_instance_type())
 				return memory::init<route>(*(const route*)base);
 			else if (hash == bind::as_instance_type())
@@ -4075,6 +3811,8 @@ namespace tangent
 				return memory::init<broadcast>(*(const broadcast*)base);
 			else if (hash == anticast::as_instance_type())
 				return memory::init<anticast>(*(const anticast*)base);
+			else if (hash == attestate::as_instance_type())
+				return memory::init<attestate>(*(const attestate*)base);
 			return nullptr;
 		}
 		expects_promise_rt<superchain::prepared_transaction> resolver::prepare_transaction(const algorithm::asset_id& asset, const superchain::wallet_link& from_link, const superchain::value_transfer& to, const decimal& max_fee)

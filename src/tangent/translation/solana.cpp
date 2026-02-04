@@ -64,7 +64,7 @@ namespace tangent
 				netdata.composition = algorithm::composition::type::ed25519;
 				netdata.routing = routing_policy::account;
 				netdata.tokenization = token_policy::native;
-				netdata.sync_latency = 30;
+				netdata.sync_latency = 64;
 				netdata.divisibility = algorithm::arithmetic::fixed(1000000000);
 				netdata.transaction_expires = true;
 			}

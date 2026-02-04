@@ -26,8 +26,8 @@ namespace tangent
 		{
 			switch (term)
 			{
-				case superchain::wallet_link::search_term::owner:
-					return "owner";
+				case superchain::wallet_link::search_term::hash:
+					return "hash";
 				case superchain::wallet_link::search_term::public_key:
 					return "typeless_public_key";
 				case superchain::wallet_link::search_term::address:
@@ -40,8 +40,12 @@ namespace tangent
 		{
 			switch (term)
 			{
-				case superchain::wallet_link::search_term::owner:
-					return var::set::binary(link.owner.view());
+				case superchain::wallet_link::search_term::hash:
+				{
+					uint8_t hash_data[32];
+					link.hash.encode(hash_data);
+					return var::set::binary(hash_data, sizeof(hash_data));
+				}
 				case superchain::wallet_link::search_term::public_key:
 					return var::set::binary(to_typeless(link.public_key));
 				case superchain::wallet_link::search_term::address:
@@ -82,16 +86,19 @@ namespace tangent
 			transaction_id_index.write_string(copy.transaction_id);
 			transaction_id_index.write_integer(copy.index);
 
+			uint8_t hash_data[32];
+			copy.link.hash.encode(hash_data);
+
 			schema_list map;
 			map.push_back(var::set::binary(transaction_id_index.data));
 			map.push_back(block_id > 0 ? var::set::integer(block_id) : var::set::null());
 			map.push_back(var::set::boolean(false));
-			map.push_back(var::set::binary(copy.link.owner.view()));
+			map.push_back(var::set::binary(hash_data, sizeof(hash_data)));
 			map.push_back(var::set::string(copy.link.public_key));
 			map.push_back(var::set::string(copy.link.address));
 			map.push_back(var::set::binary(message.data));
 			
-			auto cursor = get_storage().emplace_query(__func__, "INSERT OR REPLACE INTO coins (transaction_id_index, receiver_block_id, spent, owner, public_key, address, message) VALUES (?, ?, ?, ?, ?, ?, ?)", &map);
+			auto cursor = get_storage().emplace_query(__func__, "INSERT OR REPLACE INTO coins (transaction_id_index, receiver_block_id, spent, hash, public_key, address, message) VALUES (?, ?, ?, ?, ?, ?, ?)", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -356,14 +363,17 @@ namespace tangent
 		}
 		expects_lr<void> superchainstate::set_link(const superchain::wallet_link& value)
 		{
+			uint8_t hash_data[32];
+			value.hash.encode(hash_data);
+
 			schema_list map;
-			map.push_back(var::set::binary(value.owner.view()));
+			map.push_back(var::set::binary(hash_data, sizeof(hash_data)));
 			map.push_back(var::set::string(value.public_key));
 			map.push_back(var::set::string(value.address));
 			map.push_back(var::set::binary(to_typeless(value.public_key)));
 			map.push_back(var::set::binary(to_typeless(value.address)));
 
-			auto cursor = get_storage().emplace_query(__func__, "INSERT OR REPLACE INTO links (owner, public_key, address, typeless_public_key, typeless_address) VALUES (?, ?, ?, ?, ?)", &map);
+			auto cursor = get_storage().emplace_query(__func__, "INSERT OR REPLACE INTO links (hash, public_key, address, typeless_public_key, typeless_address) VALUES (?, ?, ?, ?, ?)", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -392,8 +402,8 @@ namespace tangent
 				return expects_lr<superchain::wallet_link>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 			superchain::wallet_link value;
-			auto owner = (*cursor)["owner"].get().get_blob();
-			value.owner = algorithm::pubkeyhash_t(owner);
+			auto hash = (*cursor)["hash"].get().get_blob();
+			value.hash.decode_compact((uint8_t*)hash.data(), hash.size());
 			value.public_key = (*cursor)["public_key"].get().get_blob();
 			value.address = (*cursor)["address"].get().get_blob();
 			return value;
@@ -426,8 +436,8 @@ namespace tangent
 			{
 				auto row = response[i];
 				superchain::wallet_link value;
-				auto owner = row["owner"].get().get_blob();
-				value.owner = algorithm::pubkeyhash_t(owner);
+				auto hash = row["hash"].get().get_blob();
+				value.hash.decode_compact((uint8_t*)hash.data(), hash.size());
 				value.public_key = row["public_key"].get().get_blob();
 				value.address = row["address"].get().get_blob();
 				values[string(value.address)] = std::move(value);
@@ -464,8 +474,8 @@ namespace tangent
 			{
 				auto row = response[i];
 				superchain::wallet_link value;
-				auto owner = row["owner"].get().get_blob();
-				value.owner = algorithm::pubkeyhash_t(owner);
+				auto hash = row["hash"].get().get_blob();
+				value.hash.decode_compact((uint8_t*)hash.data(), hash.size());
 				value.public_key = row["public_key"].get().get_blob();
 				value.address = row["address"].get().get_blob();
 				values[string(value.address)] = std::move(value);
@@ -473,15 +483,19 @@ namespace tangent
 
 			return values;
 		}
-		expects_lr<hash_map<string, superchain::wallet_link>> superchainstate::get_links_by_owner(const algorithm::pubkeyhash_t& owner, size_t offset, size_t count)
+		expects_lr<hash_map<string, superchain::wallet_link>> superchainstate::get_links_by_hash(const uint256_t& hash, size_t offset, size_t count)
 		{
 			schema_list map;
-			if (!owner.empty())
-				map.push_back(var::set::binary(owner.view()));
+			if (hash > 0)
+			{
+				uint8_t hash_data[32];
+				hash.encode(hash_data);
+				map.push_back(var::set::binary(hash_data, sizeof(hash_data)));
+			}
 			map.push_back(var::set::integer(count));
 			map.push_back(var::set::integer(offset));
 
-			auto cursor = get_storage().emplace_query(__func__, !owner.empty() ? "SELECT * FROM links WHERE owner = ? LIMIT ? OFFSET ?" : "SELECT * FROM links LIMIT ? OFFSET ?", &map);
+			auto cursor = get_storage().emplace_query(__func__, hash > 0 ? "SELECT * FROM links WHERE hash = ? LIMIT ? OFFSET ?" : "SELECT * FROM links LIMIT ? OFFSET ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<hash_map<string, superchain::wallet_link>>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -494,8 +508,8 @@ namespace tangent
 			{
 				auto row = response[i];
 				superchain::wallet_link value;
-				auto owner_hash = row["owner"].get().get_blob();
-				value.owner = algorithm::pubkeyhash_t(owner_hash);
+				auto hash = row["hash"].get().get_blob();
+				value.hash.decode_compact((uint8_t*)hash.data(), hash.size());
 				value.public_key = row["public_key"].get().get_blob();
 				value.address = row["address"].get().get_blob();
 				values[string(value.address)] = std::move(value);
@@ -542,13 +556,13 @@ namespace tangent
 				receiver_block_id BIGINT DEFAULT NULL,
 				spender_block_id BIGINT DEFAULT NULL,
 				spent BOOLEAN NOT NULL,
-				owner BLOB(20) NOT NULL,
+				hash BLOB(32) NOT NULL,
 				public_key TEXT NOT NULL,
 				address TEXT NOT NULL,
 				message BLOB NOT NULL,
   				PRIMARY KEY (transaction_id_index)
 			) WITHOUT ROWID;
-			CREATE INDEX IF NOT EXISTS coins_spent_owner ON coins (spent, owner);
+			CREATE INDEX IF NOT EXISTS coins_spent_hash ON coins (spent, hash);
 			CREATE INDEX IF NOT EXISTS coins_spent_public_key ON coins (spent, public_key);
 			CREATE INDEX IF NOT EXISTS coins_spent_address ON coins (spent, address);
 			CREATE TABLE IF NOT EXISTS transactions
@@ -562,12 +576,12 @@ namespace tangent
 			) WITHOUT ROWID;
 			CREATE TABLE IF NOT EXISTS links
 			(
-				owner BLOB(20) NOT NULL,
+				hash BLOB(32) NOT NULL,
 				public_key TEXT NOT NULL,
 				address TEXT NOT NULL,
 				typeless_public_key BLOB NOT NULL,
 				typeless_address BLOB NOT NULL,
-				PRIMARY KEY (owner, typeless_public_key, typeless_address)
+				PRIMARY KEY (hash, typeless_public_key, typeless_address)
 			) WITHOUT ROWID;
 			CREATE INDEX IF NOT EXISTS links_typeless_public_key ON links (typeless_public_key);
 			CREATE INDEX IF NOT EXISTS links_typeless_address ON links (typeless_address);

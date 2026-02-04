@@ -38,7 +38,7 @@ namespace tangent
 
 		enum class gas_cost
 		{
-			write_tx_byte = 48,
+			write_tx_byte = 64,
 			write_byte = 32,
 			erase_byte = 2,
 			read_byte = 1,
@@ -308,22 +308,19 @@ namespace tangent
 			expects_lr<void> burn_gas();
 			expects_lr<void> burn_gas(const uint256_t& value);
 			expects_lr<void> verify_account_nonce() const;
-			expects_lr<void> verify_account_delegation(const algorithm::pubkeyhash_t& owner) const;
 			expects_lr<void> verify_gas_transfer_balance() const;
 			expects_lr<void> verify_transfer_balance(const algorithm::asset_id& asset, const decimal& value) const;
 			expects_lr<algorithm::wesolowski::distribution> calculate_random(const uint256_t& seed);
-			expects_lr<decimal> calculate_amount_considered_dust(const algorithm::asset_id& asset) const;
 			expects_lr<size_t> calculate_attesters_size(const algorithm::asset_id& asset) const;
 			expects_lr<size_t> calculate_producers_size() const;
 			expects_lr<vector<states::validator_production>> calculate_producers(size_t target_size);
 			expects_lr<vector<states::validator_attestation>> calculate_attesters(const algorithm::asset_id& asset, size_t target_size);
-			expects_lr<states::validator_attestation> calculate_attester_for_migration(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& exclusion);
-			expects_lr<vector<states::validator_participation>> calculate_participants(btree_set<algorithm::pubkeyhash_t>& exclusion, size_t target_size, const decimal& threshold);
+			expects_lr<vector<states::validator_attestation>> calculate_attesters(const algorithm::asset_id& asset, size_t target_size, const decimal& fee_threshold, btree_set<algorithm::pubkeyhash_t>& exclusion);
+			expects_lr<vector<states::validator_participation>> calculate_participants(size_t target_size, btree_set<algorithm::pubkeyhash_t>& exclusion);
 			expects_lr<states::account_nonce> apply_account_nonce(const algorithm::pubkeyhash_t& owner, uint64_t nonce);
 			expects_lr<states::account_program> apply_account_program(const algorithm::pubkeyhash_t& owner, const std::string_view& program_hashcode);
 			expects_lr<states::account_uniform> apply_account_uniform(const algorithm::pubkeyhash_t& owner, const std::string_view& index, const std::string_view& data);
 			expects_lr<states::account_multiform> apply_account_multiform(const algorithm::pubkeyhash_t& owner, const std::string_view& column, const std::string_view& row, const std::string_view& data, const uint256_t& filter);
-			expects_lr<states::account_delegation> apply_account_delegation(const algorithm::pubkeyhash_t& owner, uint32_t delegations);
 			expects_lr<states::account_balance> apply_transfer(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const decimal& supply, const decimal& reserve);
 			expects_lr<states::account_balance> apply_fee_transfer(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const decimal& value);
 			expects_lr<states::account_balance> apply_payment(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& from, const algorithm::pubkeyhash_t& to, const decimal& value);
@@ -331,19 +328,19 @@ namespace tangent
 			expects_lr<states::validator_production_reward> apply_validator_production_reward(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const decimal& reward);
 			expects_lr<states::validator_participation> apply_validator_participation(const algorithm::pubkeyhash_t& owner, staker type, const decimal& stake);
 			expects_lr<states::validator_participation_reward> apply_validator_participation_reward(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const decimal& reward);
-			expects_lr<states::validator_participation_ref> apply_validator_participation_ref(const algorithm::pubkeyhash_t& owner, const states::validator_participation_ref::ref_value& ref, bool active);
-			expects_lr<states::validator_attestation> apply_validator_attestation(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, staker type, const decimal& stake);
+			expects_lr<states::validator_participation_ref> apply_validator_participation_ref(const algorithm::pubkeyhash_t& owner, const states::bridge_ref& ref, bool active);
+			expects_lr<states::validator_attestation> apply_validator_attestation(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, staker type, const decimal& stake, const decimal& min_fee);
 			expects_lr<states::validator_attestation_reward> apply_validator_attestation_reward(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const decimal& reward);
-			expects_lr<states::validator_attestation> apply_validator_attestation_policy(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, uint8_t security_level, const decimal& participation_threshold, const decimal& incoming_fee, const decimal& outgoing_fee, bool accepts_account_requests, bool accepts_withdrawal_requests);
-			expects_lr<states::validator_attestation> apply_validator_attestation_queue(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const uint256_t& transaction_hash);
-			expects_lr<states::validator_attestation> apply_validator_attestation_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, uint64_t new_accounts);
-			expects_lr<states::bridge_balance> apply_bridge_balance(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const decimal& balance);
-			expects_lr<states::bridge_account> apply_bridge_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const algorithm::pubkeyhash_t& manager, const algorithm::composition::cpubkey_t& public_key, btree_set<algorithm::pubkeyhash_t>&& group);
+			expects_lr<states::bridge_instance> apply_bridge_instance(const algorithm::asset_id& asset, const uint256_t& bridge_hash, uint8_t security_level, const decimal& fee);
+			expects_lr<states::bridge_instance> apply_bridge_instance_log(const algorithm::asset_id& asset, const uint256_t& bridge_hash, const uint256_t& transaction_hash);
+			expects_lr<states::bridge_instance> apply_bridge_instance_account(const algorithm::asset_id& asset, const uint256_t& bridge_hash, const algorithm::pubkeyhash_t& owner);
+			expects_lr<states::bridge_balance> apply_bridge_balance(const algorithm::asset_id& asset, const uint256_t& bridge_hash, const decimal& balance);
+			expects_lr<states::bridge_account> apply_bridge_account(const algorithm::pubkeyhash_t& owner, const algorithm::asset_id& asset, const uint256_t& bridge_hash, const algorithm::composition::cpubkey_t& public_key, btree_set<algorithm::pubkeyhash_t>&& group);
 			expects_lr<states::witness_program> apply_witness_program(const std::string_view& packed_program_code);
 			expects_lr<states::witness_event> apply_witness_event(const uint256_t& parent_transaction_hash, const uint256_t& child_transaction_hash);
-			expects_lr<states::witness_account> apply_witness_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const address_map& addresses);
-			expects_lr<states::witness_account> apply_witness_routing_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const address_map& addresses);
-			expects_lr<states::witness_account> apply_witness_bridge_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const algorithm::pubkeyhash_t& manager, const address_map& addresses, bool active = true);
+			expects_lr<states::witness_account> apply_witness_account(const algorithm::pubkeyhash_t& owner, const algorithm::asset_id& asset, const address_map& addresses);
+			expects_lr<states::witness_account> apply_witness_routing_account(const algorithm::pubkeyhash_t& owner, const algorithm::asset_id& asset, const address_map& addresses);
+			expects_lr<states::witness_account> apply_witness_bridge_account(const algorithm::pubkeyhash_t& owner, const algorithm::asset_id& asset, const uint256_t& bridge_hash, const address_map& addresses, bool active = true);
 			expects_lr<states::witness_transaction> apply_witness_transaction(const algorithm::asset_id& asset, const std::string_view& transaction_id);
 			expects_lr<states::account_nonce> get_account_nonce(const algorithm::pubkeyhash_t& owner) const;
 			expects_lr<states::account_program> get_account_program(const algorithm::pubkeyhash_t& owner) const;
@@ -353,7 +350,6 @@ namespace tangent
 			expects_lr<vector<uptr<states::account_multiform>>> get_account_multiforms_by_column_filter(const algorithm::pubkeyhash_t& owner, const std::string_view& column, const filter_comparator& comparator, const uint256_t& filter_value, filter_order order, size_t offset, size_t count) const;
 			expects_lr<vector<uptr<states::account_multiform>>> get_account_multiforms_by_row(const algorithm::pubkeyhash_t& owner, const std::string_view& row, size_t offset, size_t count) const;
 			expects_lr<vector<uptr<states::account_multiform>>> get_account_multiforms_by_row_filter(const algorithm::pubkeyhash_t& owner, const std::string_view& row, const filter_comparator& comparator, const uint256_t& filter_value, filter_order order, size_t offset, size_t count) const;
-			expects_lr<states::account_delegation> get_account_delegation(const algorithm::pubkeyhash_t& owner) const;
 			expects_lr<states::account_balance> get_account_balance(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner) const;
 			expects_lr<states::validator_production> get_validator_production(const algorithm::pubkeyhash_t& owner) const;
 			expects_lr<states::validator_production_reward> get_validator_production_reward(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner) const;
@@ -367,10 +363,12 @@ namespace tangent
 			expects_lr<vector<states::validator_attestation>> get_validator_attestations(const algorithm::pubkeyhash_t& owner, size_t offset, size_t count) const;
 			expects_lr<states::validator_attestation_reward> get_validator_attestation_reward(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner) const;
 			expects_lr<vector<states::validator_attestation_reward>> get_validator_attestation_rewards(const algorithm::pubkeyhash_t& owner, size_t offset, size_t count) const;
-			expects_lr<states::bridge_balance> get_bridge_balance(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner) const;
-			expects_lr<vector<states::bridge_balance>> get_bridge_balances(const algorithm::pubkeyhash_t& owner, size_t offset, size_t count) const;
-			expects_lr<vector<states::bridge_account>> get_bridge_accounts(const algorithm::pubkeyhash_t& manager, size_t offset, size_t count) const;
-			expects_lr<states::bridge_account> get_bridge_account(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner) const;
+			expects_lr<states::bridge_instance> get_bridge_instance(const algorithm::asset_id& asset, const uint256_t& bridge_hash) const;
+			expects_lr<vector<states::bridge_instance>> get_bridge_instances(const algorithm::asset_id& asset, size_t offset, size_t count) const;
+			expects_lr<states::bridge_balance> get_bridge_balance(const algorithm::asset_id& asset, const uint256_t& bridge_hash) const;
+			expects_lr<vector<states::bridge_balance>> get_bridge_balances(const uint256_t& bridge_hash, size_t offset, size_t count) const;
+			expects_lr<vector<states::bridge_account>> get_bridge_accounts(const uint256_t& bridge_hash, size_t offset, size_t count) const;
+			expects_lr<states::bridge_account> get_bridge_account(const algorithm::pubkeyhash_t& owner, const algorithm::asset_id& asset, const uint256_t& bridge_hash) const;
 			expects_lr<states::witness_program> get_witness_program(const std::string_view& program_hashcode) const;
 			expects_lr<states::witness_event> get_witness_event(const uint256_t& parent_transaction_hash) const;
 			expects_lr<vector<states::witness_account>> get_witness_accounts(const algorithm::pubkeyhash_t& owner, size_t offset, size_t count) const;
@@ -421,9 +419,9 @@ namespace tangent
 					algorithm::share_t output;
 				};
 
-				algorithm::asset_id asset;
-				algorithm::pubkeyhash_t manager;
 				algorithm::pubkeyhash_t owner;
+				algorithm::asset_id asset;
+				uint256_t hash;
 				algorithm::storage_type<uint8_t, 64> entropy;
 				btree_map<algorithm::pubkeyhash_t, share_pair> shares;
 
@@ -435,7 +433,7 @@ namespace tangent
 				uint256_t as_ref_hash() const;
 				static uint32_t as_instance_type();
 				static std::string_view as_instance_typename();
-				static uint256_t ref_hash(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner);
+				static uint256_t ref_hash(const algorithm::pubkeyhash_t& owner, const algorithm::asset_id& asset, const uint256_t& hash);
 			};
 
 			struct entropy_distribution_state
@@ -504,8 +502,8 @@ namespace tangent
 			dispatcher_context(dispatcher_context&&) noexcept = default;
 			dispatcher_context& operator=(const dispatcher_context& other) noexcept;
 			dispatcher_context& operator=(dispatcher_context&&) noexcept = default;
-			virtual expects_lr<secret_entropy> apply_secret_entropy(const wallet* runner_wallet, const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner, const algorithm::storage_type<uint8_t, 64>& entropy, btree_map<algorithm::pubkeyhash_t, secret_entropy::share_pair>&& shares);
-			virtual expects_lr<secret_entropy> recover_secret_entropy(const wallet* runner_wallet, const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& manager, const algorithm::pubkeyhash_t& owner);
+			virtual expects_lr<secret_entropy> apply_secret_entropy(const wallet* runner_wallet, const algorithm::pubkeyhash_t& owner, const algorithm::asset_id& asset, const uint256_t& hash, const algorithm::storage_type<uint8_t, 64>& entropy, btree_map<algorithm::pubkeyhash_t, secret_entropy::share_pair>&& shares);
+			virtual expects_lr<secret_entropy> recover_secret_entropy(const wallet* runner_wallet, const algorithm::pubkeyhash_t& owner, const algorithm::asset_id& asset, const uint256_t& hash);
 			virtual expects_promise_rt<void> aggregate_validators(const btree_set<algorithm::pubkeyhash_t>& validators) = 0;
 			virtual expects_promise_rt<void> distribute_entropy_shares(const executor_context* executor, entropy_distribution_state& state, const algorithm::pubkeyhash_t& validator) = 0;
 			virtual expects_promise_rt<void> aggregate_entropy_shares(const executor_context* executor, entropy_aggregation_state& state, const algorithm::pubkeyhash_t& validator) = 0;

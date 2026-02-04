@@ -908,10 +908,10 @@ namespace tangent
 				policy.pow.security = 64;
 				policy.attestation.withdrawal_time = 2;
 				policy.attestation.min_stake_value = decimal::zero();
+				policy.participation.locking_time = 2;
 				policy.participation.min_stake_value = decimal::zero();
 				policy.production.network_congestion_threshold = 2;
 				policy.production.min_stake_value = decimal::zero();
-				policy.delegations_max_per_account = std::numeric_limits<uint32_t>::max();
 				policy.transaction_tps = 5000000;
 				policy.commitment_tps = 50000;
 				break;

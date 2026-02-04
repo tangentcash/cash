@@ -380,6 +380,15 @@ namespace tangent
 		{
 			return false;
 		}
+		uint64_t transition_state::time_lock_blocks(const transition_state* prev, uint64_t milliseconds) const
+		{
+			if (!prev)
+				return 0;
+
+			auto current = prev->block_number < block_number ? prev->block_number - block_number : 0;
+			auto target = milliseconds / protocol::now().policy.pow.time;
+			return target < current ? target - current : 0;
+		}
 
 		uniform_state::uniform_state(uint64_t new_block_number) : transition_state(new_block_number)
 		{

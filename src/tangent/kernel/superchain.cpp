@@ -74,7 +74,7 @@ namespace tangent
 			return user_agents[(size_t)math64u::random() % user_agents_size];
 		}
 
-		wallet_link::wallet_link(const algorithm::pubkeyhash_t& new_owner, const std::string_view& new_public_key, const std::string_view& new_address) : owner(new_owner), public_key(new_public_key), address(new_address)
+		wallet_link::wallet_link(const uint256_t& new_hash, const std::string_view& new_public_key, const std::string_view& new_address) : hash(new_hash), public_key(new_public_key), address(new_address)
 		{
 		}
 		bool wallet_link::store_payload(format::wo_stream* stream) const
@@ -82,7 +82,7 @@ namespace tangent
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_string(public_key);
 			stream->write_string(address);
-			stream->write_string(owner.optimized_view());
+			stream->write_integer(hash);
 			return true;
 		}
 		bool wallet_link::load_payload(format::ro_stream& stream)
@@ -93,8 +93,7 @@ namespace tangent
 			if (!stream.read_string(stream.read_type(), &address))
 				return false;
 
-			string owner_assembly;
-			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_bytes(owner_assembly, owner.blob, sizeof(owner)))
+			if (!stream.read_integer(stream.read_type(), &hash))
 				return false;
 
 			return true;
@@ -102,7 +101,7 @@ namespace tangent
 		format::tree wallet_link::as_tree() const
 		{
 			format::tree data;
-			data.set("owner", algorithm::signing::serialize_address(owner));
+			data.set("hash", algorithm::encoding::serialize_uint256(hash));
 			data.set("public_key", public_key.empty() ? format::variable() : format::variable(public_key));
 			data.set("address", address.empty() ? format::variable() : format::variable(address));
 			return data;
@@ -117,8 +116,8 @@ namespace tangent
 		}
 		wallet_link::search_term wallet_link::as_search_wide() const
 		{
-			if (has_owner())
-				return search_term::owner;
+			if (has_hash())
+				return search_term::hash;
 			else if (has_public_key())
 				return search_term::public_key;
 			else if (has_address())
@@ -131,8 +130,8 @@ namespace tangent
 				return search_term::address;
 			else if (has_public_key())
 				return search_term::public_key;
-			else if (has_owner())
-				return search_term::owner;
+			else if (has_hash())
+				return search_term::hash;
 			return search_term::none;
 		}
 		string wallet_link::as_tag_address(const std::string_view& tag) const
@@ -147,14 +146,14 @@ namespace tangent
 			if (has_public_key())
 				return public_key;
 
-			if (has_owner())
-				return algorithm::signing::encode_address(owner);
+			if (has_hash())
+				return algorithm::encoding::encode_0xhex256(hash);
 
 			return "(confidential)";
 		}
-		bool wallet_link::has_owner() const
+		bool wallet_link::has_hash() const
 		{
-			return !owner.empty();
+			return hash > 0;
 		}
 		bool wallet_link::has_public_key() const
 		{
@@ -166,11 +165,11 @@ namespace tangent
 		}
 		bool wallet_link::has_all() const
 		{
-			return has_owner() && has_public_key() && has_address();
+			return has_hash() && has_public_key() && has_address();
 		}
 		bool wallet_link::has_any() const
 		{
-			return has_owner() || has_public_key() || has_address();
+			return has_hash() || has_public_key() || has_address();
 		}
 		uint32_t wallet_link::as_instance_type()
 		{
@@ -181,17 +180,17 @@ namespace tangent
 		{
 			return "wallet_link";
 		}
-		wallet_link wallet_link::from_owner(const algorithm::pubkeyhash_t& new_owner)
+		wallet_link wallet_link::from_hash(const uint256_t& new_hash)
 		{
-			return wallet_link(new_owner, std::string_view(), std::string_view());
+			return wallet_link(new_hash, std::string_view(), std::string_view());
 		}
 		wallet_link wallet_link::from_public_key(const std::string_view& new_public_key)
 		{
-			return wallet_link(algorithm::pubkeyhash_t(), new_public_key, std::string_view());
+			return wallet_link(0, new_public_key, std::string_view());
 		}
 		wallet_link wallet_link::from_address(const std::string_view& new_address)
 		{
-			return wallet_link(algorithm::pubkeyhash_t(), std::string_view(), new_address);
+			return wallet_link(0, std::string_view(), new_address);
 		}
 
 		value_transfer::value_transfer() : asset(0), value(decimal::nan())
@@ -1210,13 +1209,13 @@ namespace tangent
 			auto result = btree_map<string, wallet_link>(results->begin(), results->end());
 			return expects_lr<btree_map<string, wallet_link>>(std::move(result));
 		}
-		expects_lr<btree_map<string, wallet_link>> translation_unit::find_linked_addresses(const algorithm::pubkeyhash_t& owner, size_t offset, size_t count)
+		expects_lr<btree_map<string, wallet_link>> translation_unit::find_linked_addresses(const uint256_t& hash, size_t offset, size_t count)
 		{
 			auto* implementation = bridge::get()->get_network(native_asset);
 			if (!implementation)
 				return expects_lr<btree_map<string, wallet_link>>(layer_exception("chain not found"));
 
-			auto results = bridge::get()->get_links_by_owner(native_asset, owner, offset, count);
+			auto results = bridge::get()->get_links_by_hash(native_asset, hash, offset, count);
 			if (!results || results->empty())
 				return expects_lr<btree_map<string, wallet_link>>(layer_exception("no addresses found"));
 
@@ -1973,7 +1972,7 @@ namespace tangent
 					"  send from %s (%s)\n"
 					"  send %s %s to %s",
 					blockchain.c_str(),
-					algorithm::signing::encode_address(normalized_from_link->owner).c_str(),
+					algorithm::encoding::encode_0xhex256(normalized_from_link->hash).c_str(),
 					normalized_max_fee.to_string().c_str(),
 					blockchain.c_str(),
 					normalized_from_link->public_key.empty() ? "none" : normalized_from_link->public_key.c_str(),
@@ -2395,9 +2394,9 @@ namespace tangent
 					return expects_lr<wallet_link>(std::move(result->begin()->second));
 			}
 
-			if (link.has_owner())
+			if (link.has_hash())
 			{
-				auto result = get_links_by_owner(asset, link.owner, 0, 1);
+				auto result = get_links_by_hash(asset, link.hash, 0, 1);
 				if (result && !result->empty())
 					return expects_lr<wallet_link>(std::move(result->begin()->second));
 			}
@@ -2449,10 +2448,10 @@ namespace tangent
 			storages::superchainstate state = storages::superchainstate(asset);
 			return state.get_link(address);
 		}
-		expects_lr<hash_map<string, wallet_link>> bridge::get_links_by_owner(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, size_t offset, size_t count)
+		expects_lr<hash_map<string, wallet_link>> bridge::get_links_by_hash(const algorithm::asset_id& asset, const uint256_t& hash, size_t offset, size_t count)
 		{
 			storages::superchainstate state = storages::superchainstate(asset);
-			return state.get_links_by_owner(owner, offset, count);
+			return state.get_links_by_hash(hash, offset, count);
 		}
 		expects_lr<hash_map<string, wallet_link>> bridge::get_links_by_public_keys(const algorithm::asset_id& asset, const hash_set<string>& public_keys)
 		{

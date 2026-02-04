@@ -6,6 +6,13 @@ namespace tangent
 {
 	namespace states
 	{
+		struct bridge_ref
+		{
+			algorithm::pubkeyhash_t owner;
+			algorithm::asset_id asset;
+			uint256_t hash;
+		};
+
 		struct account_nonce final : ledger::uniform_state
 		{
 			algorithm::pubkeyhash_t owner;
@@ -92,27 +99,6 @@ namespace tangent
 			static std::string_view as_instance_typename();
 			static string as_instance_column(const algorithm::pubkeyhash_t& owner, const std::string_view& column);
 			static string as_instance_row(const algorithm::pubkeyhash_t& owner, const std::string_view& row);
-		};
-
-		struct account_delegation final : ledger::uniform_state
-		{
-			algorithm::pubkeyhash_t owner;
-			uint32_t delegations = 0;
-
-			account_delegation(const algorithm::pubkeyhash_t& new_owner, uint64_t new_block_number);
-			account_delegation(const algorithm::pubkeyhash_t& new_owner, const ledger::block_header* new_block_header);
-			expects_lr<void> transition(const transition_state* prev_state) override;
-			bool store_index(format::wo_stream* stream) const override;
-			bool load_index(format::ro_stream& stream) override;
-			bool store_data(format::wo_stream* stream) const override;
-			bool load_data(format::ro_stream& stream) override;
-			uint64_t get_delegation_zeroing_block(uint64_t current_block_number) const;
-			format::tree as_tree() const override;
-			uint32_t as_type() const override;
-			std::string_view as_typename() const override;
-			static uint32_t as_instance_type();
-			static std::string_view as_instance_typename();
-			static string as_instance_index(const algorithm::pubkeyhash_t& owner);
 		};
 
 		struct account_balance final : ledger::multiform_state
@@ -245,17 +231,12 @@ namespace tangent
 
 		struct validator_participation_ref final : ledger::multiform_state
 		{
-			struct ref_value
-			{
-				algorithm::asset_id asset;
-				algorithm::pubkeyhash_t manager;
-				algorithm::pubkeyhash_t owner;
-			} ref;
 			algorithm::pubkeyhash_t owner;
+			bridge_ref ref;
 			bool active = false;
 
-			validator_participation_ref(const algorithm::pubkeyhash_t& new_owner, const ref_value& new_ref, uint64_t new_block_number);
-			validator_participation_ref(const algorithm::pubkeyhash_t& new_owner, const ref_value& new_ref, const ledger::block_header* new_block_header);
+			validator_participation_ref(const algorithm::pubkeyhash_t& new_owner, const bridge_ref& new_ref, uint64_t new_block_number);
+			validator_participation_ref(const algorithm::pubkeyhash_t& new_owner, const bridge_ref& new_ref, const ledger::block_header* new_block_header);
 			expects_lr<void> transition(const transition_state* prev_state) override;
 			bool store_column(format::wo_stream* stream) const override;
 			bool load_column(format::ro_stream& stream) override;
@@ -270,22 +251,15 @@ namespace tangent
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
 			static string as_instance_column(const algorithm::pubkeyhash_t& owner);
-			static string as_instance_row(const ref_value& ref);
+			static string as_instance_row(const bridge_ref& ref);
 		};
 
 		struct validator_attestation final : ledger::multiform_state
 		{
 			algorithm::pubkeyhash_t owner;
 			algorithm::asset_id asset;
-			decimal participation_threshold = decimal::zero();
 			decimal stake = decimal::nan();
-			decimal incoming_fee = decimal::zero();
-			decimal outgoing_fee = decimal::zero();
-			uint256_t queue_transaction_hash = 0;
-			uint64_t accounts_under_management = 0;
-			uint8_t security_level = (uint8_t)protocol::now().policy.participation.min_per_account;
-			bool accepts_account_requests = false;
-			bool accepts_withdrawal_requests = false;
+			decimal min_fee = decimal::zero();
 
 			validator_attestation(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, uint64_t new_block_number);
 			validator_attestation(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, const ledger::block_header* new_block_header);
@@ -305,6 +279,7 @@ namespace tangent
 			static std::string_view as_instance_typename();
 			static string as_instance_column(const algorithm::pubkeyhash_t& owner);
 			static string as_instance_row(const algorithm::asset_id& asset);
+			static uint256_t to_rank(const decimal& threshold);
 		};
 
 		struct validator_attestation_reward final : ledger::multiform_state
@@ -332,14 +307,43 @@ namespace tangent
 			static string as_instance_row(const algorithm::asset_id& asset);
 		};
 
+		struct bridge_instance final : ledger::multiform_state
+		{
+			bridge_ref ref;
+			decimal fee_rate = decimal::zero();
+			uint256_t transaction_hash = 0;
+			uint64_t transaction_nonce = 0;
+			uint64_t account_nonce = 0;
+			uint8_t security_level = (uint8_t)protocol::now().policy.participation.min_per_account;
+
+			bridge_instance(const bridge_ref& new_ref, uint64_t new_block_number);
+			bridge_instance(const bridge_ref& new_ref, const ledger::block_header* new_block_header);
+			expects_lr<void> transition(const transition_state* prev_state) override;
+			bool store_column(format::wo_stream* stream) const override;
+			bool load_column(format::ro_stream& stream) override;
+			bool store_row(format::wo_stream* stream) const override;
+			bool load_row(format::ro_stream& stream) override;
+			bool store_data(format::wo_stream* stream) const override;
+			bool load_data(format::ro_stream& stream) override;
+			bool is_permanent() const override;
+			format::tree as_tree() const override;
+			uint32_t as_type() const override;
+			std::string_view as_typename() const override;
+			uint256_t as_rank() const override;
+			static uint32_t as_instance_type();
+			static std::string_view as_instance_typename();
+			static string as_instance_column(const algorithm::asset_id& asset);
+			static string as_instance_row(const uint256_t& bridge_hash);
+		};
+
 		struct bridge_balance final : ledger::multiform_state
 		{
-			algorithm::pubkeyhash_t owner;
 			algorithm::asset_id asset;
+			uint256_t bridge_hash;
 			decimal supply = decimal::zero();
 
-			bridge_balance(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, uint64_t new_block_number);
-			bridge_balance(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, const ledger::block_header* new_block_header);
+			bridge_balance(const algorithm::asset_id& new_asset, const uint256_t& new_bridge_hash, uint64_t new_block_number);
+			bridge_balance(const algorithm::asset_id& new_asset, const uint256_t& new_bridge_hash, const ledger::block_header* new_block_header);
 			expects_lr<void> transition(const transition_state* prev_state) override;
 			bool store_column(format::wo_stream* stream) const override;
 			bool load_column(format::ro_stream& stream) override;
@@ -353,20 +357,18 @@ namespace tangent
 			uint256_t as_rank() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
-			static string as_instance_column(const algorithm::pubkeyhash_t& owner);
-			static string as_instance_row(const algorithm::asset_id& asset);
+			static string as_instance_column(const algorithm::asset_id& asset);
+			static string as_instance_row(const uint256_t& bridge_hash);
 		};
 
 		struct bridge_account final : ledger::multiform_state
 		{
 			btree_set<algorithm::pubkeyhash_t> group;
 			algorithm::composition::cpubkey_t public_key;
-			algorithm::pubkeyhash_t owner;
-			algorithm::pubkeyhash_t manager;
-			algorithm::asset_id asset;
+			bridge_ref ref;
 
-			bridge_account(const algorithm::pubkeyhash_t& new_manager, const algorithm::asset_id& new_asset, const algorithm::pubkeyhash_t& new_owner, uint64_t new_block_number);
-			bridge_account(const algorithm::pubkeyhash_t& new_manager, const algorithm::asset_id& new_asset, const algorithm::pubkeyhash_t& new_owner, const ledger::block_header* new_block_header);
+			bridge_account(const bridge_ref& new_ref, uint64_t new_block_number);
+			bridge_account(const bridge_ref& new_ref, const ledger::block_header* new_block_header);
 			expects_lr<void> transition(const transition_state* prev_state) override;
 			bool store_column(format::wo_stream* stream) const override;
 			bool load_column(format::ro_stream& stream) override;
@@ -381,8 +383,8 @@ namespace tangent
 			uint256_t as_rank() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
-			static string as_instance_column(const algorithm::pubkeyhash_t& manager);
-			static string as_instance_row(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner);
+			static string as_instance_column(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner);
+			static string as_instance_row(const uint256_t& bridge_hash);
 		};
 
 		struct witness_program final : ledger::uniform_state
@@ -437,14 +439,12 @@ namespace tangent
 				bridge
 			};
 
-			algorithm::pubkeyhash_t owner;
-			algorithm::pubkeyhash_t manager;
-			algorithm::asset_id asset;
 			address_map addresses;
+			bridge_ref ref;
 			bool active = true;
 
-			witness_account(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, const address_map& new_addresses, uint64_t new_block_number);
-			witness_account(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, const address_map& new_addresses, const ledger::block_header* new_block_header);
+			witness_account(const bridge_ref& new_ref, const address_map& new_addresses, uint64_t new_block_number);
+			witness_account(const bridge_ref& new_ref, const address_map& new_addresses, const ledger::block_header* new_block_header);
 			expects_lr<void> transition(const transition_state* prev_state) override;
 			bool store_column(format::wo_stream* stream) const override;
 			bool load_column(format::ro_stream& stream) override;
@@ -491,8 +491,8 @@ namespace tangent
 		class resolver
 		{
 		public:
-			typedef std::array<uint32_t, 7> uniform_type_map;
-			typedef std::array<uint32_t, 12> multiform_type_map;
+			typedef std::array<uint32_t, 6> uniform_type_map;
+			typedef std::array<uint32_t, 13> multiform_type_map;
 
 		public:
 			static ledger::transition_state* from_stream(format::ro_stream& stream);
