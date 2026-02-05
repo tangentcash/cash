@@ -617,7 +617,7 @@ namespace tangent
 
 					format::tree map;
 					map.push(format::variable(ref_mint_address));
-					map.push(std::move(config));
+					map.push(config);
 
 					auto account_info = coawait(execute_rpc(nd_call::get_account_info(), std::move(map), cache_policy::lifetime_cache));
 					if (account_info)
@@ -674,7 +674,10 @@ namespace tangent
 					if (!b58enc(meta_address, &meta_address_size, meta, sizeof(meta)))
 						coreturn expects_rt<string>(remote_exception("metaplex address not valid"));
 
-					map.childs()[0] = format::variable(meta_address);
+					map = format::tree();
+					map.push(format::variable(meta_address));
+					map.push(std::move(config));
+
 					account_info = coawait(execute_rpc(nd_call::get_account_info(), std::move(map), cache_policy::lifetime_cache));
 					if (!account_info)
 						coreturn expects_rt<string>(std::move(account_info.error()));

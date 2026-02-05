@@ -14,7 +14,9 @@ namespace tangent
 
 		static string to_typeless(const std::string_view& data)
 		{
-			if (format::util::is_hex_encoding(data))
+			if (data.empty())
+				return string();
+			else if (format::util::is_hex_encoding(data))
 				return codec::hex_decode(data);
 			else if (format::util::is_base64_encoding(data))
 				return codec::base64_decode(data);
