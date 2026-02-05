@@ -2274,25 +2274,6 @@ namespace tangent
 			if (!witness_account_status)
 				return witness_account_status.error();
 
-			return expectation::met;
-		}
-		expects_promise_rt<void> bind::dispatch(const ledger::executor_context* executor, ledger::dispatcher_context* dispatcher) const
-		{
-			auto parent = executor->get_block_transaction<route>(route_hash);
-			if (!parent)
-				return expects_promise_rt<void>(expectation::met);
-
-			auto* server = superchain::bridge::get();
-			auto* chain = server->get_network(asset);
-			auto encoded_public_key = chain->encode_public_key(std::string_view((char*)group_public_key.data(), group_public_key.size()));
-			if (!encoded_public_key)
-				return expects_promise_rt<void>(expectation::met);
-
-			auto addresses = chain->to_addresses(*encoded_public_key);
-			if (!addresses)
-				return expects_promise_rt<void>(expectation::met);
-
-			auto* parent_transaction = (route*)*parent->transaction;
 			for (auto& [type, address] : *addresses)
 			{
 				auto [base_address, tag] = superchain::address_util::decode_tag_address(address);
@@ -2302,7 +2283,7 @@ namespace tangent
 				server->enable_link(asset, superchain::wallet_link(parent_transaction->bridge_hash, *encoded_public_key, address));
 			}
 
-			return expects_promise_rt<void>(expectation::met);
+			return expectation::met;
 		}
 		void bind::set_witness(const uint256_t& new_route_hash, algorithm::composition::cpubkey_t&& new_group_public_key, algorithm::composition::chashsig_t&& new_group_signature)
 		{
@@ -2343,10 +2324,6 @@ namespace tangent
 			if (parent)
 				parties.insert(algorithm::pubkeyhash_t(parent->receipt.from));
 
-			return true;
-		}
-		bool bind::is_dispatchable() const
-		{
 			return true;
 		}
 		format::tree bind::as_tree() const
