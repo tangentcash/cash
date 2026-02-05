@@ -188,13 +188,21 @@ namespace tangent
 			}
 			expects_promise_rt<tron::trx_tx_block_header_info> tron::get_block_header_for_tx()
 			{
-				auto args = format::tree::map();
-				args.set("detail", format::variable(false));
-
-				return execute_rest("POST", trx_nd_call::get_block(), std::move(args), cache_policy::no_cache).then<expects_rt<trx_tx_block_header_info>>([](expects_rt<format::tree>&& block_data) -> expects_rt<trx_tx_block_header_info>
+				return coasync<expects_rt<trx_tx_block_header_info>>([this]() -> expects_promise_rt<trx_tx_block_header_info>
 				{
+					auto args = format::tree::map();
+					args.set("detail", format::variable(false));
+
+					auto block_id = coawait(get_latest_block_height());
+					if (block_id)
+					{
+						const uint64_t block_offset = 1024;
+						args.set("id_or_num", format::variable(to_string(*block_id <= block_offset ? 1 : *block_id - block_offset)));
+					}
+
+					auto block_data = coawait(execute_rest("POST", trx_nd_call::get_block(), std::move(args), cache_policy::no_cache));
 					if (!block_data)
-						return expects_rt<tron::trx_tx_block_header_info>(std::move(block_data.error()));
+						coreturn expects_rt<tron::trx_tx_block_header_info>(std::move(block_data.error()));
 
 					auto ref_block_bytes = block_data->child_var("block_header.raw_data.number").as_uint128().to_string(16);
 					while (ref_block_bytes.size() < 4)
@@ -202,14 +210,14 @@ namespace tangent
 
 					auto ref_block_hash = block_data->child_var("blockID").as_blob();
 					if (ref_block_hash.size() < 32)
-						return expects_rt<tron::trx_tx_block_header_info>(remote_exception("invalid ref block hash"));
+						coreturn expects_rt<tron::trx_tx_block_header_info>(remote_exception("invalid ref block hash"));
 
 					trx_tx_block_header_info info;
 					info.ref_block_bytes = ref_block_bytes.substr(ref_block_bytes.size() - 4);
 					info.ref_block_hash = ref_block_hash.substr(16, 16);
 					info.timestamp = block_data->child_var("block_header.raw_data.timestamp").as_uint64();
 					info.expiration = info.timestamp + 60 * 1000;
-					return expects_rt<tron::trx_tx_block_header_info>(std::move(info));
+					coreturn expects_rt<tron::trx_tx_block_header_info>(std::move(info));
 				});
 			}
 			expects_lr<void> tron::verify_node_compatibility(connection_instance* node)
