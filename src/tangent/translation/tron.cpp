@@ -216,7 +216,7 @@ namespace tangent
 					info.ref_block_bytes = ref_block_bytes.substr(ref_block_bytes.size() - 4);
 					info.ref_block_hash = ref_block_hash.substr(16, 16);
 					info.timestamp = block_data->child_var("block_header.raw_data.timestamp").as_uint64();
-					info.expiration = info.timestamp + 60 * 1000;
+					info.expiration = protocol::now().time.now_cpu() + 7200 * 1000;
 					coreturn expects_rt<tron::trx_tx_block_header_info>(std::move(info));
 				});
 			}
