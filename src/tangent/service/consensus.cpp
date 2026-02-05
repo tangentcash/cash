@@ -766,10 +766,93 @@ namespace tangent
 			}
 			clear_pending_fork(nullptr);
 		}
+		expects_promise_system<http::response_frame> server_node::queued_fetch_external(const algorithm::asset_id& asset, const std::string_view& location, const std::string_view& method, const http::fetch_frame& options)
+		{
+			if (!is_active())
+				return expects_promise_system<http::response_frame>(system_exception("cancelled due to shutdown", std::make_error_condition(std::errc::owner_dead)));
+
+			umutex<std::mutex> unique(sync.fetcher);
+			auto& fetcher = fetchers[asset];
+			if (fetcher.busy)
+			{
+				auto& target = fetcher.queue.emplace();
+				target.location = location;
+				target.method = method;
+				target.options = options;
+				return target.result;
+			}
+
+			fetcher.busy = true;
+			unique.unlock();
+			return queued_fetch_internal(asset, location, method, options);
+		}
+		expects_promise_system<http::response_frame> server_node::queued_fetch_internal(const algorithm::asset_id& asset, const std::string_view& location, const std::string_view& method, const http::fetch_frame& options)
+		{
+			if (is_active())
+			{
+				return http::fetch(location, method, options).then<expects_system<http::response_frame>>([this, asset](expects_system<http::response_frame>&& response) -> expects_system<http::response_frame>&&
+				{
+					umutex<std::mutex> unique(sync.fetcher);
+					auto& fetcher = fetchers[asset];
+					fetcher.busy = !fetcher.queue.empty();
+					if (!fetcher.busy)
+						return std::move(response);
+
+					auto target = std::move(fetcher.queue.front());
+					fetcher.queue.pop();
+					unique.unlock();
+					cospawn([this, asset, target = std::move(target)]() mutable
+					{
+						auto result = std::move(target.result);
+						queued_fetch_internal(asset, target.location, target.method, target.options).when([result](expects_system<http::response_frame>&& response) mutable { result.set(std::move(response)); });
+					});
+					return std::move(response);
+				});
+			}
+			else
+			{
+				single_queue<fetch_target> cancellations;
+				umutex<std::mutex> unique(sync.fetcher);
+				auto& fetcher = fetchers[asset];
+				cancellations.swap(fetcher.queue);
+				unique.unlock();
+
+				auto exception = system_exception("cancelled due to shutdown", std::make_error_condition(std::errc::owner_dead));
+				while (!cancellations.empty())
+				{
+					auto& target = cancellations.front();
+					target.result.set(exception);
+					cancellations.pop();
+				}
+				return expects_promise_system<http::response_frame>(exception);
+			}
+		}
 		expects_system<void> server_node::on_unlisten()
 		{
 			control_sys.deactivate(false);
 			clear_pending_fork(nullptr);
+			{
+				single_queue<fetch_target> cancellations;
+				umutex<std::mutex> unique(sync.fetcher);
+				for (auto& [asset, fetcher] : fetchers)
+				{
+					while (!fetcher.queue.empty())
+					{
+						cancellations.emplace(std::move(fetcher.queue.front()));
+						fetcher.queue.pop();
+					}
+				}
+
+				fetchers.clear();
+				unique.unlock();
+				auto exception = system_exception("cancelled due to shutdown", std::make_error_condition(std::errc::owner_dead));
+				while (!cancellations.empty())
+				{
+					auto& target = cancellations.front();
+					target.result.set(exception);
+					cancellations.pop();
+				}
+			}
 			umutex<std::recursive_mutex> unique(exclusive);
 		retry:
 			{
@@ -3168,7 +3251,7 @@ namespace tangent
 			{
 				auto* bridge = superchain::bridge::get();
 				bridge->network_active = [this]() -> bool { return is_active(); };
-				bridge->network_fetch = [this](const algorithm::asset_id&, const std::string_view& location, const std::string_view& method, const http::fetch_frame& options) -> expects_promise_system<http::response_frame> { return http::fetch(location, method, options); };
+				bridge->network_fetch = std::bind(&server_node::queued_fetch_external, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4);
 				transport_layer::link_instance();
 				for (auto& [blockchain, listener] : bridge->get_networks())
 					run_superchain_sync(listener.asset);

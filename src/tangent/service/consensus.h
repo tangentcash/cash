@@ -206,6 +206,20 @@ namespace tangent
 				uref<relay> state;
 			};
 
+			struct fetch_target
+			{
+				string location;
+				string method;
+				http::fetch_frame options;
+				expects_promise_system<http::response_frame> result;
+			};
+
+			struct fetch_queue
+			{
+				single_queue<fetch_target> queue;
+				bool busy = false;
+			};
+
 		public:
 			struct
 			{
@@ -215,6 +229,7 @@ namespace tangent
 				std::recursive_mutex fork;
 				std::recursive_mutex tip;
 				std::mutex inventory;
+				std::mutex fetcher;
 			} sync;
 
 			struct
@@ -236,6 +251,7 @@ namespace tangent
 			} prover;
 
 		private:
+			hash_map<algorithm::asset_id, fetch_queue> fetchers;
 			hash_map<algorithm::asset_id, uint64_t> witnesses;
 			hash_map<uint256_t, neighbor_callback> neighbors;
 			hash_map<uint8_t, callable> callables;
@@ -326,6 +342,8 @@ namespace tangent
 			option<std::pair<uint256_t, fork_header>> get_best_fork_header();
 
 		private:
+			expects_promise_system<http::response_frame> queued_fetch_external(const algorithm::asset_id& asset, const std::string_view& location, const std::string_view& method, const http::fetch_frame& options);
+			expects_promise_system<http::response_frame> queued_fetch_internal(const algorithm::asset_id& asset, const std::string_view& location, const std::string_view& method, const http::fetch_frame& options);
 			expects_system<void> on_unlisten() override;
 			expects_system<void> on_after_unlisten() override;
 			expects_lr<void> accept_local_node(storages::mempoolstate& mempool, relay_descriptor& descriptor, bool runner);
