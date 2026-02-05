@@ -325,6 +325,18 @@ namespace tangent
 			{
 				return !program.path.empty();
 			}
+			uint256_t state_root_hash() const
+			{
+				vector<uint256_t> state_tree;
+				state_tree.reserve(tracer.solver.state.changelog.outgoing.finalized.size());
+				for (auto& [index, change] : tracer.solver.state.changelog.outgoing.finalized)
+				{
+					auto copy = uptr(states::resolver::from_copy(*change.state));
+					copy->block_number = std::numeric_limits<uint64_t>::max();
+					state_tree.push_back(copy->as_hash());
+				}
+				return algorithm::merkle_tree::from(std::move(state_tree)).root();
+			}
 			format::tree serialize_event_args(const format::variables& value) const
 			{
 				format::variables copy = value;
@@ -619,6 +631,7 @@ namespace tangent
 					terminal->fwrite("%s in %" PRIu64 " ms", success ? "OK finalize transaction" : "ERR revert transaction", (uint64_t)(date_time().milliseconds() - time));
 					terminal->clear_color();
 					terminal->write("\n");
+					terminal->fwrite("\"%s\": ", algorithm::encoding::encode_0xhex256(context.state_root_hash()).c_str());
 					terminal->write_line(context.tracer.returning.as_json(true));
 					return success;
 				}
@@ -670,6 +683,27 @@ namespace tangent
 							upsert->set(format::util::encode_0xhex(index), change.state->as_tree());
 					}
 					terminal->write_line(changelog.as_json(true));
+					return true;
+				}
+				else if (method == "state_check")
+				{
+					if (args.size() < 2)
+						return err("not a valid state hash");
+
+					auto state_hash = algorithm::encoding::decode_0xhex256(args[1]);
+					vector<uint256_t> state_tree;
+					state_tree.reserve(context.tracer.solver.state.changelog.outgoing.finalized.size() + 1);
+					for (auto& [index, change] : context.tracer.solver.state.changelog.outgoing.finalized)
+					{
+						auto copy = uptr(states::resolver::from_copy(*change.state));
+						copy->block_number = std::numeric_limits<uint64_t>::max();
+						state_tree.push_back(copy->as_hash());
+					}
+
+					auto state_root = algorithm::merkle_tree::from(std::move(state_tree)).root();
+					if (state_root != state_hash)
+						return err("state hash mismatch (actual): " + algorithm::encoding::encode_0xhex256(state_root));
+
 					return true;
 				}
 				else if (method == "receipt")
@@ -901,6 +935,7 @@ namespace tangent
 						"result                                                  -- get call result log\n"
 						"log                                                     -- get call event log\n"
 						"changelog                                               -- get call state changes log\n"
+						"state_check [hash]                                      -- verify state hash derived from current changelog\n"
 						"receipt                                                 -- get call receipt\n"
 						"abi                                                     -- get program abi listing\n"
 						"predefined [path]                                       -- export symbols for AngelScript Language Server (as.predefined)\n"
