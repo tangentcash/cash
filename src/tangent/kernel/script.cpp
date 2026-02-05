@@ -5508,7 +5508,6 @@ namespace tangent
 				any_type->set_behaviour_address("void f(int &in)", behaviours::enum_refs, WRAP_MFN(script::bindings::any, enum_references), convention::generic_call);
 				any_type->set_behaviour_address("void f(int &in)", behaviours::release_refs, WRAP_MFN(script::bindings::any, release_references), convention::generic_call);
 				any_type->set_operator_copy_address(WRAP_MFN(script::bindings::any, operator=), convention::generic_call);
-				any_type->set_method_address("any &opAssign(any&in)", WRAP_OBJ_FIRST(script::bindings::any::assignment), convention::generic_call);
 				any_type->set_method_extern("void store(?&in)", &any_store, convention::generic_call);
 				any_type->set_method_extern("bool retrieve(?&out)", &any_retrieve, convention::generic_call);
 				vmc_tools = true;
