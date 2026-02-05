@@ -517,7 +517,7 @@ namespace tangent
 
 					return ok("compiled " + *path);
 				}
-				else if (method == "asseemble")
+				else if (method == "assemble")
 				{
 					if (args.size() < 3)
 						return err("not a valid type");
