@@ -282,17 +282,25 @@ namespace tangent
 		}
 		void block_changelog::clear()
 		{
+			effects.pending.clear();
+			effects.finalized.clear();
 			outgoing.revert(true);
 			incoming.revert(true);
 			clear_temporary_state();
 		}
 		void block_changelog::revert()
 		{
+			effects.pending.clear();
 			outgoing.revert();
 			incoming.revert();
 		}
 		void block_changelog::commit()
 		{
+			if (!effects.pending.empty())
+			{
+				effects.finalized.insert(effects.finalized.end(), std::make_move_iterator(effects.pending.begin()), std::make_move_iterator(effects.pending.end()));
+				effects.pending.clear();
+			}
 			outgoing.commit();
 			incoming.commit();
 		}
@@ -1133,6 +1141,11 @@ namespace tangent
 			block = other.block;
 			options = other.options;
 			return *this;
+		}
+		void executor_context::defer_side_effect(task_callback&& callback)
+		{
+			VI_ASSERT(callback, "callback should be set");
+			changelog->effects.pending.push_back(std::move(callback));
 		}
 		expects_lr<void> executor_context::query(transition_state* next, bool paid_in_full)
 		{
@@ -1989,6 +2002,28 @@ namespace tangent
 
 			return new_state;
 		}
+		expects_lr<states::bridge_queue> executor_context::apply_bridge_queue(const algorithm::asset_id& asset, const uint256_t& bridge_hash, const uint256_t& transaction_hash, bool active)
+		{
+			states::bridge_queue new_state = states::bridge_queue(asset, bridge_hash, transaction_hash, block);
+			if (active)
+			{
+				new_state.index = get_bridge_queue(asset, bridge_hash).or_else(states::bridge_queue(asset, bridge_hash, 0, nullptr)).index + 1;
+				auto status = store(&new_state, true);
+				if (!status)
+					return status.error();
+
+				status = emit_event<states::bridge_queue>({ format::variable(asset), format::variable(bridge_hash), format::variable(new_state.index) });
+				if (!status)
+					return status.error();
+			}
+			else
+			{
+				auto status = store(&new_state, true);
+				if (!status)
+					return status.error();
+			}
+			return new_state;
+		}
 		expects_lr<states::bridge_balance> executor_context::apply_bridge_balance(const algorithm::asset_id& asset, const uint256_t& bridge_hash, const decimal& balance)
 		{
 			if (balance.is_zero())
@@ -2477,6 +2512,24 @@ namespace tangent
 				addresses.emplace_back(std::move(*state.as<states::bridge_instance>()));
 			}
 			return addresses;
+		}
+		expects_lr<states::bridge_queue> executor_context::get_bridge_queue(const algorithm::asset_id& asset, const uint256_t& bridge_hash, int8_t side) const
+		{
+			auto filter = storages::result_filter::greater(0, side);
+			auto window = storages::result_range_window(0, 1);
+			auto chain = storages::chainstate();
+			auto states = chain.get_multiforms_by_column_filter(states::bridge_queue::as_instance_type(), changelog, states::bridge_queue::as_instance_column(asset, bridge_hash), filter, get_validation_nonce(), window);
+			if (!states)
+				return layer_exception("bridge queue required but not applicable (" + states.what() + ")");
+			else if (states->empty())
+				return layer_exception("bridge queue required but not applicable (empty list)");
+
+			auto& state = states->front();
+			auto status = ((executor_context*)this)->query(state.ptr(), !state.cached);
+			if (!status)
+				return status.error();
+
+			return states::bridge_queue(std::move(*state.as<states::bridge_queue>()));
 		}
 		expects_lr<states::bridge_balance> executor_context::get_bridge_balance(const algorithm::asset_id& asset, const uint256_t& bridge_hash) const
 		{
@@ -3493,10 +3546,10 @@ namespace tangent
 		}
 		format::ro_stream dispatcher_context::pull_cache(const executor_context* executor)
 		{
-			auto* bridge = superchain::bridge::get();
+			auto* offchain = superchain::bridge::get();
 			auto location = stringify::text("dispatch_cache_%s", algorithm::encoding::encode_0xhex256(executor->receipt.transaction_hash).c_str());
-			auto cache = bridge->load_cache(executor->transaction->asset, superchain::cache_policy::lifetime_cache, location);
-			bridge->store_cache(executor->transaction->asset, superchain::cache_policy::lifetime_cache, location, format::tree());
+			auto cache = offchain->load_cache(executor->transaction->asset, superchain::cache_policy::lifetime_cache, location);
+			offchain->store_cache(executor->transaction->asset, superchain::cache_policy::lifetime_cache, location, format::tree());
 			return format::ro_stream(cache ? cache->value.as_string() : std::string_view());
 		}
 		void dispatcher_context::push_cache(const executor_context* executor, const format::wo_stream& message) const
@@ -3716,7 +3769,7 @@ namespace tangent
 						auto& reward = rewards[blob.transaction->asset];
 						reward = (reward.is_nan() ? decimal::zero() : reward) + blob.transaction->gas_price * blob.receipt.relative_gas_use.to_decimal();
 					}
-					state.changelog.outgoing.commit();
+					state.changelog.commit();
 				}
 				else
 				{
@@ -3767,10 +3820,11 @@ namespace tangent
 
 			auto* parent_block = tip.address();
 			size_t block_cost = (size_t)gas_cost::write_byte * 1024;
-			state.changelog.outgoing.commit();
+			state.changelog.commit();
 			solution.block.gas_limit += block_cost;
 			solution.block.gas_use += block_cost;
 			solution.block.recalculate(parent_block, &state.changelog.outgoing);
+			state.changelog.effects.finalized.swap(solution.effects);
 			state.changelog.outgoing.pending.swap(solution.state.pending);
 			state.changelog.outgoing.finalized.swap(solution.state.finalized);
 			erase_failed_transactions().report("mempool cleanup failed");
@@ -4008,6 +4062,12 @@ namespace tangent
 			auto result = storage_util::multi_tx_commit(__func__, std::move(global_state));
 			if (!result)
 				return layer_exception(std::move(result.error().message()));
+
+			for (auto& side_effect : solution.effects)
+			{
+				VI_ASSERT(side_effect, "side effect callback should be set");
+				side_effect();
+			}
 
 			return mutation;
 		}

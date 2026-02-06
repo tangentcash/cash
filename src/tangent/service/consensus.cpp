@@ -760,9 +760,9 @@ namespace tangent
 		{
 			if (superchain::bridge::has_instance())
 			{
-				auto* bridge = superchain::bridge::get();
-				bridge->network_active = nullptr;
-				bridge->network_fetch = nullptr;
+				auto* offchain = superchain::bridge::get();
+				offchain->network_active = nullptr;
+				offchain->network_fetch = nullptr;
 			}
 			clear_pending_fork(nullptr);
 		}
@@ -2746,22 +2746,22 @@ namespace tangent
 			if (!protocol::now().user.superchain.listener)
 				return false;
 
-			auto* bridge = superchain::bridge::get();
-			auto* listener = bridge->get_network_instance(asset);
+			auto* offchain = superchain::bridge::get();
+			auto* listener = offchain->get_network_instance(asset);
 			if (!listener || listener->connections.empty())
 				return false;
 
 			string blockchain = algorithm::asset::blockchain_of(listener->asset);
 			string task = stringify::text(TASK_SUPERCHAIN_SYNC "_%s", blockchain.c_str());
 			stringify::to_lower(task);
-			return control_sys.async_task_if_none(task, [this, task, blockchain, bridge, listener]() -> promise<void>
+			return control_sys.async_task_if_none(task, [this, task, blockchain, offchain, listener]() -> promise<void>
 			{
 				uint64_t retry_after_timestamp = std::numeric_limits<uint64_t>::max();
 				VI_INFO("%s block pulling: resuming now", blockchain.c_str());
 			retry:
 				while (is_active())
 				{
-					auto result = coawait(bridge->link_transactions(listener->asset));
+					auto result = coawait(offchain->link_transactions(listener->asset));
 					if (!result)
 					{
 						if (protocol::now().user.superchain.logging && !listener->options.state.retry_after_time)
@@ -3146,12 +3146,12 @@ namespace tangent
 				umutex<std::recursive_mutex> unique(sync.fork);
 				if (!witnesses.empty())
 				{
-					auto* bridge = superchain::bridge::get();
+					auto* offchain = superchain::bridge::get();
 					for (auto& [asset, block_height] : witnesses)
 					{
-						auto earlist_block_height = bridge->get_earliest_scanned_block_height(asset);
+						auto earlist_block_height = offchain->get_earliest_scanned_block_height(asset);
 						if (!earlist_block_height || *earlist_block_height > block_height)
-							bridge->scan_from_block_height(asset, block_height);
+							offchain->scan_from_block_height(asset, block_height);
 					}
 					witnesses.clear();
 				}
@@ -3249,11 +3249,11 @@ namespace tangent
 
 			if (protocol::now().user.superchain.listener)
 			{
-				auto* bridge = superchain::bridge::get();
-				bridge->network_active = [this]() -> bool { return is_active(); };
-				bridge->network_fetch = std::bind(&server_node::queued_fetch_external, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4);
+				auto* offchain = superchain::bridge::get();
+				offchain->network_active = [this]() -> bool { return is_active(); };
+				offchain->network_fetch = std::bind(&server_node::queued_fetch_external, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4);
 				transport_layer::link_instance();
-				for (auto& [blockchain, listener] : bridge->get_networks())
+				for (auto& [blockchain, listener] : offchain->get_networks())
 					run_superchain_sync(listener.asset);
 			}
 		}

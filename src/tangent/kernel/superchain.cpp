@@ -1457,15 +1457,6 @@ namespace tangent
 			for (auto& chain : chains)
 				chain.second(chain.first);
 
-			if (protocol::now().user.superchain.logging)
-			{
-				auto* output = console::get();
-				output->add_colorization("spends", std_color::red);
-				output->add_colorization("receives", std_color::green);
-				output->add_colorization("pending", std_color::orange);
-				output->add_colorization("finalized", std_color::green);
-			}
-
 			auto& config = protocol::now().user.superchain.options;
 			if (!config || !config->is_map())
 				return;
@@ -1655,7 +1646,7 @@ namespace tangent
 			string hash = codec::hex_encode(algorithm::hashing::hash512((uint8_t*)message.data(), message.size()));
 			if (cache != cache_policy::no_cache && cache != cache_policy::no_cache_no_throttling)
 			{
-				auto data = bridge::get()->load_cache(asset, cache, hash);
+				auto data = load_cache(asset, cache, hash);
 				if (data)
 					return expects_rt<format::tree>(std::move(*data));
 			}
@@ -1913,9 +1904,8 @@ namespace tangent
 			if (!implementation)
 				return expects_rt<void>(remote_exception("chain not found"));
 
-			auto* server = bridge::get();
 			auto new_transaction = finalized.as_computed();
-			server->normalize_transaction_id(asset, &new_transaction.transaction_id);
+			normalize_transaction_id(asset, &new_transaction.transaction_id);
 			new_transaction.block_id = 0;
 			{
 				storages::superchainstate state = storages::superchainstate(asset);

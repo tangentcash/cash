@@ -336,6 +336,32 @@ namespace tangent
 			static string as_instance_row(const uint256_t& bridge_hash);
 		};
 
+		struct bridge_queue final : ledger::multiform_state
+		{
+			algorithm::asset_id asset;
+			uint256_t bridge_hash;
+			uint256_t transaction_hash;
+			uint64_t index = 0;
+
+			bridge_queue(const algorithm::asset_id& new_asset, const uint256_t& new_bridge_hash, const uint256_t& new_transaction_hash, uint64_t new_block_number);
+			bridge_queue(const algorithm::asset_id& new_asset, const uint256_t& new_bridge_hash, const uint256_t& new_transaction_hash, const ledger::block_header* new_block_header);
+			expects_lr<void> transition(const transition_state* prev_state) override;
+			bool store_column(format::wo_stream* stream) const override;
+			bool load_column(format::ro_stream& stream) override;
+			bool store_row(format::wo_stream* stream) const override;
+			bool load_row(format::ro_stream& stream) override;
+			bool store_data(format::wo_stream* stream) const override;
+			bool load_data(format::ro_stream& stream) override;
+			format::tree as_tree() const override;
+			uint32_t as_type() const override;
+			std::string_view as_typename() const override;
+			uint256_t as_rank() const override;
+			static uint32_t as_instance_type();
+			static std::string_view as_instance_typename();
+			static string as_instance_column(const algorithm::asset_id& asset, const uint256_t& bridge_hash);
+			static string as_instance_row(const uint256_t& transaction_hash);
+		};
+
 		struct bridge_balance final : ledger::multiform_state
 		{
 			algorithm::asset_id asset;
@@ -492,7 +518,7 @@ namespace tangent
 		{
 		public:
 			typedef std::array<uint32_t, 6> uniform_type_map;
-			typedef std::array<uint32_t, 13> multiform_type_map;
+			typedef std::array<uint32_t, 14> multiform_type_map;
 
 		public:
 			static ledger::transition_state* from_stream(format::ro_stream& stream);

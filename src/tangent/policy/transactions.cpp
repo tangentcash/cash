@@ -2208,9 +2208,9 @@ namespace tangent
 				return parent.error();
 
 			auto* parent_transaction = (route*)*parent->transaction;
-			auto* server = superchain::bridge::get();
-			auto* chain = server->get_network(asset);
-			auto* params = server->get_network_params(asset);
+			auto* offchain = superchain::bridge::get();
+			auto* chain = offchain->get_network(asset);
+			auto* params = offchain->get_network_params(asset);
 			if (!chain || !params)
 				return layer_exception("invalid operation");
 
@@ -2274,15 +2274,20 @@ namespace tangent
 			if (!witness_account_status)
 				return witness_account_status.error();
 
-			for (auto& [type, address] : *addresses)
+			auto link_asset = asset;
+			auto link_base = superchain::wallet_link(parent_transaction->bridge_hash, *encoded_public_key, string());
+			executor->defer_side_effect([link_asset, link_base = std::move(link_base), addresses = std::move(addresses)]() mutable
 			{
-				auto [base_address, tag] = superchain::address_util::decode_tag_address(address);
-				if (base_address != address)
-					server->enable_link(asset, superchain::wallet_link(parent_transaction->bridge_hash, *encoded_public_key, base_address));
+				auto* offchain = superchain::bridge::get();
+				for (auto& [type, address] : *addresses)
+				{
+					auto [base_address, tag] = superchain::address_util::decode_tag_address(address);
+					if (base_address != address)
+						offchain->enable_link(link_asset, superchain::wallet_link(link_base.hash, link_base.public_key, base_address)).report("failed to enable the off-chain link");
 
-				server->enable_link(asset, superchain::wallet_link(parent_transaction->bridge_hash, *encoded_public_key, address));
-			}
-
+					offchain->enable_link(link_asset, superchain::wallet_link(link_base.hash, link_base.public_key, address)).report("failed to enable the off-chain link");
+				}
+			});
 			return expectation::met;
 		}
 		void bind::set_witness(const uint256_t& new_route_hash, algorithm::composition::cpubkey_t&& new_group_public_key, algorithm::composition::chashsig_t&& new_group_signature)
@@ -2433,6 +2438,10 @@ namespace tangent
 			if (!token_transfer)
 				return token_transfer.error();
 
+			auto queue = executor->apply_bridge_queue(asset, bridge_hash, executor->receipt.transaction_hash, true);
+			if (!queue)
+				return queue.error();
+
 			return expectation::met;
 		}
 		expects_promise_rt<void> withdraw::dispatch(const ledger::executor_context* executor, ledger::dispatcher_context* dispatcher) const
@@ -2445,10 +2454,13 @@ namespace tangent
 			if (executor->get_witness_event(executor->receipt.transaction_hash))
 				return expects_promise_rt<void>(expectation::met);
 
+			auto front = executor->get_bridge_queue(asset, bridge_hash);
+			if (front && front->transaction_hash != executor->receipt.transaction_hash)
+				return expects_promise_rt<void>(remote_exception::retry_later());
+
 			return coasync<expects_rt<void>>([this, executor, dispatcher, runner_wallet]() mutable -> expects_promise_rt<void>
 			{
-				auto* server = superchain::bridge::get();
-				auto* chain = server->get_network_params(asset);
+				auto* chain = superchain::bridge::get()->get_network_params(asset);
 				auto cancel = [this, executor, dispatcher, runner_wallet](remote_exception&& error) -> expects_rt<void>
 				{
 					auto* transaction = memory::init<broadcast>();
@@ -2681,7 +2693,25 @@ namespace tangent
 			if (!bridge)
 				return bridge.error();
 
-			if (!proof)
+			if (proof)
+			{
+				auto fee_transfer = executor->apply_transfer(fee_asset, parent->receipt.from, -bridge->fee_rate, -bridge->fee_rate);
+				if (!fee_transfer)
+					return fee_transfer.error();
+
+				auto attester = parent_transaction->get_attester(parent->receipt);
+				auto attestation = executor->apply_validator_attestation_reward(fee_asset, attester, bridge->fee_rate * protocol::now().policy.attestation.fee_rate);
+				if (!attestation)
+					return attestation.error();
+
+				auto proof_base = proof->as_computed();
+				auto proof_asset = algorithm::asset::base_id_of(parent_transaction->asset);
+				executor->defer_side_effect([proof_asset, proof_base = std::move(proof_base)]() mutable
+				{
+					superchain::bridge::get()->update_utxo_tree(proof_asset, proof_base).report("failed to update the pending off-chain utxo set");
+				});
+			}
+			else
 			{
 				if (fee_asset != parent_transaction->asset)
 				{
@@ -2695,33 +2725,16 @@ namespace tangent
 				if (!token_transfer)
 					return token_transfer.error();
 			}
-			else
-			{
-				auto fee_transfer = executor->apply_transfer(fee_asset, parent->receipt.from, -bridge->fee_rate, -bridge->fee_rate);
-				if (!fee_transfer)
-					return fee_transfer.error();
-
-				auto attester = parent_transaction->get_attester(parent->receipt);
-				auto attestation = executor->apply_validator_attestation_reward(fee_asset, attester, bridge->fee_rate * protocol::now().policy.attestation.fee_rate);
-				if (!attestation)
-					return attestation.error();
-			}
 
 			auto log = executor->apply_bridge_instance_log(fee_asset, parent_transaction->bridge_hash, executor->receipt.transaction_hash);
 			if (!log)
 				return log.error();
 
-			return expectation::met;
-		}
-		expects_promise_rt<void> broadcast::dispatch(const ledger::executor_context* executor, ledger::dispatcher_context*) const
-		{
-			auto parent = proof ? executor->get_block_transaction<withdraw>(withdraw_hash) : expects_lr<ledger::block_transaction>(layer_exception("not applicable"));
-			if (!parent)
-				return expects_promise_rt<void>(expectation::met);
+			auto queue = executor->apply_bridge_queue(asset, parent_transaction->bridge_hash, parent->receipt.transaction_hash, false);
+			if (!queue)
+				return queue.error();
 
-			auto* parent_transaction = (withdraw*)*parent->transaction;
-			auto status = superchain::bridge::get()->update_utxo_tree(algorithm::asset::base_id_of(parent_transaction->asset), proof->as_computed());
-			return status ? expects_promise_rt<void>(expectation::met) : expects_promise_rt<void>(remote_exception(std::move(status.error().message())));
+			return expectation::met;
 		}
 		bool broadcast::store_body(format::wo_stream* stream) const
 		{
@@ -2758,10 +2771,6 @@ namespace tangent
 				proof = layer_exception(std::move(error_message));
 			}
 
-			return true;
-		}
-		bool broadcast::is_dispatchable() const
-		{
 			return true;
 		}
 		bool broadcast::recover_many(const ledger::executor_context* executor, const ledger::transaction_receipt&, btree_set<algorithm::pubkeyhash_t>& parties) const
@@ -2815,12 +2824,12 @@ namespace tangent
 			if (prepared.as_status() == superchain::prepared_transaction::status::invalid)
 				return layer_exception("invalid prepared transaction");
 
-			auto server = superchain::bridge::get();
+			auto offchain = superchain::bridge::get();
 			auto base_asset = algorithm::asset::base_id_of(transaction->asset);
 			auto required_output_witness = btree_map<string, states::witness_account>();
 			auto required_output_value = btree_map<algorithm::asset_id, decimal>();
 			auto normalized_address = transaction->address;
-			auto status = server->normalize_address(transaction->asset, &normalized_address);
+			auto status = offchain->normalize_address(transaction->asset, &normalized_address);
 			if (!status)
 				return status.error();
 
@@ -2842,7 +2851,7 @@ namespace tangent
 			for (auto& input : prepared.inputs)
 			{
 				auto normalized_address = input.utxo.link.address;
-				auto status = server->normalize_address(base_asset, &normalized_address);
+				auto status = offchain->normalize_address(base_asset, &normalized_address);
 				if (!status)
 					return status.error();
 
@@ -2875,7 +2884,7 @@ namespace tangent
 			for (auto& output : prepared.outputs)
 			{
 				auto normalized_address = output.link.address;
-				auto status = server->normalize_address(base_asset, &normalized_address);
+				auto status = offchain->normalize_address(base_asset, &normalized_address);
 				if (!status)
 					return status.error();
 
@@ -3030,6 +3039,17 @@ namespace tangent
 			if (!bridge)
 				return bridge.error();
 
+			auto queue = executor->apply_bridge_queue(asset, origin_transaction->bridge_hash, origin->receipt.transaction_hash, false);
+			if (!queue)
+				return queue.error();
+
+			auto proof_base = parent_transaction->proof->as_computed();
+			auto proof_asset = algorithm::asset::base_id_of(origin_transaction->asset);
+			executor->defer_side_effect([proof_asset, proof_base = std::move(proof_base)]() mutable
+			{
+				superchain::bridge::get()->revive_utxo_tree(proof_asset, proof_base).report("failed to revive pending off-chain utxo set");
+			});
+
 			auto prev_attestation = executor->get_validator_attestation_reward(base_asset, attester);
 			if (!prev_attestation)
 				return expectation::met;
@@ -3048,18 +3068,6 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_promise_rt<void> anticast::dispatch(const ledger::executor_context* executor, ledger::dispatcher_context*) const
-		{
-			auto parent = executor->get_block_transaction<broadcast>(broadcast_hash, true);
-			auto origin = parent ? executor->get_block_transaction<withdraw>(((broadcast*)*parent->transaction)->withdraw_hash, true) : expects_lr<ledger::block_transaction>(layer_exception("not applicable"));
-			if (!origin)
-				return expects_promise_rt<void>(expectation::met);
-
-			auto* origin_transaction = (withdraw*)*origin->transaction;
-			auto* parent_transaction = (broadcast*)*parent->transaction;
-			auto status = superchain::bridge::get()->revive_utxo_tree(algorithm::asset::base_id_of(origin_transaction->asset), parent_transaction->proof->as_computed());
-			return status ? expects_promise_rt<void>(expectation::met) : expects_promise_rt<void>(remote_exception(std::move(status.error().message())));
-		}
 		bool anticast::store_body(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
@@ -3071,10 +3079,6 @@ namespace tangent
 			if (!stream.read_integer(stream.read_type(), &broadcast_hash))
 				return false;
 
-			return true;
-		}
-		bool anticast::is_dispatchable() const
-		{
 			return true;
 		}
 		bool anticast::recover_many(const ledger::executor_context* executor, const ledger::transaction_receipt&, btree_set<algorithm::pubkeyhash_t>& parties) const
@@ -3476,12 +3480,13 @@ namespace tangent
 			if (!finalization)
 				return finalization.error();
 
+			auto proof_asset = asset;
+			auto proof_base = proof;
+			executor->defer_side_effect([proof_asset, proof_base = std::move(proof_base)]() mutable
+			{
+				superchain::bridge::get()->update_utxo_tree(proof_asset, proof_base).report("failed to update the off-chain utxo set");
+			});
 			return executor->emit_witness(asset, proof.block_id);
-		}
-		expects_promise_rt<void> attestate::dispatch(const ledger::executor_context*, ledger::dispatcher_context*) const
-		{
-			auto status = superchain::bridge::get()->update_utxo_tree(asset, proof);
-			return status ? expects_promise_rt<void>(expectation::met) : expects_promise_rt<void>(remote_exception(std::move(status.error().message())));
 		}
 		bool attestate::store_body(format::wo_stream* stream) const
 		{
@@ -3543,10 +3548,6 @@ namespace tangent
 				if (event->size() >= 2 && event->at(1).as_string().size() == sizeof(algorithm::pubkeyhash_t))
 					parties.insert(algorithm::pubkeyhash_t(event->at(1).as_blob()));
 			}
-			return true;
-		}
-		bool attestate::is_dispatchable() const
-		{
 			return true;
 		}
 		void attestate::set_finalized_proof(uint64_t block_id, const std::string_view& transaction_id, const vector<superchain::value_transfer>& inputs, const vector<superchain::value_transfer>& outputs)
@@ -3794,16 +3795,16 @@ namespace tangent
 		}
 		expects_promise_rt<superchain::prepared_transaction> resolver::prepare_transaction(const algorithm::asset_id& asset, const superchain::wallet_link& from_link, const superchain::value_transfer& to, const decimal& max_fee)
 		{
-			auto* server = superchain::bridge::get();
+			auto* offchain = superchain::bridge::get();
 			bool may_mock_up = protocol::now().is(network_type::regtest);
-			if (!may_mock_up || server->has_network(asset, true))
-				return server->prepare_transaction(asset, from_link, to, max_fee);
+			if (!may_mock_up || offchain->has_network(asset, true))
+				return offchain->prepare_transaction(asset, from_link, to, max_fee);
 
-			auto chain = server->get_network_params(asset);
+			auto chain = offchain->get_network_params(asset);
 			if (!chain)
 				return expects_promise_rt<superchain::prepared_transaction>(remote_exception("invalid operation"));
 
-			auto from = server->normalize_link(asset, from_link);
+			auto from = offchain->normalize_link(asset, from_link);
 			if (!from)
 				return expects_promise_rt<superchain::prepared_transaction>(remote_exception(std::move(from.error().message())));
 
@@ -3811,7 +3812,7 @@ namespace tangent
 			if (!from->store_payload(&message))
 				return expects_promise_rt<superchain::prepared_transaction>(remote_exception("serialization error"));
 
-			auto public_key = server->to_composite_public_key(asset, from->public_key);
+			auto public_key = offchain->to_composite_public_key(asset, from->public_key);
 			if (!public_key)
 				return expects_promise_rt<superchain::prepared_transaction>(remote_exception(std::move(public_key.error().message())));
 
@@ -3836,10 +3837,10 @@ namespace tangent
 		}
 		expects_lr<superchain::finalized_transaction> resolver::finalize_transaction(const algorithm::asset_id& asset, superchain::prepared_transaction&& prepared)
 		{
-			auto* server = superchain::bridge::get();
+			auto* offchain = superchain::bridge::get();
 			bool may_mock_up = protocol::now().is(network_type::regtest);
-			if (!may_mock_up || server->has_network(asset, true))
-				return server->finalize_transaction(asset, std::move(prepared));
+			if (!may_mock_up || offchain->has_network(asset, true))
+				return offchain->finalize_transaction(asset, std::move(prepared));
 
 			auto transaction_id = algorithm::encoding::encode_0xhex256(prepared.as_hash());
 			auto block_id = algorithm::hashing::hash256i(transaction_id) % std::numeric_limits<uint32_t>::max();
@@ -3849,12 +3850,12 @@ namespace tangent
 		}
 		expects_promise_rt<void> resolver::broadcast_transaction(const algorithm::asset_id& asset, const uint256_t& external_id, superchain::finalized_transaction&& finalized, ledger::dispatcher_context* dispatcher, const ledger::wallet* runner_wallet)
 		{
-			auto* server = superchain::bridge::get();
+			auto* offchain = superchain::bridge::get();
 			bool may_mock_up = protocol::now().is(network_type::regtest);
-			if (!may_mock_up || server->has_network(asset, true))
+			if (!may_mock_up || offchain->has_network(asset, true))
 			{
 				auto preserved = memory::init<superchain::finalized_transaction>(std::move(finalized));
-				return server->broadcast_transaction(asset, external_id, *preserved).then<expects_rt<void>>([preserved](expects_rt<void>&& status) mutable -> expects_rt<void>
+				return offchain->broadcast_transaction(asset, external_id, *preserved).then<expects_rt<void>>([preserved](expects_rt<void>&& status) mutable -> expects_rt<void>
 				{
 					memory::deinit(preserved);
 					if (!status)

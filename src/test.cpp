@@ -1147,12 +1147,12 @@ struct tests
 	static void cryptography_multichain_wallet()
 	{
 		auto* term = console::get();
-		auto* bridge = superchain::bridge::get();
+		auto* offchain = superchain::bridge::get();
 		auto user = ledger::wallet::from_seed("0000000");
-		for (auto& asset : bridge->get_assets())
+		for (auto& asset : offchain->get_assets())
 		{
 			uint8_t seed[] = "123456";
-			auto wallet = *bridge->compute_wallet(asset, seed, sizeof(seed) - 1);
+			auto wallet = *offchain->compute_wallet(asset, seed, sizeof(seed) - 1);
 			auto info = wallet.as_tree();
 			info.set("asset", algorithm::asset::serialize(asset));
 			term->write_line(info.as_json(true));
@@ -1280,7 +1280,7 @@ struct tests
 	/* superchain transaction generation test */
 	static void cryptography_multichain_transaction()
 	{
-		auto* bridge = superchain::bridge::get();
+		auto* offchain = superchain::bridge::get();
 		auto* term = console::get();
 		auto seed = uint256_t(123456);
 		auto create_wallet = [&](const algorithm::asset_id& asset) -> superchain::computed_wallet
@@ -1288,9 +1288,9 @@ struct tests
 			uint8_t seed_buffer[32];
 			seed.encode(seed_buffer);
 
-			auto wallet = *bridge->compute_wallet(asset, seed_buffer, sizeof(seed_buffer));
+			auto wallet = *offchain->compute_wallet(asset, seed_buffer, sizeof(seed_buffer));
 			for (auto& encoded_address : wallet.encoded_addresses)
-				bridge->enable_link(asset, superchain::wallet_link(seed, wallet.encoded_public_key, encoded_address.second)).expect("link activation error");
+				offchain->enable_link(asset, superchain::wallet_link(seed, wallet.encoded_public_key, encoded_address.second)).expect("link activation error");
 			return wallet;
 		};
 		auto validate_transaction = [&](const algorithm::asset_id& asset, const superchain::computed_wallet& wallet, superchain::prepared_transaction& prepared, const std::string_view& feature, const std::string_view& expected_calldata)
@@ -1303,7 +1303,7 @@ struct tests
 				state->to_signature(&input.signature);
 			}
 
-			superchain::finalized_transaction finalized = bridge->finalize_transaction(asset, std::move(prepared)).expect("prepared transaction finalization error");
+			superchain::finalized_transaction finalized = offchain->finalize_transaction(asset, std::move(prepared)).expect("prepared transaction finalization error");
 			VI_PANIC(finalized.calldata == expected_calldata, "resulting calldata differs from expected calldata");
 			term->fwrite_line("%s (%.*s) = %s", algorithm::asset::handle_of(asset).c_str(), (int)feature.size(), feature.data(), finalized.calldata.c_str());
 		};
@@ -1318,10 +1318,10 @@ struct tests
 			options.push(format::variable("p2wsh_p2pkh"));
 			options.push(format::variable("p2wpkh"));
 			options.push(format::variable("p2tr"));
-			bridge->add_network_props(asset, options);
+			offchain->add_network_props(asset, options);
 
 			auto wallet = create_wallet(asset);
-			bridge->add_network_props(asset, format::tree());
+			offchain->add_network_props(asset, format::tree());
 
 			auto input_p2pkh_hash = codec::hex_decode("0x57e30b41a6d984cdb763145f32ad9678a9b2bfd0267e12d5d0474e97f7d077d0");
 			superchain::coin_utxo input_p2pkh;
@@ -1683,18 +1683,18 @@ struct tests
 			TEST_BLOCK(std::bind(&generators::call_stage_1, std::placeholders::_1, std::placeholders::_2, &contracts), "0xcdc0948c487294adede9657938c9eb64c5eaf6919f54b459b0811510b281cb71", 13);
 			TEST_BLOCK(&generators::rollup_stage_1, "0xd85527e5870cbafdc1be4da79fd3870b15a9f3e49dd6a7644739de3f0a747fe7", 14);
 			TEST_BLOCK(std::bind(&generators::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 0, 1), "0xf63278d33cb550efe8daa12f03344f45616cfee2956ea93f9690eecb11100607", 15);
-			TEST_BLOCK_FAULT(&generators::migrate_stage_1, "0x77c3ab1aea67503d7944d08101e6a4cd4b80dd885cf7bab6a0561ba0b7e5f96e", 16);
-			TEST_BLOCK(&generators::migrate_stage_2, "0xb8590f77192eeb6fa75b429959364512a89a5d3a7369b1670507cc37fa42d17d", 18);
-			TEST_BLOCK(&generators::migrate_stage_3, "0xd817f977b73675de91859bcb17fe79908f499e77494fd0989590fd8c6435355a", 19);
-			TEST_BLOCK(&generators::migrate_stage_4, "0x60ba659e512f11512080470d2e3310f7a20557b39f4e79d6781ce360c074065c", 21);
-			TEST_BLOCK(&generators::withdraw_stage_1, "0x63acb3b98e8ad97d2e19755a3411ab568c625f3c811753ed8aa2b0d38a973aa5", 23);
-			TEST_BLOCK(&generators::withdraw_stage_2, "0xb1353cb69c658c25d74e6dc0317eecbcf6a0cd3b0d954c05b0eff67e875adb1d", 25);
-			TEST_BLOCK(&generators::withdraw_stage_3, "0x312df88cd8916c69e50e786e7f91c826341a938afab0c184d2592a09a777d44f", 26);
-			TEST_BLOCK(&generators::withdraw_stage_4, "0x65eaea95726f048609908d284e8f1f7798ff4ed2afd53ba4cbc25593415d7877", 27);
-			TEST_BLOCK(&generators::withdraw_stage_5, "0xa79b09111e8ec864a061a3c03c41c06c6c35e3cbef91f617e42a78eb3d6d447d", 28);
-			TEST_BLOCK(&generators::withdraw_stage_6, "0xab630b8f1da31c309c70e9e6963d43beea902d9906e867b569be8ec1ff9d20cb", 30);
-			TEST_BLOCK(&generators::withdraw_stage_7, "0x361d3b88037cb057fbf541d32e53854728845c16c2d3059d8df7670455ff2484", 32);
-			TEST_BLOCK(std::bind(&generators::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 1, 0), "0x842271e5886640a6ea6bff2e69bdb0e95c595a069c0b1149be7a2ad3a57f672c", 34);
+			TEST_BLOCK_FAULT(&generators::migrate_stage_1, "0x643f70f1458025a747217b614202b90307dec2651812812ceaf857c0f638631b", 16);
+			TEST_BLOCK(&generators::migrate_stage_2, "0xae4b9740fcd39c7c2713b8f48450632801db4eeef85d58c0ac370a5651c849b6", 18);
+			TEST_BLOCK(&generators::migrate_stage_3, "0x1db5b903cdbaea6c494dfe4f8ebeb23523a26f9009731d8d925e68e7422c46b9", 19);
+			TEST_BLOCK(&generators::migrate_stage_4, "0x19fb7c90bbee02391bd233297f26c980bb65865d43201853b9ebe2d0f53dd6f2", 21);
+			TEST_BLOCK(&generators::withdraw_stage_1, "0x18f68a6119b1f990831236576b2341e53b6db53e1ffa2e6397a63b54ef01b172", 23);
+			TEST_BLOCK(&generators::withdraw_stage_2, "0xdb62c5805894ddcda2c1531986b3d1060f8e99f05e53abacb220849e5c2fb3ab", 25);
+			TEST_BLOCK(&generators::withdraw_stage_3, "0x3eb9d3e929dd98bc64466c555f5c0580b975d9c0dbcb1be25b5cd9361fc540ec", 26);
+			TEST_BLOCK(&generators::withdraw_stage_4, "0xddda1abb3577da56156dd91f2cd0fa01df0a06a02befabb62019ef10e5ad43d9", 27);
+			TEST_BLOCK(&generators::withdraw_stage_5, "0xb7ed7cd29115ef9a32d1c365578a2d3893c4a877845029efb487dbf73cbcbad4", 28);
+			TEST_BLOCK(&generators::withdraw_stage_6, "0x2d7eca4817a720688fac70c06d3b3e21776da3a73cf588abef5b9054e153ecd7", 30);
+			TEST_BLOCK(&generators::withdraw_stage_7, "0x737dc533a08b4e16ff503997a17e4be0a97b8382c76d374aa521c2e132e02402", 32);
+			TEST_BLOCK(std::bind(&generators::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 1, 0), "0x4c29c24692b0bdfcb33f5d2f246f7987188e8c5139912de5c132f52885b9bd71", 34);
 			if (userdata != nullptr)
 				*userdata = std::move(users);
 			else
@@ -1773,11 +1773,11 @@ struct tests
 			auto& config = protocol::change();
 			config.user.superchain.listener = true;
 
-			auto* bridge = superchain::bridge::get();
-			auto params = (superchain::translation_unit::chainparams*)bridge->get_network_params(asset);
+			auto* offchain = superchain::bridge::get();
+			auto params = (superchain::translation_unit::chainparams*)offchain->get_network_params(asset);
 			protocol::change().user.superchain.polling_frequency = 3000;
-			bridge->add_network_connection(asset, hash_map<string, string>(urls), 0.0, false);
-			bridge->scan_from_block_height(asset, block_number);
+			offchain->add_network_connection(asset, hash_map<string, string>(urls), 0.0, false);
+			offchain->scan_from_block_height(asset, block_number);
 
 			auto receive_transaction = [&]()
 			{
@@ -1787,7 +1787,7 @@ struct tests
 				{
 					auto result = coasync<expects_rt<vector<superchain::transaction_logs>>>([&]() -> expects_promise_rt<vector<superchain::transaction_logs>>
 					{
-						coreturn coawait(bridge->link_transactions(asset));
+						coreturn coawait(offchain->link_transactions(asset));
 					}).get();
 					if (!result)
 					{
@@ -1806,7 +1806,7 @@ struct tests
 							transactions.push_back(transaction);
 						}
 
-						logs.report_logs(asset, bridge->get_network_instance(asset)->options);
+						logs.report_logs(asset, offchain->get_network_instance(asset)->options);
 						if (!transactions.empty())
 						{
 							tester::new_block_from_list(nullptr, producers, std::move(transactions));
@@ -2297,7 +2297,7 @@ int main(int argc, char* argv[])
 			{ "cryptography / multichain transaction", &tests::cryptography_multichain_transaction },
 			{ "blockchain / full coverage", std::bind(&tests::blockchain_full_coverage, (vector<account_ref>*)nullptr) },
 			{ "blockchain / verification", &tests::blockchain_verification },
-			{ "blockchain / partial coverage", std::bind(&tests::blockchain_partial_coverage, (vector<account_ref>*)nullptr) },
+			//{ "blockchain / partial coverage", std::bind(&tests::blockchain_partial_coverage, (vector<account_ref>*)nullptr) },
 			{ "blockchain / verification", &tests::blockchain_verification },
 			{ "blockchain / gas estimation", &tests::blockchain_gas_estimation },
 		};

@@ -131,7 +131,7 @@ namespace tangent
 			};
 
 			typedef std::array<state_local_storage, 6> uniform_storage_map;
-			typedef std::array<state_local_storage, 13> multiform_storage_map;
+			typedef std::array<state_local_storage, 14> multiform_storage_map;
 			static_assert(std::tuple_size_v<states::resolver::uniform_type_map> == std::tuple_size_v<uniform_storage_map>, "uniform storage size mismatch");
 			static_assert(std::tuple_size_v<states::resolver::multiform_type_map> == std::tuple_size_v<multiform_storage_map>, "multiform storage size mismatch");
 

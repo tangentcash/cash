@@ -252,10 +252,8 @@ namespace tangent
 
 			expects_lr<void> validate(uint64_t block_number) const override;
 			expects_lr<void> execute(ledger::executor_context* executor) const override;
-			expects_promise_rt<void> dispatch(const ledger::executor_context* executor, ledger::dispatcher_context* dispatcher) const override;
 			bool store_body(format::wo_stream* stream) const override;
 			bool load_body(format::ro_stream& stream) override;
-			bool is_dispatchable() const override;
 			bool recover_many(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const override;
 			void set_proof(const uint256_t& new_withdraw_hash, expects_lr<superchain::finalized_transaction>&& new_proof);
 			format::tree as_tree() const override;
@@ -273,10 +271,8 @@ namespace tangent
 
 			expects_lr<void> validate(uint64_t block_number) const override;
 			expects_lr<void> execute(ledger::executor_context* executor) const override;
-			expects_promise_rt<void> dispatch(const ledger::executor_context* executor, ledger::dispatcher_context* dispatcher) const override;
 			bool store_body(format::wo_stream* stream) const override;
 			bool load_body(format::ro_stream& stream) override;
-			bool is_dispatchable() const override;
 			bool recover_many(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const override;
 			void set_protest(const uint256_t& new_broadcast_hash);
 			format::tree as_tree() const override;
@@ -301,11 +297,9 @@ namespace tangent
 
 			expects_lr<void> validate(uint64_t block_number) const override;
 			expects_lr<void> execute(ledger::executor_context* executor) const override;
-			expects_promise_rt<void> dispatch(const ledger::executor_context* executor, ledger::dispatcher_context* dispatcher) const override;
 			bool store_body(format::wo_stream* stream) const override;
 			bool load_body(format::ro_stream& stream) override;
 			bool recover_many(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const override;
-			bool is_dispatchable() const override;
 			void set_finalized_proof(uint64_t block_id, const std::string_view& transaction_id, const vector<superchain::value_transfer>& inputs, const vector<superchain::value_transfer>& outputs);
 			void set_computed_proof(superchain::computed_transaction&& new_proof, btree_map<uint256_t, btree_set<algorithm::hashsig_t>>&& new_commitments);
 			bool add_commitment(const algorithm::seckey_t& secret_key);

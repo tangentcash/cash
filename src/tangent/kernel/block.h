@@ -114,6 +114,11 @@ namespace tangent
 				hash_map<uint32_t, void*> topics;
 				hash_map<string, string> effects;
 			} temporary_state;
+			struct
+			{
+				vector<task_callback> finalized;
+				vector<task_callback> pending;
+			} effects;
 			block_state outgoing;
 			block_state incoming;
 
@@ -261,6 +266,7 @@ namespace tangent
 		{
 			block_body block;
 			block_state state;
+			vector<task_callback> effects;
 
 			format::tree as_tree() const;
 		};
@@ -300,6 +306,7 @@ namespace tangent
 			executor_context(executor_context&&) = default;
 			executor_context& operator=(const executor_context& other);
 			executor_context& operator=(executor_context&&) = default;
+			void defer_side_effect(task_callback&& callback);
 			expects_lr<void> query(transition_state* value, bool paid_in_full);
 			expects_lr<void> load(transition_state* value, bool paid);
 			expects_lr<void> store(transition_state* value, bool paid);
@@ -334,6 +341,7 @@ namespace tangent
 			expects_lr<states::bridge_instance> apply_bridge_instance(const algorithm::asset_id& asset, const uint256_t& bridge_hash, uint8_t security_level, const decimal& fee);
 			expects_lr<states::bridge_instance> apply_bridge_instance_log(const algorithm::asset_id& asset, const uint256_t& bridge_hash, const uint256_t& transaction_hash);
 			expects_lr<states::bridge_instance> apply_bridge_instance_account(const algorithm::asset_id& asset, const uint256_t& bridge_hash, const algorithm::pubkeyhash_t& owner);
+			expects_lr<states::bridge_queue> apply_bridge_queue(const algorithm::asset_id& asset, const uint256_t& bridge_hash, const uint256_t& transaction_hash, bool active);
 			expects_lr<states::bridge_balance> apply_bridge_balance(const algorithm::asset_id& asset, const uint256_t& bridge_hash, const decimal& balance);
 			expects_lr<states::bridge_account> apply_bridge_account(const algorithm::pubkeyhash_t& owner, const algorithm::asset_id& asset, const uint256_t& bridge_hash, const algorithm::composition::cpubkey_t& public_key, btree_set<algorithm::pubkeyhash_t>&& group);
 			expects_lr<states::witness_program> apply_witness_program(const std::string_view& packed_program_code);
@@ -365,6 +373,7 @@ namespace tangent
 			expects_lr<vector<states::validator_attestation_reward>> get_validator_attestation_rewards(const algorithm::pubkeyhash_t& owner, size_t offset, size_t count) const;
 			expects_lr<states::bridge_instance> get_bridge_instance(const algorithm::asset_id& asset, const uint256_t& bridge_hash) const;
 			expects_lr<vector<states::bridge_instance>> get_bridge_instances(const algorithm::asset_id& asset, size_t offset, size_t count) const;
+			expects_lr<states::bridge_queue> get_bridge_queue(const algorithm::asset_id& asset, const uint256_t& bridge_hash, int8_t side = 1) const;
 			expects_lr<states::bridge_balance> get_bridge_balance(const algorithm::asset_id& asset, const uint256_t& bridge_hash) const;
 			expects_lr<vector<states::bridge_balance>> get_bridge_balances(const uint256_t& bridge_hash, size_t offset, size_t count) const;
 			expects_lr<vector<states::bridge_account>> get_bridge_accounts(const uint256_t& bridge_hash, size_t offset, size_t count) const;

@@ -3250,9 +3250,8 @@ namespace tangent
 		}
 		server_response server_node::validatorstate_get_blockchains(http::connection*, format::variables&&)
 		{
-			auto* bridge = superchain::bridge::get();
 			auto data = format::tree::list();
-			for (auto& [asset, params] : bridge->get_assets_with_params())
+			for (auto& [asset, params] : superchain::bridge::get()->get_assets_with_params())
 			{
 				auto* next = data.push(algorithm::asset::serialize(asset));
 				next->set("divisibility", format::variable(params.divisibility));
