@@ -899,7 +899,7 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<void> server_node::accept_local_node(storages::mempoolstate& mempool, relay_descriptor& descriptor, bool runner)
+		expects_lr<void> server_node::accept_node(storages::mempoolstate& mempool, relay_descriptor& descriptor, node_category category)
 		{
 			auto& [node, wallet] = descriptor;
 			auto ip_address = node.address.get_ip_address();
@@ -909,19 +909,26 @@ namespace tangent
 			else if (*ip_address == "0.0.0.0")
 				node.address = socket_address("127.0.0.1", *ip_port);
 
-			return runner ? mempool.apply_runner_node(descriptor) : mempool.apply_neighbor_node(descriptor);
-		}
-		expects_lr<void> server_node::accept_node(storages::mempoolstate& mempool, relay_descriptor& descriptor)
-		{
-			auto& [node, wallet] = descriptor;
-			auto ip_address = node.address.get_ip_address();
-			auto ip_port = node.address.get_ip_port();
-			if (!node.address.is_valid() || !ip_address || !ip_port)
-				return layer_exception("bad node address");
-			else if (*ip_address == "0.0.0.0")
-				node.address = socket_address("127.0.0.1", *ip_port);
+			switch (category)
+			{
+				case node_category::runner:
+					return mempool.apply_runner_node(descriptor);
+				case node_category::neighbor:
+					return mempool.apply_neighbor_node(descriptor);
+				case node_category::other:
+				{
+					if (find_descriptor(wallet.public_key_hash))
+						return layer_exception("must not modify internal node");
 
-			return mempool.apply_node(descriptor);
+					auto prev = mempool.get_node(node.address);
+					if (prev && find_descriptor(prev->second.public_key_hash))
+						return layer_exception("must not modify internal node");
+
+					return mempool.apply_node(descriptor);
+				}
+				default:
+					return layer_exception("invalid node category");
+			}
 		}
 		expects_lr<void> server_node::accept_local_accounts(const vector<ledger::wallet>& accounts)
 		{
@@ -967,7 +974,7 @@ namespace tangent
 				node.services.has_rpc = protocol::now().user.rpc.server && protocol::now().user.rpc.username.empty();
 
 				bool runner = account == runner_account;
-				auto result = accept_local_node(mempool, descriptor, runner);
+				auto result = accept_node(mempool, descriptor, runner ? node_category::runner : node_category::neighbor);
 				if (result)
 					VI_INFO("%s account %s accepted", runner ? "runner" : "neighbor", wallet.get_address().c_str());
 			}
@@ -1334,15 +1341,22 @@ namespace tangent
 			algorithm::signing::derive_public_key_hash(peer_wallet.public_key, peer_wallet.public_key_hash);
 			if (!peer_node.is_valid() || peer_wallet.public_key_hash.empty() || find_descriptor(peer_wallet.public_key_hash) || find_by_account(peer_wallet.public_key_hash))
 			{
-				mempool.clear_node(peer_descriptor.first.address);
-				return remote_exception("invalid node");
+				auto prev = mempool.get_node(peer_descriptor.first.address);
+				if (prev)
+				{
+					if (!find_descriptor(prev->second.public_key_hash))
+						mempool.clear_node(peer_descriptor.first.address);
+				}
+				return remote_exception("node is not acceptable");
 			}
 
 			auto prev_descriptor = mempool.get_node(peer_node.address);
 			if (prev_descriptor)
 				peer_node.availability.reachable = peer_node.availability.reachable || prev_descriptor->first.availability.reachable;
 
-			accept_node(mempool, peer_descriptor).report("mempool peer node save failed");
+			if (!accept_node(mempool, peer_descriptor, node_category::other))
+				return remote_exception("node is not memorizable");
+
 			from->initialize(std::move(peer_descriptor));
 			if (is_acknowledgement)
 				return format::variables();
@@ -1372,8 +1386,9 @@ namespace tangent
 			{
 				for (auto& [account, descriptor] : descriptors)
 				{
+					bool runner = runner_descriptor == &descriptor;
 					descriptor.first.address = std::move(*address);
-					accept_local_node(mempool, descriptor, runner_descriptor == &descriptor).report("mempool local node save failed");
+					accept_node(mempool, descriptor, runner ? node_category::runner : node_category::neighbor).report("mempool local node save failed");
 				}
 			}
 

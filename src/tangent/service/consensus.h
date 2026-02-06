@@ -30,6 +30,13 @@ namespace tangent
 			outbound
 		};
 
+		enum class node_category
+		{
+			runner,
+			neighbor,
+			other
+		};
+
 		struct callable
 		{
 			struct descriptor
@@ -346,8 +353,7 @@ namespace tangent
 			expects_promise_system<http::response_frame> queued_fetch_internal(const algorithm::asset_id& asset, const std::string_view& location, const std::string_view& method, const http::fetch_frame& options);
 			expects_system<void> on_unlisten() override;
 			expects_system<void> on_after_unlisten() override;
-			expects_lr<void> accept_local_node(storages::mempoolstate& mempool, relay_descriptor& descriptor, bool runner);
-			expects_lr<void> accept_node(storages::mempoolstate& mempool, relay_descriptor& descriptor);
+			expects_lr<void> accept_node(storages::mempoolstate& mempool, relay_descriptor& descriptor, node_category category);
 			uref<relay> find_node_by_instance(void* instance);
 			format::variables build_state_exchange(uref<relay>&& state);
 			void announce_peer(uref<relay>&& state, bool available);
