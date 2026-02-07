@@ -836,7 +836,7 @@ namespace tangent
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			if (!prepared.store_payload(stream))
 				return false;
-			
+
 			stream->write_string(calldata);
 			stream->write_string(hashdata);
 			stream->write_integer(locktime);
@@ -1365,7 +1365,7 @@ namespace tangent
 			copy.transaction_id = transaction_id;
 			copy.index = index;
 			copy.link = std::move(*link);
-			for (auto& [hash, item]: copy.tokens)
+			for (auto& [hash, item] : copy.tokens)
 			{
 				public_key_hash = implementation->decode_address(item.contract_address);
 				if (public_key_hash)
@@ -1603,7 +1603,7 @@ namespace tangent
 				if (data)
 					return expects_rt<format::tree>(std::move(*data));
 			}
-			
+
 			if (protocol::now().time.now_cpu() < connection.state.error_retry_after_timestamp)
 				return expects_rt<format::tree>(remote_exception::retry_after(connection.state.error_retry_after_timestamp));
 			else
@@ -1879,7 +1879,7 @@ namespace tangent
 				auto* utxo_implementation = result ? utxo_translation_unit::from(implementation) : nullptr;
 				if (utxo_implementation != nullptr)
 					utxo_implementation->update_utxo(new_transaction).report("failed to update utxo set from " + new_transaction.transaction_id);
-	
+
 				return result;
 			});
 		}

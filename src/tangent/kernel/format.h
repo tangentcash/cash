@@ -175,7 +175,7 @@ namespace tangent
 		{
 			string key;
 			variable value;
-			option<vector<tree>> fields;
+			vector<tree>* fields;
 			structure type;
 
 			tree() noexcept;
@@ -183,13 +183,14 @@ namespace tangent
 			tree(variable&& base) noexcept;
 			tree(const tree& other) noexcept;
 			tree(tree&& other) noexcept;
+			~tree() noexcept;
 			tree& operator=(const tree& other) noexcept;
 			tree& operator=(tree&& other) noexcept;
-			variable child_var(const std::string_view& notation, bool deep = false) const;
+			variable child_var(const std::string_view& notation) const;
 			variable child_var(size_t index) const;
-			tree* child(const std::string_view& notation, bool deep = false) const;
+			tree* child(const std::string_view& notation) const;
 			tree* child(size_t index) const;
-			tree* at(const std::string_view& name, bool deep = false) const;
+			tree* at(const std::string_view& name) const;
 			tree* set(const std::string_view& key, const variable& value);
 			tree* set(const std::string_view& key, variable&& value);
 			tree* set(const std::string_view& key, const tree& value);
@@ -213,6 +214,24 @@ namespace tangent
 			static tree from_schema(schema* base);
 			static option<tree> from_message(format::ro_stream& stream);
 			static expects_parser<tree> from_json(const std::string_view& text);
+		};
+
+		class tree_pool : public singleton<tree_pool>
+		{
+		private:
+			single_queue<vector<tree>*> queue;
+			std::recursive_mutex mutex;
+			std::atomic<bool> full;
+
+		public:
+			size_t max_queue_size;
+			size_t max_vector_capacity;
+
+		public:
+			tree_pool();
+			vector<tree>* allocate();
+			vector<tree>* reallocate(vector<tree>* from, vector<tree>* preallocated = nullptr);
+			void deallocate(vector<tree>* value);
 		};
 
 		class util
@@ -256,6 +275,7 @@ namespace tangent
 			static bool serialize_into(const variables& data, wo_stream* result, bool merging);
 		};
 	}
+
 }
 
 namespace vitex

@@ -734,6 +734,14 @@ namespace tangent
 			if (value != nullptr && value->value.is_integer())
 				user.storage.checkpoint_size = value->value.as_uint64();
 
+			value = config->child("storage.max_tree_queue_size");
+			if (value != nullptr && value->value.is_integer())
+				format::tree_pool::get()->max_queue_size = (size_t)value->value.as_uint64();
+
+			value = config->child("storage.max_tree_vector_size");
+			if (value != nullptr && value->value.is_integer())
+				format::tree_pool::get()->max_vector_capacity = (size_t)value->value.as_uint64();
+
 			value = config->child("storage.module_cache_size");
 			if (value != nullptr && value->value.is_integer())
 				user.storage.module_cache_size = value->value.as_uint64();
@@ -941,6 +949,7 @@ namespace tangent
 		database.checkpoint();
 		superchain::bridge::cleanup_instance();
 		script::factory::cleanup_instance();
+		format::tree_pool::cleanup_instance();
 		algorithm::signing::deinitialize();
 		error_handling::set_callback(nullptr);
 		if (instance == this)

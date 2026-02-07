@@ -226,13 +226,13 @@ namespace tangent
 					case rapidjson::kStringType:
 					{
 						std::string_view text(from->GetString(), from->GetStringLength());
-						if (stringify::has_integer(text))
+						if (text.find('-') == std::string::npos && stringify::has_integer(text))
 						{
-							auto number = uint256_t(text, 10);
-							if (number.to_string() != text)
-								to.value = variable(decimal(text));
+							auto number = from_string<uint64_t>(text);
+							if (number)
+								to.value = variable(*number);
 							else
-								to.value = variable(number);
+								to.value = variable(decimal(text));
 						}
 						else if (stringify::has_number(text))
 							to.value = variable(decimal(text));
@@ -1371,29 +1371,36 @@ namespace tangent
 			return variable(any);
 		}
 
-		tree::tree() noexcept : fields(optional::none), type(structure::flat)
+		tree::tree() noexcept : fields(nullptr), type(structure::flat)
 		{
 		}
-		tree::tree(const variable& base) noexcept : value(base), fields(optional::none), type(structure::flat)
+		tree::tree(const variable& base) noexcept : value(base), fields(nullptr), type(structure::flat)
 		{
 		}
-		tree::tree(variable&& base) noexcept : value(std::move(base)), fields(optional::none), type(structure::flat)
+		tree::tree(variable&& base) noexcept : value(std::move(base)), fields(nullptr), type(structure::flat)
 		{
 		}
-		tree::tree(const tree& other) noexcept : key(other.key), value(other.value), fields(other.fields), type(other.type)
+		tree::tree(const tree& other) noexcept : key(other.key), value(other.value), fields(nullptr), type(other.type)
 		{
+			if (other.fields != nullptr)
+				fields = tree_pool::get()->reallocate(other.fields);
 		}
-		tree::tree(tree&& other) noexcept : key(std::move(other.key)), value(std::move(other.value)), fields(std::move(other.fields)), type(other.type)
+		tree::tree(tree&& other) noexcept : key(std::move(other.key)), value(std::move(other.value)), fields(other.fields), type(other.type)
 		{
+			other.fields = nullptr;
 		}
 		tree& tree::operator=(const tree& other) noexcept
 		{
 			if (this == &other)
 				return *this;
 
+			if (other.fields != nullptr)
+				fields = tree_pool::get()->reallocate(other.fields, fields);
+			else
+				this->~tree();
+
 			key = other.key;
 			value = other.value;
-			fields = other.fields;
 			type = other.type;
 			return *this;
 		}
@@ -1402,15 +1409,25 @@ namespace tangent
 			if (this == &other)
 				return *this;
 
+			fields = other.fields;
+			other.fields = nullptr;
+
 			key = std::move(other.key);
 			value = std::move(other.value);
-			fields = std::move(other.fields);
 			type = other.type;
 			return *this;
 		}
-		variable tree::child_var(const std::string_view& notation, bool deep) const
+		tree::~tree()
 		{
-			auto* result = child(notation, deep);
+			if (fields != nullptr)
+			{
+				tree_pool::get()->deallocate(fields);
+				fields = nullptr;
+			}
+		}
+		variable tree::child_var(const std::string_view& notation) const
+		{
+			auto* result = child(notation);
 			if (!result)
 				return variable();
 
@@ -1418,24 +1435,25 @@ namespace tangent
 		}
 		variable tree::child_var(size_t index) const
 		{
-			return fields && index < fields->size() ? (*fields)[index].value : variable();
+			auto result = child(index);
+			return result ? result->value : variable();
 		}
-		tree* tree::child(const std::string_view& notation, bool deep) const
+		tree* tree::child(const std::string_view& notation) const
 		{
 			if (notation.find('.') == std::string::npos)
-				return at(notation, deep);
+				return at(notation);
 
 			vector<string> names = stringify::split(notation, '.');
 			if (names.empty())
 				return nullptr;
 
-			auto* current = at(*names.begin(), deep);
+			auto* current = at(*names.begin());
 			if (!current)
 				return nullptr;
 
 			for (auto it = names.begin() + 1; it != names.end(); ++it)
 			{
-				current = current->at(*it, deep);
+				current = current->at(*it);
 				if (!current)
 					return nullptr;
 			}
@@ -1446,28 +1464,18 @@ namespace tangent
 		{
 			return fields && index < fields->size() ? (tree*)&(*fields)[index] : nullptr;
 		}
-		tree* tree::at(const std::string_view& name, bool deep) const
+		tree* tree::at(const std::string_view& name) const
 		{
 			if (!fields || fields->empty())
 				return nullptr;
 
 			if (stringify::has_integer(name))
-			{
-				size_t index = (size_t)*from_string<uint64_t>(name);
-				if (index < fields->size())
-					return (tree*)&(*fields)[index];
-			}
+				return child((size_t)*from_string<uint64_t>(name));
 
 			for (auto& k : *fields)
 			{
 				if (k.key == name)
 					return (tree*)&k;
-				else if (!deep)
-					continue;
-
-				auto* v = k.at(name, deep);
-				if (v != nullptr)
-					return v;
 			}
 
 			return nullptr;
@@ -1593,7 +1601,7 @@ namespace tangent
 		vector<tree>& tree::childs()
 		{
 			if (!fields)
-				fields = vector<tree>();
+				fields = tree_pool::get()->allocate();
 			return *fields;
 		}
 		bool tree::has(const std::string_view& name) const
@@ -1740,6 +1748,51 @@ namespace tangent
 			auto to = tree();
 			convert_from_json_value(&from, to);
 			return expects_parser<tree>(std::move(to));
+		}
+
+		tree_pool::tree_pool() : full(false), max_queue_size(64 * 1024), max_vector_capacity(48)
+		{
+		}
+		vector<tree>* tree_pool::allocate()
+		{
+			umutex<std::recursive_mutex> unique(mutex);
+			if (!queue.empty())
+			{
+				auto* cache = queue.front();
+				queue.pop();
+				full = false;
+				return cache;
+			}
+			return memory::init<vector<tree>>();
+		}
+		vector<tree>* tree_pool::reallocate(vector<tree>* from, vector<tree>* preallocated)
+		{
+			VI_ASSERT(from != nullptr, "from should be set");
+			auto* to = preallocated ? preallocated : allocate();
+			to->assign(from->begin(), from->end());
+			for (auto& item : *to)
+			{
+				if (item.fields != nullptr)
+					item.fields = reallocate(item.fields);
+			}
+			return to;
+		}
+		void tree_pool::deallocate(vector<tree>* value)
+		{
+			VI_ASSERT(value != nullptr, "value should be set");
+			if (full)
+				return memory::deinit(value);
+
+			if (value->capacity() > max_vector_capacity)
+			{
+				value->resize(max_vector_capacity);
+				value->shrink_to_fit();
+			}
+
+			value->clear();
+			umutex<std::recursive_mutex> unique(mutex);
+			queue.push(value);
+			full = queue.size() >= max_queue_size;
 		}
 
 		string util::decompress_stream(const std::string_view& data)

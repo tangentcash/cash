@@ -3,6 +3,7 @@
 #include "control.h"
 #include "../policy/messages.h"
 #include <vitex/network/http.h>
+#include <rapidjson/rapidjson.h>
 
 namespace tangent
 {
