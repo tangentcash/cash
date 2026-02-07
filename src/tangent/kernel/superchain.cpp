@@ -1458,7 +1458,7 @@ namespace tangent
 							auto* headers_field = child.child("headers");
 							if (headers_field != nullptr)
 							{
-								for (auto& header : child.childs())
+								for (auto& header : headers_field->childs())
 									headers[header.key] = header.value.as_blob();
 							}
 
@@ -1631,14 +1631,14 @@ namespace tangent
 				setup.verify_peers = (uint32_t)protocol::now().user.tcp.tls_trusted_peers;
 				setup.timeout = protocol::now().user.tcp.timeout;
 				setup.set_header("User-Agent", random_user_agent());
-				for (auto& [key, value] : connection.headers)
-					setup.set_header(key, value);
-
 				if (!message.empty())
 				{
 					setup.set_header("Content-Type", type_ref);
 					setup.content.assign(message);
 				}
+
+				for (auto& [key, value] : connection.headers)
+					setup.set_header(key, value);
 
 				auto response = coawait(network_fetch(asset, target_url, method_ref, setup));
 				if (!response || response->status_code == 408 || response->status_code == 429 || response->status_code == 502 || response->status_code == 503 || response->status_code == 504)
