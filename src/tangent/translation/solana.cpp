@@ -92,7 +92,7 @@ namespace tangent
 					map.push(std::move(submap));
 				}
 
-				return execute_rpc_multi(nd_call::get_block(), std::move(map), cache_policy::blob_cache).then<expects_rt<vector<block_log>>>([block_height, block_count](expects_rt<format::tree>&& block_data) -> expects_rt<vector<block_log>>
+				return execute_rpc_multi(nd_call::get_block(), std::move(map), cache_policy::no_cache).then<expects_rt<vector<block_log>>>([block_height, block_count](expects_rt<format::tree>&& block_data) -> expects_rt<vector<block_log>>
 				{
 					if (!block_data && block_data.error().message().find("was skipped, or missing") == std::string::npos)
 						return block_data.error();
@@ -125,38 +125,50 @@ namespace tangent
 			}
 			expects_promise_rt<computed_transaction> solana::link_transaction(uint64_t, const std::string_view&, format::tree& transaction_data)
 			{
-				return coasync<expects_rt<computed_transaction>>([this, &transaction_data]() -> expects_promise_rt<computed_transaction>
+				auto* meta = transaction_data.child("meta");
+				if (meta != nullptr)
 				{
-					auto* error = transaction_data.child("meta.status.Err");
-					if (error != nullptr)
-						coreturn expects_rt<computed_transaction>(remote_exception("tx reverted"));
+					auto* status = meta->child("status");
+					if (status != nullptr && status->has("Err"))
+						return expects_rt<computed_transaction>(remote_exception("tx reverted"));
+				}
 
-					auto signature = transaction_data.child_var("transaction.signatures.0").as_blob();
-					auto* account_keys = transaction_data.child("transaction.accountKeys");
-					if (!account_keys || signature.empty())
-						coreturn expects_rt<computed_transaction>(remote_exception("tx must have one or more signatures and account keys"));
+				auto* transaction = transaction_data.child("transaction");
+				if (!transaction)
+					return expects_rt<computed_transaction>(remote_exception("tx invalid"));
 
-					hash_set<string> addresses;
-					for (auto& account_key : account_keys->childs())
-						addresses.insert(account_key.child_var("pubkey").as_blob());
+				auto* signatures = transaction->child("signatures");
+				auto* account_keys = transaction->child("accountKeys");
+				if (!signatures || !signatures->fields || signatures->childs().empty() || !account_keys || !account_keys->fields || account_keys->childs().empty())
+					return expects_rt<computed_transaction>(remote_exception("tx must have one or more signatures and account keys"));
 
-					auto* pre_token_balances = transaction_data.child("meta.preTokenBalances");
-					auto* post_token_balances = transaction_data.child("meta.postTokenBalances");
-					if (pre_token_balances != nullptr)
-					{
-						for (auto& balance : pre_token_balances->childs())
-							addresses.insert(balance.child_var("owner").as_blob());
-					}
-					if (post_token_balances != nullptr)
-					{
-						for (auto& balance : post_token_balances->childs())
-							addresses.insert(balance.child_var("owner").as_blob());
-					}
+				auto signature = signatures->child(0)->value.as_string();
+				if (signature.empty())
+					return expects_rt<computed_transaction>(remote_exception("tx must have one or more signatures and account keys"));
 
-					auto discovery = find_linked_addresses(addresses);
-					if (!discovery || discovery->empty())
-						coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
+				hash_set<string> addresses;
+				for (auto& account_key : account_keys->childs())
+					addresses.insert(account_key.child_var("pubkey").as_blob());
 
+				auto* pre_token_balances = meta ? meta->child("preTokenBalances") : nullptr;
+				auto* post_token_balances = meta ? meta->child("postTokenBalances") : nullptr;
+				if (pre_token_balances != nullptr)
+				{
+					for (auto& balance : pre_token_balances->childs())
+						addresses.insert(balance.child_var("owner").as_blob());
+				}
+				if (post_token_balances != nullptr)
+				{
+					for (auto& balance : post_token_balances->childs())
+						addresses.insert(balance.child_var("owner").as_blob());
+				}
+
+				auto discovery = find_linked_addresses(addresses);
+				if (!discovery || discovery->empty())
+					return expects_rt<computed_transaction>(remote_exception("tx not involved"));
+
+				return coasync<expects_rt<computed_transaction>>([this, &transaction_data, pre_token_balances, post_token_balances, signature = std::move(signature), addresses = std::move(addresses), discovery = std::move(discovery)]() mutable -> expects_promise_rt<computed_transaction>
+				{
 					auto transaction_data_postload = coawait(get_transaction(signature));
 					if (!transaction_data_postload)
 						coreturn expects_rt<computed_transaction>(transaction_data_postload.error());
