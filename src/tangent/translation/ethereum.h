@@ -104,6 +104,7 @@ namespace tangent
 					uint8_t priority_gas = 0;
 				} legacy;
 				chainparams netdata;
+				string evm_rpc_path;
 
 			public:
 				ethereum(const algorithm::asset_id& new_asset) noexcept;

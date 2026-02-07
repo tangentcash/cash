@@ -296,15 +296,14 @@ namespace tangent
 
 		struct connection_instance
 		{
-			hash_map<string, string> urls;
-			uint64_t rps_retry_after_timestamp = 0;
-			uint64_t error_retry_after_timestamp = 0;
-			bool keep_alive = true;
+			struct
+			{
+				uint64_t rps_retry_after_timestamp = 0;
+				uint64_t error_retry_after_timestamp = 0;
+			} state;
+			string connection_url;
+			btree_map<string, string> headers;
 			double rps = 0.0;
-
-			bool has_distinct_url(const std::string_view& type) const;
-			const string& get_url(const std::string_view& type) const;
-			string get_url(const std::string_view& type, const std::string_view& path) const;
 		};
 
 		struct network_instance
@@ -372,7 +371,6 @@ namespace tangent
 			virtual expects_lr<address_map> to_addresses(const std::string_view& public_key) = 0;
 			virtual expects_lr<btree_map<string, wallet_link>> find_linked_addresses(const hash_set<string>& addresses);
 			virtual expects_lr<btree_map<string, wallet_link>> find_linked_addresses(const uint256_t& hash, size_t offset, size_t count);
-			virtual expects_lr<void> verify_node_compatibility(connection_instance* node);
 			virtual decimal to_value(const decimal& value) const;
 			virtual uint256_t to_baseline_value(const decimal& value) const;
 			virtual decimal from_baseline_value(const uint256_t& value) const;
@@ -484,8 +482,7 @@ namespace tangent
 			translation_unit* get_network(const algorithm::asset_id& asset);
 			network_instance* get_network_instance(const algorithm::asset_id& asset);
 			const translation_unit::chainparams* get_network_params(const algorithm::asset_id& asset);
-			connection_instance* add_network_connection(const algorithm::asset_id& asset, const std::string_view& url, double rps, bool keep_alive);
-			connection_instance* add_network_connection(const algorithm::asset_id& asset, hash_map<string, string>&& urls, double rps, bool keep_alive);
+			connection_instance* add_network_connection(const algorithm::asset_id& asset, const std::string_view& url, btree_map<string, string>&& headers, double rps);
 			format::tree* add_network_props(const algorithm::asset_id& asset, const format::tree& value);
 			format::tree* get_network_props(const algorithm::asset_id& asset);
 			void remove_network(const algorithm::asset_id& asset);

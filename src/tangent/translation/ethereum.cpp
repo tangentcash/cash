@@ -337,7 +337,7 @@ namespace tangent
 				format::tree map;
 				map.push(format::variable(format::util::assign_0xhex(transaction_id)));
 
-				return execute_rpc(nd_call::get_transaction_receipt(), std::move(map), cached ? cache_policy::blob_cache : cache_policy::no_cache_no_throttling).then<expects_rt<format::tree>>([](expects_rt<format::tree>&& tx_data) -> expects_rt<format::tree>
+				return execute_rpc(nd_call::get_transaction_receipt(), std::move(map), cached ? cache_policy::blob_cache : cache_policy::no_cache_no_throttling, evm_rpc_path).then<expects_rt<format::tree>>([](expects_rt<format::tree>&& tx_data) -> expects_rt<format::tree>
 				{
 					return tx_data && tx_data.is_none() ? expects_rt<format::tree>(remote_exception("receipt not found")) : expects_rt<format::tree>(std::move(tx_data));
 				});
@@ -351,7 +351,7 @@ namespace tangent
 					latest_map.push(format::variable(address_ref));
 					latest_map.push(format::variable("latest"));
 
-					auto latest_transaction_count = coawait(execute_rpc(nd_call::get_transaction_count(), std::move(latest_map), cache_policy::no_cache));
+					auto latest_transaction_count = coawait(execute_rpc(nd_call::get_transaction_count(), std::move(latest_map), cache_policy::no_cache, evm_rpc_path));
 					if (!latest_transaction_count)
 						coreturn expects_rt<uint256_t>(std::move(latest_transaction_count.error()));
 
@@ -360,7 +360,7 @@ namespace tangent
 					pending_map.push(format::variable(address_ref));
 					pending_map.push(format::variable("pending"));
 
-					auto pending_transaction_count = coawait(execute_rpc(nd_call::get_transaction_count(), std::move(pending_map), cache_policy::no_cache));
+					auto pending_transaction_count = coawait(execute_rpc(nd_call::get_transaction_count(), std::move(pending_map), cache_policy::no_cache, evm_rpc_path));
 					if (pending_transaction_count)
 					{
 						uint256_t pending_transactions_count = hex_to_uint256(pending_transaction_count->value.as_blob());
@@ -373,7 +373,7 @@ namespace tangent
 			}
 			expects_promise_rt<uint256_t> ethereum::get_chain_id()
 			{
-				return execute_rpc(nd_call::get_chain_id(), format::tree::list(), cache_policy::lifetime_cache).then<expects_rt<uint256_t>>([this](expects_rt<format::tree>&& hex_chain_id) -> expects_rt<uint256_t>
+				return execute_rpc(nd_call::get_chain_id(), format::tree::list(), cache_policy::lifetime_cache, evm_rpc_path).then<expects_rt<uint256_t>>([this](expects_rt<format::tree>&& hex_chain_id) -> expects_rt<uint256_t>
 				{
 					return hex_chain_id ? expects_rt<uint256_t>(hex_to_uint256(hex_chain_id->value.as_blob())) : expects_rt<uint256_t>(std::move(hex_chain_id.error()));
 				});
@@ -388,7 +388,7 @@ namespace tangent
 				map.push(std::move(params));
 				map.push(format::variable("latest"));
 
-				return execute_rpc(nd_call::call(), std::move(map), cache_policy::lifetime_cache).then<expects_rt<string>>([](expects_rt<format::tree>&& symbol) -> expects_rt<string>
+				return execute_rpc(nd_call::call(), std::move(map), cache_policy::lifetime_cache, evm_rpc_path).then<expects_rt<string>>([](expects_rt<format::tree>&& symbol) -> expects_rt<string>
 				{
 					if (!symbol)
 						return expects_rt<string>(std::move(symbol.error()));
@@ -418,14 +418,14 @@ namespace tangent
 				map.push(std::move(params));
 				map.push(format::variable("latest"));
 
-				return execute_rpc(nd_call::call(), std::move(map), cache_policy::lifetime_cache).then<expects_rt<decimal>>([this](expects_rt<format::tree>&& decimals) -> expects_rt<decimal>
+				return execute_rpc(nd_call::call(), std::move(map), cache_policy::lifetime_cache, evm_rpc_path).then<expects_rt<decimal>>([this](expects_rt<format::tree>&& decimals) -> expects_rt<decimal>
 				{
 					return decimals ? expects_rt<decimal>(algorithm::arithmetic::range((uint64_t)hex_to_uint256(decimals->value.as_blob()))) : expects_rt<decimal>(std::move(decimals.error()));
 				});
 			}
 			expects_promise_rt<uint64_t> ethereum::get_latest_block_height()
 			{
-				return execute_rpc(nd_call::block_number(), format::tree::list(), cache_policy::no_cache).then<expects_rt<uint64_t>>([this](expects_rt<format::tree>&& block_count) -> expects_rt<uint64_t>
+				return execute_rpc(nd_call::block_number(), format::tree::list(), cache_policy::no_cache, evm_rpc_path).then<expects_rt<uint64_t>>([this](expects_rt<format::tree>&& block_count) -> expects_rt<uint64_t>
 				{
 					return block_count ? expects_rt<uint64_t>((uint64_t)hex_to_uint256(block_count->value.as_blob())) : expects_rt<uint64_t>(std::move(block_count.error()));
 				});
@@ -443,7 +443,7 @@ namespace tangent
 						map.push(std::move(block_map));
 					}
 
-					auto block_data = coawait(execute_rpc_multi(nd_call::get_block_by_number(), std::move(map), cache_policy::temporary_cache));
+					auto block_data = coawait(execute_rpc_multi(nd_call::get_block_by_number(), std::move(map), cache_policy::temporary_cache, evm_rpc_path));
 					if (!block_data)
 						coreturn block_data.error();
 
@@ -469,7 +469,7 @@ namespace tangent
 						map.push(std::move(logs_map));
 					}
 
-					auto logs_batch = map.childs().empty() ? expects_rt<format::tree>(remote_exception::shutdown()) : coawait(execute_rpc_multi(nd_call::get_logs(), std::move(map), cache_policy::temporary_cache));
+					auto logs_batch = map.childs().empty() ? expects_rt<format::tree>(remote_exception::shutdown()) : coawait(execute_rpc_multi(nd_call::get_logs(), std::move(map), cache_policy::temporary_cache, evm_rpc_path));
 					if (logs_batch)
 					{
 						hash_map<string, format::tree*> indices;
@@ -647,7 +647,7 @@ namespace tangent
 			{
 				return coasync<expects_rt<computed_fee>>([this, from_link, to]() -> expects_promise_rt<computed_fee>
 				{
-					auto gas_price_value = coawait(execute_rpc(nd_call::gas_price(), format::tree::list(), cache_policy::no_cache));
+					auto gas_price_value = coawait(execute_rpc(nd_call::gas_price(), format::tree::list(), cache_policy::no_cache, evm_rpc_path));
 					if (!gas_price_value)
 						coreturn expects_rt<computed_fee>(std::move(gas_price_value.error()));
 
@@ -655,7 +655,7 @@ namespace tangent
 					uint256_t vgas_premium = 0;
 					if (!legacy.eip_155)
 					{
-						auto max_priority_fee_per_gas_value = legacy.priority_gas ? expects_rt<format::tree>(remote_exception::retry_later()) : coawait(execute_rpc(nd_call::max_priority_fee_per_gas(), format::tree::list(), cache_policy::no_cache));
+						auto max_priority_fee_per_gas_value = legacy.priority_gas ? expects_rt<format::tree>(remote_exception::retry_later()) : coawait(execute_rpc(nd_call::max_priority_fee_per_gas(), format::tree::list(), cache_policy::no_cache, evm_rpc_path));
 						if (!max_priority_fee_per_gas_value)
 						{
 							auto block_number = coawait(get_latest_block_height());
@@ -666,7 +666,7 @@ namespace tangent
 							map.push(format::variable(uint256_to_hex(*block_number)));
 							map.push(format::variable(false));
 
-							auto block_data = coawait(execute_rpc(nd_call::get_block_by_number(), std::move(map), cache_policy::temporary_cache));
+							auto block_data = coawait(execute_rpc(nd_call::get_block_by_number(), std::move(map), cache_policy::temporary_cache, evm_rpc_path));
 							if (!block_data)
 								coreturn expects_rt<computed_fee>(std::move(block_data.error()));
 
@@ -724,7 +724,7 @@ namespace tangent
 						vgas_price -= vgas_premium;
 
 					decimal gas_premium = to_eth(vgas_premium * 2, netdata.divisibility);
-					auto gas_limit_estimate = coawait(execute_rpc(nd_call::estimate_gas(), std::move(map), cache_policy::no_cache));
+					auto gas_limit_estimate = coawait(execute_rpc(nd_call::estimate_gas(), std::move(map), cache_policy::no_cache, evm_rpc_path));
 					if (!gas_limit_estimate)
 					{
 						decimal gas_price = to_eth(vgas_price, netdata.divisibility);
@@ -768,7 +768,7 @@ namespace tangent
 					map.push(params);
 					map.push(format::variable("latest"));
 
-					auto confirmed_balance = coawait(execute_rpc(method, std::move(map), cache_policy::no_cache));
+					auto confirmed_balance = coawait(execute_rpc(method, std::move(map), cache_policy::no_cache, evm_rpc_path));
 					if (!confirmed_balance)
 						coreturn expects_rt<decimal>(std::move(confirmed_balance.error()));
 
@@ -781,7 +781,7 @@ namespace tangent
 				format::tree map;
 				map.push(format::variable(format::util::assign_0xhex(finalized.calldata)));
 
-				return execute_rpc(nd_call::send_raw_transaction(), std::move(map), cache_policy::no_cache_no_throttling).then<expects_rt<void>>([](expects_rt<format::tree>&& result) -> expects_rt<void>
+				return execute_rpc(nd_call::send_raw_transaction(), std::move(map), cache_policy::no_cache_no_throttling, evm_rpc_path).then<expects_rt<void>>([](expects_rt<format::tree>&& result) -> expects_rt<void>
 				{
 					return result ? expects_rt<void>(expectation::met) : expects_rt<void>(std::move(result.error()));
 				});

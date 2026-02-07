@@ -73,6 +73,20 @@ namespace tangent
 			size_t user_agents_size = sizeof(user_agents) / sizeof(user_agents[0]);
 			return user_agents[(size_t)math64u::random() % user_agents_size];
 		}
+		static string join_url_path(const std::string_view& url, const std::string_view& path)
+		{
+			auto result = string(url);
+			if (result.empty() || path.empty())
+				return result;
+
+			if (result.back() == '/' && path.front() == '/')
+				result.pop_back();
+			else if (result.back() != '/' && path.front() != '/')
+				result.push_back('/');
+
+			result += path;
+			return result;
+		}
 
 		wallet_link::wallet_link(const uint256_t& new_hash, const std::string_view& new_public_key, const std::string_view& new_address) : hash(new_hash), public_key(new_public_key), address(new_address)
 		{
@@ -1043,44 +1057,6 @@ namespace tangent
 			return std::min(std::floor(percentage * multiplier) / multiplier, multiplier);
 		}
 
-		bool connection_instance::has_distinct_url(const std::string_view& type) const
-		{
-			if (type.empty() || type == "auto")
-				return !urls.empty();
-
-			auto it = urls.find(key_lookup_cast(type));
-			return it != urls.end();
-		}
-		const string& connection_instance::get_url(const std::string_view& type) const
-		{
-			VI_ASSERT(!urls.empty(), "node does not have any urls");
-			auto it = urls.find(key_lookup_cast(type));
-			if (it != urls.end())
-				return it->second;
-
-			it = urls.find("auto");
-			if (it != urls.end())
-				return it->second;
-
-			return urls.begin()->second;
-		}
-		string connection_instance::get_url(const std::string_view& type, const std::string_view& path) const
-		{
-			if (stringify::starts_with(path, "http"))
-				return string(path);
-
-			string url = get_url(type);
-			if (url.empty() || path.empty())
-				return url;
-
-			if (url.back() == '/' && path.front() == '/')
-				url.erase(url.end() - 1);
-			else if (url.back() != '/' && path.front() != '/')
-				url += '/';
-			url += path;
-			return url;
-		}
-
 		string address_util::encode_tag_address(const std::string_view& address, const std::string_view& destination_tag)
 		{
 			auto split = address.rfind('#');
@@ -1221,10 +1197,6 @@ namespace tangent
 
 			auto result = btree_map<string, wallet_link>(results->begin(), results->end());
 			return expects_lr<btree_map<string, wallet_link>>(std::move(result));
-		}
-		expects_lr<void> translation_unit::verify_node_compatibility(connection_instance*)
-		{
-			return expectation::met;
 		}
 		decimal translation_unit::to_value(const decimal& value) const
 		{
@@ -1477,43 +1449,26 @@ namespace tangent
 					auto* peers = root.child("peers");
 					if (peers && !peers->childs().empty())
 					{
-						hash_map<std::string_view, double> sources;
 						for (auto& child : peers->childs())
 						{
-							if (child.is_map())
-							{
-								hash_map<string, string> urls;
-								for (auto& protocol : child.childs())
-									urls[protocol.key] = protocol.value.as_blob();
-								urls.erase("keep_alive");
-								urls.erase("rps");
+							if (!child.is_map())
+								continue;
 
-								size_t size = urls.size();
-								auto rps = child.child_var("rps").as_double();
-								auto keep_alive = child.has("keep_alive") ? child.child_var("keep_alive").as_boolean() : true;
-								if (add_network_connection(asset, std::move(urls), rps, keep_alive) && protocol::now().user.superchain.logging)
-									VI_INFO("%s server %i urls added (rps: %.2f)", algorithm::asset::name_of(asset).c_str(), (int)size, rps);
-								else if (protocol::now().user.superchain.logging)
-									VI_ERR("failed to add %s server %i urls", algorithm::asset::name_of(asset).c_str(), (int)size);
-							}
-							else if (child.is_list())
+							btree_map<string, string> headers;
+							auto* headers_field = child.child("headers");
+							if (headers_field != nullptr)
 							{
-								auto url = child.childs().size() > 0 ? child.childs()[0].value.as_blob() : child.value.as_blob();
-								auto rps = child.childs().size() > 1 ? child.childs()[1].value.as_double() : 0.0;
-								auto keep_alive = child.childs().size() > 2 ? child.childs()[2].value.as_boolean() : true;
-								if (add_network_connection(asset, url, rps, keep_alive) && protocol::now().user.superchain.logging)
-									VI_INFO("%s server url \"%.*s\" added (rps: %.2f)", algorithm::asset::name_of(asset).c_str(), (int)url.size(), url.data(), rps);
-								else if (protocol::now().user.superchain.logging)
-									VI_ERR("failed to add %s server url: \"%.*s\"", algorithm::asset::name_of(asset).c_str(), (int)url.size(), url.data());
+								for (auto& header : child.childs())
+									headers[header.key] = header.value.as_blob();
 							}
-							else
-							{
-								auto url = child.value.as_blob();
-								if (add_network_connection(asset, url, 0.0, true) && protocol::now().user.superchain.logging)
-									VI_INFO("%s server url \"%.*s\" added", algorithm::asset::name_of(asset).c_str(), (int)url.size(), url.data());
-								else if (protocol::now().user.superchain.logging)
-									VI_ERR("failed to add %s server url: \"%.*s\"", algorithm::asset::name_of(asset).c_str(), (int)url.size(), url.data());
-							}
+
+							size_t headers_size = headers.size();
+							auto url = child.child_var("url").as_blob();
+							auto rps = child.child_var("rps").as_double();
+							if (add_network_connection(asset, url, std::move(headers), rps) && protocol::now().user.superchain.logging)
+								VI_INFO("%s server add \"%s\" endpoint (rps: %.2f, headers: %i)", algorithm::asset::name_of(asset).c_str(), url.c_str(), rps, (int)headers_size);
+							else if (protocol::now().user.superchain.logging)
+								VI_ERR("failed to add %s server \"%s\" with %i headers", algorithm::asset::name_of(asset).c_str(), url.c_str(), (int)headers_size);
 						}
 					}
 
@@ -1624,8 +1579,6 @@ namespace tangent
 		{
 			if (reporter.type.empty())
 				reporter.type = "rest";
-			if (reporter.method.empty())
-				reporter.method = location(connection.get_url(reporter.type, path)).path.substr(1);
 
 			string body = args.is_none() ? string() : args.as_json();
 			return execute_http(asset, connection, reporter, method, path, "application/json", body, cache);
@@ -1635,7 +1588,7 @@ namespace tangent
 			if (reporter.type.empty())
 				reporter.type = "http";
 
-			string target_url = connection.get_url(reporter.type, path);
+			string target_url = join_url_path(connection.connection_url, path);
 			if (reporter.method.empty())
 				reporter.method = location(target_url).path.substr(1);
 
@@ -1651,8 +1604,8 @@ namespace tangent
 					return expects_rt<format::tree>(std::move(*data));
 			}
 			
-			if (protocol::now().time.now_cpu() < connection.error_retry_after_timestamp)
-				return expects_rt<format::tree>(remote_exception::retry_after(connection.error_retry_after_timestamp));
+			if (protocol::now().time.now_cpu() < connection.state.error_retry_after_timestamp)
+				return expects_rt<format::tree>(remote_exception::retry_after(connection.state.error_retry_after_timestamp));
 			else
 				message = string(body);
 
@@ -1661,13 +1614,13 @@ namespace tangent
 			{
 				if (connection.rps > 0.0 && cache != cache_policy::no_cache_no_throttling)
 				{
-					while (protocol::now().time.now_cpu() < connection.rps_retry_after_timestamp && (!network_active || network_active()))
+					while (protocol::now().time.now_cpu() < connection.state.rps_retry_after_timestamp && (!network_active || network_active()))
 					{
 						promise<void> awaiter;
 						schedule::get()->set_timeout(200, [awaiter]() mutable { awaiter.set(); });
 						coawait(std::move(awaiter));
 					}
-					connection.rps_retry_after_timestamp = protocol::now().time.now_cpu() + (uint64_t)(1000000.0 / connection.rps) / 1000;
+					connection.state.rps_retry_after_timestamp = protocol::now().time.now_cpu() + (uint64_t)(1000000.0 / connection.rps) / 1000;
 				}
 
 				if (!network_fetch || (network_active && !network_active()))
@@ -1678,8 +1631,8 @@ namespace tangent
 				setup.verify_peers = (uint32_t)protocol::now().user.tcp.tls_trusted_peers;
 				setup.timeout = protocol::now().user.tcp.timeout;
 				setup.set_header("User-Agent", random_user_agent());
-				if (!connection.keep_alive)
-					setup.set_header("Connection", "Close");
+				for (auto& [key, value] : connection.headers)
+					setup.set_header(key, value);
 
 				if (!message.empty())
 				{
@@ -2636,22 +2589,23 @@ namespace tangent
 
 			return nullptr;
 		}
-		connection_instance* bridge::add_network_connection(const algorithm::asset_id& asset, const std::string_view& url, double rps, bool keep_alive)
-		{
-			return add_network_connection(asset, { { "auto", string(url) } }, rps, keep_alive);
-		}
-		connection_instance* bridge::add_network_connection(const algorithm::asset_id& asset, hash_map<string, string>&& urls, double rps, bool keep_alive)
+		connection_instance* bridge::add_network_connection(const algorithm::asset_id& asset, const std::string_view& url, btree_map<string, string>&& headers, double rps)
 		{
 			auto it = networks.find(algorithm::asset::blockchain_of(asset));
 			VI_PANIC(it != networks.end(), "must add a network before adding a connection");
 			it->second.connections.emplace_back();
 			auto& next = it->second.connections.back();
-			next.urls = std::move(urls);
-			next.keep_alive = keep_alive;
+			next.connection_url = url;
+			next.headers = std::move(headers);
 			next.rps = rps;
 
-			for (auto& [type, path] : next.urls)
-				stringify::trim(path);
+			stringify::trim(next.connection_url);
+			for (auto& [key, value] : next.headers)
+				stringify::trim(value);
+
+			VI_PANIC(next.connection_url.size() > 1, "url must not be empty");
+			if (next.connection_url.back() == '/')
+				next.connection_url.pop_back();
 
 			return &next;
 		}
@@ -2659,7 +2613,7 @@ namespace tangent
 		{
 			auto it = networks.find(algorithm::asset::blockchain_of(asset));
 			VI_PANIC(it != networks.end(), "must add a network before adding props");
-			it->second.props = std::move(value);
+			it->second.props = value;
 			return &it->second.props;
 		}
 		format::tree* bridge::get_network_props(const algorithm::asset_id& asset)

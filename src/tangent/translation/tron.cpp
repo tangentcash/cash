@@ -185,6 +185,7 @@ namespace tangent
 				netdata.transaction_expires = true;
 				legacy.estimate_gas = 1;
 				legacy.eip_155 = 1;
+				evm_rpc_path = "/jsonrpc";
 			}
 			expects_promise_rt<tron::trx_tx_block_header_info> tron::get_block_header_for_tx()
 			{
@@ -219,16 +220,6 @@ namespace tangent
 					info.expiration = protocol::now().time.now_cpu() + 7200 * 1000;
 					coreturn expects_rt<tron::trx_tx_block_header_info>(std::move(info));
 				});
-			}
-			expects_lr<void> tron::verify_node_compatibility(connection_instance* node)
-			{
-				if (!node->has_distinct_url("jrpc"))
-					return layer_exception("trongrid jrpc solidity node is required (default location http://hostname:8545/jsonrpc)");
-
-				if (!node->has_distinct_url("rest"))
-					return layer_exception("trongrid rest node is required (default location http://hostname:18190/)");
-
-				return expectation::met;
 			}
 			expects_promise_rt<computed_transaction> tron::link_transaction(uint64_t, const std::string_view&, format::tree& transaction_data)
 			{
@@ -410,7 +401,7 @@ namespace tangent
 					map.push(params);
 					map.push(format::variable("latest"));
 
-					auto confirmed_balance = coawait(execute_rpc(method, std::move(map), cache_policy::no_cache));
+					auto confirmed_balance = coawait(execute_rpc(method, std::move(map), cache_policy::no_cache, evm_rpc_path));
 					if (!confirmed_balance)
 						coreturn expects_rt<decimal>(std::move(confirmed_balance.error()));
 
