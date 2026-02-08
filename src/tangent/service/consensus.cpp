@@ -964,6 +964,8 @@ namespace tangent
 				auto& [node, wallet] = descriptor;
 				fill_node_services(descriptor);
 				fill_node_neighbors(descriptor);
+				VI_PANIC(wallet.has_secret_key(), "server descriptor %s wallet must have a secret key", wallet.get_address().c_str());
+
 				node.major_version = protocol::now().message.major_version;
 				node.minor_version = protocol::now().message.minor_version;
 				node.ports.consensus = protocol::now().user.consensus.port;

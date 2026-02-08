@@ -190,8 +190,8 @@ namespace tangent
 			auto address_message = address_to_message(node.address);
 			schema_list map;
 			map.push_back(var::set::binary(address_message));
-			map.push_back(var::set::binary(address_message));
 			map.push_back(var::set::binary(wallet.public_key_hash.view()));
+			map.push_back(var::set::boolean(type >= 0));
 			map.push_back(var::set::binary(address_message));
 			map.push_back(var::set::binary(wallet.public_key_hash.view()));
 			map.push_back(var::set::integer(type >= 0 ? node.get_preference() : type));
@@ -201,7 +201,7 @@ namespace tangent
 
 			auto cursor = get_peer_storage().emplace_query(__func__,
 				"DELETE FROM addresses WHERE address = ?;"
-				"DELETE FROM nodes WHERE address = ? OR account = ?;"
+				"DELETE FROM nodes WHERE account = ? AND (quality >= 0) = ?;"
 				"INSERT OR REPLACE INTO nodes (address, account, quality, services, node_message, wallet_message) VALUES (?, ?, ?, ?, ?, ?)", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
@@ -265,7 +265,7 @@ namespace tangent
 			schema_list map;
 			map.push_back(var::set::binary(account.view()));
 
-			auto cursor = get_peer_storage().emplace_query(__func__, "DELETE FROM nodes WHERE account = ?", &map);
+			auto cursor = get_peer_storage().emplace_query(__func__, "DELETE FROM nodes WHERE account = ? AND quality >= 0", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -280,7 +280,7 @@ namespace tangent
 			map.push_back(var::set::binary(address_message));
 
 			auto cursor = get_peer_storage().emplace_query(__func__,
-				"DELETE FROM nodes WHERE address = ?;"
+				"DELETE FROM nodes WHERE address = ? AND quality >= 0;"
 				"DELETE FROM cooldowns WHERE address = ?;"
 				"DELETE FROM addresses WHERE address = ?", &map);
 			if (!cursor || cursor->error())
