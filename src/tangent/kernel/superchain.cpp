@@ -1810,7 +1810,7 @@ namespace tangent
 				auto logs = vector<transaction_logs>();
 				auto block_height = options->get_next_block_height(block_count);
 				auto block_batch = coawait(implementation->get_block_transactions(block_height, block_count));
-				if (!block_batch || block_batch->empty())
+				if (!block_batch)
 					coreturn expects_rt<vector<transaction_logs>>(block_batch ? remote_exception("failed to find new block data") : block_batch.error());
 
 				auto* utxo_implementation = utxo_translation_unit::from(implementation);
