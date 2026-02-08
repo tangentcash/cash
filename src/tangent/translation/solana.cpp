@@ -168,40 +168,40 @@ namespace tangent
 						map.push(std::move(options));
 
 						auto result = coawait(execute_rpc(nd_call::get_signatures_for_address(), std::move(map), cache_policy::no_cache));
-						if (!result || result->childs().empty())
-							continue;
-
-						size_t index = 0; bool target_found = false;
-						for (auto& transaction : result->childs())
+						if (result && !result->childs().empty())
 						{
-							uint64_t slot = transaction.child_var("slot").as_uint64();
-							auto signature = transaction.child_var("signature").as_blob();
-							if (slot > seen_block_height && linker.unseen_best > slot)
-								linker.unseen_best = slot;		
-
-							bool latest_transaction = !index;
-							if (latest_transaction && unseen_signature.empty())
-								unseen_signature = signature;
-							
-							bool oldest_transaction = index == result->childs().size() - 1;
-							if (oldest_transaction)
-								before_signature = signature;
-
-							target_found = target_found || signature == watcher.seen_signature;
-							if (slot <= seen_block_height)
+							size_t index = 0; bool target_found = watcher.seen_signature.empty();
+							for (auto& transaction : result->childs())
 							{
-								if (seen_signature.empty())
-									seen_signature = signature;
-								else if (prev_seen_signature.empty() && signature != watcher.seen_signature)
-									prev_seen_signature = signature;
+								uint64_t slot = transaction.child_var("slot").as_uint64();
+								auto signature = transaction.child_var("signature").as_blob();
+								if (slot > seen_block_height && linker.unseen_best > slot)
+									linker.unseen_best = slot;
+
+								bool latest_transaction = !index;
+								if (latest_transaction && unseen_signature.empty())
+									unseen_signature = signature;
+
+								bool oldest_transaction = index == result->childs().size() - 1;
+								if (oldest_transaction)
+									before_signature = signature;
+
+								target_found = target_found || signature == watcher.seen_signature;
+								if (slot <= seen_block_height)
+								{
+									if (seen_signature.empty())
+										seen_signature = signature;
+									else if (prev_seen_signature.empty() && signature != watcher.seen_signature)
+										prev_seen_signature = signature;
+								}
+
+								if ((watcher.unseen_block_heights.empty() || watcher.unseen_block_heights.front() > slot) && slot > seen_block_height)
+									watcher.unseen_block_heights.push_back(slot);
 							}
 
-							if ((watcher.unseen_block_heights.empty() || watcher.unseen_block_heights.front() > slot) && slot > seen_block_height)
-								watcher.unseen_block_heights.push_back(slot);
+							if (!target_found)
+								goto find_target;
 						}
-
-						if (!target_found)
-							goto find_target;
 
 						if (!unseen_signature.empty())
 						{
@@ -219,21 +219,7 @@ namespace tangent
 
 					format::tree cache = format::tree::map();
 					for (auto& [account, watcher] : linker.seen)
-					{
 						cache.set(account, format::variable(watcher.seen_signature));
-						printf(
-							"%s (type: %s, accounts: %s, queue: %i):\n"
-							"  unseen_signature: %s\n"
-							"  seen_signature: %s\n"
-							"  prev_seen_signature: %s\n",
-							account.c_str(),
-							watcher.can_pull_accounts ? "native" : "token",
-							watcher.must_pull_accounts ? "stale" : "latest",
-							(int)watcher.unseen_block_heights.size(),
-							watcher.unseen_signature.empty() ? "NULL" : watcher.unseen_signature.c_str(),
-							watcher.seen_signature.empty() ? "NULL" : watcher.seen_signature.c_str(),
-							watcher.prev_seen_signature.empty() ? "NULL" : watcher.prev_seen_signature.c_str());
-					}
 
 					bridge::get()->store_cache(native_asset, cache_policy::lifetime_cache, "TIP:LINKER", cache);
 					if (linker.unseen_best != std::numeric_limits<uint64_t>::max() && linker.unseen_best > seen_block_height)
