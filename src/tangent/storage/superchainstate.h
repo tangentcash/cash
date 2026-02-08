@@ -38,6 +38,7 @@ namespace tangent
 			expects_lr<void> set_link(const superchain::wallet_link& value);
 			expects_lr<void> clear_link(const superchain::wallet_link& address);
 			expects_lr<superchain::wallet_link> get_link(const std::string_view& address);
+			expects_lr<hash_map<string, superchain::wallet_link>> get_links_with_hash(size_t offset, size_t count);
 			expects_lr<hash_map<string, superchain::wallet_link>> get_links_by_hash(const uint256_t& hash, size_t offset, size_t count);
 			expects_lr<hash_map<string, superchain::wallet_link>> get_links_by_public_keys(const hash_set<string>& public_key);
 			expects_lr<hash_map<string, superchain::wallet_link>> get_links_by_addresses(const hash_set<string>& addresses);

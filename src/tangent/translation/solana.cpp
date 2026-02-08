@@ -46,6 +46,10 @@ namespace tangent
 			{
 				return "getTransaction";
 			}
+			const char* solana::nd_call::get_signatures_for_address()
+			{
+				return "getSignaturesForAddress";
+			}
 			const char* solana::nd_call::get_slot()
 			{
 				return "getSlot";
@@ -67,6 +71,120 @@ namespace tangent
 				netdata.sync_latency = 64;
 				netdata.divisibility = algorithm::arithmetic::fixed(1000000000);
 				netdata.transaction_expires = true;
+			}
+			expects_promise_rt<uint64_t> solana::get_linked_block_height(uint64_t seen_block_height)
+			{
+				if (linker.unseen_best != std::numeric_limits<uint64_t>::max() && linker.unseen_best > seen_block_height)
+					return expects_promise_rt<uint64_t>(linker.unseen_best);
+
+				return coasync<expects_rt<uint64_t>>([this, seen_block_height]() -> expects_promise_rt<uint64_t>
+				{
+					hash_set<string> accounts;
+					accounts.reserve(linker.seen.size());
+					for (auto& [account, watcher] : linker.seen)
+						accounts.insert(account);
+
+					size_t offset = 0;
+					while (true)
+					{
+						auto links = find_linked_addresses(offset, ELEMENTS_MANY);
+						if (!links)
+							break;
+
+						for (auto& link : *links)
+						{
+							if (link.second.address.empty())
+								continue;
+
+							accounts.insert(link.second.address);
+							auto& watcher = linker.seen[link.second.address];
+							if (!watcher.is_stale)
+								continue;
+
+							auto token_program_accounts = coawait(get_token_accounts("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", link.second.address));
+							if (token_program_accounts)
+							{
+								accounts.insert(token_program_accounts->begin(), token_program_accounts->end());
+								for (auto& token_account : *token_program_accounts)
+									linker.seen[token_account].is_token = true;
+							}
+
+							auto token_program_2022_accounts = coawait(get_token_accounts("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb", link.second.address));
+							if (token_program_2022_accounts)
+							{
+								accounts.insert(token_program_2022_accounts->begin(), token_program_2022_accounts->end());
+								for (auto& token_account : *token_program_2022_accounts)
+									linker.seen[token_account].is_token = true;
+							}
+
+							watcher.is_stale = false;
+						}
+
+						offset += links->size();
+						if (links->size() != ELEMENTS_MANY)
+							break;
+					}
+
+					linker.unseen_best = std::numeric_limits<uint64_t>::max();
+					for (auto it = accounts.begin(); it != accounts.end() && linker.unseen_best != seen_block_height + 1; it++)
+					{
+						auto& watcher = linker.seen[*it];
+						bool unseen_best_found = false;
+						while (!watcher.best_block_heights.empty())
+						{
+							auto best_block_height = watcher.best_block_heights.front();
+							watcher.best_block_heights.pop_back();
+							if (best_block_height > seen_block_height && linker.unseen_best > best_block_height)
+							{
+								linker.unseen_best = best_block_height;
+								unseen_best_found = true;
+								break;
+							}
+						}
+						if (unseen_best_found)
+							continue;
+
+						format::tree map;
+						map.push(format::variable(*it));
+						if (!watcher.best_signature.empty())
+						{
+							format::tree options;
+							options.set("until", format::variable(watcher.best_signature));
+							map.push(std::move(options));
+						}
+
+						auto result = coawait(execute_rpc(nd_call::get_signatures_for_address(), std::move(map), cache_policy::no_cache));
+						if (!result)
+							continue;
+
+						size_t index = 0;
+						for (auto& transaction : result->childs())
+						{
+							auto slot = transaction.child("slot");
+							if (!slot || !slot->value.is_integer())
+								continue;
+
+							uint64_t maybe_new_best = slot->value.as_uint64();
+							if (maybe_new_best > seen_block_height && linker.unseen_best > maybe_new_best)
+								linker.unseen_best = maybe_new_best;
+
+							if (!index++)
+							{
+								auto new_best_signature = transaction.child_var("signature").as_blob();
+								watcher.is_stale = !watcher.best_signature.empty() && watcher.best_signature != new_best_signature;
+								watcher.best_signature = std::move(new_best_signature);
+							}
+
+							if ((watcher.best_block_heights.empty() || watcher.best_block_heights.front() > maybe_new_best) && maybe_new_best > seen_block_height)
+								watcher.best_block_heights.push_back(maybe_new_best);
+						}		
+					}
+
+					if (linker.unseen_best != std::numeric_limits<uint64_t>::max() && linker.unseen_best > seen_block_height)
+						coreturn expects_promise_rt<uint64_t>(linker.unseen_best);
+
+					coreturn remote_exception::retry_later();
+				});
 			}
 			expects_promise_rt<uint64_t> solana::get_latest_block_height()
 			{
@@ -92,7 +210,7 @@ namespace tangent
 					map.push(std::move(submap));
 				}
 
-				return execute_rpc_multi(nd_call::get_block(), std::move(map), cache_policy::no_cache).then<expects_rt<vector<block_log>>>([block_height, block_count](expects_rt<format::tree>&& block_data) -> expects_rt<vector<block_log>>
+				return execute_rpc_multi(nd_call::get_block(), std::move(map), cache_policy::blob_cache).then<expects_rt<vector<block_log>>>([block_height, block_count](expects_rt<format::tree>&& block_data) -> expects_rt<vector<block_log>>
 				{
 					if (!block_data && block_data.error().message().find("was skipped, or missing") == std::string::npos)
 						return block_data.error();
@@ -736,6 +854,33 @@ namespace tangent
 					result.divisibility = std::move(divisibility);
 					result.balance = value / result.divisibility;
 					return expects_rt<token_account>(std::move(result));
+				});
+			}
+			expects_promise_rt<hash_set<string>> solana::get_token_accounts(const std::string_view& programId, const std::string_view& owner)
+			{
+				format::tree map;
+				map.push(format::variable(owner));
+				map.push(format::tree::map())->set("programId", format::variable(programId));
+				map.push(format::tree::map())->set("encoding", format::variable("jsonParsed"));
+
+				return execute_rpc(nd_call::get_token_balance(), std::move(map), cache_policy::no_cache).then<expects_rt<hash_set<string>>>([](expects_rt<format::tree>&& values) -> expects_rt<hash_set<string>>
+				{
+					if (!values)
+						return expects_rt<hash_set<string>>(std::move(values.error()));
+
+					hash_set<string> results;
+					auto value = values->child("value");
+					if (value != nullptr)
+					{
+						results.reserve(value->childs().size());
+						for (auto& item : value->childs())
+						{
+							auto pubkey = item.child_var("pubkey").as_blob();
+							if (!pubkey.empty())
+								results.insert(std::move(pubkey));
+						}
+					}
+					return expects_rt<hash_set<string>>(std::move(results));
 				});
 			}
 			expects_promise_rt<decimal> solana::get_balance(const std::string_view& owner)

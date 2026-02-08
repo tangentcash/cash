@@ -42,6 +42,14 @@ namespace tangent
 					uint8_t decimals = 0;
 				};
 
+				struct sol_watcher
+				{
+					vector<uint64_t> best_block_heights;
+					string best_signature;
+					bool is_token = false;
+					bool is_stale = true;
+				};
+
 			public:
 				class nd_call
 				{
@@ -51,17 +59,24 @@ namespace tangent
 					static const char* get_balance();
 					static const char* get_block_hash();
 					static const char* get_transaction();
+					static const char* get_signatures_for_address();
 					static const char* get_slot();
 					static const char* get_block();
 					static const char* send_transaction();
 				};
 
 			protected:
+				struct
+				{
+					hash_map<string, sol_watcher> seen;
+					uint64_t unseen_best = std::numeric_limits<uint64_t>::max();
+				} linker;
 				chainparams netdata;
 
 			public:
 				solana(const algorithm::asset_id& new_asset) noexcept;
 				virtual ~solana() override = default;
+				virtual expects_promise_rt<uint64_t> get_linked_block_height(uint64_t seen_block_height) override;
 				virtual expects_promise_rt<uint64_t> get_latest_block_height() override;
 				virtual expects_promise_rt<vector<block_log>> get_block_transactions(uint64_t block_height, uint64_t block_count) override;
 				virtual expects_promise_rt<computed_transaction> link_transaction(uint64_t block_height, const std::string_view& block_hash, format::tree& transaction_data) override;
@@ -83,6 +98,7 @@ namespace tangent
 			public:
 				virtual expects_promise_rt<string> get_token_symbol(const std::string_view& mint);
 				virtual expects_promise_rt<token_account> get_token_balance(const std::string_view& mint, const std::string_view& owner);
+				virtual expects_promise_rt<hash_set<string>> get_token_accounts(const std::string_view& programId, const std::string_view& owner);
 				virtual expects_promise_rt<decimal> get_balance(const std::string_view& owner);
 				virtual expects_promise_rt<format::tree> get_transaction(const std::string_view& signature);
 				virtual expects_promise_rt<string> get_recent_block_hash();

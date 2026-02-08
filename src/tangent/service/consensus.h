@@ -224,6 +224,7 @@ namespace tangent
 			struct fetch_queue
 			{
 				single_queue<fetch_target> queue;
+				size_t requests = 0;
 				bool busy = false;
 			};
 

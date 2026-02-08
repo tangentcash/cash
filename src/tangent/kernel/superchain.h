@@ -3,7 +3,6 @@
 #include "control.h"
 #include "../policy/messages.h"
 #include <vitex/network/http.h>
-#include <rapidjson/rapidjson.h>
 
 namespace tangent
 {
@@ -229,7 +228,7 @@ namespace tangent
 			uint64_t block_height = (uint64_t)-1;
 			string block_hash;
 
-			void report_logs(const algorithm::asset_id& asset, const network_options& options);
+			void report_logs(const algorithm::asset_id& asset, const network_options& options, size_t requests);
 		};
 
 		struct computed_fee
@@ -353,6 +352,7 @@ namespace tangent
 			virtual expects_promise_rt<format::tree> execute_rpc_multi(const std::string_view& method, format::tree&& args, cache_policy cache, const std::string_view& path = std::string_view());
 			virtual expects_promise_rt<format::tree> execute_rest(const std::string_view& method, const std::string_view& path, format::tree&& args, cache_policy cache);
 			virtual expects_promise_rt<format::tree> execute_http(const std::string_view& method, const std::string_view& path, const std::string_view& type, const std::string_view& body, cache_policy cache);
+			virtual expects_promise_rt<uint64_t> get_linked_block_height(uint64_t seen_block_height);
 			virtual expects_promise_rt<uint64_t> get_latest_block_height() = 0;
 			virtual expects_promise_rt<vector<block_log>> get_block_transactions(uint64_t block_height, uint64_t block_count) = 0;
 			virtual expects_promise_rt<computed_transaction> link_transaction(uint64_t block_height, const std::string_view& block_hash, format::tree& transaction_data) = 0;
@@ -372,6 +372,7 @@ namespace tangent
 			virtual expects_lr<address_map> to_addresses(const std::string_view& public_key) = 0;
 			virtual expects_lr<btree_map<string, wallet_link>> find_linked_addresses(const hash_set<string>& addresses);
 			virtual expects_lr<btree_map<string, wallet_link>> find_linked_addresses(const uint256_t& hash, size_t offset, size_t count);
+			virtual expects_lr<btree_map<string, wallet_link>> find_linked_addresses(size_t offset, size_t count);
 			virtual decimal to_value(const decimal& value) const;
 			virtual uint256_t to_baseline_value(const decimal& value) const;
 			virtual decimal from_baseline_value(const uint256_t& value) const;
@@ -415,6 +416,7 @@ namespace tangent
 			};
 
 			typedef std::function<expects_promise_system<http::response_frame>(const algorithm::asset_id&, const std::string_view&, const std::string_view&, const http::fetch_frame&)> fetch_callback;
+			typedef std::function<expects_promise_system<void>(const algorithm::asset_id&, const std::string_view&, const http::ws_fetch_frame&)> ws_fetch_callback;
 			typedef std::function<bool(const std::string_view&)> invocation_callback;
 
 		protected:
@@ -423,6 +425,7 @@ namespace tangent
 
 		public:
 			fetch_callback network_fetch;
+			ws_fetch_callback network_ws_fetch;
 			activity_callback network_active;
 
 		public:
@@ -466,6 +469,7 @@ namespace tangent
 			expects_lr<hash_map<string, wallet_link>> get_links_by_public_keys(const algorithm::asset_id& asset, const hash_set<string>& public_keys);
 			expects_lr<hash_map<string, wallet_link>> get_links_by_addresses(const algorithm::asset_id& asset, const hash_set<string>& addresses);
 			expects_lr<hash_map<string, wallet_link>> get_links_by_hash(const algorithm::asset_id& asset, const uint256_t& hash, size_t offset, size_t count);
+			expects_lr<hash_map<string, wallet_link>> get_links_with_hash(const algorithm::asset_id& asset, size_t offset, size_t count);
 			expects_lr<void> receive_utxo(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint64_t index, uint64_t block_id, const coin_utxo& value);
 			expects_lr<void> spend_utxo(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint64_t index, uint64_t block_id);
 			expects_lr<void> revive_utxo(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint64_t index);

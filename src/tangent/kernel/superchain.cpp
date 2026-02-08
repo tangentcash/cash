@@ -87,6 +87,32 @@ namespace tangent
 			result += path;
 			return result;
 		}
+		static expects_rt<format::tree> solve_rpc_response(format::tree& response, bridge::error_reporter* reporter)
+		{
+			if (response.has("error.code"))
+			{
+				string code = response.child_var("error.code").as_blob();
+				string description = response.has("error.message") ? response.child_var("error.message").as_blob() : "no error description";
+				return expects_rt<format::tree>(remote_exception(normalize_error(expects_system<http::response_frame>(system_exception()), reporter ? *reporter : bridge::error_reporter(), code, description)));
+			}
+			else if (response.has("result.error_code"))
+			{
+				string code = response.child_var("result.error_code").as_blob();
+				string description = response.has("result.error_message") ? response.child_var("result.error_message").as_blob() : "no error description";
+				return expects_rt<format::tree>(remote_exception(normalize_error(expects_system<http::response_frame>(system_exception()), reporter ? *reporter : bridge::error_reporter(), code, description)));
+			}
+
+			auto* result = (format::tree*)response.child("result");
+			if (reporter != nullptr && !result)
+			{
+				string description = response.value.is_string() ? response.value.as_blob() : "no error description";
+				return expects_rt<format::tree>(remote_exception(normalize_error(expects_system<http::response_frame>(system_exception()), reporter ? *reporter : bridge::error_reporter(), "null", description)));
+			}
+			else if (!reporter && !result)
+				return expects_rt<format::tree>(std::move(response));
+
+			return expects_rt<format::tree>(std::move(*result));
+		};
 
 		wallet_link::wallet_link(const uint256_t& new_hash, const std::string_view& new_public_key, const std::string_view& new_address) : hash(new_hash), public_key(new_public_key), address(new_address)
 		{
@@ -901,15 +927,16 @@ namespace tangent
 			return "finalized_transaction";
 		}
 
-		void transaction_logs::report_logs(const algorithm::asset_id& asset, const network_options& options)
+		void transaction_logs::report_logs(const algorithm::asset_id& asset, const network_options& options, size_t requests)
 		{
 			auto blockchain = algorithm::asset::blockchain_of(asset);
-			VI_INFO("%s block %s found (height: %i, sync: %.2f%%, txns: %i)",
+			VI_INFO("%s block %s found (height: %i, sync: %.2f%%, txns: %i, rpb: %i)",
 				blockchain.c_str(),
 				block_hash.c_str(),
 				(int)block_height,
 				options.get_checkpoint_percentage(),
-				(int)receipts.size());
+				(int)receipts.size(),
+				(int)requests);
 
 			for (auto& tx : receipts)
 			{
@@ -1161,6 +1188,10 @@ namespace tangent
 				coreturn expects_rt<format::tree>(std::move(exception));
 			});
 		}
+		expects_promise_rt<uint64_t> translation_unit::get_linked_block_height(uint64_t seen_block_height)
+		{
+			return expects_promise_rt<uint64_t>(remote_exception("not supported"));
+		}
 		expects_lr<algorithm::composition::cpubkey_t> translation_unit::to_composite_public_key(const std::string_view& public_key)
 		{
 			auto result = decode_public_key(public_key);
@@ -1192,6 +1223,19 @@ namespace tangent
 				return expects_lr<btree_map<string, wallet_link>>(layer_exception("chain not found"));
 
 			auto results = bridge::get()->get_links_by_hash(native_asset, hash, offset, count);
+			if (!results || results->empty())
+				return expects_lr<btree_map<string, wallet_link>>(layer_exception("no addresses found"));
+
+			auto result = btree_map<string, wallet_link>(results->begin(), results->end());
+			return expects_lr<btree_map<string, wallet_link>>(std::move(result));
+		}
+		expects_lr<btree_map<string, wallet_link>> translation_unit::find_linked_addresses(size_t offset, size_t count)
+		{
+			auto* implementation = bridge::get()->get_network(native_asset);
+			if (!implementation)
+				return expects_lr<btree_map<string, wallet_link>>(layer_exception("chain not found"));
+
+			auto results = bridge::get()->get_links_with_hash(native_asset, offset, count);
 			if (!results || results->empty())
 				return expects_lr<btree_map<string, wallet_link>>(layer_exception("no addresses found"));
 
@@ -1525,39 +1569,15 @@ namespace tangent
 				if (!response)
 					return response;
 
-				auto to_response = [&reporter](format::tree& response) -> expects_rt<format::tree>
-				{
-					if (response.has("error.code"))
-					{
-						string code = response.child_var("error.code").as_blob();
-						string description = response.has("error.message") ? response.child_var("error.message").as_blob() : "no error description";
-						return expects_rt<format::tree>(remote_exception(normalize_error(expects_system<http::response_frame>(system_exception()), reporter, code, description)));
-					}
-					else if (response.has("result.error_code"))
-					{
-						string code = response.child_var("result.error_code").as_blob();
-						string description = response.has("result.error_message") ? response.child_var("result.error_message").as_blob() : "no error description";
-						return expects_rt<format::tree>(remote_exception(normalize_error(expects_system<http::response_frame>(system_exception()), reporter, code, description)));
-					}
-
-					auto* result = (format::tree*)response.child("result");
-					if (!result)
-					{
-						string description = response.value.is_string() ? response.value.as_blob() : "no error description";
-						return expects_rt<format::tree>(remote_exception(normalize_error(expects_system<http::response_frame>(system_exception()), reporter, "null", description)));
-					}
-
-					return expects_rt<format::tree>(std::move(*result));
-				};
 				if (!multi)
-					return to_response(*response);
+					return solve_rpc_response(*response, &reporter);
 
 				format::tree results;
 				if (multi_confirmed)
 				{
 					for (auto& subresponse : response->childs())
 					{
-						auto subresult = to_response(subresponse);
+						auto subresult = solve_rpc_response(subresponse, &reporter);
 						if (!subresult)
 							return subresult;
 
@@ -1566,7 +1586,7 @@ namespace tangent
 				}
 				else
 				{
-					auto subresult = to_response(*response);
+					auto subresult = solve_rpc_response(*response, &reporter);
 					if (!subresult)
 						return subresult;
 
@@ -1740,6 +1760,21 @@ namespace tangent
 					}
 				}
 
+				auto linked_block_height = coawait(implementation->get_linked_block_height(options->state.index_block_height > 0 ? options->state.index_block_height - 1 : options->state.index_block_height));
+				if (!linked_block_height && linked_block_height.error().is_retry())
+				{
+					if (linked_block_height.error().is_retry_after())
+					{
+						options->state.retry_after_time = linked_block_height.error().retry_after_timestamp();
+						coreturn expects_rt<vector<transaction_logs>>(linked_block_height.error());
+					}
+
+					options->state.retry_after_time = protocol::now().time.now_cpu() + protocol::now().user.superchain.polling_frequency;
+					coreturn expects_rt<vector<transaction_logs>>(remote_exception::retry_after(options->state.retry_after_time));
+				}
+				else if (linked_block_height)
+					options->set_checkpoint_from_block(*linked_block_height);
+
 				options->state.retry_after_time = 0;
 				if (!options->has_target_block_height())
 				{
@@ -1748,6 +1783,9 @@ namespace tangent
 						coreturn expects_rt<vector<transaction_logs>>(std::move(latest_block_height.error()));
 
 					*latest_block_height = to_delayed_block_height(*latest_block_height, true);
+					if (linked_block_height)
+						*latest_block_height = std::min(*latest_block_height, *linked_block_height + 1);
+
 					options->set_checkpoint_to_block(*latest_block_height);
 				}
 
@@ -2395,6 +2433,11 @@ namespace tangent
 		{
 			storages::superchainstate state = storages::superchainstate(asset);
 			return state.get_links_by_hash(hash, offset, count);
+		}
+		expects_lr<hash_map<string, wallet_link>> bridge::get_links_with_hash(const algorithm::asset_id& asset, size_t offset, size_t count)
+		{
+			storages::superchainstate state = storages::superchainstate(asset);
+			return state.get_links_with_hash(offset, count);
 		}
 		expects_lr<hash_map<string, wallet_link>> bridge::get_links_by_public_keys(const algorithm::asset_id& asset, const hash_set<string>& public_keys)
 		{

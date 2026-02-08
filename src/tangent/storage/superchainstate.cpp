@@ -519,6 +519,38 @@ namespace tangent
 
 			return values;
 		}
+		expects_lr<hash_map<string, superchain::wallet_link>> superchainstate::get_links_with_hash(size_t offset, size_t count)
+		{
+			uint8_t hash_data[32];
+			memset(hash_data, 0, sizeof(hash_data));
+
+			schema_list map;
+			map.push_back(var::set::binary(hash_data, sizeof(hash_data)));
+			map.push_back(var::set::integer(count));
+			map.push_back(var::set::integer(offset));
+
+			auto cursor = get_storage().emplace_query(__func__, "SELECT * FROM links WHERE hash <> ? LIMIT ? OFFSET ?" , &map);
+			if (!cursor || cursor->error())
+				return expects_lr<hash_map<string, superchain::wallet_link>>(layer_exception(ledger::storage_util::error_of(cursor)));
+
+			auto& response = cursor->first();
+			size_t size = response.size();
+			hash_map<string, superchain::wallet_link> values;
+			values.reserve(size);
+
+			for (size_t i = 0; i < size; i++)
+			{
+				auto row = response[i];
+				superchain::wallet_link value;
+				auto hash = row["hash"].get().get_blob();
+				value.hash.decode_compact((uint8_t*)hash.data(), hash.size());
+				value.public_key = row["public_key"].get().get_blob();
+				value.address = row["address"].get().get_blob();
+				values[string(value.address)] = std::move(value);
+			}
+
+			return values;
+		}
 		ledger::storage_index_ptr& superchainstate::get_storage()
 		{
 			if (!local_storage.may_use())

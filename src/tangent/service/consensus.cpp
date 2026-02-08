@@ -773,6 +773,7 @@ namespace tangent
 
 			umutex<std::mutex> unique(sync.fetcher);
 			auto& fetcher = fetchers[asset];
+			++fetcher.requests;
 			if (fetcher.busy)
 			{
 				auto& target = fetcher.queue.emplace();
@@ -2788,15 +2789,20 @@ namespace tangent
 							retry_after_timestamp = std::min(retry_after_timestamp, result.error().is_retry_after() ? result.error().retry_after_timestamp() : (protocol::now().time.now_cpu() + protocol::now().user.superchain.polling_frequency));
 						break;
 					}
-					else
+
+					umutex<std::mutex> unique(sync.fetcher);
+					auto it = fetchers.find(listener->asset);
+					size_t requests = it != fetchers.end() ? it->second.requests : 0;
+					if (it != fetchers.end())
+						it->second.requests = 0;
+
+					unique.unlock();
+					for (auto& log : *result)
 					{
-						for (auto& log : *result)
-						{
-							if (protocol::now().user.superchain.logging)
-								log.report_logs(listener->asset, listener->options);
-							if (!log.receipts.empty())
-								dispatch_transaction_logs(listener->asset, std::move(log)).report("failed to dispatch transaction logs");
-						}
+						if (protocol::now().user.superchain.logging)
+							log.report_logs(listener->asset, listener->options, requests);
+						if (!log.receipts.empty())
+							dispatch_transaction_logs(listener->asset, std::move(log)).report("failed to dispatch transaction logs");
 					}
 				}
 
