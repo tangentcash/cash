@@ -44,10 +44,12 @@ namespace tangent
 
 				struct sol_watcher
 				{
-					vector<uint64_t> best_block_heights;
-					string best_signature;
-					bool is_token = false;
-					bool is_stale = true;
+					vector<uint64_t> unseen_block_heights;
+					string unseen_signature;
+					string seen_signature;
+					string prev_seen_signature;
+					bool can_pull_accounts = true;
+					bool must_pull_accounts = true;
 				};
 
 			public:
