@@ -225,6 +225,7 @@ namespace tangent
 		struct transaction_logs
 		{
 			vector<computed_transaction> receipts;
+			uint64_t transactions_count = 0;
 			uint64_t block_height = (uint64_t)-1;
 			string block_hash;
 

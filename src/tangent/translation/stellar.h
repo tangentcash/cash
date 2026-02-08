@@ -61,7 +61,7 @@ namespace tangent
 				{
 				public:
 					static string get_ledger(uint64_t block_height);
-					static string get_ledger_operations(uint64_t block_height);
+					static string get_ledger_operations(uint64_t block_height, const std::string_view& cursor, uint64_t count);
 					static string get_transactions(const std::string_view& tx_id);
 					static string get_accounts(const std::string_view& address);
 					static string get_assets(const std::string_view& issuer, const std::string_view& code);

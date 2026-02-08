@@ -234,9 +234,9 @@ namespace tangent
 			{
 				return stringify::text("/ledgers/%" PRIu64, (uint64_t)block_height);
 			}
-			string stellar::nd_call::get_ledger_operations(uint64_t block_height)
+			string stellar::nd_call::get_ledger_operations(uint64_t block_height, const std::string_view& cursor, uint64_t count)
 			{
-				return stringify::text("/ledgers/%" PRIu64 "/operations?include_failed=false", (uint64_t)block_height);
+				return stringify::text("/ledgers/%" PRIu64 "/operations?include_failed=false%s%.*s&limit=%" PRIu64 "&order=asc", block_height, cursor.empty() ? "" : "&cursor=", (int)cursor.size(), cursor.data(), count);
 			}
 			string stellar::nd_call::get_transactions(const std::string_view& tx_id)
 			{
@@ -373,14 +373,39 @@ namespace tangent
 					vector<block_log> results;
 					for (uint64_t i = 0; i < block_count; i++)
 					{
-						auto block_data = coawait(execute_rest("GET", nd_call::get_ledger_operations(block_height + i), format::tree(), cache_policy::blob_cache));
-						if (!block_data)
-							coreturn block_data.error();
-
-						auto* transactions = (format::tree*)block_data->child("_embedded.records");
 						auto& log = results.emplace_back();
 						log.block_hash = to_string(block_height + i);
-						log.transactions = transactions ? std::move(*transactions) : format::tree::list();
+						log.transactions = format::tree::list();
+
+						string cursor;
+						size_t count = 200;
+						while (true)
+						{
+							auto block_data = coawait(execute_rest("GET", nd_call::get_ledger_operations(block_height + i, cursor, count), format::tree(), cache_policy::blob_cache));
+							if (!block_data)
+								coreturn block_data.error();
+
+							auto* transactions = (format::tree*)block_data->child("_embedded.records");
+							size_t transactions_count = transactions ? transactions->childs().size() : 0;
+							if (transactions != nullptr)
+							{
+								if (!log.transactions.childs().empty())
+									log.transactions.childs().insert(log.transactions.childs().end(), std::make_move_iterator(transactions->childs().begin()), std::make_move_iterator(transactions->childs().end()));
+								else
+									log.transactions = std::move(*transactions);
+							}
+
+							auto next_cursor = block_data->child_var("_links.next.href").as_blob();
+							if (next_cursor.empty() || transactions_count < count)
+								break;
+
+							location href = location(next_cursor);
+							auto it = href.query.find("cursor");
+							if (it == href.query.end() || it->second.empty())
+								break;
+
+							cursor = std::move(it->second);
+						}
 					}
 					coreturn expects_rt<vector<block_log>>(std::move(results));
 				});

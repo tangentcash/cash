@@ -930,12 +930,13 @@ namespace tangent
 		void transaction_logs::report_logs(const algorithm::asset_id& asset, const network_options& options, size_t requests)
 		{
 			auto blockchain = algorithm::asset::blockchain_of(asset);
-			VI_INFO("%s block %s found (height: %i, sync: %.2f%%, txns: %i, rpb: %i)",
+			VI_INFO("%s block %s found (height: %i, sync: %.2f%%, txns: %i/%i, rpb: %i)",
 				blockchain.c_str(),
 				block_hash.c_str(),
 				(int)block_height,
 				options.get_checkpoint_percentage(),
 				(int)receipts.size(),
+				(int)transactions_count,
 				(int)requests);
 
 			for (auto& tx : receipts)
@@ -1818,6 +1819,7 @@ namespace tangent
 					transaction_logs log;
 					log.block_height = block_height + (uint64_t)logs.size();
 					log.block_hash = block.block_hash.empty() ? to_string(log.block_height) : block.block_hash;
+					log.transactions_count = block.transactions.childs().size();
 
 					for (auto& item : block.transactions.childs())
 					{
