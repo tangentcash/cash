@@ -43,7 +43,7 @@ namespace tangent
 		}
 		expects_promise_rt<void> transaction_message::dispatch(const executor_context* executor, dispatcher_context* dispatcher) const
 		{
-			return expects_promise_rt<void>(remote_exception("invalid operation"));
+			return expects_promise_rt<void>(expectation::met);
 		}
 		bool transaction_message::store_payload(format::wo_stream* stream) const
 		{

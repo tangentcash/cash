@@ -3538,7 +3538,7 @@ namespace tangent
 			auto& error = errors[transaction_hash];
 			if (!error.empty())
 				error.append(1, '\n');
-			error.append(stringify::text("in transaction %s dispatch reverted: %.*s", algorithm::encoding::encode_0xhex256(transaction_hash).c_str(), (int)error_message.size(), error_message.data()));
+			error.append(error_message);
 		}
 		vector<std::pair<const ledger::wallet*, uptr<transaction_message>>>& dispatcher_context::get_sendable_transactions()
 		{
