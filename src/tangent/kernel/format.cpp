@@ -1417,7 +1417,7 @@ namespace tangent
 			type = other.type;
 			return *this;
 		}
-		tree::~tree()
+		tree::~tree() noexcept
 		{
 			if (fields != nullptr)
 			{
