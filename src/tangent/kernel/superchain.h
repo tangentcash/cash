@@ -416,7 +416,6 @@ namespace tangent
 			};
 
 			typedef std::function<expects_promise_system<http::response_frame>(const algorithm::asset_id&, const std::string_view&, const std::string_view&, const http::fetch_frame&)> fetch_callback;
-			typedef std::function<expects_promise_system<void>(const algorithm::asset_id&, const std::string_view&, const http::ws_fetch_frame&)> ws_fetch_callback;
 			typedef std::function<bool(const std::string_view&)> invocation_callback;
 
 		protected:
@@ -425,7 +424,6 @@ namespace tangent
 
 		public:
 			fetch_callback network_fetch;
-			ws_fetch_callback network_ws_fetch;
 			activity_callback network_active;
 
 		public:
