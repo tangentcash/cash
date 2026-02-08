@@ -285,6 +285,7 @@ namespace tangent
 				uint64_t retry_after_time = 0;
 			} state;
 			uint64_t blocks_batching = 1;
+			bool blocks_linker = false;
 
 			void set_checkpoint_from_block(uint64_t block_height);
 			void set_checkpoint_to_block(uint64_t block_height);
