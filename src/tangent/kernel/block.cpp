@@ -3432,7 +3432,7 @@ namespace tangent
 			auto entropy_source_3 = runner_wallet->secret_key.view();
 			auto entropy_source_4 = format::util::decode_0xhex(protocol::now().policy.pow.base);
 			asset.encode(entropy_source_1);
-			hash.encode(entropy_source_2);//hash.encode(entropy_source_2);
+			asset.encode(entropy_source_2);//hash.encode(entropy_source_2);
 
 			format::wo_stream entropy_source;
 			entropy_source.write_string(algorithm::hashing::hash512(entropy_source_1, sizeof(entropy_source_1)));

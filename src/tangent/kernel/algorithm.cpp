@@ -1224,9 +1224,7 @@ namespace tangent
 		}
 		string asset::handle_of(const std::string_view& blockchain, const std::string_view& token, const std::string_view& contract_address)
 		{
-			string handle;
-			if (!blockchain.empty())
-				handle.append(blockchain.substr(0, 8));
+			string handle = string(blockchain.substr(0, blockchain == protocol::now().policy.token ? 0 : 8));
 			if (!token.empty())
 			{
 				string normalized_token = string(token);
