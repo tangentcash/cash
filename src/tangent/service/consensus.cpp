@@ -2941,6 +2941,9 @@ namespace tangent
 					goto retry;
 				}
 
+				for (auto& [account, descriptor] : descriptors)
+					fill_node_services(descriptor);
+
 				run_block_production();
 				coreturn_void;
 			});
