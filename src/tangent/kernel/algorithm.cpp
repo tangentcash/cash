@@ -1234,13 +1234,12 @@ namespace tangent
 				handle.append(1, ':').append(std::string_view(stringify::trim(normalized_token)).substr(0, 11));
 				if (!contract_address.empty())
 				{
-					auto data = format::util::is_hex_encoding(contract_address) ? codec::hex_decode(contract_address) : string(contract_address);
-					auto hash = codec::base64_url_encode(*crypto::hash(digests::sha1(), stringify::trim(data)));
-					handle.append(1, ':').append(std::string_view(stringify::replace_of(hash, "-_", "")).substr(0, 32 - handle.size()));
+					auto hash = codec::base64_url_encode(*crypto::hash(digests::sha1(), format::util::is_hex_encoding(contract_address) ? codec::hex_decode(contract_address) : string(contract_address)));
+					handle.append(1, ':').append(std::string_view(stringify::replace_of(hash, "-_", "")).substr(0, sizeof(asset_id) - handle.size()));
 				}
 			}
-			if (handle.size() > 32)
-				handle.erase(32, handle.size() - 32);
+			if (handle.size() > sizeof(asset_id))
+				handle.erase(sizeof(asset_id), handle.size() - sizeof(asset_id));
 			return handle;
 		}
 		string asset::handle_of(const asset_id& value)
