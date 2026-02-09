@@ -473,8 +473,8 @@ namespace tangent
 					if (contract_address)
 					{
 						auto balance = coawait(calculate_balance(to.asset, from_link));
-						if (!balance || *balance < fee_value)
-							coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", (balance ? *balance : decimal(0.0)).to_string().c_str(), fee_value.to_string().c_str())));
+						if (!balance || *balance < to.value)
+							coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", (balance ? *balance : decimal(0.0)).to_string().c_str(), to.value.to_string().c_str())));
 					}
 
 					auto total_value = contract_address ? fee_value : (to.value + fee_value);
