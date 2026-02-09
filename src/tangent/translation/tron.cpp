@@ -465,9 +465,7 @@ namespace tangent
 					if (!fee)
 						coreturn expects_rt<prepared_transaction>(std::move(fee.error()));
 
-					if (contract_address)
-						fee->gas.gas_limit *= 4;
-
+					fee->gas.gas_limit = fee->gas.gas_limit - (fee->gas.gas_limit % 1000) + 1000;
 					decimal fee_value = fee->get_max_fee();
 					if (fee_value > max_fee)
 						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
