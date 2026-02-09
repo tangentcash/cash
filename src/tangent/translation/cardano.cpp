@@ -17,15 +17,11 @@ namespace tangent
 			{
 				return stringify::starts_with(value, "0x") ? std::string(value.substr(2)) : std::string(value);
 			}
-			static string to_token_symbol(const std::string_view& symbol)
+			static string to_token_symbol(const std::string_view& data)
 			{
-				string token_symbol = string(symbol);
+				string token_symbol = string(data);
 				if (format::util::is_hex_encoding(token_symbol))
-				{
 					token_symbol = codec::hex_decode(token_symbol);
-					token_symbol.erase(std::remove_if(token_symbol.begin(), token_symbol.end(), [](char v) { return static_cast<uint8_t>(v) < 0x20 || static_cast<uint8_t>(v) >= 0x7F; }), token_symbol.end());
-					stringify::trim(token_symbol);
-				}
 				return token_symbol;
 			}
 
@@ -151,7 +147,6 @@ namespace tangent
 					auto identifier = stringify::split(tx_operation.child_var("coin_change.coin_identifier.identifier").as_blob(), ':');
 					uint32_t index = from_string<uint32_t>(identifier.back()).or_else(0);
 					string transaction_id = identifier.front();
-					string symbol = to_token_symbol(tx_operation.child_var("amount.currency.symbol").as_blob());
 					string address = tx_operation.child_var("account.address").as_blob();
 					string type = tx_operation.child_var("type").as_blob();
 					decimal value = math0::abs(tx_operation.child_var("amount.value").as_decimal()) / netdata.divisibility;

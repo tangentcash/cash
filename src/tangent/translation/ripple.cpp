@@ -405,7 +405,7 @@ namespace tangent
 						return expects_rt<void>(expectation::met);
 					
 					if (error_message.empty())
-						error_message = "broadcast error";
+						error_message = "transaction failed without error message";
 
 					return expects_rt<void>(remote_exception(std::move(error_message)));
 				});
@@ -414,6 +414,10 @@ namespace tangent
 			{
 				return coasync<expects_rt<prepared_transaction>>([this, from_link, to, max_fee]() -> expects_promise_rt<prepared_transaction>
 				{
+					auto contract_address = bridge::get()->get_contract_address(to.asset);
+					if (!contract_address && !algorithm::asset::token_of(to.asset).empty())
+						coreturn expects_rt<prepared_transaction>(remote_exception("failed to find a token contract address"));
+
 					auto account_info = coawait(get_account_info(from_link.address));
 					if (!account_info)
 						coreturn expects_rt<prepared_transaction>(std::move(account_info.error()));
@@ -443,7 +447,6 @@ namespace tangent
 					if (fee_value > max_fee)
 						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
 
-					auto contract_address = bridge::get()->get_contract_address(to.asset);
 					if (contract_address)
 					{
 						auto account_token_info = coawait(get_account_token_info(to.asset, *contract_address));
@@ -454,6 +457,8 @@ namespace tangent
 					auto total_value = contract_address ? fee_value : (to.value + fee_value);
 					if (account_info->balance < total_value || total_value.is_negative())
 						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", account_info->balance.to_string().c_str(), total_value.to_string().c_str())));
+					else if (account_info->balance - total_value < 1)
+						coreturn expects_rt<prepared_transaction>(remote_exception("spender account must have at least 1 XRP left after this operation"));
 
 					auto [output_address, output_tag] = address_util::decode_tag_address(to.address);
 					transaction_buffer buffer;

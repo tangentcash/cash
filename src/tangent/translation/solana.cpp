@@ -577,12 +577,16 @@ namespace tangent
 			{
 				return coasync<expects_rt<prepared_transaction>>([this, from_link, to, max_fee]() -> expects_promise_rt<prepared_transaction>
 				{
+					auto contract_address = bridge::get()->get_contract_address(to.asset);
+					if (!contract_address && !algorithm::asset::token_of(to.asset).empty())
+						coreturn expects_rt<prepared_transaction>(remote_exception("failed to find a token contract address"));
+
 					auto native_balance = coawait(get_balance(from_link.address));
 					if (!native_balance)
 						coreturn expects_rt<prepared_transaction>(std::move(native_balance.error()));
 
 					uint64_t fee_constant = 5000;
-					if (!algorithm::asset::token_of(to.asset).empty())
+					if (contract_address)
 						fee_constant += fee_constant * 2;
 
 					auto fee = computed_fee::flat_fee(fee_constant / netdata.divisibility);
@@ -590,7 +594,6 @@ namespace tangent
 					if (fee_value > max_fee)
 						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
 
-					auto contract_address = bridge::get()->get_contract_address(to.asset);
 					option<token_account> from_token = optional::none;
 					option<token_account> to_token = optional::none;
 					if (contract_address)

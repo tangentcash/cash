@@ -453,6 +453,10 @@ namespace tangent
 			{
 				return coasync<expects_rt<prepared_transaction>>([this, from_link, to, max_fee]() -> expects_promise_rt<prepared_transaction>
 				{
+					auto contract_address = bridge::get()->get_contract_address(to.asset);
+					if (!contract_address && !algorithm::asset::token_of(to.asset).empty())
+						coreturn expects_rt<prepared_transaction>(remote_exception("failed to find a token contract address"));
+
 					auto chain_id = coawait(get_chain_id());
 					if (!chain_id)
 						coreturn expects_rt<prepared_transaction>(std::move(chain_id.error()));
@@ -461,7 +465,6 @@ namespace tangent
 					if (!fee)
 						coreturn expects_rt<prepared_transaction>(std::move(fee.error()));
 
-					auto contract_address = bridge::get()->get_contract_address(to.asset);
 					if (contract_address)
 						fee->gas.gas_limit *= 4;
 

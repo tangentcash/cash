@@ -514,17 +514,22 @@ namespace tangent
 
 				const char* type = "application/x-www-form-urlencoded";
 				string body = args->encode(type);
-				return execute_http("POST", nd_call::submit_transaction(), type, body, cache_policy::no_cache_no_throttling).then<expects_rt<void>>([](expects_rt<format::tree>&& hex_data) -> expects_rt<void>
+				return execute_http("POST", nd_call::submit_transaction(), type, body, cache_policy::no_cache_no_throttling).then<expects_rt<void>>([](expects_rt<format::tree>&& result) -> expects_rt<void>
 				{
-					if (!hex_data)
-						return expects_rt<void>(std::move(hex_data.error()));
+					if (!result)
+						return expects_rt<void>(std::move(result.error()));
 
-					string detail = hex_data->child_var("detail").as_blob();
-					if (!detail.empty())
+					auto* error_operations = result->child("extras.result_codes.operations");
+					auto error_message = result->child_var("extras.result_codes.transaction").as_blob();
+					if (error_operations != nullptr)
 					{
-						string code = hex_data->child_var("extras.result_codes.transaction").as_blob();
-						return expects_rt<void>(remote_exception(std::move(code.empty() ? detail : code)));
+						for (auto& error_code : error_operations->childs())
+							error_message += " " + error_code.value.as_blob();
 					}
+
+					stringify::trim(error_message);
+					if (!result->child_var("successful").as_boolean() || !error_message.empty())
+						return expects_rt<void>(error_message.empty() ? remote_exception("transaction failed without error message") : remote_exception(std::move(error_message)));
 
 					return expects_rt<void>(expectation::met);
 				});
@@ -533,6 +538,10 @@ namespace tangent
 			{
 				return coasync<expects_rt<prepared_transaction>>([this, from_link, to, max_fee]() -> expects_promise_rt<prepared_transaction>
 				{
+					auto contract_address = bridge::get()->get_contract_address(to.asset);
+					if (!contract_address && !algorithm::asset::token_of(to.asset).empty())
+						coreturn expects_rt<prepared_transaction>(remote_exception("failed to find a token contract address"));
+
 					auto account_info = coawait(get_account_info(from_link.address));
 					if (!account_info)
 						coreturn expects_rt<prepared_transaction>(std::move(account_info.error()));
@@ -553,7 +562,6 @@ namespace tangent
 
 					option<StellarCreateAccountOp> account = optional::none;
 					option<StellarPaymentOp> payment = optional::none;
-					auto contract_address = bridge::get()->get_contract_address(to.asset);
 					if (!*has_account)
 						account = tx_create_account_prepared(to.address, from_link.address, (uint64_t)to_stroop(to.value), !!contract_address);
 
@@ -591,6 +599,10 @@ namespace tangent
 						if (balance_value == account_info->balances.end() || balance_value->second.balance < total_value)
 							coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", (balance_value != account_info->balances.end() ? balance_value->second.balance : decimal(0.0)).to_string().c_str(), total_value.to_string().c_str())));
 					}
+
+					auto it = account_info->balances.find(native_asset);
+					if (it == account_info->balances.end() || it->second.balance - fee_input < 1)
+						coreturn expects_rt<prepared_transaction>(remote_exception("spender account must have at least 1 XLM left after this operation"));
 
 					auto signing_public_key = decode_public_key(from_link.public_key);
 					if (!signing_public_key)

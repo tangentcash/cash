@@ -790,6 +790,10 @@ namespace tangent
 			{
 				return coasync<expects_rt<prepared_transaction>>([this, from_link, to, max_fee]() -> expects_promise_rt<prepared_transaction>
 				{
+					auto contract_address = bridge::get()->get_contract_address(to.asset);
+					if (!contract_address && !algorithm::asset::token_of(to.asset).empty())
+						coreturn expects_rt<prepared_transaction>(remote_exception("failed to find a token contract address"));
+
 					auto chain_id = coawait(get_chain_id());
 					if (!chain_id)
 						coreturn expects_rt<prepared_transaction>(std::move(chain_id.error()));
@@ -802,15 +806,12 @@ namespace tangent
 					if (fee_value > max_fee)
 						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
 
-					auto contract_address = bridge::get()->get_contract_address(to.asset);
 					if (contract_address)
 					{
 						auto balance = coawait(calculate_balance(to.asset, from_link));
 						if (!balance || *balance < fee_value)
 							coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", (balance ? *balance : decimal(0.0)).to_string().c_str(), fee_value.to_string().c_str())));
 					}
-					else if (!algorithm::asset::token_of(to.asset).empty())
-						coreturn expects_rt<prepared_transaction>(remote_exception("invalid sending token"));
 
 					auto total_value = contract_address ? fee_value : (to.value + fee_value);
 					auto balance = coawait(calculate_balance(native_asset, from_link));

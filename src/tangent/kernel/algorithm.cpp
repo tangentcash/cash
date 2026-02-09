@@ -1229,12 +1229,14 @@ namespace tangent
 				handle.append(blockchain.substr(0, 8));
 			if (!token.empty())
 			{
-				handle.append(1, ':').append(token.substr(0, 8));
+				string normalized_token = string(token);
+				normalized_token.erase(std::remove_if(normalized_token.begin(), normalized_token.end(), [](char v) { return static_cast<uint8_t>(v) < 0x20 || static_cast<uint8_t>(v) >= 0x7F; }), normalized_token.end());
+				handle.append(1, ':').append(std::string_view(stringify::trim(normalized_token)).substr(0, 11));
 				if (!contract_address.empty())
 				{
-					auto hash = codec::base64_url_encode(*crypto::hash(digests::sha1(), format::util::is_hex_encoding(contract_address) ? codec::hex_decode(contract_address) : string(contract_address)));
-					stringify::replace_of(hash, "-_", "");
-					handle.append(1, ':').append(hash.substr(0, 32 - handle.size()));
+					auto data = format::util::is_hex_encoding(contract_address) ? codec::hex_decode(contract_address) : string(contract_address);
+					auto hash = codec::base64_url_encode(*crypto::hash(digests::sha1(), stringify::trim(data)));
+					handle.append(1, ':').append(std::string_view(stringify::replace_of(hash, "-_", "")).substr(0, 32 - handle.size()));
 				}
 			}
 			if (handle.size() > 32)
