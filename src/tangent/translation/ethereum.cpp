@@ -738,10 +738,7 @@ namespace tangent
 					decimal gas_premium = to_eth(vgas_premium * 2, netdata.divisibility);
 					auto gas_limit_estimate = coawait(execute_rpc(nd_call::estimate_gas(), std::move(map), cache_policy::no_cache, evm_rpc_path));
 					if (!gas_limit_estimate)
-					{
-						decimal gas_price = to_eth(vgas_price, netdata.divisibility);
-						coreturn expects_rt<computed_fee>(computed_fee::fee_per_gas_priority(gas_premium, gas_price, default_gas_limit));
-					}
+						coreturn expects_rt<computed_fee>(gas_limit_estimate.error());
 
 					uint256_t vgas_limit = hex_to_uint256(gas_limit_estimate->value.as_blob());
 					decimal gas_price = to_eth(vgas_price, netdata.divisibility);
