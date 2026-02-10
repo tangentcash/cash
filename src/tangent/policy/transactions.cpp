@@ -3123,28 +3123,15 @@ namespace tangent
 			if (!algorithm::asset::token_of(asset).empty())
 				return layer_exception("invalid asset");
 
-			if (!proof.is_valid())
-				return layer_exception("invalid proof");
-
 			if (!proof.block_id)
 				return layer_exception("transaction has no block reference");
+
+			if (!proof.is_valid_with(asset))
+				return layer_exception("invalid proof");
 
 			auto chain = superchain::bridge::get()->get_network_params(asset);
 			if (!chain)
 				return layer_exception("invalid operation");
-
-			auto blockchain = algorithm::asset::blockchain_of(asset);
-			for (auto& [hash, input] : proof.inputs)
-			{
-				if (input.is_account() && algorithm::asset::blockchain_of(input.get_asset(asset)) != blockchain)
-					return layer_exception("proof input asset not valid");
-			}
-
-			for (auto& [hash, output] : proof.outputs)
-			{
-				if (output.is_account() && algorithm::asset::blockchain_of(output.get_asset(asset)) != blockchain)
-					return layer_exception("proof output asset not valid");
-			}
 
 			btree_set<algorithm::pubkeyhash_t> attesters;
 			for (auto& [commitment_hash, signatures] : commitments)
@@ -3672,8 +3659,19 @@ namespace tangent
 
 			return expectation::met;
 		}
-		void attestate::optimize_proof_commitments(const ledger::executor_context* executor, const algorithm::asset_id& asset, btree_map<uint256_t, btree_set<algorithm::hashsig_t>>& commitments)
+		void attestate::optimize_proofs_and_commitments(const ledger::executor_context* executor, const algorithm::asset_id& asset, btree_map<uint256_t, superchain::computed_transaction>& proofs, btree_map<uint256_t, btree_set<algorithm::hashsig_t>>& commitments)
 		{
+			for (auto it = proofs.begin(); it != proofs.end();)
+			{
+				if (!it->second.is_valid_with(asset))
+				{
+					commitments.erase(it->first);
+					it = proofs.erase(it);
+				}
+				else
+					++it;
+			}
+
 			btree_set<algorithm::pubkeyhash_t> duplicates;
 			btree_map<uint256_t, btree_set<algorithm::hashsig_t>> removals;
 			for (auto& [commitment_hash, signatures] : commitments)

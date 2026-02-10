@@ -553,6 +553,39 @@ namespace tangent
 
 			return true;
 		}
+		bool computed_transaction::is_valid_with(const algorithm::asset_id& asset) const
+		{
+			auto blockchain = algorithm::asset::blockchain_of(asset);
+			for (auto& [hash, input] : inputs)
+			{
+				auto native_asset = input.get_asset(asset);
+				if (algorithm::asset::blockchain_of(native_asset) != blockchain || !algorithm::asset::is_aux(native_asset, true))
+					return false;
+
+				for (auto& [token_hash, token_input] : input.tokens)
+				{
+					auto token_asset = token_input.get_asset(asset);
+					if (algorithm::asset::blockchain_of(token_asset) != blockchain || !algorithm::asset::is_aux(token_asset))
+						return false;
+				}
+			}
+
+			for (auto& [hash, output] : outputs)
+			{
+				auto native_asset = output.get_asset(asset);
+				if (algorithm::asset::blockchain_of(native_asset) != blockchain || !algorithm::asset::is_aux(native_asset, true))
+					return false;
+
+				for (auto& [token_hash, token_output] : output.tokens)
+				{
+					auto token_asset = token_output.get_asset(asset);
+					if (algorithm::asset::blockchain_of(token_asset) != blockchain || !algorithm::asset::is_aux(token_asset))
+						return false;
+				}
+			}
+
+			return true;
+		}
 		bool computed_transaction::is_valid() const
 		{
 			if (inputs.empty() || outputs.empty() || stringify::is_empty_or_whitespace(transaction_id))

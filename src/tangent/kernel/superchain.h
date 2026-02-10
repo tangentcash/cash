@@ -147,6 +147,7 @@ namespace tangent
 			void add_output(coin_utxo&& output);
 			bool store_payload(format::wo_stream* stream) const override;
 			bool load_payload(format::ro_stream& stream) override;
+			bool is_valid_with(const algorithm::asset_id& asset) const;
 			bool is_valid() const;
 			uint256_t as_attestation_hash() const;
 			format::tree as_tree() const override;

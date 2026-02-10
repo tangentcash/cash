@@ -994,7 +994,6 @@ namespace tangent
 			VI_ASSERT(signer_wallet != nullptr, "signer wallet should be set");
 			umutex<std::recursive_mutex> unique(sync.account);
 			auto status = candidate_tx->sign(signer_wallet->secret_key, signer_wallet->get_latest_nonce().or_else(0), decimal::zero());
-			console::get()->write_line(candidate_tx->as_tree().as_json(true));
 			if (!status)
 			{
 				auto purpose = candidate_tx->as_typename();
@@ -1069,10 +1068,12 @@ namespace tangent
 			auto batch = mempool.get_attestation(attestation_hash);
 			if (!batch)
 				return batch.error();
-			else if (batch->proofs.empty())
-				return layer_exception("proof required");
 
 			auto executor = ledger::executor_context(nullptr);
+			transactions::attestate::optimize_proofs_and_commitments(&executor, batch->asset, batch->proofs, batch->commitments);
+			if (batch->proofs.empty())
+				return layer_exception("proof are either not valid or not provided");
+
 			auto collision = executor.get_witness_transaction(batch->asset, batch->proofs.begin()->second.transaction_id);
 			if (collision)
 			{
@@ -1082,7 +1083,6 @@ namespace tangent
 
 			uint256_t best_commitment_hash = 0;
 			btree_map<uint256_t, btree_set<algorithm::pubkeyhash_t>> attesters;
-			transactions::attestate::optimize_proof_commitments(&executor, batch->asset, batch->commitments);
 			auto verification = transactions::attestate::verify_proof_commitment(&executor, batch->asset, batch->commitments, best_commitment_hash, attesters);
 			if (!verification)
 				return verification;

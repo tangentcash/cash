@@ -309,7 +309,7 @@ namespace tangent
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
 			static expects_lr<void> verify_proof_commitment(ledger::executor_context* executor, const algorithm::asset_id& asset, const btree_map<uint256_t, btree_set<algorithm::hashsig_t>>& commitments, uint256_t& best_commitment_hash, btree_map<uint256_t, btree_set<algorithm::pubkeyhash_t>>& attesters);
-			static void optimize_proof_commitments(const ledger::executor_context* executor, const algorithm::asset_id& asset, btree_map<uint256_t, btree_set<algorithm::hashsig_t>>& commitments);
+			static void optimize_proofs_and_commitments(const ledger::executor_context* executor, const algorithm::asset_id& asset, btree_map<uint256_t, superchain::computed_transaction>& proofs, btree_map<uint256_t, btree_set<algorithm::hashsig_t>>& commitments);
 			static bool commit_to_proof(const superchain::computed_transaction& new_proof, const algorithm::seckey_t& secret_key, uint256_t& commitment_hash, algorithm::hashsig_t& commitment_signature);
 		};
 
