@@ -740,7 +740,7 @@ namespace tangent
 
 					uint256_t vgas_limit = hex_to_uint256(gas_limit_estimate->value.as_blob());
 					decimal gas_price = to_eth(vgas_price, netdata.divisibility);
-					coreturn expects_rt<computed_fee>(computed_fee::fee_per_gas_priority(gas_premium, gas_price, vgas_limit > 0 ? vgas_limit : uint256_t(fallback_gas_limit)));
+					coreturn expects_rt<computed_fee>(computed_fee::fee_per_gas_priority(gas_premium, gas_price, vgas_limit > 0 ? (vgas_limit - (vgas_limit % 1000) + 1000) : uint256_t(fallback_gas_limit)));
 				});
 			}
 			expects_promise_rt<decimal> ethereum::calculate_balance(const algorithm::asset_id& for_asset, const wallet_link& link)
