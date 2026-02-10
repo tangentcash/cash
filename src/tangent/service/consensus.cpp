@@ -994,6 +994,7 @@ namespace tangent
 			VI_ASSERT(signer_wallet != nullptr, "signer wallet should be set");
 			umutex<std::recursive_mutex> unique(sync.account);
 			auto status = candidate_tx->sign(signer_wallet->secret_key, signer_wallet->get_latest_nonce().or_else(0), decimal::zero());
+			console::get()->write_line(candidate_tx->as_message().encode());
 			if (!status)
 			{
 				auto purpose = candidate_tx->as_typename();
