@@ -709,22 +709,20 @@ namespace tangent
 							divisibility = *contract_divisibility;
 					}
 
-					uint64_t default_gas_limit;
+					uint64_t fallback_gas_limit;
 					uint256_t value = from_eth(to.value, divisibility);
 					if (contract_address)
 					{
-						default_gas_limit = get_erc20_transfer_gas_limit_gwei();
+						fallback_gas_limit = get_erc20_transfer_gas_limit_gwei();
 						params.set("to", format::variable(decode_non_eth_address(*contract_address)));
 						params.set("value", format::variable(uint256_to_hex(0)));
-						params.set("gas", format::variable(uint256_to_hex(default_gas_limit)));
 						params.set("data", format::variable(encode_0xhex(translations::ethereum::sc_call::transfer(decode_non_eth_address(to.address), value))));
 					}
 					else
 					{
-						default_gas_limit = get_eth_transfer_gas_limit_gwei();
+						fallback_gas_limit = get_eth_transfer_gas_limit_gwei();
 						params.set("to", format::variable(decode_non_eth_address(to.address)));
 						params.set("value", format::variable(uint256_to_hex(value)));
-						params.set("gas", format::variable(uint256_to_hex(default_gas_limit)));
 					}
 
 					format::tree map;
@@ -742,7 +740,7 @@ namespace tangent
 
 					uint256_t vgas_limit = hex_to_uint256(gas_limit_estimate->value.as_blob());
 					decimal gas_price = to_eth(vgas_price, netdata.divisibility);
-					coreturn expects_rt<computed_fee>(computed_fee::fee_per_gas_priority(gas_premium, gas_price, vgas_limit > 0 ? vgas_limit : uint256_t(default_gas_limit)));
+					coreturn expects_rt<computed_fee>(computed_fee::fee_per_gas_priority(gas_premium, gas_price, vgas_limit > 0 ? vgas_limit : uint256_t(fallback_gas_limit)));
 				});
 			}
 			expects_promise_rt<decimal> ethereum::calculate_balance(const algorithm::asset_id& for_asset, const wallet_link& link)
