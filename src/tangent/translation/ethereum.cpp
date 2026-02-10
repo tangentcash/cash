@@ -1155,11 +1155,11 @@ namespace tangent
 			}
 			uint256_t ethereum::get_eth_transfer_gas_limit_gwei()
 			{
-				return 21000;
+				return 42000;
 			}
 			uint256_t ethereum::get_erc20_transfer_gas_limit_gwei()
 			{
-				return 63000;
+				return 84000;
 			}
 
 			arbitrum::arbitrum(const algorithm::asset_id& new_asset) noexcept : ethereum(new_asset)
