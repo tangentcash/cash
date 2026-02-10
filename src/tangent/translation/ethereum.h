@@ -63,6 +63,7 @@ namespace tangent
 				class sc_function
 				{
 				public:
+					static const char* name();
 					static const char* symbol();
 					static const char* decimals();
 					static const char* balance_of();
@@ -73,6 +74,7 @@ namespace tangent
 				class sc_call
 				{
 				public:
+					static binary_data_t name();
 					static binary_data_t symbol();
 					static binary_data_t decimals();
 					static binary_data_t balance_of(const string& address);

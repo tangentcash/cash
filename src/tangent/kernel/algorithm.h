@@ -222,6 +222,7 @@ namespace tangent
 			static uint256_t hash256i(const uint8_t* buffer, size_t size);
 			static uint256_t hash256i(const std::string_view& data);
 			static string ppc512(const std::string_view& unpacked_code);
+			static string atca160ascii(const std::string_view& contract_address);
 		};
 
 		class arithmetic

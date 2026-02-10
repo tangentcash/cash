@@ -1191,6 +1191,13 @@ namespace tangent
 			stringify::compress(stringify::trim(hashable), erasable, quotes);
 			return hash512((uint8_t*)hashable.data(), hashable.size());
 		}
+		string hashing::atca160ascii(const std::string_view& contract_address)
+		{
+			auto sha160 = format::util::is_hex_encoding(contract_address) ? crypto::hash(digests::sha1(), codec::hex_decode(contract_address)) : crypto::hash(digests::sha1(), contract_address);
+			auto ascii_base64_url = codec::base64_url_encode(*sha160);
+			stringify::replace_of(ascii_base64_url, "-_", "");
+			return ascii_base64_url;
+		}
 
 		asset_id asset::native()
 		{
@@ -1225,19 +1232,18 @@ namespace tangent
 		string asset::handle_of(const std::string_view& blockchain, const std::string_view& token, const std::string_view& contract_address)
 		{
 			string handle = string(blockchain.substr(0, blockchain == protocol::now().policy.token ? 0 : 8));
-			if (!token.empty())
+			if (!token.empty() || !contract_address.empty())
 			{
-				string normalized_token = string(token);
-				normalized_token.erase(std::remove_if(normalized_token.begin(), normalized_token.end(), [](char v) { return static_cast<uint8_t>(v) < 0x20 || static_cast<uint8_t>(v) >= 0x7F; }), normalized_token.end());
-				handle.append(1, ':').append(std::string_view(stringify::trim(normalized_token)).substr(0, 11));
-				if (!contract_address.empty())
-				{
-					auto hash = codec::base64_url_encode(*crypto::hash(digests::sha1(), format::util::is_hex_encoding(contract_address) ? codec::hex_decode(contract_address) : string(contract_address)));
-					handle.append(1, ':').append(std::string_view(stringify::replace_of(hash, "-_", "")).substr(0, sizeof(asset_id) - handle.size()));
-				}
+				auto symbol = string(token);
+				symbol.erase(std::remove_if(symbol.begin(), symbol.end(), [](char v) { return static_cast<uint8_t>(v) < 0x20 || static_cast<uint8_t>(v) >= 0x7F; }), symbol.end());
+				stringify::trim(symbol);
+				if (symbol.empty())
+					symbol = hashing::atca160ascii(token);
+				
+				auto hash = hashing::atca160ascii(contract_address.empty() ? token : contract_address);
+				handle.append(1, ':').append(std::string_view(symbol).substr(0, 11));
+				handle.append(1, ':').append(std::string_view(hash).substr(0, sizeof(asset_id) - handle.size()));
 			}
-			if (handle.size() > sizeof(asset_id))
-				handle.erase(sizeof(asset_id), handle.size() - sizeof(asset_id));
 			return handle;
 		}
 		string asset::handle_of(const asset_id& value)

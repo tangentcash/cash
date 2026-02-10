@@ -309,10 +309,7 @@ namespace tangent
 
 								auto contract_address = encode_eth_address(invocation.child_var("address").as_blob());
 								auto symbol = coawait(get_contract_symbol(contract_address));
-								if (!symbol)
-									continue;
-
-								auto token_asset = algorithm::asset::id_of(algorithm::asset::blockchain_of(native_asset), *symbol, contract_address);
+								auto token_asset = algorithm::asset::id_of(algorithm::asset::blockchain_of(native_asset), symbol.or_else(contract_address), contract_address);
 								decimal divisibility = coawait(get_contract_divisibility(contract_address)).or_else(netdata.divisibility);
 								decimal token_value = to_eth(hex_to_uint256(invocation.child_var("data").as_blob()), divisibility);
 								if (topics->childs().size() == 3)

@@ -205,6 +205,10 @@ namespace tangent
 				return binary_data_t((char*)hash, sizeof(hash));
 			}
 
+			const char* ethereum::sc_function::name()
+			{
+				return "name()";
+			}
 			const char* ethereum::sc_function::symbol()
 			{
 				return "symbol()";
@@ -226,6 +230,17 @@ namespace tangent
 				return "transferFrom(address,address,uint256)";
 			}
 
+			ethereum::binary_data_t ethereum::sc_call::name()
+			{
+				string raw_data;
+				struct eth_abi evm;
+				eth_abi_init(&evm, ETH_ABI_ENCODE);
+				eth_abi_call_begin(&evm, sc_function::name());
+				eth_abi_call_end(&evm);
+				eth_abi_to_bytes(&evm, &raw_data);
+				eth_abi_free(&evm);
+				return raw_data;
+			}
 			ethereum::binary_data_t ethereum::sc_call::symbol()
 			{
 				string raw_data;
@@ -401,7 +416,7 @@ namespace tangent
 					bool has_bytes = eth_abi_bytes(&evm, &bytes, &bytes_size) == 1;
 					eth_abi_free(&evm);
 					if (!has_bytes)
-						return expects_rt<string>(symbol->value.as_blob());
+						return remote_exception("invalid symbol() result");
 
 					string result = string((char*)bytes, bytes_size);
 					free(bytes);
@@ -581,10 +596,7 @@ namespace tangent
 
 								auto contract_address = encode_eth_address(invocation.child_var("address").as_blob());
 								auto symbol = coawait(get_contract_symbol(contract_address));
-								if (!symbol)
-									continue;
-
-								auto token_asset = algorithm::asset::id_of(algorithm::asset::blockchain_of(native_asset), *symbol, contract_address);
+								auto token_asset = algorithm::asset::id_of(algorithm::asset::blockchain_of(native_asset), symbol.or_else(contract_address), contract_address);
 								decimal divisibility = coawait(get_contract_divisibility(contract_address)).or_else(netdata.divisibility);
 								decimal token_value = to_eth(hex_to_uint256(invocation.child_var("data").as_blob()), divisibility);
 								if (topics->childs().size() == 3)

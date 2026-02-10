@@ -173,7 +173,7 @@ namespace tangent
 									for (auto& item : tokens->childs())
 									{
 										auto token_symbol = to_token_symbol(item.child_var("currency.symbol").as_blob());
-										auto token_asset = algorithm::asset::id_of(blockchain, token_symbol, contract_address);
+										auto token_asset = algorithm::asset::id_of(blockchain, token_symbol.empty() ? contract_address : token_symbol, contract_address);
 										uint8_t decimals = item.child_var("currency.decimals").as_uint8();
 										decimal divisibility = decimals > 0 ? decimal("1" + string(decimals, '0')) : decimal(1);
 										decimal token_value = algorithm::arithmetic::divide(math0::abs(item.child_var("value").as_decimal()), divisibility);
