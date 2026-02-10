@@ -691,8 +691,9 @@ namespace tangent
 
 				transaction_data.resize(transaction_data_size - 1);
 				auto result = finalized_transaction(std::move(prepared), std::move(transaction_data), string((char*)transaction_id, transaction_id_size - 1));
-				if (!result.is_valid())
-					return layer_exception("tx serialization error");
+				auto validation = result.validate();
+				if (!validation)
+					return validation.error();
 
 				return expects_lr<finalized_transaction>(std::move(result));
 			}

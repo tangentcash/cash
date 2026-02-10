@@ -613,8 +613,9 @@ namespace tangent
 					return layer_exception(std::move(native_data.error().message()));
 
 				auto result = finalized_transaction(std::move(prepared), codec::hex_encode(*native_data), codec::hex_encode(transaction.raw_transaction_id));
-				if (!result.is_valid())
-					return layer_exception("tx serialization error");
+				auto validation = result.validate();
+				if (!validation)
+					return validation.error();
 
 				return expects_lr<finalized_transaction>(std::move(result));
 			}

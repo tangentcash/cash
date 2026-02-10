@@ -3126,8 +3126,9 @@ namespace tangent
 			if (!proof.block_id)
 				return layer_exception("transaction has no block reference");
 
-			if (!proof.is_valid_with(asset))
-				return layer_exception("invalid proof");
+			auto prevalidation = proof.validate_with(asset);
+			if (!prevalidation)
+				return prevalidation;
 
 			auto chain = superchain::bridge::get()->get_network_params(asset);
 			if (!chain)
@@ -3663,7 +3664,7 @@ namespace tangent
 		{
 			for (auto it = proofs.begin(); it != proofs.end();)
 			{
-				if (!it->second.is_valid_with(asset))
+				if (!it->second.validate_with(asset))
 				{
 					commitments.erase(it->first);
 					it = proofs.erase(it);

@@ -352,7 +352,7 @@ namespace tangent
 						{
 							auto token_asset = token.get_asset(native_asset);
 							auto& next = change_tokens[token_asset];
-							if (next.is_valid())
+							if (next.validate())
 								next.value += token.value;
 							else
 								next = token;
@@ -372,7 +372,7 @@ namespace tangent
 					auto change_output = coin_utxo(wallet_link(possible_inputs->front().link), string(), (uint32_t)result.outputs.size(), decimal(remaining_value - total_value));
 					for (auto& token : change_tokens)
 					{
-						if (token.second.is_valid() && token.second.value.is_positive())
+						if (token.second.validate() && token.second.value.is_positive())
 							change_output.apply_token_value(token.second.contract_address, token.second.symbol, token.second.value, token.second.decimals);
 					}
 
@@ -520,8 +520,9 @@ namespace tangent
 					crypto_generichash_blake2b(raw_transaction_id, sizeof(raw_transaction_id), raw_body_data.data(), raw_body_data.size(), nullptr, 0);
 
 					auto result = finalized_transaction(std::move(prepared), codec::hex_encode(std::string_view((const char*)raw_tx_data.data(), raw_tx_data.size())), codec::hex_encode(std::string_view((const char*)raw_transaction_id, sizeof(raw_transaction_id))));
-					if (!result.is_valid())
-						return layer_exception("tx serialization error");
+					auto validation = result.validate();
+					if (!validation)
+						return validation.error();
 
 					return expects_lr<finalized_transaction>(std::move(result));
 				}

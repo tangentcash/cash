@@ -89,7 +89,7 @@ namespace tangent
 			value_transfer(value_transfer&&) noexcept = default;
 			value_transfer& operator=(const value_transfer&) = default;
 			value_transfer& operator=(value_transfer&&) noexcept = default;
-			bool is_valid() const;
+			expects_lr<void> validate() const;
 		};
 
 		struct coin_utxo : messages::uniform
@@ -107,8 +107,8 @@ namespace tangent
 				decimal get_divisibility() const;
 				algorithm::asset_id get_asset(const algorithm::asset_id& base_asset) const;
 				bool is_account() const;
-				bool is_valid() const;
 				uint256_t as_hash() const;
+				expects_lr<void> validate() const;
 			};
 
 			btree_map<uint256_t, token_utxo> tokens;
@@ -125,8 +125,8 @@ namespace tangent
 			bool store_payload(format::wo_stream* stream) const override;
 			bool load_payload(format::ro_stream& stream) override;
 			bool is_account() const;
-			bool is_valid_input() const;
-			bool is_valid_output() const;
+			expects_lr<void> validate_as_input() const;
+			expects_lr<void> validate_as_output() const;
 			algorithm::asset_id get_asset(const algorithm::asset_id& base_asset) const;
 			format::tree as_tree() const override;
 			uint32_t as_type() const override;
@@ -147,8 +147,8 @@ namespace tangent
 			void add_output(coin_utxo&& output);
 			bool store_payload(format::wo_stream* stream) const override;
 			bool load_payload(format::ro_stream& stream) override;
-			bool is_valid_with(const algorithm::asset_id& asset) const;
-			bool is_valid() const;
+			expects_lr<void> validate_with(const algorithm::asset_id& asset) const;
+			expects_lr<void> validate() const;
 			uint256_t as_attestation_hash() const;
 			format::tree as_tree() const override;
 			uint32_t as_type() const override;
@@ -208,7 +208,7 @@ namespace tangent
 			finalized_transaction(prepared_transaction&& new_prepared, string&& new_calldata, string&& new_hashdata, uint64_t new_locktime = 0);
 			bool store_payload(format::wo_stream* stream) const override;
 			bool load_payload(format::ro_stream& stream) override;
-			bool is_valid() const;
+			expects_lr<void> validate() const;
 			computed_transaction as_computed() const;
 			format::tree as_tree() const override;
 			uint32_t as_type() const override;
@@ -255,7 +255,7 @@ namespace tangent
 
 			decimal get_max_fee() const;
 			bool is_flat_fee() const;
-			bool is_valid() const;
+			expects_lr<void> validate() const;
 			static computed_fee flat_fee(const decimal& fee);
 			static computed_fee fee_per_byte(const decimal& rate, size_t bytes);
 			static computed_fee fee_per_kilobyte(const decimal& rate);

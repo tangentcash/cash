@@ -239,9 +239,15 @@ namespace tangent
 		value_transfer::value_transfer(const algorithm::asset_id& new_asset, const std::string_view& new_address, decimal&& new_value) : asset(new_asset), address(new_address), value(std::move(new_value))
 		{
 		}
-		bool value_transfer::is_valid() const
+		expects_lr<void> value_transfer::validate() const
 		{
-			return !stringify::is_empty_or_whitespace(address) && (value.is_zero() || value.is_positive());
+			if (stringify::is_empty_or_whitespace(address))
+				return layer_exception("invalid transfer address");
+
+			if (value.is_nan() || value.is_negative())
+				return layer_exception("invalid transfer value");
+
+			return expectation::met;
 		}
 
 		coin_utxo::token_utxo::token_utxo() : decimals(0)
@@ -265,13 +271,6 @@ namespace tangent
 		{
 			return symbol.empty() && decimals == 0;
 		}
-		bool coin_utxo::token_utxo::is_valid() const
-		{
-			if (is_account())
-				return algorithm::asset::id_of_handle(contract_address) > 0 && !value.is_negative() && !value.is_nan();
-
-			return !contract_address.empty() && !symbol.empty() && !value.is_negative() && !value.is_nan();
-		}
 		uint256_t coin_utxo::token_utxo::as_hash() const
 		{
 			format::wo_stream message;
@@ -280,6 +279,24 @@ namespace tangent
 			message.write_decimal(value);
 			message.write_integer(decimals);
 			return message.hash();
+		}
+		expects_lr<void> coin_utxo::token_utxo::validate() const
+		{
+			if (!is_account())
+			{
+				if (contract_address.empty())
+					return layer_exception("invalid token utxo contract address");
+
+				if (symbol.empty())
+					return layer_exception("invalid token utxo symbol");
+			}
+			else if (!algorithm::asset::id_of_handle(contract_address))
+				return layer_exception("invalid token utxo asset handle (stored in contract address)");
+
+			if (value.is_nan() || value.is_negative())
+				return layer_exception("invalid token utxo value");
+
+			return expectation::met;
 		}
 
 		coin_utxo::coin_utxo(wallet_link&& new_link, hash_map<algorithm::asset_id, decimal>&& new_values) : link(std::move(new_link)), index(std::numeric_limits<uint32_t>::max())
@@ -402,34 +419,50 @@ namespace tangent
 		{
 			return index == std::numeric_limits<uint32_t>::max();
 		}
-		bool coin_utxo::is_valid_input() const
+		expects_lr<void> coin_utxo::validate_as_input() const
 		{
+			if (value.is_nan() || value.is_negative())
+				return layer_exception("invalid utxo value");
+
+			if (!link.has_all())
+				return layer_exception("invalid utxo input link");
+
+			if (is_account())
+			{
+				if (!algorithm::asset::id_of_handle(transaction_id))
+					return layer_exception("invalid utxo asset handle (stored in transaction id)");
+			}
+			else if (stringify::is_empty_or_whitespace(transaction_id))
+				return layer_exception("invalid utxo transaction id");
+
 			for (auto& [hash, token] : tokens)
 			{
-				if (!token.is_valid())
-					return false;
+				auto status = token.validate();
+				if (!status)
+					return status;
 			}
 
-			if (!is_account())
-				return !transaction_id.empty() && !value.is_nan() && !value.is_negative() && link.has_all();
-
-			if (!algorithm::asset::id_of_handle(transaction_id))
-				return false;
-
-			return !value.is_nan() && !value.is_negative() && link.has_all();
+			return expectation::met;
 		}
-		bool coin_utxo::is_valid_output() const
+		expects_lr<void> coin_utxo::validate_as_output() const
 		{
+			if (value.is_nan() || value.is_negative())
+				return layer_exception("invalid utxo value");
+
+			if (!link.has_public_key() && !link.has_address())
+				return layer_exception("invalid utxo output link (missing pubkey and/or address)");
+
 			if (is_account() && !algorithm::asset::id_of_handle(transaction_id))
-				return false;
+				return layer_exception("invalid utxo asset handle (stored in transaction id)");
 
 			for (auto& [hash, token] : tokens)
 			{
-				if (!token.is_valid())
-					return false;
+				auto status = token.validate();
+				if (!status)
+					return status;
 			}
 
-			return !value.is_nan() && !value.is_negative() && (link.has_public_key() || link.has_address());
+			return expectation::met;
 		}
 		algorithm::asset_id coin_utxo::get_asset(const algorithm::asset_id& base_asset) const
 		{
@@ -553,20 +586,20 @@ namespace tangent
 
 			return true;
 		}
-		bool computed_transaction::is_valid_with(const algorithm::asset_id& asset) const
+		expects_lr<void> computed_transaction::validate_with(const algorithm::asset_id& asset) const
 		{
 			auto blockchain = algorithm::asset::blockchain_of(asset);
 			for (auto& [hash, input] : inputs)
 			{
 				auto native_asset = input.get_asset(asset);
 				if (algorithm::asset::blockchain_of(native_asset) != blockchain || !algorithm::asset::is_aux(native_asset, true))
-					return false;
+					return layer_exception("invalid input asset");
 
 				for (auto& [token_hash, token_input] : input.tokens)
 				{
 					auto token_asset = token_input.get_asset(asset);
 					if (algorithm::asset::blockchain_of(token_asset) != blockchain || !algorithm::asset::is_aux(token_asset))
-						return false;
+						return layer_exception("invalid input token asset");
 				}
 			}
 
@@ -574,28 +607,33 @@ namespace tangent
 			{
 				auto native_asset = output.get_asset(asset);
 				if (algorithm::asset::blockchain_of(native_asset) != blockchain || !algorithm::asset::is_aux(native_asset, true))
-					return false;
+					return layer_exception("invalid output asset");
 
 				for (auto& [token_hash, token_output] : output.tokens)
 				{
 					auto token_asset = token_output.get_asset(asset);
 					if (algorithm::asset::blockchain_of(token_asset) != blockchain || !algorithm::asset::is_aux(token_asset))
-						return false;
+						return layer_exception("invalid output token asset");
 				}
 			}
 
-			return true;
+			return validate();
 		}
-		bool computed_transaction::is_valid() const
+		expects_lr<void> computed_transaction::validate() const
 		{
-			if (inputs.empty() || outputs.empty() || stringify::is_empty_or_whitespace(transaction_id))
-				return false;
+			if (inputs.empty())
+				return layer_exception("must have some inputs");
+			else if (outputs.empty())
+				return layer_exception("must have some outputs");
+			else if (stringify::is_empty_or_whitespace(transaction_id))
+				return layer_exception("must have transaction id");
 
 			hash_map<algorithm::asset_id, decimal> balance;
 			for (auto& [hash, input] : inputs)
 			{
-				if (!input.is_valid_output())
-					return false;
+				auto status = input.validate_as_output();
+				if (!status)
+					return status;
 
 				auto& balance_value = balance[0];
 				balance_value = balance_value.is_nan() ? -input.value : (balance_value - input.value);
@@ -608,8 +646,9 @@ namespace tangent
 
 			for (auto& [hash, output] : outputs)
 			{
-				if (!output.is_valid_output())
-					return false;
+				auto status = output.validate_as_output();
+				if (!status)
+					return status;
 
 				auto& balance_value = balance[0];
 				balance_value = balance_value.is_nan() ? output.value : (balance_value + output.value);
@@ -623,10 +662,10 @@ namespace tangent
 			for (auto& balance_value : balance)
 			{
 				if (balance_value.second > 0.0)
-					return false;
+					return layer_exception("transaction spends more than possible");
 			}
 
-			return true;
+			return expectation::met;
 		}
 		uint256_t computed_transaction::as_attestation_hash() const
 		{
@@ -795,13 +834,13 @@ namespace tangent
 
 			for (auto& item : inputs)
 			{
-				if (item.alg == algorithm::composition::type::unknown || item.public_key.empty() || item.message.empty() || !item.utxo.is_valid_input())
+				if (item.alg == algorithm::composition::type::unknown || item.public_key.empty() || item.message.empty() || !item.utxo.validate_as_input())
 					return status::invalid;
 			}
 
 			for (auto& item : outputs)
 			{
-				if (!item.is_valid_output())
+				if (!item.validate_as_output())
 					return status::invalid;
 				else if (!item.is_account() && !item.transaction_id.empty())
 					return status::invalid;
@@ -917,9 +956,18 @@ namespace tangent
 
 			return true;
 		}
-		bool finalized_transaction::is_valid() const
+		expects_lr<void> finalized_transaction::validate() const
 		{
-			return prepared.as_status() == prepared_transaction::status::finalizeable && !calldata.empty() && !hashdata.empty();
+			if (prepared.as_status() != prepared_transaction::status::finalizeable)
+				return layer_exception("prepared transaction must be finalizeable");
+
+			if (calldata.empty())
+				return layer_exception("must have calldata prepared (transaction data)");
+
+			if (hashdata.empty())
+				return layer_exception("must have hashdata prepared (transaction hash)");
+
+			return expectation::met;
 		}
 		computed_transaction finalized_transaction::as_computed() const
 		{
@@ -1013,16 +1061,31 @@ namespace tangent
 		{
 			return type == fee_type::fee && fee.byte_rate == 1;
 		}
-		bool computed_fee::is_valid() const
+		expects_lr<void> computed_fee::validate() const
 		{
 			switch (type)
 			{
 				case fee_type::fee:
-					return fee.fee_rate.is_positive() && fee.byte_rate > 0;
+					if (!fee.fee_rate.is_positive())
+						return layer_exception("invalid fee rate");
+
+					if (!fee.byte_rate)
+						return layer_exception("invalid byte rate");
+
+					return expectation::met;
 				case fee_type::gas:
-					return !gas.gas_premium.is_nan() && !gas.gas_premium.is_negative() && gas.gas_price.is_positive() && gas.gas_limit > 0;
+					if (gas.gas_premium.is_nan() || gas.gas_premium.is_negative())
+						return layer_exception("invalid gas premium");
+
+					if (!gas.gas_price.is_positive())
+						return layer_exception("invalid gas price");
+
+					if (!gas.gas_limit)
+						return layer_exception("invalid gas limit");
+
+					return expectation::met;
 				default:
-					return false;
+					return layer_exception("invalid fee type");
 			}
 		}
 		computed_fee computed_fee::flat_fee(const decimal& fee)
@@ -1929,8 +1992,9 @@ namespace tangent
 			if (!algorithm::asset::is_aux(asset))
 				return expects_rt<void>(remote_exception("asset not found"));
 
-			if (!finalized.is_valid())
-				return expects_rt<void>(remote_exception("transaction is not valid"));
+			auto prevalidation = finalized.validate();
+			if (!prevalidation)
+				return expects_rt<void>(remote_exception(std::move(prevalidation.error().message())));
 
 			if (!has_network(asset))
 				return expects_rt<void>(remote_exception("chain not active"));
@@ -1979,8 +2043,9 @@ namespace tangent
 
 			auto normalized_to = normalize_value(implementation, to);
 			auto blockchain = algorithm::asset::blockchain_of(asset);
-			if (!normalized_to.is_valid())
-				return expects_rt<prepared_transaction>(remote_exception("receiver address not valid"));
+			auto to_validation = normalized_to.validate();
+			if (!to_validation)
+				return expects_rt<prepared_transaction>(remote_exception(std::move(to_validation.error().message())));
 
 			if (!algorithm::asset::is_aux(normalized_to.asset) || algorithm::asset::blockchain_of(normalized_to.asset) != blockchain)
 				return expects_rt<prepared_transaction>(remote_exception("receiver asset not valid"));
@@ -2057,8 +2122,10 @@ namespace tangent
 			auto finalized = implementation->finalize_transaction(std::move(prepared));
 			if (!finalized)
 				return finalized;
-			else if (!finalized->is_valid())
-				return layer_exception("transaction is not finalized properly");
+			
+			auto postvalidation = finalized->validate();
+			if (!postvalidation)
+				return postvalidation.error();
 
 			return finalized;
 		}

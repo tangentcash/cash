@@ -682,8 +682,9 @@ namespace tangent
 
 				vector<uint8_t> raw_data = tx_data_from_envelope(transaction, signatures, accounts, payments);
 				auto result = finalized_transaction(std::move(prepared), codec::base64_encode(std::string_view((char*)raw_data.data(), raw_data.size())), codec::hex_encode(std::string_view((char*)input.message.data(), input.message.size())));
-				if (!result.is_valid())
-					return layer_exception("tx serialization error");
+				auto validation = result.validate();
+				if (!validation)
+					return validation.error();
 
 				return expects_lr<finalized_transaction>(std::move(result));
 			}
