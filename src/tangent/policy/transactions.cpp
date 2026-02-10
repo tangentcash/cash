@@ -3134,9 +3134,6 @@ namespace tangent
 				return layer_exception("invalid operation");
 
 			auto blockchain = algorithm::asset::blockchain_of(asset);
-			if (!proof.is_valid())
-				return layer_exception("invalid proof data");
-
 			for (auto& [hash, input] : proof.inputs)
 			{
 				if (input.is_account() && algorithm::asset::blockchain_of(input.get_asset(asset)) != blockchain)
