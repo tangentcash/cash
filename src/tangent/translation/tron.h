@@ -24,6 +24,7 @@ namespace tangent
 				{
 				public:
 					static const char* broadcast_transaction();
+					static const char* get_transaction_by_id();
 					static const char* get_transaction_info_by_id();
 					static const char* get_block();
 				};

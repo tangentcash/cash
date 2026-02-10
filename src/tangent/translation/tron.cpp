@@ -166,6 +166,10 @@ namespace tangent
 			{
 				return "/wallet/broadcasttransaction";
 			}
+			const char* tron::trx_nd_call::get_transaction_by_id()
+			{
+				return "/wallet/gettransactionbyid";
+			}
 			const char* tron::trx_nd_call::get_transaction_info_by_id()
 			{
 				return "/wallet/gettransactioninfobyid";
@@ -233,25 +237,12 @@ namespace tangent
 					string tx_hash = transaction_data.child_var("hash").as_blob();
 					string from = encode_eth_address(transaction_data.child_var("from").as_blob());
 					string to = encode_eth_address(transaction_data.child_var("to").as_blob());
-					decimal base_value = to_eth(hex_to_uint256(transaction_data.child_var("value").as_blob()), netdata.divisibility);
 
+					hash_set<string> addresses = { from, to };
 					computed_transaction result;
 					result.transaction_id = tx_hash;
-
-					hash_map<string, hash_map<algorithm::asset_id, decimal>> inputs;
-					hash_map<string, hash_map<algorithm::asset_id, decimal>> outputs;
-					if (base_value.is_positive())
-					{
-						inputs[from][native_asset] = base_value;
-						outputs[to][native_asset] = base_value;
-					}
-
-					hash_set<string> addresses;
-					addresses.reserve(inputs.size() + outputs.size());
-					for (auto& next : inputs)
-						addresses.insert(next.first);
-					for (auto& next : outputs)
-						addresses.insert(next.first);
+					if (stringify::starts_with(result.transaction_id, "0x"))
+						result.transaction_id.erase(0, 2);
 
 					if (!data.empty())
 					{
@@ -285,6 +276,8 @@ namespace tangent
 					if (!discovery || discovery->empty())
 						coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
 
+					hash_map<string, hash_map<algorithm::asset_id, decimal>> inputs;
+					hash_map<string, hash_map<algorithm::asset_id, decimal>> outputs;
 					if (!data.empty())
 					{
 						auto* logs = transaction_data.child("logs");
@@ -324,6 +317,71 @@ namespace tangent
 						}
 					}
 
+					auto args = format::tree::map();
+					args.set("value", format::variable(tx_hash.starts_with("0x") ? std::string_view(tx_hash).substr(2) : std::string_view(tx_hash)));
+
+					auto info = coawait(execute_rest("POST", trx_nd_call::get_transaction_info_by_id(), format::tree(args), cache_policy::blob_cache));
+					if (!info)
+						coreturn expects_rt<computed_transaction>(remote_exception("tx not found"));
+
+					auto receipt_result = info->child_var("receipt.result").as_blob(), tx_result = info->child_var("result").as_blob();
+					if ((!receipt_result.empty() && receipt_result != "SUCCESS") || (!tx_result.empty() && tx_result != "SUCCESS"))
+						coreturn expects_rt<computed_transaction>(remote_exception("tx reverted"));
+
+					auto details = coawait(execute_rest("POST", trx_nd_call::get_transaction_by_id(), std::move(args), cache_policy::blob_cache));
+					if (!details)
+						coreturn expects_rt<computed_transaction>(remote_exception("tx not found"));
+
+					auto* contracts = details->child("raw_data.contract");
+					if (contracts != nullptr)
+					{
+						for (auto& contract : contracts->childs())
+						{
+							auto* value = contract.child("parameter.value");
+							if (!value)
+								continue;
+
+							auto type = contract.child_var("type").as_blob();
+							if (type == "TransferContract")
+							{
+								auto amount = to_eth(value->child_var("amount").as_uint256(), netdata.divisibility);
+								if (!amount.is_positive())
+									continue;
+
+								auto raw_owner_address = value->child_var("owner_address").as_blob();
+								if (stringify::starts_with(raw_owner_address, "41"))
+								{
+									raw_owner_address[0] = '0';
+									raw_owner_address[1] = 'x';
+								}
+
+								auto raw_to_address = value->child_var("to_address").as_blob();
+								if (stringify::starts_with(raw_to_address, "41"))
+								{
+									raw_to_address[0] = '0';
+									raw_to_address[1] = 'x';
+								}
+
+								auto owner_address = encode_eth_address(raw_owner_address);
+								auto to_address = encode_eth_address(raw_to_address);
+								auto& input_value = inputs[owner_address][native_asset];
+								auto& output_value = outputs[to_address][native_asset];
+								input_value = input_value.is_nan() ? amount : (input_value + amount);
+								output_value = output_value.is_nan() ? amount : (output_value + amount);
+							}
+						}
+					}
+
+					if (inputs.empty() || outputs.empty())
+						coreturn expects_rt<computed_transaction>(remote_exception("tx not valid"));
+
+					auto fee_value = to_eth(info->child_var("fee").as_uint64(), netdata.divisibility);
+					if (fee_value.is_positive())
+					{
+						auto& input_value = inputs[from][native_asset];
+						input_value = input_value.is_nan() ? fee_value : (input_value + fee_value);
+					}
+
 					addresses.clear();
 					for (auto& next : inputs)
 						addresses.insert(next.first);
@@ -333,24 +391,6 @@ namespace tangent
 					discovery = find_linked_addresses(addresses);
 					if (!discovery || discovery->empty())
 						coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
-
-					auto args = format::tree::map();
-					args.set("value", format::variable(tx_hash.starts_with("0x") ? std::string_view(tx_hash).substr(2) : std::string_view(tx_hash)));
-
-					auto info = coawait(execute_rest("POST", trx_nd_call::get_transaction_info_by_id(), std::move(args), cache_policy::blob_cache));
-					if (!info)
-						coreturn expects_rt<computed_transaction>(remote_exception("tx not found"));
-
-					auto receipt_result = info->child_var("receipt.result").as_blob(), tx_result = info->child_var("result").as_blob();
-					if ((!receipt_result.empty() && receipt_result != "SUCCESS") || (!tx_result.empty() && tx_result != "SUCCESS"))
-						coreturn expects_rt<computed_transaction>(remote_exception("tx reverted"));
-
-					auto fee_value = to_eth(info->child_var("fee").as_uint64(), netdata.divisibility);
-					if (fee_value.is_positive())
-					{
-						auto& input_value = inputs[from][native_asset];
-						input_value = input_value.is_nan() ? fee_value : (input_value + fee_value);
-					}
 
 					for (auto& [address, values] : inputs)
 					{
