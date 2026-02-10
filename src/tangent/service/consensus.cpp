@@ -1091,7 +1091,7 @@ namespace tangent
 				return layer_exception("proof required");
 
 			auto* transaction = memory::init<transactions::attestate>();
-			transaction->asset = batch->asset;
+			transaction->asset = algorithm::asset::base_id_of(batch->asset);
 			transaction->set_computed_proof(std::move(it->second), std::move(batch->commitments));
 			if (accept_local_transaction(&runner_descriptor->second, transaction))
 				mempool.remove_attestation(attestation_hash);
@@ -1831,7 +1831,7 @@ namespace tangent
 				for (auto& [account, descriptor] : descriptors)
 				{
 					auto& [node, wallet] = descriptor;
-					if (!node.services.has_attestation)
+					if (!node.services.has_attestation && false)
 						continue;
 
 					algorithm::hashsig_t commitment_signature; uint256_t commitment_hash;
