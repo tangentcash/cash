@@ -177,7 +177,7 @@ namespace tangent
 					return false;
 			}
 		}
-		static void convert_from_json_value(rapidjson::Value* from, tree& to)
+		static void convert_from_json_value(rapidjson::Value* from, tree& to, bool optimized)
 		{
 			if (from->IsObject())
 			{
@@ -193,7 +193,7 @@ namespace tangent
 					
 					auto& child = to.fields->emplace_back();
 					child.key.assign(it->name.GetString(), (size_t)it->name.GetStringLength());
-					convert_from_json_value(&it->value, child);
+					convert_from_json_value(&it->value, child, optimized);
 				}
 			}
 			else if (from->IsArray())
@@ -206,7 +206,7 @@ namespace tangent
 				for (auto it = from->Begin(); it != from->End(); ++it)
 				{
 					auto& child = to.fields->emplace_back();
-					convert_from_json_value(it, child);
+					convert_from_json_value(it, child, optimized);
 				}
 			}
 			else
@@ -226,18 +226,37 @@ namespace tangent
 					case rapidjson::kStringType:
 					{
 						std::string_view text(from->GetString(), from->GetStringLength());
-						if (text.find('-') == std::string::npos && stringify::has_integer(text))
+						if (optimized)
 						{
-							auto number = from_string<uint64_t>(text);
-							if (number)
-								to.value = variable(*number);
-							else
+							if (text.find('-') == std::string::npos && stringify::has_integer(text))
+							{
+								auto number = from_string<uint64_t>(text);
+								if (number)
+									to.value = variable(*number);
+								else
+									to.value = variable(decimal(text));
+							}
+							else if (stringify::has_number(text))
 								to.value = variable(decimal(text));
+							else
+								to.value = variable(text);
 						}
-						else if (stringify::has_number(text))
-							to.value = variable(decimal(text));
 						else
 							to.value = variable(text);
+						break;
+					}
+					case rapidjson::kNumberType:
+					{
+						if (from->IsUint())
+							to.value = variable(from->GetUint());
+						else if (from->IsUint64())
+							to.value = variable(from->GetUint64());
+						else if (from->IsInt())
+							to.value = variable(decimal(from->GetInt()));
+						else if (from->IsInt64())
+							to.value = variable(decimal(from->GetInt64()));
+						else
+							to.value = variable(decimal(from->GetDouble()));
 						break;
 					}
 					default:
@@ -1694,13 +1713,16 @@ namespace tangent
 
 			return option<tree>(std::move(result));
 		}
-		expects_parser<tree> tree::from_json(const std::string_view& buffer)
+		expects_parser<tree> tree::from_json(const std::string_view& buffer, bool optimized)
 		{
 			if (buffer.empty())
 				return parser_exception(parser_error::json_document_empty, 0);
 
 			rapidjson::Document from;
-			from.Parse<rapidjson::kParseNumbersAsStringsFlag>(buffer.data(), buffer.size());
+			if (optimized)
+				from.Parse<rapidjson::kParseNumbersAsStringsFlag>(buffer.data(), buffer.size());
+			else
+				from.Parse(buffer.data(), buffer.size());
 			if (from.HasParseError())
 			{
 				size_t offset = from.GetErrorOffset();
@@ -1746,7 +1768,7 @@ namespace tangent
 			}
 
 			auto to = tree();
-			convert_from_json_value(&from, to);
+			convert_from_json_value(&from, to, optimized);
 			return expects_parser<tree>(std::move(to));
 		}
 

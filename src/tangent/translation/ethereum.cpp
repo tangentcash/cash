@@ -887,12 +887,9 @@ namespace tangent
 
 				auto& input = prepared.inputs.front();
 				auto& output = prepared.outputs.front();
-				auto output_asset = output.get_asset(native_asset);
 				auto type = prepared.abi[0].as_boolean() ? evm_transaction::evm_type::eip_155 : evm_transaction::evm_type::eip_1559;
 				auto contract_address = prepared.abi[1].as_string();
 				auto divisibility = prepared.abi[2].as_decimal();
-				if (algorithm::asset::id_of(algorithm::asset::blockchain_of(native_asset), algorithm::asset::token_of(output.get_asset(native_asset)), contract_address) != output_asset)
-					return layer_exception("invalid prepared abi");
 
 				evm_transaction transaction;
 				transaction.nonce = prepared.abi[3].as_uint256();
@@ -906,8 +903,11 @@ namespace tangent
 						return layer_exception("invalid output");
 
 					auto& output_token = output.tokens.begin()->second;
+					auto output_token_asset = output_token.get_asset(native_asset);
 					transaction.address = decode_non_eth_address(contract_address);
 					transaction.abi_data = sc_call::transfer(output.link.address, from_eth(output_token.value, divisibility));
+					if (algorithm::asset::id_of(algorithm::asset::blockchain_of(native_asset), algorithm::asset::token_of(output_token_asset), contract_address) != output_token_asset)
+						return layer_exception("invalid token asset");
 				}
 				else
 				{

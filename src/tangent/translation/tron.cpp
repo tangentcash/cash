@@ -467,13 +467,13 @@ namespace tangent
 				if (!native_data)
 					return expects_rt<void>(remote_exception(std::move(native_data.error().message())));
 
-				auto transaction_data = format::tree::from_json(*native_data);
+				auto transaction_data = format::tree::from_json(*native_data, false);
 				if (!transaction_data)
 					return expects_rt<void>(remote_exception(std::move(transaction_data.error().message())));
 
 				return coasync<expects_rt<void>>([this, transaction_data = std::move(transaction_data)]() mutable -> expects_promise_rt<void>
 				{
-					uint64_t retry_timeout = 2000;
+					uint64_t retry_timeout = 5000;
 					auto result = expects_rt<format::tree>(remote_exception::retry_later());
 					for (size_t i = 0; i < 6; i++)
 					{

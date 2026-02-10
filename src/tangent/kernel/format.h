@@ -213,7 +213,7 @@ namespace tangent
 			static tree map();
 			static tree from_schema(schema* base);
 			static option<tree> from_message(format::ro_stream& stream);
-			static expects_parser<tree> from_json(const std::string_view& text);
+			static expects_parser<tree> from_json(const std::string_view& text, bool optimized = true);
 		};
 
 		class tree_pool : public singleton<tree_pool>
