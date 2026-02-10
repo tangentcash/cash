@@ -1831,7 +1831,7 @@ namespace tangent
 				for (auto& [account, descriptor] : descriptors)
 				{
 					auto& [node, wallet] = descriptor;
-					if (!node.services.has_attestation && false)
+					if (!node.services.has_attestation)
 						continue;
 
 					algorithm::hashsig_t commitment_signature; uint256_t commitment_hash;
