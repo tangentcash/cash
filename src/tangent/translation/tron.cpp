@@ -225,6 +225,21 @@ namespace tangent
 					coreturn expects_rt<tron::trx_tx_block_header_info>(std::move(info));
 				});
 			}
+			expects_promise_rt<vector<block_log>> tron::get_block_transactions(uint64_t block_height, uint64_t block_count)
+			{
+				return ethereum::get_block_transactions(block_height, block_count).then<expects_rt<vector<block_log>>>([](expects_rt<vector<block_log>>&& result) -> expects_rt<vector<block_log>>
+				{
+					if (result)
+					{
+						for (auto& log : *result)
+						{
+							if (stringify::starts_with(log.block_hash, "0x"))
+								log.block_hash.erase(0, 2);
+						}
+					}
+					return std::move(result);
+				});
+			}
 			expects_promise_rt<computed_transaction> tron::link_transaction(uint64_t, const std::string_view&, format::tree& transaction_data)
 			{
 				return coasync<expects_rt<computed_transaction>>([this, &transaction_data]() -> expects_promise_rt<computed_transaction>
