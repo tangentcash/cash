@@ -1498,8 +1498,8 @@ namespace tangent
 		}
 		uint32_t exponential_distribution::next(const uint256_t& entropy, uint32_t order)
 		{
-			if (order < 3)
-				return order > 1 ? (uint32_t)(entropy % order) : 0;
+			if (order < 2)
+				return 0;
 
 			if (!state)
 			{
@@ -1508,7 +1508,7 @@ namespace tangent
 			}
 
 			mpf_t& weight = *(mpf_t*)state;
-			mpf_set_ui(weight, (order - 1) / 2);
+			mpf_set_ui(weight, std::max<uint32_t>((order - 1) / 2, 1));
 			mpf_mul_ui(weight, weight, 8 * order);
 			mpf_mul_ui(weight, weight, (uint32_t)(entropy % std::numeric_limits<uint32_t>::max()));
 			mpf_div_ui(weight, weight, std::numeric_limits<uint32_t>::max());
