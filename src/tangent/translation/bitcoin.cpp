@@ -503,7 +503,7 @@ namespace tangent
 						coreturn expects_rt<computed_fee>(std::move(block_height.error()));
 
 					vector<decimal> fee_rates;
-					auto min_fee_rate = get_min_relay_fee().fee.fee_rate * netdata.divisibility;
+					auto min_fee_rate = get_min_relay_fee(1).fee.fee_rate * netdata.divisibility;
 					auto precision = std::max<uint64_t>(1, get_chainparams().sync_latency);
 					for (uint64_t i = 0; i < precision; i++)
 					{
@@ -616,7 +616,7 @@ namespace tangent
 					std::sort(fee_rates.begin(), fee_rates.end());
 
 					decimal median_fee_rate = std::max(decimal(1), fee_rates.empty() ? decimal(1) : median_of(fee_rates));
-					coreturn expects_rt<computed_fee>(computed_fee::fee_per_byte(median_fee_rate / netdata.divisibility, (size_t)std::ceil(virtual_size)));
+					coreturn expects_rt<computed_fee>(computed_fee::fee_per_byte(median_fee_rate / netdata.divisibility, (size_t)std::ceil(2 * virtual_size)));
 				});
 			}
 			expects_promise_rt<prepared_transaction> bitcoin::prepare_transaction(const wallet_link& from_link, const value_transfer& to, const decimal& max_fee)
@@ -626,7 +626,7 @@ namespace tangent
 					if (!fee)
 						return expects_rt<prepared_transaction>(std::move(fee.error()));
 
-					decimal fee_value = std::max(fee->get_max_fee(), get_min_relay_fee().get_max_fee());
+					decimal fee_value = std::max(fee->get_max_fee(), get_min_relay_fee(fee->fee.byte_rate).get_max_fee());
 					if (fee_value > max_fee)
 						return expects_rt<prepared_transaction>(remote_exception(stringify::text("fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
 
@@ -1541,9 +1541,9 @@ namespace tangent
 
 				goto try_public_key;
 			}
-			computed_fee bitcoin::get_min_relay_fee()
+			computed_fee bitcoin::get_min_relay_fee(size_t size)
 			{
-				return computed_fee::fee_per_byte(decimal(1) / netdata.divisibility, 1000);
+				return computed_fee::fee_per_byte(decimal(1) / netdata.divisibility, size);
 			}
 			const sc_chainparams_* bitcoin::get_chain()
 			{
