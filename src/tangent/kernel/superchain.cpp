@@ -1150,12 +1150,16 @@ namespace tangent
 				set_checkpoint_from_block(block_height > 1 ? block_height - 1 : block_height);
 			state.target_block_height = block_height;
 		}
-		uint64_t network_options::get_next_block_height(uint64_t block_count)
+		void network_options::move_index_block(uint64_t block_count)
 		{
 			block_count = std::max<uint64_t>(1, block_count);
 			uint64_t result = (state.index_block_height / block_count) * block_count;
 			state.index_block_height = result + block_count;
-			return result;
+		}
+		uint64_t network_options::get_next_block_height(uint64_t block_count) const
+		{
+			block_count = std::max<uint64_t>(1, block_count);
+			return (state.index_block_height / block_count) * block_count;
 		}
 		bool network_options::has_next_block_height(uint64_t block_count) const
 		{
@@ -1949,6 +1953,7 @@ namespace tangent
 				if (!tip_max.value.is_integer() || tip_max.value.as_uint64() < options->state.target_block_height)
 					state.set_property("TIP:MAX", format::variable(options->state.target_block_height));
 
+				options->move_index_block(block_count);
 				coreturn expects_rt<vector<transaction_logs>>(std::move(logs));
 			});
 		}

@@ -291,7 +291,8 @@ namespace tangent
 
 			void set_checkpoint_from_block(uint64_t block_height);
 			void set_checkpoint_to_block(uint64_t block_height);
-			uint64_t get_next_block_height(uint64_t block_count);
+			void move_index_block(uint64_t block_count);
+			uint64_t get_next_block_height(uint64_t block_count) const;
 			bool has_next_block_height(uint64_t block_count) const;
 			bool has_target_block_height() const;
 			double get_checkpoint_percentage() const;
