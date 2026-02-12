@@ -3029,7 +3029,7 @@ namespace tangent
 						return &runner_descriptor->second;
 
 					auto it = descriptors.begin();
-					std::advance(it, std::min(descriptors.size(), index));
+					std::advance(it, std::min(descriptors.size(), index - 1));
 					if (it != descriptors.end() && it->second.second.public_key_hash == runner_descriptor->second.public_key_hash)
 						++it;
 
