@@ -385,13 +385,16 @@ namespace tangent
 		};
 		if (interactive)
 		{
-			string password;
-			auto* terminal = console::get();
-			terminal->write("keystate password: ");
-			terminal->echo_off([&]() { password = terminal->read(1024); });
+			auto password = os::process::get_env("KEYSTATE_PASSWORD");
+			if (!password)
+			{
+				auto* terminal = console::get();
+				terminal->write("keystate password: ");
+				terminal->echo_off([&]() { password = terminal->read(1024); });
+			}
 
 			uint8_t encryption_key[32] = { 0 };
-			VI_PANIC(algorithm::signing::derive_seed_from_password((uint8_t*)password.data(), password.size(), encryption_key, sizeof(encryption_key)), "decryption key derivation failed");
+			VI_PANIC(algorithm::signing::derive_seed_from_password((uint8_t*)password->data(), password->size(), encryption_key, sizeof(encryption_key)), "decryption key derivation failed");
 
 			auto encryption_key_view = secret_box::view(std::string_view((char*)encryption_key, sizeof(encryption_key)));
 			auto encryption_salt_view = secret_box::view(data.substr(data.size() - 48, 16));
