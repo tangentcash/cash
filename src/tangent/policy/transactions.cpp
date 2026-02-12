@@ -3314,10 +3314,11 @@ namespace tangent
 				if (bridge)
 				{
 					auto reward = bridge->fee_rate * (1 - protocol::now().policy.attestation.fee_rate);
+					auto applicable = std::max<decimal>(reward - network_fee, decimal::zero());
 					if (it == penalties.end())
-						penalties[base_asset] = -reward;
+						penalties[base_asset] = -applicable;
 					else
-						it->second -= reward;
+						it->second -= applicable;
 				}
 			}
 			else
