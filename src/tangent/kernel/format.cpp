@@ -231,10 +231,21 @@ namespace tangent
 							if (text.find('-') == std::string::npos && stringify::has_integer(text))
 							{
 								auto number = from_string<uint64_t>(text);
-								if (number)
-									to.value = variable(*number);
+								if (!number)
+								{
+									if (number.error() == std::errc::result_out_of_range)
+									{
+										auto number256 = uint256_t(text, 10);
+										if (number256.to_string() == text)
+											to.value = variable(number256);
+										else
+											to.value = variable(decimal(text));
+									}
+									else
+										to.value = variable(decimal(text));
+								}
 								else
-									to.value = variable(decimal(text));
+									to.value = variable(*number);
 							}
 							else if (stringify::has_number(text))
 								to.value = variable(decimal(text));
