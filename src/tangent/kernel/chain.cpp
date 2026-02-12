@@ -346,26 +346,73 @@ namespace tangent
 		return target_path;
 	}
 
-	string keystate::init()
+	string keystate::init(const std::string_view& maybe_data, bool interactive)
 	{
-		auto data = *crypto::random_bytes(KEY_SIZE);
-		auto checksum = *crypto::hash(digests::sha256(), data);
-		return data + checksum;
+		VI_PANIC(maybe_data.empty() || maybe_data.size() == KEY_SIZE + 32, "base keystate must be either empty or unencrypted")
+		auto entropy = maybe_data.empty() ? *crypto::random_bytes(KEY_SIZE) : string(maybe_data.substr(0, KEY_SIZE));
+		auto commitment = *crypto::hash(digests::sha256(), entropy);
+		VI_PANIC(maybe_data.empty() || commitment == maybe_data.substr(maybe_data.size() - 32), "base keystate checksum validation failed");
+		if (interactive)
+		{
+			string password;
+			auto* terminal = console::get();
+			terminal->fwrite("%s keystate password: ", maybe_data.empty() ? "new" : "attach");
+			terminal->echo_off([&]() { password = terminal->read(1024); });
+			terminal->write("verify keystate password: ");
+			terminal->echo_off([&]() { VI_PANIC(!password.empty() && terminal->read(1024) == password, "password verification failed"); });
+
+			uint8_t encryption_key[32] = { 0 }, encryption_salt[16] = { 0 };
+			VI_PANIC(algorithm::signing::derive_seed_from_password((uint8_t*)password.data(), password.size(), encryption_key, sizeof(encryption_key)), "encryption key derivation failed");
+			crypto::fill_random_bytes(encryption_salt, sizeof(encryption_salt)).expect("encryption salt generation failed");
+
+			auto encryption_key_view = secret_box::view(std::string_view((char*)encryption_key, sizeof(encryption_key)));
+			auto encryption_salt_view = secret_box::view(std::string_view((char*)encryption_salt, sizeof(encryption_salt)));
+			entropy = crypto::encrypt(ciphers::aes_256_cbc(), entropy, encryption_key_view, encryption_salt_view).expect("keystate encryption failed");
+			entropy.append(std::string_view((char*)encryption_salt, sizeof(encryption_salt)));
+		}
+		entropy.append(commitment);
+		return entropy;
 	}
-	void keystate::use(network_type type, const std::string_view& data)
+	void keystate::use(network_type type, const std::string_view& data, bool interactive)
 	{
-		VI_PANIC(data.size() == KEY_SIZE + 32, "invalid key size");
-		VI_PANIC(*crypto::hash(digests::sha256(), data.substr(0, KEY_SIZE)) == data.substr(KEY_SIZE), "invalid key checksum");
-		string blob = to_string((uint8_t)type) + string(data);
-		for (size_t i = 0; i < data.size(); i++)
-			blob = *crypto::hash(digests::sha256(), blob);
-		key = secret_box::secure(blob);
+		VI_PANIC(interactive ? data.size() >= KEY_SIZE + 48 : (data.size() == KEY_SIZE + 32), "invalid keystate size");
+		auto calculate = [&](const std::string_view& entropy)
+		{
+			string blob = to_string((uint8_t)type).append(entropy);
+			for (size_t i = 0; i < entropy.size(); i++)
+				blob = *crypto::hash(digests::sha256(), blob);
+			key = secret_box::secure(blob);
+		};
+		if (interactive)
+		{
+			string password;
+			auto* terminal = console::get();
+			terminal->write("keystate password: ");
+			terminal->echo_off([&]() { password = terminal->read(1024); });
+
+			uint8_t encryption_key[32] = { 0 };
+			VI_PANIC(algorithm::signing::derive_seed_from_password((uint8_t*)password.data(), password.size(), encryption_key, sizeof(encryption_key)), "decryption key derivation failed");
+
+			auto encryption_key_view = secret_box::view(std::string_view((char*)encryption_key, sizeof(encryption_key)));
+			auto encryption_salt_view = secret_box::view(data.substr(data.size() - 48, 16));
+			auto entropy = crypto::decrypt(ciphers::aes_256_cbc(), data.substr(0, data.size() - 48), encryption_key_view, encryption_salt_view).expect("keystate decryption failed");
+
+			VI_PANIC(*crypto::hash(digests::sha256(), entropy) == data.substr(data.size() - 32), "keystate checksum validation failed");
+			entropy.append(data.substr(data.size() - 32));
+			calculate(entropy);
+		}
+		else
+		{
+			VI_PANIC(*crypto::hash(digests::sha256(), data.substr(0, data.size() - 32)) == data.substr(data.size() - 32), "keystate checksum validation failed");
+			calculate(data);
+		}
 	}
 	expects_lr<string> keystate::encrypt(const std::string_view& data) const
 	{
 		auto front = *crypto::random_bytes(KEY_FRONT), back = *crypto::random_bytes(KEY_BACK);
 		auto salt = crypto::hash(digests::sha256(), front + back);
 		auto result = crypto::encrypt(ciphers::aes_256_cbc(), data, key, secret_box::view(*salt));
+		result.report("secret value encryption failed (keystate possibly invalid)");
 		if (!result)
 			return layer_exception(std::move(result.error().message()));
 
@@ -381,6 +428,7 @@ namespace tangent
 		auto front = data.substr(0, KEY_FRONT), back = data.substr(data.size() - KEY_BACK);
 		auto salt = crypto::hash(digests::sha256(), string(front) + string(back));
 		auto result = crypto::decrypt(ciphers::aes_256_cbc(), data.substr(KEY_FRONT, data.size() - KEY_FRONT - KEY_BACK), key, secret_box::view(*salt));
+		result.report("secret value decryption failed (keystate possibly invalid)");
 		if (!result)
 			return layer_exception(std::move(result.error().message()));
 
@@ -521,6 +569,10 @@ namespace tangent
 			value = config->child("keystate");
 			if (value != nullptr && value->value.is_string())
 				user.keystate = value->value.as_blob();
+
+			value = config->child("interactive");
+			if (value != nullptr && value->value.is_boolean())
+				user.interactive = value->value.as_boolean();
 
 			value = config->child("known_nodes");
 			if (value != nullptr && value->is_list())
@@ -892,14 +944,19 @@ namespace tangent
 			if (!keystate_host)
 				keystate_path = os::path::resolve(default_keystate_path, user.storage.path, true).or_else(string(default_keystate_path));
 
-			keystate_file = box.init();
+			auto* value = config ? config->child("keystate_for_encryption") : nullptr;
+			if (value != nullptr && value->value.is_string())
+				keystate_file = box.init(*os::file::read_as_string(*os::path::resolve(value->value.as_string(), user.storage.path, true)), user.interactive);
+			else
+				keystate_file = box.init(std::string_view(), user.interactive);
+
 			VI_PANIC(location(keystate_path).protocol == "file", "cannot save keystate into %s", keystate_path.c_str());
 			os::directory::patch(os::path::get_directory(keystate_path)).expect("cannot save keystate into " + keystate_path);
 			os::file::write(keystate_path, (uint8_t*)keystate_file->data(), keystate_file->size()).expect("cannot save keystate into " + keystate_path);
 		}
 
 		instance = this;
-		box.use(user.network, *keystate_file);
+		box.use(user.network, *keystate_file, user.interactive);
 		switch (user.network)
 		{
 			case tangent::network_type::regtest:

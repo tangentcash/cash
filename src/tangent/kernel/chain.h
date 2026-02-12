@@ -135,8 +135,8 @@ namespace tangent
 		secret_box key;
 
 	public:
-		string init();
-		void use(network_type type, const std::string_view& data);
+		string init(const std::string_view& maybe_data, bool interactive);
+		void use(network_type type, const std::string_view& data, bool interactive);
 		expects_lr<string> encrypt(const std::string_view& data) const;
 		expects_lr<string> decrypt(const std::string_view& data) const;
 	};
@@ -246,6 +246,7 @@ namespace tangent
 			hash_set<string> bootstrap_nodes;
 			network_type network = network_type::mainnet;
 			string keystate;
+			bool interactive = false;
 		} user;
 		struct protocol_messaging_config
 		{
