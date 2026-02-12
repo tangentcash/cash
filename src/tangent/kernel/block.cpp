@@ -1699,17 +1699,11 @@ namespace tangent
 				}
 				case staker::unlock:
 				{
-					if (!stake.is_nan())
-					{
-						if (!stake.is_negative())
-							return layer_exception("invalid stake");
+					if (!stake.is_zero_or_nan() && !stake.is_negative())
+						return layer_exception("invalid stake");
 
-						new_state.stake += stake;
-						if (new_state.stake.is_negative())
-							new_state.stake = decimal::zero();
-					}
-
-					auto transfer = apply_transfer(algorithm::asset::native(), owner, decimal::zero(), -new_state.stake);
+					auto penalty = stake.is_nan() ? decimal::zero() : stake;
+					auto transfer = apply_transfer(algorithm::asset::native(), owner, penalty, -new_state.stake);
 					if (!transfer)
 						return transfer.error();
 
@@ -1727,7 +1721,7 @@ namespace tangent
 					new_state.stake = decimal::nan();
 					for (auto& reward : rewards)
 					{
-						transfer = apply_transfer(algorithm::asset::native(), owner, decimal::zero(), -reward.reward);
+						transfer = apply_transfer(reward.asset, owner, decimal::zero(), -reward.reward);
 						if (!transfer)
 							return transfer.error();
 
@@ -1810,7 +1804,7 @@ namespace tangent
 					new_state.stake = stake;
 					for (auto& reward : rewards)
 					{
-						transfer = apply_transfer(algorithm::asset::native(), owner, decimal::zero(), -reward.reward);
+						transfer = apply_transfer(reward.asset, owner, decimal::zero(), -reward.reward);
 						if (!transfer)
 							return transfer.error();
 
@@ -1905,7 +1899,7 @@ namespace tangent
 					new_state.stake = stake;
 					for (auto& reward : rewards)
 					{
-						transfer = apply_transfer(algorithm::asset::native(), owner, decimal::zero(), -reward.reward);
+						transfer = apply_transfer(reward.asset, owner, decimal::zero(), -reward.reward);
 						if (!transfer)
 							return transfer.error();
 
@@ -3789,6 +3783,20 @@ namespace tangent
 			auto& coinbase = rewards[algorithm::asset::native()];
 			coinbase = coinbase.is_nan() ? block_header::get_coinbase_value(solution.block.number) : (coinbase + block_header::get_coinbase_value(solution.block.number));
 
+			auto penalty = -coinbase;
+			auto penalty_queue = std::min((size_t)solution.block.priority, producers.size());
+			for (size_t i = 0; i < penalty_queue; i++)
+			{
+				auto& target = producers[i].owner;
+				auto production = state.executor.get_validator_production(target).or_else(states::validator_production(target, &solution.block));
+				auto compensation = production.stake.is_positive() ? std::max(penalty, -production.stake) : decimal::zero();
+				auto production_penalty = state.executor.apply_validator_production(target, executor_context::staker::unlock, compensation);
+				if (!production_penalty)
+					return production_penalty.error();
+
+				coinbase -= compensation;
+			}
+
 			bool paying_rewards = state.executor.get_validator_production(state.public_key_hash).or_else(states::validator_production(algorithm::pubkeyhash_t(), nullptr)).is_active();
 			if (paying_rewards)
 			{
@@ -3810,13 +3818,6 @@ namespace tangent
 			}
 			else if (!state.validator_active)
 				return layer_exception("block producer must be active");
-
-			for (size_t i = 0; i < (size_t)solution.block.priority; i++)
-			{
-				auto penalty = state.executor.apply_validator_production(producers[i].owner, executor_context::staker::unlock, -rewards[algorithm::asset::native()]);
-				if (!penalty)
-					return penalty.error();
-			}
 
 			auto* parent_block = tip.address();
 			size_t block_cost = (size_t)gas_cost::write_byte * 1024;
@@ -3923,7 +3924,8 @@ namespace tangent
 			solver_context solver;
 			if (!solver.apply_validator_state([&producer](size_t index) { return index > 0 ? nullptr : &producer; }, parent_block))
 			{
-				if (child_block.priority != (uint64_t)solver.producers.size())
+				solver.state.public_key_hash = producer.public_key_hash;
+				if (child_block.priority != protocol::now().policy.production.max_per_block)
 					return layer_exception("invalid producer priority");
 			}
 

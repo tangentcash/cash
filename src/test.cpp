@@ -4,8 +4,9 @@
 #include "tangent/policy/compositions.h"
 #include <vitex/vitex.h>
 #include <sstream>
-#define TEST_BLOCK(x, y, z) tester::new_block_from_generator(data, users, x, #x, y, z)
-#define TEST_BLOCK_FAULT(x, y, z) tester::new_block_from_generator(data, users, x, #x, y, z, true)
+#define TEST_BLOCK(x, y, z) tester::new_block_from_generator(data, users, x, #x, y, z, tester::block_type::normal)
+#define TEST_BLOCK_FALLBACK(x, y, z) tester::new_block_from_generator(data, users, x, #x, y, z, tester::block_type::fallback)
+#define TEST_BLOCK_FAULTY(x, y, z) tester::new_block_from_generator(data, users, x, #x, y, z, tester::block_type::faulty)
 
 using namespace tangent;
 
@@ -52,6 +53,13 @@ struct participant_ref
 
 struct tester
 {
+	enum class block_type
+	{
+		normal,
+		fallback,
+		faulty
+	};
+
 	template <typename t, typename... args>
 	static void new_serialization_comparison(format::tree& data, args... arguments)
 	{
@@ -68,7 +76,7 @@ struct tester
 
 		data.set(t::as_instance_typename(), format::variable(algorithm::encoding::encode_0xhex256(message.hash())));
 	}
-	static ledger::block_body new_block_from_generator(format::tree* results, vector<account_ref>& users, std::function<void(vector<uptr<ledger::transaction_message>>&, vector<account_ref>&)>&& test_case, const std::string_view& test_case_call, const std::string_view& state_root_hash, uint64_t block_number, bool causes_fault = false)
+	static ledger::block_body new_block_from_generator(format::tree* results, vector<account_ref>& users, std::function<void(vector<uptr<ledger::transaction_message>>&, vector<account_ref>&)>&& test_case, const std::string_view& test_case_call, const std::string_view& state_root_hash, uint64_t block_number, block_type type)
 	{
 		for (auto& user : users)
 			user.nonce = user.wallet.get_latest_nonce().or_else(0);
@@ -76,22 +84,22 @@ struct tester
 		vector<uptr<ledger::transaction_message>> transactions;
 		test_case(transactions, users);
 
-		auto block = new_block_from_list(results, users, std::move(transactions), causes_fault);
+		auto block = new_block_from_list(results, users, std::move(transactions), type);
 		auto hash = algorithm::encoding::encode_0xhex256(block.state_root);
 		if (results != nullptr)
-			console::get()->fwrite_line("TEST_BLOCK%s(%s, \"%s\", %" PRIu64 ");", causes_fault ? "_FAULT" : "", test_case_call.data(), hash.c_str(), block.number);
+			console::get()->fwrite_line("TEST_BLOCK%s(%s, \"%s\", %" PRIu64 ");", type == block_type::fallback ? "_FALLBACK" : (type == block_type::faulty ? "_FAULTY" : ""), test_case_call.data(), hash.c_str(), block.number);
 
 		VI_PANIC(state_root_hash.empty() || state_root_hash == hash, "block state root deviation");
 		VI_PANIC(!block_number || block_number == block.number, "block number deviation");
 		return block;
 	}
-	static ledger::block_body new_block_from_one(format::tree* results, vector<account_ref>& users, uptr<ledger::transaction_message>&& transaction, bool causes_fault = false)
+	static ledger::block_body new_block_from_one(format::tree* results, vector<account_ref>& users, uptr<ledger::transaction_message>&& transaction, block_type type)
 	{
 		auto transactions = vector<uptr<ledger::transaction_message>>();
 		transactions.push_back(std::move(transaction));
-		return new_block_from_list(results, users, std::move(transactions), causes_fault);
+		return new_block_from_list(results, users, std::move(transactions), type);
 	}
-	static ledger::block_body new_block_from_list(format::tree* results, vector<account_ref>& users, vector<uptr<ledger::transaction_message>>&& transactions, bool causes_fault = false)
+	static ledger::block_body new_block_from_list(format::tree* results, vector<account_ref>& users, vector<uptr<ledger::transaction_message>>&& transactions, block_type type)
 	{
 		ledger::solver_context solver;
 		for (size_t i = 0; i < transactions.size(); i++)
@@ -112,8 +120,15 @@ struct tester
 			attestation->sign(submitter.wallet.secret_key, submitter.nonce++, decimal::zero()).expect("pre-validation failed");
 		}
 
-		uint64_t priority = solver.apply_validator_state([&users](size_t index) { return index < users.size() ? &users[index].wallet : nullptr; }).or_else(std::numeric_limits<uint64_t>::max());
-		VI_PANIC(priority == 0, "block proposal not allowed");
+		uint64_t priority = solver.apply_validator_state([&](size_t index) { return index < users.size() ? &users[index].wallet : nullptr; }).or_else(std::numeric_limits<uint64_t>::max());
+		if (type == block_type::fallback)
+		{
+			VI_PANIC(users.size() >= 2, "must have another user");
+			auto& fallback_wallet = users[1].wallet;
+			solver.state.secret_key = fallback_wallet.secret_key;
+			solver.state.public_key_hash = fallback_wallet.public_key_hash;
+		}
+		VI_PANIC(type == block_type::fallback || priority == 0, "block proposal not allowed");
 		ledger::solver_context::sort_transaction_list(transactions);
 		if (!solver.try_include_transactions(std::move(transactions)))
 			VI_PANIC(false, "empty block not allowed");
@@ -150,11 +165,11 @@ struct tester
 			}
 		}
 		for (auto& transaction : dispatcher.errors)
-			VI_PANIC(causes_fault, "%s", transaction.second.c_str());
+			VI_PANIC(type == block_type::faulty, "%s", transaction.second.c_str());
 		
 		dispatcher.checkpoint().expect("dispatcher checkpoint error");
 		if (!transactions.empty())
-			new_block_from_list(results, users, std::move(transactions));
+			new_block_from_list(results, users, std::move(transactions), type);
 
 		return proposal.block;
 	}
@@ -812,6 +827,28 @@ struct generators
 		withdrawal_bitcoin->set_bridge_hash(executor.get_bridge_instances(withdrawal_bitcoin->asset, 0, 1)->front().ref.hash);
 		withdrawal_bitcoin->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(withdrawal_bitcoin);
+	}
+	static void production_stage_1(vector<uptr<ledger::transaction_message>>& transactions, vector<account_ref>& users)
+	{
+		auto& [user2, user2_nonce] = users[1];
+		auto* setup_user2 = memory::init<transactions::setup>();
+		setup_user2->allocate_production_stake(decimal::zero());
+		setup_user2->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
+		transactions.push_back(setup_user2);
+	}
+	static void production_stage_2(vector<uptr<ledger::transaction_message>>& transactions, vector<account_ref>& users)
+	{
+		auto& [user1, user1_nonce] = users[0];
+		auto& [user2, user2_nonce] = users[1];
+		auto* setup_user1 = memory::init<transactions::setup>();
+		setup_user1->allocate_production_stake(decimal::zero());
+		setup_user1->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
+		transactions.push_back(setup_user1);
+
+		auto* setup_user2 = memory::init<transactions::setup>();
+		setup_user2->disable_production();
+		setup_user2->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
+		transactions.push_back(setup_user2);
 	}
 };
 
@@ -1683,7 +1720,7 @@ struct tests
 			TEST_BLOCK(std::bind(&generators::call_stage_1, std::placeholders::_1, std::placeholders::_2, &contracts), "0xc67d75ab3e8e5f8f4f1f3477b7faa187962d510234a738a1bf16deb2b2c2bb76", 13);
 			TEST_BLOCK(&generators::rollup_stage_1, "0x06963e1f24c0e96e5543f0fb6056abcf8a149bfa20e70aaab93ef83faa13594e", 14);
 			TEST_BLOCK(std::bind(&generators::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 0, 1), "0x7c3490825eca5a13e0914ab179b5c56cf0591a0de9c91e061d44b9fd98a4c0da", 15);
-			TEST_BLOCK_FAULT(&generators::migrate_stage_1, "0xee4a2ddde5f0c263b80fbbf4536d9673b651af96be8f544842b8697f0be26751", 16);
+			TEST_BLOCK_FAULTY(&generators::migrate_stage_1, "0xee4a2ddde5f0c263b80fbbf4536d9673b651af96be8f544842b8697f0be26751", 16);
 			TEST_BLOCK(&generators::migrate_stage_2, "0xd72b48b683c476d5cb6786bffbfe3ade4c7f750a0798fa09b656415b77e70d8c", 18);
 			TEST_BLOCK(&generators::migrate_stage_3, "0x1542b5c194cd6c9cdd88380c207a6d804d1737a0cf1aebad47f5eca264fc35b6", 19);
 			TEST_BLOCK(&generators::migrate_stage_4, "0x2519948c607ebac939a9362857bb3a9b5175788ff521ea5390bad670c7da4cf1", 21);
@@ -1692,9 +1729,11 @@ struct tests
 			TEST_BLOCK(&generators::withdraw_stage_3, "0x7d5a5e781bac3a01bfe33fdc248ac76523fdd5ef589bc8481a1485fe3a398685", 26);
 			TEST_BLOCK(&generators::withdraw_stage_4, "0xe88914fe02af148a5e4652746da327b457b6afe181f71fd90eb7204639032dc3", 27);
 			TEST_BLOCK(&generators::withdraw_stage_5, "0xa53e44a161707a4f4486e68734bfacd742bc3bc94259cf4ef038baed4c8896e0", 28);
-			TEST_BLOCK(&generators::withdraw_stage_6, "0xb9b88850df66919f0907c45bcbc5ce063a5d05482731a65ef4625830e6dadf94", 30);
-			TEST_BLOCK(&generators::withdraw_stage_7, "0xa0856914d139d7677d71d4a9e1a5cff28d5b4d02a142ade505c5e38b4045fa37", 32);
-			TEST_BLOCK(std::bind(&generators::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 1, 0), "0x76004eb4d0777a2938a592fdb75b4ac65d10fd94396911881616b19f5b3b55c1", 34);
+			TEST_BLOCK(&generators::withdraw_stage_6, "0x7e8a5d13ae3597d5d657890aaa90d1b37b354c8558918d8b5772f8ddf625059b", 30);
+			TEST_BLOCK(&generators::withdraw_stage_7, "0x2cb6629ac457b3ee0b314c5e0f0e270a0d6e5955ac851a626976101b8b02e0be", 32);
+			TEST_BLOCK(std::bind(&generators::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 1, 0), "0x4564656f4834bdaf9686d3c9889cf77953f81c36ae467e51aa373d41b86ace49", 34);
+			TEST_BLOCK_FALLBACK(&generators::production_stage_1, "0x38cedd150d21b855d9edd08c8c3aae9d3bd3d2958984265744fda54f42d646a0", 35);
+			TEST_BLOCK(&generators::production_stage_2, "0xb3fb5ca864ec7b0591a475ad23b173ffeb823d03530564502b67d3ca0ecd8ba7", 36);
 			if (userdata != nullptr)
 				*userdata = std::move(users);
 			else
@@ -1903,7 +1942,7 @@ int main(int argc, char* argv[])
 		{
 			static uint64_t cumulative_transaction_count = 0, cumulative_transition_count = 0;
 			auto cumulative_query_count = (uint64_t)ledger::storage_util::get_thread_invocations(); term->capture_time();
-			auto block = tester::new_block_from_list(nullptr, users, std::move(transactions));
+			auto block = tester::new_block_from_list(nullptr, users, std::move(transactions), tester::block_type::normal);
 			auto time = term->get_captured_time();
 			cumulative_transaction_count += block.transaction_count;
 			cumulative_transition_count += block.transition_count;
