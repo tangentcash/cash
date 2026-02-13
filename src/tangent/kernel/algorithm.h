@@ -263,6 +263,15 @@ namespace tangent
 
 				return uint256_t(numeric, 10);
 			}
+			inline static uint32_t fastmod256r32(const uint256_t& value, uint64_t order)
+			{
+				uint64_t w0 = value.low().low();
+				uint64_t w1 = value.low().high();
+				uint64_t w2 = value.high().low();
+				uint64_t w3 = value.high().high();
+				uint64_t w = (w0 % order) + (w1 % order) + (w2 % order) + (w3 % order);
+				return static_cast<uint32_t>(w % order);
+			}
 			template <typename t>
 			inline static decimal range(const t& value)
 			{

@@ -1507,10 +1507,11 @@ namespace tangent
 				mpf_init(*(mpf_t*)state);
 			}
 
+			uint32_t seed = arithmetic::fastmod256r32(entropy, 4294967295llu);
 			mpf_t& weight = *(mpf_t*)state;
 			mpf_set_ui(weight, std::max<uint32_t>((order - 1) / 2, 1));
 			mpf_mul_ui(weight, weight, 8 * order);
-			mpf_mul_ui(weight, weight, (uint32_t)(entropy % std::numeric_limits<uint32_t>::max()));
+			mpf_mul_ui(weight, weight, seed);
 			mpf_div_ui(weight, weight, std::numeric_limits<uint32_t>::max());
 			mpf_add_ui(weight, weight, 1);
 			mpf_sqrt(weight, weight);

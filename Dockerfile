@@ -12,6 +12,6 @@ RUN rm -r /home/tangentcash
 FROM alpine:latest AS deployment
 WORKDIR /usr/local/bin
 ENV PATH="${PATH}:/usr/local/lib"
-RUN apk add libsecp256k1-dev gmp-dev libsodium-dev rocksdb-dev sqlite-dev openssl-dev zlib-dev libunwind-dev elfutils-dev
+RUN apk add libsecp256k1 gmp libsodium rocksdb sqlite-libs openssl-dev zlib libunwind elfutils-dev
 COPY --from=build /usr/local/bin /usr/local/bin
 COPY --from=build /usr/local/lib /usr/local/lib
