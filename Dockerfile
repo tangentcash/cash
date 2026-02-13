@@ -1,5 +1,4 @@
 FROM alpine:latest AS build
-RUN apk update && apk upgrade --no-cache
 RUN apk add clang clang-dev ninja cmake libsecp256k1-dev gmp-dev libsodium-dev rocksdb-dev sqlite-dev openssl-dev zlib-dev libunwind-dev elfutils-dev
 RUN mkdir /home/tangentcash && mkdir /home/tangentcash/make
 COPY ./ /home/tangentcash/source/
@@ -13,7 +12,6 @@ RUN rm -r /home/tangentcash
 FROM alpine:latest AS deployment
 WORKDIR /usr/local/bin
 ENV PATH="${PATH}:/usr/local/lib"
-RUN apk update && apk upgrade --no-cache
 RUN apk add libsecp256k1-dev gmp-dev libsodium-dev rocksdb-dev sqlite-dev openssl-dev zlib-dev libunwind-dev elfutils-dev
 COPY --from=build /usr/local/bin /usr/local/bin
 COPY --from=build /usr/local/lib /usr/local/lib
