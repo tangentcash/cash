@@ -39,15 +39,15 @@ Nodes download and validate data from seeder nodes, gradually forming a list of 
 The asset bridging process employs an N-of-N signature scheme and utilizes [Multi-Party Computation (MPC)](https://tangent.cash/docs/blockchain/bridges/02-mpc/) capabilities to build aggregated signatures or public keys which involves coordinating an array of participants of an asset bridge, ensuring robust security.
 
 ### Bridging
-Users can deposit native cryptocurrency using any bridging node of their choice. Each bridges has its own flat fees withdrawals. Users request a deposit address* from a bridge and send assets to that address. To withdraw assets, users select a bridge (which can be different from the one used for depositing) and send a withdrawal transaction. The assets will then be sent to the user's selected address. Bridge coordinator is chosen randomly for each operation as well as bridge participants but they are chosen randomly for each account only.
+Users can deposit native cryptocurrency using any bridging node of their choice. Each bridge has its own flat fees for withdrawals. Users request a deposit address* from a bridge and send assets to that address. To withdraw assets, users select a bridge (which can be different from the one used for depositing) and send a withdrawal transaction. The assets will then be sent to the user's selected address. Bridge coordinator is chosen randomly for each operation as well as bridge participants but they are chosen randomly for each account only.
 
 ###### _*EVM blockchains require submitting sender address before depositing._ 
 
 ### Consensus
 - **Verifiable Delay Function**: Proof of work in form of Wesolowki's verifiable delay function, requiring sequential operations to be computed, unlike classic algorithms that can utilize multithreading.
 - **Block Time**: Target block time is 12 seconds.
-- **Validator Committee**: Each block is created by a randomly selected committee of up to 12 validators. Validators are ranked by priority within their epoch, preventing lower-priority blocks from replacing higher-priority valid candidate blocks. Lower-priority also requires higher difficulty.
-- **Epoch Management**: Epochs cannot be skipped, which may impact availability in favor of security.
+- **Validator Committee**: Each block is created by a randomly selected committee of up to 12 validators. Validators are ranked by priority within their slot, preventing lower-priority blocks from replacing higher-priority valid candidate blocks. Lower-priority also requires higher difficulty.
+- **Slot Management**: Slots cannot be skipped, which may impact availability in favor of security.
 - **Rewards and Penalties**: Each accepted block emits 1.2 TAN with 1% decay every 500,000 blocks for the winning validator and applies penalties to validators with higher priority who did not commit their work.
 
 ### Network Recovery
