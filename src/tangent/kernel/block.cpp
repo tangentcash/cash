@@ -1378,7 +1378,7 @@ namespace tangent
 			auto distribution = algorithm::exponential_distribution();
 			while (indices.size() < size)
 			{
-				uint64_t index = (uint64_t)distribution.next(random->derive(), (uint32_t)size);
+				uint64_t index = (uint64_t)distribution.next(random->derive(), (uint32_t)pool);
 				if (indices.find(index) == indices.end())
 				{
 					window.indices.push_back(index);
