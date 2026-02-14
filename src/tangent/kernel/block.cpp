@@ -3982,14 +3982,6 @@ namespace tangent
 		{
 			auto chain = storages::chainstate();
 			auto mempool = storages::mempoolstate();
-			auto mempool_state = mempool.get_multi_storage();
-			auto global_state = chain.get_multi_storage();
-			global_state.insert(mempool_state.begin(), mempool_state.end());
-
-			auto isolation = storage_util::multi_tx_begin(__func__, sqlite::isolation::default_isolation, global_state);
-			if (!isolation)
-				return layer_exception(std::move(isolation.error().message()));
-
 			hash_set<uint256_t> finalized_transactions;
 			finalized_transactions.reserve(solution.block.transactions.size());
 			for (auto& transaction : solution.block.transactions)
@@ -4033,10 +4025,7 @@ namespace tangent
 
 				auto status = chain.revert(mutation.new_tip_block_number - 1, &mutation.block_delta, &mutation.transaction_delta, &mutation.state_delta);
 				if (!status)
-				{
-					storage_util::multi_tx_rollback(__func__, std::move(global_state)).report("global state rollback failed");
 					return status.error();
-				}
 
 				if (protocol::now().user.storage.logging)
 					VI_INFO("block %s rewinded (height: %" PRIu64 ", mempool: +%" PRIu64 ", blocktrie: %" PRIi64 ", transactiontrie: %" PRIi64 ", statetrie: %" PRIi64 ")", algorithm::encoding::encode_0xhex256(solution.block.as_hash()).c_str(), mutation.new_tip_block_number, mutation.mempool_transactions, mutation.block_delta, mutation.transaction_delta, mutation.state_delta);
@@ -4046,12 +4035,16 @@ namespace tangent
 					auto parent_block = chain.get_block_by_number(solution.block.number - 1);
 					auto validation = validate_solved_block(parent_block.address(), solution.block, &solution);
 					if (!validation)
-					{
-						storage_util::multi_tx_rollback(__func__, std::move(global_state)).report("global state rollback failed");
 						return validation.error();
-					}
 				}
 			}
+
+			auto mempool_state = mempool.get_multi_storage();
+			auto global_state = chain.get_multi_storage();
+			global_state.insert(mempool_state.begin(), mempool_state.end());
+			auto isolation = storage_util::multi_tx_begin(__func__, sqlite::isolation::default_isolation, global_state);
+			if (!isolation)
+				return layer_exception(std::move(isolation.error().message()));
 
 			auto status = chain.checkpoint(solution);
 			if (!status)
