@@ -213,9 +213,7 @@ namespace tangent
 			server_response mempoolstate_get_next_account_nonce(http::connection* base, format::variables&& args);
 			server_response mempoolstate_get_transactions(http::connection* base, format::variables&& args);
 			server_response mempoolstate_get_transactions_by_owner(http::connection* base, format::variables&& args);
-			server_response validatorstate_compact(http::connection* base, format::variables&& args);
 			server_response validatorstate_revert(http::connection* base, format::variables&& args);
-			server_response validatorstate_reorganize(http::connection* base, format::variables&& args);
 			server_response validatorstate_verify(http::connection* base, format::variables&& args);
 			server_response validatorstate_accept_node(http::connection* base, format::variables&& args);
 			server_response validatorstate_reject_node(http::connection* base, format::variables&& args);

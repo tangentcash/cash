@@ -695,6 +695,9 @@ namespace tangent
 					state_tree.reserve(context.tracer.solver.state.changelog.outgoing.finalized.size() + 1);
 					for (auto& [index, change] : context.tracer.solver.state.changelog.outgoing.finalized)
 					{
+						if (change.state->as_type() == states::witness_program::as_instance_type())
+							continue;
+
 						auto copy = uptr(states::resolver::from_copy(*change.state));
 						copy->block_number = std::numeric_limits<uint64_t>::max();
 						state_tree.push_back(copy->as_hash());

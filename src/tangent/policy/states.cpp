@@ -18,10 +18,17 @@ namespace tangent
 				return layer_exception("invalid state owner");
 
 			auto* prev = (account_nonce*)prev_state;
-			if (!prev || nonce == std::numeric_limits<uint64_t>::max())
-				return expectation::met;
-
-			if (prev->nonce >= nonce || nonce - prev->nonce > 1)
+			if (!prev)
+			{
+				if (nonce > 1 && nonce != std::numeric_limits<uint64_t>::max())
+					return layer_exception("invalid starting nonce");
+			}
+			else if (prev->nonce == std::numeric_limits<uint64_t>::max() || nonce == std::numeric_limits<uint64_t>::max())
+			{
+				if (prev->nonce != nonce)
+					return layer_exception("account nonce must stay frozen");
+			}
+			else if (prev->nonce >= nonce || nonce - prev->nonce > 1)
 				return layer_exception("invalid nonce (received: " + to_string(nonce) + ", expected: " + to_string(prev->nonce + 1) + ")");
 
 			return expectation::met;

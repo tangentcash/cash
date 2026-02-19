@@ -427,9 +427,7 @@ namespace tangent
 			bind(access_type::r | access_type::a, "validatorstate", "setwallet", 2, 2, "string type = 'mnemonic' | 'seed' | 'key', string entropy", "wallet", "set validator wallet from mnemonic phrase, seed value or secret key", std::bind(&server_node::validatorstate_set_wallet, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::r | access_type::a, "validatorstate", "getwallet", 0, 0, "", "wallet", "get validator wallet", std::bind(&server_node::validatorstate_get_wallet, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::r | access_type::a, "validatorstate", "verify", 2, 3, "uint64 number, uint64 count, bool? validate", "uint256[]", "verify chain and possibly re-execute each block", std::bind(&server_node::validatorstate_verify, this, std::placeholders::_1, std::placeholders::_2));
-			bind(access_type::w | access_type::a, "validatorstate", "compact", 1, 1, "uint64 number", "void", "prune chainstate data", std::bind(&server_node::validatorstate_compact, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "validatorstate", "revert", 1, 2, "uint64 number, bool? keep_reverted_transactions", "{ new_tip_block_number: uint64, old_tip_block_number: uint64, mempool_transactions: uint64, block_delta: int64, transaction_delta: int64, state_delta: int64, is_fork: bool }", "revert chainstate to block number and possibly send removed transactions to mempool", std::bind(&server_node::validatorstate_revert, this, std::placeholders::_1, std::placeholders::_2));
-			bind(access_type::w | access_type::a, "validatorstate", "reorganize", 0, 0, "", "{ new_tip_block_number: uint64, old_tip_block_number: uint64, mempool_transactions: uint64, block_delta: int64, transaction_delta: int64, state_delta: int64, is_fork: bool }", "reorganize current chain which re-executes every saved block from genesis to tip and re-calculates the final chain state (helpful for corrupted state recovery or pruning checkpoint size change without re-downloading full block history)", std::bind(&server_node::validatorstate_reorganize, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "validatorstate", "acceptnode", 1, 1, "string uri_address", "void", "try to accept and connect to a node possibly by ip address", std::bind(&server_node::validatorstate_accept_node, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "validatorstate", "rejectnode", 1, 1, "string uri_address", "void", "reject and disconnect from a node by ip address", std::bind(&server_node::validatorstate_reject_node, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "validatorstate", "submitblock", 0, 0, "", "void", "try to propose a block from mempool transactions", std::bind(&server_node::validatorstate_submit_block, this, std::placeholders::_1, std::placeholders::_2));
@@ -3086,15 +3084,6 @@ namespace tangent
 				return server_response().success(std::move(data));
 			}
 		}
-		server_response server_node::validatorstate_compact(http::connection*, format::variables&& args)
-		{
-			auto chain = storages::chainstate();
-			auto status = chain.compact(args[0].as_uint64());
-			if (!status)
-				return server_response().error(error_codes::not_found, status.error().message());
-
-			return server_response().success(format::variable());
-		}
 		server_response server_node::validatorstate_revert(http::connection*, format::variables&& args)
 		{
 			auto chain = storages::chainstate();
@@ -3128,29 +3117,6 @@ namespace tangent
 			result.set("block_delta", format::variable(decimal(checkpoint->block_delta)));
 			result.set("state_delta", format::variable(decimal(checkpoint->state_delta)));
 			result.set("is_fork", format::variable(checkpoint->is_fork));
-			return server_response().success(std::move(result));
-		}
-		server_response server_node::validatorstate_reorganize(http::connection*, format::variables&&)
-		{
-			auto chain = storages::chainstate();
-			auto checkpoint = ledger::block_checkpoint();
-			checkpoint.old_tip_block_number = chain.get_latest_block_number().or_else(0);
-			checkpoint.new_tip_block_number = checkpoint.old_tip_block_number;
-			if (!checkpoint.new_tip_block_number)
-				return server_response().error(error_codes::not_found, "block tip not found");
-
-			auto reorganization = chain.reorganize(&checkpoint.block_delta, &checkpoint.transaction_delta, &checkpoint.state_delta);
-			if (!reorganization)
-				return server_response().error(error_codes::bad_params, reorganization.error().message());
-
-			auto result = format::tree::map();
-			result.set("new_tip_block_number", format::variable(checkpoint.new_tip_block_number));
-			result.set("old_tip_block_number", format::variable(checkpoint.old_tip_block_number));
-			result.set("mempool_transactions", format::variable(checkpoint.mempool_transactions));
-			result.set("transaction_delta", format::variable(decimal(checkpoint.transaction_delta)));
-			result.set("block_delta", format::variable(decimal(checkpoint.block_delta)));
-			result.set("state_delta", format::variable(decimal(checkpoint.state_delta)));
-			result.set("is_fork", format::variable(checkpoint.is_fork));
 			return server_response().success(std::move(result));
 		}
 		server_response server_node::validatorstate_verify(http::connection*, format::variables&& args)

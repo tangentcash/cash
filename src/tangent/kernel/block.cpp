@@ -1284,6 +1284,8 @@ namespace tangent
 			auto state = get_account_nonce(receipt.from);
 			if (state && state->nonce > transaction->nonce && !replayable)
 				return layer_exception("nonce is invalid (now: " + to_string(state->nonce) + ")");
+			else if (state && state->nonce == std::numeric_limits<uint64_t>::max())
+				return layer_exception("account must stay passive");
 
 			return expectation::met;
 		}
@@ -4039,25 +4041,11 @@ namespace tangent
 				}
 			}
 
-			auto mempool_state = mempool.get_multi_storage();
-			auto global_state = chain.get_multi_storage();
-			global_state.insert(mempool_state.begin(), mempool_state.end());
-			auto isolation = storage_util::multi_tx_begin(__func__, sqlite::isolation::default_isolation, global_state);
-			if (!isolation)
-				return layer_exception(std::move(isolation.error().message()));
-
 			auto status = chain.checkpoint(solution);
 			if (!status)
-			{
-				storage_util::multi_tx_rollback(__func__, std::move(global_state)).report("global state rollback failed");
 				return status.error();
-			}
 
 			mempool.remove_transactions(finalized_transactions).report("mempool cleanup failed");
-			auto result = storage_util::multi_tx_commit(__func__, std::move(global_state));
-			if (!result)
-				return layer_exception(std::move(result.error().message()));
-
 			for (auto& side_effect : solution.effects)
 			{
 				VI_ASSERT(side_effect, "side effect callback should be set");
