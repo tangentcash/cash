@@ -202,8 +202,6 @@ namespace tangent
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
-			static uint64_t get_commitment_limit();
-			static uint64_t get_transaction_limit();
 			static uint256_t get_commitment_gas_limit();
 			static uint256_t get_transaction_gas_limit();
 			static uint256_t get_total_gas_limit();

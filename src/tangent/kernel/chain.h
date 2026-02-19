@@ -321,10 +321,9 @@ namespace tangent
 				decimal min_coinbase_value = std::string_view("0.0002");
 			} emission;
 			string token = "TAN";
-			uint64_t commitment_tps = 10;
-			uint64_t transaction_tps = 200;
-			uint64_t transaction_gas = 32768;
-			uint64_t payable_transaction_size_bytes = 768;
+			uint64_t block_commitment_gas_limit = 4'000'000;
+			uint64_t block_transaction_gas_limit = 40'000'000;
+			uint64_t free_transaction_size_limit = 512;
 		} policy;
 
 	private:

@@ -1042,7 +1042,7 @@ namespace tangent
 
 			if (!candidate_tx->is_commitment() && !candidate_tx->gas_price.is_positive())
 			{
-				if (candidate_message.data.size() > protocol::now().policy.payable_transaction_size_bytes)
+				if (candidate_message.data.size() > protocol::now().policy.free_transaction_size_limit)
 				{
 					if (protocol::now().user.consensus.logging)
 						VI_WARN("transaction %s %.*s validation failed: must pay for gas (anti-spam, large transaction)", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data());
@@ -3135,20 +3135,20 @@ namespace tangent
 					{
 						prover.solver.erase_failed_transactions().report("mempool cleanup failed");
 						if (protocol::now().user.consensus.logging)
-							VI_INFO("block %s solved (number: %" PRIu64", txns: %" PRIu64 ", leader: %" PRIu64 ", work: < ~%.2f sec.)", algorithm::encoding::encode_0xhex256(prover.solution.block.as_hash()).c_str(), prover.solution.block.number, (uint64_t)prover.solution.block.transactions.size(), position + 1, span / 1000.0);
+							VI_INFO("block %s solved (number: %" PRIu64", txns: %" PRIu64 ", pos: %" PRIu64 ", work: < ~%.2f sec.)", algorithm::encoding::encode_0xhex256(prover.solution.block.as_hash()).c_str(), prover.solution.block.number, (uint64_t)prover.solution.block.transactions.size(), position + 1, span / 1000.0);
 
 						goto next_block;
 					}
 					else if (protocol::now().user.consensus.logging)
 					{
 						if (!evaluation)
-							VI_WARN("block %s dismissed: %s (number: %" PRIu64", txns: %" PRIu64 ", leader: %" PRIu64 ", work: < ~%.2f sec.)", algorithm::encoding::encode_0xhex256(prover.solution.block.as_hash()).c_str(), evaluation.error().what(), prover.solution.block.number, (uint64_t)prover.solution.block.transactions.size(), position + 1, span / 1000.0);
+							VI_WARN("block %s dismissed: %s (number: %" PRIu64", txns: %" PRIu64 ", pos: %" PRIu64 ", work: < ~%.2f sec.)", algorithm::encoding::encode_0xhex256(prover.solution.block.as_hash()).c_str(), evaluation.error().what(), prover.solution.block.number, (uint64_t)prover.solution.block.transactions.size(), position + 1, span / 1000.0);
 						else
 							VI_WARN("%s", verification.error().what());
 					}
 				}
 				else if (protocol::now().user.consensus.logging)
-					VI_WARN("block %s dismissed: %s (number: %" PRIu64", txns: %" PRIu64 ", leader: %" PRIu64 ", work: < ~%.2f sec.)", algorithm::encoding::encode_0xhex256(prover.solution.block.as_hash()).c_str(), evaluation ? (solution ? "cancelled" : solution.error().what()) : evaluation.error().what(), prover.solution.block.number, (uint64_t)prover.solution.block.transactions.size(), position + 1, span / 1000.0);
+					VI_WARN("block %s dismissed: %s (number: %" PRIu64", txns: %" PRIu64 ", pos: %" PRIu64 ", work: < ~%.2f sec.)", algorithm::encoding::encode_0xhex256(prover.solution.block.as_hash()).c_str(), evaluation ? (solution ? "cancelled" : solution.error().what()) : evaluation.error().what(), prover.solution.block.number, (uint64_t)prover.solution.block.transactions.size(), position + 1, span / 1000.0);
 			});
 		}
 		bool server_node::run_block_dispatcher()
@@ -3460,19 +3460,18 @@ namespace tangent
 			{
 				if (mutation->is_fork)
 				{
-					VI_INFO("block %s reorganized (height: %" PRIu64 ", sync: %.2f%%, size: ~%.2f kb, length: %" PRIi64 ", txns: %" PRIi64 " / %" PRIi64 ", states: %" PRIi64 ")\n",
+					VI_INFO("block %s (number: %" PRIu64 ", sync: %.2f%%, size: ~%.2f kb, depth: %" PRIi64 ", txns: %" PRIi64 ", state: %" PRIi64 ")\n",
 						algorithm::encoding::encode_0xhex256(candidate_hash).c_str(),
 						candidate.block.number,
 						100.0 * get_sync_progress(candidate.block.number, *from),
 						(double)(uint64_t)candidate.block.gas_limit / ((double)ledger::gas_cost::write_byte * 1024.0),
 						mutation->block_delta,
-						mutation->transaction_delta,
-						mutation->mempool_transactions,
+						mutation->transaction_delta + mutation->mempool_transactions,
 						mutation->state_delta);
 				}
 				else
 				{
-					VI_INFO("block %s finalized (height: %" PRIu64 ", sync: %.2f%%, size: ~%.2f kb)",
+					VI_INFO("block %s (number: %" PRIu64 ", sync: %.2f%%, size: ~%.2f kb)",
 						algorithm::encoding::encode_0xhex256(candidate_hash).c_str(),
 						candidate.block.number,
 						100.0 * get_sync_progress(candidate.block.number, *from),

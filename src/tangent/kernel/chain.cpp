@@ -980,8 +980,6 @@ namespace tangent
 				policy.participation.min_stake_value = decimal::zero();
 				policy.production.network_congestion_threshold = 2;
 				policy.production.min_stake_value = decimal::zero();
-				policy.transaction_tps = 5000000;
-				policy.commitment_tps = 50000;
 				break;
 			case tangent::network_type::testnet:
 				message.packet_magic = 0xf815c95c;

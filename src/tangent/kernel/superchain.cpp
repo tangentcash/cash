@@ -1011,7 +1011,7 @@ namespace tangent
 		void transaction_logs::report_logs(const algorithm::asset_id& asset, const network_options& options, size_t requests)
 		{
 			auto blockchain = algorithm::asset::blockchain_of(asset);
-			VI_INFO("%s block %s found (height: %i, sync: %.2f%%, txns: %i/%i, rpb: %i)",
+			VI_INFO("%s block %s (number: %i, sync: %.2f%%, txns: %i/%i, rpb: %i)",
 				blockchain.c_str(),
 				block_hash.c_str(),
 				(int)block_height,
@@ -1023,7 +1023,7 @@ namespace tangent
 			for (auto& tx : receipts)
 			{
 				string transfer_logs = stringify::text(
-					"%s transaction %s found (block: %" PRIu64 ")\n",
+					"%s transaction %s (block: %" PRIu64 ")\n",
 					blockchain.c_str(),
 					tx.transaction_id.c_str(), tx.block_id);
 				for (auto& [hash, input] : tx.inputs)

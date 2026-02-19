@@ -707,24 +707,14 @@ namespace tangent
 		{
 			return "block";
 		}
-		uint64_t block_header::get_commitment_limit()
-		{
-			static uint64_t limit = algorithm::arithmetic::ceil(algorithm::arithmetic::divide(protocol::now().policy.pow.time * protocol::now().policy.commitment_tps, 1000)).to_uint64();
-			return limit;
-		}
-		uint64_t block_header::get_transaction_limit()
-		{
-			static uint64_t limit = algorithm::arithmetic::ceil(algorithm::arithmetic::divide(protocol::now().policy.pow.time * protocol::now().policy.transaction_tps, 1000)).to_uint64();
-			return limit;
-		}
 		uint256_t block_header::get_commitment_gas_limit()
 		{
-			static uint256_t limit = protocol::now().policy.transaction_gas * get_commitment_limit();
+			static uint256_t limit = protocol::now().policy.block_commitment_gas_limit;
 			return limit;
 		}
 		uint256_t block_header::get_transaction_gas_limit()
 		{
-			static uint256_t limit = protocol::now().policy.transaction_gas * get_transaction_limit();
+			static uint256_t limit = protocol::now().policy.block_transaction_gas_limit;
 			return limit;
 		}
 		uint256_t block_header::get_total_gas_limit()
@@ -3967,13 +3957,13 @@ namespace tangent
 			result.block.signature = child_block.signature;
 			result.block.recalculate(parent_block, &result.state);
 
-			block_header input = child_block, output = result.block;
-			if (input.as_message().data != output.as_message().data)
-				return layer_exception("unproven state transition");
-
 			auto verification = solver.verify_block(result, producer.public_key_hash);
 			if (!verification)
 				return verification;
+
+			block_header input = child_block, output = result.block;
+			if (input.as_message().data != output.as_message().data)
+				return layer_exception("block data mismatch");
 
 			if (evaluated_result != nullptr)
 				*evaluated_result = std::move(result);

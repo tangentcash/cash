@@ -1066,10 +1066,7 @@ namespace tangent
 		}
 		uint64_t mempoolstate::transaction_limit()
 		{
-			auto& params = protocol::now();
-			auto transactions = ledger::block_header::get_transaction_limit() * (params.user.consensus.transaction_timeout / params.policy.pow.time);
-			auto commitments = ledger::block_header::get_commitment_limit() * (params.user.consensus.commitment_timeout / params.policy.pow.time);
-			return transactions + commitments;
+			return 1024 * 1024;
 		}
 		bool mempoolstate::make_schema(sqlite::connection* connection, const std::string_view& name)
 		{
@@ -1132,7 +1129,7 @@ namespace tangent
 				CREATE INDEX IF NOT EXISTS transactions_owner_nonce ON transactions (owner, nonce);
 				CREATE INDEX IF NOT EXISTS transactions_asset_quality ON transactions (asset ASC, quality DESC);
 				CREATE INDEX IF NOT EXISTS transactions_epoch_quality ON transactions (epoch ASC, quality DESC);
-				CREATE INDEX IF NOT EXISTS transactions_epoch_time ON transactions(epoch ASC, time ASC);
+				CREATE INDEX IF NOT EXISTS transactions_epoch_time ON transactions (epoch ASC, time ASC);
 				CREATE TRIGGER IF NOT EXISTS transactions_capacity BEFORE INSERT ON transactions BEGIN
 					DELETE FROM transactions WHERE hash = (SELECT hash FROM transactions ORDER BY epoch DESC, quality ASC NULLS FIRST) AND (SELECT COUNT(1) FROM transactions) >= max_mempool_size;
 				END;);

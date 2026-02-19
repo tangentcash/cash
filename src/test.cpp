@@ -1725,15 +1725,15 @@ struct tests
 			TEST_BLOCK(&generators::migrate_stage_3, "0x1542b5c194cd6c9cdd88380c207a6d804d1737a0cf1aebad47f5eca264fc35b6", 19);
 			TEST_BLOCK(&generators::migrate_stage_4, "0x2519948c607ebac939a9362857bb3a9b5175788ff521ea5390bad670c7da4cf1", 21);
 			TEST_BLOCK(&generators::withdraw_stage_1, "0x52d2a6c1af4a00108d2f98ed80f3f38c5d066c81bad1548271b712ad77e3af91", 23);
-			TEST_BLOCK(&generators::withdraw_stage_2, "0xf2b4916080fa4da87dd36cef5a22987d65385af87f3be96f3186449be0a61423", 25);
-			TEST_BLOCK(&generators::withdraw_stage_3, "0x7d5a5e781bac3a01bfe33fdc248ac76523fdd5ef589bc8481a1485fe3a398685", 26);
-			TEST_BLOCK(&generators::withdraw_stage_4, "0xe88914fe02af148a5e4652746da327b457b6afe181f71fd90eb7204639032dc3", 27);
-			TEST_BLOCK(&generators::withdraw_stage_5, "0xa53e44a161707a4f4486e68734bfacd742bc3bc94259cf4ef038baed4c8896e0", 28);
-			TEST_BLOCK(&generators::withdraw_stage_6, "0x7e8a5d13ae3597d5d657890aaa90d1b37b354c8558918d8b5772f8ddf625059b", 30);
-			TEST_BLOCK(&generators::withdraw_stage_7, "0x2cb6629ac457b3ee0b314c5e0f0e270a0d6e5955ac851a626976101b8b02e0be", 32);
-			TEST_BLOCK(std::bind(&generators::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 1, 0), "0x4564656f4834bdaf9686d3c9889cf77953f81c36ae467e51aa373d41b86ace49", 34);
-			TEST_BLOCK_FALLBACK(&generators::production_stage_1, "0x38cedd150d21b855d9edd08c8c3aae9d3bd3d2958984265744fda54f42d646a0", 35);
-			TEST_BLOCK(&generators::production_stage_2, "0xb3fb5ca864ec7b0591a475ad23b173ffeb823d03530564502b67d3ca0ecd8ba7", 36);
+			TEST_BLOCK(&generators::withdraw_stage_2, "0x3c52b44f59630c314d446c8ce96ad4c498b7a5ee570b7b754c1abb6d896ba0c4", 25);
+			TEST_BLOCK(&generators::withdraw_stage_3, "0x39707243282c1c9f2951b8b3f966d023cb7653c2a1cd7cde5709449d5b8d6467", 26);
+			TEST_BLOCK(&generators::withdraw_stage_4, "0x2e44d6a235a37d13517d096797c2df19b781d673b55d122fac1c7a06d1ce9b06", 27);
+			TEST_BLOCK(&generators::withdraw_stage_5, "0x4fb381570932e257621ce442a715a50867d0e7bd6ced969557566ae8b9a93e0e", 28);
+			TEST_BLOCK(&generators::withdraw_stage_6, "0xb998a0f08f8c87f5a80fd870f464e8c5c9d4237deefa5ead80524d8f1cac60b7", 30);
+			TEST_BLOCK(&generators::withdraw_stage_7, "0xed1f2a8725cf194aea6d3982c8646636a33b245b7cf1393e60817478465afa91", 32);
+			TEST_BLOCK(std::bind(&generators::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 1, 0), "0x1f0a428ec9fc0a5637007d0d7dc826d51abb7c453abf3b763ebe2b3f4d5be6b2", 34);
+			TEST_BLOCK_FALLBACK(&generators::production_stage_1, "0x2ba33878c94ecead6b718b74b3cd9aa7ae8b38e0399be8894d7a4b31f232a37a", 35);
+			TEST_BLOCK(&generators::production_stage_2, "0xb8099566863f0125e78bcae7d5a57477763e629d293efd69fc9798080c06aec1", 36);
 			if (userdata != nullptr)
 				*userdata = std::move(users);
 			else
@@ -1880,11 +1880,10 @@ struct tests
 
 		format::tree data = format::tree::map();
 		data.set("setup_transaction_gas_limit", algorithm::encoding::serialize_uint256(transaction.gas_limit));
-		data.set("block_commitment_limit", algorithm::encoding::serialize_uint256(ledger::block_body::get_commitment_limit()));
-		data.set("block_transaction_limit", algorithm::encoding::serialize_uint256(ledger::block_body::get_transaction_limit()));
 		data.set("block_commitment_gas_limit", algorithm::encoding::serialize_uint256(ledger::block_body::get_commitment_gas_limit()));
 		data.set("block_transaction_gas_limit", algorithm::encoding::serialize_uint256(ledger::block_body::get_transaction_gas_limit()));
 		data.set("block_total_gas_limit", algorithm::encoding::serialize_uint256(ledger::block_body::get_total_gas_limit()));
+		data.set("slot_total_gas_limit", algorithm::encoding::serialize_uint256(ledger::block_body::get_slot_total_gas_limit()));
 		term->write_line(data.as_json(true));
 	}
 };
