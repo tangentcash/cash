@@ -324,6 +324,7 @@ namespace tangent
 			uint64_t commitment_tps = 10;
 			uint64_t transaction_tps = 200;
 			uint64_t transaction_gas = 32768;
+			uint64_t payable_transaction_size_bytes = 768;
 		} policy;
 
 	private:

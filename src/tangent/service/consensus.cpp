@@ -1016,7 +1016,8 @@ namespace tangent
 		{
 			algorithm::pubkeyhash_t owner;
 			auto purpose = candidate_tx->as_typename();
-			auto candidate_hash = candidate_tx->as_hash();
+			auto candidate_message = candidate_tx->as_message();
+			auto candidate_hash = candidate_message.hash();
 			if (!candidate_tx->recover_hash(owner))
 			{
 				if (protocol::now().user.consensus.logging)
@@ -1041,12 +1042,19 @@ namespace tangent
 
 			if (!candidate_tx->is_commitment() && !candidate_tx->gas_price.is_positive())
 			{
+				if (candidate_message.data.size() > protocol::now().policy.payable_transaction_size_bytes)
+				{
+					if (protocol::now().user.consensus.logging)
+						VI_WARN("transaction %s %.*s validation failed: must pay for gas (anti-spam, large transaction)", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data());
+					return layer_exception("must pay for gas (anti-spam, large transaction)");
+				}
+
 				auto tip = chain.get_latest_block_header();
 				if (tip && tip->network_congestion())
 				{
 					if (protocol::now().user.consensus.logging)
-						VI_WARN("transaction %s %.*s validation failed: must pay for gas (anti-spam)", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data());
-					return layer_exception("must pay for gas (anti-spam)");
+						VI_WARN("transaction %s %.*s validation failed: must pay for gas (anti-spam, network congestion)", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data());
+					return layer_exception("must pay for gas (anti-spam, network congestion)");
 				}
 			}
 
