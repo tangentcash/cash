@@ -343,7 +343,7 @@ namespace tangent
 			bind(0 | access_type::r, "txnstate", "gettransactionbyhash", 1, 2, "uint256 hash, uint8? unrolling = 0", "txn | block::txn", "get transaction by hash", std::bind(&server_node::txnstate_get_transaction_by_hash, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "txnstate", "getrawtransactionbyhash", 1, 1, "uint256 hash", "string", "get raw transaction by hash", std::bind(&server_node::txnstate_get_raw_transaction_by_hash, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "txnstate", "getreceiptbytransactionhash", 1, 1, "uint256 hash", "receipt", "get receipt by transaction hash", std::bind(&server_node::txnstate_get_receipt_by_transaction_hash, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "calltransaction", 4, 32, "string asset, string from_address, string to_address, string function, ...", "program_trace", "execute of immutable function of program assigned to to_address", std::bind(&server_node::chainstate_call_transaction, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "calltransaction", 4, 32, "string asset, string from_address, string to_address, string function, any... args", "program_trace", "execute of immutable function of program assigned to to_address", std::bind(&server_node::chainstate_call_transaction, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getblockstatebyhash", 1, 2, "uint256 hash, uint8? unrolling = 0", "uint256[] | (uniform|multiform)[]", "get block state by hash", std::bind(&server_node::chainstate_get_block_state_by_hash, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getblockstatebynumber", 1, 2, "uint64 number, uint8? unrolling = 0", "uint256[] | (uniform|multiform)[]", "get block state by number", std::bind(&server_node::chainstate_get_block_state_by_number, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getblockgaspricebyhash", 2, 3, "uint256 hash, string asset, double? percentile = 0.5", "decimal", "get gas price from percentile of block transactions by hash", std::bind(&server_node::chainstate_get_block_gas_price_by_hash, this, std::placeholders::_1, std::placeholders::_2));
@@ -424,6 +424,8 @@ namespace tangent
 			bind(access_type::w | access_type::a, "mempoolstate", "rejecttransaction", 1, 1, "uint256 hash", "void", "remove mempool transaction by hash", std::bind(&server_node::mempoolstate_reject_transaction, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "mempoolstate", "addnode", 1, 1, "string uri_address", "void", "add node ip address to trial addresses", std::bind(&server_node::mempoolstate_add_node, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "mempoolstate", "clearnode", 1, 1, "string uri_address", "void", "remove associated node info by ip address", std::bind(&server_node::mempoolstate_clear_node, this, std::placeholders::_1, std::placeholders::_2));
+			bind(access_type::w | access_type::a, "validatorstate", "importentropies", 2, 1024, "string participant_address, string password, string... messages", "void", "import a set of encrypted entropy messages", std::bind(&server_node::validatorstate_import_entropies, this, std::placeholders::_1, std::placeholders::_2));
+			bind(access_type::r | access_type::a, "validatorstate", "exportentropies", 2, 2, "string participant_address, string password", "void", "export a set of encrypted entropy messages", std::bind(&server_node::validatorstate_export_entropies, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::r | access_type::a, "validatorstate", "setwallet", 2, 2, "string type = 'mnemonic' | 'seed' | 'key', string entropy", "wallet", "set validator wallet from mnemonic phrase, seed value or secret key", std::bind(&server_node::validatorstate_set_wallet, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::r | access_type::a, "validatorstate", "getwallet", 0, 0, "", "wallet", "get validator wallet", std::bind(&server_node::validatorstate_get_wallet, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::r | access_type::a, "validatorstate", "verify", 2, 3, "uint64 number, uint64 count, bool? validate", "uint256[]", "verify chain and possibly re-execute each block", std::bind(&server_node::validatorstate_verify, this, std::placeholders::_1, std::placeholders::_2));
@@ -3311,6 +3313,70 @@ namespace tangent
 				return server_response().error(error_codes::bad_request, result.error().message());
 
 			return server_response().success(wallet.as_tree());
+		}
+		server_response server_node::validatorstate_export_entropies(http::connection* base, format::variables&& args)
+		{
+			algorithm::pubkeyhash_t participant;
+			if (!algorithm::signing::decode_address(args[0].as_string(), participant))
+				return server_response().error(error_codes::bad_params, "participant address not valid");
+
+			auto password = args[1].as_string();
+			if (password.size() < 6)
+				return server_response().error(error_codes::bad_request, "invalid password");
+
+			uint8_t encryption_key[32] = { 0 };
+			if (!algorithm::signing::derive_seed_from_password((uint8_t*)password.data(), password.size(), encryption_key, sizeof(encryption_key)))
+				return server_response().error(error_codes::bad_request, "failed to derive an encryption key");
+
+			auto mempool = storages::mempoolstate();
+			auto results = format::tree::list();
+			while (true)
+			{
+				auto entropy = mempool.get_secret_entropy(participant, results.childs().size());
+				if (!entropy)
+					break;
+
+				auto salt = *crypto::random_bytes(16);
+				auto message = entropy->as_message();
+				auto encrypted_message = *crypto::encrypt(ciphers::aes_256_cbc(), message.data, secret_box::view(std::string_view((char*)encryption_key, sizeof(encryption_key))), secret_box::view(salt));
+				encrypted_message.insert(encrypted_message.begin(), salt.begin(), salt.end());
+				results.push(format::variable(encrypted_message));
+			}
+			return server_response().success(std::move(results));
+		}
+		server_response server_node::validatorstate_import_entropies(http::connection* base, format::variables&& args)
+		{
+			algorithm::pubkeyhash_t participant;
+			if (!algorithm::signing::decode_address(args[0].as_string(), participant))
+				return server_response().error(error_codes::bad_params, "participant address not valid");
+
+			auto password = args[1].as_string();
+			uint8_t decryption_key[32] = { 0 };
+			if (!algorithm::signing::derive_seed_from_password((uint8_t*)password.data(), password.size(), decryption_key, sizeof(decryption_key)))
+				return server_response().error(error_codes::bad_request, "failed to derive a decryption key");
+
+			auto mempool = storages::mempoolstate();
+			for (size_t i = 2; i < args.size(); i++)
+			{
+				auto salt_and_encrypted_message = format::util::decode_0xhex(args[i].as_string());
+				if (salt_and_encrypted_message.size() <= 16)
+					return server_response().error(error_codes::bad_request, "invalid encrypted entropy");
+
+				auto salt = std::string_view(salt_and_encrypted_message).substr(0, 16);
+				auto encrypted_message = std::string_view(salt_and_encrypted_message).substr(salt.size());
+				auto decrypted_message = crypto::decrypt(ciphers::aes_256_cbc(), encrypted_message, secret_box::view(std::string_view((char*)decryption_key, sizeof(decryption_key))), secret_box::view(salt));
+				if (!decrypted_message)
+					return server_response().error(error_codes::bad_request, "failed to decrypt message " + to_string(i - 1));
+
+				auto message = format::ro_stream(*decrypted_message);
+				auto entropy = ledger::dispatcher_context::secret_entropy();
+				if (!entropy.load(message))
+					return server_response().error(error_codes::bad_request, "failed to load message " + to_string(i - 1));
+
+				if (!mempool.apply_secret_entropy(participant, entropy))
+					return server_response().error(error_codes::bad_request, "failed to save message " + to_string(i - 1));
+			}
+			return server_response().success(format::variable());
 		}
 		server_response server_node::validatorstate_status(http::connection*, format::variables&&)
 		{

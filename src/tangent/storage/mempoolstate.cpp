@@ -687,6 +687,9 @@ namespace tangent
 		}
 		expects_lr<void> mempoolstate::add_transaction(const ledger::transaction_message& value)
 		{
+			if (has_transaction(value.as_hash()))
+				return expectation::met;
+
 			format::wo_stream message;
 			if (!value.store(&message))
 				return expects_lr<void>(layer_exception("transaction serialization error"));
@@ -814,6 +817,29 @@ namespace tangent
 			map.push_back(var::set::binary(participant.view()));
 
 			auto cursor = get_secret_storage().emplace_query(__func__, "SELECT entropy_message FROM secrets WHERE owner = ? AND asset = ? AND hash = ? AND participant = ?", &map);
+			if (!cursor || cursor->error())
+				return expects_lr<ledger::dispatcher_context::secret_entropy>(layer_exception(ledger::storage_util::error_of(cursor)));
+			else if (cursor->empty())
+				return layer_exception("entropy not found");
+
+			auto decrypted_entropy_message = protocol::now().box.decrypt((*cursor)["entropy_message"].get().get_blob());
+			if (!decrypted_entropy_message)
+				return decrypted_entropy_message.error();
+
+			ledger::dispatcher_context::secret_entropy entropy;
+			format::ro_stream entropy_message = format::ro_stream(*decrypted_entropy_message);
+			if (!entropy.load(entropy_message))
+				return expects_lr<ledger::dispatcher_context::secret_entropy>(layer_exception("entropy deserialization error"));
+
+			return expects_lr<ledger::dispatcher_context::secret_entropy>(std::move(entropy));
+		}
+		expects_lr<ledger::dispatcher_context::secret_entropy> mempoolstate::get_secret_entropy(const algorithm::pubkeyhash_t& participant, size_t index)
+		{
+			schema_list map;
+			map.push_back(var::set::binary(participant.view()));
+			map.push_back(var::set::integer(index));
+
+			auto cursor = get_secret_storage().emplace_query(__func__, "SELECT entropy_message FROM secrets WHERE participant = ? LIMIT 1 OFFSET ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<ledger::dispatcher_context::secret_entropy>(layer_exception(ledger::storage_util::error_of(cursor)));
 			else if (cursor->empty())

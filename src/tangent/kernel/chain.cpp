@@ -385,7 +385,7 @@ namespace tangent
 		};
 		if (interactive)
 		{
-			auto password = os::process::get_env("KEYSTATE_PASSWORD");
+			auto password = os::process::get_env("XBASE");
 			if (!password)
 			{
 				auto* terminal = console::get();
