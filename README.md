@@ -19,7 +19,7 @@ Tangent Protocol is a software implementation designed as a validator node, esse
 Tangent's primary utility lies in its asset bridging capabilities, allowing users to deposit and withdraw (lock and unlock) cryptocurrencies into the Tangent network. This feature significantly enhances the speed and efficiency of unbounded DeFi operations.
 
 ### Performance
-- **Transaction Speed**: Optimized for moderately fast transaction processing, supporting up to 210 transactions per second (TPS) with instant finality*.
+- **Transaction Speed**: Optimized for moderately fast transaction processing, supporting up to 110 transactions per second (TPS) with instant finality*.
 - **Fees**: Implements market-based transaction fees to reduce the operational costs of node software.
 - **Blockchain Support**: Transactions can be conducted using cryptocurrencies or tokens from other blockchains, as well as Tangent's native cryptocurrency.
 
