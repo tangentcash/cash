@@ -687,17 +687,23 @@ namespace tangent
 		}
 		expects_lr<void> mempoolstate::add_transaction(const ledger::transaction_message& value)
 		{
-			auto duplicate = has_transaction(value.as_hash());
-			if (duplicate && *duplicate)
-				return expectation::met;
+			uint8_t hash[32];
+			value.as_hash().encode(hash);
+
+			schema_list map;
+			map.push_back(var::set::binary(hash, sizeof(hash)));
+
+			auto cursor = get_peer_storage().emplace_query(__func__, "SELECT TRUE FROM observations WHERE hash = ?", &map);
+			if (cursor && !cursor->error_or_empty())
+				return layer_exception("transaction may be re-broadcasted later");
 
 			format::wo_stream message;
 			if (!value.store(&message))
-				return expects_lr<void>(layer_exception("transaction serialization error"));
+				return layer_exception("transaction serialization error");
 
 			algorithm::pubkeyhash_t owner;
 			if (!value.recover_hash(owner))
-				return expects_lr<void>(layer_exception("transaction owner recovery error"));
+				return layer_exception("transaction owner recovery error");
 
 			decimal quality = decimal::nan();
 			if (!value.is_commitment())
@@ -709,28 +715,29 @@ namespace tangent
 				quality = max_gas * multiplier;
 			}
 
-			uint8_t hash[32];
-			value.as_hash().encode(hash);
-
 			uint8_t asset[32];
 			value.asset.encode(asset);
 
-			schema_list map;
+			uint64_t timeout = (value.is_commitment() ? protocol::now().user.consensus.commitment_timeout : protocol::now().user.consensus.transaction_timeout);
+			map.clear();
+			map.push_back(var::set::binary(hash, sizeof(hash)));
+			map.push_back(var::set::integer(protocol::now().time.now_cpu() + timeout + 86400 * 1000));
 			map.push_back(var::set::binary(hash, sizeof(hash)));
 			map.push_back(var::set::binary(owner.view()));
 			map.push_back(var::set::binary(asset, sizeof(asset)));
 			map.push_back(var::set::integer(value.nonce));
 			map.push_back(quality.is_nan() ? var::set::null() : var::set::integer(quality.to_uint64()));
-			map.push_back(var::set::integer(time(nullptr) + (value.is_commitment() ? protocol::now().user.consensus.commitment_timeout : protocol::now().user.consensus.transaction_timeout)));
+			map.push_back(var::set::integer(protocol::now().time.now_cpu() + timeout));
 			map.push_back(var::set::string(value.gas_price.to_string()));
 			map.push_back(var::set::binary(message.data));
 			map.push_back(var::set::binary(owner.view()));
 
-			auto cursor = get_peer_storage().emplace_query(__func__,
+			cursor = get_peer_storage().emplace_query(__func__,
+				"INSERT OR REPLACE INTO observations (hash, time) VALUES (?, ?);"
 				"INSERT OR REPLACE INTO transactions (hash, owner, asset, nonce, quality, time, price, message) VALUES (?, ?, ?, ?, ?, ?, ?, ?);"
 				"WITH epochs AS (SELECT rowid, ROW_NUMBER() OVER (ORDER BY nonce) AS epoch FROM transactions WHERE owner = ?) UPDATE transactions SET epoch = epochs.epoch FROM epochs WHERE transactions.rowid = epochs.rowid", &map);
 			if (!cursor || cursor->error())
-				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
+				return layer_exception(ledger::storage_util::error_of(cursor));
 
 			return expectation::met;
 		}
@@ -761,10 +768,14 @@ namespace tangent
 		}
 		expects_lr<size_t> mempoolstate::expire_transactions()
 		{
+			auto timestamp = protocol::now().time.now_cpu();
 			schema_list map;
-			map.push_back(var::set::integer(time(nullptr)));
+			map.push_back(var::set::integer(timestamp));
+			map.push_back(var::set::integer(timestamp));
 
-			auto cursor = get_peer_storage().emplace_query(__func__, "DELETE FROM transactions WHERE time < ?", &map);
+			auto cursor = get_peer_storage().emplace_query(__func__, 
+				"DELETE FROM transactions WHERE time < ?;"
+				"DELETE FROM observations WHERE time < ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<size_t>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -1140,6 +1151,13 @@ namespace tangent
 					signature BLOB(65) NOT NULL,
 					PRIMARY KEY (hash, commitment, signature)
 				);
+				CREATE TABLE IF NOT EXISTS observations
+				(
+					hash BLOB(32) NOT NULL,
+					time INTEGER NOT NULL,
+					PRIMARY KEY (hash)
+				);
+				CREATE INDEX IF NOT EXISTS observations_time ON observations (time ASC);
 				CREATE TABLE IF NOT EXISTS transactions
 				(
 					hash BLOB(32) NOT NULL,

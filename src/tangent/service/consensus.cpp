@@ -3133,7 +3133,6 @@ namespace tangent
 					auto verification = evaluation ? accept_block(nullptr, prover.solution, 0) : evaluation;
 					if (evaluation && verification)
 					{
-						prover.solver.erase_failed_transactions().report("mempool cleanup failed");
 						if (protocol::now().user.consensus.logging)
 							VI_INFO("block %s solved (number: %" PRIu64", txns: %" PRIu64 ", pos: %" PRIu64 ", work: < ~%.2f sec.)", algorithm::encoding::encode_0xhex256(prover.solution.block.as_hash()).c_str(), prover.solution.block.number, (uint64_t)prover.solution.block.transactions.size(), position + 1, span / 1000.0);
 

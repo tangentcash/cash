@@ -28,8 +28,8 @@ namespace tangent
 				if (prev->nonce != nonce)
 					return layer_exception("account nonce must stay frozen");
 			}
-			else if (prev->nonce >= nonce || nonce - prev->nonce > 1)
-				return layer_exception("invalid nonce (received: " + to_string(nonce) + ", expected: " + to_string(prev->nonce + 1) + ")");
+			else if (prev->nonce >= nonce || nonce - prev->nonce > protocol::now().policy.account_nonce_step_limit)
+				return layer_exception("invalid nonce (received: " + to_string(nonce) + ", expected: " + to_string(prev->nonce + 1) + "-" + to_string(prev->nonce + protocol::now().policy.account_nonce_step_limit) + ")");
 
 			return expectation::met;
 		}
