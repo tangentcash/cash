@@ -2373,7 +2373,7 @@ namespace tangent
 			if (protocol::now().user.consensus.logging)
 				VI_DEBUG("node %s query \"%.*s\" out: %s", from->peer_address().c_str(), (int)descriptor.name.size(), descriptor.name.data(), args.empty() ? "OK" : stringify::text("[%i values]", (int)args.size()).c_str());
 
-			auto result = from->push_query(descriptor, std::move(args), timeout_ms);
+			auto result = from->push_query(descriptor, std::move(args), timeout_ms, false);
 			push_messages(std::move(from));
 			return result;
 		}
@@ -2604,22 +2604,8 @@ namespace tangent
 							auto session = message.session;
 							auto forward_state = find_by_account(account);
 							auto forward_descriptor = find_descriptor(account);
-							if (forward_state)
-							{
-								auto method = callable::descriptor(it->second.name, it->first);
-								message.args.erase(message.args.begin());
-								query(uref(forward_state), method, std::move(message.args), protocol::now().user.tcp.timeout).when([this, from, forward_state, method, session](expects_rt<exchange>&& result) mutable
-								{
-									if (!result && protocol::now().user.consensus.logging)
-										VI_WARN("node %s forward query \"%.*s\" error in: %s", forward_state->peer_address().c_str(), (int)method.name.size(), method.name.data(), result.what().c_str());
-									else if (result && protocol::now().user.consensus.logging)
-										VI_DEBUG("node %s forward query \"%.*s\" result in: %s", from->peer_address().c_str(), (int)method.name.size(), method.name.data(), result ? result->args.empty() ? "OK" : stringify::text("[%i values]", (int)result->args.size()).c_str() : "RETRY");
-
-									from->push_event(session, pack_query_result(result ? expects_rt<format::variables>(std::move(result->args)) : expects_rt<format::variables>(result.error())));
-									push_messages(std::move(from));
-								});
-							}
-							else if (forward_descriptor)
+							message.args.erase(message.args.begin());
+							if (forward_descriptor)
 							{
 								message.callee = forward_descriptor;
 								auto result = it->second.query(this, uref(from), message);
@@ -2630,6 +2616,20 @@ namespace tangent
 
 								from->push_event(message.session, pack_query_result(result));
 								push_messages(uref(from));
+							}
+							else if (forward_state)
+							{
+								auto method = callable::descriptor(it->second.name, it->first);
+								query(uref(forward_state), method, std::move(message.args), protocol::now().user.tcp.timeout).when([this, from, forward_state, method, session](expects_rt<exchange>&& result) mutable
+								{
+									if (!result && protocol::now().user.consensus.logging)
+										VI_WARN("node %s forward query \"%.*s\" error in: %s", forward_state->peer_address().c_str(), (int)method.name.size(), method.name.data(), result.what().c_str());
+									else if (result && protocol::now().user.consensus.logging)
+										VI_DEBUG("node %s forward query \"%.*s\" result in: %s", from->peer_address().c_str(), (int)method.name.size(), method.name.data(), result ? result->args.empty() ? "OK" : stringify::text("[%i values]", (int)result->args.size()).c_str() : "RETRY");
+
+									from->push_event(session, pack_query_result(result ? expects_rt<format::variables>(std::move(result->args)) : expects_rt<format::variables>(result.error())));
+									push_messages(std::move(from));
+								});
 							}
 							else
 							{

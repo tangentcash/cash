@@ -158,7 +158,7 @@ namespace tangent
 		public:
 			relay(node_type new_type, void* new_instance);
 			~relay();
-			expects_promise_rt<exchange> push_query(const callable::descriptor& descriptor, format::variables&& args, uint64_t timeout_ms, bool forwarded = false);
+			expects_promise_rt<exchange> push_query(const callable::descriptor& descriptor, format::variables&& args, uint64_t timeout_ms, bool forwarded);
 			bool push_event(const callable::descriptor& descriptor, format::variables&& args);
 			void push_event(uint32_t session, format::variables&& args);
 			void push_incoming(const uint8_t* buffer, size_t size);
