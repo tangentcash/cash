@@ -1240,7 +1240,7 @@ namespace tangent
 				btree_set<algorithm::pubkeyhash_t> deferred_participants;
 				while (!aggregation_state.participants.empty())
 				{
-					auto result = coawait(dispatcher->aggregate_entropy_shares(executor, aggregation_state, *aggregation_state.participants.begin()));
+					auto result = coawait(dispatcher->aggregate_entropy_shares(executor, aggregation_state, *aggregation_state.participants.begin(), runner_wallet->public_key_hash));
 					if (!result && (result.error().is_retry() || result.error().is_shutdown()))
 						deferred_participants.insert(*aggregation_state.participants.begin());
 					else if (!result)
@@ -1287,7 +1287,7 @@ namespace tangent
 					recovery_state.encrypted_entropies[secret->as_ref_hash()] = std::move(*encrypted_entropy);
 				}
 
-				auto result = coawait(dispatcher->recover_entropy(executor, recovery_state, new_participant));
+				auto result = coawait(dispatcher->recover_entropy(executor, recovery_state, new_participant, runner_wallet->public_key_hash));
 				if (!result && (result.error().is_retry() || result.error().is_shutdown()))
 					goto postpone;
 				else if (!result)
@@ -1994,7 +1994,7 @@ namespace tangent
 					if (it == state.participants.end())
 						break;
 
-					auto result = coawait(dispatcher->aggregate_public_key(executor, state, *it));
+					auto result = coawait(dispatcher->aggregate_public_key(executor, state, *it, runner_wallet->public_key_hash));
 					if (!result && (result.error().is_retry() || result.error().is_shutdown()))
 					{
 						unavailable.insert(*it);
@@ -2048,7 +2048,7 @@ namespace tangent
 					else if (distribution_state.encrypted_shares.empty())
 						coreturn remote_exception("participant requires group shares but none were found");
 
-					auto result = coawait(dispatcher->distribute_entropy_shares(executor, distribution_state, *state.participants.begin()));
+					auto result = coawait(dispatcher->distribute_entropy_shares(executor, distribution_state, *state.participants.begin(), runner_wallet->public_key_hash));
 					if (!result && (result.error().is_retry() || result.error().is_shutdown()))
 						unavailable.insert(*state.participants.begin());
 					else if (!result)
@@ -2534,7 +2534,7 @@ namespace tangent
 						if (it == state.participants.end())
 							break;
 
-						auto subresult = coawait(dispatcher->aggregate_signature(executor, state, *it));
+						auto subresult = coawait(dispatcher->aggregate_signature(executor, state, *it, runner_wallet->public_key_hash));
 						if (!subresult && (subresult.error().is_retry() || subresult.error().is_shutdown()))
 						{
 							unavailable.insert(*it);
