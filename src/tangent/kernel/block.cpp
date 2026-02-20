@@ -3711,8 +3711,10 @@ namespace tangent
 				auto nonce_state = chain.get_uniform(states::account_nonce::as_instance_type(), nullptr, states::account_nonce::as_instance_index(item.owner), 0);
 				auto* nonce_value = (states::account_nonce*)(nonce_state ? nonce_state->ptr() : nullptr);
 				auto nonce = (nonce_value ? nonce_value->nonce : 0);
-				if (item.candidate->nonce != nonce)
-					return item.candidate->nonce < nonce ? include_decision::not_executable : include_decision::not_includable;
+				if (item.candidate->nonce < nonce)
+					return include_decision::not_executable;
+				else if (item.candidate->nonce >= nonce + protocol::now().policy.account_nonce_step_limit)
+					return include_decision::not_includable;
 			}
 			else if (item.candidate->nonce != map_nonce->second + 1)
 				return include_decision::not_includable;
