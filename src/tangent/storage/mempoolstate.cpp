@@ -687,7 +687,8 @@ namespace tangent
 		}
 		expects_lr<void> mempoolstate::add_transaction(const ledger::transaction_message& value)
 		{
-			if (has_transaction(value.as_hash()))
+			auto duplicate = has_transaction(value.as_hash());
+			if (duplicate && *duplicate)
 				return expectation::met;
 
 			format::wo_stream message;
