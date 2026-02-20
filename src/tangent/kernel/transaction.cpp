@@ -20,12 +20,15 @@ namespace tangent
 			if (gas_limit > max_gas_limit)
 				return layer_exception("gas limit requirement not met (max: " + max_gas_limit.to_string() + ")");
 
-			if (is_commitment())
+			if (!is_commitment())
 			{
-				if (!gas_price.is_zero())
+				if (gas_price.is_nan() || gas_price.is_negative())
+					return layer_exception("invalid gas price");
+
+				if (gas_price.is_positive() && algorithm::arithmetic::fixed256(gas_price) < 1)
 					return layer_exception("invalid gas price");
 			}
-			else if (gas_price.is_nan() || gas_price.is_negative())
+			else if (!gas_price.is_zero())
 				return layer_exception("invalid gas price");
 
 			if (signature.empty())
