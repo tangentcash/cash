@@ -389,20 +389,20 @@ namespace tangent
 			dispatcher_context& operator=(const dispatcher_context& other) noexcept;
 			dispatcher_context& operator=(dispatcher_context&&) noexcept = default;
 			expects_promise_rt<void> aggregate_validators(const btree_set<algorithm::pubkeyhash_t>& validators) override;
-			expects_promise_rt<void> distribute_entropy_shares(const ledger::executor_context* executor, entropy_distribution_state& state, const algorithm::pubkeyhash_t& validator) override;
-			expects_promise_rt<void> aggregate_entropy_shares(const ledger::executor_context* executor, entropy_aggregation_state& state, const algorithm::pubkeyhash_t& validator) override;
-			expects_promise_rt<void> recover_entropy(const ledger::executor_context* executor, entropy_recovery_state& state, const algorithm::pubkeyhash_t& validator) override;
-			expects_promise_rt<void> aggregate_public_key(const ledger::executor_context* executor, public_state& state, const algorithm::pubkeyhash_t& validator) override;
-			expects_promise_rt<void> aggregate_signature(const ledger::executor_context* executor, signature_state& state, const algorithm::pubkeyhash_t& validator) override;
+			expects_promise_rt<void> distribute_entropy_shares(const ledger::executor_context* executor, entropy_distribution_state& state, const algorithm::pubkeyhash_t& validator, const algorithm::pubkeyhash_t& authority) override;
+			expects_promise_rt<void> aggregate_entropy_shares(const ledger::executor_context* executor, entropy_aggregation_state& state, const algorithm::pubkeyhash_t& validator, const algorithm::pubkeyhash_t& authority) override;
+			expects_promise_rt<void> recover_entropy(const ledger::executor_context* executor, entropy_recovery_state& state, const algorithm::pubkeyhash_t& validator, const algorithm::pubkeyhash_t& authority) override;
+			expects_promise_rt<void> aggregate_public_key(const ledger::executor_context* executor, public_state& state, const algorithm::pubkeyhash_t& validator, const algorithm::pubkeyhash_t& authority) override;
+			expects_promise_rt<void> aggregate_signature(const ledger::executor_context* executor, signature_state& state, const algorithm::pubkeyhash_t& validator, const algorithm::pubkeyhash_t& authority) override;
 			algorithm::pubkey_t get_public_key(const algorithm::pubkeyhash_t& validator) const override;
 			const ledger::wallet* get_runner_wallet(const algorithm::pubkeyhash_t& validator) const override;
 
 		private:
-			expects_promise_rt<void> distribute_entropy_shares_internal(const ledger::executor_context* executor, entropy_distribution_state& state, const algorithm::pubkeyhash_t& validator);
-			expects_promise_rt<void> aggregate_entropy_shares_internal(const ledger::executor_context* executor, entropy_aggregation_state& state, const algorithm::pubkeyhash_t& validator);
-			expects_promise_rt<void> recover_entropy_internal(const ledger::executor_context* executor, entropy_recovery_state& state, const algorithm::pubkeyhash_t& validator);
-			expects_promise_rt<void> aggregate_public_key_internal(const ledger::executor_context* executor, public_state& state, const algorithm::pubkeyhash_t& validator);
-			expects_promise_rt<void> aggregate_signature_internal(const ledger::executor_context* executor, signature_state& state, const algorithm::pubkeyhash_t& validator);
+			expects_promise_rt<void> distribute_entropy_shares_internal(const ledger::executor_context* executor, entropy_distribution_state& state, const algorithm::pubkeyhash_t& validator, const algorithm::pubkeyhash_t& authority);
+			expects_promise_rt<void> aggregate_entropy_shares_internal(const ledger::executor_context* executor, entropy_aggregation_state& state, const algorithm::pubkeyhash_t& validator, const algorithm::pubkeyhash_t& authority);
+			expects_promise_rt<void> recover_entropy_internal(const ledger::executor_context* executor, entropy_recovery_state& state, const algorithm::pubkeyhash_t& validator, const algorithm::pubkeyhash_t& authority);
+			expects_promise_rt<void> aggregate_public_key_internal(const ledger::executor_context* executor, public_state& state, const algorithm::pubkeyhash_t& validator, const algorithm::pubkeyhash_t& authority);
+			expects_promise_rt<void> aggregate_signature_internal(const ledger::executor_context* executor, signature_state& state, const algorithm::pubkeyhash_t& validator, const algorithm::pubkeyhash_t& authority);
 		};
 
 		class local_dispatcher_context final : public ledger::dispatcher_context
@@ -417,11 +417,11 @@ namespace tangent
 			local_dispatcher_context& operator=(const local_dispatcher_context& other) noexcept;
 			local_dispatcher_context& operator=(local_dispatcher_context&&) noexcept = default;
 			expects_promise_rt<void> aggregate_validators(const btree_set<algorithm::pubkeyhash_t>& validators) override;
-			expects_promise_rt<void> distribute_entropy_shares(const ledger::executor_context* executor, entropy_distribution_state& state, const algorithm::pubkeyhash_t& validator) override;
-			expects_promise_rt<void> aggregate_entropy_shares(const ledger::executor_context* executor, entropy_aggregation_state& state, const algorithm::pubkeyhash_t& validator) override;
-			expects_promise_rt<void> recover_entropy(const ledger::executor_context* executor, entropy_recovery_state& state, const algorithm::pubkeyhash_t& validator) override;
-			expects_promise_rt<void> aggregate_public_key(const ledger::executor_context* executor, public_state& state, const algorithm::pubkeyhash_t& validator) override;
-			expects_promise_rt<void> aggregate_signature(const ledger::executor_context* executor, signature_state& state, const algorithm::pubkeyhash_t& validator) override;
+			expects_promise_rt<void> distribute_entropy_shares(const ledger::executor_context* executor, entropy_distribution_state& state, const algorithm::pubkeyhash_t& validator, const algorithm::pubkeyhash_t& authority) override;
+			expects_promise_rt<void> aggregate_entropy_shares(const ledger::executor_context* executor, entropy_aggregation_state& state, const algorithm::pubkeyhash_t& validator, const algorithm::pubkeyhash_t& authority) override;
+			expects_promise_rt<void> recover_entropy(const ledger::executor_context* executor, entropy_recovery_state& state, const algorithm::pubkeyhash_t& validator, const algorithm::pubkeyhash_t& authority) override;
+			expects_promise_rt<void> aggregate_public_key(const ledger::executor_context* executor, public_state& state, const algorithm::pubkeyhash_t& validator, const algorithm::pubkeyhash_t& authority) override;
+			expects_promise_rt<void> aggregate_signature(const ledger::executor_context* executor, signature_state& state, const algorithm::pubkeyhash_t& validator, const algorithm::pubkeyhash_t& authority) override;
 			algorithm::pubkey_t get_public_key(const algorithm::pubkeyhash_t& validator) const override;
 			const ledger::wallet* get_runner_wallet(const algorithm::pubkeyhash_t& validator) const override;
 

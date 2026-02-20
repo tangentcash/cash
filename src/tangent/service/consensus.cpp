@@ -1594,7 +1594,7 @@ namespace tangent
 
 			auto public_key = find_public_key(((transactions::route*)*proof_transaction->transaction)->get_attester(proof_transaction->receipt));
 			if (!public_key)
-				return remote_exception("node public key not found");
+				return remote_exception("attester public key not found");
 
 			uint8_t encrypted_shares_size;
 			auto reader = format::ro_stream(packed->at(2).as_string());
@@ -1646,7 +1646,7 @@ namespace tangent
 
 			auto public_key = find_public_key(proof_transaction->receipt.from);
 			if (!public_key)
-				return remote_exception("node public key not found");
+				return remote_exception("initiator public key not found");
 
 			auto intermediate = string();
 			auto reader = format::ro_stream(packed->at(2).as_string());
@@ -1710,7 +1710,7 @@ namespace tangent
 
 			auto public_key = find_public_key(proof_transaction->receipt.from);
 			if (!public_key)
-				return remote_exception("node public key not found");
+				return remote_exception("initiator public key not found");
 
 			auto reader = format::ro_stream(packed->at(2).as_string());
 			auto compositor = ledger::dispatcher_context::entropy_recovery_state();
@@ -1748,7 +1748,7 @@ namespace tangent
 
 			auto public_key = find_public_key(((transactions::route*)*proof_transaction->transaction)->get_attester(proof_transaction->receipt));
 			if (!public_key)
-				return remote_exception("node public key not found");
+				return remote_exception("attester public key not found");
 
 			auto reader = format::ro_stream(packed->at(2).as_string());
 			auto compositor = algorithm::composition::load_compositor(reader);
@@ -1807,7 +1807,7 @@ namespace tangent
 
 			auto public_key = find_public_key(((transactions::withdraw*)*proof_transaction->transaction)->get_attester(proof_transaction->receipt));
 			if (!public_key)
-				return remote_exception("node public key not found");
+				return remote_exception("attester public key not found");
 
 			auto reader = format::ro_stream(packed->at(2).as_string());
 			auto message = superchain::prepared_transaction();
@@ -3863,12 +3863,12 @@ namespace tangent
 				}
 			});
 		}
-		expects_promise_rt<void> dispatcher_context::distribute_entropy_shares(const ledger::executor_context* executor, entropy_distribution_state& state, const algorithm::pubkeyhash_t& validator)
+		expects_promise_rt<void> dispatcher_context::distribute_entropy_shares(const ledger::executor_context* executor, entropy_distribution_state& state, const algorithm::pubkeyhash_t& validator, const algorithm::pubkeyhash_t& authority)
 		{
 			if (protocol::now().user.consensus.logging)
 				VI_DEBUG("mpc entropy shares distribution: inquiry to %s", algorithm::signing::encode_address(validator).c_str());
 
-			return distribute_entropy_shares_internal(executor, state, validator).then<expects_rt<void>>([&state, validator](expects_rt<void>&& result) mutable -> expects_rt<void>
+			return distribute_entropy_shares_internal(executor, state, validator, authority).then<expects_rt<void>>([&state, validator](expects_rt<void>&& result) mutable -> expects_rt<void>
 			{
 				if (result)
 				{
@@ -3886,17 +3886,21 @@ namespace tangent
 				}
 			});
 		}
-		expects_promise_rt<void> dispatcher_context::distribute_entropy_shares_internal(const ledger::executor_context* executor, entropy_distribution_state& state, const algorithm::pubkeyhash_t& validator)
+		expects_promise_rt<void> dispatcher_context::distribute_entropy_shares_internal(const ledger::executor_context* executor, entropy_distribution_state& state, const algorithm::pubkeyhash_t& validator, const algorithm::pubkeyhash_t& authority)
 		{
 			auto* runner_wallet = get_runner_wallet(validator);
 			if (runner_wallet != nullptr)
 				return local_dispatcher_context::distribute_entropy_shares(this, executor, runner_wallet, state.encrypted_shares);
 
+			auto* authority_descriptor = server->find_descriptor(authority);
+			if (!authority_descriptor)
+				return expects_promise_rt<void>(remote_exception("attester with decryption authority not found"));
+
 			auto public_key = server->find_public_key(validator);
 			if (!public_key)
 				return expects_promise_rt<void>(remote_exception::retry_later());
 
-			return coasync<expects_rt<void>>([this, executor, &state, validator, public_key = std::move(public_key)]() mutable -> expects_promise_rt<void>
+			return coasync<expects_rt<void>>([this, executor, &state, validator, authority_descriptor, public_key = std::move(public_key)]() mutable -> expects_promise_rt<void>
 			{
 				uint64_t attempt = 0;
 				auto args = pack_private_result({ format::variable(executor->receipt.block_number), format::variable(executor->receipt.transaction_hash), format::variable(state.as_message().data) }, *public_key);
@@ -3913,7 +3917,7 @@ namespace tangent
 					coreturn is_retry || !server->is_active() ? remote_exception::retry_later() : event.error();
 				}
 
-				args = unpack_private_result(event->args, server->runner_descriptor->second.secret_key);
+				args = unpack_private_result(event->args, authority_descriptor);
 				if (!args)
 					coreturn args.error();
 
@@ -3923,12 +3927,12 @@ namespace tangent
 				coreturn expectation::met;
 			});
 		}
-		expects_promise_rt<void> dispatcher_context::aggregate_entropy_shares(const ledger::executor_context* executor, entropy_aggregation_state& state, const algorithm::pubkeyhash_t& validator)
+		expects_promise_rt<void> dispatcher_context::aggregate_entropy_shares(const ledger::executor_context* executor, entropy_aggregation_state& state, const algorithm::pubkeyhash_t& validator, const algorithm::pubkeyhash_t& authority)
 		{
 			if (protocol::now().user.consensus.logging)
 				VI_DEBUG("mpc entropy shares aggregation: inquiry to %s", algorithm::signing::encode_address(validator).c_str());
 
-			return aggregate_entropy_shares_internal(executor, state, validator).then<expects_rt<void>>([&state, validator](expects_rt<void>&& result) mutable -> expects_rt<void>
+			return aggregate_entropy_shares_internal(executor, state, validator, authority).then<expects_rt<void>>([&state, validator](expects_rt<void>&& result) mutable -> expects_rt<void>
 			{
 				if (result)
 				{
@@ -3946,17 +3950,21 @@ namespace tangent
 				}
 			});
 		}
-		expects_promise_rt<void> dispatcher_context::aggregate_entropy_shares_internal(const ledger::executor_context* executor, entropy_aggregation_state& state, const algorithm::pubkeyhash_t& validator)
+		expects_promise_rt<void> dispatcher_context::aggregate_entropy_shares_internal(const ledger::executor_context* executor, entropy_aggregation_state& state, const algorithm::pubkeyhash_t& validator, const algorithm::pubkeyhash_t& authority)
 		{
 			auto* runner_wallet = get_runner_wallet(validator);
 			if (runner_wallet != nullptr)
 				return local_dispatcher_context::aggregate_entropy_shares(this, executor, runner_wallet, state.public_key, state.encrypted_shares);
 
+			auto* authority_descriptor = server->find_descriptor(authority);
+			if (!authority_descriptor)
+				return expects_promise_rt<void>(remote_exception("attester with decryption authority not found"));
+
 			auto public_key = server->find_public_key(validator);
 			if (!public_key)
 				return expects_promise_rt<void>(remote_exception::retry_later());
 
-			return coasync<expects_rt<void>>([this, executor, &state, validator, public_key = std::move(public_key)]() mutable -> expects_promise_rt<void>
+			return coasync<expects_rt<void>>([this, executor, &state, validator, authority_descriptor, public_key = std::move(public_key)]() mutable -> expects_promise_rt<void>
 			{
 				uint64_t attempt = 0;
 				auto args = pack_private_result({ format::variable(executor->receipt.block_number), format::variable(executor->receipt.transaction_hash), format::variable(state.as_message().data) }, *public_key);
@@ -3973,7 +3981,7 @@ namespace tangent
 					coreturn is_retry || !server->is_active() ? remote_exception::retry_later() : event.error();
 				}
 
-				args = unpack_private_result(event->args, server->runner_descriptor->second.secret_key);
+				args = unpack_private_result(event->args, authority_descriptor);
 				if (!args)
 					coreturn args.error();
 
@@ -4009,12 +4017,12 @@ namespace tangent
 				coreturn expectation::met;
 			});
 		}
-		expects_promise_rt<void> dispatcher_context::recover_entropy(const ledger::executor_context* executor, entropy_recovery_state& state, const algorithm::pubkeyhash_t& validator)
+		expects_promise_rt<void> dispatcher_context::recover_entropy(const ledger::executor_context* executor, entropy_recovery_state& state, const algorithm::pubkeyhash_t& validator, const algorithm::pubkeyhash_t& authority)
 		{
 			if (protocol::now().user.consensus.logging)
 				VI_DEBUG("mpc entropy recovery: inquiry to %s", algorithm::signing::encode_address(validator).c_str());
 
-			return recover_entropy_internal(executor, state, validator).then<expects_rt<void>>([&state, validator](expects_rt<void>&& result) mutable -> expects_rt<void>
+			return recover_entropy_internal(executor, state, validator, authority).then<expects_rt<void>>([&state, validator](expects_rt<void>&& result) mutable -> expects_rt<void>
 			{
 				if (result)
 				{
@@ -4032,17 +4040,21 @@ namespace tangent
 				}
 			});
 		}
-		expects_promise_rt<void> dispatcher_context::recover_entropy_internal(const ledger::executor_context* executor, entropy_recovery_state& state, const algorithm::pubkeyhash_t& validator)
+		expects_promise_rt<void> dispatcher_context::recover_entropy_internal(const ledger::executor_context* executor, entropy_recovery_state& state, const algorithm::pubkeyhash_t& validator, const algorithm::pubkeyhash_t& authority)
 		{
 			auto* runner_wallet = get_runner_wallet(validator);
 			if (runner_wallet != nullptr)
 				return local_dispatcher_context::recover_entropy(this, executor, runner_wallet, state.proof, state.encrypted_shares, state.encrypted_entropies);
 
+			auto* authority_descriptor = server->find_descriptor(authority);
+			if (!authority_descriptor)
+				return expects_promise_rt<void>(remote_exception("attester with decryption authority not found"));
+
 			auto public_key = server->find_public_key(validator);
 			if (!public_key)
 				return expects_promise_rt<void>(remote_exception::retry_later());
 
-			return coasync<expects_rt<void>>([this, executor, &state, validator, public_key = std::move(public_key)]() mutable -> expects_promise_rt<void>
+			return coasync<expects_rt<void>>([this, executor, &state, validator, authority_descriptor, public_key = std::move(public_key)]() mutable -> expects_promise_rt<void>
 			{
 				uint64_t attempt = 0;
 				auto args = pack_private_result({ format::variable(executor->receipt.block_number), format::variable(executor->receipt.transaction_hash), format::variable(state.as_message().data) }, *public_key);
@@ -4059,7 +4071,7 @@ namespace tangent
 					coreturn is_retry || !server->is_active() ? remote_exception::retry_later() : event.error();
 				}
 
-				args = unpack_private_result(event->args, server->runner_descriptor->second.secret_key);
+				args = unpack_private_result(event->args, authority_descriptor);
 				if (!args)
 					coreturn args.error();
 
@@ -4073,12 +4085,12 @@ namespace tangent
 				coreturn expectation::met;
 			});
 		}
-		expects_promise_rt<void> dispatcher_context::aggregate_public_key(const ledger::executor_context* executor, public_state& state, const algorithm::pubkeyhash_t& validator)
+		expects_promise_rt<void> dispatcher_context::aggregate_public_key(const ledger::executor_context* executor, public_state& state, const algorithm::pubkeyhash_t& validator, const algorithm::pubkeyhash_t& authority)
 		{
 			if (protocol::now().user.consensus.logging)
 				VI_DEBUG("mpc public key aggregation: inquiry to %s", algorithm::signing::encode_address(validator).c_str());
 
-			return aggregate_public_key_internal(executor, state, validator).then<expects_rt<void>>([&state, validator](expects_rt<void>&& result) mutable -> expects_rt<void>
+			return aggregate_public_key_internal(executor, state, validator, authority).then<expects_rt<void>>([&state, validator](expects_rt<void>&& result) mutable -> expects_rt<void>
 			{
 				if (result)
 				{
@@ -4096,7 +4108,7 @@ namespace tangent
 				}
 			});
 		}
-		expects_promise_rt<void> dispatcher_context::aggregate_public_key_internal(const ledger::executor_context* executor, public_state& state, const algorithm::pubkeyhash_t& validator)
+		expects_promise_rt<void> dispatcher_context::aggregate_public_key_internal(const ledger::executor_context* executor, public_state& state, const algorithm::pubkeyhash_t& validator, const algorithm::pubkeyhash_t& authority)
 		{
 			auto* runner_wallet = get_runner_wallet(validator);
 			if (runner_wallet != nullptr)
@@ -4108,11 +4120,15 @@ namespace tangent
 				return status;
 			}
 
+			auto* authority_descriptor = server->find_descriptor(authority);
+			if (!authority_descriptor)
+				return expects_promise_rt<void>(remote_exception("attester with decryption authority not found"));
+
 			auto public_key = server->find_public_key(validator);
 			if (!public_key)
 				return expects_promise_rt<void>(remote_exception::retry_later());
 
-			return coasync<expects_rt<void>>([this, executor, &state, validator, public_key = std::move(public_key)]() mutable -> expects_promise_rt<void>
+			return coasync<expects_rt<void>>([this, executor, &state, validator, authority_descriptor, public_key = std::move(public_key)]() mutable -> expects_promise_rt<void>
 			{
 				format::wo_stream writer;
 				if (!algorithm::composition::store_compositor(state.alg, *state.compositor, &writer))
@@ -4138,7 +4154,7 @@ namespace tangent
 					coreturn is_retry || !server->is_active() ? remote_exception::retry_later() : event.error();
 				}
 
-				args = unpack_private_result(event->args, server->runner_descriptor->second.secret_key);
+				args = unpack_private_result(event->args, authority_descriptor);
 				if (!args)
 					coreturn args.error();
 
@@ -4161,12 +4177,12 @@ namespace tangent
 				coreturn expectation::met;
 			});
 		}
-		expects_promise_rt<void> dispatcher_context::aggregate_signature(const ledger::executor_context* executor, signature_state& state, const algorithm::pubkeyhash_t& validator)
+		expects_promise_rt<void> dispatcher_context::aggregate_signature(const ledger::executor_context* executor, signature_state& state, const algorithm::pubkeyhash_t& validator, const algorithm::pubkeyhash_t& authority)
 		{
 			if (protocol::now().user.consensus.logging)
 				VI_DEBUG("mpc signature aggregation: inquiry to %s", algorithm::signing::encode_address(validator).c_str());
 
-			return aggregate_signature_internal(executor, state, validator).then<expects_rt<void>>([&state, validator](expects_rt<void>&& result) mutable -> expects_rt<void>
+			return aggregate_signature_internal(executor, state, validator, authority).then<expects_rt<void>>([&state, validator](expects_rt<void>&& result) mutable -> expects_rt<void>
 			{
 				if (result)
 				{
@@ -4184,17 +4200,21 @@ namespace tangent
 				}
 			});
 		}
-		expects_promise_rt<void> dispatcher_context::aggregate_signature_internal(const ledger::executor_context* executor, signature_state& state, const algorithm::pubkeyhash_t& validator)
+		expects_promise_rt<void> dispatcher_context::aggregate_signature_internal(const ledger::executor_context* executor, signature_state& state, const algorithm::pubkeyhash_t& validator, const algorithm::pubkeyhash_t& authority)
 		{
 			auto* runner_wallet = get_runner_wallet(validator);
 			if (runner_wallet != nullptr)
 				return local_dispatcher_context::aggregate_signature(this, executor, runner_wallet, **state.message, *state.compositor);
 
+			auto* authority_descriptor = server->find_descriptor(authority);
+			if (!authority_descriptor)
+				return expects_promise_rt<void>(remote_exception("attester with decryption authority not found"));
+
 			auto public_key = server->find_public_key(validator);
 			if (!public_key)
 				return expects_promise_rt<void>(remote_exception::retry_later());
 
-			return coasync<expects_rt<void>>([this, executor, &state, validator, public_key = std::move(public_key)]() mutable -> expects_promise_rt<void>
+			return coasync<expects_rt<void>>([this, executor, &state, validator, authority_descriptor, public_key = std::move(public_key)]() mutable -> expects_promise_rt<void>
 			{
 				format::wo_stream writer;
 				if (!algorithm::composition::store_compositor(state.alg, *state.compositor, &writer))
@@ -4215,7 +4235,7 @@ namespace tangent
 					coreturn is_retry || !server->is_active() ? remote_exception::retry_later() : event.error();
 				}
 
-				args = unpack_private_result(event->args, server->runner_descriptor->second.secret_key);
+				args = unpack_private_result(event->args, authority_descriptor);
 				if (!args)
 					coreturn args.error();
 
@@ -4260,7 +4280,7 @@ namespace tangent
 		{
 			return expects_promise_rt<void>(expectation::met);
 		}
-		expects_promise_rt<void> local_dispatcher_context::distribute_entropy_shares(const ledger::executor_context* executor, entropy_distribution_state& state, const algorithm::pubkeyhash_t& validator)
+		expects_promise_rt<void> local_dispatcher_context::distribute_entropy_shares(const ledger::executor_context* executor, entropy_distribution_state& state, const algorithm::pubkeyhash_t& validator, const algorithm::pubkeyhash_t& authority)
 		{
 			auto* runner_wallet = get_runner_wallet(validator);
 			if (!runner_wallet)
@@ -4298,7 +4318,7 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_promise_rt<void> local_dispatcher_context::aggregate_entropy_shares(const ledger::executor_context* executor, entropy_aggregation_state& state, const algorithm::pubkeyhash_t& validator)
+		expects_promise_rt<void> local_dispatcher_context::aggregate_entropy_shares(const ledger::executor_context* executor, entropy_aggregation_state& state, const algorithm::pubkeyhash_t& validator, const algorithm::pubkeyhash_t& authority)
 		{
 			auto* runner_wallet = get_runner_wallet(validator);
 			if (!runner_wallet)
@@ -4375,7 +4395,7 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_promise_rt<void> local_dispatcher_context::recover_entropy(const ledger::executor_context* executor, entropy_recovery_state& state, const algorithm::pubkeyhash_t& validator)
+		expects_promise_rt<void> local_dispatcher_context::recover_entropy(const ledger::executor_context* executor, entropy_recovery_state& state, const algorithm::pubkeyhash_t& validator, const algorithm::pubkeyhash_t& authority)
 		{
 			auto* runner_wallet = get_runner_wallet(validator);
 			if (!runner_wallet)
@@ -4490,7 +4510,7 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_promise_rt<void> local_dispatcher_context::aggregate_public_key(const ledger::executor_context* executor, public_state& state, const algorithm::pubkeyhash_t& validator)
+		expects_promise_rt<void> local_dispatcher_context::aggregate_public_key(const ledger::executor_context* executor, public_state& state, const algorithm::pubkeyhash_t& validator, const algorithm::pubkeyhash_t& authority)
 		{
 			auto* runner_wallet = get_runner_wallet(validator);
 			if (!runner_wallet)
@@ -4571,7 +4591,7 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_promise_rt<void> local_dispatcher_context::aggregate_signature(const ledger::executor_context* executor, signature_state& state, const algorithm::pubkeyhash_t& validator)
+		expects_promise_rt<void> local_dispatcher_context::aggregate_signature(const ledger::executor_context* executor, signature_state& state, const algorithm::pubkeyhash_t& validator, const algorithm::pubkeyhash_t& authority)
 		{
 			auto* runner_wallet = get_runner_wallet(validator);
 			if (!runner_wallet)

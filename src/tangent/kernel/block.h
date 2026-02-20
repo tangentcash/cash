@@ -512,11 +512,11 @@ namespace tangent
 			virtual expects_lr<secret_entropy> apply_secret_entropy(const wallet* runner_wallet, const algorithm::pubkeyhash_t& owner, const algorithm::asset_id& asset, const uint256_t& hash, const algorithm::storage_type<uint8_t, 64>& entropy, btree_map<algorithm::pubkeyhash_t, secret_entropy::share_pair>&& shares);
 			virtual expects_lr<secret_entropy> recover_secret_entropy(const wallet* runner_wallet, const algorithm::pubkeyhash_t& owner, const algorithm::asset_id& asset, const uint256_t& hash);
 			virtual expects_promise_rt<void> aggregate_validators(const btree_set<algorithm::pubkeyhash_t>& validators) = 0;
-			virtual expects_promise_rt<void> distribute_entropy_shares(const executor_context* executor, entropy_distribution_state& state, const algorithm::pubkeyhash_t& validator) = 0;
-			virtual expects_promise_rt<void> aggregate_entropy_shares(const executor_context* executor, entropy_aggregation_state& state, const algorithm::pubkeyhash_t& validator) = 0;
-			virtual expects_promise_rt<void> recover_entropy(const executor_context* executor, entropy_recovery_state& state, const algorithm::pubkeyhash_t& validator) = 0;
-			virtual expects_promise_rt<void> aggregate_public_key(const executor_context* executor, public_state& state, const algorithm::pubkeyhash_t& validator) = 0;
-			virtual expects_promise_rt<void> aggregate_signature(const executor_context* executor, signature_state& state, const algorithm::pubkeyhash_t& validator) = 0;
+			virtual expects_promise_rt<void> distribute_entropy_shares(const executor_context* executor, entropy_distribution_state& state, const algorithm::pubkeyhash_t& validator, const algorithm::pubkeyhash_t& authority) = 0;
+			virtual expects_promise_rt<void> aggregate_entropy_shares(const executor_context* executor, entropy_aggregation_state& state, const algorithm::pubkeyhash_t& validator, const algorithm::pubkeyhash_t& authority) = 0;
+			virtual expects_promise_rt<void> recover_entropy(const executor_context* executor, entropy_recovery_state& state, const algorithm::pubkeyhash_t& validator, const algorithm::pubkeyhash_t& authority) = 0;
+			virtual expects_promise_rt<void> aggregate_public_key(const executor_context* executor, public_state& state, const algorithm::pubkeyhash_t& validator, const algorithm::pubkeyhash_t& authority) = 0;
+			virtual expects_promise_rt<void> aggregate_signature(const executor_context* executor, signature_state& state, const algorithm::pubkeyhash_t& validator, const algorithm::pubkeyhash_t& authority) = 0;
 			virtual expects_lr<void> checkpoint();
 			virtual promise<void> dispatch_async(uint64_t block_number);
 			virtual void dispatch_sync(uint64_t block_number);
