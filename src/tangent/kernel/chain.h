@@ -164,17 +164,10 @@ namespace tangent
 				vector<string> accounts;
 				string address = "0.0.0.0";
 				uint16_t port = 18418;
-				uint64_t time_offset = 300000;
 				uint32_t max_inbound_connections = 64;
 				uint32_t max_outbound_connections = 8;
 				uint64_t inventory_timeout = 300000;
 				uint32_t inventory_size = 65536;
-				uint64_t transaction_timeout = 14400000;
-				uint64_t commitment_timeout = 7200000;
-				uint32_t topology_timeout = 180000;
-				uint32_t attestation_timeout = 600000;
-				uint64_t response_timeout = 48000;
-				uint64_t dispatch_retry_interval = 120000;
 				uint64_t aggregation_attempts = 6;
 				uint64_t aggregation_cooldown = 2000;
 				uint8_t coordination_attempts = 15;
@@ -193,7 +186,7 @@ namespace tangent
 			struct
 			{
 				uptr<format::tree> options;
-				uint64_t polling_frequency = 70000;
+				uint64_t polling_frequency = 90000;
 				uint32_t cache1_size = 4096;
 				uint32_t cache2_size = 16384;
 				bool listener = false;
@@ -211,7 +204,7 @@ namespace tangent
 			} rpc;
 			struct
 			{
-				uint64_t timeout = 15000;
+				uint64_t timeout = 30000;
 				uint64_t keep_alive = 5000;
 				uint64_t mbps_per_socket = 24;
 				uint64_t tls_trusted_peers = 100;
@@ -263,6 +256,7 @@ namespace tangent
 			uint64_t transactions_per_query = 32;
 			uint64_t items_per_query = 512;
 			uint64_t pages_per_query = 64;
+			uint64_t timestamp_delta = 300000;
 		} message;
 		struct protocol_account_config
 		{

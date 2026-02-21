@@ -1,6 +1,7 @@
 #include "chainstate.h"
 #include "../policy/transactions.h"
 #include "../policy/states.h"
+#define DISPATCH_INTERVAL 120000
 #define BLOB_BLOCK 'b'
 #define BLOB_TRANSACTION 't'
 #define BLOB_RECEIPT 'r'
@@ -1132,7 +1133,7 @@ namespace tangent
 				}
 
 				schema_list map;
-				map.push_back(var::set::integer(protocol::now().time.now_cpu() + protocol::now().user.consensus.dispatch_retry_interval));
+				map.push_back(var::set::integer(protocol::now().time.now_cpu() + DISPATCH_INTERVAL));
 				map.push_back(var::set::string(*sqlite::utils::inline_array(std::move(hashes))));
 
 				auto cursor = get_tx_storage().emplace_query(__func__, "UPDATE transactions SET dispatch_time = ? WHERE transaction_hash IN ($?)", &map);

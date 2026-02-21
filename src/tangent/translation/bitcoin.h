@@ -74,6 +74,9 @@ namespace tangent
 				chainparams netdata;
 
 			public:
+				bool all_address_types = false;
+
+			public:
 				bitcoin(const algorithm::asset_id& new_asset) noexcept;
 				virtual ~bitcoin() override;
 				virtual expects_promise_rt<uint64_t> get_latest_block_height() override;

@@ -145,11 +145,32 @@ namespace tangent
 		expects_lr<void> deploy::validate(uint64_t block_number) const
 		{
 			auto type = get_data_type();
-			if (!type)
-				return layer_exception("invalid data type");
-			else if (*type == data_type::hashcode && data.size() != 65)
-				return layer_exception("invalid hashcode data");
+			switch (type.or_else((data_type)255))
+			{
+				case data_type::program:
+				{
+					auto storage = std::string_view(data).substr(1);
+					if (storage.size() > 24576)
+						return layer_exception("calldata size exceeds 24 kb limit");
 
+					auto code = algorithm::encoding::unpack_program(storage);
+					if (!code)
+						return code.error();
+
+					auto result = script::factory::get()->compile_module(format::util::encode_0xhex(algorithm::hashing::ppc512(*code)), [&]() mutable { return std::move(code); });
+					if (!result)
+						return result.error();
+					break;
+				}
+				case data_type::hashcode:
+				{
+					if (data.size() != 65)
+						return layer_exception("invalid hashcode data");
+					break;
+				}
+				default:
+					return layer_exception("invalid data type");
+			}
 			return ledger::transaction_message::validate(block_number);
 		}
 		expects_lr<void> deploy::execute(ledger::executor_context* executor) const
@@ -161,8 +182,7 @@ namespace tangent
 			auto account = get_account();
 			auto storage = std::string_view(data).substr(1);
 			auto type = get_data_type().or_else(data_type::hashcode);
-			auto* factory = script::factory::get();
-			auto pmodule = script::cmodule(nullptr);
+			auto entrypoint = script::cmodule(nullptr);
 			switch (type)
 			{
 				case data_type::program:
@@ -172,7 +192,7 @@ namespace tangent
 						return code.error();
 
 					auto hashcode = algorithm::hashing::ppc512(*code);
-					auto result = factory->compile_module(format::util::encode_0xhex(hashcode), [&]() mutable { return std::move(code); });
+					auto result = script::factory::get()->compile_module(format::util::encode_0xhex(hashcode), [&]() mutable { return std::move(code); });
 					if (!result)
 						return result.error();
 
@@ -190,7 +210,7 @@ namespace tangent
 					if (!status)
 						return status.error();
 
-					pmodule = std::move(*result);
+					entrypoint = std::move(*result);
 					break;
 				}
 				case data_type::hashcode:
@@ -199,7 +219,7 @@ namespace tangent
 					if (!program)
 						return layer_exception("program is not stored");
 
-					auto result = factory->compile_module(format::util::encode_0xhex(storage), [&]() { return program->as_code(); });
+					auto result = script::factory::get()->compile_module(format::util::encode_0xhex(storage), [&]() { return program->as_code(); });
 					if (!result)
 						return result.error();
 
@@ -207,14 +227,14 @@ namespace tangent
 					if (!status)
 						return status.error();
 
-					pmodule = std::move(*result);
+					entrypoint = std::move(*result);
 					break;
 				}
 				default:
 					return layer_exception("invalid data type");
 			}
 
-			auto script = script::program(executor, pmodule->get_module());
+			auto script = script::program(executor, entrypoint->get_module());
 			return script.execute(script::ccall::deploy_call, script.deploy_function(), args, nullptr);
 		}
 		bool deploy::store_body(format::wo_stream* stream) const
@@ -331,7 +351,7 @@ namespace tangent
 
 		expects_lr<void> call::validate(uint64_t block_number) const
 		{
-			if (function.empty())
+			if (function.empty() || function.size() > 256)
 				return layer_exception("invalid function call");
 
 			hash_set<algorithm::asset_id> duplicates;

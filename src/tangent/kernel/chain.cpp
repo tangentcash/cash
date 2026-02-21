@@ -466,7 +466,7 @@ namespace tangent
 		for (auto& item : offsets)
 			time_offsets.push_back(std::make_pair(std::string_view(item.first), item.second));
 
-		auto& peer = protocol::now().user.consensus;
+		auto& message = protocol::now().message;
 		std::sort(time_offsets.begin(), time_offsets.end(), [](const time_source& a, const time_source& b)
 		{
 			return a.second < b.second;
@@ -474,14 +474,14 @@ namespace tangent
 
 		bool is_severe_desync = false;
 		auto& median_time = time_offsets[time_offsets.size() / 2];
-		if (median_time.second > (int64_t)peer.time_offset)
+		if (median_time.second > (int64_t)message.timestamp_delta)
 		{
-			median_time.second = (int64_t)peer.time_offset;
+			median_time.second = (int64_t)message.timestamp_delta;
 			is_severe_desync = true;
 		}
-		else if (median_time.second < -(int64_t)peer.time_offset)
+		else if (median_time.second < -(int64_t)message.timestamp_delta)
 		{
-			median_time.second = -(int64_t)peer.time_offset;
+			median_time.second = -(int64_t)message.timestamp_delta;
 			is_severe_desync = true;
 		}
 
@@ -615,10 +615,6 @@ namespace tangent
 			if (value != nullptr && value->value.is_integer())
 				user.consensus.port = value->value.as_uint16();
 
-			value = config->child("consensus.time_offset");
-			if (value != nullptr && value->value.is_integer())
-				user.consensus.time_offset = value->value.as_uint64();
-
 			value = config->child("consensus.max_inbound_connections");
 			if (value != nullptr && value->value.is_integer())
 				user.consensus.max_inbound_connections = value->value.as_uint32();
@@ -635,18 +631,6 @@ namespace tangent
 			if (value != nullptr && value->value.is_integer())
 				user.consensus.inventory_size = value->value.as_uint32();
 
-			value = config->child("consensus.topology_timeout");
-			if (value != nullptr && value->value.is_integer())
-				user.consensus.topology_timeout = value->value.as_uint32();
-
-			value = config->child("consensus.attestation_timeout");
-			if (value != nullptr && value->value.is_integer())
-				user.consensus.attestation_timeout = value->value.as_uint32();
-			
-			value = config->child("consensus.response_timeout");
-			if (value != nullptr && value->value.is_integer())
-				user.consensus.response_timeout = value->value.as_uint64();
-
 			value = config->child("consensus.aggregation_attempts");
 			if (value != nullptr && value->value.is_integer())
 				user.consensus.aggregation_attempts = value->value.as_uint64();
@@ -658,18 +642,6 @@ namespace tangent
 			value = config->child("consensus.coordination_attempts");
 			if (value != nullptr && value->value.is_integer())
 				user.consensus.coordination_attempts = value->value.as_uint8();
-
-			value = config->child("consensus.dispatch_retry_interval");
-			if (value != nullptr && value->value.is_integer())
-				user.consensus.dispatch_retry_interval = value->value.as_uint64();
-
-			value = config->child("consensus.commitment_timeout");
-			if (value != nullptr && value->value.is_integer())
-				user.consensus.commitment_timeout = value->value.as_uint64();
-
-			value = config->child("consensus.transaction_timeout");
-			if (value != nullptr && value->value.is_integer())
-				user.consensus.transaction_timeout = value->value.as_uint64();
 
 			value = config->child("consensus.reorganizable");
 			if (value != nullptr && value->value.is_boolean())

@@ -3274,10 +3274,10 @@ namespace tangent
 			bind_query(descriptors::recover_entropy(), std::bind(&server_node::recover_entropy, this, std::placeholders::_2, std::placeholders::_3));
 			bind_query(descriptors::aggregate_public_key(), std::bind(&server_node::aggregate_public_key, this, std::placeholders::_2, std::placeholders::_3));
 			bind_query(descriptors::aggregate_signature(), std::bind(&server_node::aggregate_signature, this, std::placeholders::_2, std::placeholders::_3));
-			control_sys.interval_if_none(TASK_MEMPOOL_VACUUM "_runner", protocol::now().user.consensus.transaction_timeout, std::bind(&server_node::run_mempool_vacuum, this));
-			control_sys.interval_if_none(TASK_TOPOLOGY_OPTIMIZATION "_runner", protocol::now().user.consensus.topology_timeout, std::bind(&server_node::run_topology_optimization, this));
-			control_sys.interval_if_none(TASK_ATTESTATION_RESOLUTION "_runner", protocol::now().user.consensus.attestation_timeout, std::bind(&server_node::run_attestation_resolution, this));
-			control_sys.interval_if_none(TASK_BLOCK_DISPATCH_RETRIAL "_runner", protocol::now().user.consensus.dispatch_retry_interval, std::bind(&server_node::run_block_dispatcher, this));
+			control_sys.interval_if_none(TASK_TOPOLOGY_OPTIMIZATION "_runner", 180000, std::bind(&server_node::run_topology_optimization, this));
+			control_sys.interval_if_none(TASK_BLOCK_DISPATCH_RETRIAL "_runner", 120000, std::bind(&server_node::run_block_dispatcher, this));
+			control_sys.interval_if_none(TASK_ATTESTATION_RESOLUTION "_runner", 600000, std::bind(&server_node::run_attestation_resolution, this));
+			control_sys.interval_if_none(TASK_MEMPOOL_VACUUM "_runner", 600000, std::bind(&server_node::run_mempool_vacuum, this));
 			run_topology_optimization();
 			run_mempool_vacuum();
 
@@ -3906,7 +3906,7 @@ namespace tangent
 				if (!args)
 					coreturn args.error();
 			retry:
-				auto event = coawait(server->indirect_query(validator, descriptors::distribute_entropy_shares(), format::variables(*args), protocol::now().user.consensus.response_timeout));
+				auto event = coawait(server->indirect_query(validator, descriptors::distribute_entropy_shares(), format::variables(*args), protocol::now().user.tcp.timeout));
 				if (!event)
 				{
 					bool is_retry = server->is_active() && (event.error().is_retry() || event.error().is_shutdown());
@@ -3970,7 +3970,7 @@ namespace tangent
 				if (!args)
 					coreturn args.error();
 			retry:
-				auto event = coawait(server->indirect_query(validator, descriptors::aggregate_entropy_shares(), format::variables(*args), protocol::now().user.consensus.response_timeout));
+				auto event = coawait(server->indirect_query(validator, descriptors::aggregate_entropy_shares(), format::variables(*args), protocol::now().user.tcp.timeout));
 				if (!event)
 				{
 					bool is_retry = server->is_active() && (event.error().is_retry() || event.error().is_shutdown());
@@ -4060,7 +4060,7 @@ namespace tangent
 				if (!args)
 					coreturn args.error();
 			retry:
-				auto event = coawait(server->indirect_query(validator, descriptors::aggregate_signature(), format::variables(*args), protocol::now().user.consensus.response_timeout));
+				auto event = coawait(server->indirect_query(validator, descriptors::aggregate_signature(), format::variables(*args), protocol::now().user.tcp.timeout));
 				if (!event)
 				{
 					bool is_retry = server->is_active() && (event.error().is_retry() || event.error().is_shutdown());
@@ -4143,7 +4143,7 @@ namespace tangent
 				if (!args)
 					coreturn args.error();
 			retry:
-				auto event = coawait(server->indirect_query(validator, descriptors::aggregate_public_key(), format::variables(*args), protocol::now().user.consensus.response_timeout));
+				auto event = coawait(server->indirect_query(validator, descriptors::aggregate_public_key(), format::variables(*args), protocol::now().user.tcp.timeout));
 				if (!event)
 				{
 					bool is_retry = server->is_active() && (event.error().is_retry() || event.error().is_shutdown());
@@ -4224,7 +4224,7 @@ namespace tangent
 				if (!args)
 					coreturn args.error();
 			retry:
-				auto event = coawait(server->indirect_query(validator, descriptors::aggregate_signature(), format::variables(*args), protocol::now().user.consensus.response_timeout));
+				auto event = coawait(server->indirect_query(validator, descriptors::aggregate_signature(), format::variables(*args), protocol::now().user.tcp.timeout));
 				if (!event)
 				{
 					bool is_retry = server->is_active() && (event.error().is_retry() || event.error().is_shutdown());

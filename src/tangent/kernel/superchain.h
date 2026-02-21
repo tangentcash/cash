@@ -316,7 +316,6 @@ namespace tangent
 			uptr<translation_unit> translation;
 			network_options options;
 			algorithm::asset_id asset;
-			format::tree props;
 		};
 
 		class address_util
@@ -490,8 +489,6 @@ namespace tangent
 			network_instance* get_network_instance(const algorithm::asset_id& asset);
 			const translation_unit::chainparams* get_network_params(const algorithm::asset_id& asset);
 			connection_instance* add_network_connection(const algorithm::asset_id& asset, const std::string_view& url, btree_map<string, string>&& headers, double rps);
-			format::tree* add_network_props(const algorithm::asset_id& asset, const format::tree& value);
-			format::tree* get_network_props(const algorithm::asset_id& asset);
 			void remove_network(const algorithm::asset_id& asset);
 			bool has_network(const algorithm::asset_id& asset, bool and_connections = false);
 

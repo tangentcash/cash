@@ -1617,10 +1617,6 @@ namespace tangent
 						}
 					}
 
-					auto* props = (format::tree*)root.child("strategy.props");
-					if (props != nullptr && !props->is_none())
-						instance->props = *props;
-
 					auto* batching = root.child("strategy.batching");
 					if (batching != nullptr && batching->value.is_integer())
 						instance->options.blocks_batching = batching->value.as_uint64();
@@ -2767,21 +2763,6 @@ namespace tangent
 				next.connection_url.pop_back();
 
 			return &next;
-		}
-		format::tree* bridge::add_network_props(const algorithm::asset_id& asset, const format::tree& value)
-		{
-			auto it = networks.find(algorithm::asset::blockchain_of(asset));
-			VI_PANIC(it != networks.end(), "must add a network before adding props");
-			it->second.props = value;
-			return &it->second.props;
-		}
-		format::tree* bridge::get_network_props(const algorithm::asset_id& asset)
-		{
-			auto it = networks.find(algorithm::asset::blockchain_of(asset));
-			if (it != networks.end())
-				return &it->second.props;
-
-			return nullptr;
 		}
 		void bridge::add_network_instance(const algorithm::asset_id& asset, translation_unit* instance)
 		{

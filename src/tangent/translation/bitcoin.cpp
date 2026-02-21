@@ -132,31 +132,6 @@ namespace tangent
 				}
 				return false;
 			}
-			static size_t resolve_address_types(format::tree* options)
-			{
-				size_t types = 0;
-				if (options != nullptr && options->is_list())
-				{
-					types = 0;
-					for (auto& type : options->childs())
-					{
-						std::string_view name = type.value.as_string();
-						if (name == "p2pk")
-							types |= (size_t)bitcoin::address_format::pay2_public_key;
-						else if (name == "p2sh_p2wpkh")
-							types |= (size_t)bitcoin::address_format::pay2_script_hash;
-						else if (name == "p2pkh")
-							types |= (size_t)bitcoin::address_format::pay2_public_key_hash;
-						else if (name == "p2wsh_p2pkh")
-							types |= (size_t)bitcoin::address_format::pay2_witness_script_hash;
-						else if (name == "p2wpkh")
-							types |= (size_t)bitcoin::address_format::pay2_witness_public_key_hash;
-						else if (name == "p2tr")
-							types |= (size_t)bitcoin::address_format::pay2_taproot;
-					}
-				}
-				return types;
-			}
 
 			const char* bitcoin::nd_call::get_block_count()
 			{
@@ -788,10 +763,9 @@ namespace tangent
 			expects_lr<string> bitcoin::encode_address(const std::string_view& public_key_hash)
 			{
 				auto* chain = get_chain();
-				auto* options = bridge::get()->get_network_props(native_asset);
 				auto type = public_key_hash[0];
 				auto data = public_key_hash.substr(1);
-				size_t types = (size_t)get_address_type() | resolve_address_types(options);
+				size_t types = (size_t)get_address_type();
 				switch (type)
 				{
 					case 0xF:
@@ -957,8 +931,7 @@ namespace tangent
 			expects_lr<address_map> bitcoin::to_addresses(const std::string_view& from_public_key)
 			{
 				auto* chain = get_chain();
-				auto* options = bridge::get()->get_network_props(native_asset);
-				size_t types = (size_t)get_address_type() | resolve_address_types(options);
+				size_t types = (size_t)get_address_type();
 				address_map addresses;
 				btc_pubkey public_key;
 				btc_pubkey_init(&public_key);
@@ -1562,6 +1535,9 @@ namespace tangent
 			}
 			bitcoin::address_format bitcoin::get_address_type()
 			{
+				if (all_address_types)
+					return address_format::all;
+
 				return (address_format)((size_t)address_format::pay2_public_key_hash | (size_t)address_format::pay2_witness_public_key_hash | (size_t)address_format::pay2_taproot);
 			}
 			uint32_t bitcoin::get_sig_hash_type()

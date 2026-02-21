@@ -1,5 +1,7 @@
 #include "mempoolstate.h"
 #include "../policy/transactions.h"
+#define TRANSACTION_NORMAL_EXPIRATION 14400000
+#define TRANSACTION_COMMITMENT_EXPIRATION 7200000
 #undef NULL
 
 namespace tangent
@@ -718,7 +720,7 @@ namespace tangent
 			uint8_t asset[32];
 			value.asset.encode(asset);
 
-			uint64_t timeout = (value.is_commitment() ? protocol::now().user.consensus.commitment_timeout : protocol::now().user.consensus.transaction_timeout);
+			uint64_t timeout = (value.is_commitment() ? TRANSACTION_COMMITMENT_EXPIRATION : TRANSACTION_NORMAL_EXPIRATION);
 			map.clear();
 			map.push_back(var::set::binary(hash, sizeof(hash)));
 			map.push_back(var::set::integer(protocol::now().time.now_cpu() + timeout + 86400 * 1000));

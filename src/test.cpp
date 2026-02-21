@@ -2,6 +2,7 @@
 #include "tangent/storage/superchainstate.h"
 #include "tangent/storage/mempoolstate.h"
 #include "tangent/policy/compositions.h"
+#include "tangent/translation/bitcoin.h"
 #include <vitex/vitex.h>
 #include <sstream>
 #define TEST_BLOCK(x, y, z) tester::new_block_from_generator(data, users, x, #x, y, z, tester::block_type::normal)
@@ -1348,18 +1349,11 @@ struct tests
 		{
 			auto asset = algorithm::asset::id_of("BTC");
 			auto state = storages::superchainstate(asset);
-			auto options = format::tree::list();
-			options.push(format::variable("p2pk"));
-			options.push(format::variable("p2sh_p2wpkh"));
-			options.push(format::variable("p2pkh"));
-			options.push(format::variable("p2wsh_p2pkh"));
-			options.push(format::variable("p2wpkh"));
-			options.push(format::variable("p2tr"));
-			offchain->add_network_props(asset, options);
+			auto* unit = (superchain::translations::bitcoin*)offchain->get_network(asset);
+			if (unit != nullptr)
+				unit->all_address_types = true;
 
 			auto wallet = create_wallet(asset);
-			offchain->add_network_props(asset, format::tree());
-
 			auto input_p2pkh_hash = codec::hex_decode("0x57e30b41a6d984cdb763145f32ad9678a9b2bfd0267e12d5d0474e97f7d077d0");
 			superchain::coin_utxo input_p2pkh;
 			input_p2pkh.link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses[3]);
@@ -1428,6 +1422,8 @@ struct tests
 			prepared.requires_output(std::move(output_p2wpkh));
 			prepared.requires_output(std::move(output_p2pkh));
 			validate_transaction(asset, wallet, prepared, "p2pk, p2pkh, p2sh, p2wpkh, p2wsh, p2tr", "010000000001074098b2156e619d1d3b97f59f01c20db9251bda1f8efba3091ffea1c9bf402938010000006a47304402204e33cc4508a8a3b80718856850d6d44c258cd8cb0085471feeee870c0174eedd02201749240ef5961c36956209ab4c4928adfa68555dacefa684383f8f88680897a5012102986445ccfd323143f392b66b8cfc056df90ebdc110573e3395ee670d5043f23affffffffa0020807878c29d5e524b7945bf5c282cf3efe20022f7d512138a7038e1f7c3d000000001716001418e254169de2c06bbe881f971b312084bf7d7e1cffffffff2997b935e0aff537a6c79d3b40da434daafbfa49534e430fff9b178942c094550000000000ffffffff25b37f14116609bf0334aa538bda9b0edd8fec92afcfdd8816f5c03570cb8f980000000000ffffffff301504e100c831f91f6765908084b2f5d1d979d489dec196f8486fa4a6677a9b0000000000ffffffff25600c74088b1b3d12d8e106b917a69630c82501e2422c36041f24209d94c7cc0100000000ffffffff2ff68c1d9ecbbd544e90827282fc60d2080041610338f27d6778d56c38d2b0f00000000049483045022100a91590f6154e6116afa393a4c71cb337b8a9bd1a83dc2305bc5718dcde9c1b45022001a60381a18b6b224c71193817a1d76b78d00334bbd651ec3e17e7fe7673a06401ffffffff0240d2df03000000001600142fe07053c38596c34f561a2565b752272c90e66430244c00000000001976a91418e254169de2c06bbe881f971b312084bf7d7e1c88ac0002483045022100b51bf896785af284690485b6b9fff90ee000032b7c135ec4a3b2cf1ee6ae9b5202203fa9aabd0ea22482e5f955fa0eb8e696d50fe2999793857f13be39ddc1871a89012102986445ccfd323143f392b66b8cfc056df90ebdc110573e3395ee670d5043f23a02483045022100b5ffeb7bb826eb7f743f32e7026d20cba8403a46de21ba3cc92bbcf228e8de6e02202fa447539d338f884ece7c4c181b8b590a846f3f9469721304ed0cbc407ee672012102986445ccfd323143f392b66b8cfc056df90ebdc110573e3395ee670d5043f23a014026371d3a2baaf32f56cc0e8bb0f940d243facb694ee877b34540100c5498a2ef6698effdc811e516e62ba20f187ebdc25e30208b787eac053875292088c09a56024730440220381691df2e8d7c5afdd7f71287351ec3a551a2d7a0b1afdaaa3afe42112ca0c90220408dc12aa8351c3a6808019db1b05afa4ca0798578582c259190cdcf756685b7012102986445ccfd323143f392b66b8cfc056df90ebdc110573e3395ee670d5043f23a03483045022100aefdc4da0db0934e6ba5bcd9b6f624c995c432420e237047be28aa4656eea5c0022054fd1563c3538bbec6132b8d8eb21ea49df81f059d50b1f01f3cb0fc18981715012102986445ccfd323143f392b66b8cfc056df90ebdc110573e3395ee670d5043f23a1976a91418e254169de2c06bbe881f971b312084bf7d7e1c88ac0000000000");
+			if (unit != nullptr)
+				unit->all_address_types = false;
 		});
 		tester::use_clean_state([&]()
 		{
