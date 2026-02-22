@@ -293,7 +293,7 @@ namespace tangent
 			struct
 			{
 				uint64_t locking_time = 691200000;
-				uint64_t min_per_account = 5;
+				uint64_t min_per_account = 7;
 				uint64_t max_per_account = 23;
 				decimal min_stake_value = std::string_view("2700");
 				decimal stake_threshold = std::string_view("0.20");
