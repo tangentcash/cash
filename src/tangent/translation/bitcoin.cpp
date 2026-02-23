@@ -220,22 +220,7 @@ namespace tangent
 
 					auto block_data = coawait(execute_rpc_multi(nd_call::get_block(), std::move(map), cache_policy::temporary_cache));
 					if (!block_data)
-					{
-						map.childs().clear();
-						for (auto& block_hash : block_ids->childs())
-						{
-							format::tree legacy_block_map;
-							legacy_block_map.push(format::variable(block_hash.value.as_blob()));
-							legacy_block_map.push(format::variable(true));
-							map.push(std::move(legacy_block_map));
-						}
-
-						block_data = coawait(execute_rpc_multi(nd_call::get_block(), std::move(map), cache_policy::temporary_cache));
-						if (!block_data)
-							coreturn block_data.error();
-
-						legacy.get_block = 1;
-					}
+						coreturn block_data.error();
 
 					vector<block_log> results;
 					for (auto& block : block_data->childs())
