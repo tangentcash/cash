@@ -14,6 +14,15 @@ namespace tangent
 	{
 		namespace translations
 		{
+			struct internal_transfer
+			{
+				algorithm::asset_id asset;
+				string issuer;
+				string from;
+				string to;
+				decimal value;
+			};
+
 			static stellar::asset_type to_asset_type(const std::string_view& type)
 			{
 				stellar::asset_type token_type = stellar::asset_type::ASSET_TYPE_NATIVE;
@@ -418,74 +427,114 @@ namespace tangent
 					if (!is_successful)
 						coreturn expects_rt<computed_transaction>(remote_exception("tx reverted"));
 
-					algorithm::asset_id token_asset = native_asset;
+					string fee_spender;
 					string tx_hash = transaction_data.child_var("transaction_hash").as_blob();
 					string tx_type = transaction_data.child_var("type").as_blob();
-					decimal fee_value = from_stroop(get_base_stroop_fee());
-					decimal base_value = 0.0, token_value = 0.0;
-					string from = string(), to = string();
-					bool is_payment = (tx_type == "payment");
-					bool is_create_account = (!is_payment && tx_type == "create_account");
-					bool is_native_token = (transaction_data.child_var("asset_type").as_blob() != "native");
-					if (is_payment)
+					vector<internal_transfer> transfers;
+					if (tx_type == "payment")
 					{
-						from = transaction_data.child_var("from").as_blob();
-						to = transaction_data.child_var("to").as_blob();
-						token_value = transaction_data.child_var("amount").as_decimal();
-						if (is_native_token)
+						internal_transfer transfer;
+						transfer.asset = native_asset;
+						transfer.from = transaction_data.child_var("from").as_blob();
+						transfer.to = transaction_data.child_var("to").as_blob();
+						transfer.value = transaction_data.child_var("amount").as_decimal();
+						if (transaction_data.child_var("asset_type").as_blob() != "native")
 						{
 							string token = transaction_data.child_var("asset_code").as_blob();
-							string issuer = transaction_data.child_var("asset_issuer").as_blob();
-							token_asset = algorithm::asset::id_of(algorithm::asset::blockchain_of(native_asset), token, issuer);
-							bridge::get()->enable_contract_address(token_asset, issuer);
+							transfer.issuer = transaction_data.child_var("asset_issuer").as_blob();
+							transfer.asset = algorithm::asset::id_of(algorithm::asset::blockchain_of(native_asset), token, transfer.issuer);
 						}
-						else
-						{
-							base_value = token_value;
-							token_value = 0.0;
-						}
+						fee_spender = transfer.from;
+						transfers.push_back(std::move(transfer));
 					}
-					else if (is_create_account)
+					else if (tx_type == "create_account")
 					{
-						from = transaction_data.child_var("funder").as_blob();
-						to = transaction_data.child_var("account").as_blob();
-						base_value = transaction_data.child_var("starting_balance").as_decimal();
+						internal_transfer transfer;
+						transfer.asset = native_asset;
+						transfer.from = transaction_data.child_var("funder").as_blob();
+						transfer.to = transaction_data.child_var("account").as_blob();
+						transfer.value = transaction_data.child_var("starting_balance").as_decimal();
+						fee_spender = transfer.from;
+						transfers.push_back(std::move(transfer));
+					}
+					else
+					{
+						auto* balance_changes = transaction_data.child("asset_balance_changes");
+						if (balance_changes != nullptr)
+						{
+							for (auto& change : balance_changes->childs())
+							{
+								internal_transfer transfer;
+								transfer.asset = native_asset;
+								transfer.from = change.child_var("from").as_blob();
+								transfer.to = change.child_var("to").as_blob();
+								transfer.value = change.child_var("amount").as_decimal();
+								if (change.child_var("asset_type").as_blob() != "native")
+								{
+									string token = change.child_var("asset_code").as_blob();
+									transfer.issuer = change.child_var("asset_issuer").as_blob();
+									transfer.asset = algorithm::asset::id_of(algorithm::asset::blockchain_of(native_asset), token, transfer.issuer);
+								}
+
+								if (transfer.from.empty())
+									transfer.from = transfer.issuer;
+								if (transfer.to.empty())
+									transfer.to = transfer.issuer;
+								if (!transfer.from.empty() && !transfer.to.empty())
+									transfers.push_back(std::move(transfer));
+							}
+						}
+						fee_spender = transaction_data.child_var("source_account").as_blob();
 					}
 
-					auto discovery = find_linked_addresses({ from, to });
+					if (transfers.empty())
+						coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
+
+					hash_set<string> addresses;
+					for (auto& transfer : transfers)
+					{
+						addresses.insert(transfer.from);
+						addresses.insert(transfer.to);
+						if (transfer.asset != native_asset)
+							bridge::get()->enable_contract_address(transfer.asset, transfer.issuer);
+					}
+					if (!fee_spender.empty())
+						addresses.insert(fee_spender);
+
+					auto discovery = find_linked_addresses(addresses);
 					if (!discovery || discovery->empty())
 						coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
 
 					computed_transaction tx;
 					tx.transaction_id = tx_hash;
 
-					auto total_value = base_value + fee_value;
-					auto target_from_link = discovery->find(from);
-					auto target_to_link = discovery->find(to);
-					auto to_link = target_to_link != discovery->end() ? target_to_link->second : wallet_link::from_address(to);
-					if (target_to_link != discovery->end())
+					bool has_inline_spender = false;
+					auto fee_value = from_stroop(get_base_stroop_fee());
+					for (auto& transfer : transfers)
 					{
-						auto memo = coawait(get_transaction_memo(tx_hash));
-						if (memo && !memo->empty())
-							to_link.address = address_util::encode_tag_address(to, *memo);
+						auto target_from_link = discovery->find(transfer.from);
+						auto target_to_link = discovery->find(transfer.to);
+						auto to_link = target_to_link != discovery->end() ? target_to_link->second : wallet_link::from_address(transfer.to);
+						if (target_to_link != discovery->end())
+						{
+							auto memo = coawait(get_transaction_memo(tx_hash));
+							if (memo && !memo->empty())
+								to_link.address = address_util::encode_tag_address(transfer.to, *memo);
+						}
+						if (!has_inline_spender && transfer.asset == native_asset && fee_spender == transfer.from)
+						{
+							tx.add_input(coin_utxo(target_from_link != discovery->end() ? target_from_link->second : wallet_link::from_address(transfer.from), { { transfer.asset, transfer.value + fee_value } }));
+							has_inline_spender = true;
+						}
+						else
+							tx.add_input(coin_utxo(target_from_link != discovery->end() ? target_from_link->second : wallet_link::from_address(transfer.from), { { transfer.asset, transfer.value } }));
+						tx.add_output(coin_utxo(std::move(to_link), { { transfer.asset, transfer.value } }));
 					}
-
-					hash_map<algorithm::asset_id, decimal> inputs;
-					hash_map<algorithm::asset_id, decimal> outputs;
-					if (total_value.is_positive())
+					if (!has_inline_spender && !fee_spender.empty() && fee_value.is_positive())
 					{
-						inputs[native_asset] = total_value;
-						outputs[native_asset] = base_value;
+						auto fee_spender_from_link = discovery->find(fee_spender);
+						tx.add_input(coin_utxo(fee_spender_from_link != discovery->end() ? fee_spender_from_link->second : wallet_link::from_address(fee_spender), { { native_asset, fee_value } }));
 					}
-					if (token_value.is_positive())
-					{
-						inputs[token_asset] = token_value;
-						outputs[token_asset] = token_value;
-					}
-					if (!inputs.empty())
-						tx.add_input(coin_utxo(target_from_link != discovery->end() ? target_from_link->second : wallet_link::from_address(from), std::move(inputs)));
-					if (!outputs.empty())
-						tx.add_output(coin_utxo(std::move(to_link), std::move(outputs)));
 					coreturn expects_rt<computed_transaction>(std::move(tx));
 				});
 			}
