@@ -56,6 +56,12 @@ namespace tangent
 					uint64_t sequence = 0;
 				};
 
+				struct tx_info
+				{
+					string memo;
+					decimal fee;
+				};
+
 			public:
 				class nd_call
 				{
@@ -97,7 +103,7 @@ namespace tangent
 			public:
 				virtual expects_promise_rt<asset_info> get_asset_info(const std::string_view& address, const std::string_view& code);
 				virtual expects_promise_rt<account_info> get_account_info(const std::string_view& address);
-				virtual expects_promise_rt<string> get_transaction_memo(const std::string_view& tx_id);
+				virtual expects_promise_rt<tx_info> get_transaction_metadata(const std::string_view& tx_id);
 				virtual expects_promise_rt<bool> is_account_exists(const std::string_view& address);
 				virtual string get_network_passphrase();
 				virtual decimal from_stroop(const uint256_t& value);

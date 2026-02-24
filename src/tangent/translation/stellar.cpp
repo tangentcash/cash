@@ -340,18 +340,17 @@ namespace tangent
 					return expects_rt<stellar::account_info>(std::move(info));
 				});
 			}
-			expects_promise_rt<string> stellar::get_transaction_memo(const std::string_view& tx_id)
+			expects_promise_rt<stellar::tx_info> stellar::get_transaction_metadata(const std::string_view& tx_id)
 			{
-				return execute_rest("GET", nd_call::get_transactions(format::util::clear_0xhex(tx_id)), format::tree(), cache_policy::blob_cache).then<expects_rt<string>>([](expects_rt<format::tree>&& tx_data) -> expects_rt<string>
+				return execute_rest("GET", nd_call::get_transactions(format::util::clear_0xhex(tx_id)), format::tree(), cache_policy::blob_cache).then<expects_rt<tx_info>>([this](expects_rt<format::tree>&& tx_data) -> expects_rt<tx_info>
 				{
 					if (!tx_data)
-						return expects_rt<string>(std::move(tx_data.error()));
+						return expects_rt<tx_info>(std::move(tx_data.error()));
 
-					string memo = tx_data->child_var("memo").as_blob();
-					if (memo.empty())
-						return expects_rt<string>(remote_exception("transaction memo not found"));
-
-					return expects_rt<string>(std::move(memo));
+					tx_info result;
+					result.memo = tx_data->child_var("memo").as_blob();
+					result.fee = from_stroop(tx_data->child_var("fee_charged").as_uint256());
+					return expects_rt<tx_info>(std::move(result));
 				});
 			}
 			expects_promise_rt<bool> stellar::is_account_exists(const std::string_view& address)
@@ -508,32 +507,28 @@ namespace tangent
 					computed_transaction tx;
 					tx.transaction_id = tx_hash;
 
-					bool has_inline_spender = false;
-					auto fee_value = from_stroop(get_base_stroop_fee());
+					auto metadata = coawait(get_transaction_metadata(tx_hash));
+					bool fee_included = !metadata;
 					for (auto& transfer : transfers)
 					{
 						auto target_from_link = discovery->find(transfer.from);
 						auto target_to_link = discovery->find(transfer.to);
 						auto to_link = target_to_link != discovery->end() ? target_to_link->second : wallet_link::from_address(transfer.to);
-						if (target_to_link != discovery->end())
+						if (target_to_link != discovery->end() && metadata && !metadata->memo.empty())
+							to_link.address = address_util::encode_tag_address(transfer.to, metadata->memo);	
+						if (!fee_included && transfer.asset == native_asset && fee_spender == transfer.from && metadata->fee.is_positive())
 						{
-							auto memo = coawait(get_transaction_memo(tx_hash));
-							if (memo && !memo->empty())
-								to_link.address = address_util::encode_tag_address(transfer.to, *memo);
-						}
-						if (!has_inline_spender && transfer.asset == native_asset && fee_spender == transfer.from)
-						{
-							tx.add_input(coin_utxo(target_from_link != discovery->end() ? target_from_link->second : wallet_link::from_address(transfer.from), { { transfer.asset, transfer.value + fee_value } }));
-							has_inline_spender = true;
+							tx.add_input(coin_utxo(target_from_link != discovery->end() ? target_from_link->second : wallet_link::from_address(transfer.from), { { transfer.asset, transfer.value + metadata->fee } }));
+							fee_included = true;
 						}
 						else
 							tx.add_input(coin_utxo(target_from_link != discovery->end() ? target_from_link->second : wallet_link::from_address(transfer.from), { { transfer.asset, transfer.value } }));
 						tx.add_output(coin_utxo(std::move(to_link), { { transfer.asset, transfer.value } }));
 					}
-					if (!has_inline_spender && !fee_spender.empty() && fee_value.is_positive())
+					if (!fee_included && !fee_spender.empty() && metadata->fee.is_positive())
 					{
 						auto fee_spender_from_link = discovery->find(fee_spender);
-						tx.add_input(coin_utxo(fee_spender_from_link != discovery->end() ? fee_spender_from_link->second : wallet_link::from_address(fee_spender), { { native_asset, fee_value } }));
+						tx.add_input(coin_utxo(fee_spender_from_link != discovery->end() ? fee_spender_from_link->second : wallet_link::from_address(fee_spender), { { native_asset, metadata->fee } }));
 					}
 					coreturn expects_rt<computed_transaction>(std::move(tx));
 				});
