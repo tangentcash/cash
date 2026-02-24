@@ -240,9 +240,9 @@ namespace tangent
 					return std::move(result);
 				});
 			}
-			expects_promise_rt<computed_transaction> tron::link_transaction(uint64_t, const std::string_view&, format::tree& transaction_data)
+			expects_promise_rt<extended_computed_transaction> tron::link_transaction(uint64_t, const std::string_view&, format::tree& transaction_data)
 			{
-				return coasync<expects_rt<computed_transaction>>([this, &transaction_data]() -> expects_promise_rt<computed_transaction>
+				return coasync<expects_rt<extended_computed_transaction>>([this, &transaction_data]() -> expects_promise_rt<extended_computed_transaction>
 				{
 					auto* chain = get_chain();
 					string data = transaction_data.child_var("input").as_blob();
@@ -250,14 +250,14 @@ namespace tangent
 						data.erase(0, strlen(chain->bech32_hrp));
 
 					string tx_hash = transaction_data.child_var("hash").as_blob();
-					string from = encode_eth_address(transaction_data.child_var("from").as_blob());
-					string to = encode_eth_address(transaction_data.child_var("to").as_blob());
+					string signer = encode_eth_address(transaction_data.child_var("from").as_blob());
+					string from = signer, to = encode_eth_address(transaction_data.child_var("to").as_blob());
 
 					hash_set<string> addresses = { from, to };
-					computed_transaction result;
-					result.transaction_id = tx_hash;
-					if (stringify::starts_with(result.transaction_id, "0x"))
-						result.transaction_id.erase(0, 2);
+					extended_computed_transaction result;
+					result.transaction.transaction_id = tx_hash;
+					if (stringify::starts_with(result.transaction.transaction_id, "0x"))
+						result.transaction.transaction_id.erase(0, 2);
 
 					if (!data.empty())
 					{
@@ -289,7 +289,7 @@ namespace tangent
 
 					auto discovery = find_linked_addresses(addresses);
 					if (!discovery || discovery->empty())
-						coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
+						coreturn expects_rt<extended_computed_transaction>(remote_exception("tx not involved"));
 
 					hash_map<string, hash_map<algorithm::asset_id, decimal>> inputs;
 					hash_map<string, hash_map<algorithm::asset_id, decimal>> outputs;
@@ -318,7 +318,10 @@ namespace tangent
 									to = encode_eth_address(normalize_topic_address(topics->child_var(2).as_blob()));
 								}
 								else if (topics->childs().size() == 2)
+								{
+									from = signer;
 									to = encode_eth_address(topics->child_var(1).as_blob());
+								}
 
 								auto& token_input = inputs[from][token_asset];
 								auto& token_output = outputs[to][token_asset];
@@ -334,15 +337,15 @@ namespace tangent
 
 					auto info = coawait(execute_rest("POST", trx_nd_call::get_transaction_info_by_id(), format::tree(args), cache_policy::blob_cache));
 					if (!info)
-						coreturn expects_rt<computed_transaction>(remote_exception("tx not found"));
+						coreturn expects_rt<extended_computed_transaction>(remote_exception("tx not found"));
 
 					auto receipt_result = info->child_var("receipt.result").as_blob(), tx_result = info->child_var("result").as_blob();
 					if ((!receipt_result.empty() && receipt_result != "SUCCESS") || (!tx_result.empty() && tx_result != "SUCCESS"))
-						coreturn expects_rt<computed_transaction>(remote_exception("tx reverted"));
+						coreturn expects_rt<extended_computed_transaction>(remote_exception("tx reverted"));
 
 					auto details = coawait(execute_rest("POST", trx_nd_call::get_transaction_by_id(), std::move(args), cache_policy::blob_cache));
 					if (!details)
-						coreturn expects_rt<computed_transaction>(remote_exception("tx not found"));
+						coreturn expects_rt<extended_computed_transaction>(remote_exception("tx not found"));
 
 					auto* contracts = details->child("raw_data.contract");
 					if (contracts != nullptr)
@@ -385,7 +388,7 @@ namespace tangent
 					}
 
 					if (inputs.empty() || outputs.empty())
-						coreturn expects_rt<computed_transaction>(remote_exception("tx not valid"));
+						coreturn expects_rt<extended_computed_transaction>(remote_exception("tx not valid"));
 
 					auto fee_value = to_eth(info->child_var("fee").as_uint64(), netdata.divisibility);
 					if (fee_value.is_positive())
@@ -402,23 +405,23 @@ namespace tangent
 
 					discovery = find_linked_addresses(addresses);
 					if (!discovery || discovery->empty())
-						coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
+						coreturn expects_rt<extended_computed_transaction>(remote_exception("tx not involved"));
 
 					for (auto& [address, values] : inputs)
 					{
 						auto target_link = discovery->find(address);
 						auto input = coin_utxo(target_link != discovery->end() ? target_link->second : wallet_link::from_address(address), std::move(values));
-						result.add_input(std::move(input));
+						result.transaction.add_input(std::move(input));
 					}
 
 					for (auto& [address, values] : outputs)
 					{
 						auto target_link = discovery->find(address);
 						auto output = coin_utxo(target_link != discovery->end() ? target_link->second : wallet_link::from_address(address), std::move(values));
-						result.add_output(std::move(output));
+						result.transaction.add_output(std::move(output));
 					}
 
-					coreturn expects_rt<computed_transaction>(std::move(result));
+					coreturn expects_rt<extended_computed_transaction>(std::move(result));
 				});
 			}
 			expects_promise_rt<decimal> tron::calculate_balance(const algorithm::asset_id& for_asset, const wallet_link& link)

@@ -83,7 +83,7 @@ namespace tangent
 				virtual expects_promise_rt<vector<block_log>> get_block_transactions(uint64_t block_height, uint64_t block_count) override;
 				virtual expects_promise_rt<format::tree> get_transaction(const std::string_view& tx_id);
 				virtual expects_promise_rt<coin_utxo> get_transaction_output(const std::string_view& tx_id, uint64_t index) override;
-				virtual expects_promise_rt<computed_transaction> link_transaction(uint64_t block_height, const std::string_view& block_hash, format::tree& transaction_data) override;
+				virtual expects_promise_rt<extended_computed_transaction> link_transaction(uint64_t block_height, const std::string_view& block_hash, format::tree& transaction_data) override;
 				virtual expects_promise_rt<void> broadcast_transaction(const finalized_transaction& finalized) override;
 				virtual expects_promise_rt<computed_fee> estimate_transaction_fee(const wallet_link& from_link, const value_transfer& to);
 				virtual expects_promise_rt<prepared_transaction> prepare_transaction(const wallet_link& from_link, const value_transfer& to, const decimal& max_fee) override;

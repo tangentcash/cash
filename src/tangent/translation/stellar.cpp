@@ -418,13 +418,13 @@ namespace tangent
 					coreturn expects_rt<vector<block_log>>(std::move(results));
 				});
 			}
-			expects_promise_rt<computed_transaction> stellar::link_transaction(uint64_t, const std::string_view&, format::tree& transaction_data)
+			expects_promise_rt<extended_computed_transaction> stellar::link_transaction(uint64_t, const std::string_view&, format::tree& transaction_data)
 			{
-				return coasync<expects_rt<computed_transaction>>([this, &transaction_data]() -> expects_promise_rt<computed_transaction>
+				return coasync<expects_rt<extended_computed_transaction>>([this, &transaction_data]() -> expects_promise_rt<extended_computed_transaction>
 				{
 					bool is_successful = transaction_data.child_var("successful").as_boolean() || transaction_data.child_var("transaction_successful").as_boolean();
 					if (!is_successful)
-						coreturn expects_rt<computed_transaction>(remote_exception("tx reverted"));
+						coreturn expects_rt<extended_computed_transaction>(remote_exception("tx reverted"));
 
 					string fee_spender;
 					string tx_hash = transaction_data.child_var("transaction_hash").as_blob();
@@ -487,7 +487,7 @@ namespace tangent
 					}
 
 					if (transfers.empty())
-						coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
+						coreturn expects_rt<extended_computed_transaction>(remote_exception("tx not involved"));
 
 					hash_set<string> addresses;
 					for (auto& transfer : transfers)
@@ -502,10 +502,10 @@ namespace tangent
 
 					auto discovery = find_linked_addresses(addresses);
 					if (!discovery || discovery->empty())
-						coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
+						coreturn expects_rt<extended_computed_transaction>(remote_exception("tx not involved"));
 
-					computed_transaction tx;
-					tx.transaction_id = tx_hash;
+					extended_computed_transaction tx;
+					tx.transaction.transaction_id = tx_hash;
 
 					auto metadata = coawait(get_transaction_metadata(tx_hash));
 					bool fee_included = !metadata;
@@ -518,19 +518,23 @@ namespace tangent
 							to_link.address = address_util::encode_tag_address(transfer.to, metadata->memo);	
 						if (!fee_included && transfer.asset == native_asset && fee_spender == transfer.from && metadata->fee.is_positive())
 						{
-							tx.add_input(coin_utxo(target_from_link != discovery->end() ? target_from_link->second : wallet_link::from_address(transfer.from), { { transfer.asset, transfer.value + metadata->fee } }));
+							tx.transaction.add_input(coin_utxo(target_from_link != discovery->end() ? target_from_link->second : wallet_link::from_address(transfer.from), { { transfer.asset, transfer.value + metadata->fee } }));
 							fee_included = true;
 						}
 						else
-							tx.add_input(coin_utxo(target_from_link != discovery->end() ? target_from_link->second : wallet_link::from_address(transfer.from), { { transfer.asset, transfer.value } }));
-						tx.add_output(coin_utxo(std::move(to_link), { { transfer.asset, transfer.value } }));
+							tx.transaction.add_input(coin_utxo(target_from_link != discovery->end() ? target_from_link->second : wallet_link::from_address(transfer.from), { { transfer.asset, transfer.value } }));
+						tx.transaction.add_output(coin_utxo(std::move(to_link), { { transfer.asset, transfer.value } }));
+						if (!transfer.from.empty())
+							tx.signers.insert(transfer.from);
 					}
 					if (!fee_included && !fee_spender.empty() && metadata->fee.is_positive())
 					{
 						auto fee_spender_from_link = discovery->find(fee_spender);
-						tx.add_input(coin_utxo(fee_spender_from_link != discovery->end() ? fee_spender_from_link->second : wallet_link::from_address(fee_spender), { { native_asset, metadata->fee } }));
+						tx.transaction.add_input(coin_utxo(fee_spender_from_link != discovery->end() ? fee_spender_from_link->second : wallet_link::from_address(fee_spender), { { native_asset, metadata->fee } }));
+						if (!fee_spender.empty())
+							tx.signers.insert(fee_spender);
 					}
-					coreturn expects_rt<computed_transaction>(std::move(tx));
+					coreturn expects_rt<extended_computed_transaction>(std::move(tx));
 				});
 			}
 			expects_promise_rt<decimal> stellar::calculate_balance(const algorithm::asset_id& for_asset, const wallet_link& link)

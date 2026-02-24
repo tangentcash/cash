@@ -233,15 +233,15 @@ namespace tangent
 					coreturn expects_rt<vector<block_log>>(std::move(results));
 				});
 			}
-			expects_promise_rt<computed_transaction> bitcoin::link_transaction(uint64_t, const std::string_view&, format::tree& transaction_data)
+			expects_promise_rt<extended_computed_transaction> bitcoin::link_transaction(uint64_t, const std::string_view&, format::tree& transaction_data)
 			{
-				return coasync<expects_rt<computed_transaction>>([this, &transaction_data]() -> expects_promise_rt<computed_transaction>
+				return coasync<expects_rt<extended_computed_transaction>>([this, &transaction_data]() -> expects_promise_rt<extended_computed_transaction>
 				{
 					if (!transaction_data.is_map())
 					{
 						auto transaction_data_postload = coawait(get_transaction(transaction_data.value.as_blob()));
 						if (!transaction_data_postload)
-							coreturn expects_rt<computed_transaction>(std::move(transaction_data_postload.error()));
+							coreturn expects_rt<extended_computed_transaction>(std::move(transaction_data_postload.error()));
 
 						transaction_data = std::move(*transaction_data_postload);
 					}
@@ -277,7 +277,7 @@ namespace tangent
 					}
 
 					if (!find_linked_addresses(addresses))
-						coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
+						coreturn expects_rt<extended_computed_transaction>(remote_exception("tx not involved"));
 
 					if (tx_inputs != nullptr)
 					{
@@ -294,10 +294,10 @@ namespace tangent
 
 					auto discovery = find_linked_addresses(addresses);
 					if (!discovery)
-						coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
+						coreturn expects_rt<extended_computed_transaction>(remote_exception("tx not involved"));
 
-					computed_transaction tx;
-					tx.transaction_id = transaction_data.child_var("txid").as_blob();
+					extended_computed_transaction tx;
+					tx.transaction.transaction_id = transaction_data.child_var("txid").as_blob();
 
 					bool is_coinbase = false;
 					if (tx_inputs != nullptr)
@@ -308,7 +308,11 @@ namespace tangent
 							{
 								auto output = coawait(get_transaction_output(input.child_var("txid").as_blob(), input.child_var("vout").as_uint64()));
 								if (output)
-									tx.add_input(std::move(*output));
+								{
+									if (!output->link.address.empty())
+										tx.signers.insert(output->link.address);
+									tx.transaction.add_input(std::move(*output));
+								}
 							}
 							else
 								is_coinbase = true;
@@ -321,10 +325,10 @@ namespace tangent
 						for (auto& output : tx_outputs->childs())
 						{
 							coin_utxo new_output;
-							new_output.transaction_id = tx.transaction_id;
+							new_output.transaction_id = tx.transaction.transaction_id;
 							new_output.value = output.child_var("value").as_decimal();
 							new_output.index = output.has("n") ? output.child_var("n").as_uint64() : output_index;
-							if (new_output.index > (uint64_t)tx.outputs.size())
+							if (new_output.index > (uint64_t)tx.transaction.outputs.size())
 								new_output.index = output_index;
 
 							bool is_standard_output = true;
@@ -339,29 +343,29 @@ namespace tangent
 							else
 								new_output.value = decimal::nan();
 
-							tx.add_output(std::move(new_output));
+							tx.transaction.add_output(std::move(new_output));
 							++output_index;
 						}
 
-						for (auto it = tx.outputs.begin(); it != tx.outputs.end();)
+						for (auto it = tx.transaction.outputs.begin(); it != tx.transaction.outputs.end();)
 						{
 							if (it->second.value.is_nan())
-								it = tx.outputs.erase(it);
+								it = tx.transaction.outputs.erase(it);
 							else
 								++it;
 						}
 					}
 
-					if (is_coinbase && !tx.outputs.empty())
+					if (is_coinbase && !tx.transaction.outputs.empty())
 					{
 						coin_utxo new_input;
-						new_input.transaction_id = tx.transaction_id + "!";
-						new_input.value = tx.outputs.begin()->second.value;
-						new_input.index = (uint32_t)tx.inputs.size();
-						tx.add_input(std::move(new_input));
+						new_input.transaction_id = tx.transaction.transaction_id + "!";
+						new_input.value = tx.transaction.outputs.begin()->second.value;
+						new_input.index = (uint32_t)tx.transaction.inputs.size();
+						tx.transaction.add_input(std::move(new_input));
 					}
 
-					coreturn expects_rt<computed_transaction>(std::move(tx));
+					coreturn expects_rt<extended_computed_transaction>(std::move(tx));
 				});
 			}
 			expects_promise_rt<void> bitcoin::broadcast_transaction(const finalized_transaction& finalized)

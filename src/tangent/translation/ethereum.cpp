@@ -512,9 +512,9 @@ namespace tangent
 					coreturn expects_rt<vector<block_log>>(std::move(results));
 				});
 			}
-			expects_promise_rt<computed_transaction> ethereum::link_transaction(uint64_t, const std::string_view&, format::tree& transaction_data)
+			expects_promise_rt<extended_computed_transaction> ethereum::link_transaction(uint64_t, const std::string_view&, format::tree& transaction_data)
 			{
-				return coasync<expects_rt<computed_transaction>>([this, &transaction_data]() -> expects_promise_rt<computed_transaction>
+				return coasync<expects_rt<extended_computed_transaction>>([this, &transaction_data]() -> expects_promise_rt<extended_computed_transaction>
 				{
 					auto* chain = get_chain();
 					string data = transaction_data.child_var("input").as_blob();
@@ -522,22 +522,24 @@ namespace tangent
 						data.erase(0, strlen(chain->bech32_hrp));
 
 					string tx_hash = transaction_data.child_var("hash").as_blob();
-					string from = encode_eth_address(transaction_data.child_var("from").as_blob());
-					string to = encode_eth_address(transaction_data.child_var("to").as_blob());
+					string signer = encode_eth_address(transaction_data.child_var("from").as_blob());
+					string from = signer, to = encode_eth_address(transaction_data.child_var("to").as_blob());
 					decimal gas_price = to_eth(hex_to_uint256(transaction_data.child_var("gasPrice").as_blob()), get_divisibility_gwei());
 					decimal gas_limit = to_eth(hex_to_uint256(get_raw_gas_limit(transaction_data)), get_divisibility_gwei());
 					decimal base_value = to_eth(hex_to_uint256(transaction_data.child_var("value").as_blob()), netdata.divisibility);
 					decimal fee_value = gas_price * gas_limit;
 					decimal total_value = base_value + fee_value;
 
-					computed_transaction result;
-					result.transaction_id = tx_hash;
+					extended_computed_transaction result;
+					result.transaction.transaction_id = tx_hash;
+					if (!signer.empty())
+						result.signers.insert(signer);
 
 					hash_map<string, hash_map<algorithm::asset_id, decimal>> inputs;
 					hash_map<string, hash_map<algorithm::asset_id, decimal>> outputs;
 					if (total_value.is_positive())
 					{
-						inputs[from][native_asset] = total_value;
+						inputs[signer][native_asset] = total_value;
 						outputs[to][native_asset] = base_value;
 					}
 
@@ -578,7 +580,7 @@ namespace tangent
 
 					auto discovery = find_linked_addresses(addresses);
 					if (!discovery || discovery->empty())
-						coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
+						coreturn expects_rt<extended_computed_transaction>(remote_exception("tx not involved"));
 
 					if (!data.empty())
 					{
@@ -605,7 +607,10 @@ namespace tangent
 									to = encode_eth_address(normalize_topic_address(topics->child_var(2).as_blob()));
 								}
 								else if (topics->childs().size() == 2)
+								{
+									from = signer;
 									to = encode_eth_address(topics->child_var(1).as_blob());
+								}
 
 								auto& token_input = inputs[from][token_asset];
 								auto& token_output = outputs[to][token_asset];
@@ -624,7 +629,7 @@ namespace tangent
 
 					discovery = find_linked_addresses(addresses);
 					if (!discovery || discovery->empty())
-						coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
+						coreturn expects_rt<extended_computed_transaction>(remote_exception("tx not involved"));
 
 					auto* tx_receipt = transaction_data.child("receipt");
 					if (!tx_receipt)
@@ -636,23 +641,23 @@ namespace tangent
 
 					bool is_reverted = tx_receipt && tx_receipt->is_map() ? hex_to_uint256(tx_receipt->child_var("status").as_blob()) < 1 : true;
 					if (is_reverted)
-						coreturn expects_rt<computed_transaction>(remote_exception("tx reverted"));
+						coreturn expects_rt<extended_computed_transaction>(remote_exception("tx reverted"));
 
 					for (auto& [address, values] : inputs)
 					{
 						auto target_link = discovery->find(address);
 						auto input = coin_utxo(target_link != discovery->end() ? target_link->second : wallet_link::from_address(address), std::move(values));
-						result.add_input(std::move(input));
+						result.transaction.add_input(std::move(input));
 					}
 
 					for (auto& [address, values] : outputs)
 					{
 						auto target_link = discovery->find(address);
 						auto output = coin_utxo(target_link != discovery->end() ? target_link->second : wallet_link::from_address(address), std::move(values));
-						result.add_output(std::move(output));
+						result.transaction.add_output(std::move(output));
 					}
 
-					coreturn expects_rt<computed_transaction>(std::move(result));
+					coreturn expects_rt<extended_computed_transaction>(std::move(result));
 				});
 			}
 			expects_promise_rt<computed_fee> ethereum::estimate_transaction_fee(const wallet_link& from_link, const value_transfer& to)

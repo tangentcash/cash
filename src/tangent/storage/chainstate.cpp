@@ -318,7 +318,7 @@ namespace tangent
 			if (!begin)
 				return layer_exception(std::move(begin.error().message()));
 
-			auto status = revert(block_number, block_delta, transaction_delta, state_delta);
+			auto status = revert_internal(block_number, block_delta, transaction_delta, state_delta);
 			if (!status)
 			{
 				ledger::storage_util::multi_tx_rollback(__func__, std::move(state)).report("state rollback failed");

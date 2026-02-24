@@ -1552,7 +1552,7 @@ namespace tangent
 						auto& ref = ref_state.ref;
 						if (!ref_state.active)
 							continue;
-						
+
 						auto account = executor->get_bridge_account(ref.owner, ref.asset, ref.hash);
 						if (!account)
 							return account.error();
@@ -1845,7 +1845,7 @@ namespace tangent
 				{
 					if (!bridge->account_nonce)
 						break;
-					
+
 					return routing_address_application ? expects_lr<void>(expectation::met) : expects_lr<void>(layer_exception("only one initiator bridge account may exist"));
 				}
 				case superchain::routing_policy::memo:
@@ -3471,7 +3471,7 @@ namespace tangent
 					auto attestation = executor->apply_validator_attestation_reward(penalty_asset, succeeding_attester, individual_reward_or_penalty);
 					if (!attestation)
 						return attestation.error();
-				}	
+				}
 
 				individual_reward_or_penalty = algorithm::arithmetic::divide(-penalty_value * participation_cut, participants.size());
 				for (auto& participant : participants)
