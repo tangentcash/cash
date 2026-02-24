@@ -283,28 +283,28 @@ namespace tangent
 					return expects_rt<vector<block_log>>(std::move(results));
 				});
 			}
-			expects_promise_rt<extended_computed_transaction> solana::link_transaction(uint64_t, const std::string_view&, format::tree& transaction_data)
+			expects_promise_rt<computed_transaction> solana::link_transaction(uint64_t, const std::string_view&, format::tree& transaction_data)
 			{
 				auto* meta = transaction_data.child("meta");
 				if (meta != nullptr)
 				{
 					auto* status = meta->child("status");
 					if (status != nullptr && status->has("Err"))
-						return expects_rt<extended_computed_transaction>(remote_exception("tx reverted"));
+						return expects_rt<computed_transaction>(remote_exception("tx reverted"));
 				}
 
 				auto* transaction = transaction_data.child("transaction");
 				if (!transaction)
-					return expects_rt<extended_computed_transaction>(remote_exception("tx invalid"));
+					return expects_rt<computed_transaction>(remote_exception("tx invalid"));
 
 				auto* signatures = transaction->child("signatures");
 				auto* account_keys = transaction->child("accountKeys");
 				if (!signatures || !signatures->fields || signatures->childs().empty() || !account_keys || !account_keys->fields || account_keys->childs().empty())
-					return expects_rt<extended_computed_transaction>(remote_exception("tx must have one or more signatures and account keys"));
+					return expects_rt<computed_transaction>(remote_exception("tx must have one or more signatures and account keys"));
 
 				auto signature = signatures->child(0)->value.as_string();
 				if (signature.empty())
-					return expects_rt<extended_computed_transaction>(remote_exception("tx must have one or more signatures and account keys"));
+					return expects_rt<computed_transaction>(remote_exception("tx must have one or more signatures and account keys"));
 
 				hash_set<string> addresses;
 				for (auto& account_key : account_keys->childs())
@@ -325,19 +325,19 @@ namespace tangent
 
 				auto discovery = find_linked_addresses(addresses);
 				if (!discovery || discovery->empty())
-					return expects_rt<extended_computed_transaction>(remote_exception("tx not involved"));
+					return expects_rt<computed_transaction>(remote_exception("tx not involved"));
 
-				return coasync<expects_rt<extended_computed_transaction>>([this, &transaction_data, pre_token_balances, post_token_balances, signature = std::move(signature), addresses = std::move(addresses), discovery = std::move(discovery)]() mutable -> expects_promise_rt<extended_computed_transaction>
+				return coasync<expects_rt<computed_transaction>>([this, &transaction_data, pre_token_balances, post_token_balances, signature = std::move(signature), addresses = std::move(addresses), discovery = std::move(discovery)]() mutable -> expects_promise_rt<computed_transaction>
 				{
 					auto transaction_data_postload = coawait(get_transaction(signature));
 					if (!transaction_data_postload)
-						coreturn expects_rt<extended_computed_transaction>(transaction_data_postload.error());
+						coreturn expects_rt<computed_transaction>(transaction_data_postload.error());
 
 					transaction_data = std::move(*transaction_data_postload);
 					auto* pre_balances = transaction_data.child("meta.preBalances");
 					auto* post_balances = transaction_data.child("meta.postBalances");
 					if (!pre_balances || !post_balances || pre_balances->childs().size() != post_balances->childs().size() || pre_balances->childs().empty())
-						coreturn expects_rt<extended_computed_transaction>(remote_exception("tx not involved"));
+						coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
 
 					bool non_transferring = true;
 					for (size_t i = 0; i < pre_balances->childs().size(); i++)
@@ -349,17 +349,17 @@ namespace tangent
 						}
 					}
 					if (non_transferring)
-						coreturn expects_rt<extended_computed_transaction>(remote_exception("tx not involved"));
+						coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
 
 					auto* instructions = transaction_data.child("transaction.message.instructions");
 					if (!instructions || instructions->childs().empty())
-						coreturn expects_rt<extended_computed_transaction>(remote_exception("tx not valid"));
+						coreturn expects_rt<computed_transaction>(remote_exception("tx not valid"));
 
 					auto fee_value = transaction_data.child_var("meta.fee").as_decimal() / netdata.divisibility;
 					bool fee_included = false;
 
-					extended_computed_transaction tx;
-					tx.transaction.transaction_id = signature;
+					computed_transaction tx;
+					tx.transaction_id = signature;
 
 					hash_map<string, hash_map<algorithm::asset_id, decimal>> inputs;
 					hash_map<string, hash_map<algorithm::asset_id, decimal>> outputs;
@@ -538,16 +538,16 @@ namespace tangent
 					for (auto& [address, values] : inputs)
 					{
 						auto target_link = discovery->find(address);
-						tx.transaction.add_input(coin_utxo(target_link != discovery->end() ? target_link->second : wallet_link::from_address(address), std::move(values)));
+						tx.add_input(coin_utxo(target_link != discovery->end() ? target_link->second : wallet_link::from_address(address), std::move(values)));
 					}
 
 					for (auto& [address, values] : outputs)
 					{
 						auto target_link = discovery->find(address);
-						tx.transaction.add_output(coin_utxo(target_link != discovery->end() ? target_link->second : wallet_link::from_address(address), std::move(values)));
+						tx.add_output(coin_utxo(target_link != discovery->end() ? target_link->second : wallet_link::from_address(address), std::move(values)));
 					}
 
-					coreturn expects_rt<extended_computed_transaction>(std::move(tx));
+					coreturn expects_rt<computed_transaction>(std::move(tx));
 				});
 			}
 			expects_promise_rt<decimal> solana::calculate_balance(const algorithm::asset_id& asset, const wallet_link& link)

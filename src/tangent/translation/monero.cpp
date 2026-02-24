@@ -292,9 +292,9 @@ namespace tangent
 
 				return expects_promise_rt<coin_utxo>(std::move(*result));
 			}
-			expects_promise_rt<extended_computed_transaction> monero::link_transaction(uint64_t, const std::string_view&, format::tree& transaction_data)
+			expects_promise_rt<computed_transaction> monero::link_transaction(uint64_t, const std::string_view&, format::tree& transaction_data)
 			{
-				return coasync<expects_rt<extended_computed_transaction>>([this, &transaction_data]() -> expects_promise_rt<extended_computed_transaction>
+				return coasync<expects_rt<computed_transaction>>([this, &transaction_data]() -> expects_promise_rt<computed_transaction>
 				{
 					auto info = decode_transaction_info(transaction_data);
 					auto inputs = decode_transaction_inputs(transaction_data);
@@ -307,8 +307,8 @@ namespace tangent
 					for (size_t i = 0; i < outputs.size(); i++)
 						unresolved_outputs.insert(i);
 
-					extended_computed_transaction result;
-					result.transaction.transaction_id = info.hash;
+					computed_transaction result;
+					result.transaction_id = info.hash;
 
 					for (size_t i = 0; i < inputs.size(); i++)
 					{
@@ -322,7 +322,7 @@ namespace tangent
 						{
 							if (!utxo->link.address.empty())
 								result.signers.insert(utxo->link.address);
-							result.transaction.add_input(std::move(*utxo));
+							result.add_input(std::move(*utxo));
 						}
 					}
 
@@ -330,7 +330,7 @@ namespace tangent
 					{
 						auto links = find_linked_addresses(0, offset, count);
 						if (!links)
-							coreturn expects_rt<extended_computed_transaction>(remote_exception(std::move(links.error().message())));
+							coreturn expects_rt<computed_transaction>(remote_exception(std::move(links.error().message())));
 
 						for (auto& link : *links)
 						{
@@ -425,7 +425,7 @@ namespace tangent
 									new_output.link = link.second;
 									new_output.value = value;
 									new_output.index = (uint64_t)i;
-									result.transaction.add_output(std::move(new_output));
+									result.add_output(std::move(new_output));
 								}
 							}
 
@@ -461,19 +461,19 @@ namespace tangent
 						new_output.link = links->begin()->second;
 						new_output.value = from_baseline_value(output.amount);
 						new_output.index = (uint64_t)output_index;
-						result.transaction.add_output(std::move(new_output));
+						result.add_output(std::move(new_output));
 					}
 
-					if (result.transaction.inputs.empty() && result.transaction.outputs.empty())
-						coreturn expects_rt<extended_computed_transaction>(remote_exception("tx not involved"));
+					if (result.inputs.empty() && result.outputs.empty())
+						coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
 
-					if (!result.transaction.outputs.empty())
+					if (!result.outputs.empty())
 					{
-						auto indices = coawait(get_output_indices(result.transaction.transaction_id));
+						auto indices = coawait(get_output_indices(result.transaction_id));
 						if (!indices)
-							coreturn expects_rt<extended_computed_transaction>(indices.error());
+							coreturn expects_rt<computed_transaction>(indices.error());
 
-						for (auto& [hash, output] : result.transaction.outputs)
+						for (auto& [hash, output] : result.outputs)
 						{
 							if (output.index < indices->size())
 							{
@@ -483,10 +483,10 @@ namespace tangent
 							else
 								output.index = std::numeric_limits<uint64_t>::max();
 						}
-						for (auto it = result.transaction.outputs.begin(); it != result.transaction.outputs.end();)
+						for (auto it = result.outputs.begin(); it != result.outputs.end();)
 						{
 							if (it->second.index == std::numeric_limits<uint64_t>::max())
-								it = result.transaction.outputs.erase(it);
+								it = result.outputs.erase(it);
 							else
 								++it;
 						}
@@ -494,25 +494,25 @@ namespace tangent
 
 					decimal sending_value = decimal::zero();
 					decimal receiving_value = decimal::zero();
-					for (auto& [hash, input] : result.transaction.inputs)
+					for (auto& [hash, input] : result.inputs)
 						sending_value += input.value;
-					for (auto& [hash, output] : result.transaction.outputs)
+					for (auto& [hash, output] : result.outputs)
 						receiving_value += output.value;
 
 					if (sending_value < receiving_value)
 					{
 						coin_utxo new_input;
 						new_input.value = receiving_value - sending_value;
-						result.transaction.add_input(std::move(new_input));
+						result.add_input(std::move(new_input));
 					}
 					else if (sending_value > receiving_value)
 					{
 						coin_utxo new_output;
 						new_output.value = sending_value - receiving_value;
-						result.transaction.add_output(std::move(new_output));
+						result.add_output(std::move(new_output));
 					}
 
-					coreturn expects_rt<extended_computed_transaction>(std::move(result));
+					coreturn expects_rt<computed_transaction>(std::move(result));
 				});
 			}
 			expects_promise_rt<void> monero::broadcast_transaction(const finalized_transaction& finalized)

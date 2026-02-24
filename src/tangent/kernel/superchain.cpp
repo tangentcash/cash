@@ -546,6 +546,14 @@ namespace tangent
 					return false;
 			}
 
+			if (!signers.empty())
+			{
+				stream->write_boolean(true);
+				stream->write_integer((uint8_t)signers.size());
+				for (auto& signer : signers)
+					stream->write_string(signer);
+			}
+
 			return true;
 		}
 		bool computed_transaction::load_payload(format::ro_stream& stream)
@@ -583,7 +591,26 @@ namespace tangent
 
 				outputs[next.as_hash()] = std::move(next);
 			}
+	
+			size_t seek = stream.seek; bool with_signers_extension = false; signers.clear();
+			if (stream.read_boolean(stream.read_type(), &with_signers_extension) && with_signers_extension)
+			{
+				uint8_t signers_size;
+				if (!stream.read_integer(stream.read_type(), &signers_size))
+					return false;
 
+				for (uint8_t i = 0; i < signers_size; i++)
+				{
+					string signer;
+					if (!stream.read_string(stream.read_type(), &signer))
+						return false;
+
+					signers.insert(std::move(signer));
+				}
+			}
+			else
+				stream.seek = seek;
+			
 			return true;
 		}
 		expects_lr<void> computed_transaction::validate_with(const algorithm::asset_id& asset) const
@@ -614,6 +641,19 @@ namespace tangent
 					auto token_asset = token_output.get_asset(asset);
 					if (algorithm::asset::blockchain_of(token_asset) != blockchain || !algorithm::asset::is_aux(token_asset))
 						return layer_exception("invalid output token asset");
+				}
+			}
+
+			if (!signers.empty())
+			{
+				for (auto& [input_hash, input] : inputs)
+				{
+					if (signers.find(input.link.address) == signers.end())
+					{
+						auto link = bridge::get()->get_link(asset, input.link.address);
+						if (link && link->has_all())
+							return layer_exception("input not permitted");
+					}
 				}
 			}
 
@@ -682,6 +722,9 @@ namespace tangent
 			auto* output_data = data.set("outputs", format::tree::list());
 			for (auto& [hash, output] : outputs)
 				output_data->push(output.as_tree());
+			auto* signers_data = data.set("signers", format::tree::list());
+			for (auto& signer : signers)
+				signers_data->push(format::variable(signer));
 			return data;
 		}
 		uint32_t computed_transaction::as_type() const
@@ -700,66 +743,6 @@ namespace tangent
 		std::string_view computed_transaction::as_instance_typename()
 		{
 			return "computed_transaction";
-		}
-
-		bool extended_computed_transaction::store_payload(format::wo_stream* stream) const
-		{
-			VI_ASSERT(stream != nullptr, "stream should be set");
-			if (!transaction.store_payload(stream))
-				return false;
-
-			stream->write_integer((uint32_t)signers.size());
-			for (auto& signer : signers)
-				stream->write_string(signer);
-
-			return true;
-		}
-		bool extended_computed_transaction::load_payload(format::ro_stream& stream)
-		{
-			if (!transaction.load_payload(stream))
-				return false;
-
-			uint32_t signers_size;
-			if (!stream.read_integer(stream.read_type(), &signers_size))
-				return false;
-
-			signers.clear();
-			for (size_t i = 0; i < signers_size; i++)
-			{
-				string signer;
-				if (!stream.read_string(stream.read_type(), &signer))
-					return false;
-
-				signers.insert(std::move(signer));
-			}
-
-			return true;
-		}
-		format::tree extended_computed_transaction::as_tree() const
-		{
-			format::tree data;
-			data.set("transaction", transaction.as_tree());
-			auto* signers_data = data.set("signers", format::tree::list());
-			for (auto& signer : signers)
-				signers_data->push(format::variable(signer));
-			return data;
-		}
-		uint32_t extended_computed_transaction::as_type() const
-		{
-			return as_instance_type();
-		}
-		std::string_view extended_computed_transaction::as_typename() const
-		{
-			return as_instance_typename();
-		}
-		uint32_t extended_computed_transaction::as_instance_type()
-		{
-			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
-			return hash;
-		}
-		std::string_view extended_computed_transaction::as_instance_typename()
-		{
-			return "extended_computed_transaction";
 		}
 
 		prepared_transaction& prepared_transaction::requires_input(algorithm::composition::type new_alg, const algorithm::composition::cpubkey_t& new_public_key, uint8_t* new_message, size_t new_message_size, coin_utxo&& input)
@@ -1034,10 +1017,14 @@ namespace tangent
 			computed_transaction computed;
 			computed.transaction_id = hashdata;
 			computed.block_id = locktime;
+			for (auto& input : prepared.inputs)
+			{
+				computed.inputs[input.utxo.as_hash()] = input.utxo;
+				if (!input.utxo.link.address.empty())
+					computed.signers.insert(input.utxo.link.address);
+			}
 			for (auto& output : prepared.outputs)
 				computed.outputs[output.as_hash()] = output;
-			for (auto& input : prepared.inputs)
-				computed.inputs[input.utxo.as_hash()] = input.utxo;
 			return computed;
 		}
 		format::tree finalized_transaction::as_tree() const
@@ -1098,6 +1085,8 @@ namespace tangent
 					for (auto& [token_hash, token] : output.tokens)
 						transfer_logs += stringify::text("    with %s %s\n", token.value.to_string().c_str(), algorithm::asset::name_of(token.get_asset(asset)).c_str());
 				}
+				for (auto& signer : tx.signers)
+					transfer_logs += stringify::text("  signed by %s\n", signer.c_str());
 				if (transfer_logs.back() == '\n')
 					transfer_logs.erase(transfer_logs.end() - 1);
 
@@ -1980,13 +1969,13 @@ namespace tangent
 					for (auto& item : block.transactions.childs())
 					{
 						auto computed = coawait(implementation->link_transaction(log.block_height, log.block_hash, item));
-						if (!computed || is_scam_transaction(asset, *computed))
-							continue;
-
-						computed->transaction.block_id = log.block_height;
-						normalize_transaction_id(asset, &computed->transaction.transaction_id);
-						log.receipts.push_back(std::move(computed->transaction));
-						item.key.clear();
+						if (computed)
+						{
+							computed->block_id = log.block_height;
+							normalize_transaction_id(asset, &computed->transaction_id);
+							log.receipts.push_back(std::move(*computed));
+							item.key.clear();
+						}
 					}
 
 					hash_set<string> transaction_ids;
@@ -2013,20 +2002,20 @@ namespace tangent
 				coreturn expects_rt<vector<transaction_logs>>(std::move(logs));
 			});
 		}
-		expects_promise_rt<extended_computed_transaction> bridge::link_transaction(const algorithm::asset_id& asset, uint64_t block_height, const std::string_view& block_hash, format::tree& transaction_data)
+		expects_promise_rt<computed_transaction> bridge::link_transaction(const algorithm::asset_id& asset, uint64_t block_height, const std::string_view& block_hash, format::tree& transaction_data)
 		{
 			if (!algorithm::asset::is_aux(asset))
-				return expects_rt<extended_computed_transaction>(remote_exception("asset not found"));
+				return expects_rt<computed_transaction>(remote_exception("asset not found"));
 
 			if (!block_height)
-				return expects_rt<extended_computed_transaction>(remote_exception("txs not found"));
+				return expects_rt<computed_transaction>(remote_exception("txs not found"));
 
 			if (!has_network(asset))
-				return expects_rt<extended_computed_transaction>(remote_exception("chain not active"));
+				return expects_rt<computed_transaction>(remote_exception("chain not active"));
 
 			auto* implementation = get_network(asset);
 			if (!implementation)
-				return expects_rt<extended_computed_transaction>(remote_exception("chain not found"));
+				return expects_rt<computed_transaction>(remote_exception("chain not found"));
 
 			return implementation->link_transaction(block_height, block_hash, transaction_data);
 		}
@@ -2838,19 +2827,6 @@ namespace tangent
 		{
 			auto target = networks.find(algorithm::asset::blockchain_of(asset));
 			return target != networks.end() && (!and_connections || !target->second.connections.empty());
-		}
-		bool bridge::is_scam_transaction(const algorithm::asset_id& asset, const extended_computed_transaction& tx)
-		{
-			for (auto& [input_hash, input] : tx.transaction.inputs)
-			{
-				if (tx.signers.find(input.link.address) == tx.signers.end())
-				{
-					auto link = get_link(asset, input.link.address);
-					if (link && link->has_all())
-						return true;
-				}
-			}
-			return false;
 		}
 		std::string_view bridge::cache_type_of(cache_policy cache)
 		{

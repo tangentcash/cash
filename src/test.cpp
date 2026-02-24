@@ -1929,7 +1929,6 @@ int main(int argc, char* argv[])
 		vector<account_ref> users;
 		tests::blockchain_partial_coverage(&users);
 		const size_t block_count = 1024;
-		const size_t transaction_count = 512;
 		const decimal starting_account_balance = decimal(500).truncate(12);
 		auto transactions_mutex = std::mutex();
 		auto transactions_queue = single_queue<vector<uptr<ledger::transaction_message>>>();
@@ -1989,6 +1988,7 @@ int main(int argc, char* argv[])
 		auto entropy = from_string<uint8_t>(args.get("test-entropy")).expect("must provide a \"test-entropy\" flag (number in [1, 2, 3])");
 		if (entropy == 1)
 		{
+			const size_t transaction_count = 384;
 			const decimal outgoing_account_balance = starting_account_balance / decimal(block_count * (transaction_count + 64));
 			const decimal incoming_quantity = starting_account_balance;
 			auto* attestation = memory::init<transactions::attestate>();
@@ -2029,9 +2029,10 @@ int main(int argc, char* argv[])
 		}
 		else if (entropy == 2)
 		{
+			const size_t transaction_count = 768;
 			const size_t sender_count = 16;
 			const size_t receiver_count = 32;
-			const decimal outgoing_account_balance = starting_account_balance / decimal(block_count * (transaction_count + 64) * sender_count);
+			const decimal outgoing_account_balance = starting_account_balance / decimal(block_count * (transaction_count + 64));
 			const decimal incoming_quantity = starting_account_balance * sender_count;
 			auto* attestation = memory::init<transactions::attestate>();
 			attestation->set_asset("BTC");
@@ -2093,8 +2094,9 @@ int main(int argc, char* argv[])
 		}
 		else if (entropy == 3)
 		{
+			const size_t transaction_count = 1896;
 			const size_t sender_count = transaction_count;
-			const decimal outgoing_account_balance = starting_account_balance / decimal(block_count * (transaction_count + 64) * sender_count);
+			const decimal outgoing_account_balance = starting_account_balance / decimal(block_count * (transaction_count + 64));
 			const decimal incoming_quantity = starting_account_balance * sender_count * 2;
 			auto* attestation = memory::init<transactions::attestate>();
 			attestation->set_asset("BTC");

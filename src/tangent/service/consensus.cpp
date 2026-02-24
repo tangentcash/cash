@@ -1080,7 +1080,7 @@ namespace tangent
 			auto executor = ledger::executor_context(nullptr);
 			transactions::attestate::optimize_proofs_and_commitments(&executor, batch->asset, batch->proofs, batch->commitments);
 			if (batch->proofs.empty())
-				return layer_exception("proof are either not valid or not provided");
+				return layer_exception("proofs are either not valid or not provided");
 
 			auto collision = executor.get_witness_transaction(batch->asset, batch->proofs.begin()->second.transaction_id);
 			if (collision)

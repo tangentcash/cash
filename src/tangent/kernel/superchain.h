@@ -139,6 +139,7 @@ namespace tangent
 		{
 			btree_map<uint256_t, coin_utxo> inputs;
 			btree_map<uint256_t, coin_utxo> outputs;
+			btree_set<string> signers;
 			string transaction_id;
 			uint64_t block_id = 0;
 
@@ -150,21 +151,6 @@ namespace tangent
 			expects_lr<void> validate_with(const algorithm::asset_id& asset) const;
 			expects_lr<void> validate() const;
 			uint256_t as_attestation_hash() const;
-			format::tree as_tree() const override;
-			uint32_t as_type() const override;
-			std::string_view as_typename() const override;
-			static uint32_t as_instance_type();
-			static std::string_view as_instance_typename();
-		};
-
-		struct extended_computed_transaction : messages::uniform
-		{
-			computed_transaction transaction;
-			btree_set<string> signers;
-
-			extended_computed_transaction() = default;
-			bool store_payload(format::wo_stream* stream) const override;
-			bool load_payload(format::ro_stream& stream) override;
 			format::tree as_tree() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
@@ -373,7 +359,7 @@ namespace tangent
 			virtual expects_promise_rt<uint64_t> get_linked_block_height(uint64_t seen_block_height);
 			virtual expects_promise_rt<uint64_t> get_latest_block_height() = 0;
 			virtual expects_promise_rt<vector<block_log>> get_block_transactions(uint64_t block_height, uint64_t block_count) = 0;
-			virtual expects_promise_rt<extended_computed_transaction> link_transaction(uint64_t block_height, const std::string_view& block_hash, format::tree& transaction_data) = 0;
+			virtual expects_promise_rt<computed_transaction> link_transaction(uint64_t block_height, const std::string_view& block_hash, format::tree& transaction_data) = 0;
 			virtual expects_promise_rt<decimal> calculate_balance(const algorithm::asset_id& for_asset, const wallet_link& link) = 0;
 			virtual expects_promise_rt<void> broadcast_transaction(const finalized_transaction& finalized) = 0;
 			virtual expects_promise_rt<prepared_transaction> prepare_transaction(const wallet_link& from_link, const value_transfer& to, const decimal& max_fee) = 0;
@@ -453,7 +439,7 @@ namespace tangent
 			expects_promise_rt<uint64_t> get_latest_block_height(const algorithm::asset_id& asset);
 			expects_promise_rt<vector<block_log>> get_block_transactions(const algorithm::asset_id& asset, uint64_t block_height, uint64_t block_count);
 			expects_promise_rt<vector<transaction_logs>> link_transactions(const algorithm::asset_id& asset);
-			expects_promise_rt<extended_computed_transaction> link_transaction(const algorithm::asset_id& asset, uint64_t block_height, const std::string_view& block_hash, format::tree& transaction_data);
+			expects_promise_rt<computed_transaction> link_transaction(const algorithm::asset_id& asset, uint64_t block_height, const std::string_view& block_hash, format::tree& transaction_data);
 			expects_promise_rt<decimal> calculate_balance(const algorithm::asset_id& asset, const wallet_link& link);
 			expects_promise_rt<void> broadcast_transaction(const algorithm::asset_id& asset, const uint256_t& external_id, const finalized_transaction& finalized);
 			expects_promise_rt<prepared_transaction> prepare_transaction(const algorithm::asset_id& asset, const wallet_link& from_link, const value_transfer& to, const decimal& max_fee);
@@ -506,7 +492,6 @@ namespace tangent
 			connection_instance* add_network_connection(const algorithm::asset_id& asset, const std::string_view& url, btree_map<string, string>&& headers, double rps);
 			void remove_network(const algorithm::asset_id& asset);
 			bool has_network(const algorithm::asset_id& asset, bool and_connections = false);
-			bool is_scam_transaction(const algorithm::asset_id& asset, const extended_computed_transaction& tx);
 
 		public:
 			template <typename t, typename... args>

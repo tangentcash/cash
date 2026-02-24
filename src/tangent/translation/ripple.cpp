@@ -307,11 +307,11 @@ namespace tangent
 					coreturn expects_rt<vector<block_log>>(std::move(results));
 				});
 			}
-			expects_promise_rt<extended_computed_transaction> ripple::link_transaction(uint64_t block_height, const std::string_view& block_hash, format::tree& transaction_data)
+			expects_promise_rt<computed_transaction> ripple::link_transaction(uint64_t block_height, const std::string_view& block_hash, format::tree& transaction_data)
 			{
 				string tx_result = transaction_data.child_var("metaData.TransactionResult").as_blob();
 				if (tx_result != "tesSUCCESS")
-					return expects_rt<extended_computed_transaction>(remote_exception("tx reverted"));
+					return expects_rt<computed_transaction>(remote_exception("tx reverted"));
 
 				string tx_hash = transaction_data.child_var("hash").as_blob();
 				string type = transaction_data.child_var("TransactionType").as_blob();
@@ -320,7 +320,7 @@ namespace tangent
 				decimal fee_value = from_drop(uint256_t(transaction_data.child_var("Fee").as_blob()));
 				auto* amount = transaction_data.child("Amount");
 				if (type != "Payment" || !amount)
-					return expects_rt<extended_computed_transaction>(remote_exception("tx not involved"));
+					return expects_rt<computed_transaction>(remote_exception("tx not involved"));
 
 				decimal base_value = 0.0, token_value = 0.0;
 				algorithm::asset_id token_asset = native_asset;
@@ -338,10 +338,10 @@ namespace tangent
 				auto destination_tag = transaction_data.child_var("DestinationTag").as_blob();
 				auto discovery = find_linked_addresses({ from, to });
 				if (!discovery || discovery->empty())
-					return expects_rt<extended_computed_transaction>(remote_exception("tx not involved"));
+					return expects_rt<computed_transaction>(remote_exception("tx not involved"));
 
-				extended_computed_transaction tx;
-				tx.transaction.transaction_id = tx_hash;
+				computed_transaction tx;
+				tx.transaction_id = tx_hash;
 				if (!tx.signers.empty())
 					tx.signers.insert(from);
 
@@ -365,10 +365,10 @@ namespace tangent
 					outputs[token_asset] = token_value;
 				}
 				if (!inputs.empty())
-					tx.transaction.add_input(coin_utxo(target_from_link != discovery->end() ? target_from_link->second : wallet_link::from_address(from), std::move(inputs)));	
+					tx.add_input(coin_utxo(target_from_link != discovery->end() ? target_from_link->second : wallet_link::from_address(from), std::move(inputs)));	
 				if (!outputs.empty())
-					tx.transaction.add_output(coin_utxo(std::move(to_link), std::move(outputs)));		
-				return expects_rt<extended_computed_transaction>(std::move(tx));
+					tx.add_output(coin_utxo(std::move(to_link), std::move(outputs)));		
+				return expects_rt<computed_transaction>(std::move(tx));
 			}
 			expects_promise_rt<decimal> ripple::calculate_balance(const algorithm::asset_id& for_asset, const wallet_link& link)
 			{

@@ -206,7 +206,7 @@ namespace tangent
 			{
 				uint64_t timeout = 30000;
 				uint64_t keep_alive = 5000;
-				uint64_t mbps_per_socket = 24;
+				uint64_t mbps_per_socket = 72;
 				uint64_t tls_trusted_peers = 100;
 			} tcp;
 			struct

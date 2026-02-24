@@ -117,11 +117,11 @@ namespace tangent
 					coreturn expects_rt<uint64_t>(block_slot);
 				});
 			}
-			expects_promise_rt<extended_computed_transaction> cardano::link_transaction(uint64_t, const std::string_view&, format::tree& transaction_data)
+			expects_promise_rt<computed_transaction> cardano::link_transaction(uint64_t, const std::string_view&, format::tree& transaction_data)
 			{
 				auto* operations_data = transaction_data.child("operations");
 				if (!operations_data || operations_data->childs().empty())
-					coreturn expects_rt<extended_computed_transaction>(remote_exception("tx not involved"));
+					coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
 
 				hash_set<string> addresses;
 				for (auto& tx_operation : operations_data->childs())
@@ -133,10 +133,10 @@ namespace tangent
 
 				auto discovery = find_linked_addresses(addresses);
 				if (!discovery)
-					coreturn expects_rt<extended_computed_transaction>(remote_exception("tx not involved"));
+					coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
 
-				extended_computed_transaction tx;
-				tx.transaction.transaction_id = transaction_data.child_var("transaction_identifier.hash").as_blob();
+				computed_transaction tx;
+				tx.transaction_id = transaction_data.child_var("transaction_identifier.hash").as_blob();
 
 				for (auto& tx_operation : operations_data->childs())
 				{
@@ -184,7 +184,7 @@ namespace tangent
 							}
 						}
 
-						tx.transaction.add_output(std::move(new_output));
+						tx.add_output(std::move(new_output));
 					}
 					else if (type == "input")
 					{
@@ -220,12 +220,12 @@ namespace tangent
 
 						if (!new_input.link.address.empty())
 							tx.signers.insert(new_input.link.address);
-						tx.transaction.add_input(std::move(new_input));
+						tx.add_input(std::move(new_input));
 					}
 				}
 
 				hash_map<algorithm::asset_id, decimal> balance;
-				for (auto& [hash, input] : tx.transaction.inputs)
+				for (auto& [hash, input] : tx.inputs)
 				{
 					auto& value = balance[native_asset];
 					value = value.is_nan() ? input.value : (value + input.value);
@@ -235,7 +235,7 @@ namespace tangent
 						token_value = token_value.is_nan() ? token.value : (token_value + token.value);
 					}
 				}
-				for (auto& [hash, output] : tx.transaction.outputs)
+				for (auto& [hash, output] : tx.outputs)
 				{
 					auto& value = balance[native_asset];
 					value = value.is_nan() ? -output.value : (value - output.value);
@@ -247,9 +247,9 @@ namespace tangent
 				}
 
 				coin_utxo new_input;
-				new_input.transaction_id = tx.transaction.transaction_id + "!";
+				new_input.transaction_id = tx.transaction_id + "!";
 				new_input.value = decimal::zero();
-				new_input.index = (uint32_t)tx.transaction.inputs.size();
+				new_input.index = (uint32_t)tx.inputs.size();
 
 				bool is_coinbase = false;
 				for (auto& [asset, value] : balance)
@@ -260,7 +260,7 @@ namespace tangent
 					is_coinbase = true;
 					if (asset != native_asset)
 					{
-						for (auto& [hash, output] : tx.transaction.outputs)
+						for (auto& [hash, output] : tx.outputs)
 						{
 							coin_utxo::token_utxo* token_utxo = nullptr;
 							for (auto& [token_hash, token] : output.tokens)
@@ -283,9 +283,9 @@ namespace tangent
 				}
 
 				if (is_coinbase)
-					tx.transaction.add_input(std::move(new_input));
+					tx.add_input(std::move(new_input));
 
-				coreturn expects_rt<extended_computed_transaction>(std::move(tx));
+				coreturn expects_rt<computed_transaction>(std::move(tx));
 			}
 			expects_promise_rt<void> cardano::broadcast_transaction(const finalized_transaction& finalized)
 			{

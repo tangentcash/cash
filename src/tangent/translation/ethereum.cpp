@@ -512,9 +512,9 @@ namespace tangent
 					coreturn expects_rt<vector<block_log>>(std::move(results));
 				});
 			}
-			expects_promise_rt<extended_computed_transaction> ethereum::link_transaction(uint64_t, const std::string_view&, format::tree& transaction_data)
+			expects_promise_rt<computed_transaction> ethereum::link_transaction(uint64_t, const std::string_view&, format::tree& transaction_data)
 			{
-				return coasync<expects_rt<extended_computed_transaction>>([this, &transaction_data]() -> expects_promise_rt<extended_computed_transaction>
+				return coasync<expects_rt<computed_transaction>>([this, &transaction_data]() -> expects_promise_rt<computed_transaction>
 				{
 					auto* chain = get_chain();
 					string data = transaction_data.child_var("input").as_blob();
@@ -530,8 +530,8 @@ namespace tangent
 					decimal fee_value = gas_price * gas_limit;
 					decimal total_value = base_value + fee_value;
 
-					extended_computed_transaction result;
-					result.transaction.transaction_id = tx_hash;
+					computed_transaction result;
+					result.transaction_id = tx_hash;
 					if (!signer.empty())
 						result.signers.insert(signer);
 
@@ -580,7 +580,7 @@ namespace tangent
 
 					auto discovery = find_linked_addresses(addresses);
 					if (!discovery || discovery->empty())
-						coreturn expects_rt<extended_computed_transaction>(remote_exception("tx not involved"));
+						coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
 
 					if (!data.empty())
 					{
@@ -629,7 +629,7 @@ namespace tangent
 
 					discovery = find_linked_addresses(addresses);
 					if (!discovery || discovery->empty())
-						coreturn expects_rt<extended_computed_transaction>(remote_exception("tx not involved"));
+						coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
 
 					auto* tx_receipt = transaction_data.child("receipt");
 					if (!tx_receipt)
@@ -641,23 +641,23 @@ namespace tangent
 
 					bool is_reverted = tx_receipt && tx_receipt->is_map() ? hex_to_uint256(tx_receipt->child_var("status").as_blob()) < 1 : true;
 					if (is_reverted)
-						coreturn expects_rt<extended_computed_transaction>(remote_exception("tx reverted"));
+						coreturn expects_rt<computed_transaction>(remote_exception("tx reverted"));
 
 					for (auto& [address, values] : inputs)
 					{
 						auto target_link = discovery->find(address);
 						auto input = coin_utxo(target_link != discovery->end() ? target_link->second : wallet_link::from_address(address), std::move(values));
-						result.transaction.add_input(std::move(input));
+						result.add_input(std::move(input));
 					}
 
 					for (auto& [address, values] : outputs)
 					{
 						auto target_link = discovery->find(address);
 						auto output = coin_utxo(target_link != discovery->end() ? target_link->second : wallet_link::from_address(address), std::move(values));
-						result.transaction.add_output(std::move(output));
+						result.add_output(std::move(output));
 					}
 
-					coreturn expects_rt<extended_computed_transaction>(std::move(result));
+					coreturn expects_rt<computed_transaction>(std::move(result));
 				});
 			}
 			expects_promise_rt<computed_fee> ethereum::estimate_transaction_fee(const wallet_link& from_link, const value_transfer& to)
