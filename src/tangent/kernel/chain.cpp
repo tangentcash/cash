@@ -213,13 +213,21 @@ namespace tangent
 		if (target_path.empty())
 			resolve(protocol::now().user.network, protocol::now().user.storage.path);
 
+		std::string_view prefix = "file:///";
+		std::string_view postfix = ".db";
+		char buffer[3072] = { 0 };
+		memcpy(buffer, prefix.data(), prefix.size());
+		memcpy(buffer + prefix.size(), target_path.data(), target_path.size());
+		memcpy(buffer + prefix.size() + target_path.size(), location.data(), location.size());
+		memcpy(buffer + prefix.size() + target_path.size() + location.size(), postfix.data(), postfix.size());
+
+		std::string_view address = std::string_view(buffer, strnlen(buffer, sizeof(buffer)));
 		uref<sqlite::connection> result;
-		string address = stringify::text("file:///%s%.*s.db", target_path.c_str(), (int)location.size(), location.data());
-		auto& queue = indices[address];
-		if (!queue.empty())
+		auto it = indices.find(address);
+		if (it != indices.end() && !it->second.empty())
 		{
-			result = std::move(queue.front());
-			queue.pop();
+			result = std::move(it->second.front());
+			it->second.pop();
 			return result;
 		}
 
@@ -228,7 +236,7 @@ namespace tangent
 		if (!status)
 		{
 			if (protocol::now().user.storage.logging)
-				VI_ERR("wal append error: %s (location: %s)", status.error().what(), address.c_str());
+				VI_ERR("wal append error: %s (location: %.*s)", status.error().what(), (int)address.size(), address.data());
 
 			return result;
 		}

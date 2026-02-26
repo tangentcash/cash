@@ -548,8 +548,10 @@ namespace tangent
 				{
 					dispatch_response(base, std::move(*request), optional::none, 0, [](http::connection* base, option<format::tree>&& responses)
 					{
-						auto response = (responses ? *responses : server_response().error(error_codes::bad_request, "request is empty").transform(format::tree())).as_json();
-						base->web_socket->send(response, http::web_socket_op::text, [](http::web_socket_frame* web_socket) { web_socket->next(); });
+						if (responses)
+							base->web_socket->send(responses->as_json(), http::web_socket_op::text, [](http::web_socket_frame* web_socket) { web_socket->next(); });	
+						else
+							base->web_socket->send(server_response().error(error_codes::bad_request, "request is empty").transform(format::tree()).as_json(), http::web_socket_op::text, [](http::web_socket_frame* web_socket) { web_socket->next(); });				
 					});
 				});
 			}

@@ -77,8 +77,11 @@ namespace tangent
 		}
 		uref<sqlite::connection> storage_util::index_storage_named_of(const std::string_view& location, const std::string_view& name, const std::function<bool(sqlite::connection*, const std::string_view&)>& callback)
 		{
-			string full_location = string(location) + "." + string(name);
-			return index_storage_of(full_location, std::bind(callback, std::placeholders::_1, name));
+			char buffer[256] = { 0 };
+			memcpy(buffer, location.data(), location.size());
+			memcpy(buffer + location.size() + 1, name.data(), name.size());
+			buffer[location.size()] = '.';
+			return index_storage_of(std::string_view(buffer, strnlen(buffer, sizeof(buffer))), std::bind(callback, std::placeholders::_1, name));
 		}
 		rocksdb::DB* storage_util::blob_storage_of(const std::string_view& location)
 		{
