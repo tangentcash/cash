@@ -2510,37 +2510,49 @@ namespace tangent
 			if (!p)
 				return false;
 
-			auto& cache = cache_ptr(p);
+			auto& cache = ((program*)p)->cache.index[mode == cquery::column || mode == cquery::column_filter ? 0 : 1][subject.data];
+			auto index_storage = format::wo_stream();
+			auto index_at = [&](uint32_t index) -> string&
+			{
+				index_storage.clear();
+				index_storage.write_typeless(index);
+				if (mode != cquery::row && mode != cquery::column)
+				{
+					index_storage.write_typeless((char*)&comparator, sizeof(comparator));
+					index_storage.write_typeless((char*)&order, sizeof(order));
+					index_storage.write_typeless(value);
+				}
+				return index_storage.data;
+			};
 		retry:
-			auto it = cache.find((size_t)offset);
+			auto& key = index_at(offset);
+			auto it = cache.find(key);
 			if (it == cache.end())
 			{
 				expects_lr<vector<uptr<states::account_multiform>>> results = layer_exception();
-				switch (mode)
-				{
-					case cquery::column:
-						results = p->executor->get_account_multiforms_by_column(p->callable(), subject.data, (size_t)offset, count);
-						break;
-					case cquery::column_filter:
-						results = p->executor->get_account_multiforms_by_column_filter(p->callable(), subject.data, comparator, value, order, (size_t)offset, count);
-						break;
-					case cquery::row:
-						results = p->executor->get_account_multiforms_by_row(p->callable(), subject.data, (size_t)offset, count);
-						break;
-					case cquery::row_filter:
-						results = p->executor->get_account_multiforms_by_row_filter(p->callable(), subject.data, comparator, value, order, (size_t)offset, count);
-						break;
-					default:
-						break;
-				}
-				if (!results || results->empty())
-					return false;
+				if (mode == cquery::column)
+					results = p->executor->get_account_multiforms_by_column(p->callable(), subject.data, (size_t)offset, count);
+				else if (mode == cquery::column_filter)
+					results = p->executor->get_account_multiforms_by_column_filter(p->callable(), subject.data, comparator, value, order, (size_t)offset, count);
+				else if (mode == cquery::row)
+					results = p->executor->get_account_multiforms_by_row(p->callable(), subject.data, (size_t)offset, count);
+				else if (mode == cquery::row_filter)
+					results = p->executor->get_account_multiforms_by_row_filter(p->callable(), subject.data, comparator, value, order, (size_t)offset, count);
 
-				size_t index = (size_t)offset;
+				if (!results || results->empty())
+				{
+					cache[key] = nullptr;
+					return false;
+				}
+
+				uint32_t index = offset;
 				for (auto& result : *results)
-					cache[index++] = std::move(result);
+					cache[index_at(index++)] = std::move(result);
+
 				goto retry;
 			}
+			else if (!it->second)
+				return false;
 
 			if (object_value != nullptr && object_type_id != (int)type_id::void_t)
 			{
@@ -2649,17 +2661,6 @@ namespace tangent
 			mode = (mode == cquery::column || mode == cquery::column_filter ? cquery::column_filter : cquery::row_filter);
 			order = ledger::filter_order::descending;
 			return *this;
-		}
-		hash_map<size_t, uptr<states::account_multiform>>& ranging_slice_repr::cache_ptr(const program* p)
-		{
-			if (mode == cquery::column || mode == cquery::row)
-				return ((program*)p)->cache.index[mode == cquery::column || mode == cquery::column_filter ? 0 : 1][subject.data];
-
-			auto index = subject;
-			index.write_typeless((char*)&comparator, sizeof(comparator));
-			index.write_typeless((char*)&order, sizeof(order));
-			index.write_typeless(value);
-			return ((program*)p)->cache.index[mode == cquery::column || mode == cquery::column_filter ? 0 : 1][index.data];
 		}
 		ranging_slice_repr ranging_slice_repr::from(cquery new_mode, uint8_t new_slot, const void* index_value, int index_type_id)
 		{
@@ -3323,7 +3324,7 @@ namespace tangent
 		uint64_t contract::block_number()
 		{
 			auto* p = program::fetch_immutable_or_throw();
-			return p ? p->executor->block->number : 0;
+			return p ? p->virtual_block_number() : 0;
 		}
 		payable_repr contract::tx_value()
 		{
@@ -6089,7 +6090,7 @@ namespace tangent
 					if (index >= args.size())
 						return layer_exception(stringify::text("illegal call to function \"%s\": argument #%i not bound", entrypoint.get_decl().data(), (int)i));
 
-					if (type.flags() & (size_t)object_behaviours::enumerator)
+					if (type.is_valid() && (type.flags() & (size_t)object_behaviours::enumerator))
 						type_id = (int)type_id::int32_t;
 
 					switch (type_id)
@@ -6234,6 +6235,10 @@ namespace tangent
 				return &args;
 			}
 			return nullptr;
+		}
+		uint64_t program::virtual_block_number() const
+		{
+			return executor->block->number;
 		}
 		program* program::fetch_mutable(immediate_context* coroutine)
 		{

@@ -325,6 +325,10 @@ namespace tangent
 			{
 				return !program.path.empty();
 			}
+			uint64_t virtual_block_number() const override
+			{
+				return 1;
+			}
 			uint256_t state_root_hash() const
 			{
 				vector<uint256_t> state_tree;
@@ -677,10 +681,13 @@ namespace tangent
 					auto* upsert = changelog.set("upsert", format::tree::map());
 					for (auto& [index, change] : context.tracer.solver.state.changelog.outgoing.finalized)
 					{
+						auto copy = uptr(states::resolver::from_copy(*change.state));
+						copy->block_number = std::numeric_limits<uint64_t>::max();
+						copy->checksum = 0;
 						if (change.erase)
-							erase->set(format::util::encode_0xhex(index), change.state->as_tree());
+							erase->set(format::util::encode_0xhex(index), copy->as_tree());
 						else
-							upsert->set(format::util::encode_0xhex(index), change.state->as_tree());
+							upsert->set(format::util::encode_0xhex(index), copy->as_tree());
 					}
 					terminal->write_line(changelog.as_json(true));
 					return true;
@@ -700,12 +707,20 @@ namespace tangent
 
 						auto copy = uptr(states::resolver::from_copy(*change.state));
 						copy->block_number = std::numeric_limits<uint64_t>::max();
-						state_tree.push_back(copy->as_hash());
+						copy->checksum = 0;
+						state_tree.push_back(copy->as_hash(true));
 					}
 
 					auto state_root = algorithm::merkle_tree::from(std::move(state_tree)).root();
 					if (state_root != state_hash)
-						return err("state hash mismatch (actual): " + algorithm::encoding::encode_0xhex256(state_root));
+					{
+						bool continues = args.size() >= 3 && var::any(args[2]).get_boolean();
+						bool result = err("state hash mismatch (actual): " + algorithm::encoding::encode_0xhex256(state_root));
+						if (!continues)
+							return result;
+
+						terminal->read_char();
+					}
 
 					return true;
 				}
@@ -938,7 +953,7 @@ namespace tangent
 						"result                                                  -- get call result log\n"
 						"log                                                     -- get call event log\n"
 						"changelog                                               -- get call state changes log\n"
-						"state_check [hash]                                      -- verify state hash derived from current changelog\n"
+						"state_check [hash] [continue?]                          -- verify state hash derived from current changelog\n"
 						"receipt                                                 -- get call receipt\n"
 						"abi                                                     -- get program abi listing\n"
 						"predefined [path]                                       -- export symbols for AngelScript Language Server (as.predefined)\n"

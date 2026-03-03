@@ -610,7 +610,6 @@ namespace tangent
 			ranging_slice_repr& where_lte(const uint256_t& new_value);
 			ranging_slice_repr& order_asc();
 			ranging_slice_repr& order_desc();
-			hash_map<size_t, uptr<states::account_multiform>>& cache_ptr(const program* p);
 			static ranging_slice_repr from(cquery new_mode, uint8_t new_slot, const void* index_value, int index_type_id);
 		};
 
@@ -807,7 +806,7 @@ namespace tangent
 		{
 			struct
 			{
-				hash_map<string, hash_map<size_t, uptr<states::account_multiform>>> index[2];
+				hash_map<string, hash_map<string, uptr<states::account_multiform>>> index[2];
 				option<algorithm::wesolowski::distribution> distribution = optional::none;
 				option<payable_repr> payable = optional::none;
 			} cache;
@@ -828,6 +827,7 @@ namespace tangent
 			virtual function deploy_function() const;
 			virtual string function_declaration() const;
 			virtual const format::variables* function_arguments() const;
+			virtual uint64_t virtual_block_number() const;
 			static program* fetch_mutable(immediate_context* coroutine = immediate_context::get());
 			static const program* fetch_immutable(immediate_context* coroutine = immediate_context::get());
 			static program* fetch_mutable_or_throw(immediate_context* coroutine = immediate_context::get());

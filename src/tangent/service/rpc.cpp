@@ -296,6 +296,7 @@ namespace tangent
 			router->base->callbacks.authorize = auth_token.empty() ? http::authorize_callback(nullptr) : std::bind(&server_node::authorize, this, std::placeholders::_1, std::placeholders::_2);
 			router->base->callbacks.headers = std::bind(&server_node::headers, this, std::placeholders::_1, std::placeholders::_2);
 			router->base->callbacks.options = std::bind(&server_node::options, this, std::placeholders::_1);
+			router->base->compression.enabled = true;
 			router->base->allow_web_socket = true;
 			router->base->web_socket_timeout = 0;
 			router->base->auth.type = "Basic";
