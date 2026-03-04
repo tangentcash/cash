@@ -533,7 +533,7 @@ namespace tangent
 		}
 		decimal block_header::network_congestion_threshold() const
 		{
-			return algorithm::arithmetic::divide(slot_gas_use.to_decimal(), get_slot_total_gas_limit().to_decimal());
+			return algorithm::arithmetic::divide(slot_gas_use.to_decimal(), get_slot_gas_limit().to_decimal());
 		}
 		uint64_t block_header::get_witness_requirement(const algorithm::asset_id& asset) const
 		{
@@ -650,7 +650,7 @@ namespace tangent
 			slot_data->set("duration_total", algorithm::encoding::serialize_uint256(slot_duration));
 			slot_data->set("duration_average", algorithm::encoding::serialize_uint256(get_slot_proof_duration_average()));
 			slot_data->set("gas_use", algorithm::encoding::serialize_uint256(slot_gas_use));
-			slot_data->set("gas_limit", algorithm::encoding::serialize_uint256(get_slot_total_gas_limit()));
+			slot_data->set("gas_limit", algorithm::encoding::serialize_uint256(get_slot_gas_limit()));
 			slot_data->set("congestion", format::variable(network_congestion()));
 			slot_data->set("length", algorithm::encoding::serialize_uint256(get_slot_length()));
 			auto* witnesses_data = data.set("witnesses", format::tree::list());
@@ -707,24 +707,14 @@ namespace tangent
 		{
 			return "block";
 		}
-		uint256_t block_header::get_commitment_gas_limit()
+		uint256_t block_header::get_gas_limit()
 		{
-			static uint256_t limit = protocol::now().policy.block_commitment_gas_limit;
+			static uint256_t limit = protocol::now().policy.block_gas_limit;
 			return limit;
 		}
-		uint256_t block_header::get_transaction_gas_limit()
+		uint256_t block_header::get_slot_gas_limit()
 		{
-			static uint256_t limit = protocol::now().policy.block_transaction_gas_limit;
-			return limit;
-		}
-		uint256_t block_header::get_total_gas_limit()
-		{
-			static uint256_t limit = get_commitment_gas_limit() + get_transaction_gas_limit();
-			return limit;
-		}
-		uint256_t block_header::get_slot_total_gas_limit()
-		{
-			static uint256_t limit = algorithm::wesolowski::adjustment_interval() * get_total_gas_limit();
+			static uint256_t limit = algorithm::wesolowski::adjustment_interval() * get_gas_limit();
 			return limit;
 		}
 		uint256_t block_header::get_gas_work(const uint256_t& gas_use, const uint256_t& gas_limit, uint64_t priority)
@@ -2767,7 +2757,7 @@ namespace tangent
 				reference->gas_limit = initial_gas_limit;
 			};
 			reference->checksum = 0;
-			reference->gas_limit = transaction->is_commitment() ? block_body::get_commitment_gas_limit() : block_body::get_transaction_gas_limit();
+			reference->gas_limit = block_header::get_gas_limit();
 
 			ledger::block_body temp_block;
 			solver_context temp_solver;
@@ -3555,8 +3545,7 @@ namespace tangent
 
 			state.public_key_hash = algorithm::pubkeyhash_t();
 			state.secret_key = algorithm::seckey_t();
-			state.commitment_gas_limit = 0;
-			state.transaction_gas_limit = 0;
+			state.gas_usage = 0;
 			state.block_options = 0;
 			state.validator_active = true;
 			state.executor = executor_context(&state.changelog);
@@ -3653,8 +3642,7 @@ namespace tangent
 			precompute_transaction_list(subqueue);
 
 			auto prev_pending_size = transactions.pending.size();
-			auto max_commitment_gas_limit = block_header::get_commitment_gas_limit();
-			auto max_transaction_gas_limit = block_header::get_transaction_gas_limit();
+			auto gas_limit = block_header::get_gas_limit();
 			for (auto& item : subqueue)
 			{
 				if (hashes != nullptr)
@@ -3665,24 +3653,20 @@ namespace tangent
 					hashes->insert(item.hash);
 				}
 
-				auto& max_gas_limit = item.candidate->is_commitment() ? max_commitment_gas_limit : max_transaction_gas_limit;
-				auto& current_gas_limit = item.candidate->is_commitment() ? state.commitment_gas_limit : state.transaction_gas_limit;
-				auto decision = decide_on_inclusion(item, current_gas_limit, max_gas_limit);
+				auto decision = decide_on_inclusion(item, state.gas_usage, gas_limit);
 				if (decision == include_decision::include_in_block)
 				{
 					auto& nonce = nonces[algorithm::pubkeyhash_t(item.owner)];
 					nonce = std::max(item.candidate->nonce, nonce);
-					current_gas_limit += item.candidate->gas_limit;
+					state.gas_usage += item.candidate->gas_limit;
 					transactions.pending.emplace_back(std::move(item));
 					++transactions.queued;
 				}
 				else if (decision == include_decision::not_executable)
 					transactions.failed.insert(item.hash);
 			}
-			if (state.commitment_gas_limit >= max_commitment_gas_limit - max_commitment_gas_limit / 100)
-				state.commitment_gas_limit = max_commitment_gas_limit;
-			if (state.transaction_gas_limit >= max_transaction_gas_limit - max_transaction_gas_limit / 100)
-				state.transaction_gas_limit = max_transaction_gas_limit;
+			if (state.gas_usage >= gas_limit - gas_limit / 100)
+				state.gas_usage = gas_limit;
 			return prev_pending_size - transactions.pending.size();
 		}
 		solver_context::queued_transaction& solver_context::force_include_transaction(uptr<transaction_message>&& candidate)
@@ -3886,7 +3870,7 @@ namespace tangent
 		}
 		bool solver_context::can_accept_more_transactions()
 		{
-			return state.commitment_gas_limit + state.transaction_gas_limit < block_header::get_total_gas_limit();
+			return state.gas_usage < block_header::get_gas_limit();
 		}
 		expects_lr<void> solver_context::solve_evaluated_block(block_evaluation& evaluation, const algorithm::pubkeyhash_t& public_key_hash, const algorithm::seckey_t& secret_key)
 		{

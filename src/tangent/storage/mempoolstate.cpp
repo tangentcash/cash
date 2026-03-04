@@ -1,7 +1,7 @@
 #include "mempoolstate.h"
 #include "../policy/transactions.h"
-#define TRANSACTION_NORMAL_EXPIRATION 14400000
-#define TRANSACTION_COMMITMENT_EXPIRATION 7200000
+#define TRANSACTION_EXPIRATION 14400000
+#define OBSERVATION_EXPIRATION (86400 * 1000)
 #undef NULL
 
 namespace tangent
@@ -720,16 +720,15 @@ namespace tangent
 			uint8_t asset[32];
 			value.asset.encode(asset);
 
-			uint64_t timeout = (value.is_commitment() ? TRANSACTION_COMMITMENT_EXPIRATION : TRANSACTION_NORMAL_EXPIRATION);
 			map.clear();
 			map.push_back(var::set::binary(hash, sizeof(hash)));
-			map.push_back(var::set::integer(protocol::now().time.now_cpu() + timeout + 86400 * 1000));
+			map.push_back(var::set::integer(protocol::now().time.now_cpu() + TRANSACTION_EXPIRATION + OBSERVATION_EXPIRATION));
 			map.push_back(var::set::binary(hash, sizeof(hash)));
 			map.push_back(var::set::binary(owner.view()));
 			map.push_back(var::set::binary(asset, sizeof(asset)));
 			map.push_back(var::set::integer(value.nonce));
 			map.push_back(quality.is_nan() ? var::set::null() : var::set::integer(quality.to_uint64()));
-			map.push_back(var::set::integer(protocol::now().time.now_cpu() + timeout));
+			map.push_back(var::set::integer(protocol::now().time.now_cpu() + TRANSACTION_EXPIRATION));
 			map.push_back(var::set::string(value.gas_price.to_string()));
 			map.push_back(var::set::binary(message.data));
 			map.push_back(var::set::binary(owner.view()));

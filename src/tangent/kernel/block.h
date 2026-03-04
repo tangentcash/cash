@@ -202,10 +202,8 @@ namespace tangent
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
-			static uint256_t get_commitment_gas_limit();
-			static uint256_t get_transaction_gas_limit();
-			static uint256_t get_total_gas_limit();
-			static uint256_t get_slot_total_gas_limit();
+			static uint256_t get_gas_limit();
+			static uint256_t get_slot_gas_limit();
 			static uint256_t get_gas_work(const uint256_t& gas_use, const uint256_t& gas_limit, uint64_t priority);
 			static bool is_genesis_epoch(const uint64_t block_number);
 			static decimal get_coinbase_value(const uint64_t block_number);
@@ -566,8 +564,7 @@ namespace tangent
 			{
 				algorithm::pubkeyhash_t public_key_hash;
 				algorithm::seckey_t secret_key;
-				uint256_t commitment_gas_limit = 0;
-				uint256_t transaction_gas_limit = 0;
+				uint256_t gas_usage = 0;
 				uint8_t block_options = 0;
 				bool validator_active = true;
 				block_changelog changelog;

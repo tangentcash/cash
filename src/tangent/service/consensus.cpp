@@ -1042,7 +1042,7 @@ namespace tangent
 
 			if (!candidate_tx->is_commitment() && !candidate_tx->gas_price.is_positive())
 			{
-				if (candidate_message.data.size() > protocol::now().policy.free_transaction_size_limit)
+				if (candidate_message.data.size() > protocol::now().policy.gasless_size_limit)
 				{
 					if (protocol::now().user.consensus.logging)
 						VI_WARN("transaction %s %.*s validation failed: must pay for gas (anti-spam, large transaction)", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data());

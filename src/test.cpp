@@ -1109,7 +1109,7 @@ struct tests
 		};
 
 		auto tx = transactions::transfer();
-		tx.gas_limit = ledger::block_body::get_transaction_gas_limit();
+		tx.gas_limit = ledger::block_body::get_gas_limit();
 		tx.set_to(users[1].wallet.public_key_hash, decimal("13.539899"));
 		VI_PANIC(tx.sign(users[0].wallet.secret_key, users[0].nonce++), "authentication failed");
 
@@ -1876,10 +1876,8 @@ struct tests
 
 		format::tree data = format::tree::map();
 		data.set("setup_transaction_gas_limit", algorithm::encoding::serialize_uint256(transaction.gas_limit));
-		data.set("block_commitment_gas_limit", algorithm::encoding::serialize_uint256(ledger::block_body::get_commitment_gas_limit()));
-		data.set("block_transaction_gas_limit", algorithm::encoding::serialize_uint256(ledger::block_body::get_transaction_gas_limit()));
-		data.set("block_total_gas_limit", algorithm::encoding::serialize_uint256(ledger::block_body::get_total_gas_limit()));
-		data.set("slot_total_gas_limit", algorithm::encoding::serialize_uint256(ledger::block_body::get_slot_total_gas_limit()));
+		data.set("block_gas_limit", algorithm::encoding::serialize_uint256(ledger::block_body::get_gas_limit()));
+		data.set("slot_gas_limit", algorithm::encoding::serialize_uint256(ledger::block_body::get_slot_gas_limit()));
 		term->write_line(data.as_json(true));
 	}
 };
@@ -2061,7 +2059,7 @@ int main(int argc, char* argv[])
 			transfer->set_asset("BTC");
 			for (auto& sender : senders)
 				transfer->set_to(sender.wallet.public_key_hash, starting_account_balance);
-			transfer->set_gas(decimal::zero(), ledger::block_body::get_transaction_gas_limit());
+			transfer->set_gas(decimal::zero(), ledger::block_body::get_gas_limit());
 			VI_PANIC(transfer->sign(user1.secret_key, user1_nonce++), "authentication failed");
 
 			genesis = vector<uptr<ledger::transaction_message>>();
@@ -2120,7 +2118,7 @@ int main(int argc, char* argv[])
 			transfer->set_asset("BTC");
 			for (auto& sender : senders)
 				transfer->set_to(sender.wallet.public_key_hash, starting_account_balance);
-			transfer->set_gas(decimal::zero(), ledger::block_body::get_transaction_gas_limit());
+			transfer->set_gas(decimal::zero(), ledger::block_body::get_gas_limit());
 			VI_PANIC(transfer->sign(user1.secret_key, user1_nonce++), "authentication failed");
 
 			genesis = vector<uptr<ledger::transaction_message>>();

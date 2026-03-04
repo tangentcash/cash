@@ -16,9 +16,8 @@ namespace tangent
 			if (!gas_limit)
 				return layer_exception("gas limit requirement not met (min: 1)");
 
-			uint256_t max_gas_limit = is_commitment() ? block_header::get_commitment_gas_limit() : block_header::get_transaction_gas_limit();
-			if (gas_limit > max_gas_limit)
-				return layer_exception("gas limit requirement not met (max: " + max_gas_limit.to_string() + ")");
+			if (gas_limit > ledger::block_header::get_gas_limit())
+				return layer_exception("gas limit requirement not met (max: " + ledger::block_header::get_gas_limit().to_string() + ")");
 
 			if (!is_commitment())
 			{
@@ -92,7 +91,7 @@ namespace tangent
 		}
 		expects_lr<void> transaction_message::sign(const algorithm::seckey_t& secret_key, uint64_t new_nonce, const decimal& price)
 		{
-			set_gas(price, is_commitment() ? block_header::get_commitment_gas_limit() : block_header::get_transaction_gas_limit());
+			set_gas(price, ledger::block_header::get_gas_limit());
 			if (!sign(secret_key, new_nonce))
 				return layer_exception("authentification failed");
 
@@ -127,11 +126,11 @@ namespace tangent
 		{
 			asset = algorithm::asset::id_of(blockchain, token, contract_address);
 		}
-		bool transaction_message::is_commitment() const
+		bool transaction_message::is_dispatchable() const
 		{
 			return false;
 		}
-		bool transaction_message::is_dispatchable() const
+		bool transaction_message::is_commitment() const
 		{
 			return false;
 		}

@@ -75,7 +75,7 @@ namespace tangent
 				transaction->signature.blob[0] = 0xFF;
 				transaction->nonce = std::max<size_t>(1, tracer.solver.state.executor.get_account_nonce(from).or_else(states::account_nonce(algorithm::pubkeyhash_t(), nullptr)).nonce);
 				transaction->call_to(to, function_decl, format::variables(args));
-				transaction->set_gas(decimal::zero(), ledger::block_body::get_transaction_gas_limit());
+				transaction->set_gas(decimal::zero(), ledger::block_body::get_gas_limit());
 				tracer.contextual = std::move(transaction);
 				tracer.solver.apply_temporary_state(&tracer.block, *tracer.contextual, std::move(receipt));
 				return expectation::met;

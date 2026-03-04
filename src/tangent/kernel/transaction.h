@@ -40,8 +40,8 @@ namespace tangent
 			virtual expects_lr<void> set_optimal_gas(const decimal& price);
 			virtual void set_gas(const decimal& price, const uint256_t& limit);
 			virtual void set_asset(const std::string_view& blockchain, const std::string_view& token = std::string_view(), const std::string_view& contract_address = std::string_view());
-			virtual bool is_commitment() const;
 			virtual bool is_dispatchable() const;
+			virtual bool is_commitment() const;
 			virtual uint256_t gas_asset() const;
 			virtual format::tree as_tree() const override;
 			virtual uint32_t as_type() const override = 0;

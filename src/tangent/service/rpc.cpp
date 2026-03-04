@@ -1653,7 +1653,7 @@ namespace tangent
 			auto temp_transaction = transactions::call();
 			temp_transaction.asset = algorithm::asset::id_of_handle(args[0].as_string());
 			temp_transaction.call_to(to, args[3].as_string(), std::move(function_args));
-			temp_transaction.set_gas(decimal::zero(), ledger::block_body::get_transaction_gas_limit());
+			temp_transaction.set_gas(decimal::zero(), ledger::block_body::get_gas_limit());
 
 			auto temp_receipt = ledger::transaction_receipt();
 			temp_receipt.from = from;
