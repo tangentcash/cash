@@ -295,6 +295,7 @@ namespace tangent
 						params->set("transactions", format::variable(true));
 						params->set("expand", format::variable(true));
 
+						console::get()->write_line(map.as_json(true));
 						auto block_data = coawait(execute_rpc(nd_call::ledger(), std::move(map), cache_policy::blob_cache));
 						if (!block_data)
 							coreturn block_data.error();
