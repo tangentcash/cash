@@ -3378,9 +3378,6 @@ namespace tangent
 				}
 			}
 
-			if (transfers.empty() && balances.empty())
-				return layer_exception("invalid transaction");
-
 			auto failing_attesters = btree_set<algorithm::pubkeyhash_t>();
 			for (auto& [commitment_hash, group] : attesters)
 			{

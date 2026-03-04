@@ -1956,7 +1956,7 @@ namespace tangent
 				auto block_height = options->get_next_block_height(block_count);
 				auto block_batch = coawait(implementation->get_block_transactions(block_height, block_count));
 				if (!block_batch)
-					coreturn expects_rt<vector<transaction_logs>>(block_batch.error());
+					coreturn expects_rt<vector<transaction_logs>>(stringify::text("while fetching block(s) %" PRIu64 " received %s", block_height, block_batch.error().message().c_str()));
 
 				auto* utxo_implementation = utxo_translation_unit::from(implementation);
 				for (auto& block : *block_batch)

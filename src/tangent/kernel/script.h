@@ -489,6 +489,7 @@ namespace tangent
 			void pay_all(const payable_repr& payable);
 			void mint(const string_repr& token, const decimal& supply, const decimal& reserve);
 			void burn(const string_repr& token, const decimal& supply, const decimal& reserve);
+			bool callable(const string_repr& entrypoint) const;
 			decimal token_balance_of(const string_repr& token) const;
 			decimal token_reserve_of(const string_repr& token) const;
 			decimal balance_of(const uint256_t& asset) const;
@@ -496,10 +497,18 @@ namespace tangent
 			string_repr to_string() const;
 			uint256_t to_public_key_hash() const;
 			bool empty() const;
-			static void free_call(asIScriptGeneric* generic);
-			static void paid_call(asIScriptGeneric* generic);
-			static void call(asIScriptGeneric* generic, const payable_repr& value, size_t args_offset);
+			static void call(asIScriptGeneric* generic);
+			static void static_call(asIScriptGeneric* generic);
+			static void execute_call(asIScriptGeneric* generic, const payable_repr& value, size_t args_offset);
 			static bool equals(const address_repr& a, const address_repr& b);
+		};
+
+		struct batch_payout_repr
+		{
+			btree_map<algorithm::pubkeyhash_t, btree_map<algorithm::asset_id, decimal>> payouts;
+
+			void to(const address_repr& new_to, const algorithm::asset_id& new_asset, const decimal& new_value);
+			void pay();
 		};
 
 		struct abi_repr
@@ -558,6 +567,7 @@ namespace tangent
 			~varying_repr();
 			void reset() override;
 			void erase();
+			void save();
 			void store(const void* new_value);
 			void store_if(bool condition, const void* new_value);
 			const void* load();
@@ -598,8 +608,9 @@ namespace tangent
 			bool next_index(void* object_value, int object_type_id, void* other_index_value, int other_index_type_id);
 			bool next_index_ranked(void* object_value, int object_type_id, void* other_index_value, int other_index_type_id, uint256_t* filter_value);
 			static void wrapped_next(asIScriptGeneric* generic);
-			static void wrapped_next_index(asIScriptGeneric* generic);
-			static void wrapped_next_index_ranked(asIScriptGeneric* generic);
+			static void wrapped_next_object(asIScriptGeneric* generic);
+			static void wrapped_next_object_index(asIScriptGeneric* generic);
+			static void wrapped_next_object_index_ranked(asIScriptGeneric* generic);
 			ranging_slice_repr& with_offset(uint32_t new_offset);
 			ranging_slice_repr& with_count(uint32_t new_count);
 			ranging_slice_repr& where_gt(const uint256_t& new_value);
@@ -775,8 +786,15 @@ namespace tangent
 		class factory : public singleton<factory>
 		{
 		private:
+			struct module_ref
+			{
+				library ref = nullptr;
+				size_t count = 0;
+			};
+
+		private:
 			std::recursive_mutex mutex;
-			hash_map<string, cmodule> modules;
+			hash_map<string, module_ref> modules;
 			uptr<virtual_machine> vm;
 			uptr<compiler> vmc;
 			string vmc_log;
@@ -793,7 +811,7 @@ namespace tangent
 			void return_module(cmodule&& value);
 			string export_predefined_symbols();
 			expects_lr<cmodule> compile_module(const std::string_view& hashcode, const std::function<expects_lr<string>()>& unpacked_code_callback);
-			expects_lr<void> reset_properties(library& module, immediate_context* context);
+			expects_lr<void> reset_module(library& module, immediate_context* context);
 			virtual_machine* get_vm();
 
 		private:
@@ -811,17 +829,19 @@ namespace tangent
 				option<payable_repr> payable = optional::none;
 			} cache;
 			ledger::executor_context* executor;
+			program* parent;
 			library module;
 
-			program(ledger::executor_context* new_executor, library&& new_module);
+			program(ledger::executor_context* new_executor, library&& new_module, program* new_parent = nullptr);
 			virtual expects_lr<void> execute(ccall mutability, const std::string_view& entrypoint, const format::variables& args, std::function<expects_lr<void>(void*, int)>&& return_callback);
 			virtual expects_lr<void> execute(ccall mutability, const function& entrypoint, const format::variables& args, std::function<expects_lr<void>(void*, int)>&& return_callback);
 			virtual expects_lr<void> subexecute(const algorithm::pubkeyhash_t& target, const payable_repr& payable, ccall mutability, const std::string_view& entrypoint, format::variables&& args, void* output_value, int output_type_id) const;
-			virtual expects_lr<vector<std::function<void(immediate_context*)>>> dispatch_arguments(ccall* mutability, const function& entrypoint, const format::variables& args) const;
+			virtual expects_lr<vector<std::function<void(immediate_context*)>>> dispatch_arguments(ccall* mutability, const function& entrypoint, const format::variables* args) const;
 			virtual void dispatch_event(int event_type_id, const void* object_value, int object_type_id);
 			virtual void dispatch_exception(immediate_context* coroutine);
 			virtual void dispatch_coroutine(immediate_context* coroutine);
-            virtual ccall mutability_of(const function& entrypoint) const;
+            virtual option<ccall> external_mutability_of(const algorithm::pubkeyhash_t& target, const std::string_view& entrypoint) const;
+			virtual ccall mutability_of(const function& entrypoint) const;
 			virtual algorithm::pubkeyhash_t callable() const;
 			virtual payable_repr payable() const;
 			virtual function deploy_function() const;
