@@ -1713,21 +1713,40 @@ namespace tangent
 				setup.set("id", format::variable(category));
 			}
 
+			string body = setup.as_json();
+			string message = string(path).append(":jrpc:").append(body);
+			string hash = codec::hex_encode(algorithm::hashing::hash512((uint8_t*)message.data(), message.size()));
+			bool no_cache_confirmed = cache == cache_policy::no_cache || cache == cache_policy::no_cache_no_throttling;
+			if (!no_cache_confirmed)
+			{
+				auto data = load_cache(asset, cache, hash);
+				if (data)
+					return expects_rt<format::tree>(std::move(*data));
+			}
+
 			bool multi_confirmed = args.fields && args.fields->size() > 1;
-			return execute_rest(asset, connection, reporter, "POST", path, setup, cache).then<expects_rt<format::tree>>([&reporter, multi, multi_confirmed](expects_rt<format::tree>&& response) -> expects_rt<format::tree>
+			return execute_http(asset, connection, reporter, "POST", path, "application/json", body, no_cache_confirmed ? cache : cache_policy::no_cache).then<expects_rt<format::tree>>([&reporter, multi, asset, cache, multi_confirmed, hash = std::move(hash)](expects_rt<format::tree>&& response) mutable -> expects_rt<format::tree>
 			{
 				if (!response)
 					return response;
 
-				if (!multi)
-					return solve_rpc_response(*response, &reporter);
-
 				format::tree results;
-				if (multi_confirmed)
+				if (multi)
 				{
-					for (auto& subresponse : response->childs())
+					if (multi_confirmed)
 					{
-						auto subresult = solve_rpc_response(subresponse, &reporter);
+						for (auto& subresponse : response->childs())
+						{
+							auto subresult = solve_rpc_response(subresponse, &reporter);
+							if (!subresult)
+								return subresult;
+
+							results.push(std::move(*subresult));
+						}
+					}
+					else
+					{
+						auto subresult = solve_rpc_response(*response, &reporter);
 						if (!subresult)
 							return subresult;
 
@@ -1736,12 +1755,16 @@ namespace tangent
 				}
 				else
 				{
-					auto subresult = solve_rpc_response(*response, &reporter);
-					if (!subresult)
-						return subresult;
+					auto result = solve_rpc_response(*response, &reporter);
+					if (!result)
+						return result;
 
-					results.push(std::move(*subresult));
+					results = std::move(*result);
 				}
+
+				if (cache != cache_policy::no_cache && cache != cache_policy::no_cache_no_throttling)
+					bridge::get()->store_cache(asset, cache, hash, results);
+
 				return results;
 			});
 		}
@@ -1750,8 +1773,7 @@ namespace tangent
 			if (reporter.type.empty())
 				reporter.type = "rest";
 
-			string body = args.is_none() ? string() : args.as_json();
-			return execute_http(asset, connection, reporter, method, path, "application/json", body, cache);
+			return execute_http(asset, connection, reporter, method, path, "application/json", args.is_none() ? string() : args.as_json(), cache);
 		}
 		expects_promise_rt<format::tree> bridge::execute_http(const algorithm::asset_id& asset, connection_instance& connection, error_reporter& reporter, const std::string_view& method, const std::string_view& path, const std::string_view& type, const std::string_view& body, cache_policy cache)
 		{

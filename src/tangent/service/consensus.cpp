@@ -3349,7 +3349,7 @@ namespace tangent
 		{
 			uint256_t candidate_hash = candidate.block.as_hash();
 			auto chain = storages::chainstate();
-			if (chain.get_block_header_by_hash(candidate_hash))
+			if (!fork_tip && chain.get_block_header_by_hash(candidate_hash))
 				return expectation::met;
 
 			bool fork_branch = fork_tip > 0;
