@@ -565,6 +565,7 @@ namespace tangent
 				algorithm::pubkeyhash_t public_key_hash;
 				algorithm::seckey_t secret_key;
 				uint256_t gas_usage = 0;
+				uint64_t commitments = 0;
 				uint8_t block_options = 0;
 				bool validator_active = true;
 				block_changelog changelog;
@@ -585,7 +586,7 @@ namespace tangent
 			option<uint64_t> apply_validator_state(const std::function<ledger::wallet* (size_t)>& try_producer, option<const block_header*>&& parent_block = optional::none);
 			size_t try_include_transactions(vector<uptr<transaction_message>>&& candidates, hash_set<uint256_t>* hashes = nullptr);
 			queued_transaction& force_include_transaction(uptr<transaction_message>&& candidate);
-			include_decision decide_on_inclusion(const queued_transaction& candidate, const uint256_t& current_gas_limit, const uint256_t& max_gas_limit) const;
+			include_decision decide_on_inclusion(const queued_transaction& candidate) const;
 			expects_lr<void> block_evalution_prepare(block_evaluation& solution);
 			expects_lr<void> block_evalution_update(block_evaluation& solution, block_rewards& rewards);
 			expects_lr<void> block_evalution_finalize(block_evaluation& solution, block_rewards& rewards);

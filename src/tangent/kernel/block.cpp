@@ -3546,6 +3546,7 @@ namespace tangent
 			state.public_key_hash = algorithm::pubkeyhash_t();
 			state.secret_key = algorithm::seckey_t();
 			state.gas_usage = 0;
+			state.commitments = 0;
 			state.block_options = 0;
 			state.validator_active = true;
 			state.executor = executor_context(&state.changelog);
@@ -3653,12 +3654,13 @@ namespace tangent
 					hashes->insert(item.hash);
 				}
 
-				auto decision = decide_on_inclusion(item, state.gas_usage, gas_limit);
+				auto decision = decide_on_inclusion(item);
 				if (decision == include_decision::include_in_block)
 				{
 					auto& nonce = nonces[algorithm::pubkeyhash_t(item.owner)];
 					nonce = std::max(item.candidate->nonce, nonce);
 					state.gas_usage += item.candidate->gas_limit;
+					state.commitments += item.candidate->is_commitment() ? 1 : 0;
 					transactions.pending.emplace_back(std::move(item));
 					++transactions.queued;
 				}
@@ -3676,16 +3678,18 @@ namespace tangent
 			info.candidate = std::move(candidate);
 			return info;
 		}
-		solver_context::include_decision solver_context::decide_on_inclusion(const queued_transaction& item, const uint256_t& current_gas_limit, const uint256_t& max_gas_limit) const
+		solver_context::include_decision solver_context::decide_on_inclusion(const queued_transaction& item) const
 		{
 			if (!item.candidate || item.owner.empty())
 				return include_decision::not_executable;
 
-			uint256_t new_gas_limit = current_gas_limit + item.candidate->gas_limit;
-			if (new_gas_limit < current_gas_limit || new_gas_limit > max_gas_limit)
+			uint256_t new_gas_limit = state.gas_usage + item.candidate->gas_limit;
+			if (new_gas_limit < state.gas_usage || new_gas_limit > block_header::get_gas_limit())
 				return include_decision::not_includable;
 
 			if (!item.candidate->is_commitment() && (((uint8_t)state.executor.options & (uint8_t)executor_context::flags::congestion) && !item.candidate->gas_price.is_positive()))
+				return include_decision::not_includable;
+			else if (item.candidate->is_commitment() && state.commitments + 1 > protocol::now().policy.commitments_per_block)
 				return include_decision::not_includable;
 
 			auto map_nonce = nonces.find(algorithm::pubkeyhash_t(item.owner));
@@ -3907,6 +3911,7 @@ namespace tangent
 					return layer_exception("invalid producer priority");
 			}
 
+			size_t commitments = 0;
 			hash_map<uint256_t, std::pair<const block_transaction*, const solver_context::queued_transaction*>> childs;
 			solver.transactions.pending.reserve(child_block.transactions.size());
 			for (auto& transaction : child_block.transactions)
@@ -3916,7 +3921,10 @@ namespace tangent
 
 				auto& info = solver.force_include_transaction(transactions::resolver::from_copy(*transaction.transaction));
 				childs[transaction.receipt.transaction_hash] = std::make_pair(&transaction, (const solver_context::queued_transaction*)&info);
+				commitments += transaction.transaction->is_commitment() ? 1 : 0;
 			}
+			if (commitments > protocol::now().policy.commitments_per_block)
+				return layer_exception("too many commitment transactions");
 
 			auto evaluation = solver.evaluate_block_inline();
 			if (!evaluation)

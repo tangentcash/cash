@@ -1,7 +1,7 @@
 #include "mempoolstate.h"
 #include "../policy/transactions.h"
-#define TRANSACTION_EXPIRATION 14400000
-#define OBSERVATION_EXPIRATION (86400 * 1000)
+#define TRANSACTION_EXPIRATION (8 * 3600 * 1000)
+#define OBSERVATION_EXPIRATION (36 * 3600 * 1000)
 #undef NULL
 
 namespace tangent
