@@ -361,7 +361,6 @@ namespace tangent
 			if (!value)
 				return expects_lr<format::tree>(layer_exception("property deserialization error"));
 
-			console::get()->write_line(value->as_json(true));
 			return expects_lr<format::tree>(std::move(*value));
 		}
 		expects_lr<void> superchainstate::set_link(const superchain::wallet_link& value)
