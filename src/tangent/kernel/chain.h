@@ -316,7 +316,7 @@ namespace tangent
 			} emission;
 			string token = "TAN";
 			uint64_t account_nonce_step_limit = 128;
-			uint64_t block_gas_limit = 4'000'000;
+			uint64_t block_gas_limit = 40'000'000;
 			uint64_t gasless_size_limit = 512;
 		} policy;
 
