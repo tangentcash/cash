@@ -749,10 +749,11 @@ namespace tangent
 					}
 
 					next->asset = group_asset;
+					next->gas_price = decimal::nan();
+					next->gas_limit = 0;
 					if (!next->load_body(stream))
 						return false;
 
-					normalize_transaction(**next, asset);
 					group.push_back(std::move(next));
 				}
 			}
@@ -797,15 +798,17 @@ namespace tangent
 		}
 		bool rollup::import_internal_transaction(ledger::transaction_message& transaction)
 		{
-			transaction.nonce = 0;
 			transaction.signature.clear();
-			normalize_transaction(transaction, asset);
+			transaction.nonce = 0;
+			transaction.gas_price = decimal::nan();
+			transaction.gas_limit = 0;
 			return import_transaction(transaction);
 		}
 		bool rollup::import_external_transaction(ledger::transaction_message& transaction, const algorithm::seckey_t& secret_key, uint64_t account_nonce)
 		{
 			transaction.nonce = account_nonce > 0 ? account_nonce : transaction.nonce;
-			normalize_transaction(transaction, asset);
+			transaction.gas_price = decimal::nan();
+			transaction.gas_limit = 0;
 			if (!transaction.sign(secret_key))
 				return false;
 
@@ -947,13 +950,6 @@ namespace tangent
 		std::string_view rollup::as_instance_typename()
 		{
 			return "rollup";
-		}
-		void rollup::normalize_transaction(ledger::transaction_message& transaction, const algorithm::asset_id& asset)
-		{
-			transaction.gas_price = decimal::nan();
-			transaction.gas_limit = 0;
-			if (!transaction.asset)
-				transaction.asset = asset;
 		}
 
 		expects_lr<void> setup::validate(uint64_t block_number) const

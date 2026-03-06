@@ -261,14 +261,17 @@ struct generators
 		multi_asset_rollup->set_asset("ETH");
 
 		auto transfer_ethereum1 = transactions::transfer();
+		transfer_ethereum1.set_asset("ETH");
 		transfer_ethereum1.set_to(user2.public_key_hash, 0.1);
 		VI_PANIC(multi_asset_rollup->import_internal_transaction(transfer_ethereum1), "authentication failed");
 
 		auto transfer_ethereum2 = transactions::transfer();
+		transfer_ethereum2.set_asset("ETH");
 		transfer_ethereum2.set_to(user2.public_key_hash, 0.2);
 		VI_PANIC(multi_asset_rollup->import_internal_transaction(transfer_ethereum2), "authentication failed");
 
 		auto transfer_ethereum3 = transactions::transfer();
+		transfer_ethereum3.set_asset("ETH");
 		transfer_ethereum3.set_to(user1.public_key_hash, 0.2);
 		VI_PANIC(multi_asset_rollup->import_external_transaction(transfer_ethereum3, user2.secret_key, user2_nonce++), "authentication failed");
 

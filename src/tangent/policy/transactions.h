@@ -104,7 +104,6 @@ namespace tangent
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
-			static void normalize_transaction(ledger::transaction_message& transaction, const algorithm::asset_id& asset);
 		};
 
 		struct setup final : ledger::transaction_message
