@@ -1412,8 +1412,11 @@ namespace tangent
 		}
 		tree::tree(const tree& other) noexcept : key(other.key), value(other.value), fields(nullptr), type(other.type)
 		{
-			if (other.fields != nullptr)
-				fields = tree_pool::get()->reallocate(other.fields);
+			if (!other.fields || other.fields->empty())
+				return;
+
+			fields = tree_pool::get()->allocate();
+			fields->assign(other.fields->begin(), other.fields->end());
 		}
 		tree::tree(tree&& other) noexcept : key(std::move(other.key)), value(std::move(other.value)), fields(other.fields), type(other.type)
 		{
@@ -1424,8 +1427,11 @@ namespace tangent
 			if (this == &other)
 				return *this;
 
-			if (other.fields != nullptr)
-				fields = tree_pool::get()->reallocate(other.fields, fields);
+			if (other.fields != nullptr && !other.fields->empty())
+			{
+				fields = fields ? fields : tree_pool::get()->allocate();
+				fields->assign(other.fields->begin(), other.fields->end());
+			}
 			else
 				this->~tree();
 
@@ -1798,24 +1804,12 @@ namespace tangent
 			}
 			return memory::init<vector<tree>>();
 		}
-		vector<tree>* tree_pool::reallocate(vector<tree>* from, vector<tree>* preallocated)
-		{
-			VI_ASSERT(from != nullptr, "from should be set");
-			auto* to = preallocated ? preallocated : allocate();
-			to->assign(from->begin(), from->end());
-			for (auto& item : *to)
-			{
-				if (item.fields != nullptr)
-					item.fields = reallocate(item.fields);
-			}
-			return to;
-		}
 		void tree_pool::deallocate(vector<tree>* value)
 		{
 			VI_ASSERT(value != nullptr, "value should be set");
 			if (full)
 				return memory::deinit(value);
-
+			
 			if (value->capacity() > max_vector_capacity)
 			{
 				value->resize(max_vector_capacity);

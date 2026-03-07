@@ -230,7 +230,6 @@ namespace tangent
 		public:
 			tree_pool();
 			vector<tree>* allocate();
-			vector<tree>* reallocate(vector<tree>* from, vector<tree>* preallocated = nullptr);
 			void deallocate(vector<tree>* value);
 		};
 
