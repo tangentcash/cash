@@ -2699,6 +2699,10 @@ namespace tangent
 			if (!candidate || !candidate->transaction || !candidate->receipt.successful)
 				return layer_exception("block transaction not found");
 
+			auto& policy = protocol::now().policy;
+			if (block != nullptr && candidate->receipt.block_number <= block->number && block->number - candidate->receipt.block_number > policy.participation.referencing_time / policy.pow.time)
+				return layer_exception("block transaction reference is too far into the past");
+
 			if (!may_have_distinct_asset && transaction && transaction->asset != candidate->transaction->asset)
 				return layer_exception("block transaction asset is distinct");
 
