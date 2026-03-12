@@ -2,7 +2,7 @@
 <div align="center">
     <br />
     <img src="https://github.com/tangentcash/cash/blob/main/var/favicon.png?raw=true" alt="Tangent Protocol Logo" width="100" />
-    <h3>Tangent Protocol / Cash Node</h3>
+    <h3>Tangent Cash / Cash Node</h3>
 </div>
 <div align="center">
 
@@ -67,4 +67,5 @@ Proceed to [this link](https://tangent.cash/docs/node/01-install) to view essent
 
 ## License
 This project is licensed under the MIT license
+
 
