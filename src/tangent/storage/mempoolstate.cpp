@@ -694,11 +694,10 @@ namespace tangent
 			auto timestamp = protocol::now().time.now_cpu();
 			schema_list map;
 			map.push_back(var::set::integer(timestamp));
-			map.push_back(var::set::integer(timestamp));
 
 			auto cursor = get_peer_storage().emplace_query(__func__,
 				"DELETE FROM proofs WHERE time < ?;"
-				"DELETE FROM commitments WHERE NOT EXISTS (SELECT TRUE FROM proofs WHERE proofs.hash = commitments.hash AND proofs.commitment = commitments.commitment); ", &map);
+				"DELETE FROM commitments WHERE NOT EXISTS (SELECT TRUE FROM proofs WHERE proofs.hash = commitments.hash AND proofs.commitment = commitments.commitment)", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<size_t>(layer_exception(ledger::storage_util::error_of(cursor)));
 
