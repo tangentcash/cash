@@ -2921,10 +2921,10 @@ namespace tangent
 					if (expirations)
 					{
 						if (*expirations > 0)
-							VI_INFO("mempool vacuum: OK (transactions: %i)", (int)*expirations);
+							VI_INFO("mempool transaction vacuum: OK (transactions: %i)", (int)*expirations);
 					}
 					else
-						VI_ERR("mempool vacuum failed: ", expirations.what().c_str());
+						VI_ERR("mempool transaction vacuum failed: ", expirations.what().c_str());
 				}
 			});
 		}
@@ -3011,6 +3011,18 @@ namespace tangent
 				}
 				if (resolutions > 0 && protocol::now().user.consensus.logging)
 					VI_INFO("attestation resolution: %i pending", (int)resolutions);
+
+				auto expirations = mempool.expire_attestations();
+				if (protocol::now().user.consensus.logging)
+				{
+					if (expirations)
+					{
+						if (*expirations > 0)
+							VI_INFO("mempool attestation vacuum: OK (attestations: %i)", (int)*expirations);
+					}
+					else
+						VI_ERR("mempool attestation vacuum failed: ", expirations.what().c_str());
+				}
 			});
 		}
 		bool server_node::run_block_production()

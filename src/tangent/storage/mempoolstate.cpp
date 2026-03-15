@@ -2,6 +2,7 @@
 #include "../policy/transactions.h"
 #define TRANSACTION_EXPIRATION (8 * 3600 * 1000)
 #define OBSERVATION_EXPIRATION (36 * 3600 * 1000)
+#define ATTESTATION_EXPIRATION (96 * 3600 * 1000)
 #undef NULL
 
 namespace tangent
@@ -599,12 +600,13 @@ namespace tangent
 			map.push_back(var::set::binary(commitment, sizeof(commitment)));
 			map.push_back(var::set::binary(asset_hash, sizeof(asset_hash)));
 			map.push_back(var::set::binary(message.data));
+			map.push_back(var::set::integer(protocol::now().time.now_cpu() + ATTESTATION_EXPIRATION));
 			map.push_back(var::set::binary(hash, sizeof(hash)));
 			map.push_back(var::set::binary(commitment, sizeof(commitment)));
 			map.push_back(var::set::binary(signature.view()));
 
 			auto cursor = get_peer_storage().emplace_query(__func__,
-				"INSERT OR REPLACE INTO proofs (hash, commitment, asset, message) VALUES (?, ?, ?, ?);"
+				"INSERT INTO proofs (hash, commitment, asset, message, time) VALUES (?, ?, ?, ?, ?) ON CONFLICT DO UPDATE SET asset = EXCLUDED.asset, message = EXCLUDED.message;"
 				"INSERT OR REPLACE INTO commitments (hash, commitment, signature) VALUES (?, ?, ?)", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
@@ -686,6 +688,21 @@ namespace tangent
 				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 			return expectation::met;
+		}
+		expects_lr<size_t> mempoolstate::expire_attestations()
+		{
+			auto timestamp = protocol::now().time.now_cpu();
+			schema_list map;
+			map.push_back(var::set::integer(timestamp));
+			map.push_back(var::set::integer(timestamp));
+
+			auto cursor = get_peer_storage().emplace_query(__func__,
+				"DELETE FROM proofs WHERE time < ?;"
+				"DELETE FROM commitments WHERE NOT EXISTS (SELECT TRUE FROM proofs WHERE proofs.hash = commitments.hash AND proofs.commitment = commitments.commitment); ", &map);
+			if (!cursor || cursor->error())
+				return expects_lr<size_t>(layer_exception(ledger::storage_util::error_of(cursor)));
+
+			return cursor->affected_rows();
 		}
 		expects_lr<void> mempoolstate::add_transaction(const ledger::transaction_message& value)
 		{
@@ -1143,6 +1160,7 @@ namespace tangent
 					commitment BLOB(32) NOT NULL,
 					asset BLOB(32) NOT NULL,
 					message BLOB NOT NULL,
+					time INTEGER NOT NULL,
 					PRIMARY KEY (hash, commitment)
 				);
 				CREATE TABLE IF NOT EXISTS commitments
