@@ -1027,7 +1027,7 @@ namespace tangent
 
 			auto chain = storages::chainstate();
 			auto mempool = storages::mempoolstate();
-			if (mempool.has_transaction(candidate_hash).or_else(false) || chain.has_non_aliased_transaction(candidate_hash).or_else(false))
+			if (mempool.has_transaction(candidate_hash).or_else(false) || chain.get_transaction_by_hash(candidate_hash, false))
 				return expectation::met;
 
 			auto state = chain.get_uniform(states::account_nonce::as_instance_type(), nullptr, states::account_nonce::as_instance_index(owner), 0);
@@ -1187,7 +1187,7 @@ namespace tangent
 				return expectation::met;
 
 			auto chain = storages::chainstate();
-			if (chain.get_transaction_by_hash(transaction_hash))
+			if (chain.get_transaction_by_hash(transaction_hash, false))
 				return expectation::met;
 
 			query(uref(from), descriptors::fetch_transaction(), { format::variable(transaction_hash) }, protocol::now().user.tcp.timeout).then([this, from](expects_rt<exchange>&& event) mutable
@@ -1543,7 +1543,7 @@ namespace tangent
 				return format::variables({ format::variable((*transaction)->as_message().data) });
 
 			auto chain = storages::chainstate();
-			transaction = chain.get_transaction_by_hash(transaction_hash);
+			transaction = chain.get_transaction_by_hash(transaction_hash, false);
 			if (transaction)
 				return format::variables({ format::variable((*transaction)->as_message().data) });
 
@@ -1567,7 +1567,7 @@ namespace tangent
 
 				auto transaction = mempool.get_transaction_by_hash(transaction_hash);
 				if (!transaction)
-					transaction = chain.get_transaction_by_hash(transaction_hash);
+					transaction = chain.get_transaction_by_hash(transaction_hash, false);
 				if (transaction)
 					result.push_back(format::variable((*transaction)->as_message().data));
 			}
@@ -2186,7 +2186,7 @@ namespace tangent
 						for (size_t i = 1; i < result->args.size(); i++)
 						{
 							auto transaction_hash = result->args[i].as_uint256();
-							if (!mempool.has_transaction(transaction_hash).or_else(false) && !chain.get_transaction_by_hash(transaction_hash))
+							if (!mempool.has_transaction(transaction_hash).or_else(false) && !chain.get_transaction_by_hash(transaction_hash, false))
 								transaction_hashes.insert(transaction_hash);
 						}
 					}

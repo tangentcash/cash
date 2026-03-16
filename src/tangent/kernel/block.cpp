@@ -2695,7 +2695,7 @@ namespace tangent
 				return layer_exception("block transaction not found");
 
 			auto chain = storages::chainstate();
-			auto candidate = chain.get_block_transaction_by_hash(transaction_hash);
+			auto candidate = chain.get_block_transaction_by_hash(transaction_hash, false);
 			if (!candidate || !candidate->transaction || !candidate->receipt.successful)
 				return layer_exception("block transaction not found");
 

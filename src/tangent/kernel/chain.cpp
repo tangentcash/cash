@@ -809,9 +809,9 @@ namespace tangent
 			if (value != nullptr && value->value.is_boolean())
 				user.storage.transaction_to_account_index = value->value.as_boolean();
 
-			value = config->child("storage.transaction_to_rollup_index");
+			value = config->child("storage.transaction_to_alias_index");
 			if (value != nullptr && value->value.is_boolean())
-				user.storage.transaction_to_rollup_index = value->value.as_boolean();
+				user.storage.transaction_to_alias_index = value->value.as_boolean();
 
 			value = config->child("storage.logging");
 			if (value != nullptr && value->value.is_boolean())

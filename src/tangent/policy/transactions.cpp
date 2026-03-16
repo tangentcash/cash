@@ -2798,6 +2798,16 @@ namespace tangent
 			parties.insert(algorithm::pubkeyhash_t(parent->receipt.from));
 			return true;
 		}
+		bool broadcast::recover_aliases(btree_set<uint256_t>& aliases) const
+		{
+			if (proof && !proof->hashdata.empty())
+			{
+				format::wo_stream message;
+				message.write_string(proof->hashdata);
+				aliases.insert(message.hash());
+			}
+			return true;
+		}
 		void broadcast::set_proof(const uint256_t& new_withdraw_hash, expects_lr<superchain::finalized_transaction>&& new_proof)
 		{
 			withdraw_hash = new_withdraw_hash;
@@ -3546,6 +3556,16 @@ namespace tangent
 			{
 				if (event->size() >= 2 && event->at(1).as_string().size() == sizeof(algorithm::pubkeyhash_t))
 					parties.insert(algorithm::pubkeyhash_t(event->at(1).as_blob()));
+			}
+			return true;
+		}
+		bool attestate::recover_aliases(btree_set<uint256_t>& aliases) const
+		{
+			if (!proof.transaction_id.empty())
+			{
+				format::wo_stream message;
+				message.write_string(proof.transaction_id);
+				aliases.insert(message.hash());
 			}
 			return true;
 		}

@@ -341,7 +341,8 @@ namespace tangent
 			bind(0 | access_type::r, "txnstate", "getpendingtransactionsbyhash", 1, 2, "uint256 hash, uint8? unrolling = 0", "uint256[] | txn[] | block::txn[]", "get block transactions by hash", std::bind(&server_node::txnstate_get_block_transactions_by_hash, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "txnstate", "getpendingtransactionsbynumber", 1, 2, "uint64 number, uint8? unrolling = 0", "uint256[] | txn[] | block::txn[]", "get block transactions by number", std::bind(&server_node::txnstate_get_block_transactions_by_number, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "txnstate", "gettransactionsbyowner", 3, 5, "string owner_address, uint64 offset, uint64 count, uint8? direction = 1, uint8? unrolling = 0", "uint256[] | txn[] | block::txn[]", "get transactions by owner", std::bind(&server_node::txnstate_get_transactions_by_owner, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "txnstate", "gettransactionbyhash", 1, 2, "uint256 hash, uint8? unrolling = 0", "txn | block::txn", "get transaction by hash", std::bind(&server_node::txnstate_get_transaction_by_hash, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "txnstate", "gettransactionsbyhash", 1, 2, "uint256 hash, uint8? unrolling = 0", "txn | block::txn", "get transactions by hash including aliases", std::bind(&server_node::txnstate_get_transactions_by_hash, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "txnstate", "gettransactionbyhash", 1, 2, "uint256 hash, uint8? unrolling = 0", "txn | block::txn", "get transaction by hash including aliases", std::bind(&server_node::txnstate_get_transaction_by_hash, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "txnstate", "getrawtransactionbyhash", 1, 1, "uint256 hash", "string", "get raw transaction by hash", std::bind(&server_node::txnstate_get_raw_transaction_by_hash, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "txnstate", "getreceiptbytransactionhash", 1, 1, "uint256 hash", "receipt", "get receipt by transaction hash", std::bind(&server_node::txnstate_get_receipt_by_transaction_hash, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "calltransaction", 4, 32, "string asset, string from_address, string to_address, string function, any... args", "program_trace", "execute of immutable function of program assigned to to_address", std::bind(&server_node::chainstate_call_transaction, this, std::placeholders::_1, std::placeholders::_2));
@@ -1588,6 +1589,34 @@ namespace tangent
 				return server_response().success(std::move(data));
 			}
 		}
+		server_response server_node::txnstate_get_transactions_by_hash(http::connection*, format::variables&& args)
+		{
+			uint256_t hash = args[0].as_uint256();
+			uint8_t unrolling = args.size() > 1 ? args[1].as_uint8() : 0;
+			auto chain = storages::chainstate();
+			if (unrolling == 0)
+			{
+				auto data = format::tree::list();
+				auto list = chain.get_transactions_by_hash(hash, true);
+				if (!list)
+					return server_response().error(error_codes::not_found, "transactions not found");
+
+				for (auto& item : *list)
+					data.push(format::variable(algorithm::encoding::encode_0xhex256(item->as_hash())));
+				return server_response().success(std::move(data));
+			}
+			else
+			{
+				auto data = format::tree::list();
+				auto list = chain.get_block_transactions_by_hash(hash, true);
+				if (!list)
+					return server_response().error(error_codes::not_found, "transactions not found");
+
+				for (auto& item : *list)
+					data.push(item.as_tree());
+				return server_response().success(std::move(data));
+			}
+		}
 		server_response server_node::txnstate_get_transaction_by_hash(http::connection*, format::variables&& args)
 		{
 			uint256_t hash = args[0].as_uint256();
@@ -1595,7 +1624,7 @@ namespace tangent
 			auto chain = storages::chainstate();
 			if (unrolling == 0)
 			{
-				auto transaction = chain.get_transaction_by_hash(hash);
+				auto transaction = chain.get_transaction_by_hash(hash, true);
 				if (!transaction)
 					return server_response().error(error_codes::not_found, "transaction not found");
 
@@ -1603,7 +1632,7 @@ namespace tangent
 			}
 			else
 			{
-				auto transaction = chain.get_block_transaction_by_hash(hash);
+				auto transaction = chain.get_block_transaction_by_hash(hash, true);
 				if (!transaction)
 					return server_response().error(error_codes::not_found, "transaction not found");
 
@@ -1614,7 +1643,7 @@ namespace tangent
 		{
 			uint256_t hash = args[0].as_uint256();
 			auto chain = storages::chainstate();
-			auto transaction = chain.get_transaction_by_hash(hash);
+			auto transaction = chain.get_transaction_by_hash(hash, false);
 			if (!transaction)
 				return server_response().error(error_codes::not_found, "transaction not found");
 
@@ -3426,7 +3455,7 @@ namespace tangent
 			auto* storage = data.set("storage", format::tree::map());
 			storage->set("checkpoint_size", format::variable(protocol::now().user.storage.checkpoint_size));
 			storage->set("transaction_to_account_index", format::variable(protocol::now().user.storage.transaction_to_account_index));
-			storage->set("transaction_to_rollup_index", format::variable(protocol::now().user.storage.transaction_to_rollup_index));
+			storage->set("transaction_to_alias_index", format::variable(protocol::now().user.storage.transaction_to_alias_index));
 
 			if (block_header)
 			{

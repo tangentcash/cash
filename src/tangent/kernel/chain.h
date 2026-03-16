@@ -223,7 +223,7 @@ namespace tangent
 				double compaction_threads_ratio = 0.25;
 				double computation_threads_ratio = 0.00;
 				bool transaction_to_account_index = true;
-				bool transaction_to_rollup_index = true;
+				bool transaction_to_alias_index = true;
 				bool logging = false;
 			} storage;
 			struct
