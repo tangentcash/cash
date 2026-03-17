@@ -25,7 +25,7 @@ namespace tangent
 					static const char* get_o_indexes();
 				};
 
-				struct transaction_input
+				struct vtx_input
 				{
 					vector<uint64_t> key_offsets;
 					uint8_t key_image[32] = { 0 };
@@ -33,7 +33,7 @@ namespace tangent
 					bool is_coinbase;
 				};
 
-				struct transaction_output
+				struct vtx_output
 				{
 					uint8_t ring_out_key[32] = { 0 };
 					uint8_t key[32] = { 0 };
@@ -43,7 +43,7 @@ namespace tangent
 					string ecdh_mask;
 				};
 
-				struct transaction_info
+				struct vtx_body
 				{
 					btree_map<uint8_t, algorithm::storage_type<uint8_t, 64>> output_addresses;
 					vector<algorithm::storage_type<uint8_t, 32>> public_keys;
@@ -53,27 +53,70 @@ namespace tangent
 					string hash;
 				};
 
-				struct transaction
+				struct transaction_header
 				{
 					struct input
 					{
-						uint64_t amount = 0;
 						vector<uint64_t> key_offsets;
-						uint8_t key_image[32] = { 0 };
+						uint8_t key_image[32];
 					};
 
 					struct output
 					{
-						uint64_t amount = 0;
-						uint64_t ecdh_encrypted_amount = 0;
-						uint8_t amount_commitment[32] = { 0 };
-						uint8_t public_key[32] = { 0 };
+						uint8_t public_key[32];
 					};
 
 					vector<input> inputs;
 					vector<output> outputs;
 					vector<uint8_t> extra;
-					uint64_t fee = 0;
+				};
+
+				struct transaction_body
+				{
+					struct clsag_signature
+					{
+						struct clsag_scalar
+						{
+							uint8_t s[32];
+						};
+
+						vector<clsag_scalar> s;
+						uint8_t c1[32];
+					};
+
+					struct bp_plus
+					{
+						struct bp_component
+						{
+							uint8_t l[32];
+							uint8_t r[32];
+						};
+
+						uint8_t a[32];
+						uint8_t a_dot[32];
+						uint8_t d[32];
+						uint8_t r[32];
+						uint8_t s[32];
+						uint8_t delta_ls[32];
+						vector<bp_component> l_r;
+					} bp;
+
+					struct pseudo_output
+					{
+						uint8_t input_commitment[32];
+					};
+
+					struct output_public_key
+					{
+						uint8_t output_commitment[32];
+						uint8_t ecdh_amount[8];
+					};
+
+					vector<pseudo_output> pseudo_outs;
+					vector<output_public_key> out_pk_ecdh_info;
+					vector<uint8_t> ecdh_info;
+					vector<clsag_signature> clsags;
+					uint64_t fee;
 				};
 
 			protected:
@@ -113,9 +156,9 @@ namespace tangent
 				virtual bool pedersen_commit(uint8_t mask[32], uint8_t amount[32], uint8_t commitment[32]);
 				virtual void derive_known_private_view_key(const uint8_t public_spend_key[32], uint8_t private_view_key[32]);
 				virtual void derive_known_public_view_key(const uint8_t public_spend_key[32], uint8_t public_view_key[32]);
-				virtual transaction_info decode_transaction_info(const format::tree& transaction_data);
-				virtual vector<transaction_input> decode_transaction_inputs(const format::tree& transaction_data);
-				virtual vector<transaction_output> decode_transaction_outputs(const format::tree& transaction_data);
+				virtual vtx_body decode_transaction_info(const format::tree& transaction_data);
+				virtual vector<vtx_input> decode_transaction_inputs(const format::tree& transaction_data);
+				virtual vector<vtx_output> decode_transaction_outputs(const format::tree& transaction_data);
 				virtual uint64_t get_network_type() const;
 			};
 		}

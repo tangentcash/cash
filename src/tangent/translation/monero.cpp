@@ -47,82 +47,87 @@ namespace tangent
 	{
 		namespace translations
 		{
-			template <typename t>
-			static void serialize_uint(t value, vector<uint8_t>& buffer)
+			static void serialize_varint(uint64_t i, vector<uint8_t>& buffer)
 			{
-				buffer.resize(sizeof(t));
-				for (size_t i = 0; i < sizeof(t); ++i)
-					buffer.push_back((value >> (i * 8)) & 0xFF);
+				while (i >= 0x80)
+				{
+					buffer.push_back(static_cast<uint8_t>((i & 0x7f) | 0x80));
+					i >>= 7;
+				}
+				buffer.push_back(static_cast<uint8_t>(i));
 			}
-			static void serialize_varint(uint64_t value, vector<uint8_t>& buffer)
+			static void serialize_transaction_header(const monero::transaction_header& tx, vector<uint8_t>& buffer)
 			{
-				if (value < 253)
-				{
-					buffer.push_back(static_cast<uint8_t>(value));
-				}
-				else if (value <= 0xFFFF)
-				{
-					buffer.push_back(253);
-					uint16_t v = static_cast<uint16_t>(value);
-					for (int i = 0; i < 2; ++i)
-						buffer.push_back((v >> (i * 8)) & 0xFF);
-				}
-				else if (value <= 0xFFFFFFFF)
-				{
-					buffer.push_back(254);
-					uint32_t v = static_cast<uint32_t>(value);
-					for (int i = 0; i < 4; ++i)
-						buffer.push_back((v >> (i * 8)) & 0xFF);
-				}
-				else
-				{
-					buffer.push_back(255);
-					for (int i = 0; i < 8; ++i)
-						buffer.push_back((value >> (i * 8)) & 0xFF);
-				}
-			}
-			static void serialize_fixed_bytes(const uint8_t* data, size_t data_size, vector<uint8_t>& buffer)
-			{
-				size_t size = buffer.size();
-				buffer.resize(size + data_size);
-				memcpy(buffer.data() + size, data, data_size);
-			}
-			static vector<uint8_t> serialize_transaction(const monero::transaction& tx)
-			{
-				vector<uint8_t> buffer;
-				buffer.push_back(0x2); // version - 2
-				serialize_varint(0x0, buffer); // unlock_time - instant
-				serialize_varint(tx.inputs.size(), buffer); // vin size
-				for (const auto& input : tx.inputs)
-				{
-					buffer.push_back(0x2); // type - key spend
-					serialize_varint(0, buffer); // amount - legacy (zero)
-					serialize_varint(input.key_offsets.size(), buffer); // key_offsets size
-					for (const auto& offset : input.key_offsets)
-						serialize_varint(offset, buffer); // key_offsets
-					serialize_fixed_bytes(input.key_image, sizeof(input.key_image), buffer); // key_image
-				}
-				serialize_varint(tx.outputs.size(), buffer); // vout size
-				for (const auto& output : tx.outputs)
-				{
-					buffer.push_back(0x1); // type - pay to key
-					serialize_varint(0, buffer); // amount - legacy (zero)
-					serialize_fixed_bytes(output.public_key, sizeof(output.public_key), buffer); // target - public key
-				}
-				serialize_varint(tx.extra.size(), buffer); // extra size
-				buffer.insert(buffer.end(), tx.extra.begin(), tx.extra.end()); // extra
-				serialize_varint(5, buffer); // rct_type - CLSAG
-				serialize_varint(tx.fee, buffer); // txn_fee - fee to be paid
-				serialize_varint(0, buffer); // pseudo_outs size
-				serialize_varint(tx.outputs.size(), buffer); // out_pk size
-				for (const auto& output : tx.outputs)
-					serialize_fixed_bytes(output.amount_commitment, sizeof(output.amount_commitment), buffer); // out_pk - pedersen commitment (amount + target) 
-				serialize_varint(tx.outputs.size(), buffer); // ecdh_info size
-				for (const auto& output : tx.outputs)
-					serialize_varint(output.ecdh_encrypted_amount, buffer); // ecdh_info - encrypted amount
+				serialize_varint(0x2, buffer); // version = 2
+				serialize_varint(0x0, buffer); // unlock_time = 0
 
-				// TODO: reverse engineer other fields
-				return buffer;
+				// vin (inputs)
+				serialize_varint(tx.inputs.size(), buffer); // vin size
+				for (const auto& in : tx.inputs)
+				{
+					buffer.push_back(0x02); // input type - key spend
+					serialize_varint(0, buffer); // amount value - legacy (zero)
+					serialize_varint(in.key_offsets.size(), buffer); // key_offsets size
+					for (uint64_t offset : in.key_offsets)
+						serialize_varint(offset, buffer); // key_offsets index
+					buffer.insert(buffer.end(), in.key_image, in.key_image + 32); // key_image
+				}
+
+				// vout (outputs)
+				serialize_varint(tx.outputs.size(), buffer); // vout size
+				for (const auto& out : tx.outputs)
+				{
+					serialize_varint(0, buffer); // amount value - legacy (zero)
+					buffer.push_back(0x02); // output type - pay to key
+					buffer.insert(buffer.end(), out.public_key, out.public_key + 32); // output public key
+				}
+
+				serialize_varint(tx.extra.size(), buffer); // extra field size
+				buffer.insert(buffer.end(), tx.extra.begin(), tx.extra.end()); // extra field data
+			}
+			static void serialize_transaction_body(const monero::transaction_body& tx, vector<uint8_t>& buffer)
+			{
+				buffer.push_back(0x05); // rct_type - 5 (CLSAG)
+				serialize_varint(tx.fee, buffer); // fee value - fee to be paid
+
+				// pseudo_outs - vin (inputs) commitments
+				for (const auto& po : tx.pseudo_outs)
+					buffer.insert(buffer.end(), po.input_commitment, po.input_commitment + 32);
+
+				// out_pk - vout (outputs) commitments
+				for (const auto& opk : tx.out_pk_ecdh_info)
+					buffer.insert(buffer.end(), opk.output_commitment, opk.output_commitment + 32);
+
+				// ecdh_info - amount commitments
+				for (const auto& opk : tx.out_pk_ecdh_info)
+					buffer.insert(buffer.end(), opk.ecdh_amount, opk.ecdh_amount + 8);
+
+				// bulletproofs_plus - output proofs
+				buffer.insert(buffer.end(), tx.bp.a, tx.bp.a + 32);
+				buffer.insert(buffer.end(), tx.bp.a_dot, tx.bp.a_dot + 32);
+				buffer.insert(buffer.end(), tx.bp.d, tx.bp.d + 32);
+				serialize_varint(tx.bp.l_r.size(), buffer);
+				for (const auto& l_r : tx.bp.l_r)
+				{
+					buffer.insert(buffer.end(), l_r.l, l_r.l + 32);
+					buffer.insert(buffer.end(), l_r.r, l_r.r + 32);
+				}
+				buffer.insert(buffer.end(), tx.bp.r, tx.bp.r + 32);
+				buffer.insert(buffer.end(), tx.bp.s, tx.bp.s + 32);
+				buffer.insert(buffer.end(), tx.bp.delta_ls, tx.bp.delta_ls + 32);
+
+				// clsag_signatures - transaction signatures
+				for (const auto& clsag : tx.clsags)
+				{
+					for (const auto& s : clsag.s)
+						buffer.insert(buffer.end(), s.s, s.s + 32);
+					buffer.insert(buffer.end(), clsag.c1, clsag.c1 + 32);
+				}
+			}
+			static void serialize_transaction(const monero::transaction_header& tx_header, const monero::transaction_body& tx_body, vector<uint8_t>& buffer)
+			{
+				serialize_transaction_header(tx_header, buffer);
+				serialize_transaction_body(tx_body, buffer);
 			}
 
 			const char* monero::nd_call::json_rpc()
@@ -775,7 +780,7 @@ namespace tangent
 						return 24;
 				}
 			}
-			monero::transaction_info monero::decode_transaction_info(const format::tree& transaction_data)
+			monero::vtx_body monero::decode_transaction_info(const format::tree& transaction_data)
 			{
 				const uint8_t TX_EXTRA_TAG_PADDING = 0x00;
 				const uint8_t TX_EXTRA_TAG_PUBKEY = 0x01;
@@ -796,7 +801,7 @@ namespace tangent
 						extra_buffer.push_back((int8_t)byte.value.as_uint8());
 				}
 
-				transaction_info result;
+				vtx_body result;
 				result.hash = transaction_data.child_var("hash").as_blob();
 
 				hash_set<uint8_t> tags =
@@ -939,9 +944,9 @@ namespace tangent
 				}
 				return result;
 			}
-			vector<monero::transaction_input> monero::decode_transaction_inputs(const format::tree& transaction_data)
+			vector<monero::vtx_input> monero::decode_transaction_inputs(const format::tree& transaction_data)
 			{
-				vector<transaction_input> result;
+				vector<vtx_input> result;
 				auto* inputs = transaction_data.child("vin");
 				if (inputs != nullptr)
 				{
@@ -950,7 +955,7 @@ namespace tangent
 						uint64_t coinbase_height = item.child_var("gen.height").as_uint64();
 						if (!coinbase_height)
 						{
-							transaction_input input;
+							vtx_input input;
 							input.amount = item.child_var("key.amount").as_uint64();
 							input.is_coinbase = false;
 
@@ -968,7 +973,7 @@ namespace tangent
 						}
 						else
 						{
-							transaction_input input;
+							vtx_input input;
 							memset(input.key_image, 0, sizeof(input.key_image));
 							input.amount = 0;
 							input.is_coinbase = true;
@@ -978,9 +983,9 @@ namespace tangent
 				}
 				return result;
 			}
-			vector<monero::transaction_output> monero::decode_transaction_outputs(const format::tree& transaction_data)
+			vector<monero::vtx_output> monero::decode_transaction_outputs(const format::tree& transaction_data)
 			{
-				vector<transaction_output> result;
+				vector<vtx_output> result;
 				auto* outputs = transaction_data.child("vout");
 				auto* ecdh_info = transaction_data.child("rct_signatures.ecdhInfo");
 				auto* out_pk = transaction_data.child("rct_signatures.outPk");
@@ -988,7 +993,7 @@ namespace tangent
 				{
 					for (auto& item : outputs->childs())
 					{
-						transaction_output output;
+						vtx_output output;
 						output.amount = item.child_var("amount").as_uint64();
 						if (ecdh_info != nullptr)
 						{
