@@ -25,7 +25,7 @@ namespace tangent
 					static const char* get_o_indexes();
 				};
 
-				struct vtx_input
+				struct pseudo_transaction_input
 				{
 					vector<uint64_t> key_offsets;
 					uint8_t key_image[32] = { 0 };
@@ -33,7 +33,7 @@ namespace tangent
 					bool is_coinbase;
 				};
 
-				struct vtx_output
+				struct pseudo_transaction_output
 				{
 					uint8_t ring_out_key[32] = { 0 };
 					uint8_t key[32] = { 0 };
@@ -43,7 +43,7 @@ namespace tangent
 					string ecdh_mask;
 				};
 
-				struct vtx_body
+				struct pseudo_transaction_body
 				{
 					btree_map<uint8_t, algorithm::storage_type<uint8_t, 64>> output_addresses;
 					vector<algorithm::storage_type<uint8_t, 32>> public_keys;
@@ -156,9 +156,9 @@ namespace tangent
 				virtual bool pedersen_commit(uint8_t mask[32], uint8_t amount[32], uint8_t commitment[32]);
 				virtual void derive_known_private_view_key(const uint8_t public_spend_key[32], uint8_t private_view_key[32]);
 				virtual void derive_known_public_view_key(const uint8_t public_spend_key[32], uint8_t public_view_key[32]);
-				virtual vtx_body decode_transaction_info(const format::tree& transaction_data);
-				virtual vector<vtx_input> decode_transaction_inputs(const format::tree& transaction_data);
-				virtual vector<vtx_output> decode_transaction_outputs(const format::tree& transaction_data);
+				virtual pseudo_transaction_body decode_pseudo_transaction_info(const format::tree& transaction_data);
+				virtual vector<pseudo_transaction_input> decode_pseudo_transaction_inputs(const format::tree& transaction_data);
+				virtual vector<pseudo_transaction_output> decode_pseudo_transaction_outputs(const format::tree& transaction_data);
 				virtual uint64_t get_network_type() const;
 			};
 		}

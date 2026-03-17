@@ -301,9 +301,9 @@ namespace tangent
 			{
 				return coasync<expects_rt<computed_transaction>>([this, &transaction_data]() -> expects_promise_rt<computed_transaction>
 				{
-					auto info = decode_transaction_info(transaction_data);
-					auto inputs = decode_transaction_inputs(transaction_data);
-					auto outputs = decode_transaction_outputs(transaction_data);
+					auto info = decode_pseudo_transaction_info(transaction_data);
+					auto inputs = decode_pseudo_transaction_inputs(transaction_data);
+					auto outputs = decode_pseudo_transaction_outputs(transaction_data);
 					const size_t count = 64;
 					size_t offset = 0;
 
@@ -780,7 +780,7 @@ namespace tangent
 						return 24;
 				}
 			}
-			monero::vtx_body monero::decode_transaction_info(const format::tree& transaction_data)
+			monero::pseudo_transaction_body monero::decode_pseudo_transaction_info(const format::tree& transaction_data)
 			{
 				const uint8_t TX_EXTRA_TAG_PADDING = 0x00;
 				const uint8_t TX_EXTRA_TAG_PUBKEY = 0x01;
@@ -801,7 +801,7 @@ namespace tangent
 						extra_buffer.push_back((int8_t)byte.value.as_uint8());
 				}
 
-				vtx_body result;
+				pseudo_transaction_body result;
 				result.hash = transaction_data.child_var("hash").as_blob();
 
 				hash_set<uint8_t> tags =
@@ -944,9 +944,9 @@ namespace tangent
 				}
 				return result;
 			}
-			vector<monero::vtx_input> monero::decode_transaction_inputs(const format::tree& transaction_data)
+			vector<monero::pseudo_transaction_input> monero::decode_pseudo_transaction_inputs(const format::tree& transaction_data)
 			{
-				vector<vtx_input> result;
+				vector<pseudo_transaction_input> result;
 				auto* inputs = transaction_data.child("vin");
 				if (inputs != nullptr)
 				{
@@ -955,7 +955,7 @@ namespace tangent
 						uint64_t coinbase_height = item.child_var("gen.height").as_uint64();
 						if (!coinbase_height)
 						{
-							vtx_input input;
+							pseudo_transaction_input input;
 							input.amount = item.child_var("key.amount").as_uint64();
 							input.is_coinbase = false;
 
@@ -973,7 +973,7 @@ namespace tangent
 						}
 						else
 						{
-							vtx_input input;
+							pseudo_transaction_input input;
 							memset(input.key_image, 0, sizeof(input.key_image));
 							input.amount = 0;
 							input.is_coinbase = true;
@@ -983,9 +983,9 @@ namespace tangent
 				}
 				return result;
 			}
-			vector<monero::vtx_output> monero::decode_transaction_outputs(const format::tree& transaction_data)
+			vector<monero::pseudo_transaction_output> monero::decode_pseudo_transaction_outputs(const format::tree& transaction_data)
 			{
-				vector<vtx_output> result;
+				vector<pseudo_transaction_output> result;
 				auto* outputs = transaction_data.child("vout");
 				auto* ecdh_info = transaction_data.child("rct_signatures.ecdhInfo");
 				auto* out_pk = transaction_data.child("rct_signatures.outPk");
@@ -993,7 +993,7 @@ namespace tangent
 				{
 					for (auto& item : outputs->childs())
 					{
-						vtx_output output;
+						pseudo_transaction_output output;
 						output.amount = item.child_var("amount").as_uint64();
 						if (ecdh_info != nullptr)
 						{
