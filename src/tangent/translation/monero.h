@@ -22,6 +22,7 @@ namespace tangent
 					static const char* get_height();
 					static const char* get_block();
 					static const char* get_fee_estimate();
+					static const char* get_output_distribution();
 					static const char* get_o_indexes();
 				};
 
@@ -53,69 +54,54 @@ namespace tangent
 					string hash;
 				};
 
-				struct transaction_header
+				struct transaction_data
 				{
-					struct input
+					struct bulletproof_plus
 					{
+						uint8_t a[32], a1[32], b[32];
+						uint8_t r1[32], s1[32], d1[32];
+						vector<std::array<uint8_t, 32>> l, r;
+					};
+
+					struct txin_to_key
+					{
+						struct clsag_proof
+						{
+							vector<std::array<uint8_t, 32>> s;
+							uint8_t c1[32];
+							uint8_t d[32];
+						} clsag;
+						struct
+						{
+							uint8_t blinding_factor[32];
+							uint8_t mask[32];
+						} pseudo_out;
 						vector<uint64_t> key_offsets;
 						uint8_t key_image[32];
+						size_t key_offset_out;
 					};
 
-					struct output
+					struct tx_out
 					{
-						uint8_t public_key[32];
+						struct tx_out_to_key
+						{
+							uint8_t key[32];
+						} target;
+						struct
+						{
+							uint8_t amount[32];
+						} ecdh_info;
+						struct
+						{
+							uint8_t blinding_factor[32];
+							uint8_t mask[32];
+						} out_pk;
 					};
 
-					vector<input> inputs;
-					vector<output> outputs;
+					vector<txin_to_key> vin;
+					vector<tx_out> vout;
 					vector<uint8_t> extra;
-				};
-
-				struct transaction_body
-				{
-					struct clsag_signature
-					{
-						struct clsag_scalar
-						{
-							uint8_t s[32];
-						};
-
-						vector<clsag_scalar> s;
-						uint8_t c1[32];
-					};
-
-					struct bp_plus
-					{
-						struct bp_component
-						{
-							uint8_t l[32];
-							uint8_t r[32];
-						};
-
-						uint8_t a[32];
-						uint8_t a_dot[32];
-						uint8_t d[32];
-						uint8_t r[32];
-						uint8_t s[32];
-						uint8_t delta_ls[32];
-						vector<bp_component> l_r;
-					} bp;
-
-					struct pseudo_output
-					{
-						uint8_t input_commitment[32];
-					};
-
-					struct output_public_key
-					{
-						uint8_t output_commitment[32];
-						uint8_t ecdh_amount[8];
-					};
-
-					vector<pseudo_output> pseudo_outs;
-					vector<output_public_key> out_pk_ecdh_info;
-					vector<uint8_t> ecdh_info;
-					vector<clsag_signature> clsags;
+					bulletproof_plus bpp;
 					uint64_t fee;
 				};
 
@@ -156,9 +142,13 @@ namespace tangent
 				virtual bool pedersen_commit(uint8_t mask[32], uint8_t amount[32], uint8_t commitment[32]);
 				virtual void derive_known_private_view_key(const uint8_t public_spend_key[32], uint8_t private_view_key[32]);
 				virtual void derive_known_public_view_key(const uint8_t public_spend_key[32], uint8_t public_view_key[32]);
+				virtual void derive_stealth_address(const uint8_t public_view_key[32], const uint8_t public_spend_key[32], const uint8_t tx_private_key[32], size_t index, uint8_t stealth_address[32]);
+				virtual void derive_amount_256(uint64_t amount_in, uint8_t amount_out[32]);
 				virtual pseudo_transaction_body decode_pseudo_transaction_info(const format::tree& transaction_data);
 				virtual vector<pseudo_transaction_input> decode_pseudo_transaction_inputs(const format::tree& transaction_data);
 				virtual vector<pseudo_transaction_output> decode_pseudo_transaction_outputs(const format::tree& transaction_data);
+				virtual decimal from_piconero(const uint256_t& value);
+				virtual uint256_t to_piconero(const decimal& value);
 				virtual uint64_t get_network_type() const;
 			};
 		}
