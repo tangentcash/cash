@@ -14,14 +14,12 @@ extern "C"
 		1. Private view key is derived from public spend key instead
 		   of private spend key: everyone can derive private view key
 		   if they know an address of Tangent-Monero address. This
-		   allows one to view Monero received to this address.
+		   allows anyone to view unspent UTXOs.
 		2. Transactions that are sent from Tangent network uses more
 		   data in extra field and does it in non-standard way. The
 		   TX_EXTRA_MYSTERIOUS_MINERGATE_TAG is a serialized message
-		   that contains input_index-global_index mapping and also
-		   output_index-address mapping. This allows one to view
-		   Monero sent from this address and a receiver address of
-		   Monero output as well as change address.
+		   that contains spending key offsets. This allows anyone to
+		   view spent UTXOs.
 	It is recommended to use front Monero address which will receive
 	from Tangent address and then send to back Monero address which
 	will be the actual receiver of payment if you must have standard
@@ -80,16 +78,17 @@ namespace tangent
 				serialize_varint(tx.extra.size(), buffer); // extra field size
 				buffer.insert(buffer.end(), tx.extra.begin(), tx.extra.end()); // extra field data
 			}
-			static void serialize_transaction(const monero::transaction_data& tx, vector<uint8_t>& buffer)
+			static void serialize_transaction_rct_sig_base(const monero::transaction_data& tx, vector<uint8_t>& buffer)
 			{
-				serialize_transaction_prefix(tx, buffer); // transaction_prefix
 				buffer.push_back(0x6); // rct_signatures.type: RCTTypeBulletproofPlus 
 				serialize_varint(tx.fee, buffer); // rct_signatures.txn_fee: fee to be paid
 				for (auto& proof : tx.vout) // rct_signatures.ecdh_info (based on vout.size)
 					buffer.insert(buffer.end(), proof.ecdh_info.amount, proof.ecdh_info.amount + 8); // rct_signatures.ecdh_info[i].amount: 8 bytes	
 				for (auto& proof : tx.vout) // rct_signatures.out_pk (based on vout.size)
 					buffer.insert(buffer.end(), proof.out_pk.mask, proof.out_pk.mask + 32); // rct_signatures.out_pk[i].mask: 32 bytes
-				serialize_varint(1, buffer); // rct_signatures.p.bulletproofs_plus.size: one aggregated proof
+			}
+			static void serialize_transaction_bpp(const monero::transaction_data& tx, vector<uint8_t>& buffer)
+			{
 				buffer.insert(buffer.end(), tx.bpp.a, tx.bpp.a + 32); // rct_signatures.p.bulletproofs_plus[0].a: 32 bytes
 				buffer.insert(buffer.end(), tx.bpp.a1, tx.bpp.a1 + 32); // rct_signatures.p.bulletproofs_plus[0].a1: 32 bytes
 				buffer.insert(buffer.end(), tx.bpp.b, tx.bpp.b + 32); // rct_signatures.p.bulletproofs_plus[0].b: 32 bytes
@@ -102,6 +101,13 @@ namespace tangent
 				serialize_varint(tx.bpp.r.size(), buffer); // rct_signatures.p.bulletproofs_plus[0].r.size
 				for (const auto& r : tx.bpp.r)
 					buffer.insert(buffer.end(), r.data(), r.data() + 32); // rct_signatures.p.bulletproofs_plus[0].r[j]: 32 bytes
+			}
+			static void serialize_transaction(const monero::transaction_data& tx, vector<uint8_t>& buffer)
+			{
+				serialize_transaction_prefix(tx, buffer); // transaction_prefix
+				serialize_transaction_rct_sig_base(tx, buffer); // rct_signatures.fee, rct_signatures.ecdh_info, rct_signatures.out_pk
+				serialize_varint(1, buffer); // rct_signatures.p.bulletproofs_plus.size: one aggregated proof
+				serialize_transaction_bpp(tx, buffer); // rct_signatures.p.bulletproofs_plus[0]
 				for (const auto& proof : tx.vin) // rct_signatures.clsags (based on vin.size)
 				{
 					for (const auto& s : proof.clsag.s) // rct_signatures.clsags[i].s (based on vin[0].key_offsets.size)
@@ -301,14 +307,8 @@ namespace tangent
 
 					computed_transaction result;
 					result.transaction_id = info.hash;
-
-					for (size_t i = 0; i < inputs.size(); i++)
+					for (auto key_offset : info.spending_key_offsets)
 					{
-						auto& input = inputs[i];
-						if (input.is_coinbase || info.key_offset_indices.size() != inputs.size() || info.key_offset_indices[i] >= input.key_offsets.size())
-							continue;
-
-						auto& key_offset = input.key_offsets[info.key_offset_indices[i]];
 						auto utxo = get_utxo(to_string(key_offset, 16), 0);
 						if (utxo)
 						{
@@ -430,32 +430,6 @@ namespace tangent
 							break;
 					}
 
-					for (auto& [output_index8, output_address] : info.output_addresses)
-					{
-						auto output_index = (size_t)output_index8;
-						if (unresolved_outputs.find(output_index) == unresolved_outputs.end())
-							continue;
-
-						auto& output = outputs[output_index];
-						if (!output.ecdh_amount.empty())
-							continue;
-
-						auto address = encode_address(output_address.view());
-						if (!address)
-							continue;
-
-						auto links = find_linked_addresses({ *address });
-						if (!links || links->empty())
-							continue;
-
-						coin_utxo new_output;
-						new_output.transaction_id = string();
-						new_output.link = links->begin()->second;
-						new_output.value = from_baseline_value(output.amount);
-						new_output.index = (uint64_t)output_index;
-						result.add_output(std::move(new_output));
-					}
-
 					if (result.inputs.empty() && result.outputs.empty())
 						coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
 
@@ -573,17 +547,37 @@ namespace tangent
 						if (!public_spend_view_key)
 							return optional::none;
 
-						uint8_t amount256[32];
-						derive_amount_256((uint64_t)to_piconero(value), amount256);
+						uint8_t derivation_key[32];
+						if (!generate_derivation_key_out(tx_private_key, (uint8_t*)public_spend_view_key->data() + 32, derivation_key))
+							return optional::none;
+
+						uint8_t output_scalar[32];
+						derivation_to_scalar(derivation_key, (uint64_t)index, output_scalar);
 
 						transaction_data::tx_out vout;
-						derive_stealth_address((uint8_t*)public_spend_view_key->data() + 32, (uint8_t*)public_spend_view_key->data(), tx_private_key, index, vout.target.key);
-						crypto::fill_random_bytes(seed, sizeof(seed));
-						hash_to_scalar(seed, sizeof(seed), vout.out_pk.blinding_factor);
-						pedersen_commit(vout.out_pk.blinding_factor, amount256, vout.out_pk.mask);
+						if (!derive_public_key(output_scalar, (uint8_t*)public_spend_view_key->data(), vout.target.key))
+							return optional::none;
 
-						// TODO: vout.ecdh_info.amount = crypto.encrypt_amount_bpp(d.amount, tx_priv_key, d.view_key);
-						// TODO: crypto.add_tx_pub_key_to_extra(tx.extra, crypto.scalar_to_point(tx_priv_key));
+						char mask_tag[] = "commitment_mask";
+						constexpr size_t mask_tag_size = sizeof(mask_tag) - 1;
+						uint8_t mask_commitment[mask_tag_size + sizeof(output_scalar)];
+						memcpy(mask_commitment, mask_tag, mask_tag_size);
+						memcpy(mask_commitment + mask_tag_size, output_scalar, sizeof(output_scalar));
+						hash_to_scalar(mask_commitment, sizeof(mask_commitment), vout.out_pk.blinding_factor);
+
+						char amount_tag[] = "amount";
+						constexpr size_t amount_tag_size = sizeof(amount_tag) - 1;
+						uint8_t amount_commitment[amount_tag_size + sizeof(output_scalar)];
+						memcpy(amount_commitment, amount_tag, amount_tag_size);
+						memcpy(amount_commitment + amount_tag_size, output_scalar, sizeof(output_scalar));
+						xmr_fast_hash(vout.ecdh_info.amount, amount_commitment, sizeof(amount_commitment));
+
+						uint8_t plaintext_amount[32];
+						derive_amount_256((uint64_t)to_piconero(value), plaintext_amount);
+						for (size_t j = 0; j < sizeof(plaintext_amount); j++)
+							vout.ecdh_info.amount[j] ^= (uint8_t)plaintext_amount[j];
+
+						pedersen_commit(vout.out_pk.blinding_factor, plaintext_amount, vout.out_pk.mask);
 						return option<transaction_data::tx_out>(std::move(vout));
 					};
 					auto& change_link = possible_inputs->front().link;
@@ -606,7 +600,6 @@ namespace tangent
 					map.set("to_height", format::variable(*block_height - lock_time));
 					map.set("cumulative", format::variable(true));
 					map.set("binary", format::variable(false));
-					map.push(std::move(args));
 
 					auto decoy_outputs = coawait(execute_rpc(nd_call::get_output_distribution(), std::move(map), cache_policy::no_cache, nd_call::json_rpc()));
 					if (!decoy_outputs)
@@ -630,7 +623,6 @@ namespace tangent
 					tx.fee = (uint64_t)to_piconero(fee_value);
 					tx.vout.push_back(std::move(*main_output));
 					tx.vout.push_back(std::move(*change_output));
-					// TODO: tx.bpp = crypto.generate_bulletproof_plus(tx.vout, array_from_out_pk_blinding_factor(tx.vout));
 					for (auto& utxo : *possible_inputs)
 					{
 						auto out_index = from_string<uint64_t>(utxo.transaction_id, 16);
@@ -662,16 +654,32 @@ namespace tangent
 						hash_to_scalar(seed, sizeof(seed), vin.pseudo_out.blinding_factor);
 						pedersen_commit(vin.pseudo_out.blinding_factor, amount256, vin.pseudo_out.mask);
 
+						// TODO: append_key_offset_to_tx_extra(tx.extra, vin.key_offset_out);
 						// TODO: vin.key_image = crypto.generate_key_image(utxo.priv_key, utxo.pub_key);
 						tx.vin.push_back(vin);
 					}
+					
+					// TODO: append_tx_public_key_to_tx_extra(crypto.scalar_to_point(tx_priv_key));
+					// TODO: tx.bpp = crypto.generate_bulletproof_plus(tx.vout, array_from_out_pk_blinding_factor(tx.vout));
 
 					vector<uint8_t> prefix; uint8_t prefix_hash[32];
 					serialize_transaction_prefix(tx, prefix);
 					xmr_fast_hash(prefix_hash, prefix.data(), prefix.size());
 
-					// TODO: uint8_t rct_hash[32];
-					// TODO: crypto.hash_rct_message(rct_hash, prefix_hash, tx.bpp, tx.fee);
+					vector<uint8_t> rct_base; uint8_t rct_base_hash[32];
+					serialize_transaction_rct_sig_base(tx, rct_base);
+					xmr_fast_hash(rct_base_hash, rct_base.data(), rct_base.size());
+
+					vector<uint8_t> bpp; uint8_t bpp_hash[32];
+					serialize_transaction_bpp(tx, bpp);
+					xmr_fast_hash(bpp_hash, bpp.data(), bpp.size());
+
+					uint8_t prefix_rct_base_bpp_hash[96], rct_hash[32];
+					memcpy(prefix_rct_base_bpp_hash + 00, prefix_hash, 32);
+					memcpy(prefix_rct_base_bpp_hash + 32, rct_base_hash, 32);
+					memcpy(prefix_rct_base_bpp_hash + 64, bpp_hash, 32);
+					xmr_fast_hash(rct_hash, prefix_rct_base_bpp_hash, sizeof(prefix_rct_base_bpp_hash));
+
 					for (auto& vin : tx.vin)
 					{
 						// TODO: vin.clsag = crypto.generate_clsag(rct_hash, vin.key_offsets, utxo.priv_key, vin.pseudo_out.blinding_factor, vin.key_offset_out);
@@ -1010,22 +1018,16 @@ namespace tangent
 						format::ro_stream message = format::ro_stream(buffer.substr(i + 1, size));
 						if (!message.data.empty())
 						{
-							string key_offset_indices; auto type = message.read_type();
-							if (format::util::get_string_size(type) > 0 && message.read_string(type, &key_offset_indices))
+							auto* inputs = transaction_data.child("vin");
+							size_t inputs_size = inputs ? inputs->childs().size() : 0;
+							result.spending_key_offsets.reserve(inputs_size);
+							for (size_t i = 0; i < inputs_size; i++)
 							{
-								result.key_offset_indices.resize(key_offset_indices.size());
-								memcpy(result.key_offset_indices.data(), key_offset_indices.data(), key_offset_indices.size());
+								uint64_t key_offset;
+								if (!message.read_integer(message.read_type(), &key_offset))
+									break;
 
-								string output_addresses; type = message.read_type();
-								if (format::util::get_string_size(type) > 0 && message.read_string(type, &output_addresses) && output_addresses.size() % 65 == 0)
-								{
-									size_t output_addresses_size = output_addresses.size() / 65;
-									for (size_t j = 0; j < output_addresses_size; j++)
-									{
-										auto output_address = std::string_view(output_addresses).substr(j * 65, 65);
-										result.output_addresses[output_address.front()] = output_address.substr(1);
-									}
-								}
+								result.spending_key_offsets.push_back(key_offset);
 							}
 						}
 
@@ -1162,6 +1164,10 @@ namespace tangent
 				ge_tobytes(derivation_key, &m2);
 				return true;
 			}
+			bool monero::generate_derivation_key_out(const uint8_t transaction_private_key[32], const uint8_t public_view_key[32], uint8_t derivation_key[32])
+			{
+				return generate_derivation_key(public_view_key, transaction_private_key, derivation_key);
+			}
 			void monero::derive_private_key(const uint8_t derivation_scalar[32], const uint8_t private_spend_key[32], uint8_t private_key[32])
 			{
 				sc_add(private_key, private_spend_key, derivation_scalar);
@@ -1239,25 +1245,6 @@ namespace tangent
 				uint8_t private_view_key[32];
 				derive_known_private_view_key(public_spend_key, private_view_key);
 				crypto_scalarmult_ed25519_base_noclamp(public_view_key, private_view_key);
-			}
-			void monero::derive_stealth_address(const uint8_t public_view_key[32], const uint8_t public_spend_key[32], const uint8_t tx_private_key[32], size_t index, uint8_t stealth_address[32])
-			{
-				uint8_t shared_secret[32], scalar_hash[32], hsg[32];
-				crypto_scalarmult_ed25519(shared_secret, tx_private_key, public_view_key);
-
-				auto index256 = uint256_t(index);
-				size_t derivation_size = std::min<size_t>(8, std::max<size_t>(1, index256.bytes()));
-				uint8_t derivation[32] = { 0 };
-				index256.encode(derivation);
-
-				SHA3_CTX context;
-				keccak_256_Init(&context);
-				keccak_Update(&context, shared_secret, 32);
-				keccak_Update(&context, derivation, derivation_size);
-				keccak_Final(&context, scalar_hash);
-
-				crypto_scalarmult_ed25519_base_noclamp(hsg, scalar_hash);
-				crypto_core_ed25519_add(stealth_address, hsg, public_spend_key);
 			}
 			void monero::derive_amount_256(uint64_t amount_in, uint8_t amount_out[32])
 			{

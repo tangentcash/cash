@@ -46,9 +46,8 @@ namespace tangent
 
 				struct pseudo_transaction_body
 				{
-					btree_map<uint8_t, algorithm::storage_type<uint8_t, 64>> output_addresses;
 					vector<algorithm::storage_type<uint8_t, 32>> public_keys;
-					vector<size_t> key_offset_indices;
+					vector<uint64_t> spending_key_offsets;
 					string encrypted_payment_id;
 					string payment_id;
 					string hash;
@@ -134,6 +133,7 @@ namespace tangent
 				virtual expects_promise_rt<vector<uint64_t>> get_output_indices(const std::string_view& transaction_id);
 				virtual bool generate_key_image(const uint8_t derivation_scalar[32], const uint8_t public_spend_key[32], const uint8_t public_view_key[32], const uint8_t private_spend_key[32], uint8_t key_image[32]);
 				virtual bool generate_derivation_key(const uint8_t transaction_public_key[32], const uint8_t private_view_key[32], uint8_t derivation_key[32]);
+				virtual bool generate_derivation_key_out(const uint8_t transaction_private_key[32], const uint8_t public_view_key[32], uint8_t derivation_key[32]);
 				virtual void derive_private_key(const uint8_t derivation_scalar[32], const uint8_t private_spend_key[32], uint8_t private_key[32]);
 				virtual bool derive_public_key(const uint8_t derivation_scalar[32], const uint8_t public_spend_key[32], uint8_t public_key[32]);
 				virtual void derivation_to_scalar(const uint8_t derivation_key[32], uint64_t derivation_index, uint8_t derivation_scalar[32]);
@@ -142,7 +142,6 @@ namespace tangent
 				virtual bool pedersen_commit(uint8_t mask[32], uint8_t amount[32], uint8_t commitment[32]);
 				virtual void derive_known_private_view_key(const uint8_t public_spend_key[32], uint8_t private_view_key[32]);
 				virtual void derive_known_public_view_key(const uint8_t public_spend_key[32], uint8_t public_view_key[32]);
-				virtual void derive_stealth_address(const uint8_t public_view_key[32], const uint8_t public_spend_key[32], const uint8_t tx_private_key[32], size_t index, uint8_t stealth_address[32]);
 				virtual void derive_amount_256(uint64_t amount_in, uint8_t amount_out[32]);
 				virtual pseudo_transaction_body decode_pseudo_transaction_info(const format::tree& transaction_data);
 				virtual vector<pseudo_transaction_input> decode_pseudo_transaction_inputs(const format::tree& transaction_data);
