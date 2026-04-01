@@ -3,6 +3,7 @@
 #include "../policy/transactions.h"
 #include "../storage/mempoolstate.h"
 #include "../storage/chainstate.h"
+#define BLOCK_COST ((size_t)gas_cost::write_byte * 1024)
 
 namespace tangent
 {
@@ -329,7 +330,7 @@ namespace tangent
 		{
 			return get_relative_order(other) != 0;
 		}
-		expects_lr<void> block_header::verify_validity(const block_header* parent_block, const algorithm::pubkeyhash_t& recovered_producer) const
+		expects_lr<void> block_header::verify_validity(const block_header* parent_block, const algorithm::pubkeyhash_t& recovered_producer, bool verify_pow) const
 		{
 			if (!number || (!parent_hash && number > 1) || (number == 1 && parent_hash > 0))
 				return layer_exception("invalid number");
@@ -355,7 +356,7 @@ namespace tangent
 			if (public_key_hash.empty() && !recover_hash(public_key_hash))
 				return layer_exception("producer proof verification failed");
 
-			if (!verify_proof(public_key_hash))
+			if (verify_pow && !verify_proof(public_key_hash))
 				return layer_exception("wesolowski proof verification failed");
 
 			if (!parent_block && number > 1)
@@ -529,11 +530,8 @@ namespace tangent
 		}
 		bool block_header::network_congestion() const
 		{
-			return network_congestion_threshold() > protocol::now().policy.production.network_congestion_threshold;
-		}
-		decimal block_header::network_congestion_threshold() const
-		{
-			return algorithm::arithmetic::divide(slot_gas_use.to_decimal(), get_slot_gas_limit().to_decimal());
+			uint256_t slot_gas_limit_band = get_slot_gas_limit() / 1'000'000;
+			return slot_gas_use / slot_gas_limit_band > protocol::now().policy.production.min_network_congestion;
 		}
 		uint64_t block_header::get_witness_requirement(const algorithm::asset_id& asset) const
 		{
@@ -749,11 +747,11 @@ namespace tangent
 		block_body::block_body(const block_header& other) : block_header(other)
 		{
 		}
-		expects_lr<void> block_body::verify_integrity(const block_header* parent_block, const block_state* state) const
+		expects_lr<void> block_body::verify_integrity(const block_header* parent_block, const block_state::log* state) const
 		{
 			if (transaction_count != (uint32_t)transactions.size())
 				return layer_exception("invalid transactions count");
-			else if (!transition_count && (state != nullptr && transition_count != (uint32_t)state->finalized.size()))
+			else if (!transition_count && (state != nullptr && transition_count != (uint32_t)state->size()))
 				return layer_exception("invalid states count");
 
 			if (!parent_block && number > 1)
@@ -780,10 +778,10 @@ namespace tangent
 			if (state != nullptr)
 			{
 				vector<uint256_t> state_tree;
-				state_tree.reserve(state->finalized.size() + 1);
+				state_tree.reserve(state->size() + 1);
 				if (parent_block != nullptr)
 					state_tree.push_back(parent_block->state_root);
-				for (auto& [index, change] : state->finalized)
+				for (auto& [index, change] : *state)
 					state_tree.push_back(change.state->as_hash());
 				if (algorithm::merkle_tree::from(std::move(state_tree)).root() != state_root)
 					return layer_exception("invalid state merkle tree root");
@@ -847,12 +845,12 @@ namespace tangent
 
 			return true;
 		}
-		void block_body::recalculate(const block_header* parent_block, const block_state* state)
+		void block_body::recalculate(const block_header* parent_block, const block_state::log* state)
 		{
 			auto task_queue1 = parallel::for_each(transactions.begin(), transactions.end(), ELEMENTS_FEW, [](block_transaction& item) { item.receipt.as_hash(); });
 			if (state != nullptr)
 			{
-				auto task_queue2 = parallel::for_each_sequential(state->finalized.begin(), state->finalized.end(), state->finalized.size(), ELEMENTS_FEW, [](const std::pair<const string, block_state::state_change>& item) { item.second.state->as_hash(); });
+				auto task_queue2 = parallel::for_each_sequential(state->begin(), state->end(), state->size(), ELEMENTS_FEW, [](const std::pair<const string, block_state::state_change>& item) { item.second.state->as_hash(); });
 				parallel::wail_all(std::move(task_queue2));
 			}
 			parallel::wail_all(std::move(task_queue1));
@@ -876,13 +874,13 @@ namespace tangent
 			if (state != nullptr)
 			{
 				vector<uint256_t> state_tree;
-				state_tree.reserve(state->finalized.size() + 1);
+				state_tree.reserve(state->size() + 1);
 				if (parent_block != nullptr)
 					state_tree.push_back(parent_block->state_root);
-				for (auto& [index, change] : state->finalized)
+				for (auto& [index, change] : *state)
 					state_tree.push_back(change.state->as_hash());
 				state_root = algorithm::merkle_tree::from(std::move(state_tree)).root();
-				transition_count = (uint32_t)state->finalized.size();
+				transition_count = (uint32_t)state->size();
 			}
 
 			bool cumulative = get_slot_length() > 1;
@@ -903,7 +901,7 @@ namespace tangent
 		{
 			return block_header(*this);
 		}
-		block_proof block_body::as_proof(const block_header* parent_block, const block_state* state) const
+		block_proof block_body::as_proof(const block_header* parent_block, const block_state::log* state) const
 		{
 			auto result = block_proof();
 			result.transaction_root = transaction_root;
@@ -911,7 +909,7 @@ namespace tangent
 			result.state_root = state_root;
 			result.transaction_tree.nodes.reserve(transactions.size() + 1);
 			result.receipt_tree.nodes.reserve(transactions.size() + 1);
-			result.state_tree.nodes.reserve(state ? state->finalized.size() + 1 : 0);
+			result.state_tree.nodes.reserve(state ? state->size() + 1 : 0);
 			if (parent_block != nullptr)
 			{
 				result.transaction_tree.nodes.push_back(parent_block->transaction_root);
@@ -926,7 +924,7 @@ namespace tangent
 			{
 				if (parent_block != nullptr)
 					result.state_tree.nodes.push_back(parent_block->state_root);
-				for (auto& [index, change] : state->finalized)
+				for (auto& [index, change] : *state)
 					result.state_tree.nodes.push_back(change.state->as_hash());
 			}
 			result.transaction_tree = algorithm::merkle_tree::from(std::move(result.transaction_tree.nodes));
@@ -1094,7 +1092,7 @@ namespace tangent
 		{
 			auto data = block.as_tree();
 			auto* states_data = data.set("changelog", format::tree::list());
-			for (auto& [index, change] : state.finalized)
+			for (auto& [index, change] : state)
 				states_data->push(change.state->as_tree());
 			return data;
 		}
@@ -1102,7 +1100,7 @@ namespace tangent
 		executor_context::executor_context(block_changelog* new_changelog) : solver(nullptr), transaction(nullptr), changelog(new_changelog), block(nullptr), options((uint8_t)flags::unrestricted)
 		{
 		}
-		executor_context::executor_context(block_changelog* new_changelog, const solver_context* new_solver, block_header* new_block_header, const transaction_message* new_transaction, transaction_receipt&& new_receipt) : solver(new_solver), transaction(new_transaction), changelog(new_changelog), block(new_block_header), receipt(std::move(new_receipt)), options(0)
+		executor_context::executor_context(block_changelog* new_changelog, const solver_context* new_solver, block_header* new_block_header, const transaction_message* new_transaction) : solver(new_solver), transaction(new_transaction), changelog(new_changelog), block(new_block_header), options(0)
 		{
 		}
 		executor_context::executor_context(const executor_context& other) : solver(other.solver), changelog(other.changelog), block(other.block), receipt(other.receipt), options(other.options)
@@ -2769,18 +2767,19 @@ namespace tangent
 
 			block_changelog temp_changelog;
 			size_t transaction_size = transaction->as_message().data.size();
-			auto execution = executor_context::execute_tx(&temp_solver, &temp_block, &temp_changelog, transaction, transaction->as_hash(), owner, transaction_size, (uint8_t)flags::pedantic | (uint8_t)flags::evaluation);
+			auto executor = ledger::executor_context(&temp_changelog, &temp_solver, &temp_block, transaction);
+			auto execution = executor_context::execute_tx(&executor, owner, transaction, transaction->as_hash(), transaction_size, (uint8_t)flags::pedantic | (uint8_t)flags::evaluation);
 			if (!execution)
 			{
 				revert_transaction();
 				return execution.error();
 			}
 
-			execution->receipt.relative_gas_use += 64 * (uint64_t)gas_cost::write_byte;
-			auto gas = execution->receipt.relative_gas_use - (execution->receipt.relative_gas_use % 1000) + 1000;
-			execution->receipt.relative_gas_use = gas;
+			executor.receipt.relative_gas_use += 64 * (uint64_t)gas_cost::write_byte;
+			auto gas = executor.receipt.relative_gas_use - (executor.receipt.relative_gas_use % 1000) + 1000;
+			executor.receipt.relative_gas_use = gas;
 			if (out_receipt != nullptr)
-				*out_receipt = std::move(execution->receipt);
+				*out_receipt = std::move(executor.receipt);
 			revert_transaction();
 			return gas;
 		}
@@ -2794,64 +2793,66 @@ namespace tangent
 			auto chain = storages::chainstate();
 			return new_transaction->validate(chain.get_latest_block_number().or_else(1));
 		}
-		expects_lr<executor_context> executor_context::execute_tx(const solver_context* new_solver, block_header* new_block, block_changelog* changelog, const transaction_message* new_transaction, const uint256_t& new_transaction_hash, const algorithm::pubkeyhash_t& owner, size_t transaction_size, uint8_t options, option<transaction_receipt>&& from_receipt)
+		expects_lr<void> executor_context::execute_tx(executor_context* executor, const algorithm::pubkeyhash_t& owner, const transaction_message* new_transaction, const uint256_t& new_transaction_hash, size_t transaction_size, uint8_t options)
 		{
-			VI_ASSERT(new_solver && new_block && new_transaction, "block, env, transaction should be set");
-			auto new_receipt = from_receipt ? std::move(*from_receipt) : transaction_receipt();
-			new_receipt.transaction_hash = new_transaction_hash;
-			new_receipt.absolute_gas_use = new_block->gas_use;
-			new_receipt.block_number = new_block->number;
-			new_receipt.from = owner;
+			VI_ASSERT(executor && executor->solver && executor->block && new_transaction, "executor and transaction should be set");
+			executor->transaction = new_transaction;
+			executor->options = options;
+			executor->receipt.transaction_hash = new_transaction_hash;
+			executor->receipt.absolute_gas_use = executor->block->gas_use;
+			executor->receipt.relative_gas_use = 0;
+			executor->receipt.block_number = executor->block->number;
+			executor->receipt.block_time = protocol::now().time.now();
+			executor->receipt.from = owner;
+			executor->receipt.successful = false;
+			if (!(executor->options & (uint8_t)flags::preserve_events))
+				executor->receipt.events.clear();
 
-			auto validation = new_transaction->validate(new_receipt.block_number);
+			auto validation = new_transaction->validate(executor->receipt.block_number);
 			if (!validation)
 				return validation.error();
 
-			auto executor = executor_context(changelog, new_solver, new_block, new_transaction, std::move(new_receipt));
-			executor.options = options;
-
-			auto storage = executor.burn_gas(transaction_size * (size_t)gas_cost::write_tx_byte);
+			auto storage = executor->burn_gas(transaction_size * (size_t)gas_cost::write_tx_byte);
 			if (!storage)
 				return storage.error();
 
-			bool discard = (executor.receipt.events.size() == 1 && executor.receipt.events.front().first == 0 && executor.receipt.events.front().second.size() == 1);
-			auto execution = discard ? expects_lr<void>(layer_exception(executor.receipt.events.front().second.front().as_blob())) : executor.transaction->execute(&executor);
-			executor.receipt.successful = !!execution;
-			if (!executor.receipt.successful && executor.changelog != nullptr)
-				executor.changelog->outgoing.revert();
+			bool discard = (executor->receipt.events.size() == 1 && executor->receipt.events.front().first == 0 && executor->receipt.events.front().second.size() == 1);
+			auto execution = discard ? expects_lr<void>(layer_exception(executor->receipt.events.front().second.front().as_blob())) : executor->transaction->execute(executor);
+			executor->receipt.successful = !!execution;
+			if (!executor->receipt.successful && executor->changelog != nullptr)
+				executor->changelog->outgoing.revert();
 			if (discard)
-				executor.receipt.events.clear();
-			if ((executor.options & (uint8_t)flags::pedantic) && !executor.receipt.successful)
+				executor->receipt.events.clear();
+			if ((executor->options & (uint8_t)flags::pedantic) && !executor->receipt.successful)
 				return execution.error();
 
-			if (!executor.receipt.from.empty() && !(executor.options & (uint8_t)flags::replayable))
+			if (!executor->receipt.from.empty() && !(executor->options & (uint8_t)flags::replayable))
 			{
-				auto nonce = (executor.options & (uint8_t)flags::evaluation ? executor.get_account_nonce(executor.receipt.from).or_else(states::account_nonce(algorithm::pubkeyhash_t(), nullptr)).nonce : executor.transaction->nonce);
-				auto change = executor.apply_account_nonce(executor.receipt.from, nonce + 1);
+				auto nonce = (executor->options & (uint8_t)flags::evaluation ? executor->get_account_nonce(executor->receipt.from).or_else(states::account_nonce(algorithm::pubkeyhash_t(), nullptr)).nonce : executor->transaction->nonce);
+				auto change = executor->apply_account_nonce(executor->receipt.from, nonce + 1);
 				if (!change)
 					return change.error();
 			}
 
-			if (executor.receipt.relative_gas_use > 0 && executor.transaction->gas_price.is_positive())
+			if (executor->receipt.relative_gas_use > 0 && executor->transaction->gas_price.is_positive())
 			{
-				auto fee = executor.apply_fee_transfer(executor.transaction->gas_asset(), executor.receipt.from, executor.transaction->gas_price * executor.receipt.relative_gas_use.to_decimal());
+				auto fee = executor->apply_fee_transfer(executor->transaction->gas_asset(), executor->receipt.from, executor->transaction->gas_price * executor->receipt.relative_gas_use.to_decimal());
 				if (!fee)
 					return fee.error();
 			}
 
-			if (executor.receipt.successful)
+			if (executor->receipt.successful)
 			{
-				for (auto& item : executor.witnesses)
-					executor.block->set_witness_requirement(item.first, item.second);
+				for (auto& item : executor->witnesses)
+					executor->block->set_witness_requirement(item.first, item.second);
 			}
 			else
-				executor.emit_event(0, { format::variable(execution.what()) }, false);
+				executor->emit_event(0, { format::variable(execution.what()) }, false);
 
-			executor.options = 0;
-			executor.block->gas_use += executor.receipt.relative_gas_use;
-			executor.block->gas_limit += executor.transaction->gas_limit;
-			executor.receipt.block_time = protocol::now().time.now();
-			return expects_lr<executor_context>(std::move(executor));
+			executor->options = 0;
+			executor->block->gas_use += executor->receipt.relative_gas_use;
+			executor->block->gas_limit += executor->transaction->gas_limit;
+			return expectation::met;
 		}
 		expects_promise_rt<void> executor_context::dispatch_tx(dispatcher_context* dispatcher, block_transaction* transaction)
 		{
@@ -3551,11 +3552,10 @@ namespace tangent
 			state.secret_key = algorithm::seckey_t();
 			state.gas_usage = 0;
 			state.commitments = 0;
-			state.block_options = 0;
 			state.validator_active = true;
-			state.executor = executor_context(&state.changelog);
 			state.origin = state_origin::chain;
-			state.executor = executor_context(&state.changelog, this, abstract_block, abstract_transaction, std::move(abstract_receipt));
+			state.executor = executor_context(&state.changelog, this, abstract_block, abstract_transaction);
+			state.executor.receipt = std::move(abstract_receipt);
 			transactions = transaction_queue();
 			tip = optional::none;
 			producers.clear();
@@ -3566,8 +3566,15 @@ namespace tangent
 		option<uint64_t> solver_context::apply_validator_state(const std::function<ledger::wallet* (size_t)>& try_producer, option<const block_header*>&& parent_block)
 		{
 			nonces.clear();
-			state = state_variables();
-			transactions = transaction_queue();
+			transactions.failed.clear();
+			transactions.pending.clear();
+			transactions.queued = 0;
+			state.public_key_hash.clear();
+			state.secret_key.clear();
+			state.changelog.clear();
+			state.gas_usage = 0;
+			state.commitments = 0;
+			state.validator_active = true;
 			if (!parent_block)
 			{
 				auto chain = storages::chainstate();
@@ -3591,7 +3598,11 @@ namespace tangent
 			}
 
 			auto origin = state.origin;
-			state.executor = executor_context(&state.changelog, this, tip.address(), nullptr, { });
+			state.executor.solver = this;
+			state.executor.changelog = &state.changelog;
+			state.executor.block = tip.address();
+			state.executor.transaction = nullptr;
+			state.executor.receipt = transaction_receipt();
 			state.executor.options = tip && tip->network_congestion() ? (uint8_t)executor_context::flags::congestion : 0;
 			state.origin = state.origin == state_origin::block ? state_origin::chain_block : state_origin::chain;
 			producers = state.executor.calculate_producers(protocol::now().policy.production.max_per_block).or_else(vector<states::validator_production>());
@@ -3721,9 +3732,9 @@ namespace tangent
 			solution.block.set_parent_block(parent_block);
 			solution.block.priority = (uint64_t)(position == producers.end() ? protocol::now().policy.production.max_per_block : std::distance(producers.begin(), position));
 			solution.block.difficulty = algorithm::wesolowski::scale(solution.block.get_proof_slot_target(parent_block), solution.block.get_proof_difficulty_multiplier());
-			state.executor = executor_context(&state.changelog, this, &solution.block, nullptr, { });
+			state.executor.witnesses.clear();
+			state.executor.block = &solution.block;
 			state.validator_active = state.executor.get_validator_production(state.public_key_hash).or_else(states::validator_production(algorithm::pubkeyhash_t(), nullptr)).is_active();
-			state.block_options = parent_block && parent_block->network_congestion() ? (uint8_t)executor_context::flags::congestion : 0;
 			state.changelog.clear();
 			return expectation::met;
 		}
@@ -3735,15 +3746,16 @@ namespace tangent
 				transactions.queued = transactions.pending.size();
 			}
 
+			uint8_t state_options = state.executor.options;
 			for (auto& item : transactions.pending)
 			{
 				uint8_t tx_options = item.candidate->is_commitment() ? (uint8_t)executor_context::flags::pedantic : 0;
-				auto execution = executor_context::execute_tx(this, &solution.block, &state.changelog, *item.candidate, item.hash, item.owner, item.size, state.block_options | tx_options);
+				auto execution = executor_context::execute_tx(&state.executor, item.owner, *item.candidate, item.hash, item.size, state_options | tx_options);
 				if (execution)
 				{
 					auto& blob = solution.block.transactions.emplace_back();
 					blob.transaction = std::move(item.candidate);
-					blob.receipt = std::move(execution->receipt);
+					blob.receipt = state.executor.receipt;
 					if (blob.receipt.relative_gas_use > 0 && blob.transaction->gas_price.is_positive())
 					{
 						auto& reward = rewards[blob.transaction->asset];
@@ -3760,6 +3772,8 @@ namespace tangent
 				state.changelog.clear_temporary_state();
 			}
 
+			state.executor.transaction = nullptr;
+			state.executor.options = state_options;
 			transactions.queued = 0;
 			transactions.pending.clear();
 			return expectation::met;
@@ -3806,14 +3820,12 @@ namespace tangent
 				return layer_exception("block producer must be active");
 
 			auto* parent_block = tip.address();
-			size_t block_cost = (size_t)gas_cost::write_byte * 1024;
+			solution.block.gas_limit += BLOCK_COST;
+			solution.block.gas_use += BLOCK_COST;
 			state.changelog.commit();
-			solution.block.gas_limit += block_cost;
-			solution.block.gas_use += block_cost;
-			solution.block.recalculate(parent_block, &state.changelog.outgoing);
 			state.changelog.effects.finalized.swap(solution.effects);
-			state.changelog.outgoing.pending.swap(solution.state.pending);
-			state.changelog.outgoing.finalized.swap(solution.state.finalized);
+			state.changelog.outgoing.finalized.swap(solution.state);
+			solution.block.recalculate(parent_block, &solution.state);
 			erase_failed_transactions().report("mempool cleanup failed");
 			return expectation::met;
 		}
@@ -3857,13 +3869,13 @@ namespace tangent
 
 			return block_solution_sign(evaluation);
 		}
-		expects_lr<void> solver_context::verify_block(const block_evaluation& solution, const algorithm::pubkeyhash_t& recovered_producer)
+		expects_lr<void> solver_context::verify_block(const block_evaluation& solution, const algorithm::pubkeyhash_t& recovered_producer, bool verify_pow)
 		{
-			return verify_solved_block(tip.address(), solution, recovered_producer);
+			return verify_solved_block(tip.address(), solution, recovered_producer, verify_pow);
 		}
 		expects_lr<block_checkpoint> solver_context::checkpoint_block(block_evaluation& solution, bool keep_reverted_transactions)
 		{
-			return checkpoint_solved_block(solution, keep_reverted_transactions);
+			return checkpoint_solved_block(*this, solution, keep_reverted_transactions);
 		}
 		expects_lr<void> solver_context::erase_failed_transactions()
 		{
@@ -3890,15 +3902,15 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<void> solver_context::verify_solved_block(const block_header* parent_block, const block_evaluation& solution, const algorithm::pubkeyhash_t& recovered_producer)
+		expects_lr<void> solver_context::verify_solved_block(const block_header* parent_block, const block_evaluation& solution, const algorithm::pubkeyhash_t& recovered_producer, bool verify_pow)
 		{
-			auto validity = solution.block.verify_validity(parent_block, recovered_producer);
+			auto validity = solution.block.verify_validity(parent_block, recovered_producer, verify_pow);
 			if (!validity)
 				return validity;
 
 			return solution.block.verify_integrity(parent_block, &solution.state);
 		}
-		expects_lr<void> solver_context::validate_solved_block(const block_header* parent_block, const block_body& child_block, block_evaluation* evaluated_result)
+		expects_lr<void> solver_context::validate_solved_block(solver_context& solver, const block_header* parent_block, const block_body& child_block, block_evaluation* evaluated_result, bool verify_pow)
 		{
 			if (parent_block && (parent_block->number != child_block.number - 1 || parent_block->as_hash() != child_block.parent_hash))
 				return layer_exception("invalid parent block");
@@ -3907,13 +3919,15 @@ namespace tangent
 			if (!child_block.recover_hash(producer.public_key_hash))
 				return layer_exception("invalid producer signature");
 
-			solver_context solver;
 			if (!solver.apply_validator_state([&producer](size_t index) { return index > 0 ? nullptr : &producer; }, parent_block))
 			{
 				solver.state.public_key_hash = producer.public_key_hash;
 				if (child_block.priority != protocol::now().policy.production.max_per_block)
 					return layer_exception("invalid producer priority");
 			}
+
+			if (parent_block != nullptr && (!child_block.transaction_count || child_block.transactions.empty()))
+				return validate_solved_empty_block(solver, *parent_block, child_block, producer.public_key_hash, evaluated_result, verify_pow);
 
 			size_t commitments = 0;
 			hash_map<uint256_t, std::pair<const block_transaction*, const solver_context::queued_transaction*>> childs;
@@ -3955,20 +3969,85 @@ namespace tangent
 			result.block.signature = child_block.signature;
 			result.block.recalculate(parent_block, &result.state);
 
-			auto verification = solver.verify_block(result, producer.public_key_hash);
-			if (!verification)
-				return verification;
-
 			block_header input = child_block, output = result.block;
 			if (input.as_message().data != output.as_message().data)
 				return layer_exception("block data mismatch");
+
+			auto verification = solver.verify_block(result, producer.public_key_hash, verify_pow);
+			if (!verification)
+				return verification;
 
 			if (evaluated_result != nullptr)
 				*evaluated_result = std::move(result);
 
 			return expectation::met;
 		}
-		expects_lr<block_checkpoint> solver_context::checkpoint_solved_block(block_evaluation& solution, bool keep_reverted_transactions)
+		expects_lr<void> solver_context::validate_solved_empty_block(solver_context& solver, const block_header& parent_block, const block_body& child_block, const algorithm::pubkeyhash_t& recovered_producer, block_evaluation* evaluated_result, bool verify_pow)
+		{
+			if (child_block.transaction_count != 0 || !child_block.transactions.empty())
+				return layer_exception("invalid transaction count");
+
+			if (child_block.transaction_root != parent_block.transaction_root || child_block.receipt_root != parent_block.receipt_root)
+				return layer_exception("invalid transaction/receipt merkle tree root");
+
+			if (child_block.gas_use != child_block.gas_limit || child_block.gas_limit != BLOCK_COST)
+				return layer_exception("invalid gas use/limit");
+
+			if (!child_block.witnesses.empty())
+				return layer_exception("invalid witnesses count");
+
+			auto validity = child_block.verify_validity(&parent_block, recovered_producer, verify_pow);
+			if (!validity)
+				return validity;
+
+			auto position = std::find_if(solver.producers.begin(), solver.producers.end(), [&solver](const states::validator_production& a) { return a.owner == solver.state.public_key_hash; });
+			uint64_t priority = (uint64_t)(position == solver.producers.end() ? protocol::now().policy.production.max_per_block : std::distance(solver.producers.begin(), position));
+			solver.state.executor.block = (block_body*)&child_block;
+			solver.state.validator_active = solver.state.executor.get_validator_production(solver.state.public_key_hash).or_else(states::validator_production(algorithm::pubkeyhash_t(), nullptr)).is_active();
+			if (priority != child_block.priority)
+				return layer_exception("invalid producer priority");
+			else if (!solver.state.validator_active)
+				return layer_exception("block producer must be active");
+
+			auto coinbase = block_header::get_coinbase_value(child_block.number);
+			auto penalty = -coinbase;
+			auto penalty_queue = std::min((size_t)child_block.priority, solver.producers.size());
+			for (size_t i = 0; i < penalty_queue; i++)
+			{
+				auto& target = solver.producers[i].owner;
+				auto production = solver.state.executor.get_validator_production(target).or_else(states::validator_production(target, &child_block));
+				auto compensation = production.stake.is_positive() ? std::max(penalty, -production.stake) : decimal::zero();
+				auto production_penalty = solver.state.executor.apply_validator_production(target, executor_context::staker::unlock, compensation);
+				if (!production_penalty)
+					return production_penalty.error();
+
+				coinbase -= compensation;
+			}
+
+			auto coinbase_reward = solver.state.executor.apply_validator_production(recovered_producer, executor_context::staker::reward_or_penalty, coinbase);
+			if (!coinbase_reward)
+				return coinbase_reward.error();
+
+			block_state::log state_log;
+			solver.state.changelog.commit();
+			solver.state.changelog.outgoing.finalized.swap(state_log);
+			if (state_log.size() != child_block.transition_count)
+				return layer_exception("invalid states count");
+
+			vector<uint256_t> state_tree;
+			state_tree.reserve(state_log.size() + 1);
+			state_tree.push_back(parent_block.state_root);
+			for (auto& [index, change] : state_log)
+				state_tree.push_back(change.state->as_hash());
+			if (algorithm::merkle_tree::from(std::move(state_tree)).root() != child_block.state_root)
+				return layer_exception("invalid state merkle tree root");
+
+			if (evaluated_result != nullptr)
+				evaluated_result->state.swap(state_log);
+
+			return expectation::met;
+		}
+		expects_lr<block_checkpoint> solver_context::checkpoint_solved_block(solver_context& solver, block_evaluation& solution, bool keep_reverted_transactions)
 		{
 			auto chain = storages::chainstate();
 			auto mempool = storages::mempoolstate();
@@ -4020,10 +4099,10 @@ namespace tangent
 				if (protocol::now().user.storage.logging)
 					VI_INFO("block %s rewinded (height: %" PRIu64 ", mempool: +%" PRIu64 ", blocktrie: %" PRIi64 ", transactiontrie: %" PRIi64 ", statetrie: %" PRIi64 ")", algorithm::encoding::encode_0xhex256(solution.block.as_hash()).c_str(), mutation.new_tip_block_number, mutation.mempool_transactions, mutation.block_delta, mutation.transaction_delta, mutation.state_delta);
 
-				if (solution.block.transition_count != solution.state.finalized.size())
+				if (solution.block.transition_count != solution.state.size())
 				{
 					auto parent_block = chain.get_block_by_number(solution.block.number - 1);
-					auto validation = validate_solved_block(parent_block.address(), solution.block, &solution);
+					auto validation = validate_solved_block(solver, parent_block.address(), solution.block, &solution);
 					if (!validation)
 						return validation.error();
 				}

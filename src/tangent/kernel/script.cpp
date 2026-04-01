@@ -6112,7 +6112,7 @@ namespace tangent
 				return layer_exception(stringify::text("illegal subcall to %s program on function \"%.*s\": illegal operation", address_repr(target).to_string().data(), (int)entrypoint.size(), entrypoint.data()));
 
 			auto transaction = transactions::call();
-			transaction.call_to(target, entrypoint, std::move(args));
+			transaction.call_to(target, entrypoint, std::move(args), false);
 			transaction.pays = payable.payments;
 			transaction.asset = executor->transaction->asset;
 			transaction.gas_price = executor->transaction->gas_price;
@@ -6125,7 +6125,9 @@ namespace tangent
 			receipt.block_number = executor->block->number;
 			receipt.from = callable();
 
-			auto subcontext = ledger::executor_context(executor->changelog, executor->solver, executor->block, &transaction, std::move(receipt));
+			auto subcontext = ledger::executor_context(executor->changelog, executor->solver, executor->block, &transaction);
+			subcontext.receipt = std::move(receipt);
+
 			auto subexecution = transaction.subexecute(&subcontext, [&](void* module_ptr)
 			{
 				auto script = program(&subcontext, (asIScriptModule*)module_ptr, (program*)this);

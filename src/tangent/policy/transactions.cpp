@@ -376,7 +376,7 @@ namespace tangent
 			return subexecute(executor, [this, executor](void* module_ptr)
 			{
 				auto script = script::program(executor, (asIScriptModule*)module_ptr);
-				return script.execute(script::ccall::paying_call, function, args, nullptr);
+				return script.execute(script::ccall::paying_call, uses_pay_cap() ? std::string_view(function).substr(1) : std::string_view(function), args, nullptr);
 			});
 		}
 		expects_lr<void> call::subexecute(ledger::executor_context* executor, std::function<expects_lr<void>(void*)>&& callback) const
@@ -395,12 +395,23 @@ namespace tangent
 			if (!pmodule)
 				return pmodule.error();
 
+			bool spending_cap = uses_pay_cap();
 			for (auto& [paying_asset, paying_value] : pays)
 			{
 				if (executor->receipt.from == callable)
 					return layer_exception("invalid payment");
 
-				auto payment = executor->apply_payment(paying_asset, executor->receipt.from, callable, paying_value);
+				auto spending_value = paying_value;
+				if (spending_cap)
+				{
+					auto balance = executor->get_account_balance(paying_asset, executor->receipt.from).or_else(states::account_balance(executor->receipt.from, paying_asset, executor->block)).get_balance();
+					if (spending_value > balance)
+						spending_value = balance;
+					if (!spending_value.is_positive())
+						continue;
+				}
+
+				auto payment = executor->apply_payment(paying_asset, executor->receipt.from, callable, spending_value);
 				if (!payment)
 					return payment.error();
 			}
@@ -471,15 +482,21 @@ namespace tangent
 			parties.insert(algorithm::pubkeyhash_t(callable));
 			return true;
 		}
-		void call::call_to(const algorithm::pubkeyhash_t& new_callable, const std::string_view& new_function, format::variables&& new_args)
+		void call::call_to(const algorithm::pubkeyhash_t& new_callable, const std::string_view& new_function, format::variables&& new_args, bool pay_cap)
 		{
 			args = std::move(new_args);
 			function = new_function;
 			callable = new_callable;
+			if (pay_cap && !uses_pay_cap())
+				function.insert(function.begin(), '>');
 		}
 		void call::pay_with(const algorithm::asset_id& new_asset, const decimal& new_value)
 		{
 			pays.push_back(std::make_pair(new_asset, new_value));
+		}
+		bool call::uses_pay_cap() const
+		{
+			return !function.empty() && function.front() == '>';
 		}
 		format::tree call::as_tree() const
 		{
@@ -598,14 +615,14 @@ namespace tangent
 				return a.first->nonce > 0 && b.first->nonce > 0 && a.first->nonce != b.first->nonce ? a.first->nonce < b.first->nonce : a.second < b.second;
 			});
 
-			auto internal_receipt = ledger::transaction_receipt();
+			auto internal_executor = ledger::executor_context(executor->changelog, executor->solver, executor->block, nullptr);
 			for (auto& [transaction, index] : queue)
 			{
 				bool internal_transaction = transaction->signature.empty();
 				uint256_t transaction_hash = transaction->as_hash();
 				uint64_t transaction_nonce = transaction->nonce;
 				uint8_t transaction_code = transaction->signature.blob[0];
-				uint8_t execution_flags = (uint8_t)ledger::executor_context::flags::pedantic;
+				uint8_t execution_flags = (uint8_t)ledger::executor_context::flags::pedantic | (uint8_t)ledger::executor_context::flags::preserve_events;
 				if (internal_transaction)
 				{
 					transaction->nonce = nonce;
@@ -616,9 +633,10 @@ namespace tangent
 				else if (!transaction->recover_hash(owner) || owner.empty())
 					return layer_exception("sub-transaction " + algorithm::encoding::encode_0xhex256(transaction_hash) + " validation failed: invalid signature");
 
+				size_t prev_events_size = internal_executor.receipt.events.size();
 				transaction->gas_price = decimal::zero();
 				transaction->gas_limit = gas_limit - executor->receipt.relative_gas_use;
-				auto execution = ledger::executor_context::execute_tx(executor->solver, executor->block, executor->changelog, transaction, transaction_hash, owner, 0, execution_flags, internal_receipt);
+				auto execution = ledger::executor_context::execute_tx(&internal_executor, owner, transaction, transaction_hash, 0, execution_flags);
 				transaction->signature.blob[0] = transaction_code;
 				transaction->nonce = transaction_nonce;
 				transaction->gas_limit = 0;
@@ -626,15 +644,13 @@ namespace tangent
 				if (!execution)
 					return layer_exception("sub-transaction " + algorithm::encoding::encode_0xhex256(transaction_hash) + " execution failed: " + execution.error().message());
 
-				relative_gas_use += execution->receipt.relative_gas_use;
-				auto report = executor->emit_event<rollup>({ format::variable(execution->receipt.transaction_hash), format::variable(index), format::variable(execution->receipt.relative_gas_use) });
+				relative_gas_use += internal_executor.receipt.relative_gas_use;
+				auto report = executor->emit_event<rollup>({ format::variable(internal_executor.receipt.transaction_hash), format::variable(index), format::variable(internal_executor.receipt.relative_gas_use) });
 				if (!report)
 					return layer_exception("sub-transaction " + algorithm::encoding::encode_0xhex256(transaction_hash) + " merge failed: " + report.error().message());
 
-				size_t prev_size = internal_receipt.events.size();
-				internal_receipt.events = std::move(execution->receipt.events);
-				if (internal_receipt.events.size() > prev_size)
-					executor->receipt.events.insert(executor->receipt.events.end(), internal_receipt.events.begin() + prev_size, internal_receipt.events.end());
+				if (internal_executor.receipt.events.size() > prev_events_size)
+					executor->receipt.events.insert(executor->receipt.events.end(), internal_executor.receipt.events.begin() + prev_events_size, internal_executor.receipt.events.end());
 			}
 
 			executor->block->gas_limit = absolute_gas_limit;

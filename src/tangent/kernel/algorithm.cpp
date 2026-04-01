@@ -160,7 +160,7 @@ namespace tangent
 
 				uint64_t end_time = protocol::now().time.now();
 				uint64_t delta_time = end_time - start_time;
-				if (algorithm::arithmetic::divide(delta_time, target_time) < 0.05)
+				if (1'000'000 * delta_time / target_time < 50'000)
 				{
 					if (!target_nonce--)
 						break;
@@ -190,7 +190,7 @@ namespace tangent
 			if (policy.pow.time >= prev_time)
 			{
 				uint64_t time_delta = policy.pow.time - prev_time;
-				if (algorithm::arithmetic::divide(time_delta, policy.pow.time) < 0.1)
+				if (1'000'000 * time_delta / policy.pow.time < 100'000)
 					goto leave_as_is;
 
 				decimal adjustment = std::min(policy.pow.max_increase, 1 + arithmetic::divide(time_delta, prev_time));
@@ -201,7 +201,7 @@ namespace tangent
 			else
 			{
 				uint64_t time_delta = prev_time - policy.pow.time;
-				if (algorithm::arithmetic::divide(time_delta, policy.pow.time) < 0.1)
+				if (1'000'000 * time_delta / policy.pow.time < 100'000)
 					goto leave_as_is;
 
 				decimal adjustment = std::max(policy.pow.max_decrease, 1 - arithmetic::divide(time_delta, prev_time));

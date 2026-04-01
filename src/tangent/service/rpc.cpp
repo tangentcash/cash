@@ -1681,7 +1681,7 @@ namespace tangent
 
 			auto temp_transaction = transactions::call();
 			temp_transaction.asset = algorithm::asset::id_of_handle(args[0].as_string());
-			temp_transaction.call_to(to, args[3].as_string(), std::move(function_args));
+			temp_transaction.call_to(to, args[3].as_string(), std::move(function_args), false);
 			temp_transaction.set_gas(decimal::zero(), ledger::block_body::get_gas_limit());
 
 			auto temp_receipt = ledger::transaction_receipt();
@@ -1750,7 +1750,7 @@ namespace tangent
 					return server_response().error(error_codes::not_found, "block not found");
 
 				auto data = format::tree::list();
-				for (auto& [index, change] : list->finalized)
+				for (auto& [index, change] : *list)
 					data.push(change.as_tree());
 
 				return server_response().success(std::move(data));
@@ -1779,7 +1779,7 @@ namespace tangent
 					return server_response().error(error_codes::not_found, "block not found");
 
 				auto data = format::tree::list();
-				for (auto& [index, change] : list->finalized)
+				for (auto& [index, change] : *list)
 					data.push(change.as_tree());
 
 				return server_response().success(std::move(data));
@@ -3132,11 +3132,12 @@ namespace tangent
 			if (consensus_service != nullptr && !consensus_service->try_acquire_checkpointer())
 				return server_response().error(error_codes::not_found, "checkpointer busy");
 
+			ledger::solver_context solver;
 			ledger::block_evaluation evaluation;
 			evaluation.block = std::move(*block);
 			evaluation.state = std::move(*state);
 
-			auto checkpoint = ledger::solver_context::checkpoint_solved_block(evaluation, args.size() > 1 ? args[1].as_boolean() : false);
+			auto checkpoint = ledger::solver_context::checkpoint_solved_block(solver, evaluation, args.size() > 1 ? args[1].as_boolean() : false);
 			if (consensus_service != nullptr)
 				consensus_service->release_checkpointer();
 
@@ -3163,6 +3164,7 @@ namespace tangent
 			auto checkpoint_number = chain.get_checkpoint_block_number().or_else(0);
 			auto parent_block = current_number > 1 ? chain.get_block_header_by_number(current_number - 1) : expects_lr<ledger::block_header>(layer_exception());
 			auto data = format::tree::list();
+			auto solver = ledger::solver_context();
 			while (current_number < target_number)
 			{
 				auto next = chain.get_block_by_number(current_number);
@@ -3184,7 +3186,7 @@ namespace tangent
 				}
 				else
 				{
-					auto validation = ledger::solver_context::validate_solved_block(parent_block.address(), *next);
+					auto validation = ledger::solver_context::validate_solved_block(solver, parent_block.address(), *next);
 					if (!validation)
 						return server_response().error(error_codes::not_found, "block " + to_string(current_number) + " validation failed: " + validation.error().message());
 				}

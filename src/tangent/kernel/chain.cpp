@@ -958,7 +958,7 @@ namespace tangent
 				policy.attestation.min_stake_value = decimal::zero();
 				policy.participation.locking_time = 2;
 				policy.participation.min_stake_value = decimal::zero();
-				policy.production.network_congestion_threshold = 2;
+				policy.production.min_network_congestion = 2000000;
 				policy.production.min_stake_value = decimal::zero();
 				break;
 			case tangent::network_type::testnet:

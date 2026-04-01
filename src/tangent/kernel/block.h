@@ -86,6 +86,7 @@ namespace tangent
 				bool empty() const;
 			};
 
+			typedef btree_map<string, state_change> log;
 			btree_map<string, state_change> finalized;
 			btree_map<string, state_change> pending;
 
@@ -105,6 +106,7 @@ namespace tangent
 			string index_of(uint32_t type, const std::string_view& column, const std::string_view& row) const;
 			void revert(bool fully = false);
 			void commit();
+			void cache();
 		};
 
 		struct block_changelog
@@ -173,7 +175,7 @@ namespace tangent
 			virtual bool operator>=(const block_header& other) const;
 			virtual bool operator==(const block_header& other) const;
 			virtual bool operator!=(const block_header& other) const;
-			virtual expects_lr<void> verify_validity(const block_header* parent_block, const algorithm::pubkeyhash_t& recovered_producer = algorithm::pubkeyhash_t()) const;
+			virtual expects_lr<void> verify_validity(const block_header* parent_block, const algorithm::pubkeyhash_t& recovered_producer = algorithm::pubkeyhash_t(), bool verify_pow = true) const;
 			virtual bool store_payload(format::wo_stream* stream) const override;
 			virtual bool load_payload(format::ro_stream& stream) override;
 			virtual bool sign(const algorithm::seckey_t& secret_key) override;
@@ -185,7 +187,6 @@ namespace tangent
 			virtual void set_parent_block(const block_header* parent_block);
 			virtual void set_witness_requirement(const algorithm::asset_id& asset, uint64_t block_number);
 			virtual bool network_congestion() const;
-			virtual decimal network_congestion_threshold() const;
 			virtual uint64_t get_witness_requirement(const algorithm::asset_id& asset) const;
 			virtual int8_t get_relative_order(const block_header& other) const;
 			virtual uint64_t get_slot_proof_duration_average() const;
@@ -220,17 +221,17 @@ namespace tangent
 			virtual ~block_body() override = default;
 			block_body& operator=(const block_body&) = default;
 			block_body& operator=(block_body&&) = default;
-			expects_lr<void> verify_integrity(const block_header* parent_block, const block_state* state) const;
+			expects_lr<void> verify_integrity(const block_header* parent_block, const block_state::log* state) const;
 			bool store_payload(format::wo_stream* stream) const override;
 			bool load_payload(format::ro_stream& stream) override;
 			bool store_header_payload(format::wo_stream* stream) const;
 			bool load_header_payload(format::ro_stream& stream);
 			bool store_body_payload(format::wo_stream* stream) const;
 			bool load_body_payload(format::ro_stream& stream);
-			void recalculate(const block_header* parent_block, const block_state* state);
+			void recalculate(const block_header* parent_block, const block_state::log* state);
 			format::tree as_tree() const override;
 			block_header as_header() const;
-			block_proof as_proof(const block_header* parent_block, const block_state* state) const;
+			block_proof as_proof(const block_header* parent_block, const block_state::log* state) const;
 			uint256_t as_hash(bool renew = false) const override;
 		};
 
@@ -261,7 +262,7 @@ namespace tangent
 		struct block_evaluation
 		{
 			block_body block;
-			block_state state;
+			block_state::log state;
 			vector<task_callback> effects;
 
 			format::tree as_tree() const;
@@ -276,7 +277,8 @@ namespace tangent
 				evaluation = 1 << 1,
 				replayable = 1 << 2,
 				unrestricted = 1 << 3,
-				congestion = 1 << 4
+				congestion = 1 << 4,
+				preserve_events = 1 << 5
 			};
 
 			enum class staker : uint8_t
@@ -297,7 +299,7 @@ namespace tangent
 
 		public:
 			executor_context(block_changelog* new_changelog);
-			executor_context(block_changelog* new_changelog, const solver_context* new_solver, block_header* new_block_header, const transaction_message* new_transaction, transaction_receipt&& new_receipt);
+			executor_context(block_changelog* new_changelog, const solver_context* new_solver, block_header* new_block_header, const transaction_message* new_transaction);
 			executor_context(const executor_context& other);
 			executor_context(executor_context&&) = default;
 			executor_context& operator=(const executor_context& other);
@@ -410,7 +412,7 @@ namespace tangent
 		public:
 			static expects_lr<uint256_t> calculate_tx_gas(const transaction_message* transaction, transaction_receipt* out_receipt = nullptr);
 			static expects_lr<void> validate_tx(const transaction_message* new_transaction, const uint256_t& new_transaction_hash, algorithm::pubkeyhash_t& owner);
-			static expects_lr<executor_context> execute_tx(const solver_context* new_solver, ledger::block_header* new_block, block_changelog* changelog, const transaction_message* new_transaction, const uint256_t& new_transaction_hash, const algorithm::pubkeyhash_t& owner, size_t transaction_size, uint8_t execution_flags, option<transaction_receipt>&& from_receipt = optional::none);
+			static expects_lr<void> execute_tx(executor_context* context, const algorithm::pubkeyhash_t& owner, const transaction_message* new_transaction, const uint256_t& new_transaction_hash, size_t transaction_size, uint8_t execution_flags);
 			static expects_promise_rt<void> dispatch_tx(dispatcher_context* dispatcher, block_transaction* transaction);
 		};
 
@@ -566,7 +568,6 @@ namespace tangent
 				algorithm::seckey_t secret_key;
 				uint256_t gas_usage = 0;
 				uint64_t commitments = 0;
-				uint8_t block_options = 0;
 				bool validator_active = true;
 				block_changelog changelog;
 				executor_context executor = executor_context(&changelog);
@@ -594,14 +595,15 @@ namespace tangent
 			expects_lr<void> block_solution_solve(block_evaluation& evaluation);
 			expects_lr<void> block_solution_sign(block_evaluation& evaluation);
 			expects_lr<void> solve_block_inline(block_evaluation& evaluation);
-			expects_lr<void> verify_block(const block_evaluation& solution, const algorithm::pubkeyhash_t& recovered_producer = algorithm::pubkeyhash_t());
+			expects_lr<void> verify_block(const block_evaluation& solution, const algorithm::pubkeyhash_t& recovered_producer = algorithm::pubkeyhash_t(), bool verify_pow = true);
 			expects_lr<block_checkpoint> checkpoint_block(block_evaluation& solution, bool keep_reverted_transactions = true);
 			expects_lr<void> erase_failed_transactions();
 			bool can_accept_more_transactions();
 			static expects_lr<void> solve_evaluated_block(block_evaluation& evaluation, const algorithm::pubkeyhash_t& public_key_hash, const algorithm::seckey_t& secret_key);
-			static expects_lr<void> verify_solved_block(const block_header* parent_block, const block_evaluation& solution, const algorithm::pubkeyhash_t& recovered_producer = algorithm::pubkeyhash_t());
-			static expects_lr<void> validate_solved_block(const block_header* parent_block, const block_body& child_block, block_evaluation* evaluated_result = nullptr);
-			static expects_lr<block_checkpoint> checkpoint_solved_block(block_evaluation& solution, bool keep_reverted_transactions = true);
+			static expects_lr<void> verify_solved_block(const block_header* parent_block, const block_evaluation& solution, const algorithm::pubkeyhash_t& recovered_producer = algorithm::pubkeyhash_t(), bool verify_pow = true);
+			static expects_lr<void> validate_solved_block(solver_context& solver, const block_header* parent_block, const block_body& child_block, block_evaluation* evaluated_result = nullptr, bool verify_pow = true);
+			static expects_lr<void> validate_solved_empty_block(solver_context& solver, const block_header& parent_block, const block_body& child_block, const algorithm::pubkeyhash_t& recovered_producer, block_evaluation* evaluated_result = nullptr, bool verify_pow = true);
+			static expects_lr<block_checkpoint> checkpoint_solved_block(solver_context& solver, block_evaluation& solution, bool keep_reverted_transactions = true);
 			static queued_transaction precompute_transaction_element(uptr<transaction_message>&& candidate);
 			static void precompute_transaction_list(vector<queued_transaction>& candidates);
 			static void sort_transaction_list(vector<uptr<transaction_message>>& candidates);

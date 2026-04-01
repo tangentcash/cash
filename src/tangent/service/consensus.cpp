@@ -2272,9 +2272,9 @@ namespace tangent
 					option<remote_exception> error = optional::none;
 					uint256_t best_new_tip_hash = 0;
 					uint64_t best_new_tip_number = 0;
-					size_t batch_size = 16, block_count = result->args.size() - 1;
+					size_t batch_size = 64, block_count = result->args.size() - 1;
 					size_t batch_count = block_count / batch_size + (block_count % batch_size == 0 ? 0 : 1);
-					for (auto& task : parallel::for_loop(batch_count, 1, [&](size_t batch_index)
+					for (auto& task : parallel::for_loop(batch_count, 2 * batch_size, [&](size_t batch_index)
 					{
 						auto chain = storages::chainstate();
 						auto parent_header = ledger::block_header();
@@ -2335,23 +2335,52 @@ namespace tangent
 					else if (result->args.empty())
 						break;
 
+					std::atomic<size_t> max_block_count = result->args.size();
+					size_t batch_size = 64, block_count = max_block_count.load();
+					size_t batch_count = block_count / batch_size + (block_count % batch_size == 0 ? 0 : 1);
+					if (block_count > batch_size && protocol::now().user.consensus.logging)
+						VI_INFO("block %s conflict: verifying proofs (size: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(new_tip_fork_hash).c_str(), (uint64_t)block_count);
+
+					for (auto& task : parallel::for_loop(batch_count, 2 * batch_size, [&](size_t batch_index)
+					{
+						auto header = ledger::block_header();
+						auto producer = algorithm::pubkeyhash_t();
+						size_t begin = 1 + batch_index * batch_size;
+						size_t end = std::min(begin + (batch_index == batch_count - 1 ? block_count % batch_size : batch_size), result->args.size());
+						for (size_t i = begin; i < end; i++)
+						{
+							format::ro_stream block_message = format::ro_stream(result->args[i].as_string());
+							if (!header.load(block_message) || !header.recover_hash(producer) || !header.verify_proof(producer))
+							{
+								size_t prev = max_block_count.load();
+								while (prev > i && !max_block_count.compare_exchange_weak(prev, i));
+								break;
+							}
+						}
+					}))
+						coawait(std::move(task));
+
 					new_tip_hash = 0;
-					for (auto& block : result->args)
+					size_t safe_block_count = max_block_count.load();
+					for (size_t i = 0; i < safe_block_count; i++)
 					{
 						ledger::block_evaluation tip;
-						format::ro_stream block_message = format::ro_stream(block.as_string());
+						format::ro_stream block_message = format::ro_stream(result->args[i].as_string());
 						if (!tip.block.load(block_message))
 							coreturn remote_exception("block violates message protocol");
 
 						best_tip_hash = tip.block.as_hash();
 						new_tip_number = tip.block.number + 1;
-						auto status = accept_block(uref(new_tip.state), tip, new_tip_fork_hash);
+						auto status = accept_block(uref(new_tip.state), tip, new_tip_fork_hash, false);
 						if (!status)
 							coreturn remote_exception(std::move(status.error().message()));
 
 						if (!is_active())
 							break;
 					}
+
+					if (safe_block_count < result->args.size())
+						coreturn remote_exception("stopping due to " + to_string(result->args.size() - safe_block_count) + " blocks with invalid proofs");
 				}
 
 				if (best_tip_hash > 0)
@@ -3357,7 +3386,7 @@ namespace tangent
 			fork.state = from;
 			prover.dirty = true;
 		}
-		expects_lr<void> server_node::accept_block(uref<relay>&& from, ledger::block_evaluation& candidate, const uint256_t& fork_tip)
+		expects_lr<void> server_node::accept_block(uref<relay>&& from, ledger::block_evaluation& candidate, const uint256_t& fork_tip, bool verify_pow)
 		{
 			uint256_t candidate_hash = candidate.block.as_hash();
 			auto chain = storages::chainstate();
@@ -3446,20 +3475,27 @@ namespace tangent
 											\
 											<+> - <+> = possible reorganization
 			*/
-			auto reorganization = ledger::solver_context::requires_reorganization(candidate);
-			auto validation = fork_branch && reorganization ? expects_lr<void>(expectation::met) : ledger::solver_context::validate_solved_block(parent_block.address(), candidate.block, &candidate);
-			if (!validation)
-				return layer_exception(stringify::text("block %s rejected: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), validation.error().what()));
-			else if (reorganization && !protocol::now().user.consensus.reorganizable)
-				return layer_exception(stringify::text("block %s rejected: requires deep chain reorganization (disabled)", algorithm::encoding::encode_0xhex256(candidate_hash).c_str()));
-
-			bool chain_extension = !fork_tip;
 			if (!try_acquire_checkpointer())
 				return layer_exception(stringify::text("block %s checkpoint failed: checkpointer busy", algorithm::encoding::encode_0xhex256(candidate_hash).c_str()));
-			else if (chain_extension)
+
+			bool chain_extension = !fork_tip;
+			if (chain_extension)
 				append_pending_block(uref(from), candidate_hash, &candidate.block);
 
-			auto mutation = ledger::solver_context::checkpoint_solved_block(candidate);
+			auto reorganization = ledger::solver_context::requires_reorganization(candidate);
+			auto validation = fork_branch && reorganization ? expects_lr<void>(expectation::met) : ledger::solver_context::validate_solved_block(verifier.solver, parent_block.address(), candidate.block, &candidate, verify_pow);
+			if (!validation)
+			{
+				release_checkpointer();
+				return layer_exception(stringify::text("block %s rejected: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), validation.error().what()));
+			}
+			else if (reorganization && !protocol::now().user.consensus.reorganizable)
+			{
+				release_checkpointer();
+				return layer_exception(stringify::text("block %s rejected: requires deep chain reorganization (disabled)", algorithm::encoding::encode_0xhex256(candidate_hash).c_str()));
+			}
+
+			auto mutation = ledger::solver_context::checkpoint_solved_block(verifier.solver, candidate);
 			release_checkpointer();
 			if (chain_extension)
 				erase_pending_block(candidate_hash);
@@ -3469,24 +3505,28 @@ namespace tangent
 
 			if (protocol::now().user.consensus.logging)
 			{
-				if (mutation->is_fork)
+				int64_t progress = (int64_t)(10000.0 * get_sync_progress(candidate.block.number, *from));
+				verifier.size += (uint64_t)((double)(uint64_t)candidate.block.gas_limit / ((double)ledger::gas_cost::write_byte * 1024.0) * 1000.0);
+				if (progress >= 10000 || verifier.progress < progress || mutation->is_fork)
 				{
-					VI_INFO("block %s (number: %" PRIu64 ", sync: %.2f%%, size: ~%.2f kb, depth: %" PRIi64 ", txns: %" PRIi64 ", state: %" PRIi64 ")\n",
-						algorithm::encoding::encode_0xhex256(candidate_hash).c_str(),
-						candidate.block.number,
-						100.0 * get_sync_progress(candidate.block.number, *from),
-						(double)(uint64_t)candidate.block.gas_limit / ((double)ledger::gas_cost::write_byte * 1024.0),
-						mutation->block_delta,
-						mutation->transaction_delta + mutation->mempool_transactions,
-						mutation->state_delta);
-				}
-				else
-				{
-					VI_INFO("block %s (number: %" PRIu64 ", sync: %.2f%%, size: ~%.2f kb)",
-						algorithm::encoding::encode_0xhex256(candidate_hash).c_str(),
-						candidate.block.number,
-						100.0 * get_sync_progress(candidate.block.number, *from),
-						(double)(uint64_t)candidate.block.gas_limit / ((double)ledger::gas_cost::write_byte * 1024.0));
+					double size = (double)verifier.size.load() / 1000.0;
+					if (mutation->is_fork)
+					{
+						VI_INFO("block %s (number: %" PRIu64 ", sync: %.2f%%, size: ~%.2f kb, depth: %" PRIi64 ", txns: %" PRIi64 ", state: %" PRIi64 ")\n",
+							algorithm::encoding::encode_0xhex256(candidate_hash).c_str(),
+							candidate.block.number, (double)progress / 100.0, size,
+							mutation->block_delta,
+							mutation->transaction_delta + mutation->mempool_transactions,
+							mutation->state_delta);
+					}
+					else
+					{
+						VI_INFO("block %s (number: %" PRIu64 ", sync: %.2f%%, size: ~%.2f kb)",
+							algorithm::encoding::encode_0xhex256(candidate_hash).c_str(),
+							candidate.block.number, (double)progress / 100.0, size);
+					}
+					verifier.progress = progress;
+					verifier.size = 0;
 				}
 			}
 

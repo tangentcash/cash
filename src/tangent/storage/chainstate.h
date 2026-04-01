@@ -188,7 +188,7 @@ namespace tangent
 			expects_lr<vector<uint256_t>> get_block_state_hashset(uint64_t block_number);
 			expects_lr<vector<uint256_t>> get_block_hashset(uint64_t block_number, size_t count);
 			expects_lr<vector<ledger::block_header>> get_block_headers(uint64_t block_number, size_t count);
-			expects_lr<ledger::block_state> get_block_state_by_number(uint64_t block_number, size_t chunk = ELEMENTS_MANY);
+			expects_lr<ledger::block_state::log> get_block_state_by_number(uint64_t block_number, size_t chunk = ELEMENTS_MANY);
 			expects_lr<vector<uptr<ledger::transaction_message>>> get_transactions_by_number(uint64_t block_number, size_t offset, size_t count);
 			expects_lr<vector<uptr<ledger::transaction_message>>> get_transactions_by_owner(uint64_t block_number, const algorithm::pubkeyhash_t& owner, int8_t direction, size_t offset, size_t count);
 			expects_lr<vector<ledger::block_transaction>> get_block_transactions_by_number(uint64_t block_number, size_t offset, size_t count);

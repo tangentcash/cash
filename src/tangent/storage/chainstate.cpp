@@ -70,7 +70,7 @@ namespace tangent
 			ledger::storage_index_ptr* storage;
 		};
 
-		static void fill_multiform_writer_from_block_state(vector<multiform_blob>* blobs, uint32_t type, const btree_map<string, ledger::block_state::state_change>& state)
+		static void fill_multiform_writer_from_block_state(vector<multiform_blob>* blobs, uint32_t type, const ledger::block_state::log& state)
 		{
 			for (auto& [index, change] : state)
 			{
@@ -518,6 +518,7 @@ namespace tangent
 			uint64_t current_number = 1;
 			uint64_t checkpoint_number = get_checkpoint_block_number().or_else(0);
 			uint64_t tip_number = get_latest_block_number().or_else(0);
+			auto solver = ledger::solver_context();
 			auto parent_block = expects_lr<ledger::block_header>(layer_exception());
 			while (current_number <= tip_number)
 			{
@@ -528,7 +529,7 @@ namespace tangent
 					return layer_exception("block " + to_string(current_number - 1) + " reorganization failed: parent block data pruned");
 
 				ledger::block_evaluation evaluation;
-				auto validation = ledger::solver_context::validate_solved_block(parent_block.address(), *candidate_block, &evaluation);
+				auto validation = ledger::solver_context::validate_solved_block(solver, parent_block.address(), *candidate_block, &evaluation);
 				if (!validation)
 					return layer_exception("block " + to_string(current_number) + " validation failed: " + validation.error().message());
 
@@ -616,8 +617,8 @@ namespace tangent
 			for (auto& [uniform_storage, type] : get_uniform_multi_storage())
 			{
 				vector<uniform_blob> blobs;
-				blobs.reserve(evaluation.state.finalized.size());
-				for (auto& [index, change] : evaluation.state.finalized)
+				blobs.reserve(evaluation.state.size());
+				for (auto& [index, change] : evaluation.state)
 				{
 					if (change.state->as_level() == ledger::state_level::uniform && change.state->as_type() == type)
 					{
@@ -660,7 +661,7 @@ namespace tangent
 			for (auto& [multiform_storage, type] : get_multiform_multi_storage())
 			{
 				vector<multiform_blob> blobs;
-				fill_multiform_writer_from_block_state(&blobs, type, evaluation.state.finalized);
+				fill_multiform_writer_from_block_state(&blobs, type, evaluation.state);
 				if (blobs.empty())
 					continue;
 
@@ -1767,7 +1768,7 @@ namespace tangent
 
 			return result;
 		}
-		expects_lr<ledger::block_state> chainstate::get_block_state_by_number(uint64_t block_number, size_t chunk)
+		expects_lr<ledger::block_state::log> chainstate::get_block_state_by_number(uint64_t block_number, size_t chunk)
 		{
 			auto& blob_storage = get_blob_storage();
 			schema_list map;
@@ -1784,7 +1785,7 @@ namespace tangent
 				{
 					auto cursor = uniform_storage.emplace_query(__func__, "SELECT (SELECT index_hash FROM indices WHERE indices.index_number = snapshots.index_number) AS index_hash, hidden FROM snapshots WHERE block_number = ? LIMIT ? OFFSET ?", &map);
 					if (!cursor || cursor->error())
-						return expects_lr<ledger::block_state>(layer_exception(ledger::storage_util::error_of(cursor)));
+						return expects_lr<ledger::block_state::log>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 					auto& response = cursor->first();
 					size_t size = response.size();
@@ -1814,7 +1815,7 @@ namespace tangent
 				{
 					auto cursor = multiform_storage.emplace_query(__func__, "SELECT (SELECT column_hash FROM columns WHERE columns.column_number = snapshots.column_number) AS column_hash, (SELECT row_hash FROM rows WHERE rows.row_number = snapshots.row_number) AS row_hash, hidden FROM snapshots WHERE block_number = ? LIMIT ? OFFSET ?", &map);
 					if (!cursor || cursor->error())
-						return expects_lr<ledger::block_state>(layer_exception(ledger::storage_util::error_of(cursor)));
+						return expects_lr<ledger::block_state::log>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 					auto& response = cursor->first();
 					size_t size = response.size();
@@ -1837,8 +1838,7 @@ namespace tangent
 				}
 			}
 
-			result.commit();
-			return expects_lr<ledger::block_state>(std::move(result));
+			return expects_lr<ledger::block_state::log>(std::move(result.pending));
 		}
 		expects_lr<vector<uptr<ledger::transaction_message>>> chainstate::get_transactions_by_number(uint64_t block_number, size_t offset, size_t count)
 		{

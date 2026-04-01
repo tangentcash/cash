@@ -303,8 +303,8 @@ namespace tangent
 			struct
 			{
 				uint64_t max_per_block = 12;
+				uint256_t min_network_congestion = 250000;
 				decimal min_stake_value = std::string_view("12");
-				decimal network_congestion_threshold = std::string_view("0.25");
 			} production;
 			struct
 			{

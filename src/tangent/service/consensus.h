@@ -246,7 +246,6 @@ namespace tangent
 				std::function<void(const uint256_t&, const ledger::transaction_message*, const algorithm::pubkeyhash_t&)> accept_transaction;
 			} events;
 
-		private:
 			struct
 			{
 				ledger::solver_context solver;
@@ -257,6 +256,13 @@ namespace tangent
 				std::atomic<bool> waiting = false;
 				std::atomic<bool> dirty = false;
 			} prover;
+
+			struct
+			{
+				ledger::solver_context solver;
+				std::atomic<int64_t> progress = std::atomic<int64_t>(-1);
+				std::atomic<uint64_t> size = std::atomic<uint64_t>(0);
+			} verifier;
 
 		private:
 			hash_map<algorithm::asset_id, fetch_queue> fetchers;
@@ -330,7 +336,7 @@ namespace tangent
 			void clear_pending_neighbors();
 			void clear_pending_fork(relay* state);
 			void accept_pending_fork(uref<relay>&& state, const uint256_t& candidate_hash, ledger::block_header&& candidate_block);
-			expects_lr<void> accept_block(uref<relay>&& from, ledger::block_evaluation& candidate, const uint256_t& fork_tip);
+			expects_lr<void> accept_block(uref<relay>&& from, ledger::block_evaluation& candidate, const uint256_t& fork_tip, bool verify_pow = true);
 			bool connected_to_ip_address(const socket_address& address);
 			relay_descriptor* find_descriptor(const algorithm::pubkeyhash_t& account);
 			uref<relay> find_by_ip_address(const socket_address& address);

@@ -4,7 +4,6 @@
 #include "tangent/policy/compositions.h"
 #include "tangent/translation/bitcoin.h"
 #include <vitex/vitex.h>
-#include <sstream>
 #define TEST_BLOCK(x, y, z) tester::new_block_from_generator(data, users, x, #x, y, z, tester::block_type::normal)
 #define TEST_BLOCK_FALLBACK(x, y, z) tester::new_block_from_generator(data, users, x, #x, y, z, tester::block_type::fallback)
 #define TEST_BLOCK_FAULTY(x, y, z) tester::new_block_from_generator(data, users, x, #x, y, z, tester::block_type::faulty)
@@ -355,37 +354,38 @@ struct generators
 		auto& [user1, user1_nonce] = users[0];
 		auto& [user2, user2_nonce] = users[1];
 		auto* call1 = memory::init<transactions::call>();
-		call1->call_to(contracts->at(0), "transfer", { format::variable(user2.public_key_hash.view()), format::variable(decimal(1234u)) });
+		call1->call_to(contracts->at(0), "transfer", { format::variable(user2.public_key_hash.view()), format::variable(decimal(1234u)) }, false);
 		call1->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(call1);
 
 		auto* call2 = memory::init<transactions::call>();
-		call2->call_to(contracts->at(0), "info", { });
+		call2->call_to(contracts->at(0), "info", { }, false);
 		call2->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(call2);
 
 		auto* call3 = memory::init<transactions::call>();
-		call3->call_to(contracts->at(2), "transfer", { format::variable(user1.public_key_hash.view()), format::variable(decimal(4321u)) });
+		call3->call_to(contracts->at(2), "transfer", { format::variable(user1.public_key_hash.view()), format::variable(decimal(4321u)) }, true);
+		call3->pay_with(algorithm::asset::id_of("TRX"), 10);
 		call3->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(call3);
 
 		auto* call4 = memory::init<transactions::call>();
-		call4->call_to(contracts->at(2), "info", { });
+		call4->call_to(contracts->at(2), "info", { }, false);
 		call4->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(call4);
 
 		auto* call5 = memory::init<transactions::call>();
-		call5->call_to(contracts->at(1), "balance_of_test_token", { });
+		call5->call_to(contracts->at(1), "balance_of_test_token", { }, false);
 		call5->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(call5);
 
 		auto* call6 = memory::init<transactions::call>();
-		call6->call_to(contracts->at(3), "balance_of_test_token", { });
+		call6->call_to(contracts->at(3), "balance_of_test_token", { }, false);
 		call6->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(call6);
 
 		auto* call7 = memory::init<transactions::call>();
-		call7->call_to(contracts->at(4), "test_module", { });
+		call7->call_to(contracts->at(4), "test_module", { }, false);
 		call7->set_gas(decimal::zero(), 500000);
 		call7->sign(user2.secret_key, user2_nonce++);
 		transactions.push_back(call7);
@@ -1776,6 +1776,7 @@ struct tests
 		
 		uint64_t current_number = 1;
 		format::tree data = format::tree::list();
+		auto solver = ledger::solver_context();
 		auto parent_block = chain.get_block_header_by_number(current_number > 0 ? current_number - 1 : 0);
 		while (true)
 		{
@@ -1788,7 +1789,7 @@ struct tests
 			result->set("block_hash", format::variable(algorithm::encoding::encode_0xhex256(next->as_hash())));
 
 			ledger::block_evaluation evaluation;
-			auto validation = ledger::solver_context::validate_solved_block(parent_block.address(), *next, &evaluation);
+			auto validation = ledger::solver_context::validate_solved_block(solver, parent_block.address(), *next, &evaluation);
 			if (!validation)
 			{
 				result->set("status", format::variable("block validation test failed"));
@@ -1835,7 +1836,7 @@ struct tests
 			}
 
 			size_t state_index = 0;
-			for (auto& [index, change] : evaluation.state.finalized)
+			for (auto& [index, change] : evaluation.state)
 			{
 				uint256_t hash = change.state->as_hash();
 				if (!proof.has_state(hash))
