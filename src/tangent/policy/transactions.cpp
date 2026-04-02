@@ -235,7 +235,7 @@ namespace tangent
 			}
 
 			auto script = script::program(executor, entrypoint->get_module());
-			return script.execute(script::ccall::deploy_call, script.deploy_function(), args, nullptr);
+			return script.execute(script::payable_repr(), script::ccall::deploy_call, script.deploy_function(), args, nullptr);
 		}
 		bool deploy::store_body(format::wo_stream* stream) const
 		{
@@ -373,13 +373,13 @@ namespace tangent
 			if (!validation)
 				return validation.error();
 
-			return subexecute(executor, [this, executor](void* module_ptr)
+			return subexecute(executor, [this, executor](const payable_array& payable, void* module_ptr)
 			{
 				auto script = script::program(executor, (asIScriptModule*)module_ptr);
-				return script.execute(script::ccall::paying_call, uses_pay_cap() ? std::string_view(function).substr(1) : std::string_view(function), args, nullptr);
+				return script.execute(script::payable_repr(payable_array(payable)), script::ccall::paying_call, uses_pipeline_pay() ? std::string_view(function).substr(1) : std::string_view(function), args, nullptr);
 			});
 		}
-		expects_lr<void> call::subexecute(ledger::executor_context* executor, std::function<expects_lr<void>(void*)>&& callback) const
+		expects_lr<void> call::subexecute(ledger::executor_context* executor, std::function<expects_lr<void>(const payable_array&, void*)>&& callback) const
 		{
 			VI_ASSERT(executor, "executor should be set");
 			auto index = executor->get_account_program(callable);
@@ -395,28 +395,62 @@ namespace tangent
 			if (!pmodule)
 				return pmodule.error();
 
-			bool spending_cap = uses_pay_cap();
-			for (auto& [paying_asset, paying_value] : pays)
+			if (uses_pipeline_pay())
 			{
-				if (executor->receipt.from == callable)
-					return layer_exception("invalid payment");
-
-				auto spending_value = paying_value;
-				if (spending_cap)
+				payable_array pipeline_pays;
+				for (auto& [paying_asset, paying_value] : pays)
 				{
-					auto balance = executor->get_account_balance(paying_asset, executor->receipt.from).or_else(states::account_balance(executor->receipt.from, paying_asset, executor->block)).get_balance();
-					if (spending_value > balance)
-						spending_value = balance;
-					if (!spending_value.is_positive())
+					if (executor->receipt.from == callable)
+						return layer_exception("invalid payment");
+
+					auto balance_out = executor->get_account_balance(paying_asset, executor->receipt.from).or_else(states::account_balance(executor->receipt.from, paying_asset, executor->block));
+					auto balance_in = balance_out;
+					for (auto& event_args : executor->receipt.find_events<states::account_balance>())
+					{
+						auto& args = *event_args;
+						if (args.size() != 4 || args[0].as_uint256() != paying_asset || !args[1].is_string())
+							continue;
+
+						bool spender = args[1].as_string() == executor->receipt.from.view();
+						if (spender && args[2].is_decimal() && args[3].is_decimal())
+						{
+							balance_in.supply -= args[2].as_decimal();
+							balance_in.reserve -= args[3].as_decimal();
+						}
+						else if (spender && args[2].is_decimal() && args[3].is_boolean() && !args[3].as_boolean())
+							balance_in.supply += args[2].as_decimal();
+						else if (args[2].is_string() && (spender || args[2].as_string() == executor->receipt.from.view()) && args[3].is_decimal())
+							balance_in.supply -= spender ? -args[3].as_decimal() : args[3].as_decimal();
+					}
+
+					auto available_value = std::max(balance_out.get_balance() - balance_in.get_balance(), decimal::zero());
+					if (!available_value.is_positive())
 						continue;
+
+					auto& capped_value = std::min(paying_value, available_value);
+					auto payment = executor->apply_payment(paying_asset, executor->receipt.from, callable, capped_value);
+					if (!payment)
+						return payment.error();
+
+					pipeline_pays.push_back(std::make_pair(paying_asset, capped_value));
 				}
 
-				auto payment = executor->apply_payment(paying_asset, executor->receipt.from, callable, spending_value);
-				if (!payment)
-					return payment.error();
+				return callback(pipeline_pays, pmodule->ref.get_module());
 			}
+			else
+			{
+				for (auto& [paying_asset, paying_value] : pays)
+				{
+					if (executor->receipt.from == callable)
+						return layer_exception("invalid payment");
 
-			return callback(pmodule->ref.get_module());
+					auto payment = executor->apply_payment(paying_asset, executor->receipt.from, callable, paying_value);
+					if (!payment)
+						return payment.error();
+				}
+
+				return callback(pays, pmodule->ref.get_module());
+			}
 		}
 		bool call::store_body(format::wo_stream* stream) const
 		{
@@ -482,19 +516,19 @@ namespace tangent
 			parties.insert(algorithm::pubkeyhash_t(callable));
 			return true;
 		}
-		void call::call_to(const algorithm::pubkeyhash_t& new_callable, const std::string_view& new_function, format::variables&& new_args, bool pay_cap)
+		void call::call_to(const algorithm::pubkeyhash_t& new_callable, const std::string_view& new_function, format::variables&& new_args, bool pipeline_pay)
 		{
 			args = std::move(new_args);
 			function = new_function;
 			callable = new_callable;
-			if (pay_cap && !uses_pay_cap())
+			if (pipeline_pay && !uses_pipeline_pay())
 				function.insert(function.begin(), '>');
 		}
 		void call::pay_with(const algorithm::asset_id& new_asset, const decimal& new_value)
 		{
 			pays.push_back(std::make_pair(new_asset, new_value));
 		}
-		bool call::uses_pay_cap() const
+		bool call::uses_pipeline_pay() const
 		{
 			return !function.empty() && function.front() == '>';
 		}

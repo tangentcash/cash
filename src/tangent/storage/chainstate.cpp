@@ -1840,6 +1840,37 @@ namespace tangent
 
 			return expects_lr<ledger::block_state::log>(std::move(result.pending));
 		}
+		expects_lr<vector<uptr<ledger::transaction_message>>> chainstate::get_transactions(size_t offset, size_t count)
+		{
+			schema_list map;
+			map.push_back(var::set::integer(count));
+			map.push_back(var::set::integer(offset));
+
+			auto cursor = get_tx_storage().emplace_query(__func__, "SELECT transaction_hash FROM transactions ORDER BY transaction_number DESC LIMIT ? OFFSET ?", &map);
+			if (!cursor || cursor->error())
+				return expects_lr<vector<uptr<ledger::transaction_message>>>(layer_exception(ledger::storage_util::error_of(cursor)));
+
+			auto& response = cursor->first();
+			size_t size = response.size();
+			vector<uptr<ledger::transaction_message>> values;
+			values.resize(size);
+
+			auto& blob_storage = get_blob_storage();
+			parallel::wail_all(parallel::for_loop(size, ELEMENTS_FEW, [&](size_t i)
+			{
+				auto row = response[i];
+				auto& value = values[i];
+				auto transaction_hash = row["transaction_hash"].get();
+				auto transaction_blob = blob_storage.load(__func__, get_transaction_label(transaction_hash.get_binary())).or_else(string());
+				auto message = format::ro_stream(transaction_blob);
+				value = transactions::resolver::from_stream(message);
+				if (value && value->load(message))
+					finalize_checksum(**value, transaction_hash);
+			}));
+
+			values.erase(std::remove_if(values.begin(), values.end(), [](const uptr<ledger::transaction_message>& a) { return !a; }), values.end());
+			return values;
+		}
 		expects_lr<vector<uptr<ledger::transaction_message>>> chainstate::get_transactions_by_number(uint64_t block_number, size_t offset, size_t count)
 		{
 			schema_list map;
@@ -1921,6 +1952,39 @@ namespace tangent
 			}));
 
 			values.erase(std::remove_if(values.begin(), values.end(), [](const uptr<ledger::transaction_message>& a) { return !a; }), values.end());
+			return values;
+		}
+		expects_lr<vector<ledger::block_transaction>> chainstate::get_block_transactions(size_t offset, size_t count)
+		{
+			schema_list map;
+			map.push_back(var::set::integer(count));
+			map.push_back(var::set::integer(offset));
+
+			auto cursor = get_tx_storage().emplace_query(__func__, "SELECT transaction_hash FROM transactions ORDER BY transaction_number DESC LIMIT ? OFFSET ?", &map);
+			if (!cursor || cursor->error())
+				return expects_lr<vector<ledger::block_transaction>>(layer_exception(ledger::storage_util::error_of(cursor)));
+
+			auto& response = cursor->first();
+			size_t size = response.size();
+			vector<ledger::block_transaction> values;
+			values.resize(size);
+
+			auto& blob_storage = get_blob_storage();
+			parallel::wail_all(parallel::for_loop(size, ELEMENTS_FEW, [&](size_t i)
+			{
+				auto row = response[i];
+				auto& value = values[i];
+				auto transaction_hash = row["transaction_hash"].get();
+				auto transaction_blob = blob_storage.load(__func__, get_transaction_label(transaction_hash.get_binary())).or_else(string());
+				auto receipt_blob = blob_storage.load(__func__, get_receipt_label(transaction_hash.get_binary())).or_else(string());
+				auto transaction_message = format::ro_stream(transaction_blob);
+				auto receipt_message = format::ro_stream(receipt_blob);
+				value.transaction = transactions::resolver::from_stream(transaction_message);
+				if (value.transaction && value.transaction->load(transaction_message) && value.receipt.load(receipt_message))
+					finalize_checksum(**value.transaction, transaction_hash);
+			}));
+
+			values.erase(std::remove_if(values.begin(), values.end(), [](const ledger::block_transaction& a) { return !a.transaction; }), values.end());
 			return values;
 		}
 		expects_lr<vector<ledger::block_transaction>> chainstate::get_block_transactions_by_number(uint64_t block_number, size_t offset, size_t count)

@@ -833,8 +833,8 @@ namespace tangent
 			library module;
 
 			program(ledger::executor_context* new_executor, library&& new_module, program* new_parent = nullptr);
-			virtual expects_lr<void> execute(ccall mutability, const std::string_view& entrypoint, const format::variables& args, std::function<expects_lr<void>(void*, int)>&& return_callback);
-			virtual expects_lr<void> execute(ccall mutability, const function& entrypoint, const format::variables& args, std::function<expects_lr<void>(void*, int)>&& return_callback);
+			virtual expects_lr<void> execute(const payable_repr& payable, ccall mutability, const std::string_view& entrypoint, const format::variables& args, std::function<expects_lr<void>(void*, int)>&& return_callback);
+			virtual expects_lr<void> execute(const payable_repr& payable, ccall mutability, const function& entrypoint, const format::variables& args, std::function<expects_lr<void>(void*, int)>&& return_callback);
 			virtual expects_lr<void> subexecute(const algorithm::pubkeyhash_t& target, const payable_repr& payable, ccall mutability, const std::string_view& entrypoint, format::variables&& args, void* output_value, int output_type_id) const;
 			virtual expects_lr<vector<std::function<void(immediate_context*)>>> dispatch_arguments(ccall* mutability, const function& entrypoint, const format::variables* args) const;
 			virtual void dispatch_event(int event_type_id, const void* object_value, int object_type_id);
@@ -843,7 +843,7 @@ namespace tangent
             virtual option<ccall> external_mutability_of(const algorithm::pubkeyhash_t& target, const std::string_view& entrypoint) const;
 			virtual ccall mutability_of(const function& entrypoint) const;
 			virtual algorithm::pubkeyhash_t callable() const;
-			virtual payable_repr payable() const;
+			virtual payable_repr payable_value() const;
 			virtual function deploy_function() const;
 			virtual string function_declaration() const;
 			virtual const format::variables* function_arguments() const;

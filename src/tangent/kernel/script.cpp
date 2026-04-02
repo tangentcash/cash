@@ -3385,7 +3385,7 @@ namespace tangent
 		payable_repr contract::tx_value()
 		{
 			auto* p = program::fetch_immutable_or_throw();
-			return p ? p->payable() : payable_repr();
+			return p ? p->payable_value() : payable_repr();
 		}
 		bool contract::tx_paid()
 		{
@@ -6025,12 +6025,12 @@ namespace tangent
 		program::program(ledger::executor_context* new_executor, library&& new_module, program* new_parent) : executor(new_executor), parent(new_parent), module(new_module)
 		{
 		}
-		expects_lr<void> program::execute(ccall mutability, const std::string_view& entrypoint, const format::variables& args, std::function<expects_lr<void>(void*, int)>&& return_callback)
+		expects_lr<void> program::execute(const payable_repr& payable, ccall mutability, const std::string_view& entrypoint, const format::variables& args, std::function<expects_lr<void>(void*, int)>&& return_callback)
 		{
 			auto candidate = module.get_function_by_name(entrypoint);
-			return execute(mutability, candidate.is_valid() ? candidate : module.get_function_by_decl(entrypoint), args, std::move(return_callback));
+			return execute(payable, mutability, candidate.is_valid() ? candidate : module.get_function_by_decl(entrypoint), args, std::move(return_callback));
 		}
-		expects_lr<void> program::execute(ccall mutability, const function& entrypoint, const format::variables& args, std::function<expects_lr<void>(void*, int)>&& return_callback)
+		expects_lr<void> program::execute(const payable_repr& payable, ccall mutability, const function& entrypoint, const format::variables& args, std::function<expects_lr<void>(void*, int)>&& return_callback)
 		{
 			if (!entrypoint.is_valid())
 			{
@@ -6065,6 +6065,7 @@ namespace tangent
 			};
 			coroutine->set_user_data(mutability == ccall::deploy_call || mutability == ccall::paying_call ? (caller ? prev_mutable_program : this) : nullptr, SCRIPT_TAG_MUTABLE_PROGRAM);
 			coroutine->set_user_data(this, SCRIPT_TAG_IMMUTABLE_PROGRAM);
+			cache.payable = payable;
 			if (caller != coroutine)
 			{
 				coroutine->set_line_callback(std::bind(&program::dispatch_coroutine, this, std::placeholders::_1));
@@ -6128,10 +6129,10 @@ namespace tangent
 			auto subcontext = ledger::executor_context(executor->changelog, executor->solver, executor->block, &transaction);
 			subcontext.receipt = std::move(receipt);
 
-			auto subexecution = transaction.subexecute(&subcontext, [&](void* module_ptr)
+			auto subexecution = transaction.subexecute(&subcontext, [&](const transactions::call::payable_array& payable_ptr, void* module_ptr)
 			{
 				auto script = program(&subcontext, (asIScriptModule*)module_ptr, (program*)this);
-				return script.execute(mutability, entrypoint, transaction.args, [&](void* result_value, int return_type_id) -> expects_lr<void>
+				return script.execute(payable_repr(transactions::call::payable_array(payable_ptr)), mutability, entrypoint, transaction.args, [&](void* result_value, int return_type_id) -> expects_lr<void>
 				{
 					format::wo_stream stream;
 					auto serialization = marshall::store(&stream, result_value, return_type_id);
@@ -6325,12 +6326,9 @@ namespace tangent
 
 			return executor->receipt.from;
 		}
-		payable_repr program::payable() const
+		payable_repr program::payable_value() const
 		{
-			if (executor->transaction->as_type() == transactions::call::as_instance_type())
-				return payable_repr(vector<std::pair<algorithm::asset_id, decimal>>(((transactions::call*)executor->transaction)->pays));
-
-			return payable_repr();
+			return cache.payable ? *cache.payable : payable_repr();
 		}
 		function program::deploy_function() const
 		{

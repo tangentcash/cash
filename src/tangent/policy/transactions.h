@@ -57,20 +57,21 @@ namespace tangent
 
 		struct call final : ledger::transaction_message
 		{
+			typedef vector<std::pair<algorithm::asset_id, decimal>> payable_array;
 			algorithm::pubkeyhash_t callable;
-			vector<std::pair<algorithm::asset_id, decimal>> pays;
+			payable_array pays;
 			format::variables args;
 			string function;
 
 			expects_lr<void> validate(uint64_t block_number) const override;
 			expects_lr<void> execute(ledger::executor_context* executor) const override;
-			expects_lr<void> subexecute(ledger::executor_context* executor, std::function<expects_lr<void>(void*)>&& callback) const;
+			expects_lr<void> subexecute(ledger::executor_context* executor, std::function<expects_lr<void>(const payable_array&, void*)>&& callback) const;
 			bool store_body(format::wo_stream* stream) const override;
 			bool load_body(format::ro_stream& stream) override;
 			bool recover_many(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const override;
-			void call_to(const algorithm::pubkeyhash_t& new_callable, const std::string_view& new_function, format::variables&& new_args, bool pay_cap);
+			void call_to(const algorithm::pubkeyhash_t& new_callable, const std::string_view& new_function, format::variables&& new_args, bool pipeline_pay);
 			void pay_with(const algorithm::asset_id& asset, const decimal& new_value);
-			bool uses_pay_cap() const;
+			bool uses_pipeline_pay() const;
 			format::tree as_tree() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;

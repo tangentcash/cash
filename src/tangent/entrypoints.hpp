@@ -85,7 +85,7 @@ namespace tangent
 				VI_ASSERT(tracer.contextual, "transaction should be assigned");
 				tracer.returning = format::tree();
 				tracer.events.clear();
-				auto execution = execute(mutability, entrypoint, args, [this](void* address, int type_id) -> expects_lr<void>
+				auto execution = execute(script::payable_repr(transactions::call::payable_array(tracer.contextual->pays)), mutability, entrypoint, args, [this](void* address, int type_id) -> expects_lr<void>
 				{
 					tracer.returning = format::tree::map();
 					auto serialization = script::marshall::store(tracer.returning, address, type_id);

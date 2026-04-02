@@ -340,6 +340,7 @@ namespace tangent
 			bind(0 | access_type::r, "txnstate", "getblockreceiptsbynumber", 1, 2, "uint64 number, uint8? unrolling = 0", "uint256[] | receipt[]", "get block receipts by number", std::bind(&server_node::txnstate_get_block_receipts_by_number, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "txnstate", "getpendingtransactionsbyhash", 1, 2, "uint256 hash, uint8? unrolling = 0", "uint256[] | txn[] | block::txn[]", "get block transactions by hash", std::bind(&server_node::txnstate_get_block_transactions_by_hash, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "txnstate", "getpendingtransactionsbynumber", 1, 2, "uint64 number, uint8? unrolling = 0", "uint256[] | txn[] | block::txn[]", "get block transactions by number", std::bind(&server_node::txnstate_get_block_transactions_by_number, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "txnstate", "getfinalizedtransactions", 2, 3, "uint64 offset, uint64 count, uint8? unrolling = 0", "uint256[] | txn[] | block::txn[]", "get latest finalized transactions", std::bind(&server_node::txnstate_get_finalized_transactions, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "txnstate", "gettransactionsbyowner", 3, 5, "string owner_address, uint64 offset, uint64 count, uint8? direction = 1, uint8? unrolling = 0", "uint256[] | txn[] | block::txn[]", "get transactions by owner", std::bind(&server_node::txnstate_get_transactions_by_owner, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "txnstate", "gettransactionsbyhash", 1, 2, "uint256 hash, uint8? unrolling = 0", "txn | block::txn", "get transactions by hash including aliases", std::bind(&server_node::txnstate_get_transactions_by_hash, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "txnstate", "gettransactionbyhash", 1, 2, "uint256 hash, uint8? unrolling = 0", "txn | block::txn", "get transaction by hash including aliases", std::bind(&server_node::txnstate_get_transaction_by_hash, this, std::placeholders::_1, std::placeholders::_2));
@@ -1542,6 +1543,48 @@ namespace tangent
 				return server_response().success(std::move(data));
 			}
 		}
+		server_response server_node::txnstate_get_finalized_transactions(http::connection* base, format::variables&& args)
+		{
+			uint64_t offset = args[0].as_uint64(), count = args[1].as_uint64();
+			if (!count || count > protocol::now().message.pages_per_query)
+				return server_response().error(error_codes::bad_params, "count not valid");
+
+			uint8_t unrolling = args.size() > 2 ? args[2].as_uint8() : 0;
+			auto chain = storages::chainstate();
+			if (unrolling == 0)
+			{
+				auto data = format::tree::list();
+				auto list = chain.get_transactions(offset, count);
+				if (!list)
+					return server_response().error(error_codes::not_found, "transactions not found");
+
+				for (auto& item : *list)
+					data.push(format::variable(algorithm::encoding::encode_0xhex256(item->as_hash())));
+				return server_response().success(std::move(data));
+			}
+			else if (unrolling == 1)
+			{
+				auto data = format::tree::list();
+				auto list = chain.get_transactions(offset, count);
+				if (!list)
+					return server_response().error(error_codes::not_found, "transactions not found");
+
+				for (auto& item : *list)
+					data.push(item->as_tree());
+				return server_response().success(std::move(data));
+			}
+			else
+			{
+				auto data = format::tree::list();
+				auto list = chain.get_block_transactions(offset, count);
+				if (!list)
+					return server_response().error(error_codes::not_found, "transactions not found");
+
+				for (auto& item : *list)
+					data.push(item.as_tree());
+				return server_response().success(std::move(data));
+			}
+		}
 		server_response server_node::txnstate_get_transactions_by_owner(http::connection*, format::variables&& args)
 		{
 			algorithm::pubkeyhash_t owner;
@@ -1691,10 +1734,10 @@ namespace tangent
 			temp_solver.apply_temporary_state(&temp_block, &temp_transaction, std::move(temp_receipt));
 
 			auto returning = format::tree();
-			auto execution = temp_transaction.subexecute(&temp_solver.state.executor, [&](void* module_ptr)
+			auto execution = temp_transaction.subexecute(&temp_solver.state.executor, [&](const transactions::call::payable_array& payable, void* module_ptr)
 			{
 				auto script = script::program(&temp_solver.state.executor, (asIScriptModule*)module_ptr);
-				return script.execute(script::ccall::const_call, temp_transaction.function, temp_transaction.args, [&](void* address, int type_id) -> expects_lr<void>
+				return script.execute(script::payable_repr(transactions::call::payable_array(payable)), script::ccall::const_call, temp_transaction.function, temp_transaction.args, [&](void* address, int type_id) -> expects_lr<void>
 				{
 					returning = format::tree::map();
 					auto serialization = script::marshall::store(returning, address, type_id);
