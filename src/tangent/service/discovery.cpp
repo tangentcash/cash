@@ -21,6 +21,7 @@ namespace tangent
 			router->get("/", std::bind(&server_node::dispatch, this, std::placeholders::_1));
 			router->base->callbacks.headers = std::bind(&server_node::headers, this, std::placeholders::_1, std::placeholders::_2);
 			router->base->callbacks.options = std::bind(&server_node::options, this, std::placeholders::_1);
+			router->base->proxy_ip_address = "X-Real-IP";
 			router->temporary_directory.clear();
 			node->configure(router).expect("configuration error");
 			node->listen().expect("listen queue error");

@@ -301,6 +301,7 @@ namespace tangent
 			router->base->web_socket_timeout = 0;
 			router->base->auth.type = "Basic";
 			router->base->auth.realm = "p2p.tangent.cash";
+			router->base->proxy_ip_address = "X-Real-IP";
 			router->temporary_directory.clear();
 
 			node->configure(router).expect("configuration error");
