@@ -1204,7 +1204,7 @@ namespace tangent
 		}
 		expects_rt<void> server_node::broadcast_attestation(uref<relay>&& from, const exchange& event)
 		{
-			if (event.args.size() != 2)
+			if (event.args.size() != 3)
 				return remote_exception("invalid arguments");
 
 			algorithm::asset_id asset = event.args[0].as_uint256();
@@ -1852,7 +1852,7 @@ namespace tangent
 						continue;
 
 					auto proof_message = receipt.as_message();
-					size_t notifications = notify_all(descriptors::broadcast_attestation(), { format::variable(proof_message.data), format::variable(commitment_signature.view()) });
+					size_t notifications = notify_all(descriptors::broadcast_attestation(), { format::variable(asset), format::variable(proof_message.data), format::variable(commitment_signature.view()) });
 					if (notifications > 0 && protocol::now().user.consensus.logging)
 						VI_DEBUG("attestation %s broadcasted to %i nodes", algorithm::encoding::encode_0xhex256(commitment_hash).c_str(), (int)notifications);
 				}
@@ -3026,7 +3026,7 @@ namespace tangent
 							if (!algorithm::signing::recover_hash(commitment_hash, attester, commitment_signature) || !find_descriptor(attester))
 								continue;
 
-							size_t notifications = notify_all(descriptors::broadcast_attestation(), { format::variable(proof->second.as_message().data), format::variable(commitment_signature.view()) });
+							size_t notifications = notify_all(descriptors::broadcast_attestation(), { format::variable(batch->asset), format::variable(proof->second.as_message().data), format::variable(commitment_signature.view()) });
 							if (notifications > 0 && protocol::now().user.consensus.logging)
 								VI_DEBUG("attestation %s re-broadcasted to %i nodes", algorithm::encoding::encode_0xhex256(commitment_hash).c_str(), (int)notifications);
 

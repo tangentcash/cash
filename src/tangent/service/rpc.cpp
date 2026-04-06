@@ -424,8 +424,9 @@ namespace tangent
 			bind(0 | access_type::r, "validatorstate", "getnode", 1, 1, "string uri_address", "validator", "get a node by ip address", std::bind(&server_node::validatorstate_get_node, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "validatorstate", "getblockchains", 0, 0, "", "superchain::asset_info[]", "get supported blockchains", std::bind(&server_node::validatorstate_get_blockchains, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "validatorstate", "status", 0, 0, "", "validator::status", "get validator status", std::bind(&server_node::validatorstate_status, this, std::placeholders::_1, std::placeholders::_2));
-			bind(access_type::w | access_type::r, "mempoolstate", "submittransaction", 1, 1, "string message_heh", "uint256", "try to accept and relay a mempool transaction from raw data and possibly validate over latest chainstate", std::bind(&server_node::mempoolstate_submit_transaction, this, std::placeholders::_1, std::placeholders::_2, nullptr));
+			bind(access_type::w | access_type::r, "mempoolstate", "submittransaction", 1, 1, "string message_hash", "uint256", "try to accept and relay a mempool transaction from raw data and possibly validate over latest chainstate", std::bind(&server_node::mempoolstate_submit_transaction, this, std::placeholders::_1, std::placeholders::_2, nullptr));
 			bind(access_type::w | access_type::a, "mempoolstate", "rejecttransaction", 1, 1, "uint256 hash", "void", "remove mempool transaction by hash", std::bind(&server_node::mempoolstate_reject_transaction, this, std::placeholders::_1, std::placeholders::_2));
+			bind(access_type::w | access_type::a, "mempoolstate", "simulatebridge", 4, 4, "string asset, string bridge_hash, string to_address, decimal to_value", "superchain_transaction", "build an off-chain attestation transaction payload using off-chain node", std::bind(&server_node::mempoolstate_simulate_bridge, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "mempoolstate", "addnode", 1, 1, "string uri_address", "void", "add node ip address to trial addresses", std::bind(&server_node::mempoolstate_add_node, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "mempoolstate", "clearnode", 1, 1, "string uri_address", "void", "remove associated node info by ip address", std::bind(&server_node::mempoolstate_clear_node, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "validatorstate", "importentropies", 2, 1024, "string participant_address, string password, string... messages", "void", "import a set of encrypted entropy messages", std::bind(&server_node::validatorstate_import_entropies, this, std::placeholders::_1, std::placeholders::_2));
@@ -3062,6 +3063,52 @@ namespace tangent
 				return server_response().error(error_codes::bad_request, status.error().message());
 
 			return server_response().success(format::variable(algorithm::encoding::encode_0xhex256(candidate_hash)));
+		}
+		server_response server_node::mempoolstate_simulate_bridge(http::connection* base, format::variables&& args)
+		{
+			algorithm::asset_id asset = algorithm::asset::id_of_handle(args[0].as_string());
+			uint256_t bridge_hash = args[1].as_uint256();
+			auto executor = ledger::executor_context(nullptr);
+			auto bridge = executor.get_bridge_instance(asset, bridge_hash);
+			if (!bridge)
+				return server_response().error(error_codes::not_found, "bridge not found");
+
+			auto* offchain = superchain::bridge::get();
+			bool must_reset_network_active = !offchain->network_active;
+			bool must_reset_network_fetch = !offchain->network_fetch;
+			if (must_reset_network_active)
+				offchain->network_active = []() -> bool { return true; };
+			if (must_reset_network_fetch)
+				offchain->network_fetch = [](const algorithm::asset_id&, const std::string_view& a, const std::string_view& b, const http::fetch_frame& c) -> expects_promise_system<http::response_frame> { return http::fetch(a, b, c); };
+
+			std::string_view address = args[2].as_string();
+			decimal value = args[3].as_decimal();
+			auto prepared = transactions::resolver::prepare_transaction(algorithm::asset::base_id_of(asset), superchain::wallet_link::from_hash(bridge_hash), superchain::value_transfer(asset, address, std::move(value)), bridge->fee_rate).get();
+			if (must_reset_network_active)
+				offchain->network_active = nullptr;
+			if (must_reset_network_fetch)
+				offchain->network_fetch = nullptr;
+			if (!prepared)
+				return server_response().error(error_codes::bad_request, prepared.error().message());
+
+			for (auto& input : prepared->inputs)
+			{
+				switch (input.alg)
+				{
+					case algorithm::composition::type::secp256k1:
+						input.signature.resize(65, 0xCC);
+						break;
+					default:
+						input.signature.resize(64, 0xCC);
+						break;
+				}
+			}
+
+			auto finalized = transactions::resolver::finalize_transaction(algorithm::asset::base_id_of(asset), std::move(*prepared));
+			if (!finalized)
+				return server_response().success(prepared->as_tree());
+
+			return server_response().success(finalized->as_tree());
 		}
 		server_response server_node::mempoolstate_reject_transaction(http::connection*, format::variables&& args)
 		{

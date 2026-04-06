@@ -1909,6 +1909,9 @@ namespace tangent
 				auto to_delayed_block_height = [&](uint64_t block_height, bool zero_as_min)
 				{
 					auto latency = implementation->get_chainparams().sync_latency;
+					if (latency > 0)
+						--latency;
+
 					return block_height > latency ? block_height - latency : (zero_as_min ? 0 : 1);
 				};
 				{
