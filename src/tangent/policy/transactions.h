@@ -258,6 +258,7 @@ namespace tangent
 			bool recover_many(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const override;
 			bool recover_aliases(btree_set<uint256_t>& aliases) const override;
 			void set_proof(const uint256_t& new_withdraw_hash, expects_lr<superchain::finalized_transaction>&& new_proof);
+			bool eligible_as_migration_reason() const;
 			format::tree as_tree() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;

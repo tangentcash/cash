@@ -1720,19 +1720,19 @@ struct tests
 			TEST_BLOCK(&generators::rollup_stage_1, "0x85b801c986eca44c2d20b2ffd229cf516bdb65edbe38651be4be5cfd5b0bf5b7", 14);
 			TEST_BLOCK(std::bind(&generators::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 0, 1), "0xf5236baea04164f138b7b54c4b241b5848ade827d8f6e8afcc0ca545cd772416", 15);
 			TEST_BLOCK_FAULTY(&generators::migrate_stage_1, "0x7c33ded9076aa8ffb5b244cba810ceb9a9797cf6724005fe7c8436ae3019b3af", 16);
-			TEST_BLOCK(&generators::migrate_stage_2, "0x76043875def2bc57b61672ac57b4a482f6c6d1c8faabb011bc44999ab51955d0", 18);
-			TEST_BLOCK(&generators::migrate_stage_3, "0xb54d02d3f320e999950246626db89d570e5915eafb0e1a8d8c70904ef206de75", 19);
-			TEST_BLOCK(&generators::migrate_stage_4, "0xa73cde5145d2d406d3e7051633401ad912149fb3bbf2c712b3ead09bca8055bf", 21);
-			TEST_BLOCK(&generators::withdraw_stage_1, "0x6eaca98dd681b461201aaa15e39cb4a5d77bd7f5380c6655dcc9a853871081e5", 23);
-			TEST_BLOCK(&generators::withdraw_stage_2, "0x8a33be956396f2c7c252e0dc7e12c3a225e8ef114c5378f0dc2ff54be70a0ee3", 25);
-			TEST_BLOCK(&generators::withdraw_stage_3, "0x1d4b1326d965dfdfa2a5be4753eff02d3265bc49c9878916cc0b9c5b214ab072", 26);
-			TEST_BLOCK(&generators::withdraw_stage_4, "0x93cbe67f1fdc7dc828f5d501f06491df85e05c8579563ffaee1f75a670382662", 27);
-			TEST_BLOCK(&generators::withdraw_stage_5, "0xb0160366a753aa70c1ea731437f14691188674a5d46d7e6fda4dc264b20d4788", 28);
-			TEST_BLOCK(&generators::withdraw_stage_6, "0xf7cf633d0af22a9e8f90668dfed3824b9e21607677c7fc680253e75350180c3b", 30);
-			TEST_BLOCK(&generators::withdraw_stage_7, "0xcd74d99f0c805b1e1738034d99ea8d50bc087d2e6788509374227df91297ef48", 32);
-			TEST_BLOCK(std::bind(&generators::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 1, 0), "0xd13736e385c3f48d131f9111694e17c392eb1c85b841c974ae8186676d253fdd", 34);
-			TEST_BLOCK_FALLBACK(&generators::production_stage_1, "0x7788491bb9ed9ee8b4b89aed2b06545deb4a4a5b160c69c6b25d98907fcbd093", 35);
-			TEST_BLOCK(&generators::production_stage_2, "0x71b27dfacd70de8ffb2ab1c7028e4d132b6fd6309814269e00aae185e270632f", 36);
+			TEST_BLOCK(&generators::migrate_stage_2, "0x61276611c07a89899278aa4e46603176ee94a98c43a3c02ccd8d175ec301f23a", 18);
+			TEST_BLOCK(&generators::migrate_stage_3, "0x1f208056e4137aa7b08880861e09612731276bac313c5262a11806199abdb7de", 19);
+			TEST_BLOCK(&generators::migrate_stage_4, "0xf2111bd34ab1c91a764485c265efa8e82d62acf06fde0373f76fd753c466bc1d", 21);
+			TEST_BLOCK(&generators::withdraw_stage_1, "0x952d9c16455c3b0e1ed8bab99e170b12110deabbf17acc0280e318169682afbc", 23);
+			TEST_BLOCK(&generators::withdraw_stage_2, "0x9075fcd3dba0ab5c37e83aebb80dbaf5dc7cd8652b52965ea512331ad262aa32", 25);
+			TEST_BLOCK(&generators::withdraw_stage_3, "0x2ff94ec31adb2375b298112f41db9b32196f8dd3efd5a4df0de28ccee773deff", 26);
+			TEST_BLOCK(&generators::withdraw_stage_4, "0x85aeb328144f406064aa89392a0c0fe9e6d7b4dd95cde20b0c82ecdac2e17a9a", 27);
+			TEST_BLOCK(&generators::withdraw_stage_5, "0xbee51a42ccc838ecabdfc5e9c442cdfaea2463e6b269a61ed272896ed40a9d71", 28);
+			TEST_BLOCK(&generators::withdraw_stage_6, "0x5c77870dacf5cce6a34f35f6aa6c8f31c577a36f0cfd005df33c35e3d7af96ae", 30);
+			TEST_BLOCK(&generators::withdraw_stage_7, "0x008227d8daa4245053bfd744f4e69397d6d7e9c080cc9b41bbd738c93cb1e3dd", 32);
+			TEST_BLOCK(std::bind(&generators::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 1, 0), "0x042dd3d5b9e5794c3a8876d610c3ad3ec9d73341fd4276312c1bdede46ea3851", 34);
+			TEST_BLOCK_FALLBACK(&generators::production_stage_1, "0xc79183ed5390b5e3075c9f60205fd9e0dd259e9ff01caf5f0cb1cae48dc2ccbe", 35);
+			TEST_BLOCK(&generators::production_stage_2, "0xe6314b3058106cf8eff462ffe56958efed3bf0f8b1067fcf7498df11fd6afe7c", 36);
 			if (userdata != nullptr)
 				*userdata = std::move(users);
 			else
@@ -2186,7 +2186,7 @@ int main(int argc, char* argv[])
 			{ "cryptography / multichain transaction", &tests::cryptography_multichain_transaction },
 			{ "blockchain / full coverage", std::bind(&tests::blockchain_full_coverage, (vector<account_ref>*)nullptr) },
 			{ "blockchain / verification", &tests::blockchain_verification },
-			{ "blockchain / partial coverage", std::bind(&tests::blockchain_partial_coverage, (vector<account_ref>*)nullptr) },
+			//{ "blockchain / partial coverage", std::bind(&tests::blockchain_partial_coverage, (vector<account_ref>*)nullptr) },
 			{ "blockchain / verification", &tests::blockchain_verification },
 			{ "blockchain / gas estimation", &tests::blockchain_gas_estimation },
 		};

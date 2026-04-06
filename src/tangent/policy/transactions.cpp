@@ -1063,7 +1063,7 @@ namespace tangent
 					return layer_exception("broadcast transaction not found");
 
 				auto* parent_transaction = (broadcast*)*parent->transaction;
-				if (parent_transaction->proof)
+				if (!parent_transaction->eligible_as_migration_reason())
 					return layer_exception("broadcast transaction not applicable");
 
 				auto origin = executor->get_block_transaction<withdraw>(parent_transaction->withdraw_hash, true);
@@ -2527,18 +2527,22 @@ namespace tangent
 			return coasync<expects_rt<void>>([this, executor, dispatcher, runner_wallet]() mutable -> expects_promise_rt<void>
 			{
 				auto* chain = superchain::bridge::get()->get_network_params(asset);
-				auto cancel = [this, executor, dispatcher, runner_wallet](remote_exception&& error) -> expects_rt<void>
+				auto cancel = [this, executor, dispatcher, runner_wallet](const std::string_view& category, remote_exception&& error) -> expects_rt<void>
 				{
+					auto message = string("(");
+					message.append(category).append(") ");
+					message.append(error.message());
+
 					auto* transaction = memory::init<broadcast>();
 					transaction->asset = asset;
-					transaction->set_proof(executor->receipt.transaction_hash, layer_exception(std::move(remote_exception(error).message())));
+					transaction->set_proof(executor->receipt.transaction_hash, layer_exception(std::move(message)));
 					dispatcher->emit_transaction(runner_wallet, transaction);
 					return expects_rt<void>(std::move(error));
 				};
 
 				auto bridge = executor->get_bridge_instance(asset, bridge_hash);
 				if (!bridge)
-					coreturn cancel(remote_exception(std::move(bridge.error().message())));
+					coreturn cancel("builder", remote_exception(std::move(bridge.error().message())));
 
 				auto cache = dispatcher->pull_cache(executor);
 				auto state = ledger::dispatcher_context::signature_state();
@@ -2546,9 +2550,9 @@ namespace tangent
 				{
 					auto message = coawait(resolver::prepare_transaction(algorithm::asset::base_id_of(asset), superchain::wallet_link::from_hash(bridge_hash), superchain::value_transfer(asset, address, decimal(value)), bridge->fee_rate));
 					if (!message)
-						coreturn message.error().is_retry() || message.error().is_shutdown() ? expects_rt<void>(std::move(message.error())) : cancel(std::move(message.error()));
+						coreturn message.error().is_retry() || message.error().is_shutdown() ? expects_rt<void>(std::move(message.error())) : cancel("builder", std::move(message.error()));
 					else if (message->inputs.size() > std::numeric_limits<uint8_t>::max())
-						coreturn cancel(remote_exception("too many prepared inputs"));
+						coreturn cancel("builder", remote_exception("too many prepared inputs"));
 
 					state.message = memory::init<superchain::prepared_transaction>(std::move(*message));
 				}
@@ -2560,15 +2564,15 @@ namespace tangent
 				{
 					auto witness = executor->get_witness_account_tagged(asset, input->utxo.link.address, 0);
 					if (!witness)
-						coreturn cancel(remote_exception(std::move(witness.error().message())));
+						coreturn cancel("builder", remote_exception(std::move(witness.error().message())));
 
 					auto account = executor->get_bridge_account(witness->ref.owner, witness->ref.asset, witness->ref.hash);
 					if (!account)
-						coreturn cancel(remote_exception(std::move(account.error().message())));
+						coreturn cancel("builder", remote_exception(std::move(account.error().message())));
 
 					auto session = coawait(dispatcher->aggregate_validators(account->group));
 					if (!session)
-						coreturn session.error().is_retry() || session.error().is_shutdown() ? expects_rt<void>(std::move(session.error())) : cancel(std::move(session.error()));
+						coreturn session.error().is_retry() || session.error().is_shutdown() ? expects_rt<void>(std::move(session.error())) : cancel("composer", std::move(session.error()));
 
 					auto chosen = account->group.begin();
 					auto unavailable = btree_set<algorithm::pubkeyhash_t>();
@@ -2577,7 +2581,7 @@ namespace tangent
 					{
 						auto compositor = algorithm::composition::make_signature_compositor(input->alg, input->public_key, input->message.data(), input->message.size(), (uint16_t)account->group.size());
 						if (!compositor)
-							coreturn cancel(remote_exception(std::move(compositor.error().message())));
+							coreturn cancel("composer", remote_exception(std::move(compositor.error().message())));
 
 						state.compositor = std::move(*compositor);
 						state.alg = input->alg;
@@ -2608,7 +2612,7 @@ namespace tangent
 								goto postpone;
 						}
 						else if (!subresult)
-							coreturn cancel(std::move(subresult.error()));
+							coreturn cancel("composer", std::move(subresult.error()));
 						else
 							reset = false;
 
@@ -2623,7 +2627,7 @@ namespace tangent
 
 					auto subfinalization = state.compositor->to_signature(&input->signature);
 					if (!subfinalization)
-						coreturn cancel(remote_exception(std::move(subfinalization.error().message())));
+						coreturn cancel("composer", remote_exception(std::move(subfinalization.error().message())));
 
 					input = state.message->next_input_for_aggregation();
 					state.compositor.destroy();
@@ -2631,20 +2635,20 @@ namespace tangent
 
 				finalization = resolver::finalize_transaction(algorithm::asset::base_id_of(asset), std::move(**state.message));
 				if (!finalization)
-					coreturn cancel(remote_exception(std::move(finalization.error().message())));
+					coreturn cancel("composer", remote_exception(std::move(finalization.error().message())));
 
 				result = coawait(resolver::broadcast_transaction(algorithm::asset::base_id_of(asset), executor->receipt.transaction_hash, superchain::finalized_transaction(*finalization), dispatcher, runner_wallet));
 				if (!result && (result.error().is_retry() || result.error().is_shutdown()))
 				{
 				postpone:
 					if (++state.attempt >= protocol::now().user.consensus.coordination_attempts)
-						coreturn remote_exception("failed to coordinate participants after several retries");
+						coreturn cancel("server", remote_exception("failed to broadcast after several retries"));
 
 					dispatcher->push_cache(executor, state.as_message());
 					coreturn remote_exception::retry_later();
 				}
 				else if (!result)
-					coreturn cancel(std::move(result.error()));
+					coreturn cancel("server", std::move(result.error()));
 
 				auto* transaction = memory::init<broadcast>();
 				transaction->asset = asset;
@@ -2862,6 +2866,14 @@ namespace tangent
 		{
 			withdraw_hash = new_withdraw_hash;
 			proof = std::move(new_proof);
+		}
+		bool broadcast::eligible_as_migration_reason() const
+		{
+			if (proof)
+				return false;
+
+			auto message = layer_exception(proof.error()).message();
+			return stringify::starts_with(message, "(composer)");
 		}
 		format::tree broadcast::as_tree() const
 		{
@@ -3898,12 +3910,11 @@ namespace tangent
 
 			auto transfers = hash_map<algorithm::asset_id, decimal>();
 			transfers[algorithm::asset::base_id_of(asset)] = decimal("0.000001");
-			if (to.address == MOCKUP_FAIL)
-				return expects_promise_rt<superchain::prepared_transaction>(remote_exception("synthetic mockup error"));
 
-			uint8_t message_hash[32];
 			auto& value = transfers[to.asset];
 			value = value.is_nan() ? to.value : (value + to.value);
+
+			uint8_t message_hash[32];
 			message.write_integer(to.asset);
 			message.write_string(to.address);
 			message.write_decimal(to.value);
@@ -3921,6 +3932,12 @@ namespace tangent
 			bool may_mock_up = protocol::now().is(network_type::regtest);
 			if (!may_mock_up || offchain->has_network(asset, true))
 				return offchain->finalize_transaction(asset, std::move(prepared));
+
+			for (auto& output : prepared.outputs)
+			{
+				if (output.link.address == MOCKUP_FAIL)
+					return layer_exception("synthetic composer error");
+			}
 
 			auto transaction_id = algorithm::encoding::encode_0xhex256(prepared.as_hash());
 			auto block_id = algorithm::hashing::hash256i(transaction_id) % std::numeric_limits<uint32_t>::max();
