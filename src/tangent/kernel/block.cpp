@@ -540,48 +540,56 @@ namespace tangent
 		}
 		int8_t block_header::get_relative_order(const block_header& other) const
 		{
-			/*
-				order priority:
-				1. HIGHEST block number
-				2. LOWEST  block priority
-				3. HIGHEST block cumulative work
-				4. HIGHEST block difficulty
-				5. HIGHEST block wesolowski number
-				6. HIGHEST block gas use
-				7. HIGHEST block mutations
-				8. LOWEST  block hash
-				9. HIGHEST block data (lexicographical order)
-			*/
+			/* TRY HIGHEST: block number */
 			if (number != other.number)
 				return number > other.number ? 1 : -1;
 
-			if (priority != other.priority)
-				return priority < other.priority ? 1 : -1;
-
-			if (absolute_work != other.absolute_work)
-				return absolute_work > other.absolute_work ? 1 : -1;
-
-			if (difficulty != other.difficulty)
-				return difficulty > other.difficulty ? 1 : -1;
-
-			int8_t security = algorithm::wesolowski::compare(proof, other.proof);
-			if (security != 0)
-				return security;
-
-			if (gas_use != other.gas_use)
-				return gas_use > other.gas_use ? 1 : -1;
-
-			uint256_t mutations_a = uint256_t(transaction_count + 1) * uint256_t(transition_count + 1);
-			uint256_t mutations_b = uint256_t(other.transaction_count + 1) * uint256_t(other.transition_count + 1);
-			if (mutations_a != mutations_b)
-				return mutations_a > mutations_b ? 1 : -1;
-
+			/* CHECK EQUAL: block hash */
 			uint256_t hash_a = as_hash();
 			uint256_t hash_b = other.as_hash();
 			if (hash_a == hash_b)
 				return 0;
 
-			return hash_a > hash_b ? -1 : 1;
+			/* TRY LOWEST: block priority */
+			if (priority != other.priority)
+				return priority < other.priority ? 1 : -1;
+
+			/* CHECK EQUAL: block proposer */
+			algorithm::pubkeyhash_t proposer_a, proposer_b;
+			if (!recover_hash(proposer_a) || !other.recover_hash(proposer_b) || proposer_a != proposer_b)
+			{
+				/* TRY HIGHEST: block cumulative work */
+				if (absolute_work != other.absolute_work)
+					return absolute_work > other.absolute_work ? 1 : -1;
+
+				/* TRY HIGHEST: block difficulty */
+				if (difficulty != other.difficulty)
+					return difficulty > other.difficulty ? 1 : -1;
+
+				/* TRY HIGHEST: block wesolowski proof */
+				int8_t security = algorithm::wesolowski::compare(proof, other.proof);
+				if (security != 0)
+					return security;
+
+				/* TRY HIGHEST: block gas use */
+				if (gas_use != other.gas_use)
+					return gas_use > other.gas_use ? 1 : -1;
+
+				/* TRY HIGHEST: block mutation */
+				uint256_t mutations_a = uint256_t(transaction_count + 1) * uint256_t(transition_count + 1);
+				uint256_t mutations_b = uint256_t(other.transaction_count + 1) * uint256_t(other.transition_count + 1);
+				if (mutations_a != mutations_b)
+					return mutations_a > mutations_b ? 1 : -1;
+
+				/* RETURN LOWEST: block hash */
+				return hash_a > hash_b ? -1 : 1;
+			}
+			else
+			{
+				/* RETURN HIGHEST: block wesolowski proof (HEAD replace-by-proof) */
+				int8_t security = algorithm::wesolowski::compare(proof, other.proof);
+				return security == 0 ? -1 : security;
+			}
 		}
 		uint64_t block_header::get_slot_proof_duration_average() const
 		{
