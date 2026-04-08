@@ -3427,7 +3427,7 @@ namespace tangent
 													 /
 					<+> - <+> - <+> - <+> - <+> - <+> - <+>
 				*/
-				return layer_exception(stringify::text("block %s rejected: inferior fork difficulty", algorithm::encoding::encode_0xhex256(candidate_hash).c_str()));
+				return layer_exception(stringify::text("block %s rejected: inferior fork", algorithm::encoding::encode_0xhex256(candidate_hash).c_str()));
 			}
 			else if (!parent_block && candidate.block.number > 1)
 			{
