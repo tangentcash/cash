@@ -1567,12 +1567,16 @@ namespace tangent
 			else if (packed->size() != 4)
 				return remote_exception("invalid arguments");
 
-			auto block_number = packed->at(0).as_uint64();
+			auto yielding_delegator = ledger::wallet::from_public_key(algorithm::pubkey_t(packed->at(0).as_string()));
+			if (yielding_delegator.public_key_hash.empty())
+				return remote_exception("invalid delegator");
+
+			auto block_number = packed->at(1).as_uint64();
 			auto chainstate = storages::chainstate();
 			if (chainstate.get_latest_block_number().or_else(1) < block_number)
 				return remote_exception::retry_later();
 
-			auto transaction_hash = packed->at(1).as_uint256();
+			auto transaction_hash = packed->at(2).as_uint256();
 			auto executor = ledger::executor_context(nullptr);
 			auto context = executor.get_block_transaction_instance(transaction_hash);
 			if (!context)
@@ -1582,7 +1586,7 @@ namespace tangent
 			executor.transaction = *context->transaction;
 			executor.receipt = std::move(context->receipt);
 
-			auto reader = format::ro_stream(packed->at(2).as_string());
+			auto reader = format::ro_stream(packed->at(3).as_string());
 			if (!reader.read_integer(reader.read_type(), &delegation_type))
 				return remote_exception("invalid delegation type");
 
@@ -1598,7 +1602,6 @@ namespace tangent
 			if (!delegation->load_payload(reader))
 				return remote_exception("delegation deserialization failed");
 
-			auto yielding_delegator = ledger::wallet::from_public_key(algorithm::pubkey_t(packed->at(3).as_string()));
 			auto validation = delegation->validate_transition(nullptr, yielding_delegator);
 			if (!validation)
 				return remote_exception(std::move(validation.error().message()));
@@ -3680,9 +3683,9 @@ namespace tangent
 				return expects_promise_rt<format::wo_stream>(remote_exception::retry_later());
 
 			format::variables args;
+			args.push_back(format::variable(contract->runner->public_key.optimized_view()));
 			args.push_back(format::variable(contract->executor->receipt.block_number));
 			args.push_back(format::variable(contract->executor->receipt.transaction_hash));
-			args.push_back(format::variable(contract->runner->public_key.optimized_view()));
 			args.push_back(format::variable(message.data));
 
 			auto private_args = pack_private_result(args, *target_public_key);
