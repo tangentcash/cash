@@ -109,13 +109,17 @@ namespace tangent
 			expects_lr<void> remove_attestation(const uint256_t& attestation_hash);
 			expects_lr<size_t> expire_attestations();
 			expects_lr<void> add_transaction(const ledger::transaction_message& value);
-			expects_lr<void> remove_transactions(const hash_set<uint256_t>& transaction_hashes);
+			expects_lr<void> add_transaction_observation(const uint256_t& transaction_hash);
+			expects_lr<void> remove_transactions_by_hash(const hash_set<uint256_t>& transaction_hashes);
+			expects_lr<void> remove_transactions_by_commitment_hash(const hash_set<uint256_t>& commitment_hashes);
+			expects_lr<bool> has_transaction_commitment_hash(const uint256_t& commitment_hash);
 			expects_lr<size_t> expire_transactions();
 			expects_lr<size_t> get_transactions_count();
 			expects_lr<void> apply_key(const algorithm::pubkeyhash_t& participant, const ledger::distribution_key& entropy);
 			expects_lr<ledger::distribution_key> get_key(const algorithm::pubkeyhash_t& participant, const algorithm::pubkeyhash_t& owner, const algorithm::asset_id& asset, const uint256_t& instance);
 			expects_lr<ledger::distribution_key> get_key(const algorithm::pubkeyhash_t& participant, size_t index);
 			expects_lr<bool> has_transaction(const uint256_t& transaction_hash);
+			expects_lr<void> verify_transaction_uniqueness(const uint256_t& transaction_hash);
 			expects_lr<uint64_t> get_lowest_transaction_nonce(const algorithm::pubkeyhash_t& owner);
 			expects_lr<uint64_t> get_highest_transaction_nonce(const algorithm::pubkeyhash_t& owner);
 			expects_lr<uptr<ledger::transaction_message>> get_transaction_by_hash(const uint256_t& transaction_hash);

@@ -1263,7 +1263,7 @@ namespace tangent
 			if (gas_calculation)
 				return expectation::met;
 
-			if (!transaction->is_commitment() && (options & (uint8_t)flags::congestion) && !transaction->gas_price.is_positive())
+			if (!transaction->implements_commitment(nullptr) && (options & (uint8_t)flags::congestion) && !transaction->gas_price.is_positive())
 				return layer_exception("must pay for gas - network congestion requirement");
 			else if (!transaction->gas_price.is_positive() || (options & (uint8_t)flags::evaluation))
 				return expectation::met;
@@ -3219,7 +3219,7 @@ namespace tangent
 					auto& nonce = nonces[algorithm::pubkeyhash_t(item.owner)];
 					nonce = std::max(item.candidate->nonce, nonce);
 					state.gas_usage += item.candidate->gas_limit;
-					state.commitments += item.candidate->is_commitment() ? 1 : 0;
+					state.commitments += item.candidate->implements_commitment(nullptr) ? 1 : 0;
 					transactions.pending.emplace_back(std::move(item));
 					++transactions.queued;
 				}
@@ -3246,9 +3246,9 @@ namespace tangent
 			if (new_gas_limit < state.gas_usage || new_gas_limit > block_header::get_gas_limit())
 				return include_decision::not_includable;
 
-			if (!item.candidate->is_commitment() && (((uint8_t)state.executor.options & (uint8_t)executor_context::flags::congestion) && !item.candidate->gas_price.is_positive()))
+			if (!item.candidate->implements_commitment(nullptr) && (((uint8_t)state.executor.options & (uint8_t)executor_context::flags::congestion) && !item.candidate->gas_price.is_positive()))
 				return include_decision::not_includable;
-			else if (item.candidate->is_commitment() && state.commitments + 1 > protocol::now().policy.commitments_per_block)
+			else if (item.candidate->implements_commitment(nullptr) && state.commitments + 1 > protocol::now().policy.commitments_per_block)
 				return include_decision::not_includable;
 
 			auto map_nonce = nonces.find(algorithm::pubkeyhash_t(item.owner));
@@ -3293,7 +3293,7 @@ namespace tangent
 			uint8_t state_options = state.executor.options;
 			for (auto& item : transactions.pending)
 			{
-				uint8_t tx_options = item.candidate->is_commitment() ? (uint8_t)executor_context::flags::pedantic : 0;
+				uint8_t tx_options = item.candidate->implements_commitment(nullptr) ? (uint8_t)executor_context::flags::pedantic : 0;
 				auto execution = executor_context::execute_tx(&state.executor, item.owner, *item.candidate, item.hash, item.size, state_options | tx_options);
 				if (execution)
 				{
@@ -3431,7 +3431,7 @@ namespace tangent
 			}
 
 			auto mempool = storages::mempoolstate();
-			return mempool.remove_transactions(hashes);
+			return mempool.remove_transactions_by_hash(hashes);
 		}
 		bool solver_context::can_accept_more_transactions()
 		{
@@ -3484,7 +3484,7 @@ namespace tangent
 
 				auto& info = solver.force_include_transaction(transactions::resolver::from_copy(*transaction.transaction));
 				childs[transaction.receipt.transaction_hash] = std::make_pair(&transaction, (const solver_context::queued_transaction*)&info);
-				commitments += transaction.transaction->is_commitment() ? 1 : 0;
+				commitments += transaction.transaction->implements_commitment(nullptr) ? 1 : 0;
 			}
 			if (commitments > protocol::now().policy.commitments_per_block)
 				return layer_exception("too many commitment transactions");
@@ -3596,10 +3596,15 @@ namespace tangent
 		{
 			auto chain = storages::chainstate();
 			auto mempool = storages::mempoolstate();
-			hash_set<uint256_t> finalized_transactions;
+			hash_set<uint256_t> finalized_transactions, finalized_commitments;
 			finalized_transactions.reserve(solution.block.transactions.size());
 			for (auto& transaction : solution.block.transactions)
+			{
+				uint256_t commitment_hash;
 				finalized_transactions.insert(transaction.receipt.transaction_hash);
+				if (transaction.transaction->implements_commitment(&commitment_hash) && commitment_hash > 0)
+					finalized_commitments.insert(commitment_hash);
+			}
 
 			block_checkpoint mutation;
 			mutation.old_tip_block_number = chain.get_latest_block_number().or_else(0);
@@ -3657,7 +3662,8 @@ namespace tangent
 			if (!status)
 				return status.error();
 
-			mempool.remove_transactions(finalized_transactions).report("mempool cleanup failed");
+			mempool.remove_transactions_by_hash(finalized_transactions).report("mempool cleanup failed");
+			mempool.remove_transactions_by_commitment_hash(finalized_commitments).report("mempool cleanup failed");
 			for (auto& side_effect : solution.effects)
 			{
 				VI_ASSERT(side_effect, "side effect callback should be set");

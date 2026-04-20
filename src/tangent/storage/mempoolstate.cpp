@@ -713,7 +713,7 @@ namespace tangent
 
 			auto cursor = get_peer_storage().emplace_query(__func__, "SELECT TRUE FROM observations WHERE hash = ?", &map);
 			if (cursor && !cursor->error_or_empty())
-				return layer_exception("transaction may be re-broadcasted later");
+				return layer_exception("finality conflict");
 
 			format::wo_stream message;
 			if (!value.store(&message))
@@ -723,23 +723,27 @@ namespace tangent
 			if (!value.recover_hash(owner))
 				return layer_exception("transaction owner recovery error");
 
+			uint256_t commitment_hash = 0;
 			decimal quality = decimal::nan();
-			if (!value.is_commitment())
+			if (!value.implements_commitment(&commitment_hash))
 			{
 				auto median_gas_price = get_gas_price(value.asset, fee_percentile(fee_priority::medium));
 				decimal delta_gas = median_gas_price && median_gas_price->is_positive() ? value.gas_price / *median_gas_price : 1.0;
 				decimal max_gas = delta_gas.is_positive() ? algorithm::arithmetic::divide(value.gas_price * value.gas_limit.to_decimal(), delta_gas) : decimal::zero();
 				decimal multiplier = 2 << 20;
 				quality = max_gas * multiplier;
+				commitment_hash = uint256_t(0);
 			}
 
-			uint8_t asset[32];
+			uint8_t asset[32], other_hash[32];
 			value.asset.encode(asset);
+			commitment_hash.encode(other_hash);
 
 			map.clear();
 			map.push_back(var::set::binary(hash, sizeof(hash)));
 			map.push_back(var::set::integer(protocol::now().time.now_cpu() + TRANSACTION_EXPIRATION + OBSERVATION_EXPIRATION));
 			map.push_back(var::set::binary(hash, sizeof(hash)));
+			map.push_back(commitment_hash > 0 ? var::set::binary(other_hash, sizeof(other_hash)) : var::set::null());
 			map.push_back(var::set::binary(owner.view()));
 			map.push_back(var::set::binary(asset, sizeof(asset)));
 			map.push_back(var::set::integer(value.nonce));
@@ -751,14 +755,29 @@ namespace tangent
 
 			cursor = get_peer_storage().emplace_query(__func__,
 				"INSERT OR REPLACE INTO observations (hash, time) VALUES (?, ?);"
-				"INSERT OR REPLACE INTO transactions (hash, owner, asset, nonce, quality, time, price, message) VALUES (?, ?, ?, ?, ?, ?, ?, ?);"
+				"INSERT OR REPLACE INTO transactions (hash, commitment_hash, owner, asset, nonce, quality, time, price, message) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);"
 				"WITH epochs AS (SELECT rowid, ROW_NUMBER() OVER (ORDER BY nonce) AS epoch FROM transactions WHERE owner = ?) UPDATE transactions SET epoch = epochs.epoch FROM epochs WHERE transactions.rowid = epochs.rowid", &map);
 			if (!cursor || cursor->error())
 				return layer_exception(ledger::storage_util::error_of(cursor));
 
 			return expectation::met;
 		}
-		expects_lr<void> mempoolstate::remove_transactions(const hash_set<uint256_t>& transaction_hashes)
+		expects_lr<void> mempoolstate::add_transaction_observation(const uint256_t& transaction_hash)
+		{
+			uint8_t hash[32];
+			transaction_hash.encode(hash);
+
+			schema_list map;
+			map.push_back(var::set::binary(hash, sizeof(hash)));
+			map.push_back(var::set::integer(protocol::now().time.now_cpu() + TRANSACTION_EXPIRATION + OBSERVATION_EXPIRATION));
+
+			auto cursor = get_peer_storage().emplace_query(__func__, "INSERT OR REPLACE INTO observations (hash, time) VALUES (?, ?)", &map);
+			if (!cursor || cursor->error())
+				return layer_exception(ledger::storage_util::error_of(cursor));
+
+			return expectation::met;
+		}
+		expects_lr<void> mempoolstate::remove_transactions_by_hash(const hash_set<uint256_t>& transaction_hashes)
 		{
 			if (transaction_hashes.empty())
 				return expectation::met;
@@ -782,6 +801,43 @@ namespace tangent
 				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 			return expectation::met;
+		}
+		expects_lr<void> mempoolstate::remove_transactions_by_commitment_hash(const hash_set<uint256_t>& commitment_hashes)
+		{
+			if (commitment_hashes.empty())
+				return expectation::met;
+
+			uptr<schema> hash_list = var::set::array();
+			hash_list->reserve(commitment_hashes.size());
+			for (auto& item : commitment_hashes)
+			{
+				uint8_t hash[32];
+				item.encode(hash);
+				hash_list->push(var::binary(hash, sizeof(hash)));
+			}
+
+			schema_list map;
+			map.push_back(var::set::string(*sqlite::utils::inline_array(std::move(hash_list))));
+
+			auto cursor = get_peer_storage().emplace_query(__func__, "DELETE FROM transactions WHERE commitment_hash IN ($?)", &map);
+			if (!cursor || cursor->error())
+				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
+
+			return expectation::met;
+		}
+		expects_lr<bool> mempoolstate::has_transaction_commitment_hash(const uint256_t& commitment_hash)
+		{
+			uint8_t hash[32];
+			commitment_hash.encode(hash);
+
+			schema_list map;
+			map.push_back(var::set::binary(hash, sizeof(hash)));
+
+			auto cursor = get_peer_storage().emplace_query(__func__, "SELECT TRUE FROM transactions WHERE commitment_hash = ? LIMIT 1", &map);
+			if (!cursor || cursor->error())
+				return expects_lr<bool>(layer_exception(ledger::storage_util::error_of(cursor)));
+
+			return expects_lr<bool>(!cursor->empty());
 		}
 		expects_lr<size_t> mempoolstate::expire_transactions()
 		{
@@ -897,7 +953,21 @@ namespace tangent
 			if (!cursor || cursor->error())
 				return expects_lr<bool>(layer_exception(ledger::storage_util::error_of(cursor)));
 
-			return !cursor->empty();
+			return expects_lr<bool>(!cursor->empty());
+		}
+		expects_lr<void> mempoolstate::verify_transaction_uniqueness(const uint256_t& transaction_hash)
+		{
+			uint8_t hash[32];
+			transaction_hash.encode(hash);
+
+			schema_list map;
+			map.push_back(var::set::binary(hash, sizeof(hash)));
+
+			auto cursor = get_peer_storage().emplace_query(__func__, "SELECT TRUE FROM observations WHERE hash = ?", &map);
+			if (cursor && !cursor->error_or_empty())
+				return layer_exception("finality conflict");
+
+			return expectation::met;
 		}
 		expects_lr<uint64_t> mempoolstate::get_lowest_transaction_nonce(const algorithm::pubkeyhash_t& owner)
 		{
@@ -1179,6 +1249,7 @@ namespace tangent
 				CREATE TABLE IF NOT EXISTS transactions
 				(
 					hash BLOB(32) NOT NULL,
+					commitment_hash BLOB(32) NOT NULL,
 					owner BLOB(20) NOT NULL,
 					asset BLOB(32) NOT NULL,
 					nonce BIGINT NOT NULL,
@@ -1189,6 +1260,7 @@ namespace tangent
 					message BLOB NOT NULL,
 					PRIMARY KEY (hash)
 				);
+				CREATE INDEX IF NOT EXISTS transactions_commitment_hash ON transactions (commitment_hash);
 				CREATE INDEX IF NOT EXISTS transactions_owner_nonce ON transactions (owner, nonce);
 				CREATE INDEX IF NOT EXISTS transactions_asset_quality ON transactions (asset ASC, quality DESC);
 				CREATE INDEX IF NOT EXISTS transactions_epoch_quality ON transactions (epoch ASC, quality DESC);

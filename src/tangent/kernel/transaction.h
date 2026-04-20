@@ -79,7 +79,7 @@ namespace tangent
 			virtual expects_lr<void> set_optimal_gas(const decimal& price);
 			virtual void set_gas(const decimal& price, const uint256_t& limit);
 			virtual void set_asset(const std::string_view& blockchain, const std::string_view& token = std::string_view(), const std::string_view& contract_address = std::string_view());
-			virtual bool is_commitment() const;
+			virtual bool implements_commitment(uint256_t* event_hash) const;
 			virtual uint256_t gas_asset() const;
 			virtual format::tree as_tree() const override;
 			virtual uint32_t as_delegation_type() const;
@@ -93,7 +93,7 @@ namespace tangent
 			virtual expects_lr<void> execute(executor_context* executor) const override;
 			virtual bool store_payload(format::wo_stream* stream) const override;
 			virtual bool load_payload(format::ro_stream& stream) override;
-			virtual bool is_commitment() const override;
+			virtual bool implements_commitment(uint256_t* event_hash) const override;
 		};
 
 		struct transaction_receipt final : uniform_serializer

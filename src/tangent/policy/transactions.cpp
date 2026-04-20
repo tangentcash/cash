@@ -614,7 +614,7 @@ namespace tangent
 
 				for (auto& transaction : group.second)
 				{
-					if (!transaction || transaction->as_type() == as_type() || transaction->is_commitment())
+					if (!transaction || transaction->as_type() == as_type() || transaction->implements_commitment(nullptr))
 						return layer_exception("invalid sub-transaction");
 
 					if (transaction->asset != group.first || !transaction->gas_price.is_nan() || transaction->gas_limit > 0)
@@ -3554,6 +3554,12 @@ namespace tangent
 				return false;
 
 			commitments[commitment_hash].insert(commitment_signature);
+			return true;
+		}
+		bool attestate::implements_commitment(uint256_t* event_hash) const
+		{
+			if (event_hash != nullptr)
+				*event_hash = proof.as_hash();
 			return true;
 		}
 		format::tree attestate::as_tree() const

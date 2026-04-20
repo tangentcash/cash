@@ -985,8 +985,16 @@ namespace tangent
 				auto purpose = candidate_tx->as_typename();
 				if (protocol::now().user.consensus.logging)
 					VI_ERR("transaction %s %.*s error: %s", algorithm::encoding::encode_0xhex256(candidate_tx->as_hash()).c_str(), (int)purpose.size(), purpose.data(), status.what().c_str());
-
 				return status;
+			}
+
+			uint256_t commitment_hash = 0;
+			if (candidate_tx->implements_commitment(&commitment_hash) && commitment_hash > 0 && storages::mempoolstate().has_transaction_commitment_hash(commitment_hash))
+			{
+				auto purpose = candidate_tx->as_typename();
+				if (protocol::now().user.consensus.logging)
+					VI_WARN("transaction %s %.*s rejection: commitment conflict", algorithm::encoding::encode_0xhex256(candidate_tx->as_hash()).c_str(), (int)purpose.size(), purpose.data());
+				return layer_exception("commitment conflict");
 			}
 
 			status = accept_transaction(nullptr, std::move(candidate_tx));
@@ -1026,7 +1034,8 @@ namespace tangent
 				return layer_exception("nonce is too old");
 			}
 
-			if (!candidate_tx->is_commitment() && !candidate_tx->gas_price.is_positive())
+			uint256_t commitment_hash = 0;
+			if (!candidate_tx->implements_commitment(&commitment_hash) && !candidate_tx->gas_price.is_positive())
 			{
 				if (candidate_message.data.size() > protocol::now().policy.gasless_size_limit)
 				{
@@ -1044,13 +1053,35 @@ namespace tangent
 				}
 			}
 
-			algorithm::pubkeyhash_t validation_owner;
-			auto validation = ledger::executor_context::validate_tx(*candidate_tx, candidate_hash, validation_owner);
-			if (!validation)
+			if (commitment_hash > 0)
 			{
-				if (protocol::now().user.consensus.logging)
-					VI_WARN("transaction %s %.*s validation failed: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data(), validation.error().what());
-				return validation.error();
+				auto unique = mempool.verify_transaction_uniqueness(candidate_hash);
+				if (!unique)
+				{
+					if (protocol::now().user.consensus.logging)
+						VI_WARN("transaction %s %.*s mempool rejection: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data(), unique.error().what());
+					return unique.error();
+				}
+
+				auto simulation = ledger::executor_context::calculate_tx_gas(*candidate_tx);
+				if (!simulation)
+				{
+					mempool.add_transaction_observation(candidate_hash);
+					if (protocol::now().user.consensus.logging)
+						VI_WARN("transaction %s %.*s simulation failed: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data(), simulation.error().what());
+					return simulation.error();
+				}
+			}
+			else
+			{
+				algorithm::pubkeyhash_t validation_owner;
+				auto validation = ledger::executor_context::validate_tx(*candidate_tx, candidate_hash, validation_owner);
+				if (!validation)
+				{
+					if (protocol::now().user.consensus.logging)
+						VI_WARN("transaction %s %.*s validation failed: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data(), validation.error().what());
+					return validation.error();
+				}
 			}
 
 			return broadcast_transaction(uref(from), std::move(candidate_tx), owner);
