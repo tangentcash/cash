@@ -324,10 +324,10 @@ namespace tangent
 			expects_lr<void> verify_transfer_balance(const algorithm::asset_id& asset, const decimal& value) const;
 			expects_lr<size_t> calculate_attesters_size(const algorithm::asset_id& asset) const;
 			expects_lr<size_t> calculate_producers_size() const;
-			expects_lr<vector<states::validator_production>> calculate_producers(algorithm::wesolowski::distribution& random, size_t target_size);
+			expects_lr<vector<states::validator_production>> calculate_producers(size_t target_size);
 			expects_lr<vector<states::validator_attestation>> calculate_attesters(const algorithm::asset_id& asset, size_t target_size);
-			expects_lr<vector<states::validator_attestation>> calculate_attesters(algorithm::wesolowski::distribution& random, const algorithm::asset_id& asset, size_t target_size, const decimal& fee_threshold, btree_set<algorithm::pubkeyhash_t>& exclusion);
-			expects_lr<vector<states::validator_participation>> calculate_participants(algorithm::wesolowski::distribution& random, size_t target_size, btree_set<algorithm::pubkeyhash_t>& exclusion);
+			expects_lr<vector<states::validator_attestation>> calculate_attesters(const algorithm::asset_id& asset, size_t target_size, const decimal& fee_threshold, btree_set<algorithm::pubkeyhash_t>& exclusion);
+			expects_lr<vector<states::validator_participation>> calculate_participants(size_t target_size, btree_set<algorithm::pubkeyhash_t>& exclusion);
 			expects_lr<states::account_nonce> apply_account_nonce(const algorithm::pubkeyhash_t& owner, uint64_t nonce);
 			expects_lr<states::account_program> apply_account_program(const algorithm::pubkeyhash_t& owner, const std::string_view& program_hashcode);
 			expects_lr<states::account_uniform> apply_account_uniform(const algorithm::pubkeyhash_t& owner, const std::string_view& index, const std::string_view& data);

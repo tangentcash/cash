@@ -1069,8 +1069,7 @@ namespace tangent
 			}
 
 			btree_set<algorithm::pubkeyhash_t> exclusion;
-			auto random = executor->get_random((uint8_t)ledger::seed_byte::attester);
-			auto attesters = executor->calculate_attesters(random, asset, 1, decimal::nan(), exclusion);
+			auto attesters = executor->calculate_attesters(asset, 1, decimal::nan(), exclusion);
 			if (!attesters)
 				return attesters.error();
 
@@ -1079,8 +1078,7 @@ namespace tangent
 			if (!event)
 				return event;
 
-			random = executor->get_random((uint8_t)ledger::seed_byte::participant);
-			auto participants = executor->calculate_participants(random, bridge->security_level, exclusion);
+			auto participants = executor->calculate_participants(bridge->security_level, exclusion);
 			if (!participants)
 				return participants.error();
 
@@ -1883,8 +1881,7 @@ namespace tangent
 			if (exclusion.empty())
 				return expectation::met;
 
-			auto random = executor->get_random((uint8_t)ledger::seed_byte::participant);
-			auto committee = executor->calculate_participants(random, 1, exclusion);
+			auto committee = executor->calculate_participants(1, exclusion);
 			if (!committee)
 				return committee.error();
 
@@ -2498,8 +2495,7 @@ namespace tangent
 
 			btree_set<algorithm::pubkeyhash_t> exclusion;
 			auto fee_asset = algorithm::asset::base_id_of(asset);
-			auto random = executor->get_random((uint8_t)ledger::seed_byte::attester);
-			auto attesters = executor->calculate_attesters(random, fee_asset, 1, bridge->fee_rate, exclusion);
+			auto attesters = executor->calculate_attesters(fee_asset, 1, bridge->fee_rate, exclusion);
 			if (!attesters)
 				return attesters.error();
 

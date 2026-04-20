@@ -1307,12 +1307,13 @@ namespace tangent
 			auto window = storages::result_index_window();
 			return chain.get_multiforms_count_by_row_filter(states::validator_production::as_instance_type(), changelog, states::validator_production::as_instance_row(), filter, nonce).or_else(0);
 		}
-		expects_lr<vector<states::validator_production>> executor_context::calculate_producers(algorithm::wesolowski::distribution& random, size_t target_size)
+		expects_lr<vector<states::validator_production>> executor_context::calculate_producers(size_t target_size)
 		{
 			auto payment = burn_gas((uint64_t)gas_cost::query_result * 2048);
 			if (!payment)
 				return payment.error();
 
+			auto random = get_random((uint8_t)seed_byte::proposer);
 			auto nonce = get_validation_nonce();
 			auto chain = storages::chainstate();
 			auto filter = storages::result_filter::greater(0, -1);
@@ -1377,12 +1378,13 @@ namespace tangent
 
 			return expects_lr<vector<states::validator_attestation>>(std::move(committee));
 		}
-		expects_lr<vector<states::validator_attestation>> executor_context::calculate_attesters(algorithm::wesolowski::distribution& random, const algorithm::asset_id& asset, size_t target_size, const decimal& fee_threshold, btree_set<algorithm::pubkeyhash_t>& exclusion)
+		expects_lr<vector<states::validator_attestation>> executor_context::calculate_attesters(const algorithm::asset_id& asset, size_t target_size, const decimal& fee_threshold, btree_set<algorithm::pubkeyhash_t>& exclusion)
 		{
 			auto payment = burn_gas((uint64_t)gas_cost::query_result * 2048);
 			if (!payment)
 				return payment.error();
 
+			auto random = get_random((uint8_t)seed_byte::attester);
 			auto nonce = get_validation_nonce();
 			auto chain = storages::chainstate();
 			auto filter = storages::result_filter::greater_equal(fee_threshold.is_zero_or_nan() ? uint256_t(1) : states::validator_attestation::to_rank(fee_threshold), -1);
@@ -1438,12 +1440,13 @@ namespace tangent
 
 			return expects_lr<vector<states::validator_attestation>>(std::move(committee));
 		}
-		expects_lr<vector<states::validator_participation>> executor_context::calculate_participants(algorithm::wesolowski::distribution& random, size_t target_size, btree_set<algorithm::pubkeyhash_t>& exclusion)
+		expects_lr<vector<states::validator_participation>> executor_context::calculate_participants(size_t target_size, btree_set<algorithm::pubkeyhash_t>& exclusion)
 		{
 			auto payment = burn_gas((uint64_t)gas_cost::query_result * 2048);
 			if (!payment)
 				return payment.error();
 
+			auto random = get_random((uint8_t)seed_byte::participant);
 			auto nonce = get_validation_nonce();
 			auto chain = storages::chainstate();
 			auto filter = storages::result_filter::greater_equal(uint256_t(1), -1);
@@ -3146,8 +3149,7 @@ namespace tangent
 			state.executor.options = tip && tip->network_congestion() ? (uint8_t)executor_context::flags::congestion : 0;
 			state.origin = state.origin == state_origin::block ? state_origin::chain_block : state_origin::chain;
 
-			auto random = state.executor.get_random((uint8_t)seed_byte::proposer);
-			producers = state.executor.calculate_producers(random, protocol::now().policy.production.max_per_block).or_else(vector<states::validator_production>());
+			producers = state.executor.calculate_producers(protocol::now().policy.production.max_per_block).or_else(vector<states::validator_production>());
 			if (producers.empty())
 			{
 				while (producers.size() < protocol::now().policy.production.max_per_block)
@@ -3425,7 +3427,7 @@ namespace tangent
 			{
 				hashes.insert(transaction_hash);
 				if (protocol::now().user.consensus.logging)
-					VI_WARN("transaction %s dropped: %s", algorithm::encoding::encode_0xhex256(transaction_hash), error.what());
+					VI_WARN("transaction %s dropped: %s", algorithm::encoding::encode_0xhex256(transaction_hash).c_str(), error.what());
 			}
 
 			auto mempool = storages::mempoolstate();
