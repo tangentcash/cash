@@ -24,6 +24,12 @@ namespace tangent
 			states = 1 << 2
 		};
 
+		enum class dispatch_action
+		{
+			finalize,
+			defer
+		};
+
 		struct state_result
 		{
 			uptr<ledger::transition_state> value;
@@ -169,7 +175,7 @@ namespace tangent
 			~chainstate() noexcept;
 			expects_lr<void> revert(uint64_t block_number, int64_t* block_delta = nullptr, int64_t* transaction_delta = nullptr, int64_t* state_delta = nullptr);
 			expects_lr<void> checkpoint(const ledger::block_evaluation& evaluation, bool reorganization = false);
-			expects_lr<void> dispatch(const vector<uint256_t>& finalized_transaction_hashes, const vector<uint256_t>& repeated_transaction_hashes);
+			expects_lr<void> dispatch(const uint256_t& transaction_hash, dispatch_action action);
 			expects_lr<uint64_t> get_checkpoint_block_number();
 			expects_lr<uint64_t> get_latest_block_number();
 			expects_lr<uint64_t> get_block_number_by_hash(const uint256_t& block_hash);

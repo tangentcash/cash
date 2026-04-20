@@ -3651,15 +3651,7 @@ namespace tangent
 				return uint256_t((uint8_t)0);
 
 			if (!p->cache.distribution)
-			{
-				auto candidate = p->executor->calculate_random(p->executor->get_gas_use());
-				if (!candidate)
-				{
-					contract::throw_ptr(exception_repr(exception_repr::category::execution(), std::string_view(candidate.error().message())));
-					return uint256_t((uint8_t)0);
-				}
-				p->cache.distribution = std::move(*candidate);
-			}
+				p->cache.distribution = p->executor->get_random(p->executor->get_gas_use());
 
 			return p->cache.distribution->derive();
 		}

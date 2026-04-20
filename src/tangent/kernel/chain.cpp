@@ -1,6 +1,5 @@
 #include "chain.h"
 #include "script.h"
-#include "../storage/chainstate.h"
 #include "../storage/mempoolstate.h"
 #include <rocksdb/db.h>
 #include <rocksdb/table.h>
@@ -996,6 +995,13 @@ namespace tangent
 	bool protocol::is(network_type type) const
 	{
 		return user.network == type;
+	}
+	bool protocol::on(fork_id fork, uint64_t block_number) const
+	{
+		if (user.network != network_type::mainnet)
+			return true;
+
+		return block_number >= (uint64_t)fork;
 	}
 	bool protocol::custom() const
 	{

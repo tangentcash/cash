@@ -1,8 +1,7 @@
 #include "transactions.h"
+#include "delegations.h"
 #include "../kernel/script.h"
 #include "../kernel/superchain.h"
-#define MOCKUP_FAIL "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
-#define MOCKUP_LOST "0xbeefdeadbeefdeadbeefdeadbeefdeadbeefdead"
 
 namespace tangent
 {
@@ -620,6 +619,9 @@ namespace tangent
 
 					if (transaction->asset != group.first || !transaction->gas_price.is_nan() || transaction->gas_limit > 0)
 						return layer_exception("invalid sub-transaction data");
+
+					if (transaction->as_delegation_type() > 0)
+						return layer_exception("invalid sub-transaction type - must be non-delegable");
 				}
 			}
 
@@ -691,37 +693,6 @@ namespace tangent
 			executor->block->gas_use = absolute_gas_use;
 			executor->receipt.relative_gas_use = relative_gas_use;
 			return expectation::met;
-		}
-		expects_promise_rt<void> rollup::dispatch(const ledger::executor_context* executor, ledger::dispatcher_context* dispatcher) const
-		{
-			if (!is_dispatchable())
-				return expects_promise_rt<void>(expectation::met);
-
-			return coasync<expects_rt<void>>([this, executor, dispatcher]() -> expects_promise_rt<void>
-			{
-				string error_message;
-				for (auto& group : transactions)
-				{
-					for (auto& transaction : group.second)
-					{
-						auto resolved_transaction = resolve_block_transaction(executor->receipt, transaction->as_hash());
-						if (!resolved_transaction)
-							continue;
-
-						auto& target_transaction = *resolved_transaction;
-						auto status = coawait(ledger::executor_context::dispatch_tx(dispatcher, &target_transaction));
-						if (!status && (status.error().is_retry() || status.error().is_shutdown()))
-							coreturn status;
-						else if (!status)
-							error_message += "sub-transaction " + algorithm::encoding::encode_0xhex256(transaction->as_hash()) + " dispatch failed: " + status.error().message() + "\n";
-					}
-				}
-				if (error_message.empty())
-					coreturn expectation::met;
-
-				error_message.pop_back();
-				coreturn remote_exception(std::move(error_message));
-			});
 		}
 		bool rollup::store_body(format::wo_stream* stream) const
 		{
@@ -864,18 +835,6 @@ namespace tangent
 
 			return import_transaction(transaction);
 		}
-		bool rollup::is_dispatchable() const
-		{
-			for (auto& group : transactions)
-			{
-				for (auto& transaction : group.second)
-				{
-					if (transaction->is_dispatchable())
-						return true;
-				}
-			}
-			return false;
-		}
 		expects_lr<ledger::block_transaction> rollup::resolve_block_transaction(const ledger::transaction_receipt& receipt, const uint256_t& transaction_hash) const
 		{
 			if (!transaction_hash)
@@ -1002,6 +961,699 @@ namespace tangent
 			return "rollup";
 		}
 
+		expects_lr<void> route::validate(uint64_t block_number) const
+		{
+			if (!algorithm::asset::token_of(asset).empty())
+				return layer_exception("invalid asset");
+
+			if (!bridge_hash)
+				return layer_exception("invalid bridge hash");
+
+			return ledger::commitment_message::validate(block_number);
+		}
+		expects_lr<void> route::execute(ledger::executor_context* executor) const
+		{
+			auto validation = ledger::commitment_message::execute(executor);
+			if (!validation)
+				return validation.error();
+
+			auto* params = superchain::bridge::get()->get_network_params(asset);
+			if (!params)
+				return layer_exception("invalid operation");
+
+			bool routing_address_application = !routing_address.empty();
+			if (routing_address_application)
+			{
+				auto collision = executor->get_witness_account_tagged(asset, routing_address, 0);
+				if (collision)
+					return layer_exception("routing account address " + routing_address + " taken");
+
+				auto status = executor->apply_witness_routing_account(executor->receipt.from, asset, { { (uint8_t)1, string(routing_address) } });
+				if (!status)
+					return status.error();
+			}
+
+			auto bridge = executor->get_bridge_instance(asset, bridge_hash);
+			if (!bridge)
+				return bridge.error();
+
+			switch (params->routing)
+			{
+				case superchain::routing_policy::account:
+				{
+					if (!bridge->account_nonce)
+						break;
+
+					return routing_address_application ? expects_lr<void>(expectation::met) : expects_lr<void>(layer_exception("only one initiator bridge account may exist"));
+				}
+				case superchain::routing_policy::memo:
+				{
+					if (!bridge->account_nonce)
+						break;
+
+					auto initiator_account = executor->get_bridge_account(bridge->ref.owner, asset, bridge->ref.hash);
+					if (!initiator_account || initiator_account->public_key.empty() || initiator_account->group.empty() || initiator_account->ref.owner != bridge->ref.owner || initiator_account->ref.asset != bridge->ref.asset || initiator_account->ref.hash != bridge->ref.hash)
+						return layer_exception("initiator bridge account required");
+
+					size_t offset = 0, count = 32;
+					while (true)
+					{
+						auto duplicates = executor->get_witness_accounts_by_purpose(executor->receipt.from, states::witness_account::account_type::bridge, 0, count);
+						if (!duplicates)
+							break;
+
+						auto it = std::find_if(duplicates->begin(), duplicates->end(), [&](const states::witness_account& account) { return account.ref.owner == executor->receipt.from && account.ref.asset == asset && account.ref.hash == bridge_hash && account.active; });
+						if (it != duplicates->end())
+							return routing_address_application ? expects_lr<void>(expectation::met) : expects_lr<void>(layer_exception("bridge account already bound to this account"));
+
+						offset += duplicates->size();
+						if (duplicates->size() != count)
+							break;
+					}
+
+					auto* chain = superchain::bridge::get()->get_network(asset);
+					if (!chain)
+						return layer_exception("invalid operation");
+
+					auto encoded_public_key = chain->encode_public_key(std::string_view((char*)initiator_account->public_key.data(), initiator_account->public_key.size()));
+					if (!encoded_public_key)
+						return encoded_public_key.error();
+
+					auto addresses = chain->to_addresses(*encoded_public_key);
+					if (!addresses)
+						return addresses.error();
+
+					for (auto& address : *addresses)
+						address.second = superchain::address_util::encode_tag_address(address.second, to_string(bridge->account_nonce));
+
+					auto policy_status = executor->apply_bridge_instance_account(asset, bridge_hash, executor->receipt.from);
+					if (!policy_status)
+						return policy_status.error();
+
+					auto witness_account_status = executor->apply_witness_bridge_account(executor->receipt.from, asset, bridge_hash, *addresses);
+					if (!witness_account_status)
+						return witness_account_status.error();
+
+					return expectation::met;
+				}
+				case superchain::routing_policy::utxo:
+				{
+					auto duplicate = executor->get_bridge_account(executor->receipt.from, asset, bridge_hash);
+					if (!duplicate)
+						break;
+
+					return routing_address_application ? expects_lr<void>(expectation::met) : expects_lr<void>(layer_exception("bridge account already bound to this account"));
+				}
+				default:
+					return layer_exception("invalid operation");
+			}
+
+			btree_set<algorithm::pubkeyhash_t> exclusion;
+			auto random = executor->get_random((uint8_t)ledger::seed_byte::attester);
+			auto attesters = executor->calculate_attesters(random, asset, 1, decimal::nan(), exclusion);
+			if (!attesters)
+				return attesters.error();
+
+			exclusion.insert(attesters->front().owner);
+			auto event = executor->emit_event<route>({ format::variable(attesters->front().owner.view()) });
+			if (!event)
+				return event;
+
+			random = executor->get_random((uint8_t)ledger::seed_byte::participant);
+			auto participants = executor->calculate_participants(random, bridge->security_level, exclusion);
+			if (!participants)
+				return participants.error();
+
+			for (auto& target : *participants)
+			{
+				auto event = executor->emit_event<route>({ format::variable(target.owner.view()) });
+				if (!event)
+					return event;
+			}
+
+			return expectation::met;
+		}
+		bool route::store_body(format::wo_stream* stream) const
+		{
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			stream->write_integer(bridge_hash);
+			stream->write_string(routing_address);
+			return true;
+		}
+		bool route::load_body(format::ro_stream& stream)
+		{
+			if (!stream.read_integer(stream.read_type(), &bridge_hash))
+				return false;
+
+			if (!stream.read_string(stream.read_type(), &routing_address))
+				return false;
+
+			return true;
+		}
+		bool route::recover_many(const ledger::executor_context*, const ledger::transaction_receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const
+		{
+			auto attester = get_attester(receipt);
+			if (!attester.empty())
+				parties.insert(attester);
+
+			auto participants = get_participants(receipt);
+			parties.insert(participants.begin(), participants.end());
+			return true;
+		}
+		void route::set_routing_address(const std::string_view& new_address)
+		{
+			routing_address = new_address;
+		}
+		void route::set_bridge_hash(const uint256_t& new_bridge_hash)
+		{
+			bridge_hash = new_bridge_hash;
+		}
+		algorithm::pubkeyhash_t route::get_attester(const ledger::transaction_receipt& receipt) const
+		{
+			auto* event = receipt.find_event<route>();
+			if (event != nullptr && !event->empty() && event->front().as_string().size() == sizeof(algorithm::pubkeyhash_t))
+				return algorithm::pubkeyhash_t(event->front().as_blob());
+
+			return algorithm::pubkeyhash_t();
+		}
+		btree_set<algorithm::pubkeyhash_t> route::get_participants(const ledger::transaction_receipt& receipt) const
+		{
+			btree_set<algorithm::pubkeyhash_t> result;
+			auto events = receipt.find_events<route>();
+			for (size_t i = 1; i < events.size(); i++)
+			{
+				auto& event = events[i];
+				if (!event->empty() && event->front().as_string().size() == sizeof(algorithm::pubkeyhash_t))
+					result.insert(algorithm::pubkeyhash_t(event->front().as_blob()));
+			}
+			return result;
+		}
+		format::tree route::as_tree() const
+		{
+			format::tree data = ledger::commitment_message::as_tree();
+			data.set("bridge_hash", algorithm::encoding::serialize_uint256(bridge_hash));
+			data.set("routing_address", format::variable(routing_address));
+			return data;
+		}
+		uint32_t route::as_delegation_type() const
+		{
+			return delegations::bind_delegation::as_instance_type();
+		}
+		uint32_t route::as_type() const
+		{
+			return as_instance_type();
+		}
+		std::string_view route::as_typename() const
+		{
+			return as_instance_typename();
+		}
+		uint32_t route::as_instance_type()
+		{
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
+		}
+		std::string_view route::as_instance_typename()
+		{
+			return "route";
+		}
+		void route::challenge(const uint256_t& route_hash, uint8_t message_hash[32])
+		{
+			VI_ASSERT(message_hash != nullptr, "message hash should be set");
+			uint8_t transaction_hash[32];
+			route_hash.encode(transaction_hash);
+			algorithm::hashing::hash256(transaction_hash, sizeof(transaction_hash), message_hash);
+		}
+
+		expects_lr<void> bind::validate(uint64_t block_number) const
+		{
+			if (protocol::now().on(fork_id::veritas, block_number))
+				return layer_exception("operation not permitted");
+
+			if (!algorithm::asset::token_of(asset).empty())
+				return layer_exception("invalid asset");
+
+			if (!route_hash)
+				return layer_exception("invalid route hash");
+
+			if (group_public_key.empty())
+				return layer_exception("invalid group public key");
+
+			if (group_signature.empty())
+				return layer_exception("invalid group signature");
+
+			auto* chain = superchain::bridge::get()->get_network_params(asset);
+			if (!chain)
+				return layer_exception("invalid operation");
+
+			auto compositor = algorithm::composition::make_compositor(chain->composition);
+			if (!compositor)
+				return compositor.error();
+
+			uint8_t message_hash[32];
+			route::challenge(route_hash, message_hash);
+
+			auto& compositor_ptr = *compositor;
+			auto status = compositor_ptr->verify_signature(message_hash, sizeof(message_hash), group_signature, group_public_key);
+			if (!status)
+				return status;
+
+			return ledger::commitment_message::validate(block_number);
+		}
+		expects_lr<void> bind::execute(ledger::executor_context* executor) const
+		{
+			auto validation = ledger::commitment_message::execute(executor);
+			if (!validation)
+				return validation.error();
+
+			auto event = executor->apply_witness_event(route_hash, executor->receipt.transaction_hash);
+			if (!event)
+				return event.error();
+
+			auto parent = executor->get_block_transaction<route>(route_hash);
+			if (!parent)
+				return parent.error();
+
+			auto* parent_transaction = (route*)*parent->transaction;
+			auto* offchain = superchain::bridge::get();
+			auto* chain = offchain->get_network(asset);
+			auto* params = offchain->get_network_params(asset);
+			if (!chain || !params)
+				return layer_exception("invalid operation");
+
+			auto duplicate = executor->get_bridge_account(parent->receipt.from, asset, parent_transaction->bridge_hash);
+			if (duplicate)
+				return layer_exception("bridge account already exists");
+
+			auto encoded_public_key = chain->encode_public_key(std::string_view((char*)group_public_key.data(), group_public_key.size()));
+			if (!encoded_public_key)
+				return encoded_public_key.error();
+
+			auto addresses = chain->to_addresses(*encoded_public_key);
+			if (!addresses)
+				return addresses.error();
+
+			auto bridge = executor->get_bridge_instance(asset, parent_transaction->bridge_hash);
+			if (!bridge)
+				return bridge.error();
+
+			switch (params->routing)
+			{
+				case superchain::routing_policy::account:
+				case superchain::routing_policy::memo:
+				{
+					if (bridge->account_nonce > 0)
+						return layer_exception("too many accounts for a bridge");
+
+					if (params->routing == superchain::routing_policy::account)
+						break;
+
+					for (auto& address : *addresses)
+						address.second = superchain::address_util::encode_tag_address(address.second, to_string(bridge->account_nonce));
+					break;
+				}
+				default:
+					break;
+			}
+
+			auto ref = states::bridge_ref();
+			ref.owner = parent->receipt.from;
+			ref.asset = asset;
+			ref.hash = parent_transaction->bridge_hash;
+
+			auto policy_status = executor->apply_bridge_instance_account(ref.asset, ref.hash, ref.owner);
+			if (!policy_status)
+				return policy_status.error();
+
+			auto participants = parent_transaction->get_participants(parent->receipt);
+			for (auto& participant : participants)
+			{
+				auto status = executor->apply_validator_participation_ref(participant, ref, true);
+				if (!status)
+					return status.error();
+			}
+
+			auto bridge_account_status = executor->apply_bridge_account(ref.owner, ref.asset, ref.hash, group_public_key, std::move(participants));
+			if (!bridge_account_status)
+				return bridge_account_status.error();
+
+			auto witness_account_status = executor->apply_witness_bridge_account(ref.owner, ref.asset, ref.hash, *addresses);
+			if (!witness_account_status)
+				return witness_account_status.error();
+
+			auto link_asset = asset;
+			auto link_base = superchain::wallet_link(parent_transaction->bridge_hash, *encoded_public_key, string());
+			executor->defer_side_effect([link_asset, link_base = std::move(link_base), addresses = std::move(addresses)]() mutable
+			{
+				auto* offchain = superchain::bridge::get();
+				for (auto& [type, address] : *addresses)
+				{
+					auto [base_address, tag] = superchain::address_util::decode_tag_address(address);
+					if (base_address != address)
+						offchain->enable_link(link_asset, superchain::wallet_link(link_base.hash, link_base.public_key, base_address)).report("failed to enable the off-chain link");
+
+					offchain->enable_link(link_asset, superchain::wallet_link(link_base.hash, link_base.public_key, address)).report("failed to enable the off-chain link");
+				}
+			});
+			return expectation::met;
+		}
+		void bind::set_witness(const uint256_t& new_route_hash, algorithm::composition::cpubkey_t&& new_group_public_key, algorithm::composition::chashsig_t&& new_group_signature)
+		{
+			route_hash = new_route_hash;
+			group_public_key = std::move(new_group_public_key);
+			group_signature = std::move(new_group_signature);
+		}
+		bool bind::store_body(format::wo_stream* stream) const
+		{
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			stream->write_string(std::string_view((char*)group_public_key.data(), group_public_key.size()));
+			stream->write_string(std::string_view((char*)group_signature.data(), group_signature.size()));
+			stream->write_integer(route_hash);
+			return true;
+		}
+		bool bind::load_body(format::ro_stream& stream)
+		{
+			string group_public_key_assembly;
+			if (!stream.read_string(stream.read_type(), &group_public_key_assembly))
+				return false;
+
+			string group_signature_assembly;
+			if (!stream.read_string(stream.read_type(), &group_signature_assembly))
+				return false;
+
+			if (!stream.read_integer(stream.read_type(), &route_hash))
+				return false;
+
+			group_public_key.resize(group_public_key_assembly.size());
+			group_signature.resize(group_signature_assembly.size());
+			memcpy(group_public_key.data(), group_public_key_assembly.data(), group_public_key_assembly.size());
+			memcpy(group_signature.data(), group_signature_assembly.data(), group_signature_assembly.size());
+			return true;
+		}
+		bool bind::recover_many(const ledger::executor_context* executor, const ledger::transaction_receipt&, btree_set<algorithm::pubkeyhash_t>& parties) const
+		{
+			auto parent = executor->get_block_transaction<route>(route_hash);
+			if (parent)
+				parties.insert(algorithm::pubkeyhash_t(parent->receipt.from));
+
+			return true;
+		}
+		format::tree bind::as_tree() const
+		{
+			format::tree data = ledger::commitment_message::as_tree();
+			data.set("route_hash", route_hash > 0 ? format::variable(algorithm::encoding::encode_0xhex256(route_hash)) : format::variable());
+			data.set("group_public_key", format::variable(format::util::encode_0xhex(std::string_view((char*)group_public_key.data(), group_public_key.size()))));
+			data.set("group_signature", format::variable(format::util::encode_0xhex(std::string_view((char*)group_signature.data(), group_signature.size()))));
+			return data;
+		}
+		uint32_t bind::as_type() const
+		{
+			return as_instance_type();
+		}
+		std::string_view bind::as_typename() const
+		{
+			return as_instance_typename();
+		}
+		uint32_t bind::as_instance_type()
+		{
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
+		}
+		std::string_view bind::as_instance_typename()
+		{
+			return "bind";
+		}
+
+		expects_lr<void> imbind::validate(uint64_t block_number) const
+		{
+			if (!algorithm::asset::token_of(asset).empty())
+				return layer_exception("invalid asset");
+
+			if (!route_hash)
+				return layer_exception("invalid route hash");
+
+			if (proof.imperfect_key.empty())
+				return layer_exception("invalid imperfect key");
+
+			if (proof.key_commitment.empty())
+				return layer_exception("invalid key commitment");
+
+			if (proof.correction_commitment.empty())
+				return layer_exception("invalid correction commitment");
+
+			if (proof.correction_key.empty())
+				return layer_exception("invalid correction key");
+
+			auto* chain = superchain::bridge::get()->get_network_params(asset);
+			if (!chain)
+				return layer_exception("invalid operation");
+
+			auto compositor = algorithm::composition::make_compositor(chain->composition);
+			if (!compositor)
+				return compositor.error();
+
+			auto& compositor_ptr = *compositor;
+			auto group_public_key = to_group_public_key(*compositor_ptr);
+			if (!group_public_key)
+				return group_public_key.error();
+
+			uint8_t message_hash[32];
+			route::challenge(route_hash, message_hash);
+
+			auto status = compositor_ptr->verify_signature(message_hash, sizeof(message_hash), proof.key_commitment, *group_public_key);
+			if (!status)
+				return status;
+
+			return ledger::commitment_message::validate(block_number);
+		}
+		expects_lr<void> imbind::execute(ledger::executor_context* executor) const
+		{
+			auto validation = ledger::commitment_message::execute(executor);
+			if (!validation)
+				return validation.error();
+
+			auto event = executor->apply_witness_event(route_hash, executor->receipt.transaction_hash);
+			if (!event)
+				return event.error();
+
+			auto parent = executor->get_block_transaction<route>(route_hash);
+			if (!parent)
+				return parent.error();
+
+			auto* parent_transaction = (route*)*parent->transaction;
+			auto* offchain = superchain::bridge::get();
+			auto* chain = offchain->get_network(asset);
+			auto* params = offchain->get_network_params(asset);
+			if (!chain || !params)
+				return layer_exception("invalid operation");
+
+			if (executor->receipt.from != parent_transaction->get_attester(parent->receipt))
+				return layer_exception("invalid transaction origin");
+
+			auto duplicate = executor->get_bridge_account(parent->receipt.from, asset, parent_transaction->bridge_hash);
+			if (duplicate)
+				return layer_exception("bridge account already exists");
+
+			auto group_public_key = to_group_public_key();
+			if (!group_public_key)
+				return group_public_key.error();
+
+			uint8_t message_hash[32];
+			algorithm::pubkeyhash_t participant;
+			route::challenge(route_hash, message_hash);
+			if (!algorithm::signing::recover_hash(delegations::bind_delegation::key_challenge_hash(message_hash, proof.correction_key, *group_public_key), participant, proof.correction_commitment))
+				return layer_exception("invalid correction key commitment");
+
+			auto group = parent_transaction->get_participants(parent->receipt);
+			auto chosen = group.begin();
+			std::advance(chosen, (size_t)(algorithm::hashing::hash256i(message_hash, sizeof(message_hash)) % uint256_t(group.size())));
+			if (participant != *chosen)
+				return layer_exception("invalid correction key provider");
+
+			auto encoded_public_key = chain->encode_public_key(std::string_view((char*)group_public_key->data(), group_public_key->size()));
+			if (!encoded_public_key)
+				return encoded_public_key.error();
+
+			auto addresses = chain->to_addresses(*encoded_public_key);
+			if (!addresses)
+				return addresses.error();
+
+			auto bridge = executor->get_bridge_instance(asset, parent_transaction->bridge_hash);
+			if (!bridge)
+				return bridge.error();
+
+			switch (params->routing)
+			{
+				case superchain::routing_policy::account:
+				case superchain::routing_policy::memo:
+				{
+					if (bridge->account_nonce > 0)
+						return layer_exception("too many accounts for a bridge");
+
+					if (params->routing == superchain::routing_policy::account)
+						break;
+
+					for (auto& address : *addresses)
+						address.second = superchain::address_util::encode_tag_address(address.second, to_string(bridge->account_nonce));
+					break;
+				}
+				default:
+					break;
+			}
+
+			auto ref = states::bridge_ref();
+			ref.owner = parent->receipt.from;
+			ref.asset = asset;
+			ref.hash = parent_transaction->bridge_hash;
+
+			auto policy_status = executor->apply_bridge_instance_account(ref.asset, ref.hash, ref.owner);
+			if (!policy_status)
+				return policy_status.error();
+
+			for (auto& participant : group)
+			{
+				auto status = executor->apply_validator_participation_ref(participant, ref, true);
+				if (!status)
+					return status.error();
+			}
+
+			auto bridge_account_status = executor->apply_bridge_account(ref.owner, ref.asset, ref.hash, *group_public_key, std::move(group));
+			if (!bridge_account_status)
+				return bridge_account_status.error();
+
+			auto witness_account_status = executor->apply_witness_bridge_account(ref.owner, ref.asset, ref.hash, *addresses);
+			if (!witness_account_status)
+				return witness_account_status.error();
+
+			auto link_asset = asset;
+			auto link_base = superchain::wallet_link(parent_transaction->bridge_hash, *encoded_public_key, string());
+			executor->defer_side_effect([link_asset, link_base = std::move(link_base), addresses = std::move(addresses)]() mutable
+			{
+				auto* offchain = superchain::bridge::get();
+				for (auto& [type, address] : *addresses)
+				{
+					auto [base_address, tag] = superchain::address_util::decode_tag_address(address);
+					if (base_address != address)
+						offchain->enable_link(link_asset, superchain::wallet_link(link_base.hash, link_base.public_key, base_address)).report("failed to enable the off-chain link");
+
+					offchain->enable_link(link_asset, superchain::wallet_link(link_base.hash, link_base.public_key, address)).report("failed to enable the off-chain link");
+				}
+			});
+			return expectation::met;
+		}
+		void imbind::set_proof(const uint256_t& new_route_hash, const algorithm::hashsig_t& new_correction_commitment, algorithm::composition::cpubkey_t&& new_correction_key, algorithm::composition::cpubkey_t&& new_imperfect_key, algorithm::composition::chashsig_t&& new_key_commitment)
+		{
+			route_hash = new_route_hash;
+			proof.correction_commitment = new_correction_commitment;
+			proof.correction_key = std::move(new_correction_key);
+			proof.imperfect_key = std::move(new_imperfect_key);
+			proof.key_commitment = std::move(new_key_commitment);
+		}
+		bool imbind::store_body(format::wo_stream* stream) const
+		{
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			stream->write_integer(route_hash);
+			stream->write_string(proof.correction_commitment.optimized_view());
+			stream->write_string(std::string_view((char*)proof.correction_key.data(), proof.correction_key.size()));
+			stream->write_string(std::string_view((char*)proof.imperfect_key.data(), proof.imperfect_key.size()));
+			stream->write_string(std::string_view((char*)proof.key_commitment.data(), proof.key_commitment.size()));
+			return true;
+		}
+		bool imbind::load_body(format::ro_stream& stream)
+		{
+			if (!stream.read_integer(stream.read_type(), &route_hash))
+				return false;
+
+			string correction_commitment_assembly;
+			if (!stream.read_string(stream.read_type(), &correction_commitment_assembly) || !algorithm::encoding::decode_bytes(correction_commitment_assembly, proof.correction_commitment.blob, sizeof(proof.correction_commitment)))
+				return false;
+
+			string correction_key_assembly;
+			if (!stream.read_string(stream.read_type(), &correction_key_assembly))
+				return false;
+
+			string imperfect_key_assembly;
+			if (!stream.read_string(stream.read_type(), &imperfect_key_assembly))
+				return false;
+
+			string key_commitment_assembly;
+			if (!stream.read_string(stream.read_type(), &key_commitment_assembly))
+				return false;
+
+			proof.correction_key.resize(correction_key_assembly.size());
+			proof.imperfect_key.resize(imperfect_key_assembly.size());
+			proof.key_commitment.resize(key_commitment_assembly.size());
+			memcpy(proof.correction_key.data(), correction_key_assembly.data(), correction_key_assembly.size());
+			memcpy(proof.imperfect_key.data(), imperfect_key_assembly.data(), imperfect_key_assembly.size());
+			memcpy(proof.key_commitment.data(), key_commitment_assembly.data(), key_commitment_assembly.size());
+			return true;
+		}
+		bool imbind::recover_many(const ledger::executor_context* executor, const ledger::transaction_receipt&, btree_set<algorithm::pubkeyhash_t>& parties) const
+		{
+			auto parent = executor->get_block_transaction<route>(route_hash);
+			if (parent)
+				parties.insert(algorithm::pubkeyhash_t(parent->receipt.from));
+
+			return true;
+		}
+		expects_lr<algorithm::composition::cpubkey_t> imbind::to_group_public_key(algorithm::composition::compositor* compositor) const
+		{
+			return to_group_public_key(asset, proof, compositor);
+		}
+		expects_lr<algorithm::composition::cpubkey_t> imbind::to_group_public_key(const algorithm::asset_id& asset, const binding_proof& target, algorithm::composition::compositor* compositor)
+		{
+			auto* offchain = superchain::bridge::get();
+			auto* params = offchain->get_network_params(asset);
+			if (!params)
+				return layer_exception("invalid operation");
+
+			algorithm::composition::cpubkey_t result = target.imperfect_key;
+			if (!compositor)
+			{
+				auto temp_compositor = algorithm::composition::make_compositor(params->composition);
+				if (!temp_compositor)
+					return temp_compositor.error();
+
+				auto finalization = (*temp_compositor)->combine_public_keys(&target.correction_key, &result);
+				if (!finalization)
+					return finalization.error();
+			}
+			else
+			{
+				auto finalization = compositor->combine_public_keys(&target.correction_key, &result);
+				if (!finalization)
+					return finalization.error();
+			}
+
+			return expects_lr<algorithm::composition::cpubkey_t>(std::move(result));
+		}
+		format::tree imbind::as_tree() const
+		{
+			format::tree data = ledger::commitment_message::as_tree();
+			data.set("route_hash", route_hash > 0 ? format::variable(algorithm::encoding::encode_0xhex256(route_hash)) : format::variable());
+			data.set("correction_commitment", proof.correction_commitment.empty() ? format::variable() : format::variable(format::util::encode_0xhex(proof.correction_commitment.view())));
+			data.set("correction_key", proof.correction_key.empty() ? format::variable() : format::variable(format::util::encode_0xhex(std::string_view((char*)proof.correction_key.data(), proof.correction_key.size()))));
+			data.set("imperfect_key", proof.imperfect_key.empty() ? format::variable() : format::variable(format::util::encode_0xhex(std::string_view((char*)proof.imperfect_key.data(), proof.imperfect_key.size()))));
+			data.set("key_commitment", proof.key_commitment.empty() ? format::variable() : format::variable(format::util::encode_0xhex(std::string_view((char*)proof.key_commitment.data(), proof.key_commitment.size()))));
+			return data;
+		}
+		uint32_t imbind::as_type() const
+		{
+			return as_instance_type();
+		}
+		std::string_view imbind::as_typename() const
+		{
+			return as_instance_typename();
+		}
+		uint32_t imbind::as_instance_type()
+		{
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
+		}
+		std::string_view imbind::as_instance_typename()
+		{
+			return "imbind";
+		}
+
 		expects_lr<void> setup::validate(uint64_t block_number) const
 		{
 			if (migrations.empty() && attestations.empty() && bridges.empty() && !participation && !production)
@@ -1063,8 +1715,8 @@ namespace tangent
 					return layer_exception("broadcast transaction not found");
 
 				auto* parent_transaction = (broadcast*)*parent->transaction;
-				if (!parent_transaction->eligible_as_migration_reason())
-					return layer_exception("broadcast transaction not applicable");
+				if (!parent_transaction->eligible_migration_target(participant))
+					return layer_exception("migration participant not applicable");
 
 				auto origin = executor->get_block_transaction<withdraw>(parent_transaction->withdraw_hash, true);
 				if (!origin)
@@ -1125,7 +1777,7 @@ namespace tangent
 
 						has_any = true;
 						exclusion.insert(account->group.begin(), account->group.end());
-						auto ref_hash = ledger::dispatcher_context::secret_entropy::ref_hash(ref.owner, ref.asset, ref.hash);
+						auto ref_hash = ledger::distribution_key::ref_hash(ref.owner, ref.asset, ref.hash);
 						if (accounts.find(ref_hash) != accounts.end())
 							return layer_exception("migration requires migration to multiple new participants");
 
@@ -1156,16 +1808,13 @@ namespace tangent
 				if (!algorithm::asset::token_of(bridge_asset).empty())
 					continue;
 
-				auto distribution = executor->calculate_random(executor->receipt.transaction_hash);
-				if (!distribution)
-					return distribution.error();
-
 				auto cost = (uint64_t)ledger::gas_cost::write_tx_byte;
+				auto bridge_hash = executor->get_random(executor->receipt.transaction_hash).derive();
 				auto payment = executor->burn_gas(cost * cost * cost * (1 + (protocol::now().policy.participation.max_per_account - setup.security_level)));
 				if (!payment)
 					return payment.error();
 
-				auto instance = executor->apply_bridge_instance(bridge_asset, distribution->derive(), setup.security_level, setup.fee_rate);
+				auto instance = executor->apply_bridge_instance(bridge_asset, bridge_hash, setup.security_level, setup.fee_rate);
 				if (!instance)
 					return instance.error();
 			}
@@ -1198,7 +1847,7 @@ namespace tangent
 
 							requires_self_migration = true;
 							exclusion.insert(account->group.begin(), account->group.end());
-							auto ref_hash = ledger::dispatcher_context::secret_entropy::ref_hash(ref.owner, ref.asset, ref.hash);
+							auto ref_hash = ledger::distribution_key::ref_hash(ref.owner, ref.asset, ref.hash);
 							if (accounts.find(ref_hash) != accounts.end())
 								return layer_exception("migration requires migration to multiple new participants");
 
@@ -1234,7 +1883,8 @@ namespace tangent
 			if (exclusion.empty())
 				return expectation::met;
 
-			auto committee = executor->calculate_participants(1, exclusion);
+			auto random = executor->get_random((uint8_t)ledger::seed_byte::participant);
+			auto committee = executor->calculate_participants(random, 1, exclusion);
 			if (!committee)
 				return committee.error();
 
@@ -1243,129 +1893,6 @@ namespace tangent
 				return event;
 
 			return expectation::met;
-		}
-		expects_promise_rt<void> setup::dispatch(const ledger::executor_context* executor, ledger::dispatcher_context* dispatcher) const
-		{
-			auto* runner_wallet = dispatcher->get_runner_wallet(executor->receipt.from);
-			if (!runner_wallet)
-				return expects_promise_rt<void>(expectation::met);
-
-			bool requires_new_participant = false;
-			auto new_participant = get_new_participant(executor->receipt, &requires_new_participant);
-			if (!requires_new_participant)
-				return expects_promise_rt<void>(expectation::met);
-			else if (new_participant.empty() || executor->get_witness_event(executor->receipt.transaction_hash))
-				return expects_promise_rt<void>(remote_exception("invalid new participant"));
-
-			return coasync<expects_rt<void>>([this, executor, dispatcher, runner_wallet, new_participant]() -> expects_promise_rt<void>
-			{
-				auto migrations = expects_lr<vector<migration_ref>>(layer_exception());
-				auto cache = dispatcher->pull_cache(executor);
-				auto aggregation_state = ledger::dispatcher_context::entropy_aggregation_state();
-				if (!aggregation_state.load_message(cache))
-				{
-					migrations = get_migration_refs(executor, executor->receipt);
-					if (!migrations)
-						coreturn remote_exception(std::move(migrations.error().message()));
-					else if (migrations->empty())
-						coreturn remote_exception("must have participations to migrate");
-
-					for (auto& migration : *migrations)
-					{
-						if (migration.must_have_locally)
-							continue;
-
-						auto ref_hash = ledger::dispatcher_context::secret_entropy::ref_hash(migration.account.ref.owner, migration.account.ref.asset, migration.account.ref.hash);
-						migration.account.group.erase(migration.old_participant);
-						aggregation_state.participants.insert(migration.account.group.begin(), migration.account.group.end());
-						aggregation_state.encrypted_shares[ref_hash] = btree_map<algorithm::pubkeyhash_t, string>();
-					}
-
-					if (aggregation_state.participants.find(new_participant) != aggregation_state.participants.end())
-						coreturn remote_exception("new participant must not be present in account groups that are being migrated");
-				}
-
-				auto required_participants = aggregation_state.participants;
-				required_participants.insert(new_participant);
-
-				auto session = coawait(dispatcher->aggregate_validators(required_participants));
-				if (!session)
-					coreturn session.error();
-
-				aggregation_state.public_key = dispatcher->get_public_key(new_participant);
-				if (aggregation_state.public_key.empty())
-				{
-				postpone:
-					if (++aggregation_state.attempt >= protocol::now().user.consensus.coordination_attempts)
-						coreturn remote_exception("failed to coordinate participants after several retries");
-
-					dispatcher->push_cache(executor, aggregation_state.as_message());
-					coreturn remote_exception::retry_later();
-				}
-
-				btree_set<algorithm::pubkeyhash_t> deferred_participants;
-				while (!aggregation_state.participants.empty())
-				{
-					auto result = coawait(dispatcher->aggregate_entropy_shares(executor, aggregation_state, *aggregation_state.participants.begin(), runner_wallet->public_key_hash));
-					if (!result && (result.error().is_retry() || result.error().is_shutdown()))
-						deferred_participants.insert(*aggregation_state.participants.begin());
-					else if (!result)
-						coreturn result.error();
-
-					aggregation_state.participants.erase(aggregation_state.participants.begin());
-				}
-
-				if (!deferred_participants.empty())
-				{
-					aggregation_state.participants = std::move(deferred_participants);
-					goto postpone;
-				}
-
-				auto tweaked_public_key = aggregation_state.public_key;
-				algorithm::seckey_t tweak;
-				algorithm::signing::derive_secret_key(executor->receipt.transaction_hash, tweak);
-				if (!algorithm::signing::scalar_add_public_key(tweaked_public_key, tweak))
-					coreturn remote_exception("invalid tweaked public key");
-
-				if (!migrations)
-				{
-					migrations = get_migration_refs(executor, executor->receipt);
-					if (!migrations)
-						coreturn remote_exception(std::move(migrations.error().message()));
-				}
-
-				auto recovery_state = ledger::dispatcher_context::entropy_recovery_state();
-				recovery_state.encrypted_shares = aggregation_state.encrypted_shares;
-				for (auto& migration : *migrations)
-				{
-					if (!migration.must_have_locally)
-						continue;
-
-					auto secret = dispatcher->recover_secret_entropy(runner_wallet, migration.account.ref.owner, migration.account.ref.asset, migration.account.ref.hash);
-					if (!secret)
-						coreturn remote_exception(std::move(secret.error().message()));
-
-					uint256_t entropy = algorithm::hashing::hash256i(*crypto::random_bytes(64));
-					auto encrypted_entropy = algorithm::signing::public_encrypt(tweaked_public_key, secret->as_message().data, entropy);
-					if (!encrypted_entropy)
-						coreturn remote_exception("participant entropy encryption failed");
-
-					recovery_state.encrypted_entropies[secret->as_ref_hash()] = std::move(*encrypted_entropy);
-				}
-
-				auto result = coawait(dispatcher->recover_entropy(executor, recovery_state, new_participant, runner_wallet->public_key_hash));
-				if (!result && (result.error().is_retry() || result.error().is_shutdown()))
-					goto postpone;
-				else if (!result)
-					coreturn result.error();
-
-				auto* transaction = memory::init<migrate>();
-				transaction->asset = asset;
-				transaction->setup_hash = executor->receipt.transaction_hash;
-				transaction->proof = recovery_state.proof;
-				dispatcher->emit_transaction(runner_wallet, transaction);
-				coreturn expects_promise_rt<void>(expectation::met);
-			});
 		}
 		bool setup::store_body(format::wo_stream* stream) const
 		{
@@ -1568,10 +2095,6 @@ namespace tangent
 		{
 			migrations.erase(broadcast_hash);
 		}
-		bool setup::is_dispatchable() const
-		{
-			return true;
-		}
 		expects_lr<vector<setup::migration_ref>> setup::get_migration_refs(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt) const
 		{
 			vector<migration_ref> results;
@@ -1606,7 +2129,6 @@ namespace tangent
 						migration_ref migration;
 						migration.account = std::move(*account);
 						migration.old_participant = receipt.from;
-						migration.must_have_locally = true;
 						results.push_back(std::move(migration));
 					}
 
@@ -1655,7 +2177,6 @@ namespace tangent
 						migration_ref migration;
 						migration.account = std::move(*account);
 						migration.old_participant = participant;
-						migration.must_have_locally = false;
 						results.push_back(std::move(migration));
 						has_any = true;
 					}
@@ -1669,14 +2190,12 @@ namespace tangent
 
 			return expects_lr<vector<migration_ref>>(std::move(results));
 		}
-		algorithm::pubkeyhash_t setup::get_new_participant(const ledger::transaction_receipt& receipt, bool* requires_new_participant) const
+		algorithm::pubkeyhash_t setup::get_new_participant(const ledger::transaction_receipt& receipt) const
 		{
 			auto new_participant = algorithm::pubkeyhash_t();
 			auto* event = receipt.find_event<setup>();
 			if (event && event->size() == 2 && event->back().as_string().size() == sizeof(algorithm::pubkeyhash_t))
 				new_participant = algorithm::pubkeyhash_t(event->back().as_blob());
-			if (requires_new_participant != nullptr)
-				*requires_new_participant = event != nullptr;
 			return new_participant;
 		}
 		format::tree setup::as_tree() const
@@ -1720,6 +2239,10 @@ namespace tangent
 				data.set("block_production", production->is_zero() || production->is_positive() ? format::variable(*production) : format::variable(false));
 			return data;
 		}
+		uint32_t setup::as_delegation_type() const
+		{
+			return delegations::rebind_delegation::as_instance_type();
+		}
 		uint32_t setup::as_type() const
 		{
 			return as_instance_type();
@@ -1738,17 +2261,32 @@ namespace tangent
 			return "setup";
 		}
 
-		expects_lr<void> migrate::validate(uint64_t block_number) const
+		expects_lr<void> rebind::validate(uint64_t block_number) const
 		{
 			if (!setup_hash)
 				return layer_exception("invalid setup transaction");
 
-			if (proof.empty())
-				return layer_exception("invalid proof");
+			if (proofs.empty())
+				return layer_exception("invalid proofs");
+
+			for (auto& proof : proofs)
+			{
+				if (proof.imperfect_key.empty())
+					return layer_exception("invalid imperfect key");
+
+				if (proof.key_commitment.empty())
+					return layer_exception("invalid key commitment");
+
+				if (proof.correction_commitment.empty())
+					return layer_exception("invalid correction commitment");
+
+				if (proof.correction_key.empty())
+					return layer_exception("invalid correction key");
+			}
 
 			return ledger::commitment_message::validate(block_number);
 		}
-		expects_lr<void> migrate::execute(ledger::executor_context* executor) const
+		expects_lr<void> rebind::execute(ledger::executor_context* executor) const
 		{
 			auto validation = ledger::commitment_message::execute(executor);
 			if (!validation)
@@ -1766,21 +2304,46 @@ namespace tangent
 			if (parent->receipt.from != executor->receipt.from)
 				return layer_exception("setup transaction not applicable");
 
-			uint8_t transaction_hash_data[32];
-			parent->receipt.transaction_hash.encode(transaction_hash_data);
-
-			auto proof_hash = algorithm::hashing::hash256i(transaction_hash_data, sizeof(transaction_hash_data));
-			algorithm::pubkeyhash_t new_participant_check;
-			algorithm::pubkeyhash_t new_participant = parent_transaction->get_new_participant(parent->receipt);
-			if (!algorithm::signing::recover_hash(proof_hash, new_participant_check, proof) || new_participant != new_participant_check)
-				return layer_exception("new participant proof not valid");
+			auto new_participant = parent_transaction->get_new_participant(parent->receipt);
+			if (new_participant.empty())
+				return layer_exception("setup transaction does not require new participant");
 
 			auto migrations = parent_transaction->get_migration_refs(executor, parent->receipt);
 			if (!migrations)
 				return migrations.error();
 
-			for (auto& migration : *migrations)
+			if (migrations->size() != proofs.size())
+				return layer_exception("invalid proofs size");
+
+			uint8_t message_hash[32];
+			route::challenge(setup_hash, message_hash);
+			for (size_t i = 0; i < migrations->size(); i++)
 			{
+				auto& migration = migrations->at(i);
+				auto& proof = proofs[i];
+				auto* chain = superchain::bridge::get()->get_network_params(migration.account.ref.asset);
+				if (!chain)
+					return layer_exception("invalid operation");
+
+				auto compositor = algorithm::composition::make_compositor(chain->composition);
+				if (!compositor)
+					return compositor.error();
+
+				auto& compositor_ptr = *compositor;
+				auto group_public_key = imbind::to_group_public_key(migration.account.ref.asset, proof, *compositor_ptr);
+				if (!group_public_key)
+					return group_public_key.error();
+
+				auto status = compositor_ptr->verify_signature(message_hash, sizeof(message_hash), proof.key_commitment, *group_public_key);
+				if (!status)
+					return status;
+
+				algorithm::pubkeyhash_t participant;
+				if (!algorithm::signing::recover_hash(delegations::bind_delegation::key_challenge_hash(message_hash, proof.correction_key, *group_public_key), participant, proof.correction_commitment))
+					return layer_exception("invalid correction key commitment");
+				else if (participant != new_participant)
+					return layer_exception("invalid correction key provider");
+
 				auto account = executor->get_bridge_account(migration.account.ref.owner, migration.account.ref.asset, migration.account.ref.hash);
 				if (!account)
 					return account.error();
@@ -1795,632 +2358,112 @@ namespace tangent
 				if (!account)
 					return account.error();
 
-				auto status = executor->apply_validator_participation_ref(migration.old_participant, account->ref, false);
-				if (!status)
-					return status.error();
+				auto old_ref = executor->apply_validator_participation_ref(migration.old_participant, account->ref, false);
+				if (!old_ref)
+					return old_ref.error();
 
-				status = executor->apply_validator_participation_ref(new_participant, account->ref, true);
-				if (!status)
-					return status.error();
+				auto new_ref = executor->apply_validator_participation_ref(new_participant, account->ref, true);
+				if (!new_ref)
+					return new_ref.error();
 			}
 
 			return expectation::met;
 		}
-		bool migrate::store_body(format::wo_stream* stream) const
+		void rebind::add_proof(const uint256_t& new_setup_hash, const algorithm::hashsig_t& new_correction_commitment, algorithm::composition::cpubkey_t&& new_correction_key, algorithm::composition::cpubkey_t&& new_imperfect_key, algorithm::composition::chashsig_t&& new_key_commitment)
+		{
+			setup_hash = new_setup_hash;
+			imbind::binding_proof proof;
+			proof.correction_commitment = new_correction_commitment;
+			proof.correction_key = std::move(new_correction_key);
+			proof.imperfect_key = std::move(new_imperfect_key);
+			proof.key_commitment = std::move(new_key_commitment);
+			proofs.push_back(std::move(proof));
+		}
+		bool rebind::store_body(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_integer(setup_hash);
-			stream->write_string(proof.optimized_view());
+			stream->write_integer((uint16_t)proofs.size());
+			for (auto& proof : proofs)
+			{
+				stream->write_string(proof.correction_commitment.optimized_view());
+				stream->write_string(std::string_view((char*)proof.correction_key.data(), proof.correction_key.size()));
+				stream->write_string(std::string_view((char*)proof.imperfect_key.data(), proof.imperfect_key.size()));
+				stream->write_string(std::string_view((char*)proof.key_commitment.data(), proof.key_commitment.size()));
+			}
 			return true;
 		}
-		bool migrate::load_body(format::ro_stream& stream)
+		bool rebind::load_body(format::ro_stream& stream)
 		{
 			if (!stream.read_integer(stream.read_type(), &setup_hash))
 				return false;
 
-			string proof_assembly;
-			if (!stream.read_string(stream.read_type(), &proof_assembly) || !algorithm::encoding::decode_bytes(proof_assembly, proof.blob, sizeof(proof)))
+			uint16_t proofs_size;
+			if (!stream.read_integer(stream.read_type(), &proofs_size))
 				return false;
+
+			proofs.clear();
+			for (uint16_t i = 0; i < proofs_size; i++)
+			{
+				imbind::binding_proof proof;
+				string correction_commitment_assembly;
+				if (!stream.read_string(stream.read_type(), &correction_commitment_assembly) || !algorithm::encoding::decode_bytes(correction_commitment_assembly, proof.correction_commitment.blob, sizeof(proof.correction_commitment)))
+					return false;
+
+				string correction_key_assembly;
+				if (!stream.read_string(stream.read_type(), &correction_key_assembly))
+					return false;
+
+				string imperfect_key_assembly;
+				if (!stream.read_string(stream.read_type(), &imperfect_key_assembly))
+					return false;
+
+				string key_commitment_assembly;
+				if (!stream.read_string(stream.read_type(), &key_commitment_assembly))
+					return false;
+
+				proof.correction_key.resize(correction_key_assembly.size());
+				proof.imperfect_key.resize(imperfect_key_assembly.size());
+				proof.key_commitment.resize(key_commitment_assembly.size());
+				memcpy(proof.correction_key.data(), correction_key_assembly.data(), correction_key_assembly.size());
+				memcpy(proof.imperfect_key.data(), imperfect_key_assembly.data(), imperfect_key_assembly.size());
+				memcpy(proof.key_commitment.data(), key_commitment_assembly.data(), key_commitment_assembly.size());
+				proofs.push_back(std::move(proof));
+			}
 
 			return true;
 		}
-		format::tree migrate::as_tree() const
+		format::tree rebind::as_tree() const
 		{
 			format::tree data = ledger::commitment_message::as_tree();
 			data.set("setup_hash", format::variable(algorithm::encoding::encode_0xhex256(setup_hash)));
-			data.set("proof", proof.empty() ? format::variable() : format::variable(format::util::encode_0xhex(proof.view())));
+			format::tree* proofs_data = data.set("proofs", format::tree::list());
+			for (auto& proof : proofs)
+			{
+				format::tree* proof_data = proofs_data->push(format::tree::map());
+				proof_data->set("correction_commitment", proof.correction_commitment.empty() ? format::variable() : format::variable(format::util::encode_0xhex(proof.correction_commitment.view())));
+				proof_data->set("correction_key", proof.correction_key.empty() ? format::variable() : format::variable(format::util::encode_0xhex(std::string_view((char*)proof.correction_key.data(), proof.correction_key.size()))));
+				proof_data->set("imperfect_key", proof.imperfect_key.empty() ? format::variable() : format::variable(format::util::encode_0xhex(std::string_view((char*)proof.imperfect_key.data(), proof.imperfect_key.size()))));
+				proof_data->set("key_commitment", proof.key_commitment.empty() ? format::variable() : format::variable(format::util::encode_0xhex(std::string_view((char*)proof.key_commitment.data(), proof.key_commitment.size()))));
+			}
 			return data;
 		}
-		uint32_t migrate::as_type() const
+		uint32_t rebind::as_type() const
 		{
 			return as_instance_type();
 		}
-		std::string_view migrate::as_typename() const
+		std::string_view rebind::as_typename() const
 		{
 			return as_instance_typename();
 		}
-		uint32_t migrate::as_instance_type()
+		uint32_t rebind::as_instance_type()
 		{
 			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
 			return hash;
 		}
-		std::string_view migrate::as_instance_typename()
+		std::string_view rebind::as_instance_typename()
 		{
-			return "migrate";
-		}
-
-		expects_lr<void> route::validate(uint64_t block_number) const
-		{
-			if (!algorithm::asset::token_of(asset).empty())
-				return layer_exception("invalid asset");
-
-			if (!bridge_hash)
-				return layer_exception("invalid bridge hash");
-
-			return ledger::commitment_message::validate(block_number);
-		}
-		expects_lr<void> route::execute(ledger::executor_context* executor) const
-		{
-			auto validation = ledger::commitment_message::execute(executor);
-			if (!validation)
-				return validation.error();
-
-			auto* params = superchain::bridge::get()->get_network_params(asset);
-			if (!params)
-				return layer_exception("invalid operation");
-
-			bool routing_address_application = !routing_address.empty();
-			if (routing_address_application)
-			{
-				auto collision = executor->get_witness_account_tagged(asset, routing_address, 0);
-				if (collision)
-					return layer_exception("routing account address " + routing_address + " taken");
-
-				auto status = executor->apply_witness_routing_account(executor->receipt.from, asset, { { (uint8_t)1, string(routing_address) } });
-				if (!status)
-					return status.error();
-			}
-
-			auto bridge = executor->get_bridge_instance(asset, bridge_hash);
-			if (!bridge)
-				return bridge.error();
-
-			switch (params->routing)
-			{
-				case superchain::routing_policy::account:
-				{
-					if (!bridge->account_nonce)
-						break;
-
-					return routing_address_application ? expects_lr<void>(expectation::met) : expects_lr<void>(layer_exception("only one initiator bridge account may exist"));
-				}
-				case superchain::routing_policy::memo:
-				{
-					if (!bridge->account_nonce)
-						break;
-
-					auto initiator_account = executor->get_bridge_account(bridge->ref.owner, asset, bridge->ref.hash);
-					if (!initiator_account || initiator_account->public_key.empty() || initiator_account->group.empty() || initiator_account->ref.owner != bridge->ref.owner || initiator_account->ref.asset != bridge->ref.asset || initiator_account->ref.hash != bridge->ref.hash)
-						return layer_exception("initiator bridge account required");
-
-					size_t offset = 0, count = 32;
-					while (true)
-					{
-						auto duplicates = executor->get_witness_accounts_by_purpose(executor->receipt.from, states::witness_account::account_type::bridge, 0, count);
-						if (!duplicates)
-							break;
-
-						auto it = std::find_if(duplicates->begin(), duplicates->end(), [&](const states::witness_account& account) { return account.ref.owner == executor->receipt.from && account.ref.asset == asset && account.ref.hash == bridge_hash && account.active; });
-						if (it != duplicates->end())
-							return routing_address_application ? expects_lr<void>(expectation::met) : expects_lr<void>(layer_exception("bridge account already bound to this account"));
-
-						offset += duplicates->size();
-						if (duplicates->size() != count)
-							break;
-					}
-
-					auto* chain = superchain::bridge::get()->get_network(asset);
-					if (!chain)
-						return layer_exception("invalid operation");
-
-					auto encoded_public_key = chain->encode_public_key(std::string_view((char*)initiator_account->public_key.data(), initiator_account->public_key.size()));
-					if (!encoded_public_key)
-						return encoded_public_key.error();
-
-					auto addresses = chain->to_addresses(*encoded_public_key);
-					if (!addresses)
-						return addresses.error();
-
-					for (auto& address : *addresses)
-						address.second = superchain::address_util::encode_tag_address(address.second, to_string(bridge->account_nonce));
-
-					auto policy_status = executor->apply_bridge_instance_account(asset, bridge_hash, executor->receipt.from);
-					if (!policy_status)
-						return policy_status.error();
-
-					auto witness_account_status = executor->apply_witness_bridge_account(executor->receipt.from, asset, bridge_hash, *addresses);
-					if (!witness_account_status)
-						return witness_account_status.error();
-
-					return expectation::met;
-				}
-				case superchain::routing_policy::utxo:
-				{
-					auto duplicate = executor->get_bridge_account(executor->receipt.from, asset, bridge_hash);
-					if (!duplicate)
-						break;
-
-					return routing_address_application ? expects_lr<void>(expectation::met) : expects_lr<void>(layer_exception("bridge account already bound to this account"));
-				}
-				default:
-					return layer_exception("invalid operation");
-			}
-
-			btree_set<algorithm::pubkeyhash_t> exclusion;
-			auto attesters = executor->calculate_attesters(asset, 1, decimal::nan(), exclusion);
-			if (!attesters)
-				return attesters.error();
-
-			exclusion.insert(attesters->front().owner);
-			auto event = executor->emit_event<route>({ format::variable(attesters->front().owner.view()) });
-			if (!event)
-				return event;
-
-			auto participants = executor->calculate_participants(bridge->security_level, exclusion);
-			if (!participants)
-				return participants.error();
-
-			for (auto& target : *participants)
-			{
-				auto event = executor->emit_event<route>({ format::variable(target.owner.view()) });
-				if (!event)
-					return event;
-			}
-
-			return expectation::met;
-		}
-		expects_promise_rt<void> route::dispatch(const ledger::executor_context* executor, ledger::dispatcher_context* dispatcher) const
-		{
-			auto attester = get_attester(executor->receipt);
-			auto* runner_wallet = attester.empty() ? nullptr : dispatcher->get_runner_wallet(attester);
-			if (!runner_wallet)
-				return expects_promise_rt<void>(expectation::met);
-			else if (executor->get_witness_event(executor->receipt.transaction_hash))
-				return expects_promise_rt<void>(expectation::met);
-
-			return coasync<expects_rt<void>>([this, executor, dispatcher, runner_wallet]() -> expects_promise_rt<void>
-			{
-				auto* chain = superchain::bridge::get()->get_network_params(asset);
-				if (!chain)
-					coreturn remote_exception("invalid operation");
-
-				uint8_t message_hash[32];
-				challenge(executor->receipt.transaction_hash, message_hash);
-
-				size_t required_public_keys = 0;
-				auto cache = dispatcher->pull_cache(executor);
-				auto group = get_participants(executor->receipt);
-				auto state = ledger::dispatcher_context::public_state();
-				if (!state.load(cache))
-				{
-					auto compositor = algorithm::composition::make_public_key_compositor(chain->composition, message_hash, sizeof(message_hash), (uint16_t)group.size());
-					if (!compositor)
-						coreturn remote_exception(std::move(compositor.error().message()));
-
-					state.compositor = std::move(*compositor);
-					state.participants = group;
-					state.alg = chain->composition;
-					required_public_keys = state.participants.size();
-				}
-
-				auto session = coawait(dispatcher->aggregate_validators(state.participants));
-				if (!session)
-					coreturn session.error();
-
-				if (required_public_keys > 0)
-				{
-					if (state.participants.size() != required_public_keys)
-					{
-					postpone:
-						if (++state.attempt >= protocol::now().user.consensus.coordination_attempts)
-							coreturn remote_exception("failed to coordinate participants after several retries");
-
-						dispatcher->push_cache(executor, state.as_message());
-						coreturn remote_exception::retry_later();
-					}
-
-					for (auto& participant : state.participants)
-					{
-						auto public_key = dispatcher->get_public_key(participant);
-						if (public_key.empty())
-							goto postpone;
-
-						if (state.encrypted_shares.find(public_key) == state.encrypted_shares.end())
-							state.encrypted_shares[public_key] = btree_map<algorithm::pubkeyhash_t, string>();
-					}
-				}
-
-				bool reset = false;
-				auto chosen = group.begin();
-				auto unavailable = btree_set<algorithm::pubkeyhash_t>();
-				std::advance(chosen, (size_t)(algorithm::hashing::hash256i(message_hash, sizeof(message_hash)) % uint256_t(group.size())));
-				while (!state.distribution)
-				{
-					auto phase = state.compositor->next_phase();
-					if (!reset && (phase == algorithm::composition::phase::any_input_after_reset || phase == algorithm::composition::phase::chosen_input_after_reset))
-					{
-						state.participants = group;
-						reset = true;
-					}
-
-					bool uniform_input = phase == algorithm::composition::phase::any_input_after_reset || phase == algorithm::composition::phase::any_input;
-					bool chosen_input = phase == algorithm::composition::phase::chosen_input_after_reset || phase == algorithm::composition::phase::chosen_input;
-					auto it = (uniform_input ? state.participants.begin() : (chosen_input ? state.participants.find(*chosen) : state.participants.end()));
-					it = (!chosen_input && state.participants.size() > 1 && it != state.participants.end() && it->equals(*chosen) ? ++it : it);
-					if (it == state.participants.end())
-						break;
-
-					auto result = coawait(dispatcher->aggregate_public_key(executor, state, *it, runner_wallet->public_key_hash));
-					if (!result && (result.error().is_retry() || result.error().is_shutdown()))
-					{
-						unavailable.insert(*it);
-						if (chosen_input)
-							goto postpone;
-					}
-					else if (!result)
-						coreturn result.error();
-					else
-						reset = false;
-
-					state.participants.erase(it);
-				}
-
-				state.distribution = unavailable.empty();
-				state.participants = std::move(group);
-				if (!unavailable.empty())
-				{
-					state.participants = std::move(unavailable);
-					goto postpone;
-				}
-
-				algorithm::composition::cpubkey_t aggregated_public_key;
-				auto status = state.compositor->to_public_key(&aggregated_public_key);
-				if (!status)
-					coreturn remote_exception(std::move(status.error().message()));
-
-				algorithm::composition::chashsig_t aggregated_signature;
-				status = state.compositor->to_signature(&aggregated_signature);
-				if (!status)
-					coreturn remote_exception(std::move(status.error().message()));
-
-				auto distribution_state = ledger::dispatcher_context::entropy_distribution_state();
-				while (!state.participants.empty())
-				{
-					auto target = state.encrypted_shares.end();
-					distribution_state.encrypted_shares.clear();
-					for (auto it = state.encrypted_shares.begin(); it != state.encrypted_shares.end(); it++)
-					{
-						algorithm::pubkeyhash_t participant;
-						algorithm::signing::derive_public_key_hash(it->first, participant);
-						if (participant == *state.participants.begin())
-						{
-							distribution_state.encrypted_shares = it->second;
-							target = it;
-							break;
-						}
-					}
-					if (target == state.encrypted_shares.end())
-						coreturn remote_exception("participant requires group shares but none were shared");
-					else if (distribution_state.encrypted_shares.empty())
-						coreturn remote_exception("participant requires group shares but none were found");
-
-					auto result = coawait(dispatcher->distribute_entropy_shares(executor, distribution_state, *state.participants.begin(), runner_wallet->public_key_hash));
-					if (!result && (result.error().is_retry() || result.error().is_shutdown()))
-						unavailable.insert(*state.participants.begin());
-					else if (!result)
-						coreturn result.error();
-
-					state.participants.erase(state.participants.begin());
-				}
-
-				if (!unavailable.empty())
-				{
-					state.participants = std::move(unavailable);
-					goto postpone;
-				}
-
-				auto* transaction = memory::init<bind>();
-				transaction->asset = asset;
-				transaction->set_witness(executor->receipt.transaction_hash, std::move(aggregated_public_key), std::move(aggregated_signature));
-				dispatcher->emit_transaction(runner_wallet, transaction);
-				coreturn expectation::met;
-			});
-		}
-		bool route::store_body(format::wo_stream* stream) const
-		{
-			VI_ASSERT(stream != nullptr, "stream should be set");
-			stream->write_integer(bridge_hash);
-			stream->write_string(routing_address);
-			return true;
-		}
-		bool route::load_body(format::ro_stream& stream)
-		{
-			if (!stream.read_integer(stream.read_type(), &bridge_hash))
-				return false;
-
-			if (!stream.read_string(stream.read_type(), &routing_address))
-				return false;
-
-			return true;
-		}
-		bool route::recover_many(const ledger::executor_context*, const ledger::transaction_receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const
-		{
-			auto attester = get_attester(receipt);
-			if (!attester.empty())
-				parties.insert(attester);
-
-			auto participants = get_participants(receipt);
-			parties.insert(participants.begin(), participants.end());
-			return true;
-		}
-		bool route::is_dispatchable() const
-		{
-			return true;
-		}
-		void route::set_routing_address(const std::string_view& new_address)
-		{
-			routing_address = new_address;
-		}
-		void route::set_bridge_hash(const uint256_t& new_bridge_hash)
-		{
-			bridge_hash = new_bridge_hash;
-		}
-		algorithm::pubkeyhash_t route::get_attester(const ledger::transaction_receipt& receipt) const
-		{
-			auto* event = receipt.find_event<route>();
-			if (event != nullptr && !event->empty() && event->front().as_string().size() == sizeof(algorithm::pubkeyhash_t))
-				return algorithm::pubkeyhash_t(event->front().as_blob());
-
-			return algorithm::pubkeyhash_t();
-		}
-		btree_set<algorithm::pubkeyhash_t> route::get_participants(const ledger::transaction_receipt& receipt) const
-		{
-			btree_set<algorithm::pubkeyhash_t> result;
-			auto events = receipt.find_events<route>();
-			for (size_t i = 1; i < events.size(); i++)
-			{
-				auto& event = events[i];
-				if (!event->empty() && event->front().as_string().size() == sizeof(algorithm::pubkeyhash_t))
-					result.insert(algorithm::pubkeyhash_t(event->front().as_blob()));
-			}
-			return result;
-		}
-		format::tree route::as_tree() const
-		{
-			format::tree data = ledger::commitment_message::as_tree();
-			data.set("bridge_hash", algorithm::encoding::serialize_uint256(bridge_hash));
-			data.set("routing_address", format::variable(routing_address));
-			return data;
-		}
-		uint32_t route::as_type() const
-		{
-			return as_instance_type();
-		}
-		std::string_view route::as_typename() const
-		{
-			return as_instance_typename();
-		}
-		uint32_t route::as_instance_type()
-		{
-			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
-			return hash;
-		}
-		std::string_view route::as_instance_typename()
-		{
-			return "route";
-		}
-		void route::challenge(const uint256_t& route_hash, uint8_t message_hash[32])
-		{
-			VI_ASSERT(message_hash != nullptr, "message hash should be set");
-			uint8_t transaction_hash[32];
-			route_hash.encode(transaction_hash);
-			algorithm::hashing::hash256(transaction_hash, sizeof(transaction_hash), message_hash);
-		}
-
-		expects_lr<void> bind::validate(uint64_t block_number) const
-		{
-			if (!algorithm::asset::token_of(asset).empty())
-				return layer_exception("invalid asset");
-
-			if (!route_hash)
-				return layer_exception("invalid route hash");
-
-			if (group_public_key.empty())
-				return layer_exception("invalid group public key");
-
-			if (group_signature.empty())
-				return layer_exception("invalid group signature");
-
-			auto* chain = superchain::bridge::get()->get_network_params(asset);
-			if (!chain)
-				return layer_exception("invalid operation");
-
-			auto compositor = algorithm::composition::make_compositor(chain->composition);
-			if (!compositor)
-				return compositor.error();
-
-			uint8_t message_hash[32];
-			route::challenge(route_hash, message_hash);
-
-			auto& compositor_ptr = *compositor;
-			auto status = compositor_ptr->verify_signature(message_hash, sizeof(message_hash), group_signature, group_public_key);
-			if (!status)
-				return status;
-
-			return ledger::commitment_message::validate(block_number);
-		}
-		expects_lr<void> bind::execute(ledger::executor_context* executor) const
-		{
-			auto validation = ledger::commitment_message::execute(executor);
-			if (!validation)
-				return validation.error();
-
-			auto event = executor->apply_witness_event(route_hash, executor->receipt.transaction_hash);
-			if (!event)
-				return event.error();
-
-			auto parent = executor->get_block_transaction<route>(route_hash);
-			if (!parent)
-				return parent.error();
-
-			auto* parent_transaction = (route*)*parent->transaction;
-			auto* offchain = superchain::bridge::get();
-			auto* chain = offchain->get_network(asset);
-			auto* params = offchain->get_network_params(asset);
-			if (!chain || !params)
-				return layer_exception("invalid operation");
-
-			auto duplicate = executor->get_bridge_account(parent->receipt.from, asset, parent_transaction->bridge_hash);
-			if (duplicate)
-				return layer_exception("bridge account already exists");
-
-			auto encoded_public_key = chain->encode_public_key(std::string_view((char*)group_public_key.data(), group_public_key.size()));
-			if (!encoded_public_key)
-				return encoded_public_key.error();
-
-			auto addresses = chain->to_addresses(*encoded_public_key);
-			if (!addresses)
-				return addresses.error();
-
-			auto bridge = executor->get_bridge_instance(asset, parent_transaction->bridge_hash);
-			if (!bridge)
-				return bridge.error();
-
-			switch (params->routing)
-			{
-				case superchain::routing_policy::account:
-				case superchain::routing_policy::memo:
-				{
-					if (bridge->account_nonce > 0)
-						return layer_exception("too many accounts for a bridge");
-
-					if (params->routing == superchain::routing_policy::account)
-						break;
-
-					for (auto& address : *addresses)
-						address.second = superchain::address_util::encode_tag_address(address.second, to_string(bridge->account_nonce));
-					break;
-				}
-				default:
-					break;
-			}
-
-			auto ref = states::bridge_ref();
-			ref.owner = parent->receipt.from;
-			ref.asset = asset;
-			ref.hash = parent_transaction->bridge_hash;
-
-			auto policy_status = executor->apply_bridge_instance_account(ref.asset, ref.hash, ref.owner);
-			if (!policy_status)
-				return policy_status.error();
-
-			auto participants = parent_transaction->get_participants(parent->receipt);
-			for (auto& participant : participants)
-			{
-				auto status = executor->apply_validator_participation_ref(participant, ref, true);
-				if (!status)
-					return status.error();
-			}
-
-			auto bridge_account_status = executor->apply_bridge_account(ref.owner, ref.asset, ref.hash, group_public_key, std::move(participants));
-			if (!bridge_account_status)
-				return bridge_account_status.error();
-
-			auto witness_account_status = executor->apply_witness_bridge_account(ref.owner, ref.asset, ref.hash, *addresses);
-			if (!witness_account_status)
-				return witness_account_status.error();
-
-			auto link_asset = asset;
-			auto link_base = superchain::wallet_link(parent_transaction->bridge_hash, *encoded_public_key, string());
-			executor->defer_side_effect([link_asset, link_base = std::move(link_base), addresses = std::move(addresses)]() mutable
-			{
-				auto* offchain = superchain::bridge::get();
-				for (auto& [type, address] : *addresses)
-				{
-					auto [base_address, tag] = superchain::address_util::decode_tag_address(address);
-					if (base_address != address)
-						offchain->enable_link(link_asset, superchain::wallet_link(link_base.hash, link_base.public_key, base_address)).report("failed to enable the off-chain link");
-
-					offchain->enable_link(link_asset, superchain::wallet_link(link_base.hash, link_base.public_key, address)).report("failed to enable the off-chain link");
-				}
-			});
-			return expectation::met;
-		}
-		void bind::set_witness(const uint256_t& new_route_hash, algorithm::composition::cpubkey_t&& new_group_public_key, algorithm::composition::chashsig_t&& new_group_signature)
-		{
-			route_hash = new_route_hash;
-			group_public_key = std::move(new_group_public_key);
-			group_signature = std::move(new_group_signature);
-		}
-		bool bind::store_body(format::wo_stream* stream) const
-		{
-			VI_ASSERT(stream != nullptr, "stream should be set");
-			stream->write_string(std::string_view((char*)group_public_key.data(), group_public_key.size()));
-			stream->write_string(std::string_view((char*)group_signature.data(), group_signature.size()));
-			stream->write_integer(route_hash);
-			return true;
-		}
-		bool bind::load_body(format::ro_stream& stream)
-		{
-			string group_public_key_assembly;
-			if (!stream.read_string(stream.read_type(), &group_public_key_assembly))
-				return false;
-
-			string group_signature_assembly;
-			if (!stream.read_string(stream.read_type(), &group_signature_assembly))
-				return false;
-
-			if (!stream.read_integer(stream.read_type(), &route_hash))
-				return false;
-
-			group_public_key.resize(group_public_key_assembly.size());
-			group_signature.resize(group_signature_assembly.size());
-			memcpy(group_public_key.data(), group_public_key_assembly.data(), group_public_key_assembly.size());
-			memcpy(group_signature.data(), group_signature_assembly.data(), group_signature_assembly.size());
-			return true;
-		}
-		bool bind::recover_many(const ledger::executor_context* executor, const ledger::transaction_receipt&, btree_set<algorithm::pubkeyhash_t>& parties) const
-		{
-			auto parent = executor->get_block_transaction<route>(route_hash);
-			if (parent)
-				parties.insert(algorithm::pubkeyhash_t(parent->receipt.from));
-
-			return true;
-		}
-		format::tree bind::as_tree() const
-		{
-			format::tree data = ledger::commitment_message::as_tree();
-			data.set("route_hash", route_hash > 0 ? format::variable(algorithm::encoding::encode_0xhex256(route_hash)) : format::variable());
-			data.set("group_public_key", format::variable(format::util::encode_0xhex(std::string_view((char*)group_public_key.data(), group_public_key.size()))));
-			data.set("group_signature", format::variable(format::util::encode_0xhex(std::string_view((char*)group_signature.data(), group_signature.size()))));
-			return data;
-		}
-		uint32_t bind::as_type() const
-		{
-			return as_instance_type();
-		}
-		std::string_view bind::as_typename() const
-		{
-			return as_instance_typename();
-		}
-		uint32_t bind::as_instance_type()
-		{
-			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
-			return hash;
-		}
-		std::string_view bind::as_instance_typename()
-		{
-			return "bind";
+			return "rebind";
 		}
 
 		expects_lr<void> withdraw::validate(uint64_t block_number) const
@@ -2455,7 +2498,8 @@ namespace tangent
 
 			btree_set<algorithm::pubkeyhash_t> exclusion;
 			auto fee_asset = algorithm::asset::base_id_of(asset);
-			auto attesters = executor->calculate_attesters(fee_asset, 1, bridge->fee_rate, exclusion);
+			auto random = executor->get_random((uint8_t)ledger::seed_byte::attester);
+			auto attesters = executor->calculate_attesters(random, fee_asset, 1, bridge->fee_rate, exclusion);
 			if (!attesters)
 				return attesters.error();
 
@@ -2510,153 +2554,6 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_promise_rt<void> withdraw::dispatch(const ledger::executor_context* executor, ledger::dispatcher_context* dispatcher) const
-		{
-			auto attester = get_attester(executor->receipt);
-			auto* runner_wallet = attester.empty() ? nullptr : dispatcher->get_runner_wallet(attester);
-			if (!runner_wallet)
-				return expects_promise_rt<void>(expectation::met);
-
-			if (executor->get_witness_event(executor->receipt.transaction_hash))
-				return expects_promise_rt<void>(expectation::met);
-
-			auto front = executor->get_bridge_queue(asset, bridge_hash);
-			if (front && front->transaction_hash != executor->receipt.transaction_hash)
-				return expects_promise_rt<void>(remote_exception::retry_later());
-
-			return coasync<expects_rt<void>>([this, executor, dispatcher, runner_wallet]() mutable -> expects_promise_rt<void>
-			{
-				auto* chain = superchain::bridge::get()->get_network_params(asset);
-				auto cancel = [this, executor, dispatcher, runner_wallet](const std::string_view& category, remote_exception&& error) -> expects_rt<void>
-				{
-					auto message = string("(");
-					message.append(category).append(") ");
-					message.append(error.message());
-
-					auto* transaction = memory::init<broadcast>();
-					transaction->asset = asset;
-					transaction->set_proof(executor->receipt.transaction_hash, layer_exception(std::move(message)));
-					dispatcher->emit_transaction(runner_wallet, transaction);
-					return expects_rt<void>(std::move(error));
-				};
-
-				auto bridge = executor->get_bridge_instance(asset, bridge_hash);
-				if (!bridge)
-					coreturn cancel("builder", remote_exception(std::move(bridge.error().message())));
-
-				auto cache = dispatcher->pull_cache(executor);
-				auto state = ledger::dispatcher_context::signature_state();
-				if (chain->transaction_expires || !state.load(cache))
-				{
-					auto message = coawait(resolver::prepare_transaction(algorithm::asset::base_id_of(asset), superchain::wallet_link::from_hash(bridge_hash), superchain::value_transfer(asset, address, decimal(value)), bridge->fee_rate));
-					if (!message)
-						coreturn message.error().is_retry() || message.error().is_shutdown() ? expects_rt<void>(std::move(message.error())) : cancel("builder", std::move(message.error()));
-					else if (message->inputs.size() > std::numeric_limits<uint8_t>::max())
-						coreturn cancel("builder", remote_exception("too many prepared inputs"));
-
-					state.message = memory::init<superchain::prepared_transaction>(std::move(*message));
-				}
-
-				auto finalization = expects_lr<superchain::finalized_transaction>(layer_exception());
-				auto result = expects_rt<void>(remote_exception::shutdown());
-				auto* input = state.message->next_input_for_aggregation();
-				while (input != nullptr)
-				{
-					auto witness = executor->get_witness_account_tagged(asset, input->utxo.link.address, 0);
-					if (!witness)
-						coreturn cancel("builder", remote_exception(std::move(witness.error().message())));
-
-					auto account = executor->get_bridge_account(witness->ref.owner, witness->ref.asset, witness->ref.hash);
-					if (!account)
-						coreturn cancel("builder", remote_exception(std::move(account.error().message())));
-
-					auto session = coawait(dispatcher->aggregate_validators(account->group));
-					if (!session)
-						coreturn session.error().is_retry() || session.error().is_shutdown() ? expects_rt<void>(std::move(session.error())) : cancel("composer", std::move(session.error()));
-
-					auto chosen = account->group.begin();
-					auto unavailable = btree_set<algorithm::pubkeyhash_t>();
-					std::advance(chosen, (size_t)(algorithm::hashing::hash256i(input->message.data(), input->message.size()) % uint256_t(account->group.size())));
-					if (!state.compositor)
-					{
-						auto compositor = algorithm::composition::make_signature_compositor(input->alg, input->public_key, input->message.data(), input->message.size(), (uint16_t)account->group.size());
-						if (!compositor)
-							coreturn cancel("composer", remote_exception(std::move(compositor.error().message())));
-
-						state.compositor = std::move(*compositor);
-						state.alg = input->alg;
-					}
-
-					bool reset = false;
-					while (true)
-					{
-						auto phase = state.compositor->next_phase();
-						if (!reset && (phase == algorithm::composition::phase::any_input_after_reset || phase == algorithm::composition::phase::chosen_input_after_reset))
-						{
-							state.participants = account->group;
-							reset = true;
-						}
-
-						bool uniform_input = phase == algorithm::composition::phase::any_input_after_reset || phase == algorithm::composition::phase::any_input;
-						bool chosen_input = phase == algorithm::composition::phase::chosen_input_after_reset || phase == algorithm::composition::phase::chosen_input;
-						auto it = (uniform_input ? state.participants.begin() : (chosen_input ? state.participants.find(*chosen) : state.participants.end()));
-						it = (!chosen_input && state.participants.size() > 1 && it != state.participants.end() && it->equals(*chosen) ? ++it : it);
-						if (it == state.participants.end())
-							break;
-
-						auto subresult = coawait(dispatcher->aggregate_signature(executor, state, *it, runner_wallet->public_key_hash));
-						if (!subresult && (subresult.error().is_retry() || subresult.error().is_shutdown()))
-						{
-							unavailable.insert(*it);
-							if (chosen_input)
-								goto postpone;
-						}
-						else if (!subresult)
-							coreturn cancel("composer", std::move(subresult.error()));
-						else
-							reset = false;
-
-						state.participants.erase(it);
-					}
-
-					if (!unavailable.empty())
-					{
-						state.participants = std::move(unavailable);
-						goto postpone;
-					}
-
-					auto subfinalization = state.compositor->to_signature(&input->signature);
-					if (!subfinalization)
-						coreturn cancel("composer", remote_exception(std::move(subfinalization.error().message())));
-
-					input = state.message->next_input_for_aggregation();
-					state.compositor.destroy();
-				}
-
-				finalization = resolver::finalize_transaction(algorithm::asset::base_id_of(asset), std::move(**state.message));
-				if (!finalization)
-					coreturn cancel("composer", remote_exception(std::move(finalization.error().message())));
-
-				result = coawait(resolver::broadcast_transaction(algorithm::asset::base_id_of(asset), executor->receipt.transaction_hash, superchain::finalized_transaction(*finalization), dispatcher, runner_wallet));
-				if (!result && (result.error().is_retry() || result.error().is_shutdown()))
-				{
-				postpone:
-					if (++state.attempt >= protocol::now().user.consensus.coordination_attempts)
-						coreturn cancel("server", remote_exception("failed to broadcast after several retries"));
-
-					dispatcher->push_cache(executor, state.as_message());
-					coreturn remote_exception::retry_later();
-				}
-				else if (!result)
-					coreturn cancel("server", std::move(result.error()));
-
-				auto* transaction = memory::init<broadcast>();
-				transaction->asset = asset;
-				transaction->set_proof(executor->receipt.transaction_hash, std::move(*finalization));
-				dispatcher->emit_transaction(runner_wallet, transaction);
-				coreturn expectation::met;
-			});
-		}
 		bool withdraw::store_body(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
@@ -2694,10 +2591,6 @@ namespace tangent
 		{
 			bridge_hash = new_bridge_hash;
 		}
-		bool withdraw::is_dispatchable() const
-		{
-			return true;
-		}
 		algorithm::pubkeyhash_t withdraw::get_attester(const ledger::transaction_receipt& receipt) const
 		{
 			auto* event = receipt.find_event<withdraw>();
@@ -2713,6 +2606,10 @@ namespace tangent
 			data.set("address", format::variable(address));
 			data.set("value", format::variable(value));
 			return data;
+		}
+		uint32_t withdraw::as_delegation_type() const
+		{
+			return delegations::broadcast_delegation::as_instance_type();
 		}
 		uint32_t withdraw::as_type() const
 		{
@@ -2867,13 +2764,13 @@ namespace tangent
 			withdraw_hash = new_withdraw_hash;
 			proof = std::move(new_proof);
 		}
-		bool broadcast::eligible_as_migration_reason() const
+		bool broadcast::eligible_migration_target(const algorithm::pubkeyhash_t& target) const
 		{
 			if (proof)
 				return false;
 
 			auto message = layer_exception(proof.error()).message();
-			return stringify::starts_with(message, "(composer)");
+			return stringify::starts_with(message, stringify::text("(%s)", algorithm::signing::encode_address(target).c_str()));
 		}
 		format::tree broadcast::as_tree() const
 		{
@@ -3068,7 +2965,7 @@ namespace tangent
 			else if (finalized.hashdata.empty())
 				return layer_exception("invalid finalized hashdata");
 
-			auto finalization = resolver::finalize_transaction(transaction->asset, superchain::prepared_transaction(finalized.prepared));
+			auto finalization = delegations::broadcast_delegation::finalize_transaction(transaction->asset, superchain::prepared_transaction(finalized.prepared));
 			if (!finalization)
 				return finalization.error();
 
@@ -3838,14 +3735,16 @@ namespace tangent
 				return memory::init<call>();
 			else if (hash == rollup::as_instance_type())
 				return memory::init<rollup>();
-			else if (hash == setup::as_instance_type())
-				return memory::init<setup>();
-			else if (hash == migrate::as_instance_type())
-				return memory::init<migrate>();
 			else if (hash == route::as_instance_type())
 				return memory::init<route>();
 			else if (hash == bind::as_instance_type())
 				return memory::init<bind>();
+			else if (hash == imbind::as_instance_type())
+				return memory::init<imbind>();
+			else if (hash == setup::as_instance_type())
+				return memory::init<setup>();
+			else if (hash == rebind::as_instance_type())
+				return memory::init<rebind>();
 			else if (hash == withdraw::as_instance_type())
 				return memory::init<withdraw>();
 			else if (hash == broadcast::as_instance_type())
@@ -3867,14 +3766,16 @@ namespace tangent
 				return memory::init<call>(*(const call*)base);
 			else if (hash == rollup::as_instance_type())
 				return memory::init<rollup>(*(const rollup*)base);
-			else if (hash == setup::as_instance_type())
-				return memory::init<setup>(*(const setup*)base);
-			else if (hash == migrate::as_instance_type())
-				return memory::init<migrate>(*(const migrate*)base);
 			else if (hash == route::as_instance_type())
 				return memory::init<route>(*(const route*)base);
 			else if (hash == bind::as_instance_type())
 				return memory::init<bind>(*(const bind*)base);
+			else if (hash == imbind::as_instance_type())
+				return memory::init<imbind>(*(const imbind*)base);
+			else if (hash == setup::as_instance_type())
+				return memory::init<setup>(*(const setup*)base);
+			else if (hash == rebind::as_instance_type())
+				return memory::init<rebind>(*(const rebind*)base);
 			else if (hash == withdraw::as_instance_type())
 				return memory::init<withdraw>(*(const withdraw*)base);
 			else if (hash == broadcast::as_instance_type())
@@ -3884,93 +3785,6 @@ namespace tangent
 			else if (hash == attestate::as_instance_type())
 				return memory::init<attestate>(*(const attestate*)base);
 			return nullptr;
-		}
-		expects_promise_rt<superchain::prepared_transaction> resolver::prepare_transaction(const algorithm::asset_id& asset, const superchain::wallet_link& from_link, const superchain::value_transfer& to, const decimal& max_fee)
-		{
-			auto* offchain = superchain::bridge::get();
-			bool may_mock_up = protocol::now().is(network_type::regtest);
-			if (!may_mock_up || offchain->has_network(asset, true))
-				return offchain->prepare_transaction(asset, from_link, to, max_fee);
-
-			auto chain = offchain->get_network_params(asset);
-			if (!chain)
-				return expects_promise_rt<superchain::prepared_transaction>(remote_exception("invalid operation"));
-
-			auto from = offchain->normalize_link(asset, from_link);
-			if (!from)
-				return expects_promise_rt<superchain::prepared_transaction>(remote_exception(std::move(from.error().message())));
-
-			auto message = format::wo_stream();
-			if (!from->store_payload(&message))
-				return expects_promise_rt<superchain::prepared_transaction>(remote_exception("serialization error"));
-
-			auto public_key = offchain->to_composite_public_key(asset, from->public_key);
-			if (!public_key)
-				return expects_promise_rt<superchain::prepared_transaction>(remote_exception(std::move(public_key.error().message())));
-
-			auto transfers = hash_map<algorithm::asset_id, decimal>();
-			transfers[algorithm::asset::base_id_of(asset)] = decimal("0.000001");
-
-			auto& value = transfers[to.asset];
-			value = value.is_nan() ? to.value : (value + to.value);
-
-			uint8_t message_hash[32];
-			message.write_integer(to.asset);
-			message.write_string(to.address);
-			message.write_decimal(to.value);
-			message.hash().encode(message_hash);
-
-			superchain::prepared_transaction regtest_prepared;
-			regtest_prepared.requires_account_input(chain->composition, std::move(*from), *public_key, message_hash, sizeof(message_hash), std::move(transfers));
-			regtest_prepared.requires_account_output(to.address, { { to.asset, to.value } });
-
-			return expects_promise_rt<superchain::prepared_transaction>(std::move(regtest_prepared));
-		}
-		expects_lr<superchain::finalized_transaction> resolver::finalize_transaction(const algorithm::asset_id& asset, superchain::prepared_transaction&& prepared)
-		{
-			auto* offchain = superchain::bridge::get();
-			bool may_mock_up = protocol::now().is(network_type::regtest);
-			if (!may_mock_up || offchain->has_network(asset, true))
-				return offchain->finalize_transaction(asset, std::move(prepared));
-
-			for (auto& output : prepared.outputs)
-			{
-				if (output.link.address == MOCKUP_FAIL)
-					return layer_exception("synthetic composer error");
-			}
-
-			auto transaction_id = algorithm::encoding::encode_0xhex256(prepared.as_hash());
-			auto block_id = algorithm::hashing::hash256i(transaction_id) % std::numeric_limits<uint32_t>::max();
-			auto regtest_finalized = superchain::finalized_transaction(std::move(prepared), string(), std::move(transaction_id), block_id);
-			regtest_finalized.calldata = regtest_finalized.as_message().encode();
-			return expects_lr<superchain::finalized_transaction>(std::move(regtest_finalized));
-		}
-		expects_promise_rt<void> resolver::broadcast_transaction(const algorithm::asset_id& asset, const uint256_t& external_id, superchain::finalized_transaction&& finalized, ledger::dispatcher_context* dispatcher, const ledger::wallet* runner_wallet)
-		{
-			auto* offchain = superchain::bridge::get();
-			bool may_mock_up = protocol::now().is(network_type::regtest);
-			if (!may_mock_up || offchain->has_network(asset, true))
-			{
-				auto preserved = memory::init<superchain::finalized_transaction>(std::move(finalized));
-				return offchain->broadcast_transaction(asset, external_id, *preserved).then<expects_rt<void>>([preserved](expects_rt<void>&& status) mutable -> expects_rt<void>
-				{
-					memory::deinit(preserved);
-					if (!status)
-						return expects_rt<void>(std::move(status.error()));
-
-					return expects_rt<void>(expectation::met);
-				});
-			}
-
-			if (dispatcher != nullptr && !(finalized.prepared.outputs.size() == 1 && finalized.prepared.outputs.front().link.address == MOCKUP_LOST))
-			{
-				auto* transaction = memory::init<attestate>();
-				transaction->asset = asset;
-				transaction->set_gas(decimal::zero(), 0);
-				transaction->set_computed_proof(finalized.as_computed(), { });
-				dispatcher->emit_transaction(runner_wallet, transaction);
-			}
-			return expects_promise_rt<void>(expectation::met);
 		}
 	}
 }

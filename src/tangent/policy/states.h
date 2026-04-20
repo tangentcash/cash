@@ -1,6 +1,7 @@
 #ifndef TAN_POLICY_STATES_H
 #define TAN_POLICY_STATES_H
 #include "../kernel/transaction.h"
+#include <array>
 
 namespace tangent
 {

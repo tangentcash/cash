@@ -1,7 +1,7 @@
 #ifndef TAN_KERNEL_SCRIPT_H
 #define TAN_KERNEL_SCRIPT_H
-#include <vitex/scripting.h>
 #include "block.h"
+#include <vitex/scripting.h>
 
 namespace tangent
 {

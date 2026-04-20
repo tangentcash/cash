@@ -1,6 +1,6 @@
 #ifndef TAN_KERNEL_TRANSACTION_H
 #define TAN_KERNEL_TRANSACTION_H
-#include "wallet.h"
+#include "algorithm.h"
 
 namespace tangent
 {
@@ -8,7 +8,6 @@ namespace tangent
 	{
 		struct block_header;
 		struct executor_context;
-		struct dispatcher_context;
 		struct transaction_receipt;
 		struct transition_state;
 
@@ -18,7 +17,48 @@ namespace tangent
 			multiform
 		};
 
-		struct transaction_message : messages::authentic
+		struct uniform_serializer
+		{
+			uint256_t checksum;
+
+			uniform_serializer();
+			virtual ~uniform_serializer() = default;
+			virtual bool store(format::wo_stream* stream) const;
+			virtual bool load(format::ro_stream& stream);
+			virtual bool store_payload(format::wo_stream* stream) const = 0;
+			virtual bool load_payload(format::ro_stream& stream) = 0;
+			virtual uint256_t as_hash(bool renew = false) const;
+			virtual uint32_t as_type() const = 0;
+			virtual std::string_view as_typename() const = 0;
+			virtual format::tree as_tree() const = 0;
+			virtual format::wo_stream as_message() const;
+			virtual format::wo_stream as_signable() const;
+		};
+
+		struct authentic_serializer
+		{
+			algorithm::hashsig_t signature;
+			uint256_t checksum;
+
+			authentic_serializer();
+			virtual ~authentic_serializer() = default;
+			virtual bool store(format::wo_stream* stream) const;
+			virtual bool load(format::ro_stream& stream);
+			virtual bool store_payload(format::wo_stream* stream) const = 0;
+			virtual bool load_payload(format::ro_stream& stream) = 0;
+			virtual bool sign(const algorithm::seckey_t& secret_key);
+			virtual bool verify(const algorithm::pubkey_t& public_key) const;
+			virtual bool recover(algorithm::pubkey_t& public_key) const;
+			virtual bool recover_hash(algorithm::pubkeyhash_t& public_key_hash) const;
+			virtual uint256_t as_hash(bool renew = false) const;
+			virtual uint32_t as_type() const = 0;
+			virtual std::string_view as_typename() const = 0;
+			virtual format::tree as_tree() const = 0;
+			virtual format::wo_stream as_message() const;
+			virtual format::wo_stream as_signable() const;
+		};
+
+		struct transaction_message : authentic_serializer
 		{
 			algorithm::asset_id asset = 0;
 			decimal gas_price;
@@ -27,7 +67,6 @@ namespace tangent
 
 			virtual expects_lr<void> validate(uint64_t block_number) const;
 			virtual expects_lr<void> execute(executor_context* executor) const;
-			virtual expects_promise_rt<void> dispatch(const executor_context* executor, dispatcher_context* dispatcher) const;
 			virtual bool store_payload(format::wo_stream* stream) const override;
 			virtual bool load_payload(format::ro_stream& stream) override;
 			virtual bool store_body(format::wo_stream* stream) const = 0;
@@ -40,10 +79,10 @@ namespace tangent
 			virtual expects_lr<void> set_optimal_gas(const decimal& price);
 			virtual void set_gas(const decimal& price, const uint256_t& limit);
 			virtual void set_asset(const std::string_view& blockchain, const std::string_view& token = std::string_view(), const std::string_view& contract_address = std::string_view());
-			virtual bool is_dispatchable() const;
 			virtual bool is_commitment() const;
 			virtual uint256_t gas_asset() const;
 			virtual format::tree as_tree() const override;
+			virtual uint32_t as_delegation_type() const;
 			virtual uint32_t as_type() const override = 0;
 			virtual std::string_view as_typename() const override = 0;
 		};
@@ -57,7 +96,7 @@ namespace tangent
 			virtual bool is_commitment() const override;
 		};
 
-		struct transaction_receipt final : messages::uniform
+		struct transaction_receipt final : uniform_serializer
 		{
 			vector<std::pair<uint32_t, format::variables>> events;
 			algorithm::pubkeyhash_t from;
@@ -110,7 +149,7 @@ namespace tangent
 			}
 		};
 
-		struct transition_state : messages::uniform
+		struct transition_state : uniform_serializer
 		{
 			uint64_t block_number = 0;
 
@@ -162,6 +201,121 @@ namespace tangent
 			virtual string as_column() const;
 			virtual string as_row() const;
 			virtual uint256_t as_rank() const = 0;
+		};
+
+		struct distribution_key : uniform_serializer
+		{
+			struct share_pair
+			{
+				algorithm::share_t recv;
+				algorithm::share_t sent;
+			};
+
+			struct key_ref
+			{
+				algorithm::pubkeyhash_t owner;
+				algorithm::asset_id asset;
+				uint256_t hash;
+			} ref;
+			btree_map<algorithm::pubkeyhash_t, share_pair> shares;
+			vector<uint8_t> key;
+
+			bool store_payload(format::wo_stream* stream) const override;
+			bool load_payload(format::ro_stream& stream) override;
+			format::tree as_tree() const override;
+			uint32_t as_type() const override;
+			std::string_view as_typename() const override;
+			uint256_t as_ref_hash() const;
+			static uint32_t as_instance_type();
+			static std::string_view as_instance_typename();
+			static uint256_t ref_hash(const algorithm::pubkeyhash_t& owner, const algorithm::asset_id& asset, const uint256_t& hash);
+		};
+
+		struct wallet : uniform_serializer
+		{
+			algorithm::seckey_t secret_key;
+			algorithm::pubkey_t public_key;
+			algorithm::pubkeyhash_t public_key_hash;
+
+			bool set_secret_key(const algorithm::seckey_t& value);
+			void set_public_key(const algorithm::pubkey_t& value);
+			void set_public_key_hash(const algorithm::pubkeyhash_t& value);
+			bool verify_secret_key() const;
+			bool verify_public_key() const;
+			bool verify_address() const;
+			bool verify(const authentic_serializer& message) const;
+			bool recovers(const authentic_serializer& message) const;
+			bool sign(authentic_serializer& message) const;
+			bool store_payload(format::wo_stream* stream) const override;
+			bool load_payload(format::ro_stream& stream) override;
+			bool has_secret_key() const;
+			bool has_public_key() const;
+			bool has_public_key_hash() const;
+			option<string> seal_message(const std::string_view& plaintext, const algorithm::pubkey_t& recipient_public_key, const uint256_t& entropy) const;
+			option<string> open_message(const std::string_view& ciphertext) const;
+			option<string> open_message(const std::string_view& ciphertext, const uint256_t& entropy) const;
+			string get_secret_key() const;
+			string get_public_key() const;
+			string get_address() const;
+			expects_lr<uint64_t> get_latest_nonce() const;
+			format::tree as_tree() const override;
+			format::tree as_public_tree() const;
+			uint32_t as_type() const override;
+			std::string_view as_typename() const override;
+			static uint32_t as_instance_type();
+			static std::string_view as_instance_typename();
+			static wallet from_mnemonic(const std::string_view& mnemonic);
+			static wallet from_seed(const std::string_view& seed = std::string_view());
+			static wallet from_entropy(const uint256_t& entropy);
+			static wallet from_secret_key(const algorithm::seckey_t& key);
+			static wallet from_public_key(const algorithm::pubkey_t& key);
+			static wallet from_public_key_hash(const algorithm::pubkeyhash_t& key);
+		};
+
+		struct node final : uniform_serializer
+		{
+			struct
+			{
+				btree_set<algorithm::pubkey_t> neighbors;
+				uint64_t latency = (uint64_t)std::numeric_limits<int64_t>::max();
+				uint64_t timestamp = 0;
+				uint64_t calls = 0;
+				uint64_t errors = 0;
+				bool reachable = false;
+			} availability;
+
+			struct
+			{
+				uint16_t consensus = 0;
+				uint16_t discovery = 0;
+				uint16_t rpc = 0;
+			} ports;
+
+			struct
+			{
+				bool has_consensus = false;
+				bool has_discovery = false;
+				bool has_superchain = false;
+				bool has_rpc = false;
+				bool has_production = false;
+				bool has_participation = false;
+				bool has_attestation = false;
+			} services;
+
+			socket_address address;
+			uint32_t minor_version = 0;
+			uint32_t major_version = 0;
+
+			bool store_payload(format::wo_stream* stream) const override;
+			bool load_payload(format::ro_stream& stream) override;
+			bool is_valid() const;
+			uint64_t get_preference() const;
+			string as_version() const;
+			format::tree as_tree() const override;
+			uint32_t as_type() const override;
+			std::string_view as_typename() const override;
+			static uint32_t as_instance_type();
+			static std::string_view as_instance_typename();
 		};
 	}
 }

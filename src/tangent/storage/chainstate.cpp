@@ -147,7 +147,7 @@ namespace tangent
 			writer->storage = multiform_storage;
 			return expectation::met;
 		}
-		static void finalize_checksum(messages::authentic& message, const variant& column)
+		static void finalize_checksum(ledger::authentic_serializer& message, const variant& column)
 		{
 			if (column.size() == sizeof(uint256_t))
 				message.checksum.decode(column.get_binary());
@@ -699,7 +699,7 @@ namespace tangent
 					item.receipt_message.data.reserve(1024);
 					item.context->transaction->store(&item.transaction_message);
 					item.context->receipt.store(&item.receipt_message);
-					item.dispatchable = item.context->transaction->is_dispatchable() && item.context->receipt.successful;
+					item.dispatchable = item.context->receipt.successful && item.context->transaction->as_delegation_type() > 0;
 					item.context->receipt.transaction_hash.encode(item.transaction_hash);
 					if (transaction_to_account_index)
 					{
@@ -1092,57 +1092,39 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<void> chainstate::dispatch(const vector<uint256_t>& finalized_transaction_hashes, const vector<uint256_t>& repeated_transaction_hashes)
+		expects_lr<void> chainstate::dispatch(const uint256_t& transaction_hash, dispatch_action action)
 		{
-			hash_set<uint256_t> exclusion;
-			exclusion.reserve(repeated_transaction_hashes.size());
-			for (auto& hash : repeated_transaction_hashes)
-				exclusion.insert(hash);
+			uint8_t hash[32];
+			transaction_hash.encode(hash);
 
-			if (!finalized_transaction_hashes.empty())
+			switch (action)
 			{
-				uptr<schema> hashes = var::set::array();
-				for (auto& item : finalized_transaction_hashes)
-				{
-					if (exclusion.find(item) != exclusion.end())
-						continue;
-
-					uint8_t hash[32];
-					item.encode(hash);
-					hashes->push(var::binary(hash, sizeof(hash)));
-				}
-
-				if (!hashes->empty())
+				case dispatch_action::finalize:
 				{
 					schema_list map;
-					map.push_back(var::set::string(*sqlite::utils::inline_array(std::move(hashes))));
+					map.push_back(var::set::binary(hash, sizeof(hash)));
 
-					auto cursor = get_tx_storage().emplace_query(__func__, "UPDATE transactions SET dispatch_queue = NULL, dispatch_time = NULL WHERE transaction_hash IN ($?)", &map);
+					auto cursor = get_tx_storage().emplace_query(__func__, "UPDATE transactions SET dispatch_queue = NULL, dispatch_time = NULL WHERE transaction_hash = ?", &map);
 					if (!cursor || cursor->error())
 						return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
-				}
-			}
 
-			if (!repeated_transaction_hashes.empty())
-			{
-				uptr<schema> hashes = var::set::array();
-				for (auto& item : repeated_transaction_hashes)
+					return expectation::met;
+				}
+				case dispatch_action::defer:
 				{
-					uint8_t hash[32];
-					item.encode(hash);
-					hashes->push(var::binary(hash, sizeof(hash)));
+					schema_list map;
+					map.push_back(var::set::integer(protocol::now().time.now_cpu() + DISPATCH_INTERVAL));
+					map.push_back(var::set::binary(hash, sizeof(hash)));
+
+					auto cursor = get_tx_storage().emplace_query(__func__, "UPDATE transactions SET dispatch_time = ? WHERE transaction_hash = ?", &map);
+					if (!cursor || cursor->error())
+						return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
+
+					return expectation::met;
 				}
-
-				schema_list map;
-				map.push_back(var::set::integer(protocol::now().time.now_cpu() + DISPATCH_INTERVAL));
-				map.push_back(var::set::string(*sqlite::utils::inline_array(std::move(hashes))));
-
-				auto cursor = get_tx_storage().emplace_query(__func__, "UPDATE transactions SET dispatch_time = ? WHERE transaction_hash IN ($?)", &map);
-				if (!cursor || cursor->error())
-					return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
+				default:
+					return layer_exception("invalid dispatch action");
 			}
-
-			return expectation::met;
 		}
 		expects_lr<void> chainstate::resolve_block_transactions(vector<ledger::block_transaction>& result, uint64_t block_number, bool fully, size_t chunk)
 		{

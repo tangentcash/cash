@@ -23,8 +23,14 @@ namespace tangent
 	enum
 	{
 		ELEMENTS_FEW = 1 << 5,
-		ELEMENTS_MANY = 2 << 11,
-		ELEMENTS_HUGE = 2 << 16
+		ELEMENTS_BULK = 1 << 9,
+		ELEMENTS_MANY = 1 << 12,
+		ELEMENTS_HUGE = 1 << 17
+	};
+
+	enum class fork_id
+	{
+		veritas = 400000
 	};
 
 	enum class network_type
@@ -342,6 +348,7 @@ namespace tangent
 		protocol(const inline_args& environment);
 		virtual ~protocol();
 		bool is(network_type type) const;
+		bool on(fork_id fork, uint64_t block_number) const;
 		bool custom() const;
 
 	public:

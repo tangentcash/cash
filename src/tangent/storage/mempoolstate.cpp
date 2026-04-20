@@ -9,7 +9,7 @@ namespace tangent
 {
 	namespace storages
 	{
-		static void finalize_checksum(messages::authentic& message, const variant& column)
+		static void finalize_checksum(ledger::authentic_serializer& message, const variant& column)
 		{
 			if (column.size() == sizeof(uint256_t))
 				message.checksum.decode(column.get_binary());
@@ -129,7 +129,7 @@ namespace tangent
 			if (parent_mempoolstate == this)
 				parent_mempoolstate = nullptr;
 		}
-		expects_lr<void> mempoolstate::apply_cooldown_node(const socket_address& node_address, bool cooldown)
+		expects_lr<void> mempoolstate::apply_cooldown_node(const socket_address& node_address, bool cooldown, bool reset)
 		{
 			if (!node_address.is_valid())
 				return expects_lr<void>(layer_exception("invalid ip address"));
@@ -141,16 +141,16 @@ namespace tangent
 			auto cursor = get_peer_storage().emplace_query(__func__, cooldown ? "INSERT INTO cooldowns (address, expiration, attempt) VALUES (?, ?, 0) ON CONFLICT DO UPDATE SET expiration = EXCLUDED.expiration, attempt = attempt + 1 RETURNING attempt" : "DELETE FROM cooldowns WHERE address = ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
-			else if (!cooldown)
+			else if (!cooldown || reset)
 				return expectation::met;
 
-			uint64_t attempt = (*cursor)["attempt"].get().get_integer();
+			uint64_t attempt = std::max<uint64_t>(1, (*cursor)["attempt"].get().get_integer());
 			if (attempt > 9)
 				return clear_node(node_address);
 			else if (!attempt)
 				return expectation::met;
 
-			map[1] = var::set::integer(algorithm::arithmetic::integer_pow<uint64_t>(4, attempt));
+			map[1] = var::set::integer(algorithm::arithmetic::integer_pow<uint64_t>(4, attempt) * 1000);
 			cursor = get_peer_storage().emplace_query(__func__, "UPDATE cooldowns SET expiration = expiration + ? WHERE address = ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
@@ -209,7 +209,7 @@ namespace tangent
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 
-			return apply_cooldown_node(node.address, !wallet.has_secret_key() && !node.availability.reachable);
+			return apply_cooldown_node(node.address, !wallet.has_secret_key() && !node.availability.reachable, false);
 		}
 		expects_lr<void> mempoolstate::apply_runner_node(const node_pair& node)
 		{
@@ -259,7 +259,7 @@ namespace tangent
 				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 			if (call_result < 0)
-				return apply_cooldown_node(node.address, true);
+				return apply_cooldown_node(node.address, true, call_result == -2);
 
 			return expectation::met;
 		}
@@ -806,7 +806,7 @@ namespace tangent
 
 			return (size_t)(*cursor)["counter"].get().get_integer();
 		}
-		expects_lr<void> mempoolstate::apply_secret_entropy(const algorithm::pubkeyhash_t& participant, const ledger::dispatcher_context::secret_entropy& entropy)
+		expects_lr<void> mempoolstate::apply_key(const algorithm::pubkeyhash_t& participant, const ledger::distribution_key& entropy)
 		{
 			format::wo_stream entropy_message;
 			if (!entropy.store(&entropy_message))
@@ -817,11 +817,11 @@ namespace tangent
 				return encrypted_entropy_message.error();
 
 			uint8_t hash_data[32], asset_data[32];
-			entropy.hash.encode(hash_data);
-			entropy.asset.encode(asset_data);
+			entropy.ref.hash.encode(hash_data);
+			entropy.ref.asset.encode(asset_data);
 
 			schema_list map;
-			map.push_back(var::set::binary(entropy.owner.view()));
+			map.push_back(var::set::binary(entropy.ref.owner.view()));
 			map.push_back(var::set::binary(hash_data, sizeof(hash_data)));
 			map.push_back(var::set::binary(asset_data, sizeof(asset_data)));
 			map.push_back(var::set::binary(participant.view()));
@@ -833,7 +833,7 @@ namespace tangent
 			
 			return expectation::met;
 		}
-		expects_lr<ledger::dispatcher_context::secret_entropy> mempoolstate::get_secret_entropy(const algorithm::pubkeyhash_t& participant, const algorithm::pubkeyhash_t& owner, const algorithm::asset_id& asset, const uint256_t& hash)
+		expects_lr<ledger::distribution_key> mempoolstate::get_key(const algorithm::pubkeyhash_t& participant, const algorithm::pubkeyhash_t& owner, const algorithm::asset_id& asset, const uint256_t& hash)
 		{
 			uint8_t hash_data[32], asset_data[32];
 			hash.encode(hash_data);
@@ -847,22 +847,22 @@ namespace tangent
 
 			auto cursor = get_secret_storage().emplace_query(__func__, "SELECT entropy_message FROM secrets WHERE owner = ? AND asset = ? AND hash = ? AND participant = ?", &map);
 			if (!cursor || cursor->error())
-				return expects_lr<ledger::dispatcher_context::secret_entropy>(layer_exception(ledger::storage_util::error_of(cursor)));
+				return expects_lr<ledger::distribution_key>(layer_exception(ledger::storage_util::error_of(cursor)));
 			else if (cursor->empty())
-				return layer_exception("entropy not found");
+				return layer_exception("failed to find secret key with used ref");
 
 			auto decrypted_entropy_message = protocol::now().box.decrypt((*cursor)["entropy_message"].get().get_blob());
 			if (!decrypted_entropy_message)
 				return decrypted_entropy_message.error();
 
-			ledger::dispatcher_context::secret_entropy entropy;
+			ledger::distribution_key entropy;
 			format::ro_stream entropy_message = format::ro_stream(*decrypted_entropy_message);
 			if (!entropy.load(entropy_message))
-				return expects_lr<ledger::dispatcher_context::secret_entropy>(layer_exception("entropy deserialization error"));
+				return expects_lr<ledger::distribution_key>(layer_exception("secret entropy deserialization error"));
 
-			return expects_lr<ledger::dispatcher_context::secret_entropy>(std::move(entropy));
+			return expects_lr<ledger::distribution_key>(std::move(entropy));
 		}
-		expects_lr<ledger::dispatcher_context::secret_entropy> mempoolstate::get_secret_entropy(const algorithm::pubkeyhash_t& participant, size_t index)
+		expects_lr<ledger::distribution_key> mempoolstate::get_key(const algorithm::pubkeyhash_t& participant, size_t index)
 		{
 			schema_list map;
 			map.push_back(var::set::binary(participant.view()));
@@ -870,7 +870,7 @@ namespace tangent
 
 			auto cursor = get_secret_storage().emplace_query(__func__, "SELECT entropy_message FROM secrets WHERE participant = ? LIMIT 1 OFFSET ?", &map);
 			if (!cursor || cursor->error())
-				return expects_lr<ledger::dispatcher_context::secret_entropy>(layer_exception(ledger::storage_util::error_of(cursor)));
+				return expects_lr<ledger::distribution_key>(layer_exception(ledger::storage_util::error_of(cursor)));
 			else if (cursor->empty())
 				return layer_exception("entropy not found");
 
@@ -878,12 +878,12 @@ namespace tangent
 			if (!decrypted_entropy_message)
 				return decrypted_entropy_message.error();
 
-			ledger::dispatcher_context::secret_entropy entropy;
+			ledger::distribution_key entropy;
 			format::ro_stream entropy_message = format::ro_stream(*decrypted_entropy_message);
 			if (!entropy.load(entropy_message))
-				return expects_lr<ledger::dispatcher_context::secret_entropy>(layer_exception("entropy deserialization error"));
+				return expects_lr<ledger::distribution_key>(layer_exception("entropy deserialization error"));
 
-			return expects_lr<ledger::dispatcher_context::secret_entropy>(std::move(entropy));
+			return expects_lr<ledger::distribution_key>(std::move(entropy));
 		}
 		expects_lr<bool> mempoolstate::has_transaction(const uint256_t& transaction_hash)
 		{

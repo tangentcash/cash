@@ -1,6 +1,5 @@
 #ifndef TAN_KERNEL_BLOCK_H
 #define TAN_KERNEL_BLOCK_H
-#include "wallet.h"
 #include "../policy/states.h"
 
 namespace tangent
@@ -17,6 +16,7 @@ namespace tangent
 		struct block_proof;
 		struct block_evaluation;
 		struct solver_context;
+		struct delegation_contract;
 
 		typedef btree_map<algorithm::asset_id, decimal> block_rewards;
 
@@ -36,6 +36,13 @@ namespace tangent
 			descending
 		};
 
+		enum class seed_byte
+		{
+			proposer = 0x0,
+			attester = 0x1,
+			participant = 0x2
+		};
+
 		enum class gas_cost
 		{
 			write_tx_byte = 64,
@@ -49,7 +56,7 @@ namespace tangent
 			program_mop = 16,
 		};
 
-		struct block_transaction final : messages::uniform
+		struct block_transaction final : uniform_serializer
 		{
 			uptr<transaction_message> transaction;
 			transaction_receipt receipt;
@@ -147,7 +154,7 @@ namespace tangent
 			bool is_fork = false;
 		};
 
-		struct block_header : messages::authentic
+		struct block_header : authentic_serializer
 		{
 			algorithm::wesolowski::digest proof;
 			btree_map<algorithm::asset_id, uint64_t> witnesses;
@@ -235,7 +242,7 @@ namespace tangent
 			uint256_t as_hash(bool renew = false) const override;
 		};
 
-		struct block_proof final : messages::uniform
+		struct block_proof final : uniform_serializer
 		{
 			algorithm::merkle_tree transaction_tree;
 			algorithm::merkle_tree receipt_tree;
@@ -315,13 +322,12 @@ namespace tangent
 			expects_lr<void> verify_account_nonce() const;
 			expects_lr<void> verify_gas_transfer_balance() const;
 			expects_lr<void> verify_transfer_balance(const algorithm::asset_id& asset, const decimal& value) const;
-			expects_lr<algorithm::wesolowski::distribution> calculate_random(const uint256_t& seed);
 			expects_lr<size_t> calculate_attesters_size(const algorithm::asset_id& asset) const;
 			expects_lr<size_t> calculate_producers_size() const;
-			expects_lr<vector<states::validator_production>> calculate_producers(size_t target_size);
+			expects_lr<vector<states::validator_production>> calculate_producers(algorithm::wesolowski::distribution& random, size_t target_size);
 			expects_lr<vector<states::validator_attestation>> calculate_attesters(const algorithm::asset_id& asset, size_t target_size);
-			expects_lr<vector<states::validator_attestation>> calculate_attesters(const algorithm::asset_id& asset, size_t target_size, const decimal& fee_threshold, btree_set<algorithm::pubkeyhash_t>& exclusion);
-			expects_lr<vector<states::validator_participation>> calculate_participants(size_t target_size, btree_set<algorithm::pubkeyhash_t>& exclusion);
+			expects_lr<vector<states::validator_attestation>> calculate_attesters(algorithm::wesolowski::distribution& random, const algorithm::asset_id& asset, size_t target_size, const decimal& fee_threshold, btree_set<algorithm::pubkeyhash_t>& exclusion);
+			expects_lr<vector<states::validator_participation>> calculate_participants(algorithm::wesolowski::distribution& random, size_t target_size, btree_set<algorithm::pubkeyhash_t>& exclusion);
 			expects_lr<states::account_nonce> apply_account_nonce(const algorithm::pubkeyhash_t& owner, uint64_t nonce);
 			expects_lr<states::account_program> apply_account_program(const algorithm::pubkeyhash_t& owner, const std::string_view& program_hashcode);
 			expects_lr<states::account_uniform> apply_account_uniform(const algorithm::pubkeyhash_t& owner, const std::string_view& index, const std::string_view& data);
@@ -385,6 +391,7 @@ namespace tangent
 			expects_lr<states::witness_account> get_witness_account_tagged(const algorithm::asset_id& asset, const std::string_view& address, size_t offset) const;
 			expects_lr<states::witness_transaction> get_witness_transaction(const algorithm::asset_id& asset, const std::string_view& transaction_id) const;
 			expects_lr<block_transaction> get_block_transaction_instance(const uint256_t& transaction_hash, bool may_have_distinct_asset = false) const;
+			algorithm::wesolowski::distribution get_random(const uint256_t& seed, block_header* from_block = nullptr, ledger::transaction_receipt* from_receipt = nullptr);
 			uint64_t get_validation_nonce() const;
 			uint256_t get_gas_use() const;
 			uint256_t get_gas_left() const;
@@ -413,123 +420,52 @@ namespace tangent
 			static expects_lr<uint256_t> calculate_tx_gas(const transaction_message* transaction, transaction_receipt* out_receipt = nullptr);
 			static expects_lr<void> validate_tx(const transaction_message* new_transaction, const uint256_t& new_transaction_hash, algorithm::pubkeyhash_t& owner);
 			static expects_lr<void> execute_tx(executor_context* context, const algorithm::pubkeyhash_t& owner, const transaction_message* new_transaction, const uint256_t& new_transaction_hash, size_t transaction_size, uint8_t execution_flags);
-			static expects_promise_rt<void> dispatch_tx(dispatcher_context* dispatcher, block_transaction* transaction);
 		};
 
-		struct dispatcher_context
+		struct delegation_adapter
 		{
-			struct secret_entropy : messages::uniform
+			struct dispatcher_result
 			{
-				struct share_pair
-				{
-					algorithm::share_t input;
-					algorithm::share_t output;
-				};
-
-				algorithm::pubkeyhash_t owner;
-				algorithm::asset_id asset;
-				uint256_t hash;
-				algorithm::storage_type<uint8_t, 64> entropy;
-				btree_map<algorithm::pubkeyhash_t, share_pair> shares;
-
-				bool store_payload(format::wo_stream* stream) const override;
-				bool load_payload(format::ro_stream& stream) override;
-				format::tree as_tree() const override;
-				uint32_t as_type() const override;
-				std::string_view as_typename() const override;
-				uint256_t as_ref_hash() const;
-				static uint32_t as_instance_type();
-				static std::string_view as_instance_typename();
-				static uint256_t ref_hash(const algorithm::pubkeyhash_t& owner, const algorithm::asset_id& asset, const uint256_t& hash);
+				btree_map<uint256_t, layer_exception> errors;
+				size_t dispatches = 0;
 			};
 
-			struct entropy_distribution_state
-			{
-				btree_map<algorithm::pubkeyhash_t, string> encrypted_shares;
+			vector<std::pair<const ledger::wallet*, uptr<transaction_message>>> emissions;
 
-				bool load_message(format::ro_stream& stream);
-				format::wo_stream as_message() const;
-			};
+			delegation_adapter() = default;
+			delegation_adapter(const delegation_adapter& other) noexcept;
+			delegation_adapter(delegation_adapter&&) noexcept = default;
+			delegation_adapter& operator=(const delegation_adapter& other) noexcept;
+			delegation_adapter& operator=(delegation_adapter&&) noexcept = default;
+			virtual expects_promise_rt<btree_set<algorithm::pubkeyhash_t>> require_validators(delegation_contract* contract, const btree_set<algorithm::pubkeyhash_t>& targets) = 0;
+			virtual expects_promise_rt<format::wo_stream> execute_on_validator(delegation_contract* contract, const algorithm::pubkeyhash_t& target, const format::wo_stream& message) = 0;
+			virtual algorithm::pubkey_t get_public_key(const algorithm::pubkeyhash_t& target) const = 0;
+			virtual const wallet* get_runner_wallet(const algorithm::pubkeyhash_t& target) const = 0;
+			virtual const wallet* get_runner_wallet() const = 0;
+			virtual promise<dispatcher_result> execute_dispatcher_on(uint64_t block_number);
+			virtual expects_lr<distribution_key> derive_key(const wallet* runner_wallet, const algorithm::pubkeyhash_t& owner, const algorithm::asset_id& asset, const uint256_t& hash, algorithm::composition::type alg);
+			virtual expects_lr<distribution_key> store_key(const wallet* runner_wallet, const algorithm::pubkeyhash_t& owner, const algorithm::asset_id& asset, const uint256_t& hash, vector<uint8_t>&& key, btree_map<algorithm::pubkeyhash_t, distribution_key::share_pair>&& shares);
+			virtual expects_lr<distribution_key> load_key(const wallet* runner_wallet, const algorithm::pubkeyhash_t& owner, const algorithm::asset_id& asset, const uint256_t& hash);
+		};
 
-			struct entropy_aggregation_state
-			{
-				btree_map<uint256_t, btree_map<algorithm::pubkeyhash_t, string>> encrypted_shares;
-				btree_set<algorithm::pubkeyhash_t> participants;
-				algorithm::pubkey_t public_key;
-				uint8_t attempt = 0;
+		struct delegation_contract : uniform_serializer
+		{
+			using delegate_ptr = expects_lr<void>(*)(delegation_contract*);
+			delegation_adapter* adapter;
+			const executor_context* executor;
+			const wallet* runner;
 
-				bool load_message(format::ro_stream& stream);
-				format::wo_stream as_message() const;
-			};
-
-			struct entropy_recovery_state
-			{
-				btree_map<uint256_t, btree_map<algorithm::pubkeyhash_t, string>> encrypted_shares;
-				btree_map<uint256_t, string> encrypted_entropies;
-				algorithm::hashsig_t proof;
-
-				bool load_message(format::ro_stream& stream);
-				format::wo_stream as_message() const;
-			};
-
-			struct public_state
-			{
-				uptr<algorithm::composition::compositor> compositor;
-				btree_map<algorithm::pubkey_t, btree_map<algorithm::pubkeyhash_t, string>> encrypted_shares;
-				btree_set<algorithm::pubkeyhash_t> participants;
-				algorithm::composition::type alg;
-				uint8_t attempt = 0;
-				bool distribution = false;
-
-				bool load_compositor_transition(format::ro_stream& stream);
-				bool load(format::ro_stream& stream);
-				format::wo_stream as_message() const;
-			};
-
-			struct signature_state
-			{
-				uptr<algorithm::composition::compositor> compositor;
-				btree_set<algorithm::pubkeyhash_t> participants;
-				uptr<superchain::prepared_transaction> message;
-				algorithm::composition::type alg;
-				uint8_t attempt = 0;
-
-				bool load_compositor_transition(format::ro_stream& stream);
-				bool load(format::ro_stream& stream);
-				format::wo_stream as_message() const;
-			};
-
-			btree_map<uint256_t, string> errors;
-			vector<std::pair<const ledger::wallet*, uptr<transaction_message>>> outputs;
-			vector<uint256_t> inputs;
-			vector<uint256_t> repeaters;
-
-			dispatcher_context() noexcept = default;
-			dispatcher_context(const dispatcher_context& other) noexcept;
-			dispatcher_context(dispatcher_context&&) noexcept = default;
-			dispatcher_context& operator=(const dispatcher_context& other) noexcept;
-			dispatcher_context& operator=(dispatcher_context&&) noexcept = default;
-			virtual expects_lr<secret_entropy> apply_secret_entropy(const wallet* runner_wallet, const algorithm::pubkeyhash_t& owner, const algorithm::asset_id& asset, const uint256_t& hash, const algorithm::storage_type<uint8_t, 64>& entropy, btree_map<algorithm::pubkeyhash_t, secret_entropy::share_pair>&& shares);
-			virtual expects_lr<secret_entropy> recover_secret_entropy(const wallet* runner_wallet, const algorithm::pubkeyhash_t& owner, const algorithm::asset_id& asset, const uint256_t& hash);
-			virtual expects_promise_rt<void> aggregate_validators(const btree_set<algorithm::pubkeyhash_t>& validators) = 0;
-			virtual expects_promise_rt<void> distribute_entropy_shares(const executor_context* executor, entropy_distribution_state& state, const algorithm::pubkeyhash_t& validator, const algorithm::pubkeyhash_t& authority) = 0;
-			virtual expects_promise_rt<void> aggregate_entropy_shares(const executor_context* executor, entropy_aggregation_state& state, const algorithm::pubkeyhash_t& validator, const algorithm::pubkeyhash_t& authority) = 0;
-			virtual expects_promise_rt<void> recover_entropy(const executor_context* executor, entropy_recovery_state& state, const algorithm::pubkeyhash_t& validator, const algorithm::pubkeyhash_t& authority) = 0;
-			virtual expects_promise_rt<void> aggregate_public_key(const executor_context* executor, public_state& state, const algorithm::pubkeyhash_t& validator, const algorithm::pubkeyhash_t& authority) = 0;
-			virtual expects_promise_rt<void> aggregate_signature(const executor_context* executor, signature_state& state, const algorithm::pubkeyhash_t& validator, const algorithm::pubkeyhash_t& authority) = 0;
-			virtual expects_lr<void> checkpoint();
-			virtual promise<void> dispatch_async(uint64_t block_number);
-			virtual void dispatch_sync(uint64_t block_number);
-			virtual void reset_for_checkpoint();
-			virtual void emit_transaction(const wallet* runner_wallet, uptr<transaction_message>&& value);
-			virtual void retry_later(const uint256_t& transaction_hash);
-			virtual void report_trial(const uint256_t& transaction_hash);
-			virtual void report_error(const uint256_t& transaction_hash, const std::string_view& error_message);
-			virtual vector<std::pair<const ledger::wallet*, uptr<transaction_message>>>& get_sendable_transactions();
-			virtual format::ro_stream pull_cache(const executor_context* executor);
-			virtual void push_cache(const executor_context* executor, const format::wo_stream& message) const;
-			virtual algorithm::pubkey_t get_public_key(const algorithm::pubkeyhash_t& validator) const = 0;
-			virtual const wallet* get_runner_wallet(const algorithm::pubkeyhash_t& validator) const = 0;
+			delegation_contract(delegation_adapter* new_adapter, const executor_context* new_executor, const algorithm::pubkeyhash_t& new_runner);
+			virtual ~delegation_contract() = default;
+			virtual bool try_running_on(const algorithm::pubkeyhash_t& new_runner);
+			virtual void emit_transaction(ledger::transaction_message* transaction);
+			virtual expects_promise_rt<void> execute_transition() = 0;
+			virtual expects_lr<void> validate_transition(delegation_contract* parent, const algorithm::pubkeyhash_t& yielding_runner) const = 0;
+			virtual expects_promise_rt<btree_set<algorithm::pubkeyhash_t>> convene_delegates(const btree_set<algorithm::pubkeyhash_t>& targets);
+			virtual expects_promise_rt<void> yield_to_delegate(const algorithm::pubkeyhash_t& target, uint32_t delegate);
+			virtual expects_lr<format::wo_stream> yield_to_self(const algorithm::pubkeyhash_t& target, uint32_t delegate, bool requires_validation);
+			virtual delegate_ptr as_delegate_ptr(uint32_t hash) const = 0;
+			virtual format::tree as_tree() const override;
 		};
 
 		struct solver_context
@@ -575,8 +511,8 @@ namespace tangent
 			} state;
 			struct transaction_queue
 			{
+				btree_map<uint256_t, layer_exception> errors;
 				vector<queued_transaction> pending;
-				hash_set<uint256_t> failed;
 				size_t queued = 0;
 			} transactions;
 			option<block_header> tip = optional::none;

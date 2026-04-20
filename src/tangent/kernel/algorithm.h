@@ -1,7 +1,6 @@
 #ifndef TAN_KERNEL_ALGORITHM_H
 #define TAN_KERNEL_ALGORITHM_H
 #include "format.h"
-#include <array>
 
 typedef struct secp256k1_context_struct secp256k1_context;
 
@@ -98,6 +97,7 @@ namespace tangent
 		using pubkey_t = storage_type<uint8_t, 33>;
 		using pubkeyhash_t = storage_type<uint8_t, 20>;
 		using share_t = storage_type<uint8_t, 113>;
+		typedef vector<uint8_t> paillier_scalar_t;
 		typedef uint256_t(*hash_function)(const uint256_t&, const uint256_t&);
 
 		class wesolowski
@@ -168,8 +168,8 @@ namespace tangent
 			static bool derive_public_key(const seckey_t& secret_key, pubkey_t& public_key);
 			static void derive_public_key_hash(const pubkey_t& public_key, pubkeyhash_t& public_key_hash);
 			static bool derive_seed_from_password(const uint8_t* input, size_t input_size, uint8_t* output, size_t output_size);
-			static bool split_secret_into_shares(const uint8_t message[64], uint8_t threshold, uint8_t count, btree_set<share_t>& shares);
-			static bool combine_shares_into_secret(const btree_set<share_t>& shares, uint8_t message[64]);
+			static bool split_secret_into_shares(const uint8_t* message_in, size_t message_in_size, uint8_t threshold, uint8_t count, btree_set<share_t>& shares);
+			static bool combine_shares_into_secret(const btree_set<share_t>& shares, uint8_t* message_out, size_t message_out_size);
 			static uint8_t recovery_threshold(size_t shares);
 			static bool scalar_add_secret_key(seckey_t& secret_key, const seckey_t& scalar);
 			static bool scalar_mul_secret_key(seckey_t& secret_key, const seckey_t& scalar);
@@ -384,9 +384,13 @@ namespace tangent
 				virtual expects_lr<void> setup_public_key(const uint8_t* message, size_t message_size, uint16_t participants) = 0;
 				virtual expects_lr<void> setup_signature(const cpubkey_t& public_key, const uint8_t* message, size_t message_size, uint16_t participants) = 0;
 				virtual expects_lr<void> aggregate(const cseckey_t& secret_key) = 0;
-				virtual expects_lr<void> to_partial_secret_key(const uint8_t* seed, size_t seed_size, cseckey_t* output) const = 0;
-				virtual expects_lr<void> to_public_key(cpubkey_t* output) const = 0;
-				virtual expects_lr<void> to_signature(chashsig_t* output) const = 0;
+				virtual expects_lr<void> derive_tweaking_key(const uint8_t* seed, size_t seed_size, size_t key_size, paillier_scalar_t* public_key) const = 0;
+				virtual expects_lr<void> tweak_secret_key(const paillier_scalar_t& public_key, const cseckey_t& tweak, cseckey_t* secret_key_input_output, paillier_scalar_t* accumulator_output) const = 0;
+				virtual expects_lr<void> tweak_secret_key(const uint8_t* seed, size_t seed_size, size_t key_size, const paillier_scalar_t& accumulator, cseckey_t* secret_key_input_output) const = 0;
+				virtual expects_lr<void> combine_public_keys(const cpubkey_t* input, cpubkey_t* input_output) const = 0;
+				virtual expects_lr<void> derive_secret_key(const uint8_t* seed, size_t seed_size, cseckey_t* output) const = 0;
+				virtual expects_lr<void> derive_public_key(cpubkey_t* output) const = 0;
+				virtual expects_lr<void> derive_signature(chashsig_t* output) const = 0;
 				virtual expects_lr<void> verify_signature(const uint8_t* message, size_t message_size, const chashsig_t& signature, const cpubkey_t& public_key) const = 0;
 				virtual phase next_phase() const = 0;
 				virtual uint32_t steps_left() const = 0;
@@ -403,11 +407,12 @@ namespace tangent
 
 		public:
 			static expects_lr<keypair> derive_keypair(type alg, const uint8_t* seed, size_t seed_size);
+			static expects_lr<cpubkey_t> derive_public_key(type alg, const cseckey_t& secret_key);
 			static expects_lr<uptr<compositor>> make_compositor(type alg);
+			static expects_lr<uptr<compositor>> make_compositor_from_stream(type alg, format::ro_stream& stream);
+			static expects_lr<uptr<compositor>> make_compositor_from_copy(type alg, const compositor* other);
 			static expects_lr<uptr<compositor>> make_public_key_compositor(type alg, const uint8_t* message, size_t message_size, uint16_t participants);
 			static expects_lr<uptr<compositor>> make_signature_compositor(type alg, const cpubkey_t& public_key, const uint8_t* message, size_t message_size, uint16_t participants);
-			static expects_lr<uptr<compositor>> load_compositor(format::ro_stream& stream, type* alg = nullptr);
-			static expects_lr<void> store_compositor(type alg, const compositor* state, format::wo_stream* stream);
 
 		public:
 			template <typename T>

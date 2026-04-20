@@ -2,6 +2,7 @@
 #include "consensus.h"
 #include "../kernel/script.h"
 #include "../policy/transactions.h"
+#include "../policy/delegations.h"
 #include "../storage/mempoolstate.h"
 #include "../storage/chainstate.h"
 
@@ -3083,7 +3084,7 @@ namespace tangent
 
 			std::string_view address = args[2].as_string();
 			decimal value = args[3].as_decimal();
-			auto prepared = transactions::resolver::prepare_transaction(algorithm::asset::base_id_of(asset), superchain::wallet_link::from_hash(bridge_hash), superchain::value_transfer(asset, address, std::move(value)), bridge->fee_rate).get();
+			auto prepared = delegations::broadcast_delegation::prepare_transaction(algorithm::asset::base_id_of(asset), superchain::wallet_link::from_hash(bridge_hash), superchain::value_transfer(asset, address, std::move(value)), bridge->fee_rate).get();
 			if (must_reset_network_active)
 				offchain->network_active = nullptr;
 			if (must_reset_network_fetch)
@@ -3104,7 +3105,7 @@ namespace tangent
 				}
 			}
 
-			auto finalized = transactions::resolver::finalize_transaction(algorithm::asset::base_id_of(asset), std::move(*prepared));
+			auto finalized = delegations::broadcast_delegation::finalize_transaction(algorithm::asset::base_id_of(asset), std::move(*prepared));
 			if (!finalized)
 				return server_response().success(prepared->as_tree());
 
@@ -3457,7 +3458,7 @@ namespace tangent
 			auto results = format::tree::list();
 			while (true)
 			{
-				auto entropy = mempool.get_secret_entropy(participant, results.childs().size());
+				auto entropy = mempool.get_key(participant, results.childs().size());
 				if (!entropy)
 					break;
 
@@ -3494,11 +3495,11 @@ namespace tangent
 					return server_response().error(error_codes::bad_request, "failed to decrypt message " + to_string(i - 1));
 
 				auto message = format::ro_stream(*decrypted_message);
-				auto entropy = ledger::dispatcher_context::secret_entropy();
+				auto entropy = ledger::distribution_key();
 				if (!entropy.load(message))
 					return server_response().error(error_codes::bad_request, "failed to load message " + to_string(i - 1));
 
-				if (!mempool.apply_secret_entropy(participant, entropy))
+				if (!mempool.apply_key(participant, entropy))
 					return server_response().error(error_codes::bad_request, "failed to save message " + to_string(i - 1));
 			}
 			return server_response().success(format::variable());

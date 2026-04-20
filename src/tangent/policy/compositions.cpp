@@ -17,17 +17,17 @@ namespace tangent
 	{
 		typedef void(*gmp_free_t)(void*, size_t);
 		static gmp_free_t gmp_free = nullptr;
-		inline void mpz_import_buffer(const uint8_t* data, size_t size, mpz_t value)
+		inline void mpz_import_buffer(const uint8_t* data, size_t size, mpz_t value, bool le = false)
 		{
-			mpz_import(value, size, 1, 1, 1, 0, data);
+			mpz_import(value, size, le ? -1 : 1, 1, le ? -1 : 1, 0, data);
 		}
-		inline string mpz_export_buffer(const mpz_t value)
+		inline string mpz_export_buffer(const mpz_t value, bool le = false)
 		{
 			if (!gmp_free)
 				mp_get_memory_functions(nullptr, nullptr, &gmp_free);
 
 			size_t size = 0;
-			char* data = (char*)mpz_export(nullptr, &size, 1, 1, 1, 0, value);
+			char* data = (char*)mpz_export(nullptr, &size, le ? -1 : 1, 1, le ? -1 : 1, 0, value);
 			string buffer = string(data, size);
 			gmp_free(data, size);
 			return buffer;
@@ -56,6 +56,249 @@ namespace tangent
 			algorithm::storage_type<uint8_t, 32> result;
 			bn_write_be(&value, result.blob);
 			return result;
+		}
+		static void paillier_store_public_key(const paillier_pubkey* paillier_public_key, algorithm::paillier_scalar_t* key)
+		{
+			VI_ASSERT(paillier_public_key != nullptr, "public key should be set");
+			VI_ASSERT(key != nullptr, "key should be set");
+			format::wo_stream message;
+			message.write_string(mpz_export_buffer(paillier_public_key->n));
+			message.write_integer((uint32_t)paillier_public_key->len);
+			key->resize(message.data.size());
+			memcpy(key->data(), message.data.data(), message.data.size());
+		}
+		static bool paillier_load_public_key(const algorithm::paillier_scalar_t& key, paillier_pubkey* paillier_public_key)
+		{
+			VI_ASSERT(paillier_public_key != nullptr, "public key should be set");
+			auto modulus = string(); auto modulus_bits = uint32_t(0);
+			auto message = format::ro_stream(std::string_view((char*)key.data(), key.size()));
+			if (!message.read_string(message.read_type(), &modulus) || modulus.empty() || !message.read_integer(message.read_type(), &modulus_bits))
+				return false;
+
+			paillier_public_key->len = (mp_bitcnt_t)modulus_bits;
+			mpz_import_buffer((uint8_t*)modulus.data(), modulus.size(), paillier_public_key->n);
+			return true;
+		};
+		static void paillier_to_public_key(const uint8_t* seed, size_t seed_size, size_t key_size, algorithm::paillier_scalar_t* public_key)
+		{
+			VI_ASSERT(public_key != nullptr, "public key should be set");
+			paillier_pubkey paillier_public_key;
+			paillier_seckey paillier_secret_key;
+			paillier_seckey_init(&paillier_secret_key);
+			paillier_pubkey_init(&paillier_public_key);
+			paillier_keypair_derive(&paillier_public_key, &paillier_secret_key, (mp_bitcnt_t)key_size, seed, (mp_bitcnt_t)seed_size);
+			paillier_store_public_key(&paillier_public_key, public_key);
+		}
+		static bool paillier_accumulate_tweak(const algorithm::paillier_scalar_t& public_key, const algorithm::composition::cseckey_t& tweak, algorithm::paillier_scalar_t* tweak_accumulator, bool le = false)
+		{
+			VI_ASSERT(tweak_accumulator != nullptr, "tweak accumulator should be set");
+			paillier_pubkey paillier_public_key;
+			paillier_pubkey_init(&paillier_public_key);
+			if (!paillier_load_public_key(public_key, &paillier_public_key))
+				return false;
+
+			mpz_t plaintext_tweak, ciphertext_tweak;
+			mpz_init(plaintext_tweak);
+			mpz_init(ciphertext_tweak);
+			mpz_import_buffer(tweak.data(), tweak.size(), plaintext_tweak, le);
+			paillier_encrypt(ciphertext_tweak, plaintext_tweak, &paillier_public_key);
+			mpz_clear(plaintext_tweak);
+			if (!tweak_accumulator->empty())
+			{
+				mpz_t ciphertext_tweak_sum;
+				mpz_init(ciphertext_tweak_sum);
+				mpz_import_buffer(tweak_accumulator->data(), tweak_accumulator->size(), ciphertext_tweak_sum);
+				paillier_homomorphic_add(ciphertext_tweak, ciphertext_tweak_sum, ciphertext_tweak, &paillier_public_key);
+				mpz_clear(ciphertext_tweak_sum);
+			}
+
+			auto result = mpz_export_buffer(ciphertext_tweak);
+			tweak_accumulator->resize(result.size());
+			memcpy(tweak_accumulator->data(), result.data(), result.size());
+			paillier_pubkey_clear(&paillier_public_key);
+			mpz_clear(ciphertext_tweak);
+			return true;
+		}
+		static void paillier_finalize_tweak(const uint8_t* seed, size_t seed_size, size_t key_size, const algorithm::paillier_scalar_t& tweak_accumulator, mpz_t plaintext_tweak)
+		{
+			paillier_pubkey paillier_public_key;
+			paillier_seckey paillier_secret_key;
+			paillier_seckey_init(&paillier_secret_key);
+			paillier_pubkey_init(&paillier_public_key);
+			paillier_keypair_derive(&paillier_public_key, &paillier_secret_key, (mp_bitcnt_t)key_size, seed, (mp_bitcnt_t)seed_size);
+
+			mpz_t ciphertext_tweak;
+			mpz_init(plaintext_tweak);
+			mpz_init(ciphertext_tweak);
+			mpz_import_buffer(tweak_accumulator.data(), tweak_accumulator.size(), ciphertext_tweak);
+			paillier_decrypt(plaintext_tweak, ciphertext_tweak, &paillier_secret_key);
+			paillier_pubkey_clear(&paillier_public_key);
+			paillier_seckey_clear(&paillier_secret_key);
+			mpz_clear(ciphertext_tweak);
+		}
+		static void ed25519_to_private_key(const uint8_t* seed, size_t seed_size, uint8_t result[32])
+		{
+			uint8_t key_buffer[64];
+			algorithm::hashing::hash512(seed, seed_size, key_buffer);
+			algorithm::keypair_utils::convert_to_scalar_ed25519(key_buffer, key_buffer);
+			memcpy(result, key_buffer, sizeof(ed25519_scalar_t));
+		}
+		static expects_lr<void> ed25519_combine_secret_key(const algorithm::composition::cseckey_t* input, algorithm::composition::cseckey_t* input_output)
+		{
+			VI_ASSERT(input != nullptr, "input should be set");
+			VI_ASSERT(input_output != nullptr, "output should be set");
+			if (input->size() != sizeof(ed25519_scalar_t))
+				return layer_exception("invalid input size");
+
+			if (input_output->size() != sizeof(ed25519_scalar_t))
+				return layer_exception("invalid input size");
+
+			uint8_t x64[64] = { 0 }, y64[64] = { 0 };
+			memcpy(x64, input_output->data(), input_output->size());
+			memcpy(y64, input->data(), input->size());
+
+			uint8_t x[32], y[32], z[32], w[32] = { 0 };
+			crypto_core_ed25519_scalar_reduce(x, x64);
+			crypto_core_ed25519_scalar_reduce(y, y64);
+			crypto_core_ed25519_scalar_add(z, x, y);
+			if (!memcmp(z, w, sizeof(w)))
+				return layer_exception("zero scalar output");
+
+			memcpy(input_output->data(), z, sizeof(z));
+			return expectation::met;
+		}
+		static expects_lr<void> ed25519_accumulator_tweak_secret_key(const uint8_t* seed, size_t seed_size, size_t key_size, const algorithm::paillier_scalar_t& accumulator, algorithm::composition::cseckey_t* secret_key_input_output)
+		{
+			uint8_t order_buffer[crypto_core_ed25519_SCALARBYTES];
+			uint8_t value_buffer[crypto_core_ed25519_SCALARBYTES] = { 1 };
+			crypto_core_ed25519_scalar_negate(order_buffer, value_buffer);
+
+			mpz_t scalar, order;
+			mpz_init(order);
+			paillier_finalize_tweak(seed, seed_size, key_size, accumulator, scalar);
+			mpz_import(order, crypto_core_ed25519_SCALARBYTES, -1, 1, -1, 0, order_buffer);
+			mpz_add_ui(order, order, 1);
+			mpz_mod(scalar, scalar, order);
+			mpz_sub(scalar, order, scalar);
+			mpz_clear(order);
+
+			auto result = mpz_export_buffer(scalar, true);
+			auto tweak = algorithm::composition::cseckey_t();
+			tweak.resize(sizeof(value_buffer));
+			memcpy(tweak.data(), result.data(), sizeof(value_buffer));
+			mpz_clear(scalar);
+
+			return ed25519_combine_secret_key(&tweak, secret_key_input_output);
+		}
+		static expects_lr<void> ed25519_combine_public_key(const algorithm::composition::cpubkey_t* input, algorithm::composition::cpubkey_t* input_output)
+		{
+			VI_ASSERT(input != nullptr, "input should be set");
+			VI_ASSERT(input_output != nullptr, "output should be set");
+			if (input->size() != sizeof(ed25519_point_t))
+				return layer_exception("invalid input size");
+
+			if (!input_output->empty() && input_output->size() != sizeof(ed25519_point_t))
+				return layer_exception("invalid input-output size");
+
+			if (input_output->empty())
+				input_output->assign(input->begin(), input->end());
+			else if (crypto_core_ed25519_add(input_output->data(), input->data(), input_output->data()) != 0)
+				return layer_exception("invalid input");
+
+			return expectation::met;
+		}
+		static void secp256k1_to_private_key(const uint8_t* seed, size_t seed_size, uint8_t result[32])
+		{
+			uint8_t key_buffer[64];
+			algorithm::hashing::hash512(seed, seed_size, key_buffer);
+
+			secp256k1_scalar_t secret_key;
+			memcpy(secret_key.blob, key_buffer, std::min(sizeof(secret_key), sizeof(key_buffer)));
+
+			secp256k1_pubkey extended_public_key;
+			secp256k1_context* context = algorithm::signing::get_context();
+			while (secp256k1_ec_seckey_verify(context, secret_key.blob) != 1 || secp256k1_ec_pubkey_create(context, &extended_public_key, secret_key.blob) != 1)
+			{
+				algorithm::hashing::hash512(key_buffer, sizeof(key_buffer), key_buffer);
+				memcpy(secret_key.blob, key_buffer, std::min(sizeof(secret_key), sizeof(key_buffer)));
+			}
+
+			memcpy(result, secret_key.blob, sizeof(secret_key));
+		}
+		static expects_lr<void> secp256k1_combine_secret_key(const algorithm::composition::cseckey_t* input, algorithm::composition::cseckey_t* input_output)
+		{
+			VI_ASSERT(input != nullptr, "input should be set");
+			VI_ASSERT(input_output != nullptr, "output should be set");
+			if (input->size() != sizeof(ed25519_scalar_t))
+				return layer_exception("invalid input size");
+
+			if (input_output->size() != sizeof(ed25519_scalar_t))
+				return layer_exception("invalid input size");
+
+			bignum256 a, b;
+			bn_read_be(input->data(), &a);
+			bn_read_be(input_output->data(), &b);
+			bn_addmod(&a, &b, &secp256k1.order);
+			if (bn_is_zero(&a))
+				return layer_exception("zero scalar output");
+
+			bn_write_be(&a, input_output->data());
+			return expectation::met;
+		}
+		static expects_lr<void> secp256k1_accumulator_tweak_secret_key(const uint8_t* seed, size_t seed_size, size_t key_size, const algorithm::paillier_scalar_t& accumulator, algorithm::composition::cseckey_t* secret_key_input_output)
+		{
+			uint8_t value_buffer[32] = { 0 };
+			bn_write_be(&secp256k1.order, value_buffer);
+
+			mpz_t scalar, order;
+			mpz_init(order);
+			paillier_finalize_tweak(seed, seed_size, key_size, accumulator, scalar);
+			mpz_import_buffer(value_buffer, sizeof(value_buffer), order);
+			mpz_mod(scalar, scalar, order);
+			mpz_sub(scalar, order, scalar);
+			mpz_clear(order);
+
+			auto result = mpz_export_buffer(scalar);
+			auto tweak = algorithm::composition::cseckey_t();
+			tweak.resize(sizeof(value_buffer));
+			memcpy(tweak.data(), result.data(), sizeof(value_buffer));
+			mpz_clear(scalar);
+
+			return secp256k1_combine_secret_key(&tweak, secret_key_input_output);
+		}
+		static expects_lr<void> secp256k1_combine_public_key(const algorithm::composition::cpubkey_t* input, algorithm::composition::cpubkey_t* input_output)
+		{
+			VI_ASSERT(input != nullptr, "input should be set");
+			VI_ASSERT(input_output != nullptr, "output should be set");
+			if (input->size() != sizeof(secp256k1_point_t))
+				return layer_exception("invalid input size");
+
+			if (!input_output->empty() && input_output->size() != sizeof(secp256k1_point_t))
+				return layer_exception("invalid input-output size");
+
+			if (!input_output->empty())
+			{
+				secp256k1_pubkey next_public_key;
+				secp256k1_context* context = algorithm::signing::get_context();
+				if (secp256k1_ec_pubkey_parse(context, &next_public_key, input->data(), input->size()) != 1)
+					return layer_exception("invalid input");
+
+				secp256k1_pubkey prev_public_key, result_public_key;
+				if (secp256k1_ec_pubkey_parse(context, &prev_public_key, input_output->data(), input_output->size()) != 1)
+					return layer_exception("invalid input-output");
+
+				secp256k1_pubkey* public_keys[2] = { &prev_public_key, &next_public_key };
+				if (secp256k1_ec_pubkey_combine(context, &result_public_key, public_keys, 2) != 1)
+					return layer_exception("invalid input");
+
+				size_t key_size = input_output->size();
+				if (secp256k1_ec_pubkey_serialize(context, input_output->data(), &key_size, &result_public_key, SECP256K1_EC_COMPRESSED) != 1)
+					return layer_exception("invalid secret key");
+			}
+			else
+				input_output->assign(input->begin(), input->end());
+
+			return expectation::met;
 		}
 
 		expects_lr<void> ed25519_compositor::setup_public_key(const uint8_t* new_message, size_t new_message_size, uint16_t new_participants)
@@ -165,28 +408,48 @@ namespace tangent
 			}
 			return expectation::met;
 		}
-		expects_lr<void> ed25519_compositor::to_partial_secret_key(const uint8_t* seed, size_t seed_size, algorithm::composition::cseckey_t* output) const
+		expects_lr<void> ed25519_compositor::derive_tweaking_key(const uint8_t* seed, size_t seed_size, size_t key_size, algorithm::paillier_scalar_t* public_key) const
 		{
-			VI_ASSERT(output != nullptr, "output should be set");
-			uint8_t key_buffer[64];
-			algorithm::hashing::hash512(seed, seed_size, key_buffer);
-			algorithm::keypair_utils::convert_to_scalar_ed25519(key_buffer, key_buffer);
-			output->resize(sizeof(ed25519_scalar_t));
-			memcpy(output->data(), key_buffer, sizeof(ed25519_scalar_t));
+			paillier_to_public_key(seed, seed_size, key_size, public_key);
 			return expectation::met;
 		}
-		expects_lr<void> ed25519_compositor::to_public_key(algorithm::composition::cpubkey_t* output) const
+		expects_lr<void> ed25519_compositor::tweak_secret_key(const algorithm::paillier_scalar_t& public_key, const algorithm::composition::cseckey_t& tweak, algorithm::composition::cseckey_t* secret_key_input_output, algorithm::paillier_scalar_t* accumulator_output) const
+		{
+			if (accumulator_output != nullptr && !paillier_accumulate_tweak(public_key, tweak, accumulator_output, true))
+				return layer_exception("invalid paillier key");	
+
+			if (secret_key_input_output != nullptr)
+				return ed25519_combine_secret_key(&tweak, secret_key_input_output);
+
+			return expectation::met;
+		}
+		expects_lr<void> ed25519_compositor::tweak_secret_key(const uint8_t* seed, size_t seed_size, size_t key_size, const algorithm::paillier_scalar_t& accumulator, algorithm::composition::cseckey_t* secret_key_input_output) const
+		{
+			return ed25519_accumulator_tweak_secret_key(seed, seed_size, key_size, accumulator, secret_key_input_output);
+		}
+		expects_lr<void> ed25519_compositor::combine_public_keys(const algorithm::composition::cpubkey_t* input, algorithm::composition::cpubkey_t* input_output) const
+		{
+			return ed25519_combine_public_key(input, input_output);
+		}
+		expects_lr<void> ed25519_compositor::derive_secret_key(const uint8_t* seed, size_t seed_size, algorithm::composition::cseckey_t* output) const
+		{
+			VI_ASSERT(output != nullptr, "output should be set");
+			output->resize(sizeof(ed25519_scalar_t));
+			ed25519_to_private_key(seed, seed_size, output->data());
+			return expectation::met;
+		}
+		expects_lr<void> ed25519_compositor::derive_public_key(algorithm::composition::cpubkey_t* output) const
 		{
 			VI_ASSERT(output != nullptr, "output should be set");
 			output->resize(sizeof(group_public_key));
 			memcpy(output->data(), group_public_key.blob, sizeof(group_public_key));
 			return expectation::met;
 		}
-		expects_lr<void> ed25519_compositor::to_signature(algorithm::composition::chashsig_t* output) const
+		expects_lr<void> ed25519_compositor::derive_signature(algorithm::composition::chashsig_t* output) const
 		{
 			VI_ASSERT(output != nullptr, "output should be set");
 			algorithm::composition::cpubkey_t public_key;
-			auto status = to_public_key(&public_key);
+			auto status = derive_public_key(&public_key);
 			if (!status)
 				return status;
 
@@ -300,7 +563,7 @@ namespace tangent
 			if (z_steps == next->z_steps && !group_public_key.equals(next->group_public_key))
 				return false;
 
-			return steps_left() > next->steps_left();
+			return steps_left() >= next->steps_left();
 		}
 
 		expects_lr<void> ed25519_clsag_compositor::setup_public_key(const uint8_t* new_message, size_t new_message_size, uint16_t new_participants)
@@ -321,6 +584,8 @@ namespace tangent
 			if (public_key.size() != sizeof(ed25519_point_t))
 				return layer_exception("invalid public key size");
 
+			message.resize(new_message_size);
+			memcpy(message.data(), new_message, new_message_size);
 			group_public_key = public_key;
 			participants = new_participants;
 			z_steps = 0;
@@ -347,24 +612,44 @@ namespace tangent
 			/* Not implemented yet */
 			return expectation::met;
 		}
-		expects_lr<void> ed25519_clsag_compositor::to_partial_secret_key(const uint8_t* seed, size_t seed_size, algorithm::composition::cseckey_t* output) const
+		expects_lr<void> ed25519_clsag_compositor::derive_tweaking_key(const uint8_t* seed, size_t seed_size, size_t key_size, algorithm::paillier_scalar_t* public_key) const
 		{
-			VI_ASSERT(output != nullptr, "output should be set");
-			uint8_t key_buffer[64];
-			algorithm::hashing::hash512(seed, seed_size, key_buffer);
-			algorithm::keypair_utils::convert_to_scalar_ed25519(key_buffer, key_buffer);
-			output->resize(sizeof(ed25519_scalar_t));
-			memcpy(output->data(), key_buffer, sizeof(ed25519_scalar_t));
+			paillier_to_public_key(seed, seed_size, key_size, public_key);
 			return expectation::met;
 		}
-		expects_lr<void> ed25519_clsag_compositor::to_public_key(algorithm::composition::cpubkey_t* output) const
+		expects_lr<void> ed25519_clsag_compositor::tweak_secret_key(const algorithm::paillier_scalar_t& public_key, const algorithm::composition::cseckey_t& tweak, algorithm::composition::cseckey_t* secret_key_input_output, algorithm::paillier_scalar_t* accumulator_output) const
+		{
+			if (accumulator_output != nullptr && !paillier_accumulate_tweak(public_key, tweak, accumulator_output, true))
+				return layer_exception("invalid paillier key");
+
+			if (secret_key_input_output != nullptr)
+				return ed25519_combine_secret_key(&tweak, secret_key_input_output);
+
+			return expectation::met;
+		}
+		expects_lr<void> ed25519_clsag_compositor::tweak_secret_key(const uint8_t* seed, size_t seed_size, size_t key_size, const algorithm::paillier_scalar_t& accumulator, algorithm::composition::cseckey_t* secret_key_input_output) const
+		{
+			return ed25519_accumulator_tweak_secret_key(seed, seed_size, key_size, accumulator, secret_key_input_output);
+		}
+		expects_lr<void> ed25519_clsag_compositor::combine_public_keys(const algorithm::composition::cpubkey_t* input, algorithm::composition::cpubkey_t* input_output) const
+		{
+			return ed25519_combine_public_key(input, input_output);
+		}
+		expects_lr<void> ed25519_clsag_compositor::derive_secret_key(const uint8_t* seed, size_t seed_size, algorithm::composition::cseckey_t* output) const
+		{
+			VI_ASSERT(output != nullptr, "output should be set");
+			output->resize(sizeof(ed25519_scalar_t));
+			ed25519_to_private_key(seed, seed_size, output->data());
+			return expectation::met;
+		}
+		expects_lr<void> ed25519_clsag_compositor::derive_public_key(algorithm::composition::cpubkey_t* output) const
 		{
 			VI_ASSERT(output != nullptr, "output should be set");
 			output->resize(sizeof(group_public_key));
 			memcpy(output->data(), group_public_key.blob, sizeof(group_public_key));
 			return expectation::met;
 		}
-		expects_lr<void> ed25519_clsag_compositor::to_signature(algorithm::composition::chashsig_t* output) const
+		expects_lr<void> ed25519_clsag_compositor::derive_signature(algorithm::composition::chashsig_t* output) const
 		{
 			VI_ASSERT(output != nullptr, "output should be set");
 			/* Not implemented yet */
@@ -425,7 +710,7 @@ namespace tangent
 				return false;
 
 			/* Not implemented yet */
-			return steps_left() > next->steps_left();
+			return steps_left() >= next->steps_left();
 		}
 
 		expects_lr<void> secp256k1_compositor::setup_public_key(const uint8_t* new_message, size_t new_message_size, uint16_t new_participants)
@@ -508,17 +793,6 @@ namespace tangent
 				bn_write_be(k, message + 32);
 				paillier_keypair_derive(public_key, private_key, bits, message, sizeof(message));
 			};
-			auto calculate_paillier_public_key = [](const paillier_scalar_t& group_key, paillier_pubkey* paillier_public_key) -> bool
-			{
-				auto modulus = string(); auto modulus_bits = uint32_t(0);
-				auto message = format::ro_stream(std::string_view((char*)group_key.data(), group_key.size()));
-				if (!message.read_string(message.read_type(), &modulus) || modulus.empty() || !message.read_integer(message.read_type(), &modulus_bits))
-					return false;
-
-				paillier_public_key->len = (mp_bitcnt_t)modulus_bits;
-				mpz_import_buffer((uint8_t*)modulus.data(), modulus.size(), paillier_public_key->n);
-				return true;
-			};
 			if (z_steps > 0)
 			{
 				secp256k1_context* context = algorithm::signing::get_context();
@@ -590,12 +864,7 @@ namespace tangent
 					paillier_seckey_init(&paillier_secret_key);
 					paillier_pubkey_init(&paillier_public_key);
 					calculate_paillier_keypair(&paillier_public_key, &paillier_secret_key, p_bits, secret_key, &k);
-
-					format::wo_stream message;
-					message.write_string(mpz_export_buffer(paillier_public_key.n));
-					message.write_integer((uint32_t)paillier_public_key.len);
-					group_paillier_key.resize(message.data.size());
-					memcpy(group_paillier_key.data(), message.data.data(), message.data.size());
+					paillier_store_public_key(&paillier_public_key, &group_paillier_key);
 					paillier_pubkey_clear(&paillier_public_key);
 					paillier_seckey_clear(&paillier_secret_key);
 				}
@@ -617,7 +886,7 @@ namespace tangent
 
 				paillier_pubkey paillier_public_key;
 				paillier_pubkey_init(&paillier_public_key);
-				if (!calculate_paillier_public_key(group_paillier_key, &paillier_public_key))
+				if (!paillier_load_public_key(group_paillier_key, &paillier_public_key))
 					return layer_exception("invalid group paillier key");
 
 				curve_point r = from_compressed_point_secp256k1(cumulative_r);
@@ -675,7 +944,7 @@ namespace tangent
 				indices.erase(indices.begin());
 				if (--s_steps > 0)
 				{
-					if (!calculate_paillier_public_key(group_paillier_key, &paillier_public_key))
+					if (!paillier_load_public_key(group_paillier_key, &paillier_public_key))
 						return layer_exception("invalid group key");
 
 					uint8_t k_buffer[32] = { 0 };
@@ -737,39 +1006,48 @@ namespace tangent
 			}
 			return expectation::met;
 		}
-		expects_lr<void> secp256k1_compositor::to_partial_secret_key(const uint8_t* seed, size_t seed_size, algorithm::composition::cseckey_t* output) const
+		expects_lr<void> secp256k1_compositor::derive_tweaking_key(const uint8_t* seed, size_t seed_size, size_t key_size, algorithm::paillier_scalar_t* public_key) const
 		{
-			VI_ASSERT(output != nullptr, "output should be set");
-			uint8_t key_buffer[64];
-			algorithm::hashing::hash512(seed, seed_size, key_buffer);
-
-			secp256k1_scalar_t secret_key;
-			memcpy(secret_key.blob, key_buffer, std::min(sizeof(secret_key), sizeof(key_buffer)));
-
-			secp256k1_pubkey extended_public_key;
-			secp256k1_context* context = algorithm::signing::get_context();
-			while (secp256k1_ec_seckey_verify(context, secret_key.blob) != 1 || secp256k1_ec_pubkey_create(context, &extended_public_key, secret_key.blob) != 1)
-			{
-				algorithm::hashing::hash512(key_buffer, sizeof(key_buffer), key_buffer);
-				memcpy(secret_key.blob, key_buffer, std::min(sizeof(secret_key), sizeof(key_buffer)));
-			}
-
-			output->resize(sizeof(secret_key));
-			memcpy(output->data(), secret_key.blob, sizeof(secret_key));
+			paillier_to_public_key(seed, seed_size, key_size, public_key);
 			return expectation::met;
 		}
-		expects_lr<void> secp256k1_compositor::to_public_key(algorithm::composition::cpubkey_t* output) const
+		expects_lr<void> secp256k1_compositor::tweak_secret_key(const algorithm::paillier_scalar_t& public_key, const algorithm::composition::cseckey_t& tweak, algorithm::composition::cseckey_t* secret_key_input_output, algorithm::paillier_scalar_t* accumulator_output) const
+		{
+			if (accumulator_output != nullptr && !paillier_accumulate_tweak(public_key, tweak, accumulator_output))
+				return layer_exception("invalid paillier key");
+
+			if (secret_key_input_output != nullptr)
+				return secp256k1_combine_secret_key(&tweak, secret_key_input_output);
+
+			return expectation::met;
+		}
+		expects_lr<void> secp256k1_compositor::tweak_secret_key(const uint8_t* seed, size_t seed_size, size_t key_size, const algorithm::paillier_scalar_t& accumulator, algorithm::composition::cseckey_t* secret_key_input_output) const
+		{
+			return secp256k1_accumulator_tweak_secret_key(seed, seed_size, key_size, accumulator, secret_key_input_output);
+		}
+		expects_lr<void> secp256k1_compositor::combine_public_keys(const algorithm::composition::cpubkey_t* input, algorithm::composition::cpubkey_t* input_output) const
+		{
+			return secp256k1_combine_public_key(input, input_output);
+		}
+		expects_lr<void> secp256k1_compositor::derive_secret_key(const uint8_t* seed, size_t seed_size, algorithm::composition::cseckey_t* output) const
+		{
+			VI_ASSERT(output != nullptr, "output should be set");
+			output->resize(sizeof(secp256k1_scalar_t));
+			secp256k1_to_private_key(seed, seed_size, output->data());
+			return expectation::met;
+		}
+		expects_lr<void> secp256k1_compositor::derive_public_key(algorithm::composition::cpubkey_t* output) const
 		{
 			VI_ASSERT(output != nullptr, "output should be set");
 			output->resize(sizeof(group_public_key));
 			memcpy(output->data(), group_public_key.blob, sizeof(group_public_key));
 			return expectation::met;
 		}
-		expects_lr<void> secp256k1_compositor::to_signature(algorithm::composition::chashsig_t* output) const
+		expects_lr<void> secp256k1_compositor::derive_signature(algorithm::composition::chashsig_t* output) const
 		{
 			VI_ASSERT(output != nullptr, "output should be set");
 			algorithm::composition::cpubkey_t public_key;
-			auto status = to_public_key(&public_key);
+			auto status = derive_public_key(&public_key);
 			if (!status)
 				return status;
 
@@ -962,7 +1240,7 @@ namespace tangent
 			if (!group_paillier_key.empty() && !next->group_paillier_key.empty() && group_paillier_key != next->group_paillier_key)
 				return false;
 
-			return steps_left() > next->steps_left();
+			return steps_left() >= next->steps_left();
 		}
 
 		expects_lr<void> secp256k1_schnorr_compositor::setup_public_key(const uint8_t* new_message, size_t new_message_size, uint16_t new_participants)
@@ -1148,39 +1426,48 @@ namespace tangent
 			}
 			return expectation::met;
 		}
-		expects_lr<void> secp256k1_schnorr_compositor::to_partial_secret_key(const uint8_t* seed, size_t seed_size, algorithm::composition::cseckey_t* output) const
+		expects_lr<void> secp256k1_schnorr_compositor::derive_tweaking_key(const uint8_t* seed, size_t seed_size, size_t key_size, algorithm::paillier_scalar_t* public_key) const
 		{
-			VI_ASSERT(output != nullptr, "output should be set");
-			uint8_t key_buffer[64];
-			algorithm::hashing::hash512(seed, seed_size, key_buffer);
-
-			secp256k1_scalar_t secret_key;
-			memcpy(secret_key.blob, key_buffer, std::min(sizeof(secret_key), sizeof(key_buffer)));
-
-			secp256k1_pubkey extended_public_key;
-			secp256k1_context* context = algorithm::signing::get_context();
-			while (secp256k1_ec_seckey_verify(context, secret_key.blob) != 1 || secp256k1_ec_pubkey_create(context, &extended_public_key, secret_key.blob) != 1)
-			{
-				algorithm::hashing::hash512(key_buffer, sizeof(key_buffer), key_buffer);
-				memcpy(secret_key.blob, key_buffer, std::min(sizeof(secret_key), sizeof(key_buffer)));
-			}
-
-			output->resize(sizeof(secret_key));
-			memcpy(output->data(), secret_key.blob, sizeof(secret_key));
+			paillier_to_public_key(seed, seed_size, key_size, public_key);
 			return expectation::met;
 		}
-		expects_lr<void> secp256k1_schnorr_compositor::to_public_key(algorithm::composition::cpubkey_t* output) const
+		expects_lr<void> secp256k1_schnorr_compositor::tweak_secret_key(const algorithm::paillier_scalar_t& public_key, const algorithm::composition::cseckey_t& tweak, algorithm::composition::cseckey_t* secret_key_input_output, algorithm::paillier_scalar_t* accumulator_output) const
+		{
+			if (accumulator_output != nullptr && !paillier_accumulate_tweak(public_key, tweak, accumulator_output))
+				return layer_exception("invalid paillier key");
+
+			if (secret_key_input_output != nullptr)
+				return secp256k1_combine_secret_key(&tweak, secret_key_input_output);
+
+			return expectation::met;
+		}
+		expects_lr<void> secp256k1_schnorr_compositor::tweak_secret_key(const uint8_t* seed, size_t seed_size, size_t key_size, const algorithm::paillier_scalar_t& accumulator, algorithm::composition::cseckey_t* secret_key_input_output) const
+		{
+			return secp256k1_accumulator_tweak_secret_key(seed, seed_size, key_size, accumulator, secret_key_input_output);
+		}
+		expects_lr<void> secp256k1_schnorr_compositor::combine_public_keys(const algorithm::composition::cpubkey_t* input, algorithm::composition::cpubkey_t* input_output) const
+		{
+			return secp256k1_combine_public_key(input, input_output);
+		}
+		expects_lr<void> secp256k1_schnorr_compositor::derive_secret_key(const uint8_t* seed, size_t seed_size, algorithm::composition::cseckey_t* output) const
+		{
+			VI_ASSERT(output != nullptr, "output should be set");
+			output->resize(sizeof(secp256k1_scalar_t));
+			secp256k1_to_private_key(seed, seed_size, output->data());
+			return expectation::met;
+		}
+		expects_lr<void> secp256k1_schnorr_compositor::derive_public_key(algorithm::composition::cpubkey_t* output) const
 		{
 			VI_ASSERT(output != nullptr, "output should be set");
 			output->resize(sizeof(group_public_key));
 			memcpy(output->data(), group_public_key.blob, sizeof(group_public_key));
 			return expectation::met;
 		}
-		expects_lr<void> secp256k1_schnorr_compositor::to_signature(algorithm::composition::chashsig_t* output) const
+		expects_lr<void> secp256k1_schnorr_compositor::derive_signature(algorithm::composition::chashsig_t* output) const
 		{
 			VI_ASSERT(output != nullptr, "output should be set");
 			algorithm::composition::cpubkey_t public_key;
-			auto status = to_public_key(&public_key);
+			auto status = derive_public_key(&public_key);
 			if (!status)
 				return status;
 
@@ -1307,7 +1594,7 @@ namespace tangent
 			if (z_steps == next->z_steps && !group_public_key.equals(next->group_public_key))
 				return false;
 
-			return steps_left() > next->steps_left();
+			return steps_left() >= next->steps_left();
 		}
 		expects_lr<algorithm::composition::cpubkey_t> secp256k1_schnorr_compositor::to_tweaked_public_key(const secp256k1_point_t& public_key, const secp256k1_scalar_t& tweak)
 		{

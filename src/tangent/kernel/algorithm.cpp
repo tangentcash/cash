@@ -1,13 +1,13 @@
 #include "algorithm.h"
 #include "superchain.h"
 #include "../policy/compositions.h"
+#include <array>
 #include <gmp.h>
 extern "C"
 {
 #include <secp256k1.h>
 #include <secp256k1_ecdh.h>
 #include <secp256k1_recovery.h>
-#include <secp256k1_schnorrsig.h>
 #include <sodium.h>
 #include "../internal/ripemd160.h"
 #include "../internal/sha2.h"
@@ -737,13 +737,18 @@ namespace tangent
 			const uint8_t salt[crypto_pwhash_SALTBYTES + 1] = "ecf64bb58acc059f";
 			return crypto_pwhash(output, output_size, (const char*)input, input_size, salt, 3, 1 << 20, 1) == 0;
 		}
-		bool signing::split_secret_into_shares(const uint8_t message[64], uint8_t threshold, uint8_t count, btree_set<share_t>& shares)
+		bool signing::split_secret_into_shares(const uint8_t* message_in, size_t message_in_size, uint8_t threshold, uint8_t count, btree_set<share_t>& shares)
 		{
-			VI_ASSERT(message != nullptr, "message must be set");
+			VI_ASSERT(message_in != nullptr, "message must be set");
+			VI_ASSERT(message_in_size <= sss_MLEN, "message size must be less than 64");
 			VI_ASSERT(threshold <= count, "threshold must be less than or equal to count");
 			VI_ASSERT(count <= 64, "count must be less than or equal to 64");
+			uint8_t wrapped_message[sss_MLEN];
+			memset(wrapped_message, 0, sizeof(wrapped_message));
+			memcpy(wrapped_message, message_in, message_in_size);
+
 			std::array<sss_Share, 64> sss_shares;
-			sss_create_shares(sss_shares.data(), message, count, threshold);
+			sss_create_shares(sss_shares.data(), wrapped_message, count, threshold);
 
 			shares.clear();
 			for (size_t i = 0; i < count; i++)
@@ -751,18 +756,25 @@ namespace tangent
 
 			return true;
 		}
-		bool signing::combine_shares_into_secret(const btree_set<share_t>& shares, uint8_t message[64])
+		bool signing::combine_shares_into_secret(const btree_set<share_t>& shares, uint8_t* message_out, size_t message_out_size)
 		{
+			VI_ASSERT(message_out != nullptr, "message must be set");
+			VI_ASSERT(message_out_size <= sss_MLEN, "message size must be less than 64");
 			VI_ASSERT(shares.size() <= 64, "shares count must be less than or equal to 64");
 			std::array<sss_Share, 64> sss_shares; size_t index = 0;
 			for (auto& share : shares)
 				memcpy(sss_shares[index++], share.blob, sizeof(sss_Share));
 
-			return sss_combine_shares(message, sss_shares.data(), (uint8_t)shares.size()) == 0;
+			uint8_t wrapped_message[sss_MLEN];
+			if (sss_combine_shares(wrapped_message, sss_shares.data(), (uint8_t)shares.size()) != 0)
+				return false;
+
+			memcpy(message_out, wrapped_message, message_out_size);
+			return true;
 		}
 		uint8_t signing::recovery_threshold(size_t shares)
 		{
-			return (uint8_t)std::min<size_t>(1 + shares / 2, 64);
+			return (uint8_t)std::min<size_t>((2 + shares * 2) / 3, 64);
 		}
 		bool signing::scalar_add_secret_key(seckey_t& secret_key, const seckey_t& scalar)
 		{
@@ -1362,7 +1374,7 @@ namespace tangent
 
 			auto& keypair_state_ptr = *keypair_state;
 			auto keypair_result = keypair();
-			auto aggregation = keypair_state_ptr->to_partial_secret_key(seed, seed_size, &keypair_result.secret_key);
+			auto aggregation = keypair_state_ptr->derive_secret_key(seed, seed_size, &keypair_result.secret_key);
 			if (!aggregation)
 				return aggregation.error();
 
@@ -1375,11 +1387,34 @@ namespace tangent
 			if (!aggregation)
 				return aggregation.error();
 
-			aggregation = keypair_state_ptr->to_public_key(&keypair_result.public_key);
+			aggregation = keypair_state_ptr->derive_public_key(&keypair_result.public_key);
 			if (!aggregation)
 				return aggregation.error();
 
 			return expects_lr<composition::keypair>(std::move(keypair_result));
+		}
+		expects_lr<composition::cpubkey_t> composition::derive_public_key(type alg, const cseckey_t& secret_key)
+		{
+			auto keypair_state = make_compositor(alg);
+			if (!keypair_state)
+				return keypair_state.error();
+
+			auto& keypair_state_ptr = *keypair_state;
+			uint8_t message[32] = { 0xFF };
+			auto aggregation = keypair_state_ptr->setup_public_key(message, sizeof(message), 1);
+			if (!aggregation)
+				return aggregation.error();
+
+			aggregation = keypair_state_ptr->aggregate(secret_key);
+			if (!aggregation)
+				return aggregation.error();
+
+			cpubkey_t result;
+			aggregation = keypair_state_ptr->derive_public_key(&result);
+			if (!aggregation)
+				return aggregation.error();
+
+			return expects_lr<composition::cpubkey_t>(std::move(result));
 		}
 		expects_lr<uptr<composition::compositor>> composition::make_compositor(type alg)
 		{
@@ -1396,6 +1431,30 @@ namespace tangent
 				default:
 					return layer_exception("invalid type");
 			}
+		}
+		expects_lr<uptr<composition::compositor>> composition::make_compositor_from_stream(type alg, format::ro_stream& stream)
+		{
+			auto state = make_compositor(alg);
+			if (!state)
+				return state.error();
+
+			auto& state_ptr = *state;
+			if (!state_ptr->load(stream))
+				return layer_exception("state load error");
+
+			return expects_lr<uptr<composition::compositor>>(std::move(state_ptr));
+		}
+		expects_lr<uptr<composition::compositor>> composition::make_compositor_from_copy(type alg, const compositor* other)
+		{
+			if (!other)
+				return make_compositor(alg);
+
+			format::wo_stream writer;
+			if (!other->store(&writer))
+				return layer_exception("failed to serialize the copying compositor");
+
+			format::ro_stream reader = writer.ro();
+			return make_compositor_from_stream(alg, reader);
 		}
 		expects_lr<uptr<composition::compositor>> composition::make_public_key_compositor(type alg, const uint8_t* message, size_t message_size, uint16_t participants)
 		{
@@ -1422,35 +1481,6 @@ namespace tangent
 				return configuration.error();
 
 			return expects_lr<uptr<composition::compositor>>(std::move(state_ptr));
-		}
-		expects_lr<uptr<composition::compositor>> composition::load_compositor(format::ro_stream& stream, type* out_alg)
-		{
-			type alg;
-			if (!stream.read_integer(stream.read_type(), (uint8_t*)&alg))
-				return layer_exception("invalid type");
-
-			auto state = make_compositor(alg);
-			if (!state)
-				return state.error();
-
-			auto& state_ptr = *state;
-			if (!state_ptr->load(stream))
-				return layer_exception("state load error");
-
-			if (out_alg != nullptr)
-				*out_alg = alg;
-
-			return expects_lr<uptr<composition::compositor>>(std::move(state_ptr));
-		}
-		expects_lr<void> composition::store_compositor(type alg, const compositor* state, format::wo_stream* stream)
-		{
-			VI_ASSERT(state != nullptr, "state should be set");
-			VI_ASSERT(stream != nullptr, "stream should be set");
-			stream->write_integer((uint8_t)alg);
-			if (!state->store(stream))
-				return layer_exception("state store error");
-
-			return expectation::met;
 		}
 
 		void keypair_utils::convert_to_secret_key_ed25519(uint8_t secret_key[32])

@@ -1,6 +1,7 @@
 #ifndef TAN_TRANSLATION_MONERO_H
 #define TAN_TRANSLATION_MONERO_H
 #include "../kernel/superchain.h"
+#include <array>
 
 struct sc_chainparams_;
 

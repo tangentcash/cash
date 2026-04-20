@@ -1,6 +1,5 @@
 #include "format.h"
 #include "algorithm.h"
-#include <bitset>
 #include <rapidjson/document.h>
 
 namespace tangent

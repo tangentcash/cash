@@ -90,7 +90,6 @@ namespace tangent
 			rollup& operator= (rollup&&) noexcept = default;
 			expects_lr<void> validate(uint64_t block_number) const override;
 			expects_lr<void> execute(ledger::executor_context* executor) const override;
-			expects_promise_rt<void> dispatch(const ledger::executor_context* executor, ledger::dispatcher_context* dispatcher) const override;
 			bool store_body(format::wo_stream* stream) const override;
 			bool load_body(format::ro_stream& stream) override;
 			bool recover_many(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const override;
@@ -98,81 +97,8 @@ namespace tangent
 			bool import_transaction(const ledger::transaction_message& transaction);
 			bool import_internal_transaction(ledger::transaction_message& transaction);
 			bool import_external_transaction(ledger::transaction_message& transaction, const algorithm::seckey_t& secret_key, uint64_t nonce);
-			bool is_dispatchable() const override;
 			expects_lr<ledger::block_transaction> resolve_block_transaction(const ledger::transaction_receipt& receipt, const uint256_t& transaction_hash) const;
 			const ledger::transaction_message* resolve_transaction(const uint256_t& transaction_hash) const;
-			format::tree as_tree() const override;
-			uint32_t as_type() const override;
-			std::string_view as_typename() const override;
-			static uint32_t as_instance_type();
-			static std::string_view as_instance_typename();
-		};
-
-		struct setup final : ledger::transaction_message
-		{
-			struct migration_ref
-			{
-				states::bridge_account account = states::bridge_account(states::bridge_ref(), nullptr);
-				algorithm::pubkeyhash_t old_participant;
-				bool must_have_locally;
-			};
-
-			struct attestation_setup
-			{
-				option<decimal> min_fee = optional::none;
-				decimal stake = decimal::nan();
-			};
-
-			struct bridge_setup
-			{
-				decimal fee_rate = decimal::nan();
-				uint8_t security_level = 0;
-			};
-
-			btree_map<uint256_t, algorithm::pubkeyhash_t> migrations;
-			btree_map<algorithm::asset_id, attestation_setup> attestations;
-			btree_map<algorithm::asset_id, bridge_setup> bridges;
-			option<decimal> participation = optional::none;
-			option<decimal> production = optional::none;
-
-			expects_lr<void> validate(uint64_t block_number) const override;
-			expects_lr<void> execute(ledger::executor_context* executor) const override;
-			expects_promise_rt<void> dispatch(const ledger::executor_context* executor, ledger::dispatcher_context* dispatcher) const override;
-			bool store_body(format::wo_stream* stream) const override;
-			bool load_body(format::ro_stream& stream) override;
-			bool recover_many(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const override;
-			void allocate_production_stake(const decimal& value);
-			void disable_production();
-			void standby_on_production();
-			void allocate_participation_stake(const decimal& value);
-			void disable_participation();
-			void standby_on_participation();
-			void allocate_attestation_stake(const algorithm::asset_id& asset, const decimal& value, const decimal& new_min_fee);
-			void disable_attestation(const algorithm::asset_id& asset);
-			void standby_on_attestation(const algorithm::asset_id& asset);
-			void allocate_bridge(const algorithm::asset_id& asset, uint8_t new_security_level, const decimal& new_fee_rate);
-			void unset_bridge(const algorithm::asset_id& asset);
-			void migrate_participant(const uint256_t& broadcast_hash, const algorithm::pubkeyhash_t& participant);
-			void clear_migration(const uint256_t& broadcast_hash);
-			bool is_dispatchable() const override;
-			expects_lr<vector<migration_ref>> get_migration_refs(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt) const;
-			algorithm::pubkeyhash_t get_new_participant(const ledger::transaction_receipt& receipt, bool* requires_new_participant = nullptr) const;
-			format::tree as_tree() const override;
-			uint32_t as_type() const override;
-			std::string_view as_typename() const override;
-			static uint32_t as_instance_type();
-			static std::string_view as_instance_typename();
-		};
-
-		struct migrate final : ledger::commitment_message
-		{
-			uint256_t setup_hash = 0;
-			algorithm::hashsig_t proof;
-
-			expects_lr<void> validate(uint64_t block_number) const override;
-			expects_lr<void> execute(ledger::executor_context* executor) const override;
-			bool store_body(format::wo_stream* stream) const override;
-			bool load_body(format::ro_stream& stream) override;
 			format::tree as_tree() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
@@ -187,16 +113,15 @@ namespace tangent
 
 			expects_lr<void> validate(uint64_t block_number) const override;
 			expects_lr<void> execute(ledger::executor_context* executor) const override;
-			expects_promise_rt<void> dispatch(const ledger::executor_context* executor, ledger::dispatcher_context* dispatcher) const override;
 			bool store_body(format::wo_stream* stream) const override;
 			bool load_body(format::ro_stream& stream) override;
 			bool recover_many(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const override;
-			bool is_dispatchable() const override;
 			void set_routing_address(const std::string_view& new_address);
 			void set_bridge_hash(const uint256_t& new_bridge_hash);
 			algorithm::pubkeyhash_t get_attester(const ledger::transaction_receipt& receipt) const;
 			btree_set<algorithm::pubkeyhash_t> get_participants(const ledger::transaction_receipt& receipt) const;
 			format::tree as_tree() const override;
+			uint32_t as_delegation_type() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
@@ -223,6 +148,103 @@ namespace tangent
 			static std::string_view as_instance_typename();
 		};
 
+		struct imbind final : ledger::commitment_message
+		{
+			struct binding_proof
+			{
+				algorithm::hashsig_t correction_commitment;
+				algorithm::composition::cpubkey_t correction_key;
+				algorithm::composition::cpubkey_t imperfect_key;
+				algorithm::composition::chashsig_t key_commitment;
+			} proof;
+			uint256_t route_hash = 0;
+
+			expects_lr<void> validate(uint64_t block_number) const override;
+			expects_lr<void> execute(ledger::executor_context* executor) const override;
+			void set_proof(const uint256_t& new_route_hash, const algorithm::hashsig_t& new_correction_commitment, algorithm::composition::cpubkey_t&& new_correction_key, algorithm::composition::cpubkey_t&& new_imperfect_key, algorithm::composition::chashsig_t&& new_key_commitment);
+			bool store_body(format::wo_stream* stream) const override;
+			bool load_body(format::ro_stream& stream) override;
+			bool recover_many(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const override;
+			expects_lr<algorithm::composition::cpubkey_t> to_group_public_key(algorithm::composition::compositor* compositor = nullptr) const;
+			static expects_lr<algorithm::composition::cpubkey_t> to_group_public_key(const algorithm::asset_id& asset, const binding_proof& target, algorithm::composition::compositor* compositor = nullptr);
+			format::tree as_tree() const override;
+			uint32_t as_type() const override;
+			std::string_view as_typename() const override;
+			static uint32_t as_instance_type();
+			static std::string_view as_instance_typename();
+		};
+
+		struct setup final : ledger::transaction_message
+		{
+			struct migration_ref
+			{
+				states::bridge_account account = states::bridge_account(states::bridge_ref(), nullptr);
+				algorithm::pubkeyhash_t old_participant;
+			};
+
+			struct attestation_setup
+			{
+				option<decimal> min_fee = optional::none;
+				decimal stake = decimal::nan();
+			};
+
+			struct bridge_setup
+			{
+				decimal fee_rate = decimal::nan();
+				uint8_t security_level = 0;
+			};
+
+			btree_map<uint256_t, algorithm::pubkeyhash_t> migrations;
+			btree_map<algorithm::asset_id, attestation_setup> attestations;
+			btree_map<algorithm::asset_id, bridge_setup> bridges;
+			option<decimal> participation = optional::none;
+			option<decimal> production = optional::none;
+
+			expects_lr<void> validate(uint64_t block_number) const override;
+			expects_lr<void> execute(ledger::executor_context* executor) const override;
+			bool store_body(format::wo_stream* stream) const override;
+			bool load_body(format::ro_stream& stream) override;
+			bool recover_many(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const override;
+			void allocate_production_stake(const decimal& value);
+			void disable_production();
+			void standby_on_production();
+			void allocate_participation_stake(const decimal& value);
+			void disable_participation();
+			void standby_on_participation();
+			void allocate_attestation_stake(const algorithm::asset_id& asset, const decimal& value, const decimal& new_min_fee);
+			void disable_attestation(const algorithm::asset_id& asset);
+			void standby_on_attestation(const algorithm::asset_id& asset);
+			void allocate_bridge(const algorithm::asset_id& asset, uint8_t new_security_level, const decimal& new_fee_rate);
+			void unset_bridge(const algorithm::asset_id& asset);
+			void migrate_participant(const uint256_t& broadcast_hash, const algorithm::pubkeyhash_t& participant);
+			void clear_migration(const uint256_t& broadcast_hash);
+			expects_lr<vector<migration_ref>> get_migration_refs(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt) const;
+			algorithm::pubkeyhash_t get_new_participant(const ledger::transaction_receipt& receipt) const;
+			format::tree as_tree() const override;
+			uint32_t as_delegation_type() const override;
+			uint32_t as_type() const override;
+			std::string_view as_typename() const override;
+			static uint32_t as_instance_type();
+			static std::string_view as_instance_typename();
+		};
+
+		struct rebind final : ledger::commitment_message
+		{
+			vector<imbind::binding_proof> proofs;
+			uint256_t setup_hash = 0;
+
+			expects_lr<void> validate(uint64_t block_number) const override;
+			expects_lr<void> execute(ledger::executor_context* executor) const override;
+			void add_proof(const uint256_t& new_setup_hash, const algorithm::hashsig_t& new_correction_commitment, algorithm::composition::cpubkey_t&& new_correction_key, algorithm::composition::cpubkey_t&& new_imperfect_key, algorithm::composition::chashsig_t&& new_key_commitment);
+			bool store_body(format::wo_stream* stream) const override;
+			bool load_body(format::ro_stream& stream) override;
+			format::tree as_tree() const override;
+			uint32_t as_type() const override;
+			std::string_view as_typename() const override;
+			static uint32_t as_instance_type();
+			static std::string_view as_instance_typename();
+		};
+
 		struct withdraw final : ledger::transaction_message
 		{
 			uint256_t bridge_hash = 0;
@@ -231,15 +253,14 @@ namespace tangent
 
 			expects_lr<void> validate(uint64_t block_number) const override;
 			expects_lr<void> execute(ledger::executor_context* executor) const override;
-			expects_promise_rt<void> dispatch(const ledger::executor_context* executor, ledger::dispatcher_context* dispatcher) const override;
 			bool store_body(format::wo_stream* stream) const override;
 			bool load_body(format::ro_stream& stream) override;
 			bool recover_many(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const override;
 			void set_routing_target(const std::string_view& address, const decimal& value);
 			void set_bridge_hash(const uint256_t& new_bridge_hash);
-			bool is_dispatchable() const override;
 			algorithm::pubkeyhash_t get_attester(const ledger::transaction_receipt& receipt) const;
 			format::tree as_tree() const override;
+			uint32_t as_delegation_type() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
@@ -258,7 +279,7 @@ namespace tangent
 			bool recover_many(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const override;
 			bool recover_aliases(btree_set<uint256_t>& aliases) const override;
 			void set_proof(const uint256_t& new_withdraw_hash, expects_lr<superchain::finalized_transaction>&& new_proof);
-			bool eligible_as_migration_reason() const;
+			bool eligible_migration_target(const algorithm::pubkeyhash_t& target) const;
 			format::tree as_tree() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
@@ -323,9 +344,6 @@ namespace tangent
 			static ledger::transaction_message* from_stream(format::ro_stream& stream);
 			static ledger::transaction_message* from_type(uint32_t hash);
 			static ledger::transaction_message* from_copy(const ledger::transaction_message* base);
-			static expects_promise_rt<superchain::prepared_transaction> prepare_transaction(const algorithm::asset_id& asset, const superchain::wallet_link& from_link, const superchain::value_transfer& to, const decimal& max_fee);
-			static expects_lr<superchain::finalized_transaction> finalize_transaction(const algorithm::asset_id& asset, superchain::prepared_transaction&& prepared);
-			static expects_promise_rt<void> broadcast_transaction(const algorithm::asset_id& asset, const uint256_t& external_id, superchain::finalized_transaction&& finalized, ledger::dispatcher_context* dispatcher, const ledger::wallet* runner_wallet);
 		};
 	}
 }

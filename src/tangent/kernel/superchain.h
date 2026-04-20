@@ -1,7 +1,6 @@
 #ifndef TAN_KERNEL_SUPERCHAIN_H
 #define TAN_KERNEL_SUPERCHAIN_H
-#include "control.h"
-#include "../policy/messages.h"
+#include "transaction.h"
 #include <vitex/network/http.h>
 
 namespace tangent
@@ -40,7 +39,7 @@ namespace tangent
 
 		class translation_unit;
 
-		struct wallet_link : messages::uniform
+		struct wallet_link : ledger::uniform_serializer
 		{
 			enum class search_term
 			{
@@ -92,7 +91,7 @@ namespace tangent
 			expects_lr<void> validate() const;
 		};
 
-		struct coin_utxo : messages::uniform
+		struct coin_utxo : ledger::uniform_serializer
 		{
 			struct token_utxo
 			{
@@ -135,7 +134,7 @@ namespace tangent
 			static std::string_view as_instance_typename();
 		};
 
-		struct computed_transaction : messages::uniform
+		struct computed_transaction : ledger::uniform_serializer
 		{
 			btree_map<uint256_t, coin_utxo> inputs;
 			btree_map<uint256_t, coin_utxo> outputs;
@@ -158,7 +157,7 @@ namespace tangent
 			static std::string_view as_instance_typename();
 		};
 
-		struct prepared_transaction : messages::uniform
+		struct prepared_transaction : ledger::uniform_serializer
 		{
 			enum class status
 			{
@@ -198,7 +197,7 @@ namespace tangent
 			static std::string_view as_instance_typename();
 		};
 
-		struct finalized_transaction : messages::uniform
+		struct finalized_transaction : ledger::uniform_serializer
 		{
 			prepared_transaction prepared;
 			string calldata;
