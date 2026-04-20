@@ -3016,7 +3016,7 @@ namespace tangent
 				if (!store_payload(&message))
 					return expects_promise_rt<void>(remote_exception("failed to store delegation state"));
 
-				return adapter->execute_on_validator(this, target, message).then<expects_rt<void>>([this, target](expects_rt<format::wo_stream>&& wo_message) -> expects_rt<void>
+				return adapter->execute_on_validator(this, target, message).then<expects_rt<void>>([this, runner_wallet](expects_rt<format::wo_stream>&& wo_message) -> expects_rt<void>
 				{
 					if (!wo_message)
 						return wo_message.error();
@@ -3026,7 +3026,7 @@ namespace tangent
 					if (!delegation || !delegation->load_payload(message))
 						return remote_exception("failed to load delegation state");
 
-					auto validation = delegation->validate_transition(this, target);
+					auto validation = delegation->validate_transition(this, *runner_wallet);
 					if (!validation)
 						return remote_exception(std::move(validation.error().message()));
 
@@ -3066,7 +3066,7 @@ namespace tangent
 
 			if (requires_validation)
 			{
-				auto validation = delegation->validate_transition(this, target);
+				auto validation = delegation->validate_transition(this, *runner);
 				if (!validation)
 					return validation.error();
 			}

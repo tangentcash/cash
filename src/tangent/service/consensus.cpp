@@ -1559,12 +1559,12 @@ namespace tangent
 			}
 			return expects_rt<format::variables>(std::move(result));
 		}
-		expects_rt<format::variables> server_node::delegate_execution(uref<relay>&& caller, const exchange& event)
+		expects_rt<format::variables> server_node::delegate_execution(uref<relay>&&, const exchange& event)
 		{
 			auto packed = unpack_private_result(event.args, event.callee);
 			if (!packed)
 				return packed;
-			else if (packed->size() != 3 || !caller->as_descriptor())
+			else if (packed->size() != 4)
 				return remote_exception("invalid arguments");
 
 			auto block_number = packed->at(0).as_uint64();
@@ -1598,8 +1598,8 @@ namespace tangent
 			if (!delegation->load_payload(reader))
 				return remote_exception("delegation deserialization failed");
 
-			auto& yielding_delegator = caller->as_descriptor()->second;
-			auto validation = delegation->validate_transition(nullptr, yielding_delegator.public_key_hash);
+			auto yielding_delegator = ledger::wallet::from_public_key(algorithm::pubkey_t(packed->at(3).as_string()));
+			auto validation = delegation->validate_transition(nullptr, yielding_delegator);
 			if (!validation)
 				return remote_exception(std::move(validation.error().message()));
 
@@ -3682,6 +3682,7 @@ namespace tangent
 			format::variables args;
 			args.push_back(format::variable(contract->executor->receipt.block_number));
 			args.push_back(format::variable(contract->executor->receipt.transaction_hash));
+			args.push_back(format::variable(contract->runner->public_key.optimized_view()));
 			args.push_back(format::variable(message.data));
 
 			auto private_args = pack_private_result(args, *target_public_key);
@@ -3773,7 +3774,7 @@ namespace tangent
 			if (!get_runner_wallet(target))
 				return expects_promise_rt<format::wo_stream>(remote_exception("delegate not found"));
 
-			auto validation = contract->validate_transition(nullptr, contract->runner->public_key_hash);
+			auto validation = contract->validate_transition(nullptr, *contract->runner);
 			if (!validation)
 				return expects_promise_rt<format::wo_stream>(remote_exception(std::move(validation.error().message())));
 

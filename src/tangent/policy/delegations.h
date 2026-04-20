@@ -18,7 +18,7 @@ namespace tangent
 			bind_delegation(ledger::delegation_adapter* new_adapter, const ledger::executor_context* new_executor, const algorithm::pubkeyhash_t& new_runner);
 			bind_delegation(const bind_delegation& other);
 			expects_promise_rt<void> execute_transition() override;
-			expects_lr<void> validate_transition(delegation_contract* parent, const algorithm::pubkeyhash_t& yielding_runner) const override;
+			expects_lr<void> validate_transition(delegation_contract* parent, const ledger::wallet& yielding_runner) const override;
 			expects_lr<void> aggregate_public_key();
 			expects_lr<void> distribute_encrypted_shares();
 			bool store_payload(format::wo_stream* stream) const override;
@@ -65,7 +65,7 @@ namespace tangent
 			expects_lr<void> recover_encrypted_shares_and_tweak();
 			expects_lr<void> aggregate_tweaked_public_key();
 			expects_lr<void> distribute_tweaked_encrypted_shares();
-			expects_lr<void> validate_transition(delegation_contract* parent, const algorithm::pubkeyhash_t& yielding_runner) const override;
+			expects_lr<void> validate_transition(delegation_contract* parent, const ledger::wallet& yielding_runner) const override;
 			expects_lr<algorithm::composition::cseckey_t> as_individual_tweak(uint64_t nonce) const;
 			bool store_payload(format::wo_stream* stream) const override;
 			bool load_payload(format::ro_stream& stream) override;
@@ -88,7 +88,7 @@ namespace tangent
 			broadcast_delegation(ledger::delegation_adapter* new_adapter, const ledger::executor_context* new_executor, const algorithm::pubkeyhash_t& new_runner);
 			broadcast_delegation(const broadcast_delegation& other);
 			expects_promise_rt<void> execute_transition() override;
-			expects_lr<void> validate_transition(ledger::delegation_contract* parent, const algorithm::pubkeyhash_t& yielding_runner) const override;
+			expects_lr<void> validate_transition(ledger::delegation_contract* parent, const ledger::wallet& yielding_runner) const override;
 			expects_lr<void> aggregate_signature();
 			bool store_payload(format::wo_stream* stream) const override;
 			bool load_payload(format::ro_stream& stream) override;

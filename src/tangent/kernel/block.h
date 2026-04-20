@@ -460,7 +460,7 @@ namespace tangent
 			virtual bool try_running_on(const algorithm::pubkeyhash_t& new_runner);
 			virtual void emit_transaction(ledger::transaction_message* transaction);
 			virtual expects_promise_rt<void> execute_transition() = 0;
-			virtual expects_lr<void> validate_transition(delegation_contract* parent, const algorithm::pubkeyhash_t& yielding_runner) const = 0;
+			virtual expects_lr<void> validate_transition(delegation_contract* parent, const ledger::wallet& yielding_runner) const = 0;
 			virtual expects_promise_rt<btree_set<algorithm::pubkeyhash_t>> convene_delegates(const btree_set<algorithm::pubkeyhash_t>& targets);
 			virtual expects_promise_rt<void> yield_to_delegate(const algorithm::pubkeyhash_t& target, uint32_t delegate);
 			virtual expects_lr<format::wo_stream> yield_to_self(const algorithm::pubkeyhash_t& target, uint32_t delegate, bool requires_validation);

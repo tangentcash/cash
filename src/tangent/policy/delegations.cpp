@@ -171,7 +171,7 @@ namespace tangent
 				coreturn expectation::met;
 			});
 		}
-		expects_lr<void> bind_delegation::validate_transition(ledger::delegation_contract* parent, const algorithm::pubkeyhash_t& yielding_delegator) const
+		expects_lr<void> bind_delegation::validate_transition(ledger::delegation_contract* parent, const ledger::wallet& yielding_delegator) const
 		{
 			auto* prev = (bind_delegation*)parent;
 			auto* route = (transactions::route*)executor->transaction;
@@ -198,6 +198,8 @@ namespace tangent
 				if (!prev->key_commitment.empty() && prev->key_commitment != key_commitment)
 					return layer_exception("invalid key commitment transition");
 			}
+			else if (yielding_delegator.public_key_hash != route->get_attester(executor->receipt))
+				return layer_exception("invalid attester");
 
 			auto group = route->get_participants(executor->receipt);
 			for (auto& [localized_participant_key, localized_encrypted_shares] : encrypted_shares)
@@ -710,7 +712,7 @@ namespace tangent
 				coreturn expectation::met;
 			});
 		}
-		expects_lr<void> rebind_delegation::validate_transition(ledger::delegation_contract* parent, const algorithm::pubkeyhash_t& yielding_delegator) const
+		expects_lr<void> rebind_delegation::validate_transition(ledger::delegation_contract* parent, const ledger::wallet& yielding_delegator) const
 		{
 			auto* prev = (rebind_delegation*)parent;
 			auto* setup = (transactions::setup*)executor->transaction;
@@ -738,7 +740,12 @@ namespace tangent
 			}
 
 			if (!prev)
+			{
+				if (yielding_delegator.public_key_hash != executor->receipt.from)
+					return layer_exception("invalid attester");
+
 				return expectation::met;
+			}
 
 			if (!prev->context.accumulator_key.empty() && prev->context.accumulator_key != context.accumulator_key)
 				return layer_exception("invalid paillier key");
@@ -1508,7 +1515,7 @@ namespace tangent
 				coreturn expectation::met;
 			});
 		}
-		expects_lr<void> broadcast_delegation::validate_transition(ledger::delegation_contract* parent, const algorithm::pubkeyhash_t& yielding_delegator) const
+		expects_lr<void> broadcast_delegation::validate_transition(ledger::delegation_contract* parent, const ledger::wallet& yielding_delegator) const
 		{
 			auto* prev = (broadcast_delegation*)parent;
 			auto* withdraw = (transactions::withdraw*)executor->transaction;
@@ -1531,6 +1538,8 @@ namespace tangent
 				if (prev->message && (!message || message->as_hash() != prev->message->as_hash()))
 					return layer_exception("invalid message transition");
 			}
+			else if (yielding_delegator.public_key_hash != withdraw->get_attester(executor->receipt))
+				return layer_exception("invalid attester");
 
 			auto validation = transactions::broadcast::validate_possible_proof(executor, withdraw, executor->receipt, **message);
 			if (!validation)
