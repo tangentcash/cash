@@ -988,15 +988,6 @@ namespace tangent
 				return status;
 			}
 
-			uint256_t commitment_hash = 0;
-			if (candidate_tx->implements_commitment(&commitment_hash) && commitment_hash > 0 && storages::mempoolstate().has_transaction_commitment_hash(commitment_hash))
-			{
-				auto purpose = candidate_tx->as_typename();
-				if (protocol::now().user.consensus.logging)
-					VI_WARN("transaction %s %.*s rejection: commitment conflict", algorithm::encoding::encode_0xhex256(candidate_tx->as_hash()).c_str(), (int)purpose.size(), purpose.data());
-				return layer_exception("commitment conflict");
-			}
-
 			status = accept_transaction(nullptr, std::move(candidate_tx));
 			if (!status)
 				return status;
