@@ -108,7 +108,7 @@ namespace tangent
 			expects_lr<attestation_tree> get_attestation(const uint256_t& attestation_hash);
 			expects_lr<void> remove_attestation(const uint256_t& attestation_hash);
 			expects_lr<size_t> expire_attestations();
-			expects_lr<void> add_transaction(const ledger::transaction_message& value);
+			expects_lr<void> add_transaction(const ledger::transaction_message& value, bool bypass_cooldown = false);
 			expects_lr<void> add_transaction_observation(const uint256_t& transaction_hash);
 			expects_lr<void> remove_transactions_by_hash(const hash_set<uint256_t>& transaction_hashes);
 			expects_lr<void> remove_transactions_by_commitment_hash(const hash_set<uint256_t>& commitment_hashes);

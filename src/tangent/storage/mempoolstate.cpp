@@ -703,17 +703,19 @@ namespace tangent
 
 			return cursor->affected_rows();
 		}
-		expects_lr<void> mempoolstate::add_transaction(const ledger::transaction_message& value)
+		expects_lr<void> mempoolstate::add_transaction(const ledger::transaction_message& value, bool bypass_cooldown)
 		{
 			uint8_t hash[32];
 			value.as_hash().encode(hash);
+			if (!bypass_cooldown)
+			{
+				schema_list map;
+				map.push_back(var::set::binary(hash, sizeof(hash)));
 
-			schema_list map;
-			map.push_back(var::set::binary(hash, sizeof(hash)));
-
-			auto cursor = get_peer_storage().emplace_query(__func__, "SELECT TRUE FROM observations WHERE hash = ?", &map);
-			if (cursor && !cursor->error_or_empty())
-				return layer_exception("finality conflict");
+				auto cursor = get_peer_storage().emplace_query(__func__, "SELECT TRUE FROM observations WHERE hash = ?", &map);
+				if (cursor && !cursor->error_or_empty())
+					return layer_exception("finality conflict");
+			}
 
 			format::wo_stream message;
 			if (!value.store(&message))
@@ -739,7 +741,7 @@ namespace tangent
 			value.asset.encode(asset);
 			commitment_hash.encode(other_hash);
 
-			map.clear();
+			schema_list map;
 			map.push_back(var::set::binary(hash, sizeof(hash)));
 			map.push_back(var::set::integer(protocol::now().time.now_cpu() + TRANSACTION_EXPIRATION + OBSERVATION_EXPIRATION));
 			map.push_back(var::set::binary(hash, sizeof(hash)));
@@ -753,7 +755,7 @@ namespace tangent
 			map.push_back(var::set::binary(message.data));
 			map.push_back(var::set::binary(owner.view()));
 
-			cursor = get_peer_storage().emplace_query(__func__,
+			auto cursor = get_peer_storage().emplace_query(__func__,
 				"INSERT OR REPLACE INTO observations (hash, time) VALUES (?, ?);"
 				"INSERT OR REPLACE INTO transactions (hash, commitment_hash, owner, asset, nonce, quality, time, price, message) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);"
 				"WITH epochs AS (SELECT rowid, ROW_NUMBER() OVER (ORDER BY nonce) AS epoch FROM transactions WHERE owner = ?) UPDATE transactions SET epoch = epochs.epoch FROM epochs WHERE transactions.rowid = epochs.rowid", &map);

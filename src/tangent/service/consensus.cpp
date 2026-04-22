@@ -1044,6 +1044,7 @@ namespace tangent
 				}
 			}
 
+			bool bypass_cooldown = false;
 			if (commitment_hash > 0)
 			{
 				auto unique = mempool.verify_transaction_uniqueness(candidate_hash);
@@ -1062,6 +1063,8 @@ namespace tangent
 						VI_WARN("transaction %s %.*s simulation failed: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data(), simulation.error().what());
 					return simulation.error();
 				}
+
+				bypass_cooldown = true;
 			}
 			else
 			{
@@ -1075,7 +1078,7 @@ namespace tangent
 				}
 			}
 
-			return broadcast_transaction(uref(from), std::move(candidate_tx), owner);
+			return broadcast_transaction(uref(from), std::move(candidate_tx), owner, bypass_cooldown);
 		}
 		expects_lr<void> server_node::accept_attestation(const uint256_t& attestation_hash)
 		{
@@ -1125,12 +1128,12 @@ namespace tangent
 
 			return accept_attestation(proof.as_attestation_hash());
 		}
-		expects_lr<void> server_node::broadcast_transaction(uref<relay>&& from, uptr<ledger::transaction_message>&& candidate_tx, const algorithm::pubkeyhash_t& owner)
+		expects_lr<void> server_node::broadcast_transaction(uref<relay>&& from, uptr<ledger::transaction_message>&& candidate_tx, const algorithm::pubkeyhash_t& owner, bool bypass_cooldown)
 		{
 			auto purpose = candidate_tx->as_typename();
 			auto candidate_hash = candidate_tx->as_hash();
 			auto mempool = storages::mempoolstate();
-			auto action = mempool.add_transaction(**candidate_tx);
+			auto action = mempool.add_transaction(**candidate_tx, bypass_cooldown);
 			if (!action)
 			{
 				if (protocol::now().user.consensus.logging)
