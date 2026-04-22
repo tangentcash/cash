@@ -1251,7 +1251,7 @@ namespace tangent
 				CREATE TABLE IF NOT EXISTS transactions
 				(
 					hash BLOB(32) NOT NULL,
-					commitment_hash BLOB(32) NOT NULL,
+					commitment_hash BLOB(32) DEFAULT NULL,
 					owner BLOB(20) NOT NULL,
 					asset BLOB(32) NOT NULL,
 					nonce BIGINT NOT NULL,
