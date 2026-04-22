@@ -1047,14 +1047,6 @@ namespace tangent
 			bool bypass_cooldown = false;
 			if (commitment_hash > 0)
 			{
-				auto unique = mempool.verify_transaction_uniqueness(candidate_hash);
-				if (!unique)
-				{
-					if (protocol::now().user.consensus.logging)
-						VI_WARN("transaction %s %.*s mempool rejection: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data(), unique.error().what());
-					return unique.error();
-				}
-
 				auto simulation = ledger::executor_context::calculate_tx_gas(*candidate_tx);
 				if (!simulation)
 				{
@@ -1063,7 +1055,6 @@ namespace tangent
 						VI_WARN("transaction %s %.*s simulation failed: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data(), simulation.error().what());
 					return simulation.error();
 				}
-
 				bypass_cooldown = true;
 			}
 			else
