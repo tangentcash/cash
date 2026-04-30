@@ -1986,7 +1986,7 @@ namespace tangent
 				if (min_block_height > 0 && block_height < min_block_height)
 				{
 					auto state = storages::superchainstate(asset);
-					state.set_property("TIP:NOW", format::variable(min_block_height));
+					state.set_property("TIP:NOW", format::variable((uint64_t)min_block_height));
 					options->state.target_block_height = 0;
 					coreturn expects_rt<vector<transaction_logs>>(stringify::text("while resolving tip received %" PRIu64 " but expected %" PRIu64 " or higher", block_height, min_block_height));
 				}
