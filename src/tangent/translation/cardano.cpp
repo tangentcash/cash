@@ -47,6 +47,26 @@ namespace tangent
 				netdata.divisibility = algorithm::arithmetic::fixed(1000000);
 				netdata.transaction_expires = false;
 			}
+			expects_promise_rt<uint8_t> cardano::get_token_decimals(const std::string_view& policy_id, const std::string_view& hex_symbol)
+			{
+				auto url = stringify::text("https://raw.githubusercontent.com/cardano-foundation/cardano-token-registry/refs/heads/master/mappings/%.*s%.*s.json", (int)policy_id.size(), policy_id.data(), (int)hex_symbol.size(), hex_symbol.data());
+				return execute_http("GET", url, std::string_view(), std::string_view(), cache_policy::lifetime_cache).then<expects_rt<uint8_t>>([](expects_rt<format::tree>&& result) -> expects_rt<uint8_t>
+				{
+					if (!result)
+						return result.error();
+
+					if (result->value.is_string())
+					{
+						auto data = format::tree::from_json(result->value.as_string());
+						if (!data)
+							return remote_exception(std::move(data.error().message()));
+
+						result = std::move(*data);
+					}
+
+					return result->child_var("decimals.value").as_uint8();
+				});
+			}
 			expects_promise_rt<uint64_t> cardano::get_latest_block_height()
 			{
 				auto args = format::tree::map();
@@ -114,6 +134,9 @@ namespace tangent
 						coreturn expects_rt<uint64_t>(block_data.error());
 
 					uint64_t block_slot = block_data->child_var("block.metadata.slotNo").as_uint64();
+					if (!block_slot)
+						coreturn expects_rt<uint64_t>(remote_exception("failed to fetch current slot"));
+
 					coreturn expects_rt<uint64_t>(block_slot);
 				});
 			}
@@ -172,9 +195,19 @@ namespace tangent
 									string contract_address = token_operation.child_var("policyId").as_blob();
 									for (auto& item : tokens->childs())
 									{
-										auto token_symbol = to_token_symbol(item.child_var("currency.symbol").as_blob());
+										auto hex_symbol = item.child_var("currency.symbol").as_blob();
+										auto token_symbol = to_token_symbol(hex_symbol);
 										auto token_asset = algorithm::asset::id_of(blockchain, token_symbol.empty() ? contract_address : token_symbol, contract_address);
 										uint8_t decimals = item.child_var("currency.decimals").as_uint8();
+										if (!decimals)
+										{
+											auto decimals_fallback = coawait(get_token_decimals(contract_address, hex_symbol));
+											if (!decimals_fallback && (decimals_fallback.error().is_retry() || decimals_fallback.error().is_shutdown()))
+												coreturn decimals_fallback.error();
+
+											decimals = decimals_fallback.or_else(0);
+										}
+
 										decimal divisibility = decimals > 0 ? decimal("1" + string(decimals, '0')) : decimal(1);
 										decimal token_value = algorithm::arithmetic::divide(math0::abs(item.child_var("value").as_decimal()), divisibility);
 										new_output.apply_token_value(contract_address, token_symbol, token_value, decimals);
@@ -206,9 +239,19 @@ namespace tangent
 									string contract_address = token_operation.child_var("policyId").as_blob();
 									for (auto& item : tokens->childs())
 									{
-										auto token_symbol = to_token_symbol(item.child_var("currency.symbol").as_blob());
+										auto hex_symbol = item.child_var("currency.symbol").as_blob();
+										auto token_symbol = to_token_symbol(hex_symbol);
 										auto token_asset = algorithm::asset::id_of(blockchain, token_symbol, contract_address);
 										uint8_t decimals = item.child_var("currency.decimals").as_uint8();
+										if (!decimals)
+										{
+											auto decimals_fallback = coawait(get_token_decimals(contract_address, hex_symbol));
+											if (!decimals_fallback && (decimals_fallback.error().is_retry() || decimals_fallback.error().is_shutdown()))
+												coreturn decimals_fallback.error();
+
+											decimals = decimals_fallback.or_else(0);
+										}
+
 										decimal divisibility = decimals > 0 ? decimal("1" + string(decimals, '0')) : decimal(1);
 										decimal token_value = algorithm::arithmetic::divide(math0::abs(item.child_var("value").as_decimal()), divisibility);
 										new_input.apply_token_value(contract_address, token_symbol, token_value, decimals);

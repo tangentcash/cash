@@ -25,6 +25,7 @@ namespace tangent
 			public:
 				cardano(const algorithm::asset_id& new_asset) noexcept;
 				virtual ~cardano() noexcept = default;
+				virtual expects_promise_rt<uint8_t> get_token_decimals(const std::string_view& policy_id, const std::string_view& hex_symbol);
 				virtual expects_promise_rt<uint64_t> get_latest_block_height() override;
 				virtual expects_promise_rt<vector<block_log>> get_block_transactions(uint64_t block_height, uint64_t block_count) override;
 				virtual expects_promise_rt<coin_utxo> get_transaction_output(const std::string_view& tx_id, uint64_t index) override;

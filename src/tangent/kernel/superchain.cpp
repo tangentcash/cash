@@ -75,6 +75,9 @@ namespace tangent
 		}
 		static string join_url_path(const std::string_view& url, const std::string_view& path)
 		{
+			if (path.find("://") != std::string::npos)
+				return string(path);
+
 			auto result = string(url);
 			if (result.empty() || path.empty())
 				return result;
@@ -1838,7 +1841,7 @@ namespace tangent
 
 				format::tree result;
 				auto content_type = response->get_header("Content-Type");
-				if (stringify::starts_with(content_type, "application/json") || stringify::starts_with(content_type, "application/hal+json"))
+				if (!content_type.empty() && (stringify::starts_with(content_type, "application/json") || stringify::starts_with(content_type, "application/hal+json")))
 				{
 					auto data = format::tree::from_json(std::string_view(response->content.data.data(), response->content.data.size()));
 					if (!data)
@@ -1977,8 +1980,18 @@ namespace tangent
 					coreturn expects_rt<vector<transaction_logs>>(remote_exception::retry_after(options->state.retry_after_time));
 				}
 
-				auto logs = vector<transaction_logs>();
+				auto max_block_step = 256llu;
+				auto min_block_height = std::max<uint64_t>(tip_now.value.as_uint64(), max_block_step) - max_block_step;
 				auto block_height = options->get_next_block_height(block_count);
+				if (min_block_height > 0 && block_height < min_block_height)
+				{
+					auto state = storages::superchainstate(asset);
+					state.set_property("TIP:NOW", format::variable(min_block_height));
+					options->state.target_block_height = 0;
+					coreturn expects_rt<vector<transaction_logs>>(stringify::text("while resolving tip received %" PRIu64 " but expected %" PRIu64 " or higher", block_height, min_block_height));
+				}
+
+				auto logs = vector<transaction_logs>();
 				auto block_batch = coawait(implementation->get_block_transactions(block_height, block_count));
 				if (!block_batch)
 					coreturn expects_rt<vector<transaction_logs>>(stringify::text("while fetching block(s) %" PRIu64 " received %s", block_height, block_batch.error().message().c_str()));
@@ -2000,6 +2013,14 @@ namespace tangent
 							normalize_transaction_id(asset, &computed->transaction_id);
 							log.receipts.push_back(std::move(*computed));
 							item.key.clear();
+						}
+						else if (computed.error().is_retry() || computed.error().is_shutdown())
+						{
+							if (computed.error().is_retry_after())
+								options->state.retry_after_time = computed.error().retry_after_timestamp();
+							else
+								options->state.retry_after_time = protocol::now().time.now_cpu() + protocol::now().user.superchain.polling_frequency;
+							coreturn computed.error();
 						}
 					}
 
