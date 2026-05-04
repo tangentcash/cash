@@ -641,7 +641,19 @@ namespace tangent
 
 					bool is_reverted = tx_receipt && tx_receipt->is_map() ? hex_to_uint256(tx_receipt->child_var("status").as_blob()) < 1 : true;
 					if (is_reverted)
-						coreturn expects_rt<computed_transaction>(remote_exception("tx reverted"));
+					{
+						for (auto& [address, values] : inputs)
+						{
+							for (auto& [token, value] : values)
+								value = decimal::zero();
+						}
+						for (auto& [address, values] : outputs)
+						{
+							for (auto& [token, value] : values)
+								value = decimal::zero();
+						}
+						inputs[signer][native_asset] = fee_value;
+					}
 
 					for (auto& [address, values] : inputs)
 					{

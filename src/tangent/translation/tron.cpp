@@ -339,10 +339,6 @@ namespace tangent
 					if (!info)
 						coreturn expects_rt<computed_transaction>(remote_exception("tx not found"));
 
-					auto receipt_result = info->child_var("receipt.result").as_blob(), tx_result = info->child_var("result").as_blob();
-					if ((!receipt_result.empty() && receipt_result != "SUCCESS") || (!tx_result.empty() && tx_result != "SUCCESS"))
-						coreturn expects_rt<computed_transaction>(remote_exception("tx reverted"));
-
 					auto details = coawait(execute_rest("POST", trx_nd_call::get_transaction_by_id(), std::move(args), cache_policy::blob_cache));
 					if (!details)
 						coreturn expects_rt<computed_transaction>(remote_exception("tx not found"));
@@ -406,6 +402,23 @@ namespace tangent
 					discovery = find_linked_addresses(addresses);
 					if (!discovery || discovery->empty())
 						coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
+
+					auto receipt_result = info->child_var("receipt.result").as_blob(), tx_result = info->child_var("result").as_blob();
+					bool is_reverted = (!receipt_result.empty() && receipt_result != "SUCCESS") || (!tx_result.empty() && tx_result != "SUCCESS");
+					if (is_reverted)
+					{
+						for (auto& [address, values] : inputs)
+						{
+							for (auto& [token, value] : values)
+								value = decimal::zero();
+						}
+						for (auto& [address, values] : outputs)
+						{
+							for (auto& [token, value] : values)
+								value = decimal::zero();
+						}
+						inputs[signer][native_asset] = fee_value;
+					}
 
 					for (auto& [address, values] : inputs)
 					{

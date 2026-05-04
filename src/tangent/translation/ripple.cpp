@@ -310,9 +310,7 @@ namespace tangent
 			expects_promise_rt<computed_transaction> ripple::link_transaction(uint64_t block_height, const std::string_view& block_hash, format::tree& transaction_data)
 			{
 				string tx_result = transaction_data.child_var("metaData.TransactionResult").as_blob();
-				if (tx_result != "tesSUCCESS")
-					return expects_rt<computed_transaction>(remote_exception("tx reverted"));
-
+				bool is_reverted = tx_result != "tesSUCCESS";
 				string tx_hash = transaction_data.child_var("hash").as_blob();
 				string type = transaction_data.child_var("TransactionType").as_blob();
 				string from = transaction_data.child_var("Account").as_blob();
@@ -363,6 +361,14 @@ namespace tangent
 				{
 					inputs[token_asset] = token_value;
 					outputs[token_asset] = token_value;
+				}
+				if (is_reverted)
+				{
+					for (auto& [token, value] : inputs)
+						value = decimal::zero();
+					for (auto& [token, value] : outputs)
+						value = decimal::zero();
+					inputs[native_asset] = fee_value;
 				}
 				if (!inputs.empty())
 					tx.add_input(coin_utxo(target_from_link != discovery->end() ? target_from_link->second : wallet_link::from_address(from), std::move(inputs)));	

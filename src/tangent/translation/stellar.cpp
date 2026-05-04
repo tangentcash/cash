@@ -422,10 +422,6 @@ namespace tangent
 			{
 				return coasync<expects_rt<computed_transaction>>([this, &transaction_data]() -> expects_promise_rt<computed_transaction>
 				{
-					bool is_successful = transaction_data.child_var("successful").as_boolean() || transaction_data.child_var("transaction_successful").as_boolean();
-					if (!is_successful)
-						coreturn expects_rt<computed_transaction>(remote_exception("tx reverted"));
-
 					string fee_spender;
 					string tx_hash = transaction_data.child_var("transaction_hash").as_blob();
 					string tx_type = transaction_data.child_var("type").as_blob();
@@ -509,6 +505,13 @@ namespace tangent
 
 					auto metadata = coawait(get_transaction_metadata(tx_hash));
 					bool fee_included = !metadata;
+					bool is_successful = transaction_data.child_var("successful").as_boolean() || transaction_data.child_var("transaction_successful").as_boolean();
+					if (!is_successful)
+					{
+						for (auto& transfer : transfers)
+							transfer.value = decimal::zero();
+					}
+
 					for (auto& transfer : transfers)
 					{
 						auto target_from_link = discovery->find(transfer.from);
@@ -527,6 +530,7 @@ namespace tangent
 						if (!transfer.from.empty())
 							tx.signers.insert(transfer.from);
 					}
+
 					if (!fee_included && !fee_spender.empty() && metadata->fee.is_positive())
 					{
 						auto fee_spender_from_link = discovery->find(fee_spender);

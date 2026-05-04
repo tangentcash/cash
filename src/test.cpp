@@ -1627,6 +1627,19 @@ struct tests
 			prepared.requires_abi(format::variable(string("FEL6m5CE2P3JTW1ceo48VerTUSWDte6eXzgrcmcftvyQ")));
 			prepared.requires_abi(format::variable(string("77EWfi8yvGJNRsC9BRHepMtBJ2RDEDAkZNWAT4YJNMYU")));
 			validate_transaction(asset, wallet, prepared, "spl transfer", "7qSoGmgq68eUNs8tJZ8dDtyfpUHE64RaxrhFeARBKJdhtW4SsRitHzdkkH4uepUxZ599Y3RBhSyzSeb7mmFnrhER53hSbcyReBAPkeMfTWKeg7FnQuqxhAjnAf6zMyAiwWLHDWfDHoV1ovbUQXrdexZhHVRomMUwHX81rQv6RwCkfGnB7dfpysFQ2PeYztphz2Z2uSaY3x44X9AAZWpUk7MMHQxUvUNA6ESFoQTYYSNj8Vr5qdjV89AXYF2BfqVs1Qj3ZuHSaQbZFaEtfdanhzt7qJBBrZ4zV9QsbBCXDyPg6JncvZTePP7drV4Uf9SWKssN6AF5zaq5AVSE1GguJ5zfQoY6JbUuZ1zzX8PNbccQVtpvmfSqWn4EntLxP3D");
+
+			signable_link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses.begin()->second);
+			signable_message = codec::hex_decode("0x80010002082a994a958414a9dac047fd32001847954f89f464433cb04266fde37d6aff1544437b32d02edb961d6ffba969407c441a127befb1fe6885fa40f3d9e1dd7f93066185874e7fbfe02c145859e57010339ed925c7ab0a682a63eb522e38f22aeddd7ef41ef3474ed6a625c960cb38e5e9025a9edd6f63997d6c4c28f761dc23b67006ddf6e1d765a193d9cbe146ceeb79ac1cb485ed5f5b37913a8cf5857eff00a92f5b6b548541c59c6580cdff889e30c53e19cb10241170ae041eaed436420aa200000000000000000000000000000000000000000000000000000000000000008c97258f4e2489f1bb3d1029148e0d830b5a1399daff1084048e7bd8dbe9f8595abee248b8b08441f683b2e58d6b7c62bfa977bb775f0ef37facee593d0b126902070600020503060401010404010302000a0c50a50500000000000200");
+			prepared = superchain::prepared_transaction();
+			prepared.requires_account_input(algorithm::composition::type::ed25519, std::move(signable_link), wallet.public_key, (uint8_t*)signable_message.data(), signable_message.size(), { { asset, decimal("0.000015") }, { token_asset, decimal("3700") } });
+			prepared.requires_account_output("4Bs1nFL71Yaq2HJ3pSk3WHdbhkWeqnrLYQZDhqjDfb53", { { token_asset, decimal("3700") } });
+			prepared.requires_abi(format::variable((uint64_t)100));
+			prepared.requires_abi(format::variable(string("9YaGkvrR1fjXSAm7LTcQYXZiZfub2EuWvVxBmRSHcwHZ")));
+			prepared.requires_abi(format::variable(string("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")));
+			prepared.requires_abi(format::variable(string("5YRGqmfQGcAii8szURA3ZztXfpre1ZnajJcS63GJi4yK")));
+			prepared.requires_abi(format::variable(string()));
+			prepared.requires_abi(format::variable(string("77EWfi8yvGJNRsC9BRHepMtBJ2RDEDAkZNWAT4YJNMYU")));
+			validate_transaction(asset, wallet, prepared, "spl create+transfer", "4FSyYw7DsVMjNdPP8EyZRRSBQhgjTUA7yPHGhnuUXNzpnbU5UeE6AJ3YzoJVWEpeg1bYr2ChSGESKi3uMjKERQE13BJvJuCSrMS4LZ4Q37DJQtx1rPHKH5qQYYdLqmYLF25JLRHKFPQwCRVxhRKqfiU5vBhcEEvnBqeYBKcALZ1NYKHDL66QxRNPrZxi4htUqNBdCrJcM9p4N8QVRFdfhn7eJ5FtEumdk195JuFD9dQmSW9GhwkmaLuApNTnm1zdt44xCDxxRxS924GLg2QjsuuULrCWEt6g9gztsfRyVTaVbhPDtWqgexrP9cCrzAgvwfhJkQGW331AG2pF4pJxrAkWymLUYBFped2jYeVbhJg4LtkjUFoG1wmLrCv6qspzhVM7WqehXDutP3NnME2sjDHfFWfxtBxuwHdaLHyJdkhhF5FpVqDkdQYpjgGqf4uSrWDNount2aVvx9ZLy71ZKhq2MtrseGNSyh61gDiYwfvFz3LTzgMDJzwrjZQ3ggDcpAC58TV4T7nYV4oy");
 		});
 		tester::use_clean_state([&]()
 		{
@@ -1811,6 +1824,172 @@ struct tests
 				*userdata = std::move(users);
 			else
 				console::get()->write_line(data->as_json(true));
+		});
+	}
+	/* blockchain exclusively for testing bridges of specific networks (possibly non-zero balance accounts, valid regtest chain) */
+	static void blockchain_integration_coverage(const algorithm::asset_id& asset, const std::string_view& url, const std::string_view& deposit_account, const std::string_view& withdraw_account, const decimal& deposit_value, const decimal& bridge_fee, std::function<uint64_t()>&& new_block, std::function<void(const std::string_view&, const std::string_view&, const algorithm::asset_id&, const decimal&)>&& new_transaction)
+	{
+		tester::use_clean_state([&]()
+		{
+			vector<account_ref> producers;
+			for (size_t i = 0; i < protocol::now().policy.participation.max_per_account; i++)
+				producers.push_back(account_ref(ledger::wallet::from_seed(stringify::text("00000%i", (int)i)), 0));
+
+			auto native_asset = algorithm::asset::base_id_of(asset);
+			auto* term = console::get();
+			auto& [user1, user1_nonce] = producers[0];
+			auto& [user2, user2_nonce] = producers[1];
+			auto& [user3, user3_nonce] = producers[2];
+			auto* setup = memory::init<transactions::setup>();
+			setup->asset = native_asset;
+			setup->allocate_production_stake(decimal::zero());
+			setup->allocate_attestation_stake(native_asset, decimal::zero(), 0);
+			setup->allocate_bridge(native_asset, (uint8_t)protocol::now().policy.participation.min_per_account, bridge_fee);
+			setup->allocate_participation_stake(decimal::zero());
+			setup->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
+			tester::new_block_from_one(nullptr, producers, setup, tester::block_type::normal);
+
+			for (size_t i = 3; i < producers.size(); i++)
+			{
+				auto& [user, user_nonce] = producers[i];
+				setup = memory::init<transactions::setup>();
+				setup->asset = native_asset;
+				setup->allocate_attestation_stake(native_asset, decimal::zero(), 0);
+				setup->allocate_participation_stake(decimal::zero());
+				setup->sign(user.secret_key, user_nonce++, decimal::zero()).expect("pre-validation failed");
+				tester::new_block_from_one(nullptr, producers, setup, tester::block_type::normal);
+			}
+
+			auto executor = ledger::executor_context(nullptr);
+			auto bridge_instance = executor.get_bridge_instances(native_asset, 0, 1)->front();
+			auto* bridge_account = memory::init<transactions::route>();
+			bridge_account->asset = native_asset;
+			bridge_account->set_bridge_hash(bridge_instance.ref.hash);
+			bridge_account->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
+			tester::new_block_from_one(nullptr, producers, bridge_account, tester::block_type::normal);
+
+			auto& config = protocol::change();
+			config.user.superchain.listener = true;
+
+			auto* offchain = superchain::bridge::get();
+			auto params = (superchain::translation_unit::chainparams*)offchain->get_network_params(native_asset);
+			protocol::change().user.superchain.polling_frequency = 3000;
+			offchain->add_network_connection(native_asset, url, { }, 5.0);
+			offchain->network_active = []() -> bool { return true; };
+			offchain->network_fetch = [](const algorithm::asset_id&, const std::string_view& location, const std::string_view& method, const http::fetch_frame& options) -> expects_promise_system<http::response_frame>
+			{
+				return http::fetch(location, method, options);
+			};
+
+			auto receive_transaction = [&]()
+			{
+				bool awaiting_transaction = true;
+				while (awaiting_transaction)
+				{
+					uint64_t block_number = new_block();
+					term->fwrite_line("trying block %" PRIu64, block_number);
+					offchain->scan_from_block_height(native_asset, (block_number > 0 ? block_number - 1 : 0) + params->sync_latency);
+					auto result = coasync<expects_rt<vector<superchain::transaction_logs>>>([&]() -> expects_promise_rt<vector<superchain::transaction_logs>>
+					{
+						coreturn coawait(offchain->link_transactions(native_asset));
+					}).get();
+					if (!result)
+					{
+						term->fwrite_line("transaction(s) not found; retrying", block_number);
+						continue;
+					}
+
+					for (auto& logs : *result)
+					{
+						auto transactions = vector<uptr<ledger::transaction_message>>();
+						logs.report_logs(native_asset, offchain->get_network_instance(native_asset)->options, 0);
+						for (auto& receipt : logs.receipts)
+						{
+							auto* transaction = memory::init<transactions::attestate>();
+							transaction->asset = native_asset;
+							transaction->set_computed_proof(std::move(receipt), { });
+							transactions.push_back(transaction);
+						}
+
+						if (!transactions.empty())
+						{
+							tester::new_block_from_list(nullptr, producers, std::move(transactions), tester::block_type::normal);
+							awaiting_transaction = false;
+						}
+					}
+				}
+				term->write_line("transaction(s) found; continuing");
+			};
+
+			bridge_account = memory::init<transactions::route>();
+			bridge_account->asset = native_asset;
+			bridge_account->set_routing_address(deposit_account);
+			bridge_account->set_bridge_hash(bridge_instance.ref.hash);
+			bridge_account->sign(user3.secret_key, user3_nonce++, decimal::zero()).expect("pre-validation failed");
+			tester::new_block_from_one(nullptr, producers, bridge_account, tester::block_type::normal);
+
+			size_t deposits = 0;
+			auto accounts = *executor.get_witness_accounts_by_purpose(params->routing == superchain::routing_policy::account ? user1.public_key_hash : user3.public_key_hash, states::witness_account::account_type::bridge, 0, 128);
+			for (auto& account : accounts)
+			{
+				if (account.ref.hash == bridge_instance.ref.hash)
+				{
+					for (auto& [type, to_account] : account.addresses)
+					{
+						if (native_asset != asset)
+						{
+							new_transaction(deposit_account, to_account, native_asset, deposit_value);
+							receive_transaction();
+						}
+						new_transaction(deposit_account, to_account, asset, deposit_value);
+						receive_transaction();
+						++deposits;
+					}
+				}
+			}
+
+			VI_PANIC(deposits > 0, "deposit address generation failed");
+			auto expected_balance = deposit_value * deposits;
+			auto native_balance = executor.get_account_balance(native_asset, user3.public_key_hash).expect("native balance mismatch").get_balance();
+			VI_PANIC(native_asset == asset || native_balance >= expected_balance, "actual native balance is expected to be >=%s but is %s", expected_balance.to_string().c_str(), native_balance.to_string().c_str());
+
+			auto balance = executor.get_account_balance(asset, user3.public_key_hash).expect("balance mismatch").get_balance();
+			VI_PANIC(balance >= expected_balance, "actual balance is expected to be >=%s but is %s", expected_balance.to_string().c_str(), balance.to_string().c_str());
+
+			auto withdrawal_value = native_asset == asset ? balance - bridge_fee : balance;
+			term->write_line("outgoing transaction integration:");
+			term->fwrite_line(" - withdraw %s into %.*s", withdrawal_value.to_string().c_str(), (int)withdraw_account.size(), withdraw_account.data());
+
+			auto* withdraw = memory::init<transactions::withdraw>();
+			withdraw->asset = asset;
+			withdraw->set_routing_target(withdraw_account, withdrawal_value);
+			withdraw->set_bridge_hash(bridge_instance.ref.hash);
+			withdraw->sign(user3.secret_key, user3_nonce++, decimal::zero()).expect("pre-validation failed");
+			tester::new_block_from_one(nullptr, producers, withdraw, tester::block_type::normal);
+
+			auto chain = storages::chainstate();
+			auto confirmation_block = chain.get_latest_block();
+			VI_PANIC(confirmation_block && !confirmation_block->transactions.empty(), "blocks with withdrawal confirmation were not found");
+
+			auto& confirmation = confirmation_block->transactions.front();
+			VI_PANIC(confirmation.transaction->as_type() == transactions::broadcast::as_instance_type(), "no withdrawal confirmation");
+
+			auto* confirmation_event = confirmation.receipt.find_event<transactions::broadcast>();
+			auto* confirmation_transaction = (transactions::broadcast*)*confirmation.transaction;
+			VI_PANIC(confirmation_transaction->proof && !confirmation_event, "withdrawal confirmation failed: %s", confirmation_event ? (confirmation_event->empty() ? "unknown error" : confirmation_event->front().as_blob().c_str()) : confirmation_transaction->proof.what().c_str());
+			term->fwrite_line(" - block required for transaction %s", confirmation_transaction->proof->hashdata.c_str());
+			receive_transaction();
+
+			if (native_asset != asset)
+			{
+				auto target_balance = native_balance - bridge_fee;
+				auto actual_balance = executor.get_account_balance(native_asset, user3.public_key_hash).or_else(states::account_balance(user3.public_key_hash, asset, nullptr)).get_balance();
+				VI_PANIC(actual_balance >= target_balance, "actual balance is expected to be %s but is %s", target_balance.to_string().c_str(), actual_balance.to_string().c_str());
+			}
+
+			auto target_balance = balance - withdrawal_value;
+			auto actual_balance = executor.get_account_balance(asset, user3.public_key_hash).or_else(states::account_balance(user3.public_key_hash, asset, nullptr)).get_balance();
+			VI_PANIC(actual_balance >= target_balance, "actual balance is expected to be %s but is %s", target_balance.to_string().c_str(), actual_balance.to_string().c_str());
 		});
 	}
 	/* verify current blockchain */
@@ -2258,12 +2437,50 @@ int main(int argc, char* argv[])
 		}
 		exit_code = 0;
 	}
+	else if (test == "integration")
+	{
+		/* test case runner for superchain testing */
+		auto* queue = schedule::get();
+		queue->start(schedule::desc());
+
+		auto path = args.get("test-path");
+		VI_PANIC(!path.empty(), "must provide a \"test-path\" flag (string)");
+		auto data = schema::from_json(os::file::read_as_string(path).expect("failed to find the file")).expect("failed to parse the file");
+		auto network = data->get_var("net").get_blob();
+		auto token = data->get_var("tok").get_blob();
+		auto contract = data->get_var("ctn").get_blob();
+		auto url = data->get_var("url").get_blob();
+		auto from_address = data->get_var("int").get_blob();
+		auto to_address = data->get_var("out").get_blob();
+		auto amount = data->get_var("amt").get_decimal();
+		auto fee = data->get_var("fee").get_decimal();
+		VI_PANIC(!network.empty(), "network should be set");
+		VI_PANIC(!url.empty(), "url should be set");
+		VI_PANIC(amount.is_positive(), "amount should be positive");
+		VI_PANIC(fee.is_positive(), "fee should be positive");
+
+		tests::blockchain_integration_coverage(algorithm::asset::id_of(network, token, contract), url, from_address, to_address, amount, fee, [&]()
+		{
+			term->write("block number with tx: ");
+			return from_string<uint64_t>(term->read(128)).expect("failed to parse the block number");
+		}, [&](const std::string_view& from_account, const std::string_view& to_account, const algorithm::asset_id& asset, const decimal& value)
+		{
+			auto eth_chain = superchain::bridge::get()->get_network(algorithm::asset::id_of("ETH"));
+			auto eth_value = "0x" + eth_chain->to_baseline_value(value).to_string(16);
+			term->fwrite_line(
+				"incoming transaction integration:\n"
+				" - account %.*s sends %s (%s) %s to account %.*s", (int)from_account.size(), from_account.data(), value.to_string().c_str(), eth_value.c_str(), algorithm::asset::name_of(asset).c_str(), (int)to_account.size(), to_account.data());
+		});
+
+		queue->stop();
+		exit_code = 0;
+	}
 	else if (test == "script")
 		exit_code = entrypoints::script(args);
 	else if (test == "node")
 		exit_code = entrypoints::node(args);
 
-	VI_PANIC(exit_code != bad_entrypoint_exit_code, "must provide a \"test\" flag (string in [consensus, benchmark, regression] or in [script, node])");
+	VI_PANIC(exit_code != bad_entrypoint_exit_code, "must provide a \"test\" flag (string in [consensus, benchmark, regression, integration] or in [script, node])");
 	if (os::process::has_debugger())
 	{
 		auto* term = console::get();

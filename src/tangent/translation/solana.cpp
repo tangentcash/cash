@@ -19,6 +19,27 @@ namespace tangent
 				uint8_t readonly_unsigned_accounts;
 			};
 
+			static bool derive_program_address(const std::string_view& seed, const uint8_t* program_id, size_t program_id_size, uint8_t result[32], size_t* result_size)
+			{
+				string seed_buffer = string(seed);
+				size_t seed_index = seed_buffer.size();
+				seed_buffer.append(1, ' ');
+				seed_buffer.append((char*)program_id, program_id_size);
+				seed_buffer.append("ProgramDerivedAddress");
+				for (size_t i = 0; i < 255; i++)
+				{
+					seed_buffer[seed_index] = (char)(255 - i);
+					sha256_Raw((uint8_t*)seed_buffer.data(), seed_buffer.size(), result);
+					if (!crypto_core_ed25519_is_valid_point(result))
+					{
+						*result_size = 32;
+						return true;
+					}
+				}
+
+				*result_size = 0;
+				return false;
+			}
 			static void tx_append(vector<uint8_t>& tx, const uint8_t* data, size_t data_size)
 			{
 				size_t offset = tx.size();
@@ -285,12 +306,12 @@ namespace tangent
 			}
 			expects_promise_rt<computed_transaction> solana::link_transaction(uint64_t, const std::string_view&, format::tree& transaction_data)
 			{
+				bool reverted = false;
 				auto* meta = transaction_data.child("meta");
 				if (meta != nullptr)
 				{
 					auto* status = meta->child("status");
-					if (status != nullptr && status->has("Err"))
-						return expects_rt<computed_transaction>(remote_exception("tx reverted"));
+					reverted = status != nullptr && status->has("Err");
 				}
 
 				auto* transaction = transaction_data.child("transaction");
@@ -327,7 +348,7 @@ namespace tangent
 				if (!discovery || discovery->empty())
 					return expects_rt<computed_transaction>(remote_exception("tx not involved"));
 
-				return coasync<expects_rt<computed_transaction>>([this, &transaction_data, pre_token_balances, post_token_balances, signature = std::move(signature), addresses = std::move(addresses), discovery = std::move(discovery)]() mutable -> expects_promise_rt<computed_transaction>
+				return coasync<expects_rt<computed_transaction>>([this, &transaction_data, pre_token_balances, post_token_balances, reverted, signature = std::move(signature), addresses = std::move(addresses), discovery = std::move(discovery)]() mutable -> expects_promise_rt<computed_transaction>
 				{
 					auto transaction_data_postload = coawait(get_transaction(signature));
 					if (!transaction_data_postload)
@@ -355,9 +376,6 @@ namespace tangent
 					if (!instructions || instructions->childs().empty())
 						coreturn expects_rt<computed_transaction>(remote_exception("tx not valid"));
 
-					auto fee_value = transaction_data.child_var("meta.fee").as_decimal() / netdata.divisibility;
-					bool fee_included = false;
-
 					computed_transaction tx;
 					tx.transaction_id = signature;
 
@@ -382,9 +400,8 @@ namespace tangent
 
 							auto& native_input = inputs[from][native_asset];
 							auto& native_output = outputs[to][native_asset];
-							native_input = (native_input.is_nan() ? value : (native_input + value)) + fee_value;
+							native_input = native_input.is_nan() ? value : (native_input + value);
 							native_output = native_output.is_nan() ? value : (native_output + value);
-							fee_included = true;
 							if (!from.empty())
 								tx.signers.insert(from);
 						}
@@ -400,9 +417,24 @@ namespace tangent
 
 							auto& native_input = inputs[from][native_asset];
 							auto& native_output = outputs[to][native_asset];
-							native_input = (native_input.is_nan() ? value : (native_input + value)) + fee_value;
+							native_input = native_input.is_nan() ? value : (native_input + value);
 							native_output = native_output.is_nan() ? value : (native_output + value);
-							fee_included = true;
+							if (!from.empty())
+								tx.signers.insert(from);
+						}
+						else if (type == "create" || type == "createIdempotent")
+						{
+							auto from = info->child_var("source").as_blob();
+							auto to = info->child_var("wallet").as_blob();
+							if (!addresses.count(from) && !addresses.count(to))
+								continue;
+
+							auto& native_input = inputs[from][native_asset];
+							auto& native_output = outputs[to][native_asset];
+							if (native_input.is_nan())
+								native_input = decimal::zero();
+							if (native_output.is_nan())
+								native_output = decimal::zero();
 							if (!from.empty())
 								tx.signers.insert(from);
 						}
@@ -418,9 +450,8 @@ namespace tangent
 
 							auto& native_input = inputs[from][native_asset];
 							auto& native_output = outputs[to][native_asset];
-							native_input = (native_input.is_nan() ? value : (native_input + value)) + fee_value;
+							native_input = native_input.is_nan() ? value : (native_input + value);
 							native_output = native_output.is_nan() ? value : (native_output + value);
-							fee_included = true;
 							if (!from.empty())
 								tx.signers.insert(from);
 						}
@@ -436,9 +467,8 @@ namespace tangent
 
 							auto& native_input = inputs[from][native_asset];
 							auto& native_output = outputs[to][native_asset];
-							native_input = (native_input.is_nan() ? value : (native_input + value)) + fee_value;
+							native_input = native_input.is_nan() ? value : (native_input + value);
 							native_output = native_output.is_nan() ? value : (native_output + value);
-							fee_included = true;
 							if (!from.empty())
 								tx.signers.insert(from);
 						}
@@ -454,11 +484,50 @@ namespace tangent
 
 							auto& native_input = inputs[from][native_asset];
 							auto& native_output = outputs[to][native_asset];
-							native_input = (native_input.is_nan() ? value : (native_input + value)) + fee_value;
+							native_input = native_input.is_nan() ? value : (native_input + value);
 							native_output = native_output.is_nan() ? value : (native_output + value);
-							fee_included = true;
 							if (!from.empty())
 								tx.signers.insert(from);
+						}
+					}
+
+					bool fee_included = false;
+					auto* account_keys = transaction_data.child("transaction.message.accountKeys");
+					if (account_keys != nullptr)
+					{
+						hash_map<uint64_t, string> account_indices;
+						for (auto& account_key : account_keys->childs())
+							account_indices[(uint64_t)account_indices.size()] = account_key.child_var("pubkey").as_blob();
+
+						hash_map<string, decimal> fees;
+						if (pre_balances != nullptr && !pre_balances->childs().empty())
+						{
+							for (size_t i = 0; i < pre_balances->childs().size(); i++)
+							{
+								auto it = account_indices.find((uint64_t)i);
+								if (it != account_indices.end() && tx.signers.find(it->second) != tx.signers.end())
+								{
+									auto pre_balance = pre_balances->childs()[i].value.as_decimal();
+									auto post_balance = post_balances->childs()[i].value.as_decimal();
+									auto delta = (pre_balance - post_balance) / netdata.divisibility;
+									if (delta.is_positive())
+										fees[it->second] = std::move(delta);
+								}
+							}
+						}
+
+						for (auto& [address, values] : inputs)
+						{
+							auto fee = fees.find(address);
+							if (fee == fees.end())
+								continue;
+
+							fee_included = true;
+							auto value = values.find(native_asset);
+							if (value != values.end())
+								value->second = std::max(value->second, fee->second);
+							else
+								values[native_asset] = fee->second;
 						}
 					}
 
@@ -529,10 +598,28 @@ namespace tangent
 						}
 					}
 
-					if (!fee_included && !inputs.empty())
+					if (reverted)
 					{
-						auto& native_input = inputs.begin()->second[native_asset];
-						native_input = (native_input.is_nan() ? fee_value : (native_input + fee_value));
+						for (auto& [address, values] : inputs)
+						{
+							for (auto& [token, value] : values)
+								value = decimal::zero();
+						}
+						for (auto& [address, values] : outputs)
+						{
+							for (auto& [token, value] : values)
+								value = decimal::zero();
+						}
+					}
+
+					if (!fee_included)
+					{
+						auto fee_value = (transaction_data.child_var("meta.fee").as_decimal() / netdata.divisibility);
+						if (!inputs.empty())
+						{
+							auto& native_input = inputs.begin()->second[native_asset];
+							native_input = (native_input.is_nan() ? fee_value : (native_input + fee_value));
+						}
 					}
 
 					for (auto& [address, values] : inputs)
@@ -597,15 +684,6 @@ namespace tangent
 					if (!native_balance)
 						coreturn expects_rt<prepared_transaction>(std::move(native_balance.error()));
 
-					uint64_t fee_constant = 5000;
-					if (contract_address)
-						fee_constant += fee_constant * 2;
-
-					auto fee = computed_fee::flat_fee(fee_constant / netdata.divisibility);
-					decimal fee_value = fee.get_max_fee();
-					if (fee_value > max_fee)
-						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
-
 					option<token_account> from_token = optional::none;
 					option<token_account> to_token = optional::none;
 					if (contract_address)
@@ -617,12 +695,19 @@ namespace tangent
 							coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("account %s does not have associated token account (must not happen)", from_link.address.c_str())));
 
 						auto to_token_balance = coawait(get_token_balance(*contract_address, to.address));
-						if (!to_token_balance)
-							coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("account %s does not have associated token account (create token account before sending)", to.address.c_str())));
-
 						from_token = std::move(*from_token_balance);
-						to_token = std::move(*to_token_balance);
+						if (to_token_balance)
+							to_token = std::move(*to_token_balance);
 					}
+
+					uint64_t fee_constant = contract_address ? 15000 : 5000;
+					if (contract_address && !to_token)
+						fee_constant += 2039280;
+
+					auto fee = computed_fee::flat_fee(fee_constant / netdata.divisibility);
+					decimal fee_value = fee.get_max_fee();
+					if (fee_value > max_fee)
+						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
 
 					auto total_value = contract_address ? fee_value : (to.value + fee_value);
 					if (*native_balance < total_value || total_value.is_negative())
@@ -834,28 +919,13 @@ namespace tangent
 					if (!b58dec(mint, &mint_size, ref_mint_address.data(), ref_mint_address.size()))
 						coreturn expects_rt<string>(remote_exception("mint address not valid"));
 
-					string seed_buffer;
-					seed_buffer.append("metadata");
-					seed_buffer.append((char*)program_id, program_id_size);
-					seed_buffer.append((char*)mint, mint_size);
+					string seed;
+					seed.append("metadata");
+					seed.append((char*)program_id, program_id_size);
+					seed.append((char*)mint, mint_size);
 
-					size_t seed_index = seed_buffer.size();
-					seed_buffer.append(1, ' ');
-					seed_buffer.append((char*)program_id, program_id_size);
-					seed_buffer.append("ProgramDerivedAddress");
-
-					uint8_t meta[32]; bool exists = false;
-					for (size_t i = 0; i < 255; i++)
-					{
-						seed_buffer[seed_index] = (char)(255 - i);
-						sha256_Raw((uint8_t*)seed_buffer.data(), seed_buffer.size(), meta);
-						if (!crypto_core_ed25519_is_valid_point(meta))
-						{
-							exists = true;
-							break;
-						}
-					}
-					if (!exists)
+					uint8_t meta[32]; size_t meta_size = sizeof(meta);
+					if (!derive_program_address(seed, program_id, program_id_size, meta, &meta_size))
 						coreturn expects_rt<string>(remote_exception("metaplex address not found"));
 
 					char meta_address[256]; size_t meta_address_size = sizeof(meta_address);
@@ -986,6 +1056,10 @@ namespace tangent
 			}
 			vector<uint8_t> solana::tx_message_serialize(sol_transaction* tx_data)
 			{
+				uint8_t block_hash[32]; size_t block_hash_size = sizeof(block_hash);
+				if (!b58dec(block_hash, &block_hash_size, tx_data->recent_block_hash.c_str(), tx_data->recent_block_hash.size()))
+					return vector<uint8_t>();
+
 				uint8_t mint_buffer[32]; size_t mint_buffer_size = sizeof(mint_buffer);
 				if (!tx_data->mint_address.empty() && !b58dec(mint_buffer, &mint_buffer_size, tx_data->mint_address.c_str(), tx_data->mint_address.size()))
 					return vector<uint8_t>();
@@ -1006,25 +1080,32 @@ namespace tangent
 				if (!b58dec(to_buffer, &to_buffer_size, tx_data->to_address.c_str(), tx_data->to_address.size()))
 					return vector<uint8_t>();
 
-				uint8_t program_id[32]; size_t program_id_size = sizeof(program_id);
-				string system_program_id = !tx_data->token_program_address.empty() ? tx_data->token_program_address.c_str() : "11111111111111111111111111111111";
-				if (!b58dec(program_id, &program_id_size, system_program_id.c_str(), system_program_id.size()))
+				uint8_t token_program_id[32]; size_t token_program_id_size = sizeof(token_program_id);
+				if (!tx_data->token_program_address.empty() && !b58dec(token_program_id, &token_program_id_size, tx_data->token_program_address.c_str(), tx_data->token_program_address.size()))
 					return vector<uint8_t>();
 
-				uint8_t block_hash[32]; size_t block_hash_size = sizeof(block_hash);
-				if (!b58dec(block_hash, &block_hash_size, tx_data->recent_block_hash.c_str(), tx_data->recent_block_hash.size()))
+				uint8_t system_program_id[32]; size_t system_program_id_size = sizeof(system_program_id);
+				std::string_view system_program_id_const = "11111111111111111111111111111111";
+				if (!b58dec(system_program_id, &system_program_id_size, system_program_id_const.data(), system_program_id_const.size()))
+					return vector<uint8_t>();
+
+				uint8_t associated_token_program_id[32]; size_t associated_token_program_id_size = sizeof(associated_token_program_id);
+				std::string_view associated_token_program_id_const = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
+				if (!b58dec(associated_token_program_id, &associated_token_program_id_size, associated_token_program_id_const.data(), associated_token_program_id_const.size()))
 					return vector<uint8_t>();
 
 				bool is_token_transfer = !tx_data->mint_address.empty() || !tx_data->from_token_address.empty() || !tx_data->to_token_address.empty() || !tx_data->token_program_address.empty();
+				bool create_associated_token_account = is_token_transfer && tx_data->to_token_address.empty();
+				uint64_t amount = os::hw::to_endianness<uint64_t>(os::hw::endian::little, tx_data->value);
 				uint8_t prefix = 1 << 7;
-				uint8_t account_keys = is_token_transfer ? 5 : 3;
-				uint8_t instructions = 1;
+				uint8_t account_keys = is_token_transfer ? (create_associated_token_account ? 8 : 5) : 3;
+				uint8_t instructions = create_associated_token_account ? 2 : 1;
 				uint8_t lookups = 0;
 
 				transaction_header header;
 				header.required_signatures = 1;
 				header.readonly_signed_accounts = 0;
-				header.readonly_unsigned_accounts = 1;
+				header.readonly_unsigned_accounts = is_token_transfer && create_associated_token_account ? 2 : 1;
 
 				vector<uint8_t> message_buffer;
 				tx_append(message_buffer, (uint8_t*)&prefix, sizeof(prefix));
@@ -1033,17 +1114,51 @@ namespace tangent
 				tx_append(message_buffer, from_buffer, from_buffer_size);
 				if (is_token_transfer)
 				{
+					if (create_associated_token_account)
+					{
+						string seed;
+						seed.append((char*)to_buffer, to_buffer_size);
+						seed.append((char*)token_program_id, token_program_id_size);
+						seed.append((char*)mint_buffer, mint_buffer_size);
+						if (!derive_program_address(seed, associated_token_program_id, associated_token_program_id_size, to_token_buffer, &to_token_buffer_size))
+							return vector<uint8_t>();
+					}
 					tx_append(message_buffer, from_token_buffer, from_token_buffer_size);
 					tx_append(message_buffer, to_token_buffer, to_token_buffer_size);
 					tx_append(message_buffer, mint_buffer, mint_buffer_size);
+					tx_append(message_buffer, token_program_id, token_program_id_size);
+					if (create_associated_token_account)
+					{
+						tx_append(message_buffer, to_buffer, to_buffer_size);
+						tx_append(message_buffer, system_program_id, system_program_id_size);
+						tx_append(message_buffer, associated_token_program_id, associated_token_program_id_size);
+					}
 				}
 				else
+				{
 					tx_append(message_buffer, to_buffer, to_buffer_size);
-				tx_append(message_buffer, program_id, program_id_size);
+					tx_append(message_buffer, system_program_id, system_program_id_size);
+				}
 				tx_append(message_buffer, block_hash, block_hash_size);
 				tx_append(message_buffer, (uint8_t*)&instructions, sizeof(instructions));
 				if (is_token_transfer)
 				{
+					if (create_associated_token_account)
+					{
+						uint8_t indices = 6, size = 1, instruction = 1;
+						uint8_t program_id_index = 7, from_index = 0, to_index = 2, owner_index = 5, mint_index = 3, system_program_id_index = 6, token_program_id_index = 4;
+						tx_append(message_buffer, (uint8_t*)&program_id_index, sizeof(program_id_index));
+						tx_append(message_buffer, (uint8_t*)&indices, sizeof(indices));			
+						tx_append(message_buffer, (uint8_t*)&from_index, sizeof(from_index));
+						tx_append(message_buffer, (uint8_t*)&to_index, sizeof(to_index));
+						tx_append(message_buffer, (uint8_t*)&owner_index, sizeof(owner_index));
+						tx_append(message_buffer, (uint8_t*)&mint_index, sizeof(mint_index));
+						tx_append(message_buffer, (uint8_t*)&system_program_id_index, sizeof(system_program_id_index));
+						tx_append(message_buffer, (uint8_t*)&token_program_id_index, sizeof(token_program_id_index));
+						tx_append(message_buffer, (uint8_t*)&size, sizeof(size));
+						tx_append(message_buffer, (uint8_t*)&instruction, sizeof(instruction));
+					}
+
 					uint8_t indices = 4, size = 10, instruction = 12;
 					uint8_t program_id_index = 4, from_index = 1, to_index = 2, owner_index = 0, mint_index = 3;
 					tx_append(message_buffer, (uint8_t*)&program_id_index, sizeof(program_id_index));
@@ -1054,12 +1169,12 @@ namespace tangent
 					tx_append(message_buffer, (uint8_t*)&owner_index, sizeof(owner_index));
 					tx_append(message_buffer, (uint8_t*)&size, sizeof(size));
 					tx_append(message_buffer, (uint8_t*)&instruction, sizeof(instruction));
-					tx_append(message_buffer, (uint8_t*)&tx_data->value, sizeof(tx_data->value));
+					tx_append(message_buffer, (uint8_t*)&amount, sizeof(amount));
 					tx_append(message_buffer, (uint8_t*)&tx_data->decimals, sizeof(tx_data->decimals));
 				}
 				else
 				{
-					uint8_t indices = 2, size = 4 + 8;
+					uint8_t indices = 2, size = 12;
 					uint8_t program_id_index = 2, from_index = 0, to_index = 1;
 					uint32_t instruction = os::hw::to_endianness<uint32_t>(os::hw::endian::little, 2);
 					tx_append(message_buffer, (uint8_t*)&program_id_index, sizeof(program_id_index));
@@ -1068,7 +1183,7 @@ namespace tangent
 					tx_append(message_buffer, (uint8_t*)&to_index, sizeof(to_index));
 					tx_append(message_buffer, (uint8_t*)&size, sizeof(size));
 					tx_append(message_buffer, (uint8_t*)&instruction, sizeof(instruction));
-					tx_append(message_buffer, (uint8_t*)&tx_data->value, sizeof(tx_data->value));
+					tx_append(message_buffer, (uint8_t*)&amount, sizeof(amount));
 				}
 				tx_append(message_buffer, (uint8_t*)&lookups, sizeof(lookups));
 				return message_buffer;
