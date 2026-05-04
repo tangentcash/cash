@@ -4,6 +4,7 @@ extern "C"
 {
 #include "../internal/bitcoin.h"
 #include "../internal/ed25519.h"
+#include "../internal/ed25519/ed25519-donna.h"
 }
 
 namespace tangent
@@ -19,6 +20,11 @@ namespace tangent
 				uint8_t readonly_unsigned_accounts;
 			};
 
+			static bool is_on_curve_relaxed(const uint8_t* public_key)
+			{
+				ge25519 p;
+				return ge25519_unpack_negative_vartime(&p, public_key) != 0;
+			}
 			static bool derive_program_address(const std::string_view& seed, const uint8_t* program_id, size_t program_id_size, uint8_t result[32], size_t* result_size)
 			{
 				string seed_buffer = string(seed);
@@ -30,7 +36,7 @@ namespace tangent
 				{
 					seed_buffer[seed_index] = (char)(255 - i);
 					sha256_Raw((uint8_t*)seed_buffer.data(), seed_buffer.size(), result);
-					if (!crypto_core_ed25519_is_valid_point(result))
+					if (!is_on_curve_relaxed(result))
 					{
 						*result_size = 32;
 						return true;
