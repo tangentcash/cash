@@ -279,7 +279,7 @@ namespace tangent
 
 		struct network_options
 		{
-			struct
+			struct scan_state
 			{
 				uint64_t inital_block_height = 0;
 				uint64_t index_block_height = 0;
