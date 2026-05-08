@@ -2928,6 +2928,14 @@ namespace tangent
 					return layer_exception("witness transaction fee overflow (max: " + bridge->fee_rate.to_string() + ")");
 			}
 
+			auto rounding_equals_check = [](const decimal& a, const decimal& b)
+			{
+				if (a == b)
+					return true;
+
+				uint32_t size = std::max<uint32_t>(std::min(a.decimal_size(), b.decimal_size()), 4);
+				return decimal(a).truncate(size) == decimal(b).truncate(size);
+			};
 			for (auto& [output_asset, actual_output_value] : output_value)
 			{
 				auto change_ref = change_value.find(output_asset);
@@ -2937,14 +2945,14 @@ namespace tangent
 				{
 					if (it->second.is_nan())
 						continue;
-					else if (output_asset != base_asset && actual_output_value != it->second)
+					else if (output_asset != base_asset && !rounding_equals_check(actual_output_value, it->second))
 						return layer_exception("witness transaction output pays unexpected token value");
 					else if (output_asset == base_asset && ((actual_output_value < it->second - bridge->fee_rate) || (actual_output_value > it->second + bridge->fee_rate)))
 						return layer_exception("witness transaction output pays unexpected native value");
 				}
 				else if (output_asset == base_asset && actual_output_value > std::max(max_change_value, bridge->fee_rate))
 					return layer_exception("witness transaction output pays unexpected native value");
-				else if (output_asset != base_asset && actual_output_value != max_change_value)
+				else if (output_asset != base_asset && rounding_equals_check(actual_output_value, max_change_value))
 					return layer_exception("witness transaction output pays unexpected token value");
 			}
 
