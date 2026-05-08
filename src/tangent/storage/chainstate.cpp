@@ -344,16 +344,7 @@ namespace tangent
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 
-			auto response = cursor->first();
-			auto& blob_storage = get_blob_storage();
-			parallel::wail_all(parallel::for_each_sequential(response.begin(), response.end(), response.size(), ELEMENTS_FEW, [&](sqlite::row row)
-			{
-				auto block_hash = row["block_hash"].get();
-				blob_storage.store(__func__, get_block_label(block_hash.get_binary()), std::string_view());
-			}));
-			if (block_delta != nullptr)
-				*block_delta -= response.size();
-
+			auto block_response = cursor->first();
 			map.clear();
 			map.push_back(var::set::integer(block_number));
 
@@ -361,16 +352,7 @@ namespace tangent
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 
-			response = cursor->first();
-			parallel::wail_all(parallel::for_each_sequential(response.begin(), response.end(), response.size(), ELEMENTS_FEW, [&](sqlite::row row)
-			{
-				auto transaction_hash = row["transaction_hash"].get();
-				blob_storage.store(__func__, get_transaction_label(transaction_hash.get_binary()), std::string_view());
-				blob_storage.store(__func__, get_receipt_label(transaction_hash.get_binary()), std::string_view());
-			}));
-			if (transaction_delta != nullptr)
-				*transaction_delta -= response.size();
-
+			auto transaction_response = cursor->first();
 			map.clear();
 			map.push_back(var::set::integer(block_number));
 
@@ -386,8 +368,37 @@ namespace tangent
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 
+			bool reorganized = false;
 			if (checkpoint_number && *checkpoint_number > block_number)
-				return revert_reorganize_internal(block_delta, transaction_delta, state_delta);
+			{
+				auto reorganization_result = revert_reorganize_internal(block_delta, transaction_delta, state_delta);
+				if (!reorganization_result)
+					return reorganization_result.error();
+
+				reorganized = true;
+			}
+
+			auto& blob_storage = get_blob_storage();
+			parallel::wail_all(parallel::for_each_sequential(block_response.begin(), block_response.end(), block_response.size(), ELEMENTS_FEW, [&](sqlite::row row)
+			{
+				auto block_hash = row["block_hash"].get();
+				blob_storage.store(__func__, get_block_label(block_hash.get_binary()), std::string_view());
+			}));
+			parallel::wail_all(parallel::for_each_sequential(transaction_response.begin(), transaction_response.end(), transaction_response.size(), ELEMENTS_FEW, [&](sqlite::row row)
+			{
+				auto transaction_hash = row["transaction_hash"].get();
+				blob_storage.store(__func__, get_transaction_label(transaction_hash.get_binary()), std::string_view());
+				blob_storage.store(__func__, get_receipt_label(transaction_hash.get_binary()), std::string_view());
+			}));
+
+			if (block_delta != nullptr)
+				*block_delta -= block_response.size();
+			
+			if (transaction_delta != nullptr)
+				*transaction_delta -= transaction_response.size();
+
+			if (reorganized)
+				return expectation::met;
 
 			for (auto& [uniform_storage, type] : get_uniform_multi_storage())
 			{
@@ -404,7 +415,7 @@ namespace tangent
 					if (!cursor || cursor->error())
 						return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 
-					response = cursor->first();
+					auto response = cursor->first();
 					parallel::wail_all(parallel::for_each_sequential(response.begin(), response.end(), response.size(), ELEMENTS_FEW, [&](sqlite::row row)
 					{
 						string index = row["index_hash"].get().get_blob();
@@ -414,7 +425,8 @@ namespace tangent
 
 					size_t results = cursor->first().size();
 					offset += results;
-					state_delta += results;
+					if (state_delta != nullptr)
+						*state_delta += results;
 					if (results < count)
 						break;
 				}
@@ -449,7 +461,7 @@ namespace tangent
 					if (!cursor || cursor->error())
 						return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 
-					response = cursor->first();
+					auto response = cursor->first();
 					parallel::wail_all(parallel::for_each_sequential(response.begin(), response.end(), response.size(), ELEMENTS_FEW, [&](sqlite::row next)
 					{
 						string column = next["column_hash"].get().get_blob();
@@ -460,7 +472,8 @@ namespace tangent
 
 					size_t results = cursor->first().size();
 					offset += results;
-					state_delta += results;
+					if (state_delta != nullptr)
+						*state_delta += results;
 					if (results < count)
 						break;
 				}
@@ -533,7 +546,7 @@ namespace tangent
 				if (!validation)
 					return layer_exception("block " + to_string(current_number) + " validation failed: " + validation.error().message());
 
-				auto finalization = checkpoint(evaluation, true);
+				auto finalization = checkpoint_internal(evaluation, true);
 				if (!finalization)
 					return layer_exception("block " + to_string(current_number) + " checkpoint failed: " + finalization.error().message());
 

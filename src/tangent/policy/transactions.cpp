@@ -2669,6 +2669,32 @@ namespace tangent
 
 				auto proof_base = proof->as_computed();
 				auto proof_asset = algorithm::asset::base_id_of(parent_transaction->asset);
+				auto actual_value = decimal::zero();
+				for (auto& [hash, output] : proof_base.outputs)
+				{
+					if (output.link.address != parent_transaction->address)
+						continue;
+
+					auto output_asset = output.get_asset(proof_asset);
+					if (output_asset == parent_transaction->asset)
+						actual_value += output.value;
+
+					for (auto& [token_hash, token] : output.tokens)
+					{
+						auto token_asset = token.get_asset(proof_asset);
+						if (token_asset == parent_transaction->asset)
+							actual_value += token.value;
+					}
+				}
+
+				auto unspent_value = std::max(decimal::zero(), parent_transaction->value - actual_value);
+				if (unspent_value.is_positive() && unspent_value < parent_transaction->value)
+				{
+					auto compensation_transfer = executor->apply_transfer(parent_transaction->asset, parent->receipt.from, decimal::zero(), -unspent_value);
+					if (!compensation_transfer)
+						return compensation_transfer.error();
+				}
+
 				executor->defer_side_effect([proof_asset, proof_base = std::move(proof_base)]() mutable
 				{
 					superchain::bridge::get()->update_utxo_tree(proof_asset, proof_base).report("failed to update the pending off-chain utxo set");
@@ -2928,14 +2954,6 @@ namespace tangent
 					return layer_exception("witness transaction fee overflow (max: " + bridge->fee_rate.to_string() + ")");
 			}
 
-			auto check_truncated = [](const decimal& a, const decimal& b)
-			{
-				if (a == b)
-					return true;
-
-				uint32_t size = std::max<uint32_t>(std::min(a.decimal_size(), b.decimal_size()), 4);
-				return decimal(a).truncate(size) == decimal(b).truncate(size);
-			};
 			for (auto& [output_asset, actual_output_value] : output_value)
 			{
 				auto change_ref = change_value.find(output_asset);
@@ -2945,14 +2963,14 @@ namespace tangent
 				{
 					if (it->second.is_nan())
 						continue;
-					else if (output_asset != base_asset && !check_truncated(actual_output_value, it->second))
+					else if (output_asset != base_asset && actual_output_value > it->second)
 						return layer_exception("witness transaction output pays unexpected token value");
 					else if (output_asset == base_asset && ((actual_output_value < it->second - bridge->fee_rate) || (actual_output_value > it->second + bridge->fee_rate)))
 						return layer_exception("witness transaction output pays unexpected native value");
 				}
 				else if (output_asset == base_asset && actual_output_value > std::max(max_change_value, bridge->fee_rate))
 					return layer_exception("witness transaction output pays unexpected native value");
-				else if (output_asset != base_asset && !check_truncated(actual_output_value, max_change_value))
+				else if (output_asset != base_asset && actual_output_value > max_change_value)
 					return layer_exception("witness transaction output pays unexpected token value");
 			}
 
