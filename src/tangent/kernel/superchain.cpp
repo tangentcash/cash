@@ -2787,14 +2787,14 @@ namespace tangent
 				{ "TRX", chain<translations::tron>(this) },
 				{ "XRP", chain<translations::ripple>(this) },
 				{ "XLM", chain<translations::stellar>(this) },
-#ifdef TAN_TEST
 				{ "BCH", chain<translations::bitcoin_cash>(this) },
+				{ "DOGE", chain<translations::dogecoin>(this) },
+				{ "LTC", chain<translations::litecoin>(this) },
+#ifdef TAN_TEST
 				{ "BTG", chain<translations::bitcoin_gold>(this) },
 				{ "BSV", chain<translations::bitcoin_sv>(this) },
 				{ "DASH", chain<translations::dash>(this) },
 				{ "DGB", chain<translations::digibyte>(this) },
-				{ "DOGE", chain<translations::dogecoin>(this) },
-				{ "LTC", chain<translations::litecoin>(this) },
 				{ "XEC", chain<translations::ecash>(this) },
 				{ "ZEC", chain<translations::zcash>(this) },
 				{ "ARB", chain<translations::arbitrum>(this) },
