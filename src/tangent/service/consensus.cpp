@@ -2881,8 +2881,6 @@ namespace tangent
 						if (protocol::now().user.consensus.logging)
 							VI_INFO("attestation %s dispatch: OK", algorithm::encoding::encode_0xhex256(attestation_hash).c_str());
 					}
-					else if (protocol::now().user.consensus.logging)
-						VI_WARN("attestation %s dispatch failed: %s", algorithm::encoding::encode_0xhex256(attestation_hash).c_str(), dispatch.error().what());
 				}
 				pending_attestations.clear();
 			});
@@ -3368,9 +3366,11 @@ namespace tangent
 
 			if (events.accept_block)
 				events.accept_block(candidate_hash, candidate.block, *mutation);
-
+			
 			for (auto& transaction : candidate.block.transactions)
 			{
+				if (transaction.receipt.successful && transaction.transaction->as_type() == transactions::attestate::as_instance_type())
+					storages::mempoolstate().remove_attestation(((transactions::attestate*)*transaction.transaction)->proof.as_attestation_hash());
 				if (find_descriptor(transaction.receipt.from))
 					accept_proposal_transaction(transaction);
 			}
