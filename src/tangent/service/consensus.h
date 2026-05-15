@@ -265,7 +265,6 @@ namespace tangent
 			hash_map<uint256_t, neighbor_callback> neighbors;
 			hash_map<uint8_t, callable> callables;
 			hash_map<void*, uref<relay>> nodes;
-			hash_map<uint256_t, uptr<ledger::transaction_message>> pending_attestations;
 			hash_map<uint256_t, format::wo_stream> pending_blocks;
 			hash_set<outbound_node*> pending_nodes;
 			forwarder inventory;
@@ -321,7 +320,6 @@ namespace tangent
 			bool run_mempool_vacuum();
 			bool run_fork_resolution();
 			bool run_attestation_resolution();
-			bool run_attestation_dispatcher();
 			bool run_block_production();
 			bool run_block_dispatcher();
 			void startup();

@@ -9,7 +9,6 @@
 #define TASK_FORK_RESOLUTION "fork_resolution"
 #define TASK_SUPERCHAIN_SYNC "superchain_sync"
 #define TASK_ATTESTATION_RESOLUTION "attestation_resolution"
-#define TASK_ATTESTATION_DISPATCHER "attestation_dispatcher"
 #define TASK_BLOCK_DISPATCH_RETRIAL "block_dispatch_retrial"
 #define TASK_BLOCK_PRODUCTION "block_production"
 #define TASK_BLOCK_DISPATCHER "block_dispatcher"
@@ -1105,7 +1104,8 @@ namespace tangent
 			auto* transaction = memory::init<transactions::attestate>();
 			transaction->asset = algorithm::asset::base_id_of(batch->asset);
 			transaction->set_computed_proof(std::move(it->second), std::move(batch->commitments));
-			pending_attestations[attestation_hash] = transaction;
+			if (accept_local_transaction(&runner_descriptor->second, transaction))
+				mempool.remove_attestation(attestation_hash);
 			return expectation::met;
 		}
 		expects_lr<void> server_node::accept_committed_attestation(const algorithm::asset_id& asset, const superchain::computed_transaction& proof, const algorithm::hashsig_t& signature)
@@ -1652,9 +1652,6 @@ namespace tangent
 				if (notifications > 0 && protocol::now().user.consensus.logging)
 					VI_DEBUG("attestation %s broadcasted to %i nodes", algorithm::encoding::encode_0xhex256(commitment_hash).c_str(), (int)notifications);
 			}
-
-			if (!attestations.empty())
-				run_attestation_dispatcher();
 
 			return expectation::met;
 		}
@@ -2793,28 +2790,21 @@ namespace tangent
 		}
 		bool server_node::run_attestation_resolution()
 		{
-			if (is_syncing())
+			bool has_attestation = false;
+			for (auto& [account, descriptor] : descriptors)
+				has_attestation = has_attestation || descriptor.first.services.has_attestation;
+			if (!has_attestation || is_syncing())
 				return false;
 
 			return control_sys.task_if_none(TASK_ATTESTATION_RESOLUTION, [this](system_task&&)
 			{
 				size_t offset = 0, resolutions = 0;
 				auto mempool = storages::mempoolstate();
-				bool has_attestation = false;
-				for (auto& [account, descriptor] : descriptors)
-					has_attestation = has_attestation || descriptor.first.services.has_attestation;
-
 				auto expirations = mempool.expire_attestations();
-				if (protocol::now().user.consensus.logging)
-				{
-					if (expirations)
-					{
-						if (*expirations > 0)
-							VI_INFO("mempool attestation vacuum: OK (attestations: %i)", (int)*expirations);
-					}
-					else
-						VI_ERR("mempool attestation vacuum failed: ", expirations.what().c_str());
-				}
+				if (expirations && protocol::now().user.consensus.logging)
+					VI_INFO("mempool attestation vacuum: OK (attestations: %i)", (int)*expirations);
+				else if (protocol::now().user.consensus.logging)
+					VI_ERR("mempool attestation vacuum failed: ", expirations.what().c_str());
 
 			retry:
 				auto attestation_hash = mempool.pull_best_attestation_hash(offset++);
@@ -2826,9 +2816,6 @@ namespace tangent
 						goto retry;
 					else if (protocol::now().user.consensus.logging)
 						VI_INFO("attestation %s resolution delayed: ", algorithm::encoding::encode_0xhex256(*attestation_hash).c_str(), status.what().c_str());
-
-					if (!has_attestation)
-						goto retry;
 
 					auto batch = mempool.get_attestation(*attestation_hash);
 					if (!batch)
@@ -2861,28 +2848,6 @@ namespace tangent
 				}
 				if (resolutions > 0 && protocol::now().user.consensus.logging)
 					VI_INFO("attestation resolution: %i pending", (int)resolutions);
-			});
-		}
-		bool server_node::run_attestation_dispatcher()
-		{
-			if (is_syncing())
-				return false;
-
-			return control_sys.task_if_none(TASK_ATTESTATION_DISPATCHER, [this](system_task&&)
-			{
-				umutex<std::recursive_mutex> unique(sync.attestation);
-				auto mempool = storages::mempoolstate();
-				for (auto& [attestation_hash, transaction] : pending_attestations)
-				{
-					auto dispatch = accept_local_transaction(&runner_descriptor->second, *transaction);
-					if (dispatch)
-					{
-						mempool.remove_attestation(attestation_hash);
-						if (protocol::now().user.consensus.logging)
-							VI_INFO("attestation %s dispatch: OK", algorithm::encoding::encode_0xhex256(attestation_hash).c_str());
-					}
-				}
-				pending_attestations.clear();
 			});
 		}
 		bool server_node::run_block_production()
@@ -3149,22 +3114,20 @@ namespace tangent
 			bind_query(descriptors::delegate_execution(), std::bind(&server_node::delegate_execution, this, std::placeholders::_2, std::placeholders::_3));
 			control_sys.interval_if_none(TASK_TOPOLOGY_OPTIMIZATION "_runner", 180000, std::bind(&server_node::run_topology_optimization, this));
 			control_sys.interval_if_none(TASK_BLOCK_DISPATCH_RETRIAL "_runner", 120000, std::bind(&server_node::run_block_dispatcher, this));
-			control_sys.interval_if_none(TASK_ATTESTATION_RESOLUTION "_runner", 600000, std::bind(&server_node::run_attestation_resolution, this));
-			control_sys.interval_if_none(TASK_ATTESTATION_DISPATCHER "_runner", 60000, std::bind(&server_node::run_attestation_dispatcher, this));
-			control_sys.interval_if_none(TASK_MEMPOOL_VACUUM "_runner", 600000, std::bind(&server_node::run_mempool_vacuum, this));
+			control_sys.interval_if_none(TASK_ATTESTATION_RESOLUTION "_runner", 180000, std::bind(&server_node::run_attestation_resolution, this));
+			control_sys.interval_if_none(TASK_MEMPOOL_VACUUM "_runner", 180000, std::bind(&server_node::run_mempool_vacuum, this));
 			run_topology_optimization();
 			run_mempool_vacuum();
 			run_attestation_resolution();
+			if (!protocol::now().user.superchain.listener)
+				return;
 
-			if (protocol::now().user.superchain.listener)
-			{
-				auto* offchain = superchain::bridge::get();
-				offchain->network_active = [this]() -> bool { return is_active(); };
-				offchain->network_fetch = std::bind(&server_node::queued_fetch_external, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4);
-				transport_layer::link_instance();
-				for (auto& [blockchain, listener] : offchain->get_networks())
-					run_superchain_sync(listener.asset);
-			}
+			auto* offchain = superchain::bridge::get();
+			offchain->network_active = [this]() -> bool { return is_active(); };
+			offchain->network_fetch = std::bind(&server_node::queued_fetch_external, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4);
+			transport_layer::link_instance();
+			for (auto& [blockchain, listener] : offchain->get_networks())
+				run_superchain_sync(listener.asset);
 		}
 		void server_node::shutdown()
 		{
