@@ -282,7 +282,7 @@ namespace tangent
 			expects_lr<void> accept_local_transaction(const ledger::wallet* signer_wallet, uptr<ledger::transaction_message>&& candidate_tx, uint256_t* output_hash = nullptr);
 			expects_lr<void> accept_transaction(uref<relay>&& from, uptr<ledger::transaction_message>&& candidate_t);
 			expects_lr<void> accept_attestation(const uint256_t& attestation_hash);
-			expects_lr<void> accept_committed_attestation(const algorithm::asset_id& asset, const superchain::computed_transaction& proof, const btree_set<algorithm::hashsig_t>& signature);
+			expects_lr<void> accept_committed_attestation(const algorithm::asset_id& asset, const superchain::computed_transaction& proof, const btree_set<algorithm::hashsig_t>& signatures);
 			expects_lr<void> broadcast_transaction(uref<relay>&& from, uptr<ledger::transaction_message>&& candidate_tx, const algorithm::pubkeyhash_t& owner, bool bypass_cooldown = false);
 			expects_rt<void> check_socket(uref<relay>&& state, const exchange& event);
 			expects_rt<void> broadcast_block_hash(uref<relay>&& state, const exchange& event);
