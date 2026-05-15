@@ -1222,7 +1222,7 @@ namespace tangent
 			for (size_t i = 2; i < event.args.size(); i++)
 			{
 				algorithm::pubkeyhash_t attester;
-				algorithm::hashsig_t commitment_signature = algorithm::hashsig_t(event.args[2].as_string());
+				algorithm::hashsig_t commitment_signature = algorithm::hashsig_t(event.args[i].as_string());
 				if (!algorithm::signing::recover_hash(commitment_hash, attester, commitment_signature))
 					return remote_exception("invalid commitment");
 
