@@ -1108,14 +1108,16 @@ namespace tangent
 				mempool.remove_attestation(attestation_hash);
 			return expectation::met;
 		}
-		expects_lr<void> server_node::accept_committed_attestation(const algorithm::asset_id& asset, const superchain::computed_transaction& proof, const algorithm::hashsig_t& signature)
+		expects_lr<void> server_node::accept_committed_attestation(const algorithm::asset_id& asset, const superchain::computed_transaction& proof, const btree_set<algorithm::hashsig_t>& signatures)
 		{
 			umutex<std::recursive_mutex> unique(sync.attestation);
 			auto mempool = storages::mempoolstate();
-			auto status = mempool.add_attestation(asset, proof, signature);
-			if (!status)
-				return status.error();
-
+			for (auto& signature : signatures)
+			{
+				auto status = mempool.add_attestation(asset, proof, signature);
+				if (!status)
+					return status.error();
+			}
 			return accept_attestation(proof.as_attestation_hash());
 		}
 		expects_lr<void> server_node::broadcast_transaction(uref<relay>&& from, uptr<ledger::transaction_message>&& candidate_tx, const algorithm::pubkeyhash_t& owner, bool bypass_cooldown)
@@ -1205,7 +1207,7 @@ namespace tangent
 		}
 		expects_rt<void> server_node::broadcast_attestation(uref<relay>&& from, const exchange& event)
 		{
-			if (event.args.size() != 3)
+			if (event.args.size() < 3)
 				return remote_exception("invalid arguments");
 
 			algorithm::asset_id asset = event.args[0].as_uint256();
@@ -1214,18 +1216,30 @@ namespace tangent
 			if (!proof.load(proof_message))
 				return remote_exception("invalid proof");
 
-			uint256_t commitment_hash = proof.as_hash();
-			algorithm::pubkeyhash_t attester;
-			algorithm::hashsig_t commitment_signature = algorithm::hashsig_t(event.args[2].as_string());
-			if (!algorithm::signing::recover_hash(commitment_hash, attester, commitment_signature))
-				return remote_exception("invalid commitment");
-
 			auto executor = ledger::executor_context(nullptr);
-			auto validation = executor.get_verified_validator_attestation(asset, attester);
-			if (!validation)
-				return remote_exception(std::move(validation.error().message()));
+			uint256_t commitment_hash = proof.as_hash();
+			btree_map<algorithm::pubkeyhash_t, algorithm::hashsig_t> commitments;
+			for (size_t i = 2; i < event.args.size(); i++)
+			{
+				algorithm::pubkeyhash_t attester;
+				algorithm::hashsig_t commitment_signature = algorithm::hashsig_t(event.args[2].as_string());
+				if (!algorithm::signing::recover_hash(commitment_hash, attester, commitment_signature))
+					return remote_exception("invalid commitment");
 
-			auto finalization = accept_committed_attestation(asset, proof, commitment_signature);
+				commitments[attester] = commitment_signature;
+			}
+
+			btree_set<algorithm::hashsig_t> signatures;
+			for (auto& [attester, signature] : commitments)
+			{
+				auto validation = executor.get_verified_validator_attestation(asset, attester);
+				if (!validation)
+					return remote_exception(std::move(validation.error().message()));
+
+				signatures.insert(signature);
+			}
+
+			auto finalization = accept_committed_attestation(asset, proof, signatures);
 			if (finalization)
 				return expectation::met;
 
@@ -1632,25 +1646,25 @@ namespace tangent
 		}
 		expects_lr<void> server_node::dispatch_transaction_logs(const algorithm::asset_id& asset, superchain::transaction_logs&& logs)
 		{
-			vector<std::pair<algorithm::hashsig_t, format::wo_stream>> attestations;
 			for (auto& receipt : logs.receipts)
 			{
+				btree_set<algorithm::hashsig_t> signatures;
 				for (auto& [account, descriptor] : descriptors)
 				{
 					algorithm::hashsig_t commitment_signature; uint256_t commitment_hash;
 					if (descriptor.first.services.has_attestation && transactions::attestate::commit_to_proof(receipt, descriptor.second.secret_key, commitment_hash, commitment_signature))
-					{
-						accept_committed_attestation(asset, receipt, commitment_signature);
-						attestations.push_back(std::make_pair(commitment_signature, receipt.as_message()));
-					}
+						signatures.insert(commitment_signature);
 				}
-			}
+				if (accept_committed_attestation(asset, receipt, signatures))
+					continue;
 
-			for (auto& [commitment_signature, proof_message] : attestations)
-			{
-				size_t notifications = notify_all(descriptors::broadcast_attestation(), { format::variable(asset), format::variable(proof_message.data), format::variable(commitment_signature.view()) });
+				auto args = format::variables({ format::variable(asset), format::variable(receipt.as_message().data) });
+				for (auto& signature : signatures)
+					args.push_back(format::variable(signature.view()));
+
+				size_t notifications = args.size() > 2 ? notify_all(descriptors::broadcast_attestation(), std::move(args)) : 0;
 				if (notifications > 0 && protocol::now().user.consensus.logging)
-					VI_DEBUG("attestation %s broadcasted to %i nodes", algorithm::encoding::encode_0xhex256(commitment_hash).c_str(), (int)notifications);
+					VI_DEBUG("attestation %s broadcasted to %i nodes (signatures: %i)", algorithm::encoding::encode_0xhex256(receipt.as_attestation_hash()).c_str(), (int)notifications, (int)signatures.size());	
 			}
 
 			return expectation::met;
@@ -2821,28 +2835,23 @@ namespace tangent
 					if (!batch)
 						goto retry;
 
-					bool rebroadcasted = false;
 					for (auto& [commitment_hash, commitments] : batch->commitments)
 					{
 						auto proof = batch->proofs.find(commitment_hash);
 						if (proof == batch->proofs.end())
 							continue;
 
+						auto args = format::variables({ format::variable(batch->asset), format::variable(proof->second.as_message().data) });
 						for (auto& commitment_signature : commitments)
 						{
 							algorithm::pubkeyhash_t attester;
-							if (!algorithm::signing::recover_hash(commitment_hash, attester, commitment_signature) || !find_descriptor(attester))
-								continue;
-
-							size_t notifications = notify_all(descriptors::broadcast_attestation(), { format::variable(batch->asset), format::variable(proof->second.as_message().data), format::variable(commitment_signature.view()) });
-							if (notifications > 0 && protocol::now().user.consensus.logging)
-								VI_DEBUG("attestation %s re-broadcasted to %i nodes", algorithm::encoding::encode_0xhex256(commitment_hash).c_str(), (int)notifications);
-
-							rebroadcasted = true;
-							break;
+							if (algorithm::signing::recover_hash(commitment_hash, attester, commitment_signature) && find_descriptor(attester) != nullptr)
+								args.push_back(format::variable(commitment_signature.view()));
 						}
-						if (rebroadcasted)
-							break;
+
+						size_t notifications = args.size() > 2 ? notify_all(descriptors::broadcast_attestation(), std::move(args)) : 0;
+						if (notifications > 0 && protocol::now().user.consensus.logging)
+							VI_DEBUG("attestation %s re-broadcasted to %i nodes", algorithm::encoding::encode_0xhex256(commitment_hash).c_str(), (int)notifications);			
 					}
 					goto retry;
 				}
