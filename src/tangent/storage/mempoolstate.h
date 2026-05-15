@@ -113,7 +113,7 @@ namespace tangent
 			expects_lr<void> remove_transactions_by_hash(const hash_set<uint256_t>& transaction_hashes);
 			expects_lr<void> remove_transactions_by_commitment_hash(const hash_set<uint256_t>& commitment_hashes);
 			expects_lr<bool> has_transaction_commitment_hash(const uint256_t& commitment_hash);
-			expects_lr<size_t> expire_transactions();
+			expects_lr<size_t> expire_transactions(const std::function<uint64_t(const algorithm::pubkeyhash_t&)>& nonce_callback);
 			expects_lr<size_t> get_transactions_count();
 			expects_lr<void> apply_key(const algorithm::pubkeyhash_t& participant, const ledger::distribution_key& entropy);
 			expects_lr<ledger::distribution_key> get_key(const algorithm::pubkeyhash_t& participant, const algorithm::pubkeyhash_t& owner, const algorithm::asset_id& asset, const uint256_t& instance);

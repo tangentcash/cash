@@ -9,6 +9,7 @@
 #define TASK_FORK_RESOLUTION "fork_resolution"
 #define TASK_SUPERCHAIN_SYNC "superchain_sync"
 #define TASK_ATTESTATION_RESOLUTION "attestation_resolution"
+#define TASK_ATTESTATION_DISPATCHER "attestation_dispatcher"
 #define TASK_BLOCK_DISPATCH_RETRIAL "block_dispatch_retrial"
 #define TASK_BLOCK_PRODUCTION "block_production"
 #define TASK_BLOCK_DISPATCHER "block_dispatcher"
@@ -1104,9 +1105,7 @@ namespace tangent
 			auto* transaction = memory::init<transactions::attestate>();
 			transaction->asset = algorithm::asset::base_id_of(batch->asset);
 			transaction->set_computed_proof(std::move(it->second), std::move(batch->commitments));
-			if (accept_local_transaction(&runner_descriptor->second, transaction))
-				mempool.remove_attestation(attestation_hash);
-
+			pending_attestations[attestation_hash] = transaction;
 			return expectation::met;
 		}
 		expects_lr<void> server_node::accept_committed_attestation(const algorithm::asset_id& asset, const superchain::computed_transaction& proof, const algorithm::hashsig_t& signature)
@@ -1368,8 +1367,9 @@ namespace tangent
 			if (prev_descriptor)
 				peer_node.availability.reachable = peer_node.availability.reachable || prev_descriptor->first.availability.reachable;
 
-			if (!accept_node(mempool, peer_descriptor, node_category::other))
-				return remote_exception("node is not memorizable");
+			auto status = accept_node(mempool, peer_descriptor, node_category::other);
+			if (!status)
+				return remote_exception(std::move(status.error().message()));
 
 			from->initialize(std::move(peer_descriptor));
 			if (is_acknowledgement)
@@ -1472,7 +1472,7 @@ namespace tangent
 			umutex<std::recursive_mutex> unique(sync.tip);
 			auto it = pending_blocks.find(block_hash);
 			if (it != pending_blocks.end())
-				return format::variables({ format::variable(it->second->as_message().data) });
+				return format::variables({ format::variable(it->second.data) });
 
 			return format::variables();
 		}
@@ -1632,28 +1632,30 @@ namespace tangent
 		}
 		expects_lr<void> server_node::dispatch_transaction_logs(const algorithm::asset_id& asset, superchain::transaction_logs&& logs)
 		{
+			vector<std::pair<algorithm::hashsig_t, format::wo_stream>> attestations;
 			for (auto& receipt : logs.receipts)
 			{
 				for (auto& [account, descriptor] : descriptors)
 				{
-					auto& [node, wallet] = descriptor;
-					if (!node.services.has_attestation)
-						continue;
-
 					algorithm::hashsig_t commitment_signature; uint256_t commitment_hash;
-					if (!transactions::attestate::commit_to_proof(receipt, wallet.secret_key, commitment_hash, commitment_signature))
-						continue;
-
-					auto finalization = accept_committed_attestation(asset, receipt, commitment_signature);
-					if (finalization)
-						continue;
-
-					auto proof_message = receipt.as_message();
-					size_t notifications = notify_all(descriptors::broadcast_attestation(), { format::variable(asset), format::variable(proof_message.data), format::variable(commitment_signature.view()) });
-					if (notifications > 0 && protocol::now().user.consensus.logging)
-						VI_DEBUG("attestation %s broadcasted to %i nodes", algorithm::encoding::encode_0xhex256(commitment_hash).c_str(), (int)notifications);
+					if (descriptor.first.services.has_attestation && transactions::attestate::commit_to_proof(receipt, descriptor.second.secret_key, commitment_hash, commitment_signature))
+					{
+						accept_committed_attestation(asset, receipt, commitment_signature);
+						attestations.push_back(std::make_pair(commitment_signature, receipt.as_message()));
+					}
 				}
 			}
+
+			for (auto& [commitment_signature, proof_message] : attestations)
+			{
+				size_t notifications = notify_all(descriptors::broadcast_attestation(), { format::variable(asset), format::variable(proof_message.data), format::variable(commitment_signature.view()) });
+				if (notifications > 0 && protocol::now().user.consensus.logging)
+					VI_DEBUG("attestation %s broadcasted to %i nodes", algorithm::encoding::encode_0xhex256(commitment_hash).c_str(), (int)notifications);
+			}
+
+			if (!attestations.empty())
+				run_attestation_dispatcher();
+
 			return expectation::met;
 		}
 		expects_lr<socket_address> server_node::find_node_from_mempool()
@@ -2740,8 +2742,14 @@ namespace tangent
 				if (is_syncing())
 					return;
 
+				auto chain = storages::chainstate();
 				auto mempool = storages::mempoolstate();
-				auto expirations = mempool.expire_transactions();
+				auto expirations = mempool.expire_transactions([&](const algorithm::pubkeyhash_t& target) -> uint64_t
+				{
+					auto state = chain.get_uniform(states::account_nonce::as_instance_type(), nullptr, states::account_nonce::as_instance_index(target), 0);
+					auto* value = (states::account_nonce*)(state ? state->ptr() : nullptr);
+					return value ? value->nonce : 0; 
+				});
 				if (protocol::now().user.consensus.logging)
 				{
 					if (expirations)
@@ -2785,6 +2793,9 @@ namespace tangent
 		}
 		bool server_node::run_attestation_resolution()
 		{
+			if (is_syncing())
+				return false;
+
 			return control_sys.task_if_none(TASK_ATTESTATION_RESOLUTION, [this](system_task&&)
 			{
 				size_t offset = 0, resolutions = 0;
@@ -2792,6 +2803,19 @@ namespace tangent
 				bool has_attestation = false;
 				for (auto& [account, descriptor] : descriptors)
 					has_attestation = has_attestation || descriptor.first.services.has_attestation;
+
+				auto expirations = mempool.expire_attestations();
+				if (protocol::now().user.consensus.logging)
+				{
+					if (expirations)
+					{
+						if (*expirations > 0)
+							VI_INFO("mempool attestation vacuum: OK (attestations: %i)", (int)*expirations);
+					}
+					else
+						VI_ERR("mempool attestation vacuum failed: ", expirations.what().c_str());
+				}
+
 			retry:
 				auto attestation_hash = mempool.pull_best_attestation_hash(offset++);
 				if (attestation_hash)
@@ -2837,18 +2861,30 @@ namespace tangent
 				}
 				if (resolutions > 0 && protocol::now().user.consensus.logging)
 					VI_INFO("attestation resolution: %i pending", (int)resolutions);
+			});
+		}
+		bool server_node::run_attestation_dispatcher()
+		{
+			if (is_syncing())
+				return false;
 
-				auto expirations = mempool.expire_attestations();
-				if (protocol::now().user.consensus.logging)
+			return control_sys.task_if_none(TASK_ATTESTATION_DISPATCHER, [this](system_task&&)
+			{
+				umutex<std::recursive_mutex> unique(sync.attestation);
+				auto mempool = storages::mempoolstate();
+				for (auto& [attestation_hash, transaction] : pending_attestations)
 				{
-					if (expirations)
+					auto dispatch = accept_local_transaction(&runner_descriptor->second, *transaction);
+					if (dispatch)
 					{
-						if (*expirations > 0)
-							VI_INFO("mempool attestation vacuum: OK (attestations: %i)", (int)*expirations);
+						mempool.remove_attestation(attestation_hash);
+						if (protocol::now().user.consensus.logging)
+							VI_INFO("attestation %s dispatch: OK", algorithm::encoding::encode_0xhex256(attestation_hash).c_str());
 					}
-					else
-						VI_ERR("mempool attestation vacuum failed: ", expirations.what().c_str());
+					else if (protocol::now().user.consensus.logging)
+						VI_WARN("attestation %s dispatch failed: %s", algorithm::encoding::encode_0xhex256(attestation_hash).c_str(), dispatch.error().what());
 				}
+				pending_attestations.clear();
 			});
 		}
 		bool server_node::run_block_production()
@@ -2920,6 +2956,7 @@ namespace tangent
 					goto next_block;
 
 				size_t iteration = 0, iteration_threshold = 16, count = 512;
+				auto queue_flags = prover.solver.state.executor.options & (uint8_t)ledger::executor_context::flags::congestion ? (uint8_t)storages::transaction_queue::congestion : 0;
 				auto solution_account = prover.solver.state.public_key_hash;
 				auto solution_challenge = ledger::block_header(prover.solution.block);
 				auto solution_task = cotask<expects_lr<ledger::block_header>>([solution_challenge = std::move(solution_challenge), solution_account]() mutable -> expects_lr<ledger::block_header>
@@ -2928,24 +2965,28 @@ namespace tangent
 				}, false);
 				while (is_active() && solution_task.is_pending())
 				{
-					size_t offsets[2] = { 0, 0 }, queue = 0;
+					size_t offsets[2] = { 0, 0 };
 					while (prover.solver.can_accept_more_transactions() && (offsets[0] != std::numeric_limits<size_t>::max() || offsets[1] != std::numeric_limits<size_t>::max()))
 					{
-						auto results0 = mempool.get_best_transactions_from_queue(prover.solver.state.executor.options & (uint8_t)ledger::executor_context::flags::congestion ? (uint8_t)storages::transaction_queue::congestion : 0, offsets[0], count);
-						auto results1 = mempool.get_best_transactions_from_queue((uint8_t)storages::transaction_queue::commitment, offsets[1], count);
-						offsets[0] = count == (results0 ? results0->size() : 0) ? (results0 ? results0->size() : 0) : std::numeric_limits<size_t>::max();
-						offsets[1] = count == (results1 ? results1->size() : 0) ? (results1 ? results1->size() : 0) : std::numeric_limits<size_t>::max();
-						queue += prover.solver.try_include_transactions(std::move(*results0), &prover.hashes) + prover.solver.try_include_transactions(std::move(*results1), &prover.hashes);
+						auto queue1 = mempool.get_best_transactions_from_queue(queue_flags, offsets[0], count);
+						auto queue2 = mempool.get_best_transactions_from_queue((uint8_t)storages::transaction_queue::commitment, offsets[1], count);
+						if (queue1)
+						{
+							offsets[0] = count == queue1->size() ? offsets[0] + queue1->size() : std::numeric_limits<size_t>::max();
+							prover.solver.try_include_transactions(std::move(*queue1), &prover.hashes);
+						}
+						if (queue2)
+						{
+							offsets[1] = count == queue2->size() ? offsets[1] + queue2->size() : std::numeric_limits<size_t>::max();
+							prover.solver.try_include_transactions(std::move(*queue2), &prover.hashes);
+						}
 					}
+
+					evaluation = prover.solver.block_evalution_update(prover.solution, prover.rewards);
+					if (!evaluation)
+						break;
 
 					++iteration;
-					if (queue > 0)
-					{
-						evaluation = prover.solver.block_evalution_update(prover.solution, prover.rewards);
-						if (!evaluation)
-							break;
-					}
-
 					if (position > 0 && iteration % iteration_threshold == 0)
 					{
 						tip = chain.get_latest_block_header();
@@ -2979,7 +3020,10 @@ namespace tangent
 					else if (protocol::now().user.consensus.logging)
 					{
 						if (!evaluation)
-							VI_WARN("block %s dismissed: %s (number: %" PRIu64", txns: %" PRIu64 ", pos: %" PRIu64 ", work: < ~%.2f sec.)", algorithm::encoding::encode_0xhex256(prover.solution.block.as_hash()).c_str(), evaluation.error().what(), prover.solution.block.number, (uint64_t)prover.solution.block.transactions.size(), position + 1, span / 1000.0);
+						{
+							if (evaluation.error().message() != "block producer must be active")
+								VI_WARN("block %s dismissed: %s (number: %" PRIu64", txns: %" PRIu64 ", pos: %" PRIu64 ", work: < ~%.2f sec.)", algorithm::encoding::encode_0xhex256(prover.solution.block.as_hash()).c_str(), evaluation.error().what(), prover.solution.block.number, (uint64_t)prover.solution.block.transactions.size(), position + 1, span / 1000.0);
+						}
 						else
 							VI_WARN("%s", verification.error().what());
 					}
@@ -3108,9 +3152,11 @@ namespace tangent
 			control_sys.interval_if_none(TASK_TOPOLOGY_OPTIMIZATION "_runner", 180000, std::bind(&server_node::run_topology_optimization, this));
 			control_sys.interval_if_none(TASK_BLOCK_DISPATCH_RETRIAL "_runner", 120000, std::bind(&server_node::run_block_dispatcher, this));
 			control_sys.interval_if_none(TASK_ATTESTATION_RESOLUTION "_runner", 600000, std::bind(&server_node::run_attestation_resolution, this));
+			control_sys.interval_if_none(TASK_ATTESTATION_DISPATCHER "_runner", 60000, std::bind(&server_node::run_attestation_dispatcher, this));
 			control_sys.interval_if_none(TASK_MEMPOOL_VACUUM "_runner", 600000, std::bind(&server_node::run_mempool_vacuum, this));
 			run_topology_optimization();
 			run_mempool_vacuum();
+			run_attestation_resolution();
 
 			if (protocol::now().user.superchain.listener)
 			{
@@ -3349,7 +3395,7 @@ namespace tangent
 			VI_ASSERT(tip != nullptr, "tip should be set");
 			uint64_t block_number = tip->number;
 			umutex<std::recursive_mutex> unique(sync.tip);
-			pending_blocks[block_hash] = tip;
+			pending_blocks[block_hash] = tip->as_message();
 			unique.unlock();
 			broadcast_pending_block(std::move(from), block_hash, block_number);
 		}

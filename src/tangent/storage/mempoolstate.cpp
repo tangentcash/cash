@@ -841,20 +841,45 @@ namespace tangent
 
 			return expects_lr<bool>(!cursor->empty());
 		}
-		expects_lr<size_t> mempoolstate::expire_transactions()
+		expects_lr<size_t> mempoolstate::expire_transactions(const std::function<uint64_t(const algorithm::pubkeyhash_t&)>& nonce_callback)
 		{
 			auto timestamp = protocol::now().time.now_cpu();
 			schema_list map;
 			map.push_back(var::set::integer(timestamp));
 			map.push_back(var::set::integer(timestamp));
 
-			auto cursor = get_peer_storage().emplace_query(__func__, 
+			auto& storage = get_peer_storage();
+			auto cursor = storage.emplace_query(__func__,
 				"DELETE FROM transactions WHERE time < ?;"
 				"DELETE FROM observations WHERE time < ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<size_t>(layer_exception(ledger::storage_util::error_of(cursor)));
 
-			return cursor->affected_rows();
+			size_t offset = 0, count = cursor->affected_rows();
+			while (nonce_callback)
+			{
+				map.clear();
+				map.push_back(var::set::integer(ELEMENTS_MANY));
+				map.push_back(var::set::integer(offset));
+				
+				cursor = storage.emplace_query(__func__, "SELECT DISTINCT owner FROM transactions LIMIT ? OFFSET ?", &map);
+				if (!cursor || cursor->error_or_empty())
+					break;
+
+				offset += cursor->size();
+				for (auto row : cursor->first())
+				{
+					auto owner = algorithm::pubkeyhash_t(row["owner"].get().get_blob());
+					map.clear();
+					map.push_back(var::set::binary(owner.view()));
+					map.push_back(var::set::integer(nonce_callback(owner)));
+					cursor = storage.emplace_query(__func__, "DELETE FROM transactions WHERE owner = ? AND nonce < ?", &map);
+					offset = cursor && cursor->affected_rows() > 0 ? 0 : offset;
+					count += cursor ? cursor->affected_rows() : 0;
+				}
+			}
+
+			return count;
 		}
 		expects_lr<size_t> mempoolstate::get_transactions_count()
 		{
@@ -1024,6 +1049,9 @@ namespace tangent
 		}
 		expects_lr<vector<uptr<ledger::transaction_message>>> mempoolstate::get_best_transactions_from_queue(uint8_t flags, size_t offset, size_t count)
 		{
+			if (offset == std::numeric_limits<size_t>::max())
+				return layer_exception("end of stream");
+
 			schema_list map;
 			map.push_back(var::set::integer(count));
 			map.push_back(var::set::integer(offset));
