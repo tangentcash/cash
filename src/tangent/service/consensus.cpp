@@ -3,6 +3,7 @@
 #include "../storage/chainstate.h"
 #include "../policy/transactions.h"
 #include "../policy/delegations.h"
+#include "../translation/bitcoin.h"
 #include <random>
 #define TASK_TOPOLOGY_OPTIMIZATION "topology_optimization"
 #define TASK_MEMPOOL_VACUUM "mempool_vacuum"

@@ -157,6 +157,10 @@ namespace tangent
 			{
 				return "sendrawtransaction";
 			}
+			const char* bitcoin::nd_call::estimate_smart_fee()
+			{
+				return "estimatesmartfee";
+			}
 
 			bitcoin::btc_tx_context::btc_tx_context() : state(btc_tx_new())
 			{
@@ -462,12 +466,29 @@ namespace tangent
 
 				return coasync<expects_rt<computed_fee>>([this, virtual_size]() -> expects_promise_rt<computed_fee>
 				{
+					auto min_fee_rate = get_min_relay_fee(1).fee.fee_rate * netdata.divisibility;
+					if (legacy.estimate_smart_fee != 1)
+					{
+						format::tree hash_map;
+						hash_map.push(format::variable((uint8_t)2));
+
+						auto fee_estimate = coawait(execute_rpc(nd_call::estimate_smart_fee(), std::move(hash_map), cache_policy::no_cache));
+						if (fee_estimate)
+						{
+							auto fee_per_byte = fee_estimate->child_var("feerate").as_decimal() * netdata.divisibility;
+							fee_per_byte /= decimal(1000).truncate(protocol::now().message.decimal_precision);
+							if (fee_per_byte.is_positive() && fee_per_byte >= min_fee_rate)
+								coreturn expects_rt<computed_fee>(computed_fee::fee_per_byte(fee_per_byte / netdata.divisibility, (size_t)std::ceil(2 * virtual_size)));
+						}
+						else
+							legacy.estimate_smart_fee = 1;
+					}
+
 					auto block_height = coawait(get_latest_block_height());
 					if (!block_height)
 						coreturn expects_rt<computed_fee>(std::move(block_height.error()));
 
 					vector<decimal> fee_rates;
-					auto min_fee_rate = get_min_relay_fee(1).fee.fee_rate * netdata.divisibility;
 					auto precision = std::max<uint64_t>(1, get_chainparams().sync_latency);
 					for (uint64_t i = 0; i < precision; i++)
 					{
@@ -520,6 +541,7 @@ namespace tangent
 									if (!fee.is_zero() && !fee.is_positive())
 										continue;
 
+									fee = (fee * netdata.divisibility).truncate(protocol::now().message.decimal_precision);
 									if (!transaction.has("size"))
 									{
 										if (transaction.has("hex"))
@@ -530,7 +552,7 @@ namespace tangent
 									else
 										fee /= decimal(std::max<int64_t>(1, transaction.child("size")->value.as_uint64())).truncate(protocol::now().message.decimal_precision);
 
-									fee = std::min(min_fee_rate, fee);
+									fee = std::max(min_fee_rate, fee);
 									fee_rates.push_back(std::move(fee));
 								}
 							}
@@ -1536,6 +1558,7 @@ namespace tangent
 		
 			bitcoin_cash::bitcoin_cash(const algorithm::asset_id& new_asset) noexcept : bitcoin(new_asset)
 			{
+				legacy.estimate_smart_fee = 1;
 			}
 			const sc_chainparams_* bitcoin_cash::get_chain()
 			{
@@ -1586,8 +1609,87 @@ namespace tangent
 
 			bitcoin_sv::bitcoin_sv(const algorithm::asset_id& new_asset) noexcept : bitcoin(new_asset)
 			{
+				legacy.estimate_smart_fee = 1;
 				legacy.get_block_stats = 1;
 				legacy.enormous_block_size = 1;
+			}
+			expects_promise_rt<computed_fee> bitcoin_sv::estimate_transaction_fee(const wallet_link& from_link, const value_transfer& to)
+			{
+				auto inputs = calculate_utxo(from_link, balance_query(to.value, { }));
+				decimal input_value = inputs ? get_utxo_value(*inputs, optional::none) : 0.0;
+				if (!inputs || inputs->empty())
+					return expects_promise_rt<computed_fee>(remote_exception(stringify::text("insufficient funds: %s < %s", input_value.to_string().c_str(), to.value.to_string().c_str())));
+
+				vector<string> outputs = { inputs->front().link.address, to.address };
+				bool has_witness = false;
+				double virtual_size = 10;
+				for (auto& input : *inputs)
+				{
+					switch (parse_address(input.link.address))
+					{
+						case address_format::pay2_public_key:
+							virtual_size += 152;
+							break;
+						case address_format::pay2_public_key_hash:
+						case address_format::pay2_cash_public_key_hash:
+						case address_format::pay2_unified_public_key_hash:
+							virtual_size += 148;
+							break;
+						case address_format::pay2_script_hash:
+						case address_format::pay2_cash_script_hash:
+							virtual_size = 153;
+							break;
+						case address_format::pay2_witness_public_key_hash:
+						case address_format::pay2_witness_script_hash:
+							virtual_size += 67.75;
+							has_witness = true;
+							break;
+						case address_format::pay2_taproot:
+						case address_format::pay2_tapscript:
+							virtual_size += 57.25;
+							has_witness = true;
+							break;
+						default:
+							return expects_promise_rt<computed_fee>(remote_exception("invalid input address"));
+					}
+				}
+
+				for (auto& output : outputs)
+				{
+					switch (parse_address(output))
+					{
+						case address_format::pay2_public_key:
+							virtual_size += 48;
+							break;
+						case address_format::pay2_public_key_hash:
+						case address_format::pay2_cash_public_key_hash:
+						case address_format::pay2_unified_public_key_hash:
+							virtual_size += 32;
+							break;
+						case address_format::pay2_script_hash:
+						case address_format::pay2_cash_script_hash:
+							virtual_size = 32;
+							break;
+						case address_format::pay2_witness_public_key_hash:
+							virtual_size += 31;
+							break;
+						case address_format::pay2_witness_script_hash:
+							virtual_size += 32;
+							break;
+						case address_format::pay2_taproot:
+						case address_format::pay2_tapscript:
+							virtual_size += 43;
+							break;
+						default:
+							return expects_promise_rt<computed_fee>(remote_exception("invalid input address"));
+					}
+				}
+
+				if (has_witness)
+					virtual_size += 0.5 + (double)inputs->size() / 4.0;
+
+				auto fee = get_min_relay_fee((size_t)std::ceil(2 * virtual_size));
+				return expects_promise_rt<computed_fee>(std::move(fee));
 			}
 			const sc_chainparams_* bitcoin_sv::get_chain()
 			{
@@ -1686,6 +1788,7 @@ namespace tangent
 			ecash::ecash(const algorithm::asset_id& new_asset) noexcept : bitcoin(new_asset)
 			{
 				netdata.divisibility = algorithm::arithmetic::fixed(100);
+				legacy.estimate_smart_fee = 1;
 			}
 			const sc_chainparams_* ecash::get_chain()
 			{
@@ -1736,6 +1839,7 @@ namespace tangent
 
 			zcash::zcash(const algorithm::asset_id& new_asset) noexcept : bitcoin(new_asset)
 			{
+				legacy.estimate_smart_fee = 1;
 			}
 			expects_promise_rt<computed_fee> zcash::estimate_transaction_fee(const wallet_link& from_link, const value_transfer& to)
 			{

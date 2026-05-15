@@ -24,21 +24,21 @@ namespace tangent
 				return codec::base64_url_decode(data);
 			return string(data);
 		}
-		static std::string_view load_link_field(superchain::wallet_link::search_term term)
+		static std::string_view load_link_field(superchain::wallet_link::search_term term, bool typed)
 		{
 			switch (term)
 			{
 				case superchain::wallet_link::search_term::hash:
 					return "hash";
 				case superchain::wallet_link::search_term::public_key:
-					return "typeless_public_key";
+					return typed ? "public_key" : "typeless_public_key";
 				case superchain::wallet_link::search_term::address:
-					return "typeless_address";
+					return typed ? "address" : "typeless_address";
 				default:
 					return "";
 			}
 		}
-		static schema* load_link_value(superchain::wallet_link::search_term term, const superchain::wallet_link& link)
+		static schema* load_link_value(superchain::wallet_link::search_term term, const superchain::wallet_link& link, bool typed)
 		{
 			switch (term)
 			{
@@ -49,9 +49,9 @@ namespace tangent
 					return var::set::binary(hash_data, sizeof(hash_data));
 				}
 				case superchain::wallet_link::search_term::public_key:
-					return var::set::binary(to_typeless(link.public_key));
+					return typed ? var::set::string(link.public_key) : var::set::binary(to_typeless(link.public_key));
 				case superchain::wallet_link::search_term::address:
-					return var::set::binary(to_typeless(link.address));
+					return typed ? var::set::string(link.address) : var::set::binary(to_typeless(link.address));
 				default:
 					return nullptr;
 			}
@@ -189,12 +189,12 @@ namespace tangent
 
 			auto term = link.as_search_wide();
 			schema_list map;
-			map.push_back(var::set::string(load_link_field(term)));
-			map.push_back(load_link_value(term, link));
+			map.push_back(var::set::string(load_link_field(term, true)));
+			map.push_back(load_link_value(term, link, true));
 			map.push_back(var::set::integer(count));
 			map.push_back(var::set::integer(offset));
 
-			auto cursor = get_storage().emplace_query(__func__, "SELECT message FROM coins WHERE spent = FALSE AND $? = ? LIMIT ? OFFSET ?", &map);
+			auto cursor = get_storage().emplace_query(__func__, "SELECT message FROM coins WHERE spent = FALSE AND $? = ? ORDER BY receiver_block_id ASC NULLS LAST LIMIT ? OFFSET ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<vector<superchain::coin_utxo>>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -385,8 +385,8 @@ namespace tangent
 		{
 			auto term = value.as_search_wide();
 			schema_list map;
-			map.push_back(var::set::string(load_link_field(term)));
-			map.push_back(load_link_value(term, value));
+			map.push_back(var::set::string(load_link_field(term, false)));
+			map.push_back(load_link_value(term, value, false));
 
 			auto cursor = get_storage().emplace_query(__func__, "DELETE FROM links WHERE $? = ?", &map);
 			if (!cursor || cursor->error())

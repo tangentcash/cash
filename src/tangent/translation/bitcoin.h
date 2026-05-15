@@ -61,6 +61,7 @@ namespace tangent
 					static const char* get_block();
 					static const char* get_raw_transaction();
 					static const char* send_raw_transaction();
+					static const char* estimate_smart_fee();
 				};
 
 			protected:
@@ -70,6 +71,7 @@ namespace tangent
 					uint8_t get_block = 0;
 					uint8_t get_block_stats = 0;
 					uint8_t enormous_block_size = 0;
+					uint8_t estimate_smart_fee = 0;
 				} legacy;
 				chainparams netdata;
 
@@ -136,6 +138,7 @@ namespace tangent
 			public:
 				bitcoin_sv(const algorithm::asset_id& new_asset) noexcept;
 				virtual ~bitcoin_sv() override = default;
+				virtual expects_promise_rt<computed_fee> estimate_transaction_fee(const wallet_link& from_link, const value_transfer& to) override;
 				virtual const sc_chainparams_* get_chain() override;
 				virtual address_format get_address_type() override;
 				virtual uint32_t get_sig_hash_type() override;
