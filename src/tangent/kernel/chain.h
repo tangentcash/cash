@@ -290,7 +290,7 @@ namespace tangent
 			} pow;
 			struct
 			{
-				uint64_t withdrawal_time = 345600000;
+				uint64_t withdrawal_time = 172800000;
 				uint64_t max_per_transaction = 32;
 				decimal min_stake_value = std::string_view("900");
 				decimal consensus_threshold = std::string_view("0.70");
