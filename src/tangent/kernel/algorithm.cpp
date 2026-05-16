@@ -1183,9 +1183,10 @@ namespace tangent
 		}
 		uint256_t hashing::hash256i(const uint8_t* buffer, size_t size)
 		{
+			uint8_t hash[32];
 			uint256_t value;
-			auto hash = hash256(buffer, size);
-			value.decode((uint8_t*)hash.data());
+			hash256(buffer, size, hash);
+			value.decode(hash);
 			return value;
 		}
 		uint256_t hashing::hash256i(const std::string_view& data)

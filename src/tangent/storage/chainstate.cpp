@@ -587,29 +587,6 @@ namespace tangent
 		}
 		expects_lr<void> chainstate::checkpoint_internal(const ledger::block_evaluation& evaluation, bool reorganization)
 		{
-			auto& blob_storage = get_blob_storage();
-			if (!reorganization)
-			{
-				format::wo_stream block_header_message;
-				if (!evaluation.block.as_header().store(&block_header_message))
-					return expects_lr<void>(layer_exception("block header serialization error"));
-
-				uint8_t hash[32];
-				evaluation.block.as_hash().encode(hash);
-
-				auto status = blob_storage.store(__func__, get_block_label(hash), block_header_message.data);
-				if (!status)
-					return expects_lr<void>(layer_exception(ledger::storage_util::error_of(status)));
-
-				schema_list map;
-				map.push_back(var::set::integer(evaluation.block.number));
-				map.push_back(var::set::binary(hash, sizeof(hash)));
-
-				auto cursor = get_block_storage().emplace_query(__func__, "INSERT INTO blocks (block_number, block_hash) VALUES (?, ?)", &map);
-				if (!cursor || cursor->error())
-					return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
-			}
-
 			auto commit_transaction_data = reorganization ? sqlite::expects_db<sqlite::tstatement*>(nullptr) : get_tx_storage().prepare_statement(__func__, "INSERT INTO transactions (transaction_number, transaction_hash, dispatch_queue, block_number, block_nonce) VALUES (?, ?, ?, ?, ?)");
 			if (!commit_transaction_data)
 				return expects_lr<void>(layer_exception(std::move(commit_transaction_data.error().message())));
@@ -684,6 +661,40 @@ namespace tangent
 				auto status = fill_multiform_writer_from_storage(&writer, &multiform_storage);
 				if (!status)
 					return status;
+			}
+
+			uint8_t hash[32];
+			evaluation.block.as_hash().encode(hash);
+
+			auto& blob_storage = get_blob_storage();
+			auto expectation_queue = vector<promise<expects_lr<void>>>();
+			expectation_queue.reserve(10 + uniform_writers.size() * 2 + multiform_writers.size() * 2);
+			if (!reorganization)
+			{
+				expectation_queue.push_back(cotask<expects_lr<void>>([&]()
+				{
+					format::wo_stream block_header_message;
+					if (!evaluation.block.as_header().store(&block_header_message))
+						return expects_lr<void>(layer_exception("block header serialization error"));
+
+					auto status = blob_storage.store(__func__, get_block_label(hash), block_header_message.data);
+					if (!status)
+						return expects_lr<void>(layer_exception(ledger::storage_util::error_of(status)));
+
+					return expects_lr<void>(expectation::met);
+				}));
+				expectation_queue.push_back(cotask<expects_lr<void>>([&]()
+				{
+					schema_list map;
+					map.push_back(var::set::integer(evaluation.block.number));
+					map.push_back(var::set::binary(hash, sizeof(hash)));
+
+					auto cursor = get_block_storage().emplace_query(__func__, "INSERT INTO blocks (block_number, block_hash) VALUES (?, ?)", &map);
+					if (!cursor || cursor->error())
+						return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
+
+					return expects_lr<void>(expectation::met);
+				}));
 			}
 
 			vector<promise<void>> queue;
@@ -762,8 +773,6 @@ namespace tangent
 			}
 
 			parallel::wail_all(std::move(queue));
-			vector<promise<expects_lr<void>>> expectation_queue;
-			expectation_queue.reserve(8 + uniform_writers.size() * 2 + multiform_writers.size() * 2);
 			bool must_write_transaction_data = !reorganization;
 			for (auto& [type, writer] : uniform_writers)
 			{
