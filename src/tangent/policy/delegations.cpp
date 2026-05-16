@@ -1571,13 +1571,13 @@ namespace tangent
 				return layer_exception(std::move(accumulation.error().message()));
 
 			auto* offchain = superchain::bridge::get();
-			bool may_mock_up = protocol::now().is(network_type::regtest);
-			if (may_mock_up && !offchain->has_network(withdraw->asset, true))
+			bool may_mockup = protocol::now().is(network_type::regtest);
+			if (may_mockup && !offchain->has_network(withdraw->asset, true))
 			{
 				for (auto& output : message->outputs)
 				{
-					if (output.link.address == mockup_address_fail())
-						return layer_exception("synthetic aggregation error");
+					if (output.link.address == mockup_target_broadcast_error())
+						return layer_exception("synthetic broadcast error");
 				}
 			}
 
@@ -1652,19 +1652,23 @@ namespace tangent
 		{
 			return "broadcast_delegation";
 		}
-		string broadcast_delegation::mockup_address_lost()
+		string broadcast_delegation::mockup_target_broadcast_error()
 		{
-			return "0xbeefdeadbeefdeadbeefdeadbeefdeadbeefdead";
+			return "0xbad0000000000000000000000000000000000001";
 		}
-		string broadcast_delegation::mockup_address_fail()
+		string broadcast_delegation::mockup_target_attestate_error()
 		{
-			return "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
+			return "0xbad0000000000000000000000000000000000002";
+		}
+		string broadcast_delegation::mockup_target_attestate_absent()
+		{
+			return "0xbad0000000000000000000000000000000000003";
 		}
 		expects_promise_rt<superchain::prepared_transaction> broadcast_delegation::prepare_transaction(const algorithm::asset_id& asset, const superchain::wallet_link& from_link, const superchain::value_transfer& to, const decimal& max_fee)
 		{
 			auto* offchain = superchain::bridge::get();
-			bool may_mock_up = protocol::now().is(network_type::regtest);
-			if (!may_mock_up || offchain->has_network(asset, true))
+			bool may_mockup = protocol::now().is(network_type::regtest);
+			if (!may_mockup || offchain->has_network(asset, true))
 				return offchain->prepare_transaction(asset, from_link, to, max_fee);
 
 			auto chain = offchain->get_network_params(asset);
@@ -1703,8 +1707,8 @@ namespace tangent
 		expects_lr<superchain::finalized_transaction> broadcast_delegation::finalize_transaction(const algorithm::asset_id& asset, superchain::prepared_transaction&& prepared)
 		{
 			auto* offchain = superchain::bridge::get();
-			bool may_mock_up = protocol::now().is(network_type::regtest);
-			if (!may_mock_up || offchain->has_network(asset, true))
+			bool may_mockup = protocol::now().is(network_type::regtest);
+			if (!may_mockup || offchain->has_network(asset, true))
 				return offchain->finalize_transaction(asset, std::move(prepared));
 
 			auto transaction_id = algorithm::encoding::encode_0xhex256(prepared.as_hash());
@@ -1716,8 +1720,8 @@ namespace tangent
 		expects_promise_rt<void> broadcast_delegation::broadcast_transaction(const algorithm::asset_id& asset, const uint256_t& external_id, superchain::finalized_transaction&& finalized, ledger::delegation_contract* contract)
 		{
 			auto* offchain = superchain::bridge::get();
-			bool may_mock_up = protocol::now().is(network_type::regtest);
-			if (!may_mock_up || offchain->has_network(asset, true))
+			bool may_mockup = protocol::now().is(network_type::regtest);
+			if (!may_mockup || offchain->has_network(asset, true))
 			{
 				auto preserved = memory::init<superchain::finalized_transaction>(std::move(finalized));
 				return offchain->broadcast_transaction(asset, external_id, *preserved).then<expects_rt<void>>([preserved](expects_rt<void>&& status) mutable -> expects_rt<void>
@@ -1730,12 +1734,13 @@ namespace tangent
 				});
 			}
 
-			if (contract != nullptr && (finalized.prepared.outputs.size() != 1 || finalized.prepared.outputs.front().link.address != mockup_address_lost()))
+			if (contract != nullptr && (finalized.prepared.outputs.size() != 1 || finalized.prepared.outputs.front().link.address != mockup_target_attestate_absent()))
 			{
 				auto* transaction = memory::init<transactions::attestate>();
 				transaction->asset = asset;
 				transaction->set_gas(decimal::zero(), 0);
 				transaction->set_computed_proof(finalized.as_computed(), { });
+				transaction->proof.reverted = finalized.prepared.outputs.front().link.address == mockup_target_attestate_error();
 				contract->emit_transaction(transaction);
 			}
 			return expects_promise_rt<void>(expectation::met);

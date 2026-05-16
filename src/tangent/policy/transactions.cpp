@@ -3199,6 +3199,7 @@ namespace tangent
 			for (auto& [hash, output] : proof.outputs)
 				network_fee -= output.value;
 
+			auto base_asset = algorithm::asset::base_id_of(asset);
 			auto& succeeding_attesters = attesters[best_commitment_hash];
 			btree_map<uint256_t, btree_map<algorithm::asset_id, decimal>> balances;
 			btree_map<algorithm::pubkeyhash_t, btree_map<algorithm::asset_id, internal_transfer>> transfers;
@@ -3312,7 +3313,6 @@ namespace tangent
 					}
 				}
 
-				auto base_asset = algorithm::asset::base_id_of(asset);
 				auto it = penalties.find(base_asset);
 				if (it != penalties.end())
 					it->second = std::max<decimal>(it->second - network_fee, decimal::zero());
@@ -3372,97 +3372,134 @@ namespace tangent
 					failing_attesters.insert(group.begin(), group.end());
 			}
 
-			for (auto& [transfer_account, changes] : transfers)
+			if (!proof.reverted)
 			{
-				for (auto& [transfer_asset, transfer] : changes)
+				for (auto& [transfer_account, changes] : transfers)
 				{
-					auto supply_delta = transfer.input_supply - transfer.output_supply;
-					auto reserve_delta = transfer.input_reserve - transfer.output_reserve;
-					if (supply_delta.is_negative() || reserve_delta.is_negative())
+					for (auto& [transfer_asset, transfer] : changes)
 					{
-						auto balance = executor->get_account_balance(transfer_asset, transfer_account).or_else(states::account_balance(algorithm::pubkeyhash_t(), 0, nullptr));
-						auto supply_penalty = decimal::zero();
-						auto reserve_penalty = decimal::zero();
-						if (balance.supply < -supply_delta)
+						auto supply_delta = transfer.input_supply - transfer.output_supply;
+						auto reserve_delta = transfer.input_reserve - transfer.output_reserve;
+						if (supply_delta.is_negative() || reserve_delta.is_negative())
 						{
-							supply_penalty = -supply_delta - balance.supply;
-							supply_delta = -balance.supply;
+							auto balance = executor->get_account_balance(transfer_asset, transfer_account).or_else(states::account_balance(algorithm::pubkeyhash_t(), 0, nullptr));
+							auto supply_penalty = decimal::zero();
+							auto reserve_penalty = decimal::zero();
+							if (balance.supply < -supply_delta)
+							{
+								supply_penalty = -supply_delta - balance.supply;
+								supply_delta = -balance.supply;
+							}
+							if (balance.reserve < -reserve_delta)
+							{
+								reserve_penalty = -reserve_delta - balance.reserve;
+								reserve_delta = -balance.reserve;
+							}
+							if (supply_penalty.is_positive() || reserve_penalty.is_positive())
+							{
+								auto& penalty = penalties[transfer_asset];
+								penalty = penalty.is_nan() ? std::max(supply_penalty, reserve_penalty) : (penalty - std::max(supply_penalty, reserve_penalty));
+							}
 						}
-						if (balance.reserve < -reserve_delta)
+
+						if (!supply_delta.is_zero() || !reserve_delta.is_zero())
 						{
-							reserve_penalty = -reserve_delta - balance.reserve;
-							reserve_delta = -balance.reserve;
+							auto delta_transfer = executor->apply_transfer(transfer_asset, transfer_account, supply_delta, reserve_delta);
+							if (!delta_transfer)
+								return delta_transfer.error();
 						}
-						if (supply_penalty.is_positive() || reserve_penalty.is_positive())
+					}
+				}
+
+				for (auto& [hash, supplies] : balances)
+				{
+					for (auto& [transfer_asset, transfer_value] : supplies)
+					{
+						if (transfer_value.is_negative())
 						{
-							auto& penalty = penalties[transfer_asset];
-							penalty = penalty.is_nan() ? std::max(supply_penalty, reserve_penalty) : (penalty - std::max(supply_penalty, reserve_penalty));
+							auto balance = executor->get_bridge_balance(transfer_asset, hash);
+							transfer_value = balance ? std::max(-balance->supply, transfer_value) : decimal::zero();
+						}
+
+						auto balance = executor->apply_bridge_balance(transfer_asset, hash, transfer_value);
+						if (!balance)
+							return balance.error();
+					}
+				}
+
+				for (auto& [penalty_asset, penalty_value] : penalties)
+				{
+					if (penalty_value.is_zero_or_nan())
+						continue;
+
+					auto participation_cut = protocol::now().policy.participation.fee_rate;
+					auto attestation_cut = 1 - participation_cut;
+					if (!failing_attesters.empty() && penalty_value.is_negative())
+					{
+						auto individual_penalty = algorithm::arithmetic::divide(penalty_value * attestation_cut, failing_attesters.size());
+						for (auto& failing_attester : failing_attesters)
+						{
+							auto prev_attestation = executor->get_validator_attestation_reward(penalty_asset, failing_attester);
+							if (!prev_attestation)
+								continue;
+
+							auto next_attestation = executor->apply_validator_attestation_reward(penalty_asset, failing_attester, individual_penalty);
+							if (!next_attestation)
+								return next_attestation.error();
+
+							penalty_value -= std::max(decimal::zero(), prev_attestation->reward - next_attestation->reward);
 						}
 					}
 
-					if (!supply_delta.is_zero() || !reserve_delta.is_zero())
+					auto individual_reward_or_penalty = algorithm::arithmetic::divide(-penalty_value * attestation_cut, succeeding_attesters.size());
+					for (auto& succeeding_attester : succeeding_attesters)
 					{
-						auto delta_transfer = executor->apply_transfer(transfer_asset, transfer_account, supply_delta, reserve_delta);
-						if (!delta_transfer)
-							return delta_transfer.error();
+						auto attestation = executor->apply_validator_attestation_reward(penalty_asset, succeeding_attester, individual_reward_or_penalty);
+						if (!attestation)
+							return attestation.error();
+					}
+
+					individual_reward_or_penalty = algorithm::arithmetic::divide(-penalty_value * participation_cut, participants.size());
+					for (auto& participant : participants)
+					{
+						auto participation = executor->apply_validator_participation_reward(penalty_asset, participant, individual_reward_or_penalty);
+						if (!participation)
+							return participation.error();
 					}
 				}
 			}
-
-			for (auto& [hash, supplies] : balances)
+			else if (withdrawer_hash > 0)
 			{
-				for (auto& [transfer_asset, transfer_value] : supplies)
+				auto bridge = executor->get_bridge_instance(base_asset, withdrawer_hash);
+				for (auto& [transfer_account, changes] : transfers)
 				{
-					if (transfer_value.is_negative())
+					for (auto& [transfer_asset, transfer] : changes)
 					{
-						auto balance = executor->get_bridge_balance(transfer_asset, hash);
-						transfer_value = balance ? std::max(-balance->supply, transfer_value) : decimal::zero();
-					}
-
-					auto balance = executor->apply_bridge_balance(transfer_asset, hash, transfer_value);
-					if (!balance)
-						return balance.error();
-				}
-			}
-
-			for (auto& [penalty_asset, penalty_value] : penalties)
-			{
-				if (penalty_value.is_zero_or_nan())
-					continue;
-
-				auto participation_cut = protocol::now().policy.participation.fee_rate;
-				auto attestation_cut = 1 - participation_cut;
-				if (!failing_attesters.empty() && penalty_value.is_negative())
-				{
-					auto individual_penalty = algorithm::arithmetic::divide(penalty_value * attestation_cut, failing_attesters.size());
-					for (auto& failing_attester : failing_attesters)
-					{
-						auto prev_attestation = executor->get_validator_attestation_reward(penalty_asset, failing_attester);
-						if (!prev_attestation)
+						if (transfer.input_reserve >= transfer.output_reserve)
 							continue;
 
-						auto next_attestation = executor->apply_validator_attestation_reward(penalty_asset, failing_attester, individual_penalty);
-						if (!next_attestation)
-							return next_attestation.error();
+						auto balance = executor->get_account_balance(transfer_asset, transfer_account).or_else(states::account_balance(algorithm::pubkeyhash_t(), 0, nullptr));
+						auto delta_transfer = executor->apply_transfer(transfer_asset, transfer_account, decimal::zero(), std::max(transfer.input_reserve - transfer.output_reserve, -balance.reserve));
+						if (!delta_transfer)
+							return delta_transfer.error();
+						else if (!bridge)
+							break;
 
-						penalty_value -= std::max(decimal::zero(), prev_attestation->reward - next_attestation->reward);
+						auto reward = bridge->fee_rate * (1 - protocol::now().policy.attestation.fee_rate);
+						auto applicable = std::max<decimal>(reward - network_fee, decimal::zero());
+						delta_transfer = executor->apply_transfer(base_asset, transfer_account, applicable, decimal::zero());
+						if (!delta_transfer)
+							return delta_transfer.error();
+						break;
 					}
 				}
 
-				auto individual_reward_or_penalty = algorithm::arithmetic::divide(-penalty_value * attestation_cut, succeeding_attesters.size());
-				for (auto& succeeding_attester : succeeding_attesters)
+				if (bridge && network_fee.is_positive())
 				{
-					auto attestation = executor->apply_validator_attestation_reward(penalty_asset, succeeding_attester, individual_reward_or_penalty);
-					if (!attestation)
-						return attestation.error();
-				}
-
-				individual_reward_or_penalty = algorithm::arithmetic::divide(-penalty_value * participation_cut, participants.size());
-				for (auto& participant : participants)
-				{
-					auto participation = executor->apply_validator_participation_reward(penalty_asset, participant, individual_reward_or_penalty);
-					if (!participation)
-						return participation.error();
+					auto balance = executor->get_bridge_balance(base_asset, withdrawer_hash);
+					auto status = executor->apply_bridge_balance(base_asset, withdrawer_hash, -std::min(network_fee, balance ? balance->supply : decimal::zero()));
+					if (!status)
+						return status.error();
 				}
 			}
 
@@ -3470,12 +3507,15 @@ namespace tangent
 			if (!finalization)
 				return finalization.error();
 
-			auto proof_asset = asset;
-			auto proof_base = proof;
+			auto proof_asset = asset; auto proof_base = proof;
 			executor->defer_side_effect([proof_asset, proof_base = std::move(proof_base)]() mutable
 			{
-				superchain::bridge::get()->update_utxo_tree(proof_asset, proof_base).report("failed to update the off-chain utxo set");
+				if (proof_base.reverted)
+					superchain::bridge::get()->revive_utxo_tree(proof_asset, proof_base).report("failed to revive pending off-chain utxo set");
+				else
+					superchain::bridge::get()->update_utxo_tree(proof_asset, proof_base).report("failed to update the off-chain utxo set");
 			});
+
 			return executor->emit_witness(asset, proof.block_id);
 		}
 		bool attestate::store_body(format::wo_stream* stream) const

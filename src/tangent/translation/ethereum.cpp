@@ -639,22 +639,7 @@ namespace tangent
 							tx_receipt = transaction_data.set("receipt", std::move(*receipt));
 					}
 
-					bool is_reverted = tx_receipt && tx_receipt->is_map() ? hex_to_uint256(tx_receipt->child_var("status").as_blob()) < 1 : true;
-					if (is_reverted)
-					{
-						for (auto& [address, values] : inputs)
-						{
-							for (auto& [token, value] : values)
-								value = decimal::zero();
-						}
-						for (auto& [address, values] : outputs)
-						{
-							for (auto& [token, value] : values)
-								value = decimal::zero();
-						}
-						inputs[signer][native_asset] = fee_value;
-					}
-
+					result.reverted = tx_receipt && tx_receipt->is_map() ? hex_to_uint256(tx_receipt->child_var("status").as_blob()) < 1 : true;
 					for (auto& [address, values] : inputs)
 					{
 						auto target_link = discovery->find(address);

@@ -404,22 +404,7 @@ namespace tangent
 						coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
 
 					auto receipt_result = info->child_var("receipt.result").as_blob(), tx_result = info->child_var("result").as_blob();
-					bool is_reverted = (!receipt_result.empty() && receipt_result != "SUCCESS") || (!tx_result.empty() && tx_result != "SUCCESS");
-					if (is_reverted)
-					{
-						for (auto& [address, values] : inputs)
-						{
-							for (auto& [token, value] : values)
-								value = decimal::zero();
-						}
-						for (auto& [address, values] : outputs)
-						{
-							for (auto& [token, value] : values)
-								value = decimal::zero();
-						}
-						inputs[signer][native_asset] = fee_value;
-					}
-
+					result.reverted = (!receipt_result.empty() && receipt_result != "SUCCESS") || (!tx_result.empty() && tx_result != "SUCCESS");
 					for (auto& [address, values] : inputs)
 					{
 						auto target_link = discovery->find(address);

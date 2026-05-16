@@ -141,6 +141,7 @@ namespace tangent
 			btree_set<string> signers;
 			string transaction_id;
 			uint64_t block_id = 0;
+			bool reverted = false;
 
 			computed_transaction() = default;
 			void add_input(coin_utxo&& input);

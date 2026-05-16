@@ -384,6 +384,7 @@ namespace tangent
 
 					computed_transaction tx;
 					tx.transaction_id = signature;
+					tx.reverted = reverted;
 
 					hash_map<string, hash_map<algorithm::asset_id, decimal>> inputs;
 					hash_map<string, hash_map<algorithm::asset_id, decimal>> outputs;
@@ -601,20 +602,6 @@ namespace tangent
 								auto& token_output = outputs[owner][token_asset];
 								token_output = token_output.is_nan() ? token_value : (token_output + token_value);
 							}
-						}
-					}
-
-					if (reverted)
-					{
-						for (auto& [address, values] : inputs)
-						{
-							for (auto& [token, value] : values)
-								value = decimal::zero();
-						}
-						for (auto& [address, values] : outputs)
-						{
-							for (auto& [token, value] : values)
-								value = decimal::zero();
 						}
 					}
 

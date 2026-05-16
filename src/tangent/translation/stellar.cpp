@@ -502,16 +502,10 @@ namespace tangent
 
 					computed_transaction tx;
 					tx.transaction_id = tx_hash;
+					tx.reverted = !transaction_data.child_var("successful").as_boolean() && !transaction_data.child_var("transaction_successful").as_boolean();
 
 					auto metadata = coawait(get_transaction_metadata(tx_hash));
 					bool fee_included = !metadata;
-					bool is_successful = transaction_data.child_var("successful").as_boolean() || transaction_data.child_var("transaction_successful").as_boolean();
-					if (!is_successful)
-					{
-						for (auto& transfer : transfers)
-							transfer.value = decimal::zero();
-					}
-
 					for (auto& transfer : transfers)
 					{
 						auto target_from_link = discovery->find(transfer.from);

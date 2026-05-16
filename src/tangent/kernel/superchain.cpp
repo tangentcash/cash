@@ -533,6 +533,8 @@ namespace tangent
 		bool computed_transaction::store_payload(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
+			if (reverted)
+				stream->write_boolean(true);
 			stream->write_integer(block_id);
 			stream->write_string(transaction_id);
 			stream->write_integer((uint32_t)inputs.size());
@@ -561,7 +563,9 @@ namespace tangent
 		}
 		bool computed_transaction::load_payload(format::ro_stream& stream)
 		{
-			if (!stream.read_integer(stream.read_type(), &block_id))
+			auto type = stream.read_type();
+			reverted = type == format::viewable::true_type;
+			if (!stream.read_integer(reverted || type == format::viewable::false_type ? stream.read_type() : type, &block_id))
 				return false;
 
 			if (!stream.read_string(stream.read_type(), &transaction_id))
@@ -719,6 +723,7 @@ namespace tangent
 			format::tree data;
 			data.set("transaction_id", format::variable(transaction_id));
 			data.set("block_id", algorithm::encoding::serialize_uint256(block_id));
+			data.set("success", format::variable(!reverted));
 			auto* input_data = data.set("inputs", format::tree::list());
 			for (auto& [hash, input] : inputs)
 				input_data->push(input.as_tree());
