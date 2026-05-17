@@ -90,6 +90,13 @@ namespace tangent
 			if (mpz_probab_prime_p(paillier_public_key->n, 15) > 0)
 				return layer_exception("paillier modulus n cannot be a prime number");
 
+			const uint32_t small_prime_numbers[] = { 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97 };
+			for (uint32_t prime : small_prime_numbers)
+			{
+				if (mpz_divisible_ui_p(paillier_public_key->n, prime))
+					return layer_exception("paillier modulus n contains weak small prime factors");
+			}
+
 			return expectation::met;
 		}
 		static void paillier_to_public_key(const uint8_t* seed, size_t seed_size, size_t expected_bit_size, algorithm::paillier_scalar_t* public_key)
