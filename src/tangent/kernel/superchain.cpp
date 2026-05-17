@@ -2689,15 +2689,7 @@ namespace tangent
 
 			for (auto& [output_hash, output] : computed.outputs)
 			{
-				auto result = state.revive_utxo(output.transaction_id, output.index);
-				if (!result)
-					return result;
-
-				auto child = state.get_computed_transaction(output.transaction_id, 0, 0);
-				if (!child)
-					continue;
-
-				result = revive_utxo_tree(asset, *child);
+				auto result = state.revive_utxo(computed.transaction_id, output.index);
 				if (!result)
 					return result;
 			}

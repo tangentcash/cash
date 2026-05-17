@@ -140,27 +140,6 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<superchain::coin_utxo> superchainstate::get_stxo(const std::string_view& transaction_id, uint64_t index)
-		{
-			format::wo_stream transaction_id_index;
-			transaction_id_index.write_string(transaction_id);
-			transaction_id_index.write_integer(index);
-
-			schema_list map;
-			map.push_back(var::set::binary(transaction_id_index.data));
-
-			auto cursor = get_storage().emplace_query(__func__, "SELECT message FROM coins WHERE transaction_id_index = ?", &map);
-			if (!cursor || cursor->error_or_empty())
-				return expects_lr<superchain::coin_utxo>(layer_exception(ledger::storage_util::error_of(cursor)));
-
-			superchain::coin_utxo value;
-			auto blob = (*cursor)["message"].get().get_blob();
-			auto message = format::ro_stream(blob);
-			if (!value.load(message))
-				return expects_lr<superchain::coin_utxo>(layer_exception("utxo deserialization error"));
-
-			return value;
-		}
 		expects_lr<superchain::coin_utxo> superchainstate::get_utxo(const std::string_view& transaction_id, uint64_t index)
 		{
 			format::wo_stream transaction_id_index;
