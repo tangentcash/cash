@@ -1562,13 +1562,20 @@ namespace tangent
 			}
 			expects_lr<string> bitcoin_cash::decode_address(const std::string_view& address)
 			{
+				std::string_view prefix = get_chain()->bech32_cashaddr;
+				char cash_prefix[32];
+				memset(cash_prefix, 0, sizeof(cash_prefix));
+				memcpy(cash_prefix, prefix.data(), prefix.size());
+				cash_prefix[prefix.size()] = ':';
+				if (stringify::starts_with(address, cash_prefix))
+					return bitcoin::decode_address(address);
+
 				auto type = parse_address(address, nullptr, nullptr);
 				if (type != address_format::pay2_cash_script_hash && type != address_format::pay2_cash_public_key_hash)
 					return bitcoin::decode_address(address);
 
 				string cash_address;
-				cash_address.append(get_chain()->bech32_cashaddr);
-				cash_address.append(1, ':');
+				cash_address.append(cash_prefix);
 				cash_address.append(address);
 				return bitcoin::decode_address(cash_address);
 			}
