@@ -51,7 +51,6 @@ namespace tangent
 				algorithm::pubkey_t new_participant_key;
 				algorithm::paillier_scalar_t accumulator_key;
 				algorithm::paillier_scalar_t encrypted_accumulator;
-				algorithm::composition::type alg = algorithm::composition::type::unknown;
 				uint8_t attempt = 0;
 			};
 

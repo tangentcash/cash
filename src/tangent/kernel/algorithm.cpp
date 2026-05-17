@@ -1433,6 +1433,16 @@ namespace tangent
 					return layer_exception("invalid type");
 			}
 		}
+		expects_lr<uptr<composition::compositor>> composition::make_compositor_from_copy(const compositor* other)
+		{
+			VI_ASSERT(other != nullptr, "other should be set");
+			format::wo_stream writer;
+			if (!other->store(&writer))
+				return layer_exception("failed to serialize the copying compositor");
+
+			format::ro_stream reader = writer.ro();
+			return make_compositor_from_stream(other->alg_type(), reader);
+		}
 		expects_lr<uptr<composition::compositor>> composition::make_compositor_from_stream(type alg, format::ro_stream& stream)
 		{
 			auto state = make_compositor(alg);
@@ -1444,18 +1454,6 @@ namespace tangent
 				return layer_exception("state load error");
 
 			return expects_lr<uptr<composition::compositor>>(std::move(state_ptr));
-		}
-		expects_lr<uptr<composition::compositor>> composition::make_compositor_from_copy(type alg, const compositor* other)
-		{
-			if (!other)
-				return make_compositor(alg);
-
-			format::wo_stream writer;
-			if (!other->store(&writer))
-				return layer_exception("failed to serialize the copying compositor");
-
-			format::ro_stream reader = writer.ro();
-			return make_compositor_from_stream(alg, reader);
 		}
 		expects_lr<uptr<composition::compositor>> composition::make_public_key_compositor(type alg, const uint8_t* message, size_t message_size, uint16_t participants)
 		{

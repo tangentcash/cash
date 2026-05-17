@@ -61,7 +61,6 @@ typedef struct
  */
 typedef struct
 {
-	mp_bitcnt_t len; /**< bit length of n */
 	mpz_t n; 			/**< modulus n */
 } paillier_pubkey;
 

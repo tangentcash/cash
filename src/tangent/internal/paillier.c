@@ -24,6 +24,7 @@
  */
 #include "paillier.h"
 #include <stdlib.h>
+#include <memory.h>
 #include "sha3.h"
 #include "rand.h"
 #define BIT2BYTE(a) (a+7)>>3
@@ -35,6 +36,38 @@ typedef struct
 	mpz_t exponent; /**< exponent of exponentiation */
 	mpz_t modulus; /**< modulus of exponentiation */
 } exp_args;
+
+void sha3_512n(const unsigned char* seed, size_t seed_len, unsigned char* out, size_t out_len)
+{
+	unsigned char state[64];
+	unsigned char block[64];
+	unsigned char input[72];
+	size_t offset = 0;
+	uint64_t counter = 1;
+	if (seed_len == 64)
+		memcpy(state, seed, 64);
+	else if (seed_len < 64)
+		sha3_512(seed, seed_len, state);
+	else
+		sha3_512(seed, seed_len, state);
+
+	memcpy(input, state, 64);
+	while (offset < out_len)
+	{
+		for (int i = 0; i < 8; i++)
+			input[64 + i] = (counter >> ((7 - i) * 8)) & 0xFF;
+
+		sha3_512(input, 72, block);
+		size_t copy_len = out_len - offset;
+		if (copy_len > 64)
+			copy_len = 64;
+
+		memcpy(out + offset, block, copy_len);
+		offset += copy_len;
+		memcpy(input, block, 64);
+		counter++;
+	}
+}
 
 void mpz_random_prime(mpz_t prime, mp_bitcnt_t len)
 {
@@ -53,17 +86,23 @@ void mpz_random_prime(mpz_t prime, mp_bitcnt_t len)
 	free(seed);
 }
 
-void mpz_derive_prime(mpz_t prime, mp_bitcnt_t len, gmp_randstate_t random)
+void mpz_derive_prime(mpz_t prime, mp_bitcnt_t len, uint8_t preseed[64])
 {
 	mpz_t random_num;
 	mpz_init(random_num);
+	size_t seed_size = BIT2BYTE(len);
+	char* seed = (char*)malloc(sizeof(char) * seed_size);
 	do
 	{
-		mpz_urandomb(random_num, random, len);
+		sha3_512(preseed, 64, preseed);
+		sha3_512n(preseed, 64, seed, seed_size);
+		sha3_512(seed, seed_size, preseed);
+		mpz_import(random_num, seed_size, 1, 1, 1, 0, seed);
 		mpz_setbit(random_num, len - 1);
 		mpz_nextprime(prime, random_num);
 	} while (len != (mp_bitcnt_t)mpz_sizeinbase(prime, 2));
 	mpz_clear(random_num);
+	free(seed);
 }
 
 /**
@@ -132,7 +171,6 @@ void mpz_crt_exp(mpz_t result, mpz_t base, mpz_t exp_p, mpz_t exp_q, mpz_t pinvq
 void paillier_pubkey_init(paillier_pubkey* pub)
 {
 	mpz_init(pub->n);
-	pub->len = 0;
 }
 
 void paillier_seckey_init(paillier_seckey* priv)
@@ -213,7 +251,6 @@ void paillier_keypair_random(paillier_pubkey* pub, paillier_seckey* priv, mp_bit
 
 	//write bit lengths
 	priv->len = len;
-	pub->len = len;
 retry:
 	//generate p and q
 	mpz_random_prime(p, len / 2);
@@ -221,7 +258,9 @@ retry:
 
 	//calculate modulus n=p*q
 	mpz_mul(pub->n, p, q);
-	mpz_mul(priv->n, p, q);
+	mpz_set(priv->n, pub->n);
+	if (mpz_sizeinbase(pub->n, 2) < len)
+		goto retry;
 
 	//set g = 1+n
 	mpz_add_ui(g, pub->n, 1);
@@ -263,18 +302,16 @@ retry:
 
 void paillier_keypair_derive(paillier_pubkey* pub, paillier_seckey* priv, mp_bitcnt_t len, const unsigned char* message, mp_bitcnt_t message_size)
 {
-	gmp_randstate_t random;
-	gmp_randinit_mt(random);
-	
-	uint8_t digest[64];
+	uint8_t digest[64], p_message[65], q_message[65];
+	p_message[0] = 'p'; q_message[0] = 'q';
 	sha3_512(message, message_size, digest);
+	memcpy(p_message + 1, digest, sizeof(digest));
+	memcpy(q_message + 1, digest, sizeof(digest));
 
-	mpz_t seed;
-	mpz_init(seed);
-	mpz_import(seed, sizeof(digest), 1, 1, 1, 0, digest);
-	gmp_randseed(random, seed);
-	mpz_clear(seed);
-
+	uint8_t p_digest[64], q_digest[64];
+	sha3_512(p_message, sizeof(p_message), p_digest);
+	sha3_512(q_message, sizeof(q_message), q_digest);
+	
 	mpz_t p, q, n2, temp, mask, g;
 	mpz_init(p);
 	mpz_init(q);
@@ -285,15 +322,16 @@ void paillier_keypair_derive(paillier_pubkey* pub, paillier_seckey* priv, mp_bit
 
 	//write bit lengths
 	priv->len = len;
-	pub->len = len;
 retry:
 	//generate p and q
-	mpz_derive_prime(p, len / 2, random);
-	mpz_derive_prime(q, len / 2, random);
+	mpz_derive_prime(p, len / 2, p_digest);
+	mpz_derive_prime(q, len / 2, q_digest);
 
 	//calculate modulus n=p*q
 	mpz_mul(pub->n, p, q);
-	mpz_mul(priv->n, p, q);
+	mpz_set(priv->n, pub->n);
+	if (mpz_sizeinbase(pub->n, 2) < len)
+		goto retry;
 
 	//set g = 1+n
 	mpz_add_ui(g, pub->n, 1);
@@ -331,7 +369,6 @@ retry:
 	mpz_clear(temp);
 	mpz_clear(mask);
 	mpz_clear(g);
-	gmp_randclear(random);
 }
 
 /**
@@ -348,7 +385,8 @@ void paillier_encrypt(mpz_t ciphertext, mpz_t plaintext, paillier_pubkey* pub)
 	mpz_mul(n2, pub->n, pub->n);
 
 	//generate random r and reduce modulo n
-	size_t seed_size = BIT2BYTE(pub->len);
+	size_t pub_len = mpz_sizeinbase(pub->n, 2);
+	size_t seed_size = BIT2BYTE(pub_len);
 	uint8_t* seed = malloc(seed_size);
 retry:
 	random_buffer(seed, seed_size);

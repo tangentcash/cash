@@ -39,11 +39,7 @@ namespace tangent
 		bind_delegation::bind_delegation(const bind_delegation& other) : ledger::delegation_contract(other.adapter, other.executor, other.runner->public_key_hash), encrypted_shares(other.encrypted_shares), key_contributions(other.key_contributions), key_commitment(other.key_commitment), attempt(other.attempt)
 		{
 			if (other.compositor)
-			{
-				auto* chain = superchain::bridge::get()->get_network_params(executor->transaction->asset);
-				auto alg = chain ? chain->composition : algorithm::composition::type::unknown;
-				compositor = algorithm::composition::make_compositor_from_copy(alg, *other.compositor).or_else(nullptr);
-			}
+				compositor = algorithm::composition::make_compositor_from_copy(*other.compositor).or_else(nullptr);
 		}
 		expects_promise_rt<void> bind_delegation::execute_transition()
 		{
@@ -532,10 +528,9 @@ namespace tangent
 			context.new_participant_key = other.context.new_participant_key;
 			context.accumulator_key = other.context.accumulator_key;
 			context.encrypted_accumulator = other.context.encrypted_accumulator;
-			context.alg = other.context.alg;
 			context.attempt = other.context.attempt;
 			if (other.context.compositor)
-				context.compositor = algorithm::composition::make_compositor_from_copy(context.alg, *other.context.compositor).or_else(nullptr);
+				context.compositor = algorithm::composition::make_compositor_from_copy(*other.context.compositor).or_else(nullptr);
 		}
 		expects_promise_rt<void> rebind_delegation::execute_transition()
 		{
@@ -588,7 +583,6 @@ namespace tangent
 				retweak:
 					context = migration_context();
 					context.attempt = attempt;
-					context.alg = alg;
 					context.new_participant_key = adapter->get_public_key(new_participant);
 					context.compositor = std::move(*maybe_compositor);
 					for (auto& participant : group)
@@ -848,7 +842,7 @@ namespace tangent
 
 					auto tweaked_key = secret->key;
 					auto tweaked_accumulator = context.encrypted_accumulator;
-					auto accumulation = context.compositor->tweak_secret_key(context.accumulator_key, *individual_tweak, &tweaked_key, &tweaked_accumulator);
+					auto accumulation = context.compositor->tweak_secret_key(context.accumulator_key, tweaking_key_size(), *individual_tweak, &tweaked_key, &tweaked_accumulator);
 					if (accumulation)
 					{
 						context.encrypted_accumulator = std::move(tweaked_accumulator);
@@ -913,7 +907,7 @@ namespace tangent
 				return layer_exception("invalid migration size");
 
 			auto& migration = migrations->at(proofs.size());
-			auto secret = adapter->derive_key(runner, migration.account.ref.owner, migration.account.ref.asset, migration.account.ref.hash, context.alg);
+			auto secret = adapter->derive_key(runner, migration.account.ref.owner, migration.account.ref.asset, migration.account.ref.hash, context.compositor->alg_type());
 			if (!secret)
 				return secret.error();
 
@@ -936,7 +930,7 @@ namespace tangent
 
 				auto tweaked_key = secret->key;
 				auto tweaked_accumulator = context.encrypted_accumulator;
-				auto accumulation = context.compositor->tweak_secret_key(context.accumulator_key, *individual_tweak, &tweaked_key, &tweaked_accumulator);
+				auto accumulation = context.compositor->tweak_secret_key(context.accumulator_key, tweaking_key_size(), *individual_tweak, &tweaked_key, &tweaked_accumulator);
 				if (accumulation)
 				{
 					context.encrypted_accumulator = std::move(tweaked_accumulator);
@@ -983,7 +977,7 @@ namespace tangent
 							return individual_tweak.error();
 
 						auto tweaked_key = secret->key;
-						auto accumulation = context.compositor->tweak_secret_key(context.accumulator_key, *individual_tweak, &tweaked_key, nullptr);
+						auto accumulation = context.compositor->tweak_secret_key(context.accumulator_key, tweaking_key_size(), *individual_tweak, &tweaked_key, nullptr);
 						if (accumulation)
 						{
 							secret->key = std::move(tweaked_key);
@@ -1003,7 +997,7 @@ namespace tangent
 				}
 			}
 		
-			auto public_key = algorithm::composition::derive_public_key(context.alg, secret->key);
+			auto public_key = algorithm::composition::derive_public_key(context.compositor->alg_type(), secret->key);
 			if (!public_key)
 				return public_key.error();
 
@@ -1115,7 +1109,7 @@ namespace tangent
 			if (new_participant != runner->public_key_hash)
 				return expectation::met;
 
-			auto public_key = algorithm::composition::derive_public_key(context.alg, secret->key);
+			auto public_key = algorithm::composition::derive_public_key(context.compositor->alg_type(), secret->key);
 			if (!public_key)
 				return public_key.error();
 
@@ -1133,6 +1127,9 @@ namespace tangent
 		}
 		expects_lr<algorithm::composition::cseckey_t> rebind_delegation::as_individual_tweak(uint64_t nonce) const
 		{
+			if (!context.compositor)
+				return layer_exception("invalid compositor");
+
 			format::wo_stream message;
 			message.write_typeless(runner->public_key_hash.blob, sizeof(runner->public_key_hash.blob));
 			message.write_typeless(runner->public_key.blob, sizeof(runner->public_key.blob));
@@ -1141,7 +1138,7 @@ namespace tangent
 			message.write_typeless(context.attempt);
 			message.write_typeless(nonce);
 
-			auto keypair = algorithm::composition::derive_keypair(context.alg, (uint8_t*)message.data.data(), message.data.size());
+			auto keypair = algorithm::composition::derive_keypair(context.compositor->alg_type(), (uint8_t*)message.data.data(), message.data.size());
 			if (!keypair)
 				return keypair.error();
 
@@ -1155,7 +1152,7 @@ namespace tangent
 			stream->write_string(context.new_participant_key.optimized_view());
 			stream->write_string(std::string_view((char*)context.accumulator_key.data(), context.accumulator_key.size()));
 			stream->write_string(std::string_view((char*)context.encrypted_accumulator.data(), context.encrypted_accumulator.size()));
-			stream->write_integer(context.compositor ? (uint8_t)context.alg : (uint8_t)algorithm::composition::type::unknown);
+			stream->write_integer(context.compositor ? (uint8_t)context.compositor->alg_type() : (uint8_t)algorithm::composition::type::unknown);
 			if (context.compositor)
 				context.compositor->store(stream);
 			stream->write_integer((uint8_t)context.key_contributions.size());
@@ -1211,14 +1208,15 @@ namespace tangent
 			if (!stream.read_string(stream.read_type(), &intermediate))
 				return false;
 
+			algorithm::composition::type alg;
 			context.encrypted_accumulator.resize(intermediate.size());
 			memcpy(context.encrypted_accumulator.data(), intermediate.data(), intermediate.size());
-			if (!stream.read_integer(stream.read_type(), (uint8_t*)&context.alg))
+			if (!stream.read_integer(stream.read_type(), (uint8_t*)&alg))
 				return false;
 
-			if (context.alg != algorithm::composition::type::unknown)
+			if (alg != algorithm::composition::type::unknown)
 			{
-				auto maybe_compositor = algorithm::composition::make_compositor_from_stream(context.alg, stream);
+				auto maybe_compositor = algorithm::composition::make_compositor_from_stream(alg, stream);
 				if (!maybe_compositor)
 					return false;
 
@@ -1373,11 +1371,7 @@ namespace tangent
 		broadcast_delegation::broadcast_delegation(const broadcast_delegation& other) : ledger::delegation_contract(other.adapter, other.executor, other.runner->public_key_hash), attempt(other.attempt)
 		{
 			if (other.compositor)
-			{
-				auto* chain = superchain::bridge::get()->get_network_params(executor->transaction->asset);
-				auto alg = chain ? chain->composition : algorithm::composition::type::unknown;
-				compositor = algorithm::composition::make_compositor_from_copy(alg, *other.compositor).or_else(nullptr);
-			}
+				compositor = algorithm::composition::make_compositor_from_copy(*other.compositor).or_else(nullptr);
 			if (other.message)
 				message = memory::init<superchain::prepared_transaction>(**other.message);
 		}
