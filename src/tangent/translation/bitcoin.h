@@ -119,6 +119,7 @@ namespace tangent
 			public:
 				bitcoin_cash(const algorithm::asset_id& new_asset) noexcept;
 				virtual ~bitcoin_cash() override = default;
+				virtual expects_lr<string> decode_address(const std::string_view& address) override;
 				virtual const sc_chainparams_* get_chain() override;
 				virtual address_format get_address_type() override;
 				virtual uint32_t get_sig_hash_type() override;

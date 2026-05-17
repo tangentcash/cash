@@ -1560,6 +1560,18 @@ namespace tangent
 			{
 				legacy.estimate_smart_fee = 1;
 			}
+			expects_lr<string> bitcoin_cash::decode_address(const std::string_view& address)
+			{
+				auto type = parse_address(address, nullptr, nullptr);
+				if (type != address_format::pay2_cash_script_hash && type != address_format::pay2_cash_public_key_hash)
+					return bitcoin::decode_address(address);
+
+				string cash_address;
+				cash_address.append(get_chain()->bech32_cashaddr);
+				cash_address.append(1, ':');
+				cash_address.append(address);
+				return bitcoin::decode_address(cash_address);
+			}
 			const sc_chainparams_* bitcoin_cash::get_chain()
 			{
 				switch (protocol::now().user.network)
