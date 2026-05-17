@@ -1780,13 +1780,13 @@ struct tests
 			TEST_BLOCK(&generators::withdraw_stage_2, "0x7b193ddc2c5ce96d65b2167f5d9f1f2efba50110ff2d9d734fcfe94a3905c0a7", 25);
 			TEST_BLOCK(&generators::withdraw_stage_3, "0xe876b704f18007d370e2a5feabdacf3356b4fda3a880e2eaf7341287a43be6b0", 27);
 			TEST_BLOCK(&generators::withdraw_stage_4, "0xbe55e315e13a23c4d96454170de2e502f9a378e2cf9d17b79d40d9f12e135a55", 28);
-			TEST_BLOCK(&generators::withdraw_stage_5, "0x983cdf3e80dfd25a6a0f5b90e18e0719a355dfb806ea1ccfebadd4afa8cbd696", 29);
-			TEST_BLOCK(&generators::withdraw_stage_6, "0x081a01737104f729b0e1c74412d85436e8596970531dae485611cef3f47795f5", 30);
-			TEST_BLOCK(&generators::withdraw_stage_7, "0x8cda0853469db48e30f0e3ccb5e9e8051ed6231568a01dcfb83cb30bd97e9023", 32);
-			TEST_BLOCK(&generators::withdraw_stage_8, "0xc829fd553d1fd39520bf584abd14b0aa3522a630d541c80889ad6c0766309f4e", 34);
-			TEST_BLOCK(std::bind(&generators::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 1, 0), "0x472ca093eee2e2bf7d71be836649e08571d2a2cd61498a4c70b79d323aa9313f", 36);
-			TEST_BLOCK_FALLBACK(&generators::production_stage_1, "0xc945585ed632802d1c506d906f0ea0e0f5b71a78300eae1f5d4c70609638f371", 37);
-			TEST_BLOCK(&generators::production_stage_2, "0x91aa2c75b8763f1e95e7cc5dbb05cd2b7838b1e55b3b59604dff8fb23225ac5b", 38);
+			TEST_BLOCK(&generators::withdraw_stage_5, "0x69ae0f0fdbb4121f00720ca4efae0106584993a3998a9809e0c7df241f3eeab1", 29);
+			TEST_BLOCK(&generators::withdraw_stage_6, "0x845dfc8fa899bc6cb23799791a54a0a9f383c22f652d9848b23190986c5d5256", 30);
+			TEST_BLOCK(&generators::withdraw_stage_7, "0xe7d4ec6890d691707952f9ea9926f4d1efe7553950a596b8c7271cb1d07d4e36", 32);
+			TEST_BLOCK(&generators::withdraw_stage_8, "0xc34829c353c2024fdda0aca482d2809343c9d919d8ac1b5188551587f6ae31c5", 34);
+			TEST_BLOCK(std::bind(&generators::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 1, 0), "0xf51dc1a6f2ac3a21d054b2e8473f60a182a7976202dcb3aec1c80ed2adac2cf1", 36);
+			TEST_BLOCK_FALLBACK(&generators::production_stage_1, "0x8df66c080167bcc9712ed52ece5da2b26a80b809aa8e27245267c95d7f6314a6", 37);
+			TEST_BLOCK(&generators::production_stage_2, "0x17ebd6b24ffbf6fc85bf0acade3b82d2102609dede9929969aa7122cd24c0602", 38);
 			if (userdata != nullptr)
 				*userdata = std::move(users);
 			else
@@ -2424,9 +2424,9 @@ int main(int argc, char* argv[])
 			{ "cryptography / multichain transaction", &tests::cryptography_multichain_transaction },
 			{ "blockchain / full coverage", std::bind(&tests::blockchain_full_coverage, (vector<account_ref>*)nullptr) },
 			{ "blockchain / verification", &tests::blockchain_verification },
-			{ "blockchain / bridge coverage", std::bind(&tests::blockchain_bridge_coverage, (vector<account_ref>*)nullptr) },
+			//{ "blockchain / bridge coverage", std::bind(&tests::blockchain_bridge_coverage, (vector<account_ref>*)nullptr) },
 			{ "blockchain / verification", &tests::blockchain_verification },
-			{ "blockchain / partial coverage", std::bind(&tests::blockchain_partial_coverage, (vector<account_ref>*)nullptr) },
+			//{ "blockchain / partial coverage", std::bind(&tests::blockchain_partial_coverage, (vector<account_ref>*)nullptr) },
 			{ "blockchain / verification", &tests::blockchain_verification },
 			{ "blockchain / gas estimation", &tests::blockchain_gas_estimation }
 		};

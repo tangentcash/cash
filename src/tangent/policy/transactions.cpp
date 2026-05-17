@@ -3061,15 +3061,16 @@ namespace tangent
 			if (!prev_attestation)
 				return expectation::met;
 
-			auto next_attestation = executor->apply_validator_attestation_reward(base_asset, attester, -bridge->fee_rate);
+			auto reward_unspent = bridge->fee_rate;
+			auto reward_spent = reward_unspent * protocol::now().policy.attestation.fee_rate;
+			reward_unspent -= reward_spent;
+
+			auto next_attestation = executor->apply_validator_attestation_reward(base_asset, attester, -reward_spent);
 			if (!next_attestation)
 				return next_attestation.error();
 
-			auto compensation = std::max(decimal::zero(), prev_attestation->reward - next_attestation->reward);
-			if (!compensation.is_positive())
-				return expectation::met;
-
-			token_transfer = executor->apply_transfer(base_asset, origin->receipt.from, compensation, decimal::zero());
+			reward_spent = std::max(decimal::zero(), prev_attestation->reward - next_attestation->reward);
+			token_transfer = executor->apply_transfer(base_asset, origin->receipt.from, reward_unspent + reward_spent, decimal::zero());
 			if (!token_transfer)
 				return token_transfer.error();
 
