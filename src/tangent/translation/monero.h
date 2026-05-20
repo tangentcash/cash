@@ -1,7 +1,6 @@
 #ifndef TAN_TRANSLATION_MONERO_H
 #define TAN_TRANSLATION_MONERO_H
 #include "../kernel/superchain.h"
-#include <array>
 
 struct sc_chainparams_;
 
@@ -13,6 +12,20 @@ namespace tangent
 		{
 			class monero : public utxo_translation_unit
 			{
+			public:
+				enum TX_EXTRA_TAG
+				{
+					TX_EXTRA_TAG_PADDING = 0x00,
+					TX_EXTRA_TAG_PUBKEY = 0x01,
+					TX_EXTRA_NONCE = 0x02,
+					TX_EXTRA_NONCE_PAYMENT_ID = 0x00,
+					TX_EXTRA_NONCE_ENCRYPTED_PAYMENT_ID = 0x01,
+					TX_EXTRA_MERGE_MINING_TAG = 0x03,
+					TX_EXTRA_TAG_ADDITIONAL_PUBKEYS = 0x04,
+					TX_EXTRA_MYSTERIOUS_MINERGATE_TAG = 0xDE,
+					TX_EXTRA_PADDING_MAX_COUNT = 0xFF,
+				};
+
 			public:
 				class nd_call
 				{
@@ -54,57 +67,6 @@ namespace tangent
 					string hash;
 				};
 
-				struct transaction_data
-				{
-					struct bulletproof_plus
-					{
-						uint8_t a[32], a1[32], b[32];
-						uint8_t r1[32], s1[32], d1[32];
-						vector<std::array<uint8_t, 32>> l, r;
-					};
-
-					struct txin_to_key
-					{
-						struct clsag_proof
-						{
-							vector<std::array<uint8_t, 32>> s;
-							uint8_t c1[32];
-							uint8_t d[32];
-						} clsag;
-						struct
-						{
-							uint8_t blinding_factor[32];
-							uint8_t mask[32];
-						} pseudo_out;
-						vector<uint64_t> key_offsets;
-						uint8_t key_image[32];
-						size_t key_offset_out;
-					};
-
-					struct tx_out
-					{
-						struct tx_out_to_key
-						{
-							uint8_t key[32];
-						} target;
-						struct
-						{
-							uint8_t amount[32];
-						} ecdh_info;
-						struct
-						{
-							uint8_t blinding_factor[32];
-							uint8_t mask[32];
-						} out_pk;
-					};
-
-					vector<txin_to_key> vin;
-					vector<tx_out> vout;
-					vector<uint8_t> extra;
-					bulletproof_plus bpp;
-					uint64_t fee;
-				};
-
 			protected:
 				chainparams netdata;
 
@@ -143,7 +105,7 @@ namespace tangent
 				virtual bool pedersen_commit(uint8_t mask[32], uint8_t amount[32], uint8_t commitment[32]);
 				virtual void derive_known_private_view_key(const uint8_t public_spend_key[32], uint8_t private_view_key[32]);
 				virtual void derive_known_public_view_key(const uint8_t public_spend_key[32], uint8_t public_view_key[32]);
-				virtual void derive_amount_256(uint64_t amount_in, uint8_t amount_out[32]);
+				virtual void encode_amount_256(uint64_t amount_in, uint8_t amount_out[32]);
 				virtual pseudo_transaction_body decode_pseudo_transaction_info(const format::tree& transaction_data);
 				virtual vector<pseudo_transaction_input> decode_pseudo_transaction_inputs(const format::tree& transaction_data);
 				virtual vector<pseudo_transaction_output> decode_pseudo_transaction_outputs(const format::tree& transaction_data);

@@ -2168,7 +2168,7 @@ int main(int argc, char* argv[])
 
 		vector<account_ref> users;
 		tests::blockchain_partial_coverage(&users);
-		const size_t block_count = 1024;
+		const size_t block_count = 2048;
 		const decimal starting_account_balance = decimal(500).truncate(12);
 		auto transactions_mutex = std::mutex();
 		auto transactions_queue = single_queue<vector<uptr<ledger::transaction_message>>>();
@@ -2178,10 +2178,11 @@ int main(int argc, char* argv[])
 			auto cumulative_query_count = (uint64_t)ledger::storage_util::get_thread_invocations(); term->capture_time();
 			auto block = tester::new_block_from_list(nullptr, users, std::move(transactions), tester::block_type::normal);
 			auto time = term->get_captured_time();
+			auto hash = algorithm::encoding::encode_0xhex256(block.as_hash());
 			cumulative_transaction_count += block.transaction_count;
 			cumulative_transition_count += block.transition_count;
-			term->fwrite_line("%05" PRIu64 ": %s = (d: %s / %.2f ms, t: %" PRIu64 " / %.2f hz, s: %" PRIu64 " / %.2f hz, q: %" PRIu64 " / %.2f hz)",
-				block.number, algorithm::encoding::encode_0xhex256(block.as_hash()).c_str(),
+			term->fwrite_line("%05" PRIu64 ": %.8s...%.8s = (d: %s / %.2f ms, t: %" PRIu64 " / %.2f hz, s: %" PRIu64 " / %.2f hz, q: %" PRIu64 " / %.2f hz)",
+				block.number, hash.c_str(), hash.c_str() + (hash.size() - 8),
 				algorithm::wesolowski::kdifficulty(block.difficulty).to_string().c_str(), time,
 				cumulative_transaction_count, 1000.0 * (double)block.transaction_count / time,
 				cumulative_transition_count, 1000.0 * (double)block.transition_count / time,
@@ -2256,7 +2257,7 @@ int main(int argc, char* argv[])
 
 					auto* transaction = memory::init<transactions::transfer>();
 					transaction->set_asset("BTC");
-					transaction->set_gas(decimal::zero(), 21000);
+					transaction->set_gas(decimal::zero(), 15000);
 					transaction->set_to(receiver.public_key_hash, decimal(outgoing_account_balance).truncate(12) * decimal(balance));
 					VI_PANIC(transaction->sign(user1.secret_key, user1_nonce++), "authentication failed");
 					item = transaction;
@@ -2321,7 +2322,7 @@ int main(int argc, char* argv[])
 
 					auto* transaction = memory::init<transactions::transfer>();
 					transaction->set_asset("BTC");
-					transaction->set_gas(decimal::zero(), 21000);
+					transaction->set_gas(decimal::zero(), 15000);
 					transaction->set_to(receiver.wallet.public_key_hash, decimal(outgoing_account_balance).truncate(12) * decimal(balance));
 					VI_PANIC(transaction->sign(sender.wallet.secret_key, sender.nonce++), "authentication failed");
 					item = transaction;
@@ -2334,7 +2335,7 @@ int main(int argc, char* argv[])
 		}
 		else if (entropy == 3)
 		{
-			const size_t transaction_count = 1896;
+			const size_t transaction_count = 2660;
 			const size_t sender_count = transaction_count;
 			const decimal outgoing_account_balance = starting_account_balance / decimal(block_count * (transaction_count + 64));
 			const decimal incoming_quantity = starting_account_balance * sender_count * 2;
@@ -2382,7 +2383,7 @@ int main(int argc, char* argv[])
 
 					auto* transaction = memory::init<transactions::transfer>();
 					transaction->set_asset("BTC");
-					transaction->set_gas(decimal::zero(), 21000);
+					transaction->set_gas(decimal::zero(), 15000);
 					transaction->set_to(receiver, decimal(outgoing_account_balance).truncate(12) * decimal(balance));
 					VI_PANIC(transaction->sign(sender.wallet.secret_key, sender.nonce++), "authentication failed");
 					item = transaction;

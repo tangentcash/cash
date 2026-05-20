@@ -9,6 +9,7 @@ extern "C"
 #include "../internal/secp256k1.h"
 #include "../internal/ed25519.h"
 #include "../internal/sha2.h"
+#include "../internal/monero.h"
 }
 
 namespace tangent
@@ -631,6 +632,339 @@ namespace tangent
 			return steps_left() >= next->steps_left();
 		}
 
+		bool ed25519_clsag_compositor::clsag_message::store_payload(format::wo_stream* stream) const
+		{
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			stream->write_integer((uint16_t)vin.size());
+			for (auto& utxo : vin)
+			{
+				stream->write_string(std::string_view((char*)utxo.clsag.c1, sizeof(utxo.clsag.c1)));
+				stream->write_string(std::string_view((char*)utxo.clsag.d, sizeof(utxo.clsag.d)));
+				stream->write_integer((uint8_t)utxo.clsag.s.size());
+				for (auto& s : utxo.clsag.s)
+					stream->write_string(std::string_view((char*)s.data(), s.size()));
+				stream->write_string(std::string_view((char*)utxo.pseudo_out.blinding_factor, sizeof(utxo.pseudo_out.blinding_factor)));
+				stream->write_string(std::string_view((char*)utxo.pseudo_out.mask, sizeof(utxo.pseudo_out.mask)));
+				stream->write_integer((uint8_t)utxo.key_offsets.size());
+				for (auto& key_offset : utxo.key_offsets)
+					stream->write_integer(key_offset);
+				stream->write_string(std::string_view((char*)utxo.key_image, sizeof(utxo.key_image)));
+				stream->write_integer(utxo.key_offset_out);
+			}
+			stream->write_integer((uint16_t)vout.size());
+			for (auto& utxo : vout)
+			{
+				stream->write_string(std::string_view((char*)utxo.target.key, sizeof(utxo.target.key)));
+				stream->write_string(std::string_view((char*)utxo.ecdh_info.amount, sizeof(utxo.ecdh_info.amount)));
+				stream->write_string(std::string_view((char*)utxo.out_pk.blinding_factor, sizeof(utxo.out_pk.blinding_factor)));
+				stream->write_string(std::string_view((char*)utxo.out_pk.mask, sizeof(utxo.out_pk.mask)));
+			}
+			stream->write_string(std::string_view((char*)extra.data(), extra.size()));
+			stream->write_string(std::string_view((char*)bpp.a, sizeof(bpp.a)));
+			stream->write_string(std::string_view((char*)bpp.a1, sizeof(bpp.a1)));
+			stream->write_string(std::string_view((char*)bpp.b, sizeof(bpp.b)));
+			stream->write_string(std::string_view((char*)bpp.r1, sizeof(bpp.r1)));
+			stream->write_string(std::string_view((char*)bpp.s1, sizeof(bpp.s1)));
+			stream->write_string(std::string_view((char*)bpp.d1, sizeof(bpp.d1)));
+			stream->write_integer((uint8_t)bpp.l.size());
+			for (auto& l : bpp.l)
+				stream->write_string(std::string_view((char*)l.data(), l.size()));
+			stream->write_integer((uint8_t)bpp.r.size());
+			for (auto& r : bpp.r)
+				stream->write_string(std::string_view((char*)r.data(), r.size()));
+			stream->write_integer(fee);
+			return true;
+		}
+		bool ed25519_clsag_compositor::clsag_message::load_payload(format::ro_stream& stream)
+		{
+			string intermediate;
+			auto read_string256 = [&](format::viewable type, uint8_t data[32]) -> bool
+			{
+				if (!stream.read_string(stream.read_type(), &intermediate) || intermediate.size() != 32)
+					return false;
+
+				memcpy(data, intermediate.data(), intermediate.size());
+				return true;
+			};
+
+			uint8_t vin_size;
+			if (!stream.read_integer(stream.read_type(), &vin_size))
+				return false;
+
+			vin.clear();
+			for (uint8_t i = 0; i < vin_size; i++)
+			{
+				clsag_message::txin_to_key utxo;
+				if (!read_string256(stream.read_type(), utxo.clsag.c1))
+					return false;
+
+				if (!read_string256(stream.read_type(), utxo.clsag.d))
+					return false;
+
+				uint8_t s_size;
+				if (!stream.read_integer(stream.read_type(), &s_size))
+					return false;
+
+				for (uint8_t j = 0; j < s_size; j++)
+				{
+					std::array<uint8_t, 32> s;
+					if (!read_string256(stream.read_type(), s.data()))
+						return false;
+
+					utxo.clsag.s.push_back(s);
+				}
+
+				if (!read_string256(stream.read_type(), utxo.pseudo_out.blinding_factor))
+					return false;
+
+				if (!read_string256(stream.read_type(), utxo.pseudo_out.mask))
+					return false;
+
+				uint8_t key_offsets_size;
+				if (!stream.read_integer(stream.read_type(), &key_offsets_size))
+					return false;
+
+				for (uint8_t j = 0; j < key_offsets_size; j++)
+				{
+					uint64_t key_offset;
+					if (!stream.read_integer(stream.read_type(), &key_offset))
+						return false;
+
+					utxo.key_offsets.push_back(key_offset);
+				}
+
+				if (!read_string256(stream.read_type(), utxo.key_image))
+					return false;
+
+				if (!stream.read_integer(stream.read_type(), &utxo.key_offset_out))
+					return false;
+
+				vin.push_back(std::move(utxo));
+			}
+
+			uint8_t vout_size;
+			if (!stream.read_integer(stream.read_type(), &vout_size))
+				return false;
+
+			vout.clear();
+			for (uint8_t i = 0; i < vout_size; i++)
+			{
+				clsag_message::tx_out utxo;
+				if (!read_string256(stream.read_type(), utxo.target.key))
+					return false;
+
+				if (!read_string256(stream.read_type(), utxo.ecdh_info.amount))
+					return false;
+
+				if (!read_string256(stream.read_type(), utxo.out_pk.blinding_factor))
+					return false;
+
+				if (!read_string256(stream.read_type(), utxo.out_pk.mask))
+					return false;
+
+				vout.push_back(std::move(utxo));
+			}
+
+			if (!stream.read_string(stream.read_type(), &intermediate))
+				return false;
+
+			extra.clear();
+			extra.insert(extra.end(), (uint8_t*)intermediate.data(), (uint8_t*)intermediate.data() + intermediate.size());
+			if (!read_string256(stream.read_type(), bpp.a))
+				return false;
+
+			if (!read_string256(stream.read_type(), bpp.a1))
+				return false;
+
+			if (!read_string256(stream.read_type(), bpp.b))
+				return false;
+
+			if (!read_string256(stream.read_type(), bpp.r1))
+				return false;
+
+			if (!read_string256(stream.read_type(), bpp.s1))
+				return false;
+
+			if (!read_string256(stream.read_type(), bpp.d1))
+				return false;
+
+			uint8_t bpp_l_size;
+			if (!stream.read_integer(stream.read_type(), &bpp_l_size))
+				return false;
+
+			bpp.l.clear();
+			for (uint8_t i = 0; i < bpp_l_size; i++)
+			{
+				std::array<uint8_t, 32> l;
+				if (!read_string256(stream.read_type(), l.data()))
+					return false;
+
+				bpp.l.push_back(l);
+			}
+
+			uint8_t bpp_r_size;
+			if (!stream.read_integer(stream.read_type(), &bpp_r_size))
+				return false;
+
+			bpp.r.clear();
+			for (uint8_t i = 0; i < bpp_r_size; i++)
+			{
+				std::array<uint8_t, 32> r;
+				if (!read_string256(stream.read_type(), r.data()))
+					return false;
+
+				bpp.r.push_back(r);
+			}
+
+			if (!stream.read_integer(stream.read_type(), &fee))
+				return false;
+
+			return true;
+		}
+		void ed25519_clsag_compositor::clsag_message::write_varint(uint64_t i, vector<uint8_t>& buffer) const
+		{
+			while (i >= 0x80)
+			{
+				buffer.push_back(static_cast<uint8_t>((i & 0x7f) | 0x80));
+				i >>= 7;
+			}
+			buffer.push_back(static_cast<uint8_t>(i));
+		}
+		void ed25519_clsag_compositor::clsag_message::write_prefix(vector<uint8_t>& buffer) const
+		{
+			write_varint(0x2, buffer); // version: v2
+			write_varint(0x0, buffer); // unlock_time: instant (zero)		
+			write_varint(vin.size(), buffer); // vin.size
+			for (const auto& in : vin) // vin
+			{
+				buffer.push_back(0x3); // vin[i].tag: txin_to_key
+				write_varint(0, buffer); // vin[i].amount: legacy (zero)
+				write_varint(in.key_offsets.size(), buffer); // vin[i].key_offsets.size
+				for (uint64_t offset : in.key_offsets)
+					write_varint(offset, buffer); // vin[i].key_offsets[j]: index
+				buffer.insert(buffer.end(), in.key_image, in.key_image + 32); // vin[i].key_image: 32 bytes
+			}
+			write_varint(vout.size(), buffer); // vout.size
+			for (const auto& out : vout) // vout
+			{
+				write_varint(0, buffer); // vout[i].amount: legacy (zero)
+				buffer.push_back(0x2); // vout[i].target.tag: txout_to_key
+				buffer.insert(buffer.end(), out.target.key, out.target.key + 32); // vout[i].target.key: 32 bytes
+			}
+			write_varint(extra.size(), buffer); // extra field size
+			buffer.insert(buffer.end(), extra.begin(), extra.end()); // extra field data
+		}
+		void ed25519_clsag_compositor::clsag_message::write_rct_sig_base(vector<uint8_t>& buffer) const
+		{
+			buffer.push_back(0x6); // rct_signatures.type: RCTTypeBulletproofPlus 
+			write_varint(fee, buffer); // rct_signatures.txn_fee: fee to be paid
+			for (auto& proof : vout) // rct_signatures.ecdh_info (based on vout.size)
+				buffer.insert(buffer.end(), proof.ecdh_info.amount, proof.ecdh_info.amount + 8); // rct_signatures.ecdh_info[i].amount: 8 bytes	
+			for (auto& proof : vout) // rct_signatures.out_pk (based on vout.size)
+				buffer.insert(buffer.end(), proof.out_pk.mask, proof.out_pk.mask + 32); // rct_signatures.out_pk[i].mask: 32 bytes
+		}
+		void ed25519_clsag_compositor::clsag_message::write_bpp(vector<uint8_t>& buffer) const
+		{
+			buffer.insert(buffer.end(), bpp.a, bpp.a + 32); // rct_signatures.p.bulletproofs_plus[0].a: 32 bytes
+			buffer.insert(buffer.end(), bpp.a1, bpp.a1 + 32); // rct_signatures.p.bulletproofs_plus[0].a1: 32 bytes
+			buffer.insert(buffer.end(), bpp.b, bpp.b + 32); // rct_signatures.p.bulletproofs_plus[0].b: 32 bytes
+			buffer.insert(buffer.end(), bpp.r1, bpp.r1 + 32); // rct_signatures.p.bulletproofs_plus[0].r1: 32 bytes
+			buffer.insert(buffer.end(), bpp.s1, bpp.s1 + 32); // rct_signatures.p.bulletproofs_plus[0].s1: 32 bytes
+			buffer.insert(buffer.end(), bpp.d1, bpp.d1 + 32); // rct_signatures.p.bulletproofs_plus[0].d1: 32 bytes
+			write_varint(bpp.l.size(), buffer); // rct_signatures.p.bulletproofs_plus[0].l.size
+			for (const auto& l : bpp.l)
+				buffer.insert(buffer.end(), l.data(), l.data() + 32); // rct_signatures.p.bulletproofs_plus[0].l[j]: 32 bytes
+			write_varint(bpp.r.size(), buffer); // rct_signatures.p.bulletproofs_plus[0].r.size
+			for (const auto& r : bpp.r)
+				buffer.insert(buffer.end(), r.data(), r.data() + 32); // rct_signatures.p.bulletproofs_plus[0].r[j]: 32 bytes
+		}
+		void ed25519_clsag_compositor::clsag_message::as_rct_hash(uint8_t rct_hash[32]) const
+		{
+			vector<uint8_t> prefix; uint8_t prefix_hash[32];
+			write_prefix(prefix);
+			xmr_fast_hash(prefix_hash, prefix.data(), prefix.size());
+
+			vector<uint8_t> rct_base; uint8_t rct_base_hash[32];
+			write_rct_sig_base(rct_base);
+			xmr_fast_hash(rct_base_hash, rct_base.data(), rct_base.size());
+
+			vector<uint8_t> bpp; uint8_t bpp_hash[32];
+			write_bpp(bpp);
+			xmr_fast_hash(bpp_hash, bpp.data(), bpp.size());
+
+			uint8_t prefix_rct_base_bpp_hash[96];
+			memcpy(prefix_rct_base_bpp_hash + 00, prefix_hash, 32);
+			memcpy(prefix_rct_base_bpp_hash + 32, rct_base_hash, 32);
+			memcpy(prefix_rct_base_bpp_hash + 64, bpp_hash, 32);
+			xmr_fast_hash(rct_hash, prefix_rct_base_bpp_hash, sizeof(prefix_rct_base_bpp_hash));
+		}
+		format::tree ed25519_clsag_compositor::clsag_message::as_tree() const
+		{
+			format::tree data;
+			auto* vin_data = data.set("vin", format::tree::list());
+			for (auto& utxo : vin)
+			{
+				auto* utxo_data = vin_data->push(format::tree::map());
+				auto* clsag_data = utxo_data->set("clsag", format::tree::map());
+				clsag_data->set("c1", format::variable(format::util::encode_0xhex(std::string_view((char*)utxo.clsag.c1, sizeof(utxo.clsag.c1)))));
+				clsag_data->set("d", format::variable(format::util::encode_0xhex(std::string_view((char*)utxo.clsag.d, sizeof(utxo.clsag.d)))));
+				auto* clsag_s_data = clsag_data->set("s", format::tree::list());
+				for (auto& s : utxo.clsag.s)
+					clsag_s_data->push(format::variable(format::util::encode_0xhex(std::string_view((char*)s.data(), s.size()))));
+				auto* pseudo_out_data = utxo_data->set("pseudo_out", format::tree::map());
+				pseudo_out_data->set("blinding_factor", format::variable(format::util::encode_0xhex(std::string_view((char*)utxo.pseudo_out.blinding_factor, sizeof(utxo.pseudo_out.blinding_factor)))));
+				pseudo_out_data->set("mask", format::variable(format::util::encode_0xhex(std::string_view((char*)utxo.pseudo_out.mask, sizeof(utxo.pseudo_out.mask)))));
+				auto* key_offsets_data = utxo_data->set("key_offsets", format::tree::list());
+				for (auto& key_offset : utxo.key_offsets)
+					key_offsets_data->push(format::variable(key_offset));
+				pseudo_out_data->set("key_image", format::variable(format::util::encode_0xhex(std::string_view((char*)utxo.key_image, sizeof(utxo.key_image)))));
+				pseudo_out_data->set("key_offset_out", format::variable(utxo.key_offset_out));
+			}
+			auto* vout_data = data.set("vout", format::tree::list());
+			for (auto& utxo : vout)
+			{
+				auto* utxo_data = vout_data->push(format::tree::map());
+				utxo_data->set("target", format::tree::map())->set("key", format::variable(format::util::encode_0xhex(std::string_view((char*)utxo.target.key, sizeof(utxo.target.key)))));
+				utxo_data->set("ecdh_info", format::tree::map())->set("amount", format::variable(format::util::encode_0xhex(std::string_view((char*)utxo.ecdh_info.amount, sizeof(utxo.ecdh_info.amount)))));
+				auto* out_pk_data = utxo_data->set("out_pk", format::tree::map());
+				out_pk_data->set("blinding_factor", format::variable(format::util::encode_0xhex(std::string_view((char*)utxo.out_pk.blinding_factor, sizeof(utxo.out_pk.blinding_factor)))));
+				out_pk_data->set("mask", format::variable(format::util::encode_0xhex(std::string_view((char*)utxo.out_pk.mask, sizeof(utxo.out_pk.mask)))));
+			}
+			data.set("extra", format::variable(format::util::encode_0xhex(std::string_view((char*)extra.data(), extra.size()))));
+			auto* bpp_data = data.set("bpp", format::tree::map());
+			bpp_data->set("a", format::variable(format::util::encode_0xhex(std::string_view((char*)bpp.a, sizeof(bpp.a)))));
+			bpp_data->set("a1", format::variable(format::util::encode_0xhex(std::string_view((char*)bpp.a1, sizeof(bpp.a1)))));
+			bpp_data->set("b", format::variable(format::util::encode_0xhex(std::string_view((char*)bpp.b, sizeof(bpp.b)))));
+			bpp_data->set("r1", format::variable(format::util::encode_0xhex(std::string_view((char*)bpp.r1, sizeof(bpp.r1)))));
+			bpp_data->set("s1", format::variable(format::util::encode_0xhex(std::string_view((char*)bpp.s1, sizeof(bpp.s1)))));
+			bpp_data->set("d1", format::variable(format::util::encode_0xhex(std::string_view((char*)bpp.d1, sizeof(bpp.d1)))));
+			auto* bpp_l_data = bpp_data->set("l", format::tree::list());
+			for (auto& l : bpp.l)
+				bpp_l_data->push(format::variable(format::util::encode_0xhex(std::string_view((char*)l.data(), l.size()))));
+			auto* bpp_r_data = bpp_data->set("r", format::tree::list());
+			for (auto& r : bpp.r)
+				bpp_r_data->push(format::variable(format::util::encode_0xhex(std::string_view((char*)r.data(), r.size()))));
+			data.set("fee", format::variable(fee));
+			return data;
+		}
+		uint32_t ed25519_clsag_compositor::clsag_message::as_type() const
+		{
+			return as_instance_type();
+		}
+		std::string_view ed25519_clsag_compositor::clsag_message::as_typename() const
+		{
+			return as_instance_typename();
+		}
+		uint32_t ed25519_clsag_compositor::clsag_message::as_instance_type()
+		{
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
+		}
+		std::string_view ed25519_clsag_compositor::clsag_message::as_instance_typename()
+		{
+			return "clsag_message";
+		}
+
 		expects_lr<void> ed25519_clsag_compositor::setup_public_key(const uint8_t* new_message, size_t new_message_size, uint16_t new_participants)
 		{
 			algorithm::composition::cpubkey_t temp_public_key;
@@ -649,8 +983,18 @@ namespace tangent
 			if (public_key.size() != sizeof(ed25519_point_t))
 				return layer_exception("invalid public key size");
 
-			message.resize(new_message_size);
-			memcpy(message.data(), new_message, new_message_size);
+			if (new_message_size != sizeof(ed25519_point_t))
+			{
+				format::ro_stream stream = format::ro_stream(std::string_view((char*)new_message, new_message_size));
+				if (!message.load(stream))
+					return layer_exception("invalid input message");
+			}
+			else
+			{
+				message = clsag_message();
+				message.extra.insert(message.extra.end(), new_message, new_message + new_message_size);
+			}
+
 			group_public_key = public_key;
 			participants = new_participants;
 			z_steps = 0;
@@ -673,6 +1017,20 @@ namespace tangent
 
 				--z_steps;
 			}
+
+			/* BEGIN MPC PSEUDO PROTOCOL BLOCK */
+			for (auto& vin : message.vin)
+			{
+				// TODO: vin.key_image = crypto.generate_key_image(utxo.priv_key, utxo.pub_key);
+			}
+
+			uint8_t rct_hash[32];
+			message.as_rct_hash(rct_hash);
+			for (auto& vin : message.vin)
+			{
+				// TODO: vin.clsag = crypto.generate_clsag(rct_hash, vin.key_offsets, utxo.priv_key, vin.pseudo_out.blinding_factor, vin.key_offset_out);
+			}
+			/* END MPC PSEUDO PROTOCOL BLOCK */
 
 			/* Not implemented yet */
 			return expectation::met;

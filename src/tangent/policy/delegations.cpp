@@ -1480,8 +1480,8 @@ namespace tangent
 						delegates->erase(participant);
 					}
 
-					input = message->next_input_for_aggregation();
-					auto subfinalization = compositor->derive_signature(&input->signature);
+					auto* deserialized_input = message->next_input_for_aggregation();
+					auto subfinalization = compositor->derive_signature(&deserialized_input->signature);
 					if (!subfinalization)
 						coreturn cancel(algorithm::pubkeyhash_t(), remote_exception(std::move(subfinalization.error().message())));
 

@@ -1,6 +1,7 @@
 #ifndef TAN_POLICY_COMPOSITIONS_H
 #define TAN_POLICY_COMPOSITIONS_H
-#include "../kernel/algorithm.h"
+#include "../kernel/transaction.h"
+#include <array>
 
 namespace tangent
 {
@@ -44,8 +45,72 @@ namespace tangent
 
 		struct ed25519_clsag_compositor final : algorithm::composition::compositor
 		{
+			struct clsag_message : ledger::uniform_serializer
+			{
+				struct bulletproof_plus
+				{
+					uint8_t a[32], a1[32], b[32];
+					uint8_t r1[32], s1[32], d1[32];
+					vector<std::array<uint8_t, 32>> l, r;
+				};
+
+				struct txin_to_key
+				{
+					struct clsag_proof
+					{
+						vector<std::array<uint8_t, 32>> s;
+						uint8_t c1[32];
+						uint8_t d[32];
+					} clsag;
+					struct
+					{
+						uint8_t blinding_factor[32];
+						uint8_t mask[32];
+					} pseudo_out;
+					vector<uint64_t> key_offsets;
+					uint8_t key_image[32];
+					uint64_t key_offset_out;
+				};
+
+				struct tx_out
+				{
+					struct tx_out_to_key
+					{
+						uint8_t key[32];
+					} target;
+					struct
+					{
+						uint8_t amount[32];
+					} ecdh_info;
+					struct
+					{
+						uint8_t blinding_factor[32];
+						uint8_t mask[32];
+					} out_pk;
+				};
+
+				vector<txin_to_key> vin;
+				vector<tx_out> vout;
+				vector<uint8_t> extra;
+				bulletproof_plus bpp;
+				uint64_t fee;
+
+				bool store_payload(format::wo_stream* stream) const override;
+				bool load_payload(format::ro_stream& stream) override;
+				void write_varint(uint64_t i, vector<uint8_t>& buffer) const;
+				void write_prefix(vector<uint8_t>& buffer) const;
+				void write_rct_sig_base(vector<uint8_t>& buffer) const;
+				void write_bpp(vector<uint8_t>& buffer) const;
+				void as_rct_hash(uint8_t rct_hash[32]) const;
+				format::tree as_tree() const override;
+				uint32_t as_type() const override;
+				std::string_view as_typename() const override;
+				static uint32_t as_instance_type();
+				static std::string_view as_instance_typename();
+			};
+
 			ed25519_point_t group_public_key;
-			vector<uint8_t> message;
+			clsag_message message;
 			uint16_t participants = 0;
 			uint16_t z_steps = 0;
 
