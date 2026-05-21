@@ -169,7 +169,9 @@ namespace xmr_bpp
         for (size_t i = 0; i < P.size(); ++i)
         {
             point_t term;
-            crypto_scalarmult_ed25519(term.b32, s[i].b32, P[i].b32);
+            if (crypto_scalarmult_ed25519(term.b32, s[i].b32, P[i].b32) == -1)
+                throw std::runtime_error("Failed to multiply point by scalar");
+
             crypto_core_ed25519_add(out.b32, out.b32, term.b32);
         }
     }
@@ -344,9 +346,13 @@ namespace xmr_bpp
             // Generate Pedersen commitment for this amount
             // C = (gamma * G) + (amount * H)
             point_t commitment_G, commitment_H;
-            crypto_scalarmult_ed25519(commitment_G.b32, blinding_factors[i].b32, point_generator_G().b32);
+            if (crypto_scalarmult_ed25519(commitment_G.b32, blinding_factors[i].b32, point_generator_G().b32) == -1)
+                throw std::invalid_argument("failed to generate commitment G");
+
             scalar_t amount_scalar = scalar_uint64(amounts[i]);
-            crypto_scalarmult_ed25519(commitment_H.b32, amount_scalar.b32, point_generator_H().b32);
+            if (crypto_scalarmult_ed25519(commitment_H.b32, amount_scalar.b32, point_generator_H().b32) == -1)
+                throw std::invalid_argument("failed to generate commitment H");
+
             crypto_core_ed25519_add(commitment_G.b32, commitment_G.b32, commitment_H.b32);
             V.push_back(commitment_G);
 
@@ -384,7 +390,9 @@ namespace xmr_bpp
         point_t A_inner_L, A_inner_R, A_alpha_G, A_combined;
         point_vec_inner_product(A_inner_L, _Gi, aL);
         point_vec_inner_product(A_inner_R, _Hi, aR);
-        crypto_scalarmult_ed25519(A_alpha_G.b32, alpha.b32, point_generator_G().b32);
+        if (crypto_scalarmult_ed25519(A_alpha_G.b32, alpha.b32, point_generator_G().b32) == -1)
+            goto try_setup;
+
         crypto_core_ed25519_add(A_combined.b32, A_inner_L.b32, A_inner_R.b32);
         crypto_core_ed25519_add(A_combined.b32, A_combined.b32, A_alpha_G.b32);
 
@@ -392,9 +400,10 @@ namespace xmr_bpp
         scalar_t inv_eight = scalar_uint64(8);
         crypto_core_ed25519_scalar_invert(inv_eight.b32, inv_eight.b32);
         point_t _A;
-        crypto_scalarmult_ed25519(_A.b32, inv_eight.b32, A_combined.b32);
-        tr.update(_A);
+        if (crypto_scalarmult_ed25519(_A.b32, inv_eight.b32, A_combined.b32) == -1)
+            goto try_setup;
 
+        tr.update(_A);
         // Get challenge y
         scalar_t _y = tr.challenge();
         if (_y.empty())
@@ -468,271 +477,277 @@ namespace xmr_bpp
             return result;
         };
 
-        try
+        // Recursive inner product rounds
+        std::vector<point_t> Gi = _Gi;
+        std::vector<point_t> Hi = _Hi;
+        std::vector<scalar_t> a = aL1;
+        std::vector<scalar_t> b = aR1;
+        scalar_t _alpha = alpha1;
+        scalar_t y = _y;
+        auto n = static_cast<size_t>(Gi.size());
+        proof_t p;
+        while (n > 1)
         {
-            // Recursive inner product rounds
-            std::vector<point_t> Gi = _Gi;
-            std::vector<point_t> Hi = _Hi;
-            std::vector<scalar_t> a = aL1;
-            std::vector<scalar_t> b = aR1;
-            scalar_t alpha = alpha1;
-            scalar_t y = _y;
-            auto n = static_cast<size_t>(Gi.size());
-            proof_t p;
-            while (n > 1)
+            n /= 2;
+
+            // Split vectors in half
+            std::vector<scalar_t> a1(a.begin(), a.begin() + n);
+            std::vector<scalar_t> a2(a.begin() + n, a.end());
+            std::vector<scalar_t> b1(b.begin(), b.begin() + n);
+            std::vector<scalar_t> b2(b.begin() + n, b.end());
+            std::vector<point_t> G1(Gi.begin(), Gi.begin() + n);
+            std::vector<point_t> G2(Gi.begin() + n, Gi.end());
+            std::vector<point_t> H1(Hi.begin(), Hi.begin() + n);
+            std::vector<point_t> H2(Hi.begin() + n, Hi.end());
+
+            // Generate random d values
+            scalar_t dL = scalar_random();
+            scalar_t dR = scalar_random();
+            if (dL.empty() || dR.empty())
+                goto try_setup;
+
+            // Compute cL = weighted_inner_product(a1, b2, y)
+            // Compute cR = weighted_inner_product(a2 * y^n, b1, y)
+            scalar_t cL = weighted_inner_product(a1, b2, y);
+            scalar_t y_pow_n = scalar_pow(y, n);
+            std::vector<scalar_t> a2_scaled;
+            for (auto& s : a2)
             {
-                n /= 2;
-
-                // Split vectors in half
-                std::vector<scalar_t> a1(a.begin(), a.begin() + n);
-                std::vector<scalar_t> a2(a.begin() + n, a.end());
-                std::vector<scalar_t> b1(b.begin(), b.begin() + n);
-                std::vector<scalar_t> b2(b.begin() + n, b.end());
-                std::vector<point_t> G1(Gi.begin(), Gi.begin() + n);
-                std::vector<point_t> G2(Gi.begin() + n, Gi.end());
-                std::vector<point_t> H1(Hi.begin(), Hi.begin() + n);
-                std::vector<point_t> H2(Hi.begin() + n, Hi.end());
-
-                // Generate random d values
-                scalar_t dL = scalar_random();
-                scalar_t dR = scalar_random();
-                if (dL.empty() || dR.empty())
-                    throw std::runtime_error("d values cannot be zero");
-
-                // Compute cL = weighted_inner_product(a1, b2, y)
-                // Compute cR = weighted_inner_product(a2 * y^n, b1, y)
-                scalar_t cL = weighted_inner_product(a1, b2, y);
-                scalar_t y_pow_n = scalar_pow(y, n);
-                std::vector<scalar_t> a2_scaled;
-                for (auto& s : a2)
-                {
-                    scalar_t scaled;
-                    crypto_core_ed25519_scalar_mul(scaled.b32, s.b32, y_pow_n.b32);
-                    a2_scaled.push_back(scaled);
-                }
-
-                scalar_t cR = weighted_inner_product(a2_scaled, b1, y);
-                // Compute y^n and y^(-n)
-                scalar_t y_pow_n_full = scalar_pow(y, n), y_inv;
-                crypto_core_ed25519_scalar_invert(y_inv.b32, y.b32);
-                scalar_t y_inv_pow_n = scalar_pow(y_inv, n);
-
-                // Compute L point:
-                // L = INV_EIGHT * ((a1 * y^(-n)) . G2 + b2 . H1 + cL*H + dL*G)
-                point_t L_term1, L_term2, L_term3, L_combined;
-                // (a1 * y^(-n)) . G2
-                std::vector<scalar_t> a1_scaled;
-                for (auto& s : a1)
-                {
-                    scalar_t scaled;
-                    crypto_core_ed25519_scalar_mul(scaled.b32, s.b32, y_inv_pow_n.b32);
-                    a1_scaled.push_back(scaled);
-                }
-
-                point_vec_inner_product(L_term1, G2, a1_scaled);
-                // b2 . H1
-                point_vec_inner_product(L_term2, H1, b2);
-
-                // cL * H + dL * G
-                point_t cL_H, dL_G;
-                crypto_scalarmult_ed25519(cL_H.b32, cL.b32, point_generator_H().b32);
-                crypto_scalarmult_ed25519(dL_G.b32, dL.b32, point_generator_G().b32);
-                crypto_core_ed25519_add(L_term3.b32, cL_H.b32, dL_G.b32);
-
-                // Combine L terms
-                crypto_core_ed25519_add(L_combined.b32, L_term1.b32, L_term2.b32);
-                crypto_core_ed25519_add(L_combined.b32, L_combined.b32, L_term3.b32);
-
-                // Scale by 1/8
-                scalar_t inv_eight = scalar_uint64(8);
-                crypto_core_ed25519_scalar_invert(inv_eight.b32, inv_eight.b32);
-
-                point_t L_point;
-                crypto_scalarmult_ed25519(L_point.b32, inv_eight.b32, L_combined.b32);
-
-                // Compute R point:
-                // R = INV_EIGHT * ((a2 * y^n) . G1 + b1 . H2 + cR*H + dR*G)
-                point_t R_term1, R_term2, R_term3, R_combined;
-                // (a2 * y^n) . G1
-                point_vec_inner_product(R_term1, G1, a2_scaled);
-                // b1 . H2
-                point_vec_inner_product(R_term2, H2, b1);
-
-                // cR * H + dR * G
-                point_t cR_H, dR_G;
-                crypto_scalarmult_ed25519(cR_H.b32, cR.b32, point_generator_H().b32);
-                crypto_scalarmult_ed25519(dR_G.b32, dR.b32, point_generator_G().b32);
-                crypto_core_ed25519_add(R_term3.b32, cR_H.b32, dR_G.b32);
-
-                // Combine R terms
-                crypto_core_ed25519_add(R_combined.b32, R_term1.b32, R_term2.b32);
-                crypto_core_ed25519_add(R_combined.b32, R_combined.b32, R_term3.b32);
-
-                // Scale by 1/8
-                point_t R_point;
-                crypto_scalarmult_ed25519(R_point.b32, inv_eight.b32, R_combined.b32);
-                p.L.push_back(L_point);
-                p.R.push_back(R_point);
-                tr.update(L_point);
-                tr.update(R_point);
-
-                const scalar_t x = tr.challenge();
-                if (x.empty())
-                    throw std::runtime_error("x cannot be zero");
-
-                // Update Gi = G1.dbl_mult(x^(-1), G2, x * y^(-n))
-                // This is: Gi_new = x^(-1)*G1 + x*y^(-n)*G2
-                scalar_t x_inv;
-                crypto_core_ed25519_scalar_invert(x_inv.b32, x.b32);
-
-                std::vector<point_t> new_Gi;
-                for (size_t i = 0; i < n; ++i)
-                {
-                    // Gi = G1*x^(-1) + G2*x*y^(-n)
-                    scalar_t g1_coeff = x_inv;
-                    scalar_t g2_coeff;
-                    crypto_core_ed25519_scalar_mul(g2_coeff.b32, x.b32, y_inv_pow_n.b32);
-
-                    point_t g1_scaled;
-                    crypto_scalarmult_ed25519(g1_scaled.b32, g1_coeff.b32, G1[i].b32);
-                    point_t g2_scaled;
-                    crypto_scalarmult_ed25519(g2_scaled.b32, g2_coeff.b32, G2[i].b32);
-
-                    point_t new_G;
-                    crypto_core_ed25519_add(new_G.b32, g1_scaled.b32, g2_scaled.b32);
-                    new_Gi.push_back(new_G);
-                }
-                Gi = std::move(new_Gi);
-
-                // Update Hi = H1.dbl_mult(x, H2, x^(-1))
-                // This is: Hi_new = x*H1 + x^(-1)*H2
-                std::vector<point_t> new_Hi;
-                for (size_t i = 0; i < n; ++i)
-                {
-                    // Hi = H1*x + H2*x^(-1)
-                    scalar_t h1_coeff = x;
-                    scalar_t h2_coeff;
-                    crypto_core_ed25519_scalar_invert(h2_coeff.b32, x.b32);
-
-                    point_t h1_scaled;
-                    crypto_scalarmult_ed25519(h1_scaled.b32, h1_coeff.b32, H1[i].b32);
-                    point_t h2_scaled;
-                    crypto_scalarmult_ed25519(h2_scaled.b32, h2_coeff.b32, H2[i].b32);
-
-                    point_t new_H;
-                    crypto_core_ed25519_add(new_H.b32, h1_scaled.b32, h2_scaled.b32);
-                    new_Hi.push_back(new_H);
-                }
-                Hi = std::move(new_Hi);
-
-                // Update a = (a1 * x) + (a2 * y^n * x^(-1))
-                // Update b = (b1 * x^(-1)) + (b2 * x)
-                // Update alpha = dL * x^2 + alpha + dR * x^(-2)
-
-                scalar_t x_sq, x_inv_sq;
-                crypto_core_ed25519_scalar_mul(x_sq.b32, x.b32, x.b32);
-                crypto_core_ed25519_scalar_invert(x_inv_sq.b32, x_sq.b32);
-
-                for (size_t i = 0; i < n; ++i)
-                {
-                    // a[i] = a1[i] * x + a2[i] * y^n * x^(-1)
-                    scalar_t a1_term;
-                    crypto_core_ed25519_scalar_mul(a1_term.b32, a1[i].b32, x.b32);
-                    scalar_t a2_term;
-                    crypto_core_ed25519_scalar_mul(a2_term.b32, a2[i].b32, y_pow_n_full.b32);
-                    crypto_core_ed25519_scalar_mul(a2_term.b32, a2_term.b32, x_inv.b32);
-                    crypto_core_ed25519_scalar_add(a[i].b32, a1_term.b32, a2_term.b32);
-
-                    // b[i] = b1[i] * x^(-1) + b2[i] * x
-                    scalar_t b1_term;
-                    crypto_core_ed25519_scalar_mul(b1_term.b32, b1[i].b32, x_inv.b32);
-                    scalar_t b2_term;
-                    crypto_core_ed25519_scalar_mul(b2_term.b32, b2[i].b32, x.b32);
-                    crypto_core_ed25519_scalar_add(b[i].b32, b1_term.b32, b2_term.b32);
-                }
-
-                // alpha = dL * x^2 + alpha + dR * x^(-2)
-                scalar_t dL_x_sq, dR_x_inv_sq;
-                crypto_core_ed25519_scalar_mul(dL_x_sq.b32, dL.b32, x_sq.b32);
-                crypto_core_ed25519_scalar_mul(dR_x_inv_sq.b32, dR.b32, x_inv_sq.b32);
-                crypto_core_ed25519_scalar_add(dL_x_sq.b32, dL_x_sq.b32, alpha.b32);
-                crypto_core_ed25519_scalar_add(dL_x_sq.b32, dL_x_sq.b32, dR_x_inv_sq.b32);
-                alpha = dL_x_sq;
+                scalar_t scaled;
+                crypto_core_ed25519_scalar_mul(scaled.b32, s.b32, y_pow_n.b32);
+                a2_scaled.push_back(scaled);
             }
 
-            // Final round
-        try_prove:
-            scalar_t r = scalar_random();
-            scalar_t s = scalar_random();
-            scalar_t d = scalar_random();
-            scalar_t eta = scalar_random();
-            if (r.empty() || s.empty() || d.empty() || eta.empty())
-                goto try_prove;
+            scalar_t cR = weighted_inner_product(a2_scaled, b1, y);
+            // Compute y^n and y^(-n)
+            scalar_t y_pow_n_full = scalar_pow(y, n), y_inv;
+            crypto_core_ed25519_scalar_invert(y_inv.b32, y.b32);
+            scalar_t y_inv_pow_n = scalar_pow(y_inv, n);
 
-            // Compute rybsya = r * y * b[0] + s * y * a[0]
-            scalar_t ry, sy, rybsya;
-            crypto_core_ed25519_scalar_mul(ry.b32, r.b32, y.b32);
-            crypto_core_ed25519_scalar_mul(ry.b32, ry.b32, b[0].b32);
-            crypto_core_ed25519_scalar_mul(sy.b32, s.b32, y.b32);
-            crypto_core_ed25519_scalar_mul(sy.b32, sy.b32, a[0].b32);
-            crypto_core_ed25519_scalar_add(rybsya.b32, ry.b32, sy.b32);
+            // Compute L point:
+            // L = INV_EIGHT * ((a1 * y^(-n)) . G2 + b2 . H1 + cL*H + dL*G)
+            point_t L_term1, L_term2, L_term3, L_combined;
+            // (a1 * y^(-n)) . G2
+            std::vector<scalar_t> a1_scaled;
+            for (auto& s : a1)
+            {
+                scalar_t scaled;
+                crypto_core_ed25519_scalar_mul(scaled.b32, s.b32, y_inv_pow_n.b32);
+                a1_scaled.push_back(scaled);
+            }
 
-            // A = INV_EIGHT * (r*G1[0] + s*H1[0] + rybsya*H + d*G)
-            point_t A_rG, A_sH, A_rybsyaH, A_dG, A_combined;
-            crypto_scalarmult_ed25519(A_rG.b32, r.b32, Gi[0].b32);
-            crypto_scalarmult_ed25519(A_sH.b32, s.b32, Hi[0].b32);
-            crypto_scalarmult_ed25519(A_rybsyaH.b32, rybsya.b32, point_generator_H().b32);
-            crypto_scalarmult_ed25519(A_dG.b32, d.b32, point_generator_G().b32);
-            crypto_core_ed25519_add(A_combined.b32, A_rG.b32, A_sH.b32);
-            crypto_core_ed25519_add(A_combined.b32, A_combined.b32, A_rybsyaH.b32);
-            crypto_core_ed25519_add(A_combined.b32, A_combined.b32, A_dG.b32);
+            point_vec_inner_product(L_term1, G2, a1_scaled);
+            // b2 . H1
+            point_vec_inner_product(L_term2, H1, b2);
 
+            // cL * H + dL * G
+            point_t cL_H, dL_G;
+            if (crypto_scalarmult_ed25519(cL_H.b32, cL.b32, point_generator_H().b32) == -1)
+                goto try_setup;
+            if (crypto_scalarmult_ed25519(dL_G.b32, dL.b32, point_generator_G().b32) == -1)
+                goto try_setup;
+            crypto_core_ed25519_add(L_term3.b32, cL_H.b32, dL_G.b32);
+
+            // Combine L terms
+            crypto_core_ed25519_add(L_combined.b32, L_term1.b32, L_term2.b32);
+            crypto_core_ed25519_add(L_combined.b32, L_combined.b32, L_term3.b32);
+
+            // Scale by 1/8
             scalar_t inv_eight = scalar_uint64(8);
             crypto_core_ed25519_scalar_invert(inv_eight.b32, inv_eight.b32);
-            crypto_scalarmult_ed25519(p.A.b32, inv_eight.b32, A_combined.b32);
 
-            // B = INV_EIGHT * ((r * y * s) * H + eta * G)
-            scalar_t ry_s;
-            crypto_core_ed25519_scalar_mul(ry_s.b32, r.b32, y.b32);
-            crypto_core_ed25519_scalar_mul(ry_s.b32, ry_s.b32, s.b32);
+            point_t L_point;
+            if (crypto_scalarmult_ed25519(L_point.b32, inv_eight.b32, L_combined.b32) == -1)
+                goto try_setup;
 
-            point_t B_rybsH, B_etaG, B_combined;
-            crypto_scalarmult_ed25519(B_rybsH.b32, ry_s.b32, point_generator_H().b32);
-            crypto_scalarmult_ed25519(B_etaG.b32, eta.b32, point_generator_G().b32);
-            crypto_core_ed25519_add(B_combined.b32, B_rybsH.b32, B_etaG.b32);
-            crypto_scalarmult_ed25519(p.B.b32, inv_eight.b32, B_combined.b32);
+            // Compute R point:
+            // R = INV_EIGHT * ((a2 * y^n) . G1 + b1 . H2 + cR*H + dR*G)
+            point_t R_term1, R_term2, R_term3, R_combined;
+            // (a2 * y^n) . G1
+            point_vec_inner_product(R_term1, G1, a2_scaled);
+            // b1 . H2
+            point_vec_inner_product(R_term2, H2, b1);
 
-            tr.update(p.A);
-            tr.update(p.B);
+            // cR * H + dR * G
+            point_t cR_H, dR_G;
+            if (crypto_scalarmult_ed25519(cR_H.b32, cR.b32, point_generator_H().b32) == -1)
+                goto try_setup;
+            if (crypto_scalarmult_ed25519(dR_G.b32, dR.b32, point_generator_G().b32) == -1)
+                goto try_setup;
+            crypto_core_ed25519_add(R_term3.b32, cR_H.b32, dR_G.b32);
+
+            // Combine R terms
+            crypto_core_ed25519_add(R_combined.b32, R_term1.b32, R_term2.b32);
+            crypto_core_ed25519_add(R_combined.b32, R_combined.b32, R_term3.b32);
+
+            // Scale by 1/8
+            point_t R_point;
+            if (crypto_scalarmult_ed25519(R_point.b32, inv_eight.b32, R_combined.b32) == -1)
+                goto try_setup;
+            p.L.push_back(L_point);
+            p.R.push_back(R_point);
+            tr.update(L_point);
+            tr.update(R_point);
 
             const scalar_t x = tr.challenge();
             if (x.empty())
-                goto try_prove;
+                goto try_setup;
 
-            // r1 = r + a[0] * x
-            scalar_t r1_term;
-            crypto_core_ed25519_scalar_mul(r1_term.b32, a[0].b32, x.b32);
-            crypto_core_ed25519_scalar_add(p.r1.b32, r.b32, r1_term.b32);
+            // Update Gi = G1.dbl_mult(x^(-1), G2, x * y^(-n))
+            // This is: Gi_new = x^(-1)*G1 + x*y^(-n)*G2
+            scalar_t x_inv;
+            crypto_core_ed25519_scalar_invert(x_inv.b32, x.b32);
 
-            // s1 = s + b[0] * x
-            scalar_t s1_term;
-            crypto_core_ed25519_scalar_mul(s1_term.b32, b[0].b32, x.b32);
-            crypto_core_ed25519_scalar_add(p.s1.b32, s.b32, s1_term.b32);
+            std::vector<point_t> new_Gi;
+            for (size_t i = 0; i < n; ++i)
+            {
+                // Gi = G1*x^(-1) + G2*x*y^(-n)
+                scalar_t g1_coeff = x_inv;
+                scalar_t g2_coeff;
+                crypto_core_ed25519_scalar_mul(g2_coeff.b32, x.b32, y_inv_pow_n.b32);
 
-            // d1 = eta + d * x + alpha * x^2
-            scalar_t x_sq;
+                point_t g1_scaled, g2_scaled;
+                if (crypto_scalarmult_ed25519(g1_scaled.b32, g1_coeff.b32, G1[i].b32) == -1)
+                    goto try_setup;
+                if (crypto_scalarmult_ed25519(g2_scaled.b32, g2_coeff.b32, G2[i].b32) == -1)
+                    goto try_setup;
+
+                point_t new_G;
+                crypto_core_ed25519_add(new_G.b32, g1_scaled.b32, g2_scaled.b32);
+                new_Gi.push_back(new_G);
+            }
+            Gi = std::move(new_Gi);
+
+            // Update Hi = H1.dbl_mult(x, H2, x^(-1))
+            // This is: Hi_new = x*H1 + x^(-1)*H2
+            std::vector<point_t> new_Hi;
+            for (size_t i = 0; i < n; ++i)
+            {
+                // Hi = H1*x + H2*x^(-1)
+                scalar_t h1_coeff = x;
+                scalar_t h2_coeff;
+                crypto_core_ed25519_scalar_invert(h2_coeff.b32, x.b32);
+
+                point_t h1_scaled, h2_scaled;
+                if (crypto_scalarmult_ed25519(h1_scaled.b32, h1_coeff.b32, H1[i].b32) == -1)
+                    goto try_setup;
+                if (crypto_scalarmult_ed25519(h2_scaled.b32, h2_coeff.b32, H2[i].b32) == -1)
+                    goto try_setup;
+
+                point_t new_H;
+                crypto_core_ed25519_add(new_H.b32, h1_scaled.b32, h2_scaled.b32);
+                new_Hi.push_back(new_H);
+            }
+            Hi = std::move(new_Hi);
+
+            // Update a = (a1 * x) + (a2 * y^n * x^(-1))
+            // Update b = (b1 * x^(-1)) + (b2 * x)
+            // Update alpha = dL * x^2 + alpha + dR * x^(-2)
+
+            scalar_t x_sq, x_inv_sq;
             crypto_core_ed25519_scalar_mul(x_sq.b32, x.b32, x.b32);
+            crypto_core_ed25519_scalar_invert(x_inv_sq.b32, x_sq.b32);
 
-            scalar_t d_x, alpha_x_sq;
-            crypto_core_ed25519_scalar_mul(d_x.b32, d.b32, x.b32);
-            crypto_core_ed25519_scalar_mul(alpha_x_sq.b32, alpha.b32, x_sq.b32);
-            crypto_core_ed25519_scalar_add(p.d1.b32, eta.b32, d_x.b32);
-            crypto_core_ed25519_scalar_add(p.d1.b32, p.d1.b32, alpha_x_sq.b32);
-            return std::make_pair(std::move(p), std::move(V));
+            for (size_t i = 0; i < n; ++i)
+            {
+                // a[i] = a1[i] * x + a2[i] * y^n * x^(-1)
+                scalar_t a1_term;
+                crypto_core_ed25519_scalar_mul(a1_term.b32, a1[i].b32, x.b32);
+                scalar_t a2_term;
+                crypto_core_ed25519_scalar_mul(a2_term.b32, a2[i].b32, y_pow_n_full.b32);
+                crypto_core_ed25519_scalar_mul(a2_term.b32, a2_term.b32, x_inv.b32);
+                crypto_core_ed25519_scalar_add(a[i].b32, a1_term.b32, a2_term.b32);
+
+                // b[i] = b1[i] * x^(-1) + b2[i] * x
+                scalar_t b1_term;
+                crypto_core_ed25519_scalar_mul(b1_term.b32, b1[i].b32, x_inv.b32);
+                scalar_t b2_term;
+                crypto_core_ed25519_scalar_mul(b2_term.b32, b2[i].b32, x.b32);
+                crypto_core_ed25519_scalar_add(b[i].b32, b1_term.b32, b2_term.b32);
+            }
+
+            // alpha = dL * x^2 + alpha + dR * x^(-2)
+            scalar_t dL_x_sq, dR_x_inv_sq;
+            crypto_core_ed25519_scalar_mul(dL_x_sq.b32, dL.b32, x_sq.b32);
+            crypto_core_ed25519_scalar_mul(dR_x_inv_sq.b32, dR.b32, x_inv_sq.b32);
+            crypto_core_ed25519_scalar_add(dL_x_sq.b32, dL_x_sq.b32, _alpha.b32);
+            crypto_core_ed25519_scalar_add(dL_x_sq.b32, dL_x_sq.b32, dR_x_inv_sq.b32);
+            _alpha = dL_x_sq;
         }
-        catch (const std::exception&)
-        {
-            goto try_setup;
-        }
+
+        // Final round
+    try_prove:
+        scalar_t r = scalar_random();
+        scalar_t s = scalar_random();
+        scalar_t _d = scalar_random();
+        scalar_t eta = scalar_random();
+        if (r.empty() || s.empty() || _d.empty() || eta.empty())
+            goto try_prove;
+
+        // Compute rybsya = r * y * b[0] + s * y * a[0]
+        scalar_t ry, sy, rybsya;
+        crypto_core_ed25519_scalar_mul(ry.b32, r.b32, y.b32);
+        crypto_core_ed25519_scalar_mul(ry.b32, ry.b32, b[0].b32);
+        crypto_core_ed25519_scalar_mul(sy.b32, s.b32, y.b32);
+        crypto_core_ed25519_scalar_mul(sy.b32, sy.b32, a[0].b32);
+        crypto_core_ed25519_scalar_add(rybsya.b32, ry.b32, sy.b32);
+
+        // A = INV_EIGHT * (r*G1[0] + s*H1[0] + rybsya*H + d*G)
+        point_t A_rG, A_sH, A_rybsyaH, A_dG, _A_combined;
+        if (crypto_scalarmult_ed25519(A_rG.b32, r.b32, Gi[0].b32) == -1)
+            goto try_prove;
+        if (crypto_scalarmult_ed25519(A_sH.b32, s.b32, Hi[0].b32) == -1)
+            goto try_prove;
+        if (crypto_scalarmult_ed25519(A_rybsyaH.b32, rybsya.b32, point_generator_H().b32) == -1)
+            goto try_prove;
+        if (crypto_scalarmult_ed25519(A_dG.b32, _d.b32, point_generator_G().b32) == -1)
+            goto try_prove;
+        crypto_core_ed25519_add(_A_combined.b32, A_rG.b32, A_sH.b32);
+        crypto_core_ed25519_add(_A_combined.b32, _A_combined.b32, A_rybsyaH.b32);
+        crypto_core_ed25519_add(_A_combined.b32, _A_combined.b32, A_dG.b32);
+        if (crypto_scalarmult_ed25519(p.A.b32, inv_eight.b32, _A_combined.b32) == -1)
+            goto try_prove;
+
+        // B = INV_EIGHT * ((r * y * s) * H + eta * G)
+        scalar_t ry_s;
+        crypto_core_ed25519_scalar_mul(ry_s.b32, r.b32, y.b32);
+        crypto_core_ed25519_scalar_mul(ry_s.b32, ry_s.b32, s.b32);
+
+        point_t B_rybsH, B_etaG, B_combined;
+        if (crypto_scalarmult_ed25519(B_rybsH.b32, ry_s.b32, point_generator_H().b32) == -1)
+            goto try_prove;
+        if (crypto_scalarmult_ed25519(B_etaG.b32, eta.b32, point_generator_G().b32) == -1)
+            goto try_prove;
+        crypto_core_ed25519_add(B_combined.b32, B_rybsH.b32, B_etaG.b32);
+        if (crypto_scalarmult_ed25519(p.B.b32, inv_eight.b32, B_combined.b32) == -1)
+            goto try_prove;
+
+        tr.update(p.A);
+        tr.update(p.B);
+
+        const scalar_t x = tr.challenge();
+        if (x.empty())
+            goto try_prove;
+
+        // r1 = r + a[0] * x
+        scalar_t r1_term;
+        crypto_core_ed25519_scalar_mul(r1_term.b32, a[0].b32, x.b32);
+        crypto_core_ed25519_scalar_add(p.r1.b32, r.b32, r1_term.b32);
+
+        // s1 = s + b[0] * x
+        scalar_t s1_term;
+        crypto_core_ed25519_scalar_mul(s1_term.b32, b[0].b32, x.b32);
+        crypto_core_ed25519_scalar_add(p.s1.b32, s.b32, s1_term.b32);
+
+        // d1 = eta + d * x + alpha * x^2
+        scalar_t x_sq;
+        crypto_core_ed25519_scalar_mul(x_sq.b32, x.b32, x.b32);
+
+        scalar_t d_x, alpha_x_sq;
+        crypto_core_ed25519_scalar_mul(d_x.b32, _d.b32, x.b32);
+        crypto_core_ed25519_scalar_mul(alpha_x_sq.b32, _alpha.b32, x_sq.b32);
+        crypto_core_ed25519_scalar_add(p.d1.b32, eta.b32, d_x.b32);
+        crypto_core_ed25519_scalar_add(p.d1.b32, p.d1.b32, alpha_x_sq.b32);
+        return std::make_pair(std::move(p), std::move(V));
     }
 }
