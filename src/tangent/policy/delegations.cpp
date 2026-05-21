@@ -1384,7 +1384,7 @@ namespace tangent
 			else if (executor->get_witness_event(executor->receipt.transaction_hash))
 				return expects_promise_rt<void>(expectation::met);
 
-			auto front = executor->get_bridge_queue(withdraw->asset, withdraw->bridge_hash);
+			auto front = executor->get_bridge_queue(withdraw->asset, withdraw->bridge_hash, 1);
 			if (front && front->transaction_hash != executor->receipt.transaction_hash)
 				return expects_promise_rt<void>(remote_exception::retry_later());
 

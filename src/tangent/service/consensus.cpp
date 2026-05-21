@@ -2064,6 +2064,9 @@ namespace tangent
 
 				while (is_active() && old_tip_number > 0 && new_tip_number > 0)
 				{
+					if (protocol::now().user.consensus.logging)
+						VI_INFO("block %s fork: fetching headers (range: [%" PRIu64 "; %" PRIu64 "])", algorithm::encoding::encode_0xhex256(new_tip_fork_hash).c_str(), new_tip_number - (protocol::now().message.headers_per_query > new_tip_number ? 1 : protocol::now().message.headers_per_query), new_tip_number);
+					
 					auto result = coawait(query(uref(new_tip.state), descriptors::fetch_headers(), { format::variable(new_tip_number), format::variable(new_tip_number > old_tip_number ? 1 + new_tip_number - (old_tip_number - 1) : protocol::now().message.headers_per_query) }, protocol::now().user.tcp.timeout));
 					if (!result)
 						coreturn result.error();
@@ -2077,7 +2080,7 @@ namespace tangent
 					if (protocol::now().user.consensus.logging)
 					{
 						uint64_t blocks_count = (uint64_t)(result->args.size() - 1);
-						VI_INFO("block %s conflict: verifying headers (range: [%" PRIu64 "; %" PRIu64 "])", algorithm::encoding::encode_0xhex256(new_tip_fork_hash).c_str(), new_tip_number - (blocks_count > new_tip_number ? 1 : blocks_count), new_tip_number);
+						VI_INFO("block %s fork: verifying [%" PRIu64 "; %" PRIu64 "] headers", algorithm::encoding::encode_0xhex256(new_tip_fork_hash).c_str(), new_tip_number - (blocks_count > new_tip_number ? 1 : blocks_count), new_tip_number);
 					}
 
 					option<remote_exception> error = optional::none;
@@ -2134,12 +2137,15 @@ namespace tangent
 				}
 
 				if (new_tip_hash > 0 && protocol::now().user.consensus.logging)
-					VI_INFO("block %s conflict: collision found (height: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(new_tip_hash).c_str(), new_tip_number);
+					VI_INFO("block %s fork: collision found (height: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(new_tip_fork_hash).c_str(), new_tip_number);
 
 				uint256_t best_tip_hash = 0;
 				new_tip_number = new_tip_hash > 0 ? 0 : 1;
 				while (is_active() && (new_tip_number > 0 || new_tip_hash > 0))
 				{
+					if (protocol::now().user.consensus.logging)
+						VI_INFO("block %s fork: fetching blocks (size: %.2f kb)", algorithm::encoding::encode_0xhex256(new_tip_fork_hash).c_str(), (double)protocol::now().message.blocks_size_per_query / 1000.0);
+
 					auto result = coawait(query(uref(new_tip.state), descriptors::fetch_blocks(), { format::variable(new_tip_hash), format::variable(new_tip_number) }, protocol::now().user.tcp.timeout));
 					if (!result)
 						coreturn result.error();
@@ -2150,7 +2156,7 @@ namespace tangent
 					size_t batch_size = 64, block_count = max_block_count.load();
 					size_t batch_count = block_count / batch_size + (block_count % batch_size == 0 ? 0 : 1);
 					if (block_count > batch_size && protocol::now().user.consensus.logging)
-						VI_INFO("block %s conflict: verifying proofs (size: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(new_tip_fork_hash).c_str(), (uint64_t)block_count);
+						VI_INFO("block %s fork: verifying %" PRIu64 " proofs", algorithm::encoding::encode_0xhex256(new_tip_fork_hash).c_str(), (uint64_t)block_count);
 
 					for (auto& task : parallel::for_loop(batch_count, 2 * batch_size, [&](size_t batch_index)
 					{
@@ -2199,6 +2205,9 @@ namespace tangent
 					broadcast_pending_block(uref(new_tip.state), best_tip_hash, new_tip_number - 1);
 					finalize_pending_block(uref(new_tip.state));
 				}
+
+				if (protocol::now().user.consensus.logging)
+					VI_INFO("block %s fork: OK resolution complete", algorithm::encoding::encode_0xhex256(new_tip_fork_hash).c_str());
 
 				coreturn expectation::met;
 			});
@@ -3313,7 +3322,7 @@ namespace tangent
 			if (protocol::now().user.consensus.logging)
 			{
 				int64_t progress = (int64_t)(10000.0 * get_sync_progress(candidate.block.number, *from));
-				verifier.size += (uint64_t)((double)(uint64_t)candidate.block.gas_limit / ((double)ledger::gas_cost::write_byte * 1024.0) * 1000.0);
+				verifier.size += (uint64_t)((double)(uint64_t)candidate.block.gas_limit / (double)ledger::gas_cost::write_byte);
 				if (progress >= 10000 || verifier.progress < progress || mutation->is_fork)
 				{
 					double size = (double)verifier.size.load() / 1000.0;

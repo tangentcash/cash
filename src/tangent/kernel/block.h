@@ -377,7 +377,7 @@ namespace tangent
 			expects_lr<vector<states::validator_attestation_reward>> get_validator_attestation_rewards(const algorithm::pubkeyhash_t& owner, size_t offset, size_t count) const;
 			expects_lr<states::bridge_instance> get_bridge_instance(const algorithm::asset_id& asset, const uint256_t& bridge_hash) const;
 			expects_lr<vector<states::bridge_instance>> get_bridge_instances(const algorithm::asset_id& asset, size_t offset, size_t count) const;
-			expects_lr<states::bridge_queue> get_bridge_queue(const algorithm::asset_id& asset, const uint256_t& bridge_hash, int8_t side = 1) const;
+			expects_lr<states::bridge_queue> get_bridge_queue(const algorithm::asset_id& asset, const uint256_t& bridge_hash, int8_t side) const;
 			expects_lr<states::bridge_balance> get_bridge_balance(const algorithm::asset_id& asset, const uint256_t& bridge_hash) const;
 			expects_lr<vector<states::bridge_balance>> get_bridge_balances(const uint256_t& bridge_hash, size_t offset, size_t count) const;
 			expects_lr<vector<states::bridge_account>> get_bridge_accounts(const uint256_t& bridge_hash, size_t offset, size_t count) const;

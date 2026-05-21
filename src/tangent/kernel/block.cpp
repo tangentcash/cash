@@ -1941,7 +1941,7 @@ namespace tangent
 			states::bridge_queue new_state = states::bridge_queue(asset, bridge_hash, transaction_hash, block);
 			if (active)
 			{
-				new_state.index = get_bridge_queue(asset, bridge_hash).or_else(states::bridge_queue(asset, bridge_hash, 0, nullptr)).index + 1;
+				new_state.index = get_bridge_queue(asset, bridge_hash, -1).or_else(states::bridge_queue(asset, bridge_hash, 0, nullptr)).index + 1;
 				auto status = store(&new_state, true);
 				if (!status)
 					return status.error();
