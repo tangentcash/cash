@@ -9,6 +9,7 @@
 #include "../translation/tron.h"
 #include "../translation/monero.h"
 #include <sstream>
+#define SHARED_MESSAGE_HEADER_MAGIC 0xf6b48b4d
 
 namespace tangent
 {
@@ -765,6 +766,11 @@ namespace tangent
 			inputs.push_back(std::move(item));
 			return *this;
 		}
+		prepared_transaction& prepared_transaction::requires_shared_input(algorithm::composition::type new_alg, const algorithm::composition::cpubkey_t& new_public_key, coin_utxo&& input)
+		{
+			uint8_t dummy_hash = 0xFF;
+			return requires_input(new_alg, new_public_key, &dummy_hash, sizeof(dummy_hash), std::move(input));
+		}
 		prepared_transaction& prepared_transaction::requires_account_input(algorithm::composition::type new_alg, wallet_link&& signer, const algorithm::composition::cpubkey_t& new_public_key, uint8_t* new_message, size_t new_message_size, hash_map<algorithm::asset_id, decimal>&& input)
 		{
 			coin_utxo item = coin_utxo(std::move(signer), std::move(input));
@@ -778,6 +784,18 @@ namespace tangent
 		prepared_transaction& prepared_transaction::requires_account_output(const std::string_view& to_address, hash_map<algorithm::asset_id, decimal>&& output)
 		{
 			outputs.push_back(coin_utxo(wallet_link::from_address(to_address), std::move(output)));
+			return *this;
+		}
+		prepared_transaction& prepared_transaction::requires_shared_message(const uint8_t* message, size_t message_size)
+		{
+			VI_ASSERT(message != nullptr, "message should be set");
+			uint32_t header = os::hw::to_endianness<uint32_t>(os::hw::endian::big, SHARED_MESSAGE_HEADER_MAGIC);
+			string packed_message;
+			packed_message.resize(sizeof(header) + message_size);
+			memcpy(packed_message.data(), &header, sizeof(header));
+			memcpy(packed_message.data() + sizeof(header), message, message_size);
+			abi.clear();
+			requires_abi(format::variable(packed_message));
 			return *this;
 		}
 		prepared_transaction& prepared_transaction::requires_abi(format::variable&& value)
@@ -877,6 +895,32 @@ namespace tangent
 					return &item;
 			}
 			return nullptr;
+		}
+		option<vector<uint8_t>> prepared_transaction::as_shared_message() const
+		{
+			if (abi.size() != 1)
+				return optional::none;
+
+			uint8_t dummy_hash = 0xFF;
+			for (auto& item : inputs)
+			{
+				if (item.message.size() != sizeof(dummy_hash) || item.message.front() != dummy_hash)
+					return optional::none;
+			}
+
+			auto& front = abi.front();
+			uint32_t header = os::hw::to_endianness<uint32_t>(os::hw::endian::big, SHARED_MESSAGE_HEADER_MAGIC);
+			if (!front.is_string() || front.as_string().size() < sizeof(header))
+				return optional::none;
+
+			auto packed_message = front.as_string();
+			if (memcmp(packed_message.data(), &header, sizeof(header)) != 0)
+				return optional::none;
+
+			vector<uint8_t> result;
+			result.resize(packed_message.size() - sizeof(header));
+			memcpy(result.data(), packed_message.data() + sizeof(header), packed_message.size() - sizeof(header));
+			return option<vector<uint8_t>>(std::move(result));
 		}
 		prepared_transaction::status prepared_transaction::as_status() const
 		{

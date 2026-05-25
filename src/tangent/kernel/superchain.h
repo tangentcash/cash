@@ -182,14 +182,17 @@ namespace tangent
 
 			prepared_transaction() = default;
 			prepared_transaction& requires_input(algorithm::composition::type new_alg, const algorithm::composition::cpubkey_t& new_public_key, uint8_t* new_message, size_t new_message_size, coin_utxo&& input);
+			prepared_transaction& requires_shared_input(algorithm::composition::type new_alg, const algorithm::composition::cpubkey_t& new_public_key, coin_utxo&& input);
 			prepared_transaction& requires_account_input(algorithm::composition::type new_alg, wallet_link&& new_link, const algorithm::composition::cpubkey_t& new_public_key, uint8_t* new_message, size_t new_message_size, hash_map<algorithm::asset_id, decimal>&& input);
 			prepared_transaction& requires_output(coin_utxo&& output);
 			prepared_transaction& requires_account_output(const std::string_view& to_address, hash_map<algorithm::asset_id, decimal>&& output);
+			prepared_transaction& requires_shared_message(const uint8_t* message, size_t message_size);
 			prepared_transaction& requires_abi(format::variable&& value);
 			format::variable* load_abi(size_t* ptr);
 			bool store_payload(format::wo_stream* stream) const override;
 			bool load_payload(format::ro_stream& stream) override;
 			signable_coin_utxo* next_input_for_aggregation();
+			option<vector<uint8_t>> as_shared_message() const;
 			status as_status() const;
 			format::tree as_tree() const override;
 			uint32_t as_type() const override;

@@ -665,7 +665,7 @@ namespace tangent
 					if (!gas_price_value)
 						coreturn expects_rt<computed_fee>(std::move(gas_price_value.error()));
 
-					uint256_t vgas_price = hex_to_uint256(gas_price_value->value.as_blob());
+					uint256_t vgas_price = hex_to_uint256(gas_price_value->value.as_blob()) * 2;
 					uint256_t vgas_premium = 0;
 					if (!legacy.eip_155)
 					{

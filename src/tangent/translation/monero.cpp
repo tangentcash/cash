@@ -631,25 +631,24 @@ namespace tangent
 						coreturn expects_rt<prepared_transaction>(remote_exception(string("bulletproofs+ error: ") + string(error.what())));
 					}
 
+					format::wo_stream message = tx.as_message();
 					prepared_transaction result;
+					result.requires_shared_message((uint8_t*)message.data.data(), message.data.size());
 					for (auto& utxo : *possible_inputs)
 					{
 						auto signing_public_key = decode_public_key(utxo.link.public_key);
 						if (!signing_public_key)
 							coreturn expects_rt<prepared_transaction>(remote_exception("invalid input public key"));
 
-						uint8_t dummy_hash = 0xFF;
 						auto public_key = algorithm::composition::to_cstorage<algorithm::composition::cpubkey_t>(*signing_public_key);
-						result.requires_input(algorithm::composition::type::ed25519_clsag, public_key, &dummy_hash, sizeof(dummy_hash), std::move(utxo));
+						result.requires_shared_input(algorithm::composition::type::ed25519_clsag, public_key, std::move(utxo));
 					}
 
 					auto to_link = find_linked_addresses({ to.address });
 					result.requires_output(coin_utxo(to_link ? std::move(to_link->begin()->second) : wallet_link::from_address(to.address), string(), 0, decimal(to.value)));
 					if (change_value.is_positive())
 						result.requires_output(coin_utxo(wallet_link(change_link), string(), 0, decimal(change_value)));
-					result.requires_abi(format::variable(tx.as_message().data));
-					coreturn expects_rt<prepared_transaction>(remote_exception("not implemented"));
-					//coreturn expects_rt<prepared_transaction>(std::move(result));
+					coreturn expects_rt<prepared_transaction>(std::move(result));
 				});
 			}
 			expects_lr<finalized_transaction> monero::finalize_transaction(prepared_transaction&& prepared)
