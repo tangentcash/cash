@@ -2425,9 +2425,9 @@ int main(int argc, char* argv[])
 			{ "cryptography / multichain transaction", &tests::cryptography_multichain_transaction },
 			{ "blockchain / full coverage", std::bind(&tests::blockchain_full_coverage, (vector<account_ref>*)nullptr) },
 			{ "blockchain / verification", &tests::blockchain_verification },
-			//{ "blockchain / bridge coverage", std::bind(&tests::blockchain_bridge_coverage, (vector<account_ref>*)nullptr) },
+			{ "blockchain / bridge coverage", std::bind(&tests::blockchain_bridge_coverage, (vector<account_ref>*)nullptr) },
 			{ "blockchain / verification", &tests::blockchain_verification },
-			//{ "blockchain / partial coverage", std::bind(&tests::blockchain_partial_coverage, (vector<account_ref>*)nullptr) },
+			{ "blockchain / partial coverage", std::bind(&tests::blockchain_partial_coverage, (vector<account_ref>*)nullptr) },
 			{ "blockchain / verification", &tests::blockchain_verification },
 			{ "blockchain / gas estimation", &tests::blockchain_gas_estimation }
 		};
