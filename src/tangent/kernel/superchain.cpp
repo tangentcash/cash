@@ -1718,10 +1718,6 @@ namespace tangent
 					if (batching != nullptr && batching->value.is_integer())
 						instance->options.blocks_batching = batching->value.as_uint64();
 
-					auto* linker = root.child("strategy.linker");
-					if (linker != nullptr && linker->value.is_boolean())
-						instance->options.blocks_linker = linker->value.as_boolean();
-
 					auto* tip = root.child("strategy.tip");
 					if (tip != nullptr && tip->value.is_integer())
 						scan_from_block_height(asset, tip->value.as_uint64());
