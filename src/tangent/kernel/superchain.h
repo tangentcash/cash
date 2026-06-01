@@ -291,6 +291,7 @@ namespace tangent
 				uint64_t retry_after_time = 0;
 			} state;
 			uint64_t blocks_batching = 1;
+			bool blocks_linker = false;
 
 			void set_checkpoint_from_block(uint64_t block_height);
 			void set_checkpoint_to_block(uint64_t block_height);
@@ -358,6 +359,7 @@ namespace tangent
 			virtual expects_promise_rt<format::tree> execute_rpc_multi(const std::string_view& method, format::tree&& args, cache_policy cache, const std::string_view& path = std::string_view());
 			virtual expects_promise_rt<format::tree> execute_rest(const std::string_view& method, const std::string_view& path, format::tree&& args, cache_policy cache);
 			virtual expects_promise_rt<format::tree> execute_http(const std::string_view& method, const std::string_view& path, const std::string_view& type, const std::string_view& body, cache_policy cache);
+			virtual expects_promise_rt<uint64_t> get_linked_block_height(uint64_t seen_block_height);
 			virtual expects_promise_rt<uint64_t> get_latest_block_height() = 0;
 			virtual expects_promise_rt<vector<block_log>> get_block_transactions(uint64_t block_height, uint64_t block_count) = 0;
 			virtual expects_promise_rt<computed_transaction> link_transaction(uint64_t block_height, const std::string_view& block_hash, format::tree& transaction_data) = 0;

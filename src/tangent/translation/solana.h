@@ -42,6 +42,12 @@ namespace tangent
 					uint8_t decimals = 0;
 				};
 
+				struct sol_account_metadata
+				{
+					bool can_pull_accounts = true;
+					bool must_pull_accounts = true;
+				};
+
 			public:
 				class nd_call
 				{
@@ -58,11 +64,17 @@ namespace tangent
 				};
 
 			protected:
+				struct
+				{
+					hash_map<string, sol_account_metadata> accounts;
+					btree_set<uint64_t> slots;
+				} linker;
 				chainparams netdata;
 
 			public:
 				solana(const algorithm::asset_id& new_asset) noexcept;
 				virtual ~solana() override = default;
+				virtual expects_promise_rt<uint64_t> get_linked_block_height(uint64_t seen_block_height) override;
 				virtual expects_promise_rt<uint64_t> get_latest_block_height() override;
 				virtual expects_promise_rt<vector<block_log>> get_block_transactions(uint64_t block_height, uint64_t block_count) override;
 				virtual expects_promise_rt<computed_transaction> link_transaction(uint64_t block_height, const std::string_view& block_hash, format::tree& transaction_data) override;
@@ -84,10 +96,11 @@ namespace tangent
 			public:
 				virtual expects_promise_rt<string> get_token_symbol(const std::string_view& mint);
 				virtual expects_promise_rt<token_account> get_token_balance(const std::string_view& mint, const std::string_view& owner);
-				virtual expects_promise_rt<hash_set<string>> get_token_accounts(const std::string_view& programId, const std::string_view& owner);
+				virtual expects_promise_rt<hash_set<string>> get_token_accounts(const std::string_view& owner);
 				virtual expects_promise_rt<decimal> get_balance(const std::string_view& owner);
 				virtual expects_promise_rt<format::tree> get_transaction(const std::string_view& signature);
 				virtual expects_promise_rt<string> get_recent_block_hash();
+				virtual option<uint64_t> get_unseen_slot(uint64_t target_block_height);
 				virtual vector<uint8_t> tx_message_serialize(sol_transaction* tx_data);
 				virtual vector<uint8_t> tx_result_serialize(const vector<uint8_t>& message_buffer, const uint8_t* signature, size_t signature_size);
 				virtual const sc_chainparams_* get_chain();

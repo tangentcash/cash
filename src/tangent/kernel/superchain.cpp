@@ -1390,6 +1390,10 @@ namespace tangent
 				coreturn expects_rt<format::tree>(std::move(exception));
 			});
 		}
+		expects_promise_rt<uint64_t> translation_unit::get_linked_block_height(uint64_t seen_block_height)
+		{
+			return expects_promise_rt<uint64_t>(remote_exception("not supported"));
+		}
 		expects_lr<algorithm::composition::cpubkey_t> translation_unit::to_composite_public_key(const std::string_view& public_key)
 		{
 			auto result = decode_public_key(public_key);
@@ -1718,6 +1722,10 @@ namespace tangent
 					if (batching != nullptr && batching->value.is_integer())
 						instance->options.blocks_batching = batching->value.as_uint64();
 
+					auto* linker = root.child("strategy.linker");
+					if (linker != nullptr && linker->value.is_boolean())
+						instance->options.blocks_linker = linker->value.as_boolean();
+
 					auto* tip = root.child("strategy.tip");
 					if (tip != nullptr && tip->value.is_integer())
 						scan_from_block_height(asset, tip->value.as_uint64());
@@ -1977,6 +1985,26 @@ namespace tangent
 						if (tip_now.value.is_integer() && (!options->state.inital_block_height || !options->state.index_block_height))
 							options->set_checkpoint_from_block(tip_now.value.as_uint64() + 1);
 					}
+				}
+
+				uint64_t linked_block_height = 0;
+				if (options->blocks_linker)
+				{
+					auto result = coawait(implementation->get_linked_block_height(options->state.index_block_height > 0 ? options->state.index_block_height - 1 : options->state.index_block_height));
+					if (!result && result.error().is_retry())
+					{
+						if (result.error().is_retry_after())
+						{
+							options->state.retry_after_time = result.error().retry_after_timestamp();
+							coreturn expects_rt<vector<transaction_logs>>(result.error());
+						}
+
+						options->state.retry_after_time = protocol::now().time.now_cpu() + protocol::now().user.superchain.polling_frequency;
+						coreturn expects_rt<vector<transaction_logs>>(remote_exception::retry_after(options->state.retry_after_time));
+					}
+					else if (result)
+						options->set_checkpoint_from_block(*result);
+					linked_block_height = result.or_else(0);
 				}
 
 				options->state.retry_after_time = 0;

@@ -99,6 +99,82 @@ namespace tangent
 				netdata.divisibility = algorithm::arithmetic::fixed(1000000000);
 				netdata.transaction_expires = true;
 			}
+			expects_promise_rt<uint64_t> solana::get_linked_block_height(uint64_t seen_block_height)
+			{
+				auto unseen_block_height = get_unseen_slot(seen_block_height);
+				if (unseen_block_height)
+					return expects_promise_rt<uint64_t>(*unseen_block_height);
+
+				return coasync<expects_rt<uint64_t>>([this, seen_block_height]() -> expects_promise_rt<uint64_t>
+				{
+					size_t offset = 0;
+					while (true)
+					{
+						auto links = find_linked_addresses(offset, ELEMENTS_MANY);
+						if (!links)
+							break;
+
+						for (auto& link : *links)
+						{
+							if (link.second.address.empty())
+								continue;
+
+							auto& watcher = linker.accounts[link.second.address];
+							if (watcher.must_pull_accounts && watcher.can_pull_accounts)
+							{
+								auto token_accounts = coawait(get_token_accounts(link.second.address));
+								if (token_accounts)
+								{
+									for (auto& token_account : *token_accounts)
+										linker.accounts[token_account].can_pull_accounts = false;
+								}
+								watcher.must_pull_accounts = false;
+							}
+						}
+
+						offset += links->size();
+						if (links->size() != ELEMENTS_MANY)
+							break;
+					}
+
+					for (auto& [account, watcher] : linker.accounts)
+					{
+						string before_signature;
+					lookback:
+						format::tree map, options;
+						map.push(format::variable(account));
+						if (!before_signature.empty())
+							options.set("before", format::variable(before_signature));
+						map.push(std::move(options));
+
+						auto result = coawait(execute_rpc(nd_call::get_signatures_for_address(), std::move(map), cache_policy::no_cache));
+						if (result && !result->childs().empty())
+						{
+							auto& transactions = result->childs(); bool eof = false;
+							for (size_t i = 0; i < transactions.size(); i++)
+							{
+								auto& transaction = transactions[i];
+								uint64_t slot = transaction.child_var("slot").as_uint64();
+								eof = (slot <= seen_block_height);
+								if (eof)
+									break;
+
+								linker.slots.insert(slot);
+								if (i == result->childs().size() - 1)
+									before_signature = transaction.child_var("signature").as_blob();
+							}
+							if (!eof && !before_signature.empty())
+								goto lookback;
+						}
+					}
+
+					auto unseen_block_height = get_unseen_slot(seen_block_height);
+					if (unseen_block_height)
+						coreturn *unseen_block_height;
+
+					coreturn remote_exception::retry_later();
+				});
+			}
 			expects_promise_rt<uint64_t> solana::get_latest_block_height()
 			{
 				return execute_rpc(nd_call::get_slot(), format::tree::list(), cache_policy::no_cache).then<expects_rt<uint64_t>>([](expects_rt<format::tree>&& block_height) -> expects_rt<uint64_t>
@@ -156,25 +232,6 @@ namespace tangent
 			}
 			expects_promise_rt<computed_transaction> solana::link_transaction(uint64_t, const std::string_view&, format::tree& transaction_data)
 			{
-				auto* transaction = transaction_data.child("transaction");
-				if (!transaction)
-					return expects_rt<computed_transaction>(remote_exception("tx invalid"));
-
-				auto* account_keys = transaction->child("accountKeys");
-				if (!account_keys || !account_keys->fields || account_keys->childs().empty())
-					return expects_rt<computed_transaction>(remote_exception("tx must have one or more signatures and account keys"));
-
-				auto& account_keys_list = account_keys->childs();
-				if (account_keys_list.size() == 3)
-				{
-					std::string_view vote_program_id = "Vote111111111111111111111111111111111111111";
-					for (auto& account_key : account_keys_list)
-					{
-						if (account_key.child_var("pubkey").as_string() == vote_program_id)
-							return expects_rt<computed_transaction>(remote_exception("vote tx"));
-					}
-				}
-
 				bool reverted = false;
 				auto* meta = transaction_data.child("meta");
 				if (meta != nullptr)
@@ -183,8 +240,13 @@ namespace tangent
 					reverted = status != nullptr && status->has("Err");
 				}
 
+				auto* transaction = transaction_data.child("transaction");
+				if (!transaction)
+					return expects_rt<computed_transaction>(remote_exception("tx invalid"));
+
 				auto* signatures = transaction->child("signatures");
-				if (!signatures || !signatures->fields || signatures->childs().empty())
+				auto* account_keys = transaction->child("accountKeys");
+				if (!signatures || !signatures->fields || signatures->childs().empty() || !account_keys || !account_keys->fields || account_keys->childs().empty())
 					return expects_rt<computed_transaction>(remote_exception("tx must have one or more signatures and account keys"));
 
 				auto signature = signatures->child(0)->value.as_string();
@@ -192,7 +254,7 @@ namespace tangent
 					return expects_rt<computed_transaction>(remote_exception("tx must have one or more signatures and account keys"));
 
 				hash_set<string> addresses;
-				for (auto& account_key : account_keys_list)
+				for (auto& account_key : account_keys->childs())
 					addresses.insert(account_key.child_var("pubkey").as_blob());
 
 				auto* pre_token_balances = meta ? meta->child("preTokenBalances") : nullptr;
@@ -835,24 +897,43 @@ namespace tangent
 					return expects_rt<token_account>(std::move(result));
 				});
 			}
-			expects_promise_rt<hash_set<string>> solana::get_token_accounts(const std::string_view& programId, const std::string_view& owner)
+			expects_promise_rt<hash_set<string>> solana::get_token_accounts(const std::string_view& owner)
 			{
-				format::tree map;
-				map.push(format::variable(owner));
-				map.push(format::tree::map())->set("programId", format::variable(programId));
-				map.push(format::tree::map())->set("encoding", format::variable("jsonParsed"));
+				format::tree submap1;
+				submap1.push(format::variable(owner));
+				submap1.push(format::tree::map())->set("programId", format::variable("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"));
+				submap1.push(format::tree::map())->set("encoding", format::variable("jsonParsed"));
 
-				return execute_rpc(nd_call::get_token_balance(), std::move(map), cache_policy::no_cache).then<expects_rt<hash_set<string>>>([](expects_rt<format::tree>&& values) -> expects_rt<hash_set<string>>
+				format::tree submap2;
+				submap2.push(format::variable(owner));
+				submap2.push(format::tree::map())->set("programId", format::variable("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"));
+				submap2.push(format::tree::map())->set("encoding", format::variable("jsonParsed"));
+
+				format::tree map;
+				map.push(std::move(submap1));
+				map.push(std::move(submap2));
+
+				return execute_rpc_multi(nd_call::get_token_balance(), std::move(map), cache_policy::no_cache).then<expects_rt<hash_set<string>>>([](expects_rt<format::tree>&& values) -> expects_rt<hash_set<string>>
 				{
 					if (!values)
 						return expects_rt<hash_set<string>>(std::move(values.error()));
 
 					hash_set<string> results;
-					auto value = values->child("value");
-					if (value != nullptr)
+					auto token_program_accounts = values->child("0.value");
+					auto token_program_2022_accounts = values->child("1.value");
+					results.reserve((token_program_accounts ? token_program_accounts->childs().size() : 0) + (token_program_2022_accounts ? token_program_2022_accounts->childs().size() : 0));
+					if (token_program_accounts != nullptr)
 					{
-						results.reserve(value->childs().size());
-						for (auto& item : value->childs())
+						for (auto& item : token_program_accounts->childs())
+						{
+							auto pubkey = item.child_var("pubkey").as_blob();
+							if (!pubkey.empty())
+								results.insert(std::move(pubkey));
+						}
+					}
+					if (token_program_2022_accounts != nullptr)
+					{
+						for (auto& item : token_program_2022_accounts->childs())
 						{
 							auto pubkey = item.child_var("pubkey").as_blob();
 							if (!pubkey.empty())
@@ -904,6 +985,12 @@ namespace tangent
 
 					return expects_rt<string>(std::move(value));
 				});
+			}
+			option<uint64_t> solana::get_unseen_slot(uint64_t target_block_height)
+			{
+				while (!linker.slots.empty() && *linker.slots.begin() <= target_block_height)
+					linker.slots.erase(linker.slots.begin());
+				return linker.slots.empty() ? option<uint64_t>(optional::none) : option<uint64_t>(*linker.slots.begin());
 			}
 			vector<uint8_t> solana::tx_message_serialize(sol_transaction* tx_data)
 			{
@@ -999,7 +1086,7 @@ namespace tangent
 						uint8_t indices = 6, size = 1, instruction = 1;
 						uint8_t program_id_index = 7, from_index = 0, to_index = 2, owner_index = 5, mint_index = 3, system_program_id_index = 6, token_program_id_index = 4;
 						tx_append(message_buffer, (uint8_t*)&program_id_index, sizeof(program_id_index));
-						tx_append(message_buffer, (uint8_t*)&indices, sizeof(indices));			
+						tx_append(message_buffer, (uint8_t*)&indices, sizeof(indices));
 						tx_append(message_buffer, (uint8_t*)&from_index, sizeof(from_index));
 						tx_append(message_buffer, (uint8_t*)&to_index, sizeof(to_index));
 						tx_append(message_buffer, (uint8_t*)&owner_index, sizeof(owner_index));
