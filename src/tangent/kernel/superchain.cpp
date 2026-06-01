@@ -1863,7 +1863,7 @@ namespace tangent
 					coreturn expects_rt<format::tree>(remote_exception::shutdown());
 
 				http::fetch_frame setup;
-				setup.max_size = 16 * 1024 * 1024;
+				setup.max_size = 64 * 1024 * 1024;
 				setup.verify_peers = (uint32_t)protocol::now().user.tcp.tls_trusted_peers;
 				setup.timeout = protocol::now().user.tcp.timeout;
 				setup.set_header("User-Agent", random_user_agent());
@@ -1993,9 +1993,8 @@ namespace tangent
 				auto block_count = std::max<uint64_t>(1, options->blocks_batching);
 				if (!options->has_next_block_height(block_count))
 				{
-					options->state.retry_after_time = protocol::now().time.now_cpu() + protocol::now().user.superchain.polling_frequency;
 					options->set_checkpoint_from_block(options->state.target_block_height + 1);
-					coreturn expects_rt<vector<transaction_logs>>(remote_exception::retry_after(options->state.retry_after_time));
+					coreturn expects_rt<vector<transaction_logs>>(remote_exception::retry_later());
 				}
 
 				auto max_block_step = 256llu;
@@ -2035,10 +2034,10 @@ namespace tangent
 						}
 						else if (computed.error().is_retry() || computed.error().is_shutdown())
 						{
-							if (computed.error().is_retry_after())
-								options->state.retry_after_time = computed.error().retry_after_timestamp();
-							else
-								options->state.retry_after_time = protocol::now().time.now_cpu() + protocol::now().user.superchain.polling_frequency;
+							if (!computed.error().is_retry_after())
+								coreturn expects_rt<vector<transaction_logs>>(remote_exception::retry_later());
+
+							options->state.retry_after_time = computed.error().retry_after_timestamp();
 							coreturn computed.error();
 						}
 					}

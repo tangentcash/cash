@@ -2632,23 +2632,23 @@ namespace tangent
 			stringify::to_lower(task);
 			return control_sys.async_task_if_none(task, [this, task, blockchain, offchain, listener]() -> promise<void>
 			{
+				uint64_t start_time = protocol::now().time.now_cpu();
 				uint64_t frequency = protocol::now().user.superchain.polling_frequency;
 				uint64_t retry_after_timestamp = std::numeric_limits<uint64_t>::max();
 				VI_INFO("%s block pulling: resuming now", blockchain.c_str());
 			retry:
-				uint64_t start_time = protocol::now().time.now_cpu();
 				while (is_active())
 				{
 					auto result = coawait(offchain->link_transactions(listener->asset));
 					if (!result)
 					{
-						if (protocol::now().user.superchain.logging && !listener->options.state.retry_after_time)
+						if (protocol::now().user.superchain.logging && !listener->options.state.retry_after_time && !result.error().is_retry())
 							VI_WARN("%s block pulling halt: %s", blockchain.c_str(), result.error().what());
 
 						if (!is_active())
 							coreturn_void;
-						else if (result.error().is_retry())
-							retry_after_timestamp = std::min(retry_after_timestamp, result.error().is_retry_after() ? result.error().retry_after_timestamp() : (protocol::now().time.now_cpu() + frequency));
+						else if (result.error().is_retry_after())
+							retry_after_timestamp = std::min(retry_after_timestamp, result.error().retry_after_timestamp());
 						break;
 					}
 
