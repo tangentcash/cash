@@ -156,6 +156,25 @@ namespace tangent
 			}
 			expects_promise_rt<computed_transaction> solana::link_transaction(uint64_t, const std::string_view&, format::tree& transaction_data)
 			{
+				auto* transaction = transaction_data.child("transaction");
+				if (!transaction)
+					return expects_rt<computed_transaction>(remote_exception("tx invalid"));
+
+				auto* account_keys = transaction->child("accountKeys");
+				if (!account_keys || !account_keys->fields || account_keys->childs().empty())
+					return expects_rt<computed_transaction>(remote_exception("tx must have one or more signatures and account keys"));
+
+				auto& account_keys_list = account_keys->childs();
+				if (account_keys_list.size() == 3)
+				{
+					std::string_view vote_program_id = "Vote111111111111111111111111111111111111111";
+					for (auto& account_key : account_keys_list)
+					{
+						if (account_key.child_var("pubkey").as_string() == vote_program_id)
+							return expects_rt<computed_transaction>(remote_exception("vote tx"));
+					}
+				}
+
 				bool reverted = false;
 				auto* meta = transaction_data.child("meta");
 				if (meta != nullptr)
@@ -164,13 +183,8 @@ namespace tangent
 					reverted = status != nullptr && status->has("Err");
 				}
 
-				auto* transaction = transaction_data.child("transaction");
-				if (!transaction)
-					return expects_rt<computed_transaction>(remote_exception("tx invalid"));
-
 				auto* signatures = transaction->child("signatures");
-				auto* account_keys = transaction->child("accountKeys");
-				if (!signatures || !signatures->fields || signatures->childs().empty() || !account_keys || !account_keys->fields || account_keys->childs().empty())
+				if (!signatures || !signatures->fields || signatures->childs().empty())
 					return expects_rt<computed_transaction>(remote_exception("tx must have one or more signatures and account keys"));
 
 				auto signature = signatures->child(0)->value.as_string();
@@ -178,7 +192,7 @@ namespace tangent
 					return expects_rt<computed_transaction>(remote_exception("tx must have one or more signatures and account keys"));
 
 				hash_set<string> addresses;
-				for (auto& account_key : account_keys->childs())
+				for (auto& account_key : account_keys_list)
 					addresses.insert(account_key.child_var("pubkey").as_blob());
 
 				auto* pre_token_balances = meta ? meta->child("preTokenBalances") : nullptr;
