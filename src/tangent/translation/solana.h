@@ -42,16 +42,6 @@ namespace tangent
 					uint8_t decimals = 0;
 				};
 
-				struct sol_watcher
-				{
-					vector<uint64_t> unseen_block_heights;
-					string unseen_signature;
-					string seen_signature;
-					string prev_seen_signature;
-					bool can_pull_accounts = true;
-					bool must_pull_accounts = true;
-				};
-
 			public:
 				class nd_call
 				{
@@ -68,17 +58,11 @@ namespace tangent
 				};
 
 			protected:
-				struct
-				{
-					hash_map<string, sol_watcher> seen;
-					uint64_t unseen_best = std::numeric_limits<uint64_t>::max();
-				} linker;
 				chainparams netdata;
 
 			public:
 				solana(const algorithm::asset_id& new_asset) noexcept;
 				virtual ~solana() override = default;
-				virtual expects_promise_rt<uint64_t> get_linked_block_height(uint64_t seen_block_height) override;
 				virtual expects_promise_rt<uint64_t> get_latest_block_height() override;
 				virtual expects_promise_rt<vector<block_log>> get_block_transactions(uint64_t block_height, uint64_t block_count) override;
 				virtual expects_promise_rt<computed_transaction> link_transaction(uint64_t block_height, const std::string_view& block_hash, format::tree& transaction_data) override;

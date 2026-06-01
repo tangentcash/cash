@@ -1390,10 +1390,6 @@ namespace tangent
 				coreturn expects_rt<format::tree>(std::move(exception));
 			});
 		}
-		expects_promise_rt<uint64_t> translation_unit::get_linked_block_height(uint64_t seen_block_height)
-		{
-			return expects_promise_rt<uint64_t>(remote_exception("not supported"));
-		}
 		expects_lr<algorithm::composition::cpubkey_t> translation_unit::to_composite_public_key(const std::string_view& public_key)
 		{
 			auto result = decode_public_key(public_key);
@@ -1987,26 +1983,6 @@ namespace tangent
 					}
 				}
 
-				uint64_t linked_block_height = 0;
-				if (options->blocks_linker)
-				{
-					auto result = coawait(implementation->get_linked_block_height(options->state.index_block_height > 0 ? options->state.index_block_height - 1 : options->state.index_block_height));
-					if (!result && result.error().is_retry())
-					{
-						if (result.error().is_retry_after())
-						{
-							options->state.retry_after_time = result.error().retry_after_timestamp();
-							coreturn expects_rt<vector<transaction_logs>>(result.error());
-						}
-
-						options->state.retry_after_time = protocol::now().time.now_cpu() + protocol::now().user.superchain.polling_frequency;
-						coreturn expects_rt<vector<transaction_logs>>(remote_exception::retry_after(options->state.retry_after_time));
-					}
-					else if (result)
-						options->set_checkpoint_from_block(*result);
-					linked_block_height = result.or_else(0);
-				}
-
 				options->state.retry_after_time = 0;
 				if (!options->has_target_block_height())
 				{
@@ -2015,9 +1991,6 @@ namespace tangent
 						coreturn expects_rt<vector<transaction_logs>>(std::move(latest_block_height.error()));
 
 					*latest_block_height = to_delayed_block_height(*latest_block_height, true);
-					if (linked_block_height > 0)
-						*latest_block_height = std::min(*latest_block_height, linked_block_height + 1);
-
 					options->set_checkpoint_to_block(*latest_block_height);
 				}
 
