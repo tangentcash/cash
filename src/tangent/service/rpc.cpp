@@ -3318,7 +3318,7 @@ namespace tangent
 			if (!target)
 				return server_response().error(error_codes::bad_request, "node not found");
 
-			target->abort("manually closed");
+			consensus_service->disconnect_node(std::move(target), "manual shutdown");
 			return server_response().success(format::variable());
 		}
 		server_response server_node::validatorstate_get_node(http::connection*, format::variables&& args)

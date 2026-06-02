@@ -296,7 +296,7 @@ namespace tangent
 		}
 		relay::~relay()
 		{
-			invalidate();
+			close_channel("deferred shutdown");
 		}
 		expects_promise_rt<exchange> relay::push_query(const callable::descriptor& subject, format::variables&& args, uint64_t timeout_ms, bool forwarded)
 		{
@@ -445,10 +445,32 @@ namespace tangent
 			}
 			queries.clear();
 		}
-		void relay::abort(const std::string_view& message)
+		void relay::open_channel(relay_descriptor&& new_descriptor)
 		{
-			if (shutdown_message.empty())
-				shutdown_message = message;
+			descriptor = memory::init<relay_descriptor>(std::move(new_descriptor));
+			if (protocol::now().user.consensus.logging)
+				VI_INFO("node %s channel open %s (port: %s, tag: v%s, account: %s)", peer_address().c_str(), connection_type().data(), peer_service().c_str(), descriptor->first.as_version().c_str() + 2, descriptor->second.get_address().c_str());
+
+			auto* socket = as_socket();
+			if (socket != nullptr)
+			{
+				socket->set_io_timeout(0);
+				socket->set_keep_alive(true);
+				socket->set_keep_alive_params((int)protocol::now().user.tcp.keep_alive, (int)protocol::now().user.tcp.keep_alive, 5);
+			}
+		}
+		void relay::close_channel(const std::string_view& message)
+		{
+			bool graceful_shutdown = instance != nullptr && descriptor;
+			if (graceful_shutdown)
+			{
+				report_call(0, 0, true);
+				if (protocol::now().user.consensus.logging)
+				{
+					std::string_view shutdown_message = shutdown_message.empty() ? std::string_view("abnormal shutdown") : message;
+					VI_INFO("node %s channel close (%.*s)", peer_address().c_str(), (int)shutdown_message.size(), shutdown_message.data());
+				}
+			}
 
 			cancel_queries();
 			if (deferred_pull != INVALID_TASK_ID)
@@ -461,31 +483,6 @@ namespace tangent
 			aborted = true;
 			if (socket != nullptr)
 				socket->shutdown(true);
-		}
-		void relay::initialize(relay_descriptor&& new_descriptor)
-		{
-			descriptor = memory::init<relay_descriptor>(std::move(new_descriptor));
-			if (protocol::now().user.consensus.logging)
-				VI_INFO("node %s channel accept (mode: %s, port: %s, version: %s, account: %s)", peer_address().c_str(), connection_type().data(), peer_service().c_str(), descriptor->first.as_version().c_str(), descriptor->second.get_address().c_str());
-
-			auto* socket = as_socket();
-			if (socket != nullptr)
-			{
-				socket->set_io_timeout(0);
-				socket->set_keep_alive(true);
-				socket->set_keep_alive_params((int)protocol::now().user.tcp.keep_alive, (int)protocol::now().user.tcp.keep_alive, 5);
-			}
-		}
-		void relay::invalidate()
-		{
-			bool graceful_shutdown = instance != nullptr && descriptor;
-			if (graceful_shutdown)
-			{
-				report_call(0, 0, true);
-				if (protocol::now().user.consensus.logging)
-					VI_INFO("node %s channel shutdown (%s)", peer_address().c_str(), shutdown_message.empty() ? "abnormal" : shutdown_message.c_str());
-			}
-			abort(shutdown_message);
 
 			umutex<std::recursive_mutex> unique(mutex);
 			auto* inbound = type == node_type::inbound ? (inbound_node*)instance : nullptr;
@@ -493,7 +490,6 @@ namespace tangent
 			memory::release(inbound);
 			memory::release(outbound);
 			instance = nullptr;
-			descriptor.destroy();
 		}
 		bool relay::private_network() const
 		{
@@ -879,7 +875,7 @@ namespace tangent
 				current_nodes.swap(nodes);
 				unique.unlock();
 				for (auto& node : current_nodes)
-					node.second->abort("server shutdown");
+					node.second->close_channel("server shutdown");
 			}
 			unique.lock();
 			if (!nodes.empty())
@@ -1386,7 +1382,7 @@ namespace tangent
 			if (!status)
 				return remote_exception(std::move(status.error().message()));
 
-			from->initialize(std::move(peer_descriptor));
+			from->open_channel(std::move(peer_descriptor));
 			if (is_acknowledgement)
 				return format::variables();
 
@@ -1686,7 +1682,7 @@ namespace tangent
 					goto retry_unknown_node;
 
 				if (protocol::now().user.consensus.logging)
-					VI_INFO("node %s:%i handshake: try unknown node", unknown_node->get_ip_address().or_else(string("[bad_address]")).c_str(), (int)unknown_node->get_ip_port().or_else(0));
+					VI_INFO("node %s:%i channel: try unknown", unknown_node->get_ip_address().or_else(string("[bad_address]")).c_str(), (int)unknown_node->get_ip_port().or_else(0));
 
 				return expects_lr<socket_address>(std::move(*unknown_node));
 			}
@@ -1697,7 +1693,7 @@ namespace tangent
 			}
 
 			if (protocol::now().user.consensus.logging)
-				VI_INFO("node %s:%i handshake: try known node", known_node->first.address.get_ip_address().or_else(string("[bad_address]")).c_str(), (int)known_node->first.address.get_ip_port().or_else(0));
+				VI_INFO("node %s:%i channel: try known", known_node->first.address.get_ip_address().or_else(string("[bad_address]")).c_str(), (int)known_node->first.address.get_ip_port().or_else(0));
 
 			return expects_lr<socket_address>(std::move(known_node->first.address));
 		}
@@ -1788,7 +1784,7 @@ namespace tangent
 
 				auto abort = [&](remote_exception&& exception) -> remote_exception&&
 				{
-					next->abort(exception.message());
+					next->close_channel(exception.message());
 					return std::move(exception);
 				};
 				cospawn([this, next]() mutable { pull_messages(std::move(next)); });
@@ -1828,7 +1824,10 @@ namespace tangent
 					auto mempool = storages::mempoolstate();
 					mempool.apply_node_quality(address, -1, protocol::now().user.tcp.timeout);
 					if (protocol::now().user.consensus.logging)
-						VI_WARN("node %s:%i handshake: %s", address.get_ip_address().or_else("[bad_address]").c_str(), (int)address.get_ip_port().or_else(0), result.what().c_str());
+					{
+						auto error_message = result.error().is_retry() ? string("timed out") : (result.error().is_shutdown() ? "host unreachable" : result.what());
+						VI_WARN("node %s:%i channel open failed: %s", address.get_ip_address().or_else("[bad_address]").c_str(), (int)address.get_ip_port().or_else(0), error_message.c_str());
+					}
 				}
 				return result;
 			});
@@ -2065,7 +2064,7 @@ namespace tangent
 				while (is_active() && old_tip_number > 0 && new_tip_number > 0)
 				{
 					if (protocol::now().user.consensus.logging)
-						VI_INFO("block %s fork: fetching headers (range: [%" PRIu64 "; %" PRIu64 "])", algorithm::encoding::encode_0xhex256(new_tip_fork_hash).c_str(), new_tip_number - (protocol::now().message.headers_per_query > new_tip_number ? 1 : protocol::now().message.headers_per_query), new_tip_number);
+						VI_INFO("fork %s fetch: headers (range: [%" PRIu64 "; %" PRIu64 "])", algorithm::encoding::encode_0xhex256(new_tip_fork_hash).c_str(), new_tip_number - (protocol::now().message.headers_per_query > new_tip_number ? 1 : protocol::now().message.headers_per_query), new_tip_number);
 					
 					auto result = coawait(query(uref(new_tip.state), descriptors::fetch_headers(), { format::variable(new_tip_number), format::variable(new_tip_number > old_tip_number ? 1 + new_tip_number - (old_tip_number - 1) : protocol::now().message.headers_per_query) }, protocol::now().user.tcp.timeout));
 					if (!result)
@@ -2080,7 +2079,7 @@ namespace tangent
 					if (protocol::now().user.consensus.logging)
 					{
 						uint64_t blocks_count = (uint64_t)(result->args.size() - 1);
-						VI_INFO("block %s fork: verifying [%" PRIu64 "; %" PRIu64 "] headers", algorithm::encoding::encode_0xhex256(new_tip_fork_hash).c_str(), new_tip_number - (blocks_count > new_tip_number ? 1 : blocks_count), new_tip_number);
+						VI_INFO("fork %s verify: headers (range: [%" PRIu64 "; %" PRIu64 "])", algorithm::encoding::encode_0xhex256(new_tip_fork_hash).c_str(), new_tip_number - (blocks_count > new_tip_number ? 1 : blocks_count), new_tip_number);
 					}
 
 					option<remote_exception> error = optional::none;
@@ -2137,14 +2136,14 @@ namespace tangent
 				}
 
 				if (new_tip_hash > 0 && protocol::now().user.consensus.logging)
-					VI_INFO("block %s fork: collision found (height: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(new_tip_fork_hash).c_str(), new_tip_number);
+					VI_INFO("fork %s collision (height: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(new_tip_fork_hash).c_str(), new_tip_number);
 
 				uint256_t best_tip_hash = 0;
 				new_tip_number = new_tip_hash > 0 ? 0 : 1;
 				while (is_active() && (new_tip_number > 0 || new_tip_hash > 0))
 				{
 					if (protocol::now().user.consensus.logging)
-						VI_INFO("block %s fork: fetching blocks (size: %.2f kb)", algorithm::encoding::encode_0xhex256(new_tip_fork_hash).c_str(), (double)protocol::now().message.blocks_size_per_query / 1000.0);
+						VI_INFO("fork %s fetch: bodies (size: %.2f kb)", algorithm::encoding::encode_0xhex256(new_tip_fork_hash).c_str(), (double)protocol::now().message.blocks_size_per_query / 1000.0);
 
 					auto result = coawait(query(uref(new_tip.state), descriptors::fetch_blocks(), { format::variable(new_tip_hash), format::variable(new_tip_number) }, protocol::now().user.tcp.timeout));
 					if (!result)
@@ -2156,7 +2155,7 @@ namespace tangent
 					size_t batch_size = 64, block_count = max_block_count.load();
 					size_t batch_count = block_count / batch_size + (block_count % batch_size == 0 ? 0 : 1);
 					if (block_count > batch_size && protocol::now().user.consensus.logging)
-						VI_INFO("block %s fork: verifying %" PRIu64 " proofs", algorithm::encoding::encode_0xhex256(new_tip_fork_hash).c_str(), (uint64_t)block_count);
+						VI_INFO("fork %s verify: proofs (size: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(new_tip_fork_hash).c_str(), (uint64_t)block_count);
 
 					for (auto& task : parallel::for_loop(batch_count, 2 * batch_size, [&](size_t batch_index)
 					{
@@ -2207,7 +2206,7 @@ namespace tangent
 				}
 
 				if (protocol::now().user.consensus.logging)
-					VI_INFO("block %s fork: OK resolution complete", algorithm::encoding::encode_0xhex256(new_tip_fork_hash).c_str());
+					VI_INFO("fork %s solver: OK complete", algorithm::encoding::encode_0xhex256(new_tip_fork_hash).c_str());
 
 				coreturn expectation::met;
 			});
@@ -2339,7 +2338,7 @@ namespace tangent
 			VI_ASSERT(from, "state should be set");
 			auto* stream = from->as_socket();
 			if (!stream)
-				return abort_node(std::move(from), "connection lost");
+				return disconnect_node(std::move(from), "connection lost");
 
 			uint8_t buffer[CHUNK_SIZE];
 			size_t max_buffer_size = sizeof(buffer);
@@ -2350,14 +2349,14 @@ namespace tangent
 				if (!size)
 				{
 					if (size.error() != std::errc::operation_would_block)
-						return abort_node(std::move(from), "connection reset");
+						return disconnect_node(std::move(from), "connection reset");
 
 					multiplexer::get()->when_readable(stream, [this, from](socket_poll event) mutable
 					{
 						if (packet::is_done(event))
 							pull_messages(std::move(from));
 						else if (packet::is_error(event))
-							abort_node(std::move(from), "connection reset");
+							disconnect_node(std::move(from), "connection reset");
 					});
 					return;
 				}
@@ -2376,7 +2375,7 @@ namespace tangent
 					{
 					abort:
 						from->report_call(-1, message_latency);
-						abort_node(std::move(from), "invalid message header");
+						disconnect_node(std::move(from), "invalid message header");
 						return;
 					}
 					else if (from->incoming_size() < sizeof(message_header) + header.length)
@@ -2505,7 +2504,7 @@ namespace tangent
 			VI_ASSERT(from, "state and abort callback should be set");
 			auto* stream = from->as_socket();
 			if (!stream)
-				return abort_node(std::move(from), "connection lost");
+				return disconnect_node(std::move(from), "connection lost");
 			else if (!from->prepare_outgoing())
 				return;
 
@@ -2515,17 +2514,17 @@ namespace tangent
 				if (packet::is_done(event))
 					cospawn([this, from = std::move(from)]() mutable { push_messages(std::move(from)); });
 				else if (packet::is_error(event))
-					abort_node(std::move(from), "connection reset");
+					disconnect_node(std::move(from), "connection reset");
 			}, false);
 		}
-		void server_node::abort_node(uref<relay>&& from, const std::string_view& message)
+		void server_node::disconnect_node(uref<relay>&& from, const std::string_view& message)
 		{
 			VI_ASSERT(from, "state should be set");
+			announce_peer(uref(from), false);
+			umutex<std::recursive_mutex> unique(exclusive);
 			auto* inbound_node = from->as_inbound_node();
 			auto* outbound_node = from->as_outbound_node();
-			announce_peer(uref(from), false);
-			from->abort(message);
-			erase_node(std::move(from));
+			from->close_channel(message);
 			if (inbound_node != nullptr)
 			{
 				inbound_node->abort();
@@ -2533,8 +2532,9 @@ namespace tangent
 			}
 			if (outbound_node != nullptr)
 				outbound_node->release();
+			erase_node(std::move(from));
 		}
-		void server_node::abort_node_by_account(const algorithm::pubkeyhash_t& account, const std::string_view& message)
+		void server_node::disconnect_node_by_account(const algorithm::pubkeyhash_t& account, const std::string_view& message)
 		{
 			umutex<std::recursive_mutex> unique(exclusive);
 			for (auto& node : nodes)
@@ -2543,7 +2543,7 @@ namespace tangent
 				if (descriptor != nullptr && descriptor->second.public_key_hash.equals(account))
 				{
 					unique.unlock();
-					return abort_node(uref(node.second), message);
+					return disconnect_node(uref(node.second), message);
 				}
 			}
 		}
@@ -2562,13 +2562,27 @@ namespace tangent
 		void server_node::erase_node(uref<relay>&& from)
 		{
 			VI_ASSERT(from, "node should be set");
-			erase_node_by_instance(from->as_instance());
+			auto* instance = from->as_instance();
+			if (instance != nullptr)
+				return erase_node_by_instance(instance);
+
+			umutex<std::recursive_mutex> unique(exclusive);
+			for (auto it = nodes.begin(); it != nodes.end(); it++)
+			{
+				if (*it->second == *from)
+					return erase_node_by_iterator(it);
+			}
 		}
 		void server_node::erase_node_by_instance(void* instance)
 		{
 			VI_ASSERT(instance != nullptr, "instance should be set");
 			umutex<std::recursive_mutex> unique(exclusive);
 			auto it = nodes.find(instance);
+			erase_node_by_iterator(it);
+		}
+		void server_node::erase_node_by_iterator(hash_map<void*, uref<relay>>::iterator& it)
+		{
+			umutex<std::recursive_mutex> unique(exclusive);
 			if (it == nodes.end())
 				return;
 
@@ -2723,9 +2737,9 @@ namespace tangent
 					try_unknown_nodes = replacement_nodes.empty() && !may_connect_to_node() && mempool.get_connectable_unknown_nodes_count().or_else(0) > 0;
 				}
 				for (auto& [account, address] : replacement_nodes)
-					abort_node_by_account(account, "better node found");
+					disconnect_node_by_account(account, "better node found");
 				if (try_unknown_nodes)
-					abort_node_by_account(worst_account, "trying unknown node instead");
+					disconnect_node_by_account(worst_account, "trying unknown node instead");
 
 				for (auto& [account, address] : replacement_nodes)
 				{

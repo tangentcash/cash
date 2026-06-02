@@ -145,7 +145,6 @@ namespace tangent
 
 		public:
 			std::recursive_mutex mutex;
-			string shutdown_message;
 			pacemaker bandwidth;
 			uint64_t handshake_time;
 			task_id deferred_pull;
@@ -164,9 +163,8 @@ namespace tangent
 			void report_call(int8_t call_result, uint64_t call_latency, bool cooldown = false);
 			void resolve_query(exchange&& result);
 			void cancel_queries();
-			void abort(const std::string_view& message);
-			void initialize(relay_descriptor&& target);
-			void invalidate();
+			void open_channel(relay_descriptor&& target);
+			void close_channel(const std::string_view& message);
 			bool private_network() const;
 			bool partially_valid() const;
 			bool fully_valid() const;
@@ -327,6 +325,8 @@ namespace tangent
 			void clear_pending_neighbors();
 			void clear_pending_fork(relay* state);
 			void accept_pending_fork(uref<relay>&& state, const uint256_t& candidate_hash, ledger::block_header&& candidate_block);
+			void disconnect_node(uref<relay>&& state, const std::string_view& message);
+			void disconnect_node_by_account(const algorithm::pubkeyhash_t& account, const std::string_view& message);
 			expects_lr<void> accept_block(uref<relay>&& from, ledger::block_evaluation& candidate, const uint256_t& fork_tip, bool verify_pow = true);
 			bool connected_to_ip_address(const socket_address& address);
 			relay_descriptor* find_descriptor(const algorithm::pubkeyhash_t& account);
@@ -363,11 +363,10 @@ namespace tangent
 			bool accept_proposal_transaction(const ledger::block_transaction& transaction);
 			void pull_messages(uref<relay>&& state);
 			void push_messages(uref<relay>&& state);
-			void abort_node(uref<relay>&& state, const std::string_view& message);
-			void abort_node_by_account(const algorithm::pubkeyhash_t& account, const std::string_view& message);
 			void append_node(uref<relay>&& state);
 			void erase_node(uref<relay>&& state);
 			void erase_node_by_instance(void* instance);
+			void erase_node_by_iterator(hash_map<void*, uref<relay>>::iterator& it);
 			void append_pending_node(outbound_node* base);
 			void erase_pending_node(outbound_node* base);
 			void on_request_open(inbound_node* base) override;
