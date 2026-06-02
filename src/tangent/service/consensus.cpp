@@ -467,7 +467,7 @@ namespace tangent
 				report_call(0, 0, true);
 				if (protocol::now().user.consensus.logging)
 				{
-					std::string_view shutdown_message = shutdown_message.empty() ? std::string_view("abnormal shutdown") : message;
+					std::string_view shutdown_message = message.empty() ? std::string_view("abnormal shutdown") : message;
 					VI_INFO("node %s channel close (%.*s)", peer_address().c_str(), (int)shutdown_message.size(), shutdown_message.data());
 				}
 			}
