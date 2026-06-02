@@ -159,7 +159,9 @@ namespace tangent
 								if (eof)
 									break;
 
-								linker.slots.insert(slot);
+								auto& slots = linker.slots[slot];
+								watcher.must_pull_accounts = watcher.can_pull_accounts && (slots.find(account) == slots.end());
+								slots.insert(account);
 								if (i == result->childs().size() - 1)
 									before_signature = transaction.child_var("signature").as_blob();
 							}
@@ -988,9 +990,9 @@ namespace tangent
 			}
 			option<uint64_t> solana::get_unseen_slot(uint64_t target_block_height)
 			{
-				while (!linker.slots.empty() && *linker.slots.begin() <= target_block_height)
+				while (!linker.slots.empty() && linker.slots.begin()->first <= target_block_height)
 					linker.slots.erase(linker.slots.begin());
-				return linker.slots.empty() ? option<uint64_t>(optional::none) : option<uint64_t>(*linker.slots.begin());
+				return linker.slots.empty() ? option<uint64_t>(optional::none) : option<uint64_t>(linker.slots.begin()->first);
 			}
 			vector<uint8_t> solana::tx_message_serialize(sol_transaction* tx_data)
 			{

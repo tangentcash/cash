@@ -67,7 +67,7 @@ namespace tangent
 				struct
 				{
 					hash_map<string, sol_account_metadata> accounts;
-					btree_set<uint64_t> slots;
+					btree_map<uint64_t, hash_set<string>> slots;
 				} linker;
 				chainparams netdata;
 
