@@ -2146,7 +2146,7 @@ int main(int argc, char* argv[])
 			node.address = socket_address(params.user.consensus.address, params.user.consensus.port);
 			node.major_version = protocol::now().message.major_version;
 			node.minor_version = protocol::now().message.minor_version;
-			storages::mempoolstate().apply_runner_node(std::make_pair(node, wallet));
+			storages::mempoolstate().apply_node(std::make_pair(node, wallet), storages::node_peer::runner);
 			console::get()->write_line(wallet.as_tree().as_json(true));
 		}
 

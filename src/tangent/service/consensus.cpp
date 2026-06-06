@@ -896,10 +896,11 @@ namespace tangent
 			switch (category)
 			{
 				case node_category::runner:
-					return mempool.apply_runner_node(descriptor);
+					return mempool.apply_node(descriptor, storages::node_peer::runner);
 				case node_category::neighbor:
-					return mempool.apply_neighbor_node(descriptor);
-				case node_category::other:
+					return mempool.apply_node(descriptor, storages::node_peer::neighbor);
+				case node_category::inbound:
+				case node_category::outbound:
 				{
 					if (find_descriptor(wallet.public_key_hash))
 						return layer_exception("must not modify internal node");
@@ -908,7 +909,7 @@ namespace tangent
 					if (prev && find_descriptor(prev->second.public_key_hash))
 						return layer_exception("must not modify internal node");
 
-					return mempool.apply_node(descriptor);
+					return mempool.apply_node(descriptor, category == node_category::inbound ? storages::node_peer::inbound : storages::node_peer::outbound);
 				}
 				default:
 					return layer_exception("invalid node category");
@@ -1378,7 +1379,7 @@ namespace tangent
 			if (prev_descriptor)
 				peer_node.availability.reachable = peer_node.availability.reachable || prev_descriptor->first.availability.reachable;
 
-			auto status = accept_node(mempool, peer_descriptor, node_category::other);
+			auto status = accept_node(mempool, peer_descriptor, from->type_of() == node_type::inbound ? node_category::inbound : node_category::outbound);
 			if (!status)
 				return remote_exception(std::move(status.error().message()));
 
@@ -1671,7 +1672,7 @@ namespace tangent
 			size_t offset = 0;
 			auto mempool = storages::mempoolstate();
 		retry_known_node:
-			auto known_node = mempool.get_neighbor_node(offset);
+			auto known_node = mempool.get_closest_node(offset);
 			if (!known_node)
 			{
 			retry_unknown_node:
@@ -2295,7 +2296,7 @@ namespace tangent
 				format::variable(mempool.get_transactions_count().or_else(0))
 			};
 
-			auto random_nodes = mempool.get_random_nodes_with(protocol::now().message.hashes_per_query).or_else(vector<storages::node_location_pair>());
+			auto random_nodes = mempool.get_sample_nodes_with(protocol::now().message.hashes_per_query).or_else(vector<storages::node_location_pair>());
 			args.reserve(args.size() + random_nodes.size());
 			for (auto& [node_account, node_address] : random_nodes)
 			{

@@ -175,9 +175,34 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<void> mempoolstate::apply_custom_node(const node_pair& value, int8_t type)
+		expects_lr<void> mempoolstate::apply_node(const node_pair& value, node_peer type)
 		{
 			auto& [node, wallet] = value;
+			int64_t quality = 0;
+			switch (type)
+			{
+				case node_peer::runner:
+					quality = -1;
+					break;
+				case node_peer::neighbor:
+					quality = -2;
+					break;
+				case node_peer::inbound:
+				{
+					schema_list map;
+					map.push_back(var::set::binary(address_to_message(node.address)));
+
+					auto cursor = get_peer_storage().emplace_query(__func__, "SELECT quality FROM nodes WHERE address = ?", &map);
+					quality = std::max<int64_t>(cursor && !cursor->error_or_empty() ? (*cursor)["quality"].get().get_integer() : 0, 0);
+					break;
+				}
+				case node_peer::outbound:
+					quality = node.get_preference();
+					break;
+				default:
+					return layer_exception("invalid node type");
+			}
+
 			format::wo_stream node_message;
 			if (!node.store(&node_message))
 				return expects_lr<void>(layer_exception("node serialization error"));
@@ -194,10 +219,10 @@ namespace tangent
 			schema_list map;
 			map.push_back(var::set::binary(address_message));
 			map.push_back(var::set::binary(wallet.public_key_hash.view()));
-			map.push_back(var::set::boolean(type >= 0));
+			map.push_back(var::set::boolean(quality >= 0));
 			map.push_back(var::set::binary(address_message));
 			map.push_back(var::set::binary(wallet.public_key_hash.view()));
-			map.push_back(var::set::integer(type >= 0 ? node.get_preference() : type));
+			map.push_back(var::set::integer(quality));
 			map.push_back(var::set::integer(services_of(node)));
 			map.push_back(var::set::binary(node_message.data));
 			map.push_back(var::set::binary(*encrypted_wallet_message));
@@ -211,25 +236,13 @@ namespace tangent
 
 			return apply_cooldown_node(node.address, !wallet.has_secret_key() && !node.availability.reachable, false);
 		}
-		expects_lr<void> mempoolstate::apply_runner_node(const node_pair& node)
-		{
-			return apply_custom_node(node, -1);
-		}
-		expects_lr<void> mempoolstate::apply_neighbor_node(const node_pair& node)
-		{
-			return apply_custom_node(node, -2);
-		}
-		expects_lr<void> mempoolstate::apply_node(const node_pair& node)
-		{
-			return apply_custom_node(node, 0);
-		}
 		expects_lr<void> mempoolstate::apply_node_quality(const socket_address& node_address, int8_t call_result, uint64_t call_latency)
 		{
 			schema_list map;
 			map.push_back(var::set::binary(address_to_message(node_address)));
 
 			auto& storage = get_peer_storage();
-			auto cursor = storage.emplace_query(__func__, "SELECT node_message FROM nodes WHERE address = ? AND quality >= 0", &map);
+			auto cursor = storage.emplace_query(__func__, "SELECT node_message FROM nodes WHERE address = ? AND quality > 0", &map);
 			if (!cursor || cursor->error_or_empty())
 				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -325,7 +338,7 @@ namespace tangent
 			}
 			return expects_lr<vector<node_pair>>(std::move(results));
 		}
-		expects_lr<node_pair> mempoolstate::get_neighbor_node(size_t offset)
+		expects_lr<node_pair> mempoolstate::get_closest_node(size_t offset)
 		{
 			schema_list map;
 			map.push_back(var::set::integer(offset));
@@ -437,7 +450,7 @@ namespace tangent
 
 			return std::make_pair(std::move(node), std::move(wallet));
 		}
-		expects_lr<vector<node_location_pair>> mempoolstate::get_neighbor_nodes_with(size_t offset, size_t count, uint32_t services)
+		expects_lr<vector<node_location_pair>> mempoolstate::get_closest_nodes_with(size_t offset, size_t count, uint32_t services)
 		{
 			schema_list map;
 			map.push_back(var::set::integer(services));
@@ -461,14 +474,14 @@ namespace tangent
 			}
 			return expects_lr<vector<node_location_pair>>(std::move(results));
 		}
-		expects_lr<vector<node_location_pair>> mempoolstate::get_random_nodes_with(size_t count, uint32_t services, node_ports port)
+		expects_lr<vector<node_location_pair>> mempoolstate::get_sample_nodes_with(size_t count, uint32_t services, node_ports port)
 		{
 			schema_list map;
 			map.push_back(var::set::integer(services));
 			map.push_back(var::set::integer(services));
 			map.push_back(var::set::integer(count));
 
-			auto cursor = get_peer_storage().emplace_query(__func__, "SELECT account, node_message FROM nodes WHERE quality >= 0 AND (services & ?) == ? ORDER BY random() LIMIT ?", &map);
+			auto cursor = get_peer_storage().emplace_query(__func__, "SELECT account, node_message FROM nodes WHERE quality > 0 AND (services & ?) == ? ORDER BY random() LIMIT ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<vector<node_location_pair>>(layer_exception(ledger::storage_util::error_of(cursor)));
 

@@ -25,6 +25,14 @@ namespace tangent
 			may_finalize
 		};
 
+		enum class node_peer
+		{
+			runner,
+			neighbor,
+			inbound,
+			outbound
+		};
+
 		enum class node_ports : uint16_t
 		{
 			consensus = (1 << 0),
@@ -82,21 +90,18 @@ namespace tangent
 			~mempoolstate() noexcept;
 			expects_lr<void> apply_cooldown_node(const socket_address& address, bool cooldown, bool reset);
 			expects_lr<void> apply_unknown_node(const socket_address& address, bool allow_reserved);
-			expects_lr<void> apply_custom_node(const node_pair& node, int8_t type);
-			expects_lr<void> apply_runner_node(const node_pair& node);
-			expects_lr<void> apply_neighbor_node(const node_pair& node);
-			expects_lr<void> apply_node(const node_pair& node);
+			expects_lr<void> apply_node(const node_pair& node, node_peer type);
 			expects_lr<void> apply_node_quality(const socket_address& address, int8_t call_result, uint64_t call_latency);
 			expects_lr<void> clear_node(const algorithm::pubkeyhash_t& account);
 			expects_lr<void> clear_node(const socket_address& address);
 			expects_lr<void> clear_cooldowns();
 			expects_lr<vector<node_pair>> get_local_nodes();
-			expects_lr<node_pair> get_neighbor_node(size_t offset);
+			expects_lr<node_pair> get_closest_node(size_t offset);
 			expects_lr<node_pair> get_better_node(const algorithm::pubkeyhash_t& account);
 			expects_lr<node_pair> get_node(const socket_address& address);
 			expects_lr<node_pair> get_node(const algorithm::pubkeyhash_t& account);
-			expects_lr<vector<node_location_pair>> get_neighbor_nodes_with(size_t offset, size_t count, uint32_t services = 0);
-			expects_lr<vector<node_location_pair>> get_random_nodes_with(size_t count, uint32_t services = 0, node_ports port = node_ports::consensus);
+			expects_lr<vector<node_location_pair>> get_closest_nodes_with(size_t offset, size_t count, uint32_t services = 0);
+			expects_lr<vector<node_location_pair>> get_sample_nodes_with(size_t count, uint32_t services = 0, node_ports port = node_ports::consensus);
 			expects_lr<socket_address> sample_connectable_unknown_node();
 			expects_lr<size_t> get_connectable_unknown_nodes_count();
 			expects_lr<size_t> get_nodes_count();

@@ -2927,7 +2927,7 @@ namespace tangent
 		{
 			size_t offset = args.size() > 0 ? args[0].as_uint64() : 0;
 			auto mempool = storages::mempoolstate();
-			auto validator = mempool.get_neighbor_node(offset);
+			auto validator = mempool.get_closest_node(offset);
 			if (!validator)
 				return server_response().error(error_codes::bad_request, "node not found");
 
@@ -2991,7 +2991,7 @@ namespace tangent
 			}
 
 			auto mempool = storages::mempoolstate();
-			auto nodes = mempool.get_neighbor_nodes_with(offset, count, services);
+			auto nodes = mempool.get_closest_nodes_with(offset, count, services);
 			if (!nodes)
 				return server_response().error(error_codes::bad_request, "node not found");
 

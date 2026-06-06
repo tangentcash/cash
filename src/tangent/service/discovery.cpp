@@ -134,7 +134,7 @@ namespace tangent
 			}
 
 			auto mempool = storages::mempoolstate();
-			auto nodes = mempool.get_random_nodes_with(count, services, port).or_else(vector<storages::node_location_pair>());
+			auto nodes = mempool.get_sample_nodes_with(count, services, port).or_else(vector<storages::node_location_pair>());
 			if (protocol::now().user.discovery.logging)
 				VI_INFO("peer %s discovery: %i nodes returned (time: %" PRId64 " ms, args: %s, services: %i)", base->get_peer_ip_address().or_else("[bad_address]").c_str(), (int)nodes.size(), date_time().milliseconds() - base->info.start, base->request.query.empty() ? "none" : base->request.query.c_str(), (int)services);
 

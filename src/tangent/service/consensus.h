@@ -33,7 +33,8 @@ namespace tangent
 		{
 			runner,
 			neighbor,
-			other
+			inbound,
+			outbound
 		};
 
 		struct callable
