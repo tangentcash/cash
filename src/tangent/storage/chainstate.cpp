@@ -1,7 +1,7 @@
 #include "chainstate.h"
 #include "../policy/transactions.h"
 #include "../policy/states.h"
-#define DISPATCH_INTERVAL 120000
+#define DISPATCH_INTERVAL 60000
 #define BLOB_BLOCK 'b'
 #define BLOB_TRANSACTION 't'
 #define BLOB_RECEIPT 'r'

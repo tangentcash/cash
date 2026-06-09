@@ -2201,10 +2201,7 @@ namespace tangent
 				}
 
 				if (best_tip_hash > 0)
-				{
-					broadcast_pending_block(uref(new_tip.state), best_tip_hash, new_tip_number - 1);
-					finalize_pending_block(uref(new_tip.state));
-				}
+					finalize_pending_block(uref(new_tip.state), best_tip_hash, new_tip_number - 1);
 
 				if (protocol::now().user.consensus.logging)
 					VI_INFO("fork %s solver: OK complete", algorithm::encoding::encode_0xhex256(new_tip_fork_hash).c_str());
@@ -3050,10 +3047,15 @@ namespace tangent
 
 				if (protocol::now().user.consensus.logging)
 				{
+					for (auto& [transaction_hash, error] : execution.errors)
+					{
+						if (error.is_retry() || error.is_shutdown())
+							VI_ERR("transaction %s dispatch delayed: executor busy or not available", algorithm::encoding::encode_0xhex256(transaction_hash).c_str());
+						else
+							VI_ERR("transaction %s dispatch failed: %s", algorithm::encoding::encode_0xhex256(transaction_hash).c_str(), error.what());
+					}
 					if (execution.dispatches > 0 || !adapter.emissions.empty() || !execution.errors.empty())
 						VI_INFO("block dispatch (number: %" PRIu64", inputs: %" PRIu64 ", outputs: %" PRIu64 ", reverts: %" PRIu64 ")", tip_number, (uint64_t)execution.dispatches, (uint64_t)adapter.emissions.size(), (uint64_t)execution.errors.size());
-					for (auto& [transaction_hash, error] : execution.errors)
-						VI_ERR("transaction %s dispatching failed: %s", algorithm::encoding::encode_0xhex256(transaction_hash).c_str(), error.what());
 				}
 
 				umutex<std::recursive_mutex> unique(sync.fork);
@@ -3312,8 +3314,9 @@ namespace tangent
 			if (!try_acquire_checkpointer())
 				return layer_exception(stringify::text("block %s checkpoint skipped: checkpointer busy", algorithm::encoding::encode_0xhex256(candidate_hash).c_str()));
 
-			bool chain_extension = !fork_tip;
-			if (chain_extension)
+			bool may_broadcast_early = from && !fork_tip;
+			bool may_broadcast_lately = !from && !fork_tip;
+			if (may_broadcast_early)
 				append_pending_block(uref(from), candidate_hash, &candidate.block);
 
 			auto reorganization = ledger::solver_context::requires_reorganization(candidate);
@@ -3331,7 +3334,7 @@ namespace tangent
 
 			auto mutation = ledger::solver_context::checkpoint_solved_block(verifier.solver, candidate);
 			release_checkpointer();
-			if (chain_extension)
+			if (may_broadcast_early)
 				erase_pending_block(candidate_hash);
 
 			if (!mutation)
@@ -3386,8 +3389,8 @@ namespace tangent
 			}
 
 			unique.unlock();
-			if (chain_extension)
-				finalize_pending_block(std::move(from));
+			if (may_broadcast_early || may_broadcast_lately)
+				finalize_pending_block(std::move(from), may_broadcast_lately ? candidate_hash : 0, may_broadcast_lately ? candidate.block.number : 0);
 			return expectation::met;
 		}
 		void server_node::append_pending_block(uref<relay>&& from, const uint256_t& block_hash, ledger::block_body* tip)
@@ -3413,9 +3416,12 @@ namespace tangent
 			if (notifications > 0 && protocol::now().user.consensus.logging)
 				VI_DEBUG("block %s broadcasted to %i nodes (height: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(block_hash).c_str(), (int)notifications, block_number);
 		}
-		void server_node::finalize_pending_block(uref<relay>&& from)
+		void server_node::finalize_pending_block(uref<relay>&& from, const uint256_t& block_hash, uint64_t block_number)
 		{
 			control_sys.upsert_timeout(TASK_BLOCK_DISPATCHER "_runner", protocol::now().policy.pow.time, [this]() { run_block_dispatcher(); });
+			if (block_hash > 0 && block_number > 0)
+				broadcast_pending_block(uref(from), block_hash, block_number);
+
 			if (!from || !prover.dirty)
 				return;
 

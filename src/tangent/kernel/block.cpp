@@ -2893,7 +2893,7 @@ namespace tangent
 						if (!delegation)
 						{
 							storages::chainstate().dispatch(executor.receipt.transaction_hash, storages::dispatch_action::defer);
-							result.errors[executor.receipt.transaction_hash] = layer_exception("unrecognized delegation type");
+							result.errors[executor.receipt.transaction_hash] = remote_exception("unrecognized delegation type");
 							continue;
 						}
 
@@ -2909,7 +2909,7 @@ namespace tangent
 						auto status = coawait(delegation->execute_transition());
 						storages::chainstate().dispatch(executor.receipt.transaction_hash, !status && (status.error().is_retry() || status.error().is_shutdown()) ? storages::dispatch_action::defer : storages::dispatch_action::finalize);
 						if (!status)
-							result.errors[executor.receipt.transaction_hash] = layer_exception(std::move(status.error().message()));
+							result.errors[executor.receipt.transaction_hash] = std::move(status.error());
 					}
 					if (candidates->size() < ELEMENTS_MANY)
 						break;
@@ -3282,6 +3282,8 @@ namespace tangent
 			solution.block.set_parent_block(parent_block);
 			solution.block.priority = (uint64_t)(position == producers.end() ? protocol::now().policy.production.max_per_block : std::distance(producers.begin(), position));
 			solution.block.difficulty = algorithm::wesolowski::scale(solution.block.get_proof_slot_target(parent_block), solution.block.get_proof_difficulty_multiplier());
+			solution.state.clear();
+			solution.effects.clear();
 			state.executor.witnesses.clear();
 			state.executor.block = &solution.block;
 			state.validator_active = state.executor.get_validator_production(state.public_key_hash).or_else(states::validator_production(algorithm::pubkeyhash_t(), nullptr)).is_active();

@@ -360,7 +360,7 @@ namespace tangent
 			void append_pending_block(uref<relay>&& from, const uint256_t& block_hash, ledger::block_body* tip);
 			void erase_pending_block(const uint256_t& block_hash);
 			void broadcast_pending_block(uref<relay>&& from, const uint256_t& block_hash, uint64_t block_number);
-			void finalize_pending_block(uref<relay>&& from);
+			void finalize_pending_block(uref<relay>&& from, const uint256_t& block_hash, uint64_t block_number);
 			bool accept_proposal_transaction(const ledger::block_transaction& transaction);
 			void pull_messages(uref<relay>&& state);
 			void push_messages(uref<relay>&& state);

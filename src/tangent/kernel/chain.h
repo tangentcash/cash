@@ -71,6 +71,7 @@ namespace tangent
 		uint64_t error_retry_time;
 
 	public:
+		remote_exception();
 		remote_exception(string&& text);
 		remote_exception(const remote_exception& other);
 		remote_exception(remote_exception&& other) noexcept;

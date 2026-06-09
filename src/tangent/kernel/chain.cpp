@@ -90,6 +90,9 @@ namespace tangent
 		return std::move(error_message);
 	}
 
+	remote_exception::remote_exception() : remote_exception(string(), 1, 0)
+	{
+	}
 	remote_exception::remote_exception(string&& text, int8_t new_status, uint64_t new_retry_time) : std::exception(), error_message(std::move(text)), error_status(new_status), error_retry_time(new_retry_time)
 	{
 		if (error_status > 0)

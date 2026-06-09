@@ -426,7 +426,7 @@ namespace tangent
 		{
 			struct dispatcher_result
 			{
-				btree_map<uint256_t, layer_exception> errors;
+				btree_map<uint256_t, remote_exception> errors;
 				size_t dispatches = 0;
 			};
 
