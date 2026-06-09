@@ -3390,7 +3390,7 @@ namespace tangent
 
 			unique.unlock();
 			if (may_broadcast_early || may_broadcast_lately)
-				finalize_pending_block(std::move(from), may_broadcast_lately ? candidate_hash : 0, may_broadcast_lately ? candidate.block.number : 0);
+				finalize_pending_block(std::move(from), may_broadcast_lately ? candidate_hash : uint256_t((uint8_t)0), may_broadcast_lately ? candidate.block.number : 0);
 			return expectation::met;
 		}
 		void server_node::append_pending_block(uref<relay>&& from, const uint256_t& block_hash, ledger::block_body* tip)
