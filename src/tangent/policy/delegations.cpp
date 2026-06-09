@@ -245,7 +245,11 @@ namespace tangent
 			if (!chain)
 				return layer_exception("invalid operation");
 
-			auto secret = adapter->derive_key(runner, executor->receipt.from, route->asset, route->bridge_hash, chain->composition);
+			auto bridge = executor->get_bridge_instance(route->asset, route->bridge_hash);
+			if (!bridge)
+				return layer_exception("invalid operation");
+
+			auto secret = adapter->derive_key(runner, executor->receipt.from, route->asset, route->bridge_hash, chain->composition, bridge->ref.asset == route->asset && bridge->ref.hash == route->bridge_hash && (bridge->ref.owner.empty() || bridge->ref.owner == executor->receipt.from));
 			if (!secret)
 				return secret.error();
 
@@ -907,7 +911,11 @@ namespace tangent
 				return layer_exception("invalid migration size");
 
 			auto& migration = migrations->at(proofs.size());
-			auto secret = adapter->derive_key(runner, migration.account.ref.owner, migration.account.ref.asset, migration.account.ref.hash, context.compositor->alg_type());
+			auto bridge = executor->get_bridge_instance(migration.account.ref.asset, migration.account.ref.hash);
+			if (!bridge)
+				return layer_exception("invalid operation");
+
+			auto secret = adapter->derive_key(runner, migration.account.ref.owner, migration.account.ref.asset, migration.account.ref.hash, context.compositor->alg_type(), bridge->ref.asset == migration.account.ref.asset && bridge->ref.hash == migration.account.ref.hash && bridge->ref.owner == migration.account.ref.owner);
 			if (!secret)
 				return secret.error();
 

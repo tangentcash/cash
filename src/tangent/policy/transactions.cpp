@@ -1184,7 +1184,7 @@ namespace tangent
 
 		expects_lr<void> bind::validate(uint64_t block_number) const
 		{
-			if (protocol::now().on(fork_id::veritas, block_number))
+			if (protocol::now().on(fork_id::key_bind_commitment, block_number))
 				return layer_exception("operation not permitted");
 
 			if (!algorithm::asset::token_of(asset).empty())
@@ -1502,6 +1502,14 @@ namespace tangent
 			ref.owner = parent->receipt.from;
 			ref.asset = asset;
 			ref.hash = parent_transaction->bridge_hash;
+			if (protocol::now().on(fork_id::key_bind_uniqueness, executor->receipt.block_number))
+			{
+				for (auto& address : *addresses)
+				{
+					if (executor->get_witness_account(ref.asset, address.second, 0))
+						return layer_exception("bridge address already taken");
+				}
+			}
 
 			auto policy_status = executor->apply_bridge_instance_account(ref.asset, ref.hash, ref.owner);
 			if (!policy_status)
@@ -2103,6 +2111,7 @@ namespace tangent
 			if (!requires_self_migration && migrations.empty())
 				return expects_lr<vector<migration_ref>>(std::move(results));
 
+			hash_set<string> keys;
 			if (requires_self_migration)
 			{
 				size_t offset = 0, count = 32;
@@ -2122,6 +2131,14 @@ namespace tangent
 						auto account = executor->get_bridge_account(ref.owner, ref.asset, ref.hash);
 						if (!account)
 							return account.error();
+
+						format::wo_stream ptr;
+						ptr.write_integer(ledger::distribution_key::ref_hash(algorithm::pubkeyhash_t(), ref.asset, ref.hash));
+						ptr.write_string(std::string_view((char*)account->public_key.data(), account->public_key.size()));
+						if (keys.find(ptr.data) != keys.end())
+							continue;
+						else
+							keys.insert(ptr.data);
 
 						migration_ref migration;
 						migration.account = std::move(*account);
@@ -2170,6 +2187,14 @@ namespace tangent
 						auto account = executor->get_bridge_account(ref.owner, ref.asset, ref.hash);
 						if (!account)
 							return account.error();
+
+						format::wo_stream ptr;
+						ptr.write_integer(ledger::distribution_key::ref_hash(algorithm::pubkeyhash_t(), ref.asset, ref.hash));
+						ptr.write_string(std::string_view((char*)account->public_key.data(), account->public_key.size()));
+						if (keys.find(ptr.data) != keys.end())
+							continue;
+						else
+							keys.insert(ptr.data);
 
 						migration_ref migration;
 						migration.account = std::move(*account);
@@ -2318,11 +2343,11 @@ namespace tangent
 			{
 				auto& migration = migrations->at(i);
 				auto& proof = proofs[i];
-				auto* chain = superchain::bridge::get()->get_network_params(migration.account.ref.asset);
-				if (!chain)
+				auto* params = superchain::bridge::get()->get_network_params(migration.account.ref.asset);
+				if (!params)
 					return layer_exception("invalid operation");
 
-				auto compositor = algorithm::composition::make_compositor(chain->composition);
+				auto compositor = algorithm::composition::make_compositor(params->composition);
 				if (!compositor)
 					return compositor.error();
 
@@ -2341,27 +2366,57 @@ namespace tangent
 				else if (participant != new_participant)
 					return layer_exception("invalid correction key provider");
 
-				auto account = executor->get_bridge_account(migration.account.ref.owner, migration.account.ref.asset, migration.account.ref.hash);
-				if (!account)
-					return account.error();
+				auto* chain = superchain::bridge::get()->get_network(migration.account.ref.asset);
+				if (!chain)
+					return layer_exception("invalid operation");
 
-				size_t prev_size = account->group.size();
-				account->group.erase(migration.old_participant);
-				account->group.insert(new_participant);
-				if (prev_size != account->group.size())
-					return layer_exception("conflicting group migration (size changed)");
+				auto encoded_public_key = chain->encode_public_key(std::string_view((char*)group_public_key->data(), group_public_key->size()));
+				if (!encoded_public_key)
+					return encoded_public_key.error();
 
-				account = executor->apply_bridge_account(account->ref.owner, account->ref.asset, account->ref.hash, account->public_key, std::move(account->group));
-				if (!account)
-					return account.error();
+				auto addresses = chain->to_addresses(*encoded_public_key);
+				if (!addresses)
+					return addresses.error();
 
-				auto old_ref = executor->apply_validator_participation_ref(migration.old_participant, account->ref, false);
-				if (!old_ref)
-					return old_ref.error();
+				btree_map<uint256_t, states::bridge_ref> refs;
+				for (auto& address : *addresses)
+				{
+					size_t index = 0;
+					while (true)
+					{
+						auto account = executor->get_witness_account(migration.account.ref.asset, address.second, index++);
+						if (!account)
+							break;
 
-				auto new_ref = executor->apply_validator_participation_ref(new_participant, account->ref, true);
-				if (!new_ref)
-					return new_ref.error();
+						auto hash = ledger::distribution_key::ref_hash(account->ref.owner, account->ref.asset, account->ref.hash);
+						refs[hash] = std::move(account->ref);
+					}
+				}
+
+				for (auto& [hash, ref] : refs)
+				{
+					auto account = executor->get_bridge_account(ref.owner, ref.asset, ref.hash);
+					if (!account)
+						return account.error();
+
+					size_t prev_size = account->group.size();
+					account->group.erase(migration.old_participant);
+					account->group.insert(new_participant);
+					if (prev_size != account->group.size())
+						return layer_exception("conflicting group migration (size changed)");
+
+					account = executor->apply_bridge_account(account->ref.owner, account->ref.asset, account->ref.hash, account->public_key, std::move(account->group));
+					if (!account)
+						return account.error();
+
+					auto old_ref = executor->apply_validator_participation_ref(migration.old_participant, account->ref, false);
+					if (!old_ref)
+						return old_ref.error();
+
+					auto new_ref = executor->apply_validator_participation_ref(new_participant, account->ref, true);
+					if (!new_ref)
+						return new_ref.error();
+				}
 			}
 
 			return expectation::met;

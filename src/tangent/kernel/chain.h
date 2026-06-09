@@ -30,7 +30,8 @@ namespace tangent
 
 	enum class fork_id
 	{
-		veritas = 400000
+		key_bind_commitment = 400000,
+		key_bind_uniqueness = 840000
 	};
 
 	enum class network_type

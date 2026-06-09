@@ -2917,16 +2917,19 @@ namespace tangent
 				coreturn result;
 			});
 		}
-		expects_lr<distribution_key> delegation_adapter::derive_key(const wallet* runner_wallet, const algorithm::pubkeyhash_t& owner, const algorithm::asset_id& asset, const uint256_t& hash, algorithm::composition::type alg)
+		expects_lr<distribution_key> delegation_adapter::derive_key(const wallet* runner_wallet, const algorithm::pubkeyhash_t& owner, const algorithm::asset_id& asset, const uint256_t& hash, algorithm::composition::type alg, bool master)
 		{
 			VI_ASSERT(runner_wallet != nullptr, "runner wallet should be set");
 			uint8_t entropy_source_1[sizeof(asset)], entropy_source_2[sizeof(hash)];
 			auto entropy_source_3 = runner_wallet->secret_key.view();
 			auto entropy_source_4 = format::util::decode_0xhex(protocol::now().policy.pow.base);
+			auto entropy_source_0 = owner.view();
 			asset.encode(entropy_source_1);
 			hash.encode(entropy_source_2);
 
 			format::wo_stream entropy_source;
+			if (!master)
+				entropy_source.write_string(algorithm::hashing::hash512((uint8_t*)entropy_source_0.data(), entropy_source_0.size()));
 			entropy_source.write_string(algorithm::hashing::hash512(entropy_source_1, sizeof(entropy_source_1)));
 			entropy_source.write_string(algorithm::hashing::hash512(entropy_source_2, sizeof(entropy_source_2)));
 			entropy_source.write_string(algorithm::hashing::hash512((uint8_t*)entropy_source_3.data(), entropy_source_3.size()));
@@ -3148,8 +3151,11 @@ namespace tangent
 			state.executor.receipt = transaction_receipt();
 			state.executor.options = tip && tip->network_congestion() ? (uint8_t)executor_context::flags::congestion : 0;
 			state.origin = state.origin == state_origin::block ? state_origin::chain_block : state_origin::chain;
+			if (state.executor.block != nullptr)
+				producers = state.executor.calculate_producers(protocol::now().policy.production.max_per_block).or_else(vector<states::validator_production>());
+			else
+				producers.clear();
 
-			producers = state.executor.calculate_producers(protocol::now().policy.production.max_per_block).or_else(vector<states::validator_production>());
 			if (producers.empty())
 			{
 				while (producers.size() < protocol::now().policy.production.max_per_block)

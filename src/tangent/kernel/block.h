@@ -443,7 +443,7 @@ namespace tangent
 			virtual const wallet* get_runner_wallet(const algorithm::pubkeyhash_t& target) const = 0;
 			virtual const wallet* get_runner_wallet() const = 0;
 			virtual promise<dispatcher_result> execute_dispatcher_on(uint64_t block_number);
-			virtual expects_lr<distribution_key> derive_key(const wallet* runner_wallet, const algorithm::pubkeyhash_t& owner, const algorithm::asset_id& asset, const uint256_t& hash, algorithm::composition::type alg);
+			virtual expects_lr<distribution_key> derive_key(const wallet* runner_wallet, const algorithm::pubkeyhash_t& owner, const algorithm::asset_id& asset, const uint256_t& hash, algorithm::composition::type alg, bool master);
 			virtual expects_lr<distribution_key> store_key(const wallet* runner_wallet, const algorithm::pubkeyhash_t& owner, const algorithm::asset_id& asset, const uint256_t& hash, vector<uint8_t>&& key, btree_map<algorithm::pubkeyhash_t, distribution_key::share_pair>&& shares);
 			virtual expects_lr<distribution_key> load_key(const wallet* runner_wallet, const algorithm::pubkeyhash_t& owner, const algorithm::asset_id& asset, const uint256_t& hash);
 		};
