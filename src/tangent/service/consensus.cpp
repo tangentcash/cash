@@ -2840,8 +2840,11 @@ namespace tangent
 				size_t offset = 0, resolutions = 0;
 				auto mempool = storages::mempoolstate();
 				auto expirations = mempool.expire_attestations();
-				if (expirations && protocol::now().user.consensus.logging)
-					VI_INFO("mempool attestation vacuum: OK (attestations: %i)", (int)*expirations);
+				if (expirations)
+				{
+					if (*expirations > 0 && protocol::now().user.consensus.logging)
+						VI_INFO("mempool attestation vacuum: OK (attestations: %i)", (int)*expirations);
+				}
 				else if (protocol::now().user.consensus.logging)
 					VI_ERR("mempool attestation vacuum failed: ", expirations.what().c_str());
 
@@ -3012,6 +3015,7 @@ namespace tangent
 						if (protocol::now().user.consensus.logging)
 							VI_INFO("block %s solved (number: %" PRIu64", txns: %" PRIu64 ", pos: %" PRIu64 ", work: < ~%.2f sec.)", algorithm::encoding::encode_0xhex256(prover.solution.block.as_hash()).c_str(), prover.solution.block.number, (uint64_t)prover.solution.block.transactions.size(), position + 1, span / 1000.0);
 
+						prover.solver.erase_failed_transactions();
 						goto next_block;
 					}
 					else if (protocol::now().user.consensus.logging)

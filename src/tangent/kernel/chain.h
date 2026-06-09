@@ -324,7 +324,7 @@ namespace tangent
 				decimal min_coinbase_value = std::string_view("0.0002");
 			} emission;
 			string token = "TAN";
-			uint64_t account_nonce_step_limit = 128;
+			uint64_t account_nonce_step_limit = 1048576;
 			uint64_t block_gas_limit = 40'000'000;
 			uint64_t commitments_per_block = 20;
 			uint64_t gasless_size_limit = 512;

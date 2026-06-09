@@ -20,7 +20,7 @@ namespace tangent
 			auto* prev = (account_nonce*)prev_state;
 			if (!prev)
 			{
-				if (nonce > 1 && nonce != std::numeric_limits<uint64_t>::max())
+				if (nonce > protocol::now().policy.account_nonce_step_limit && nonce != std::numeric_limits<uint64_t>::max())
 					return layer_exception("invalid starting nonce");
 			}
 			else if (prev->nonce == std::numeric_limits<uint64_t>::max() || nonce == std::numeric_limits<uint64_t>::max())

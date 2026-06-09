@@ -3316,7 +3316,10 @@ namespace tangent
 					state.changelog.commit();
 				}
 				else
+				{
 					transactions.errors[item.hash] = execution.error();
+					state.changelog.revert();
+				}
 				state.changelog.clear_temporary_state();
 			}
 
