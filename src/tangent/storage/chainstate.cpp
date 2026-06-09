@@ -1,7 +1,6 @@
 #include "chainstate.h"
 #include "../policy/transactions.h"
 #include "../policy/states.h"
-#define DISPATCH_INTERVAL 60000
 #define BLOB_BLOCK 'b'
 #define BLOB_TRANSACTION 't'
 #define BLOB_RECEIPT 'r'
@@ -1114,39 +1113,21 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<void> chainstate::dispatch(const uint256_t& transaction_hash, dispatch_action action)
+		expects_lr<void> chainstate::dispatch(const uint256_t& transaction_hash, uint64_t retry_after_block_number_or_zero)
 		{
 			uint8_t hash[32];
 			transaction_hash.encode(hash);
 
-			switch (action)
-			{
-				case dispatch_action::finalize:
-				{
-					schema_list map;
-					map.push_back(var::set::binary(hash, sizeof(hash)));
+			schema_list map;
+			if (retry_after_block_number_or_zero > 0)
+				map.push_back(var::set::integer(retry_after_block_number_or_zero));
+			map.push_back(var::set::binary(hash, sizeof(hash)));
 
-					auto cursor = get_tx_storage().emplace_query(__func__, "UPDATE transactions SET dispatch_queue = NULL, dispatch_time = NULL WHERE transaction_hash = ?", &map);
-					if (!cursor || cursor->error())
-						return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
+			auto cursor = get_tx_storage().emplace_query(__func__, stringify::text("UPDATE transactions SET dispatch_queue = %s WHERE transaction_hash = ?", retry_after_block_number_or_zero > 0 ? "?" : "NULL"), &map);
+			if (!cursor || cursor->error())
+				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 
-					return expectation::met;
-				}
-				case dispatch_action::defer:
-				{
-					schema_list map;
-					map.push_back(var::set::integer(protocol::now().time.now_cpu() + DISPATCH_INTERVAL));
-					map.push_back(var::set::binary(hash, sizeof(hash)));
-
-					auto cursor = get_tx_storage().emplace_query(__func__, "UPDATE transactions SET dispatch_time = ? WHERE transaction_hash = ?", &map);
-					if (!cursor || cursor->error())
-						return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
-
-					return expectation::met;
-				}
-				default:
-					return layer_exception("invalid dispatch action");
-			}
+			return expectation::met;
 		}
 		expects_lr<void> chainstate::resolve_block_transactions(vector<ledger::block_transaction>& result, uint64_t block_number, bool fully, size_t chunk)
 		{
@@ -2112,11 +2093,10 @@ namespace tangent
 		{
 			schema_list map;
 			map.push_back(var::set::integer(block_number));
-			map.push_back(var::set::integer(protocol::now().time.now_cpu()));
 			map.push_back(var::set::integer(count));
 			map.push_back(var::set::integer(offset));
 
-			auto cursor = get_tx_storage().emplace_query(__func__, "SELECT transaction_hash FROM transactions WHERE dispatch_queue <= ? AND (dispatch_time IS NULL OR dispatch_time <= ?) ORDER BY block_nonce LIMIT ? OFFSET ?", &map);
+			auto cursor = get_tx_storage().emplace_query(__func__, "SELECT transaction_hash FROM transactions WHERE dispatch_queue IS NOT NULL AND dispatch_queue <= ? ORDER BY block_nonce LIMIT ? OFFSET ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<vector<ledger::block_transaction>>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -3149,7 +3129,6 @@ namespace tangent
 					transaction_number BIGINT NOT NULL,
 					transaction_hash BLOB(32) NOT NULL,
 					dispatch_queue BIGINT DEFAULT NULL,
-					dispatch_time BIGINT DEFAULT NULL,
 					block_number BIGINT NOT NULL,
 					block_nonce BIGINT NOT NULL,
 					PRIMARY KEY(transaction_hash)

@@ -2874,6 +2874,8 @@ namespace tangent
 			{
 				auto* offchain = superchain::bridge::get();
 				auto* runner = get_runner_wallet();
+				uint64_t blocks_to_update = protocol::now().policy.attestation.confirmation_time / protocol::now().policy.pow.time;
+				uint64_t blocks_to_unlock = protocol::now().policy.pow.adjustment_time / protocol::now().policy.pow.time;
 				dispatcher_result result;
 				while (runner != nullptr)
 				{
@@ -2892,8 +2894,9 @@ namespace tangent
 						uptr<delegation_contract> delegation = delegation_type > 0 ? delegations::resolver::from_type(delegation_type, this, &executor, runner->public_key_hash) : nullptr;
 						if (!delegation)
 						{
-							storages::chainstate().dispatch(executor.receipt.transaction_hash, storages::dispatch_action::defer);
-							result.errors[executor.receipt.transaction_hash] = remote_exception("unrecognized delegation type");
+							uint64_t next_block_number = block_number + blocks_to_update;
+							storages::chainstate().dispatch(executor.receipt.transaction_hash, next_block_number);
+							result.errors[executor.receipt.transaction_hash] = remote_exception::retry_after(next_block_number, "unrecognized delegation type");
 							continue;
 						}
 
@@ -2907,9 +2910,14 @@ namespace tangent
 						}
 
 						auto status = coawait(delegation->execute_transition());
-						storages::chainstate().dispatch(executor.receipt.transaction_hash, !status && (status.error().is_retry() || status.error().is_shutdown()) ? storages::dispatch_action::defer : storages::dispatch_action::finalize);
 						if (!status)
-							result.errors[executor.receipt.transaction_hash] = std::move(status.error());
+						{
+							uint64_t next_block_number = status.error().is_retry() || status.error().is_shutdown() ? block_number + (status.error().is_retry_after() ? status.error().retry_after_timestamp() : blocks_to_unlock) : 0;
+							storages::chainstate().dispatch(executor.receipt.transaction_hash, next_block_number);
+							result.errors[executor.receipt.transaction_hash] = next_block_number > 0 ? remote_exception::retry_after(next_block_number, status.what()) : std::move(status.error());
+						}
+						else
+							storages::chainstate().dispatch(executor.receipt.transaction_hash, 0);
 					}
 					if (candidates->size() < ELEMENTS_MANY)
 						break;

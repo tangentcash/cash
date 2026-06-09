@@ -1733,7 +1733,7 @@ namespace tangent
 				if (!requirement)
 					return layer_exception("must be an active attester to request migration");
 
-				auto time_lock = protocol::now().policy.attestation.withdrawal_time / protocol::now().policy.pow.time;
+				auto time_lock = protocol::now().policy.attestation.confirmation_time / protocol::now().policy.pow.time;
 				auto time_delta = parent->receipt.block_number < executor->receipt.block_number ? executor->receipt.block_number - parent->receipt.block_number : 0;
 				if (time_delta <= time_lock)
 					return layer_exception("broadcast time lock active - retry after block number " + to_string(parent->receipt.block_number + time_lock));
@@ -3082,7 +3082,7 @@ namespace tangent
 			if (witness)
 				return layer_exception("broadcast is considered final either by attestation or older protest");
 
-			auto time_lock = protocol::now().policy.attestation.withdrawal_time / protocol::now().policy.pow.time;
+			auto time_lock = protocol::now().policy.attestation.confirmation_time / protocol::now().policy.pow.time;
 			auto time_delta = parent->receipt.block_number < executor->receipt.block_number ? executor->receipt.block_number - parent->receipt.block_number : 0;
 			if (time_delta <= time_lock)
 				return layer_exception("broadcast time lock active - retry after block number " + to_string(parent->receipt.block_number + time_lock));

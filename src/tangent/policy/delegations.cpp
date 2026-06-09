@@ -1394,7 +1394,7 @@ namespace tangent
 
 			auto front = executor->get_bridge_queue(withdraw->asset, withdraw->bridge_hash, 1);
 			if (front && front->transaction_hash != executor->receipt.transaction_hash)
-				return expects_promise_rt<void>(remote_exception::retry_later());
+				return expects_promise_rt<void>(remote_exception::retry_after(1, "bridge busy"));
 
 			return coasync<expects_rt<void>>([this, withdraw]() mutable -> expects_promise_rt<void>
 			{

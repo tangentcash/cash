@@ -1047,7 +1047,7 @@ namespace tangent
 			auto* prev = (validator_attestation*)prev_state;
 			if (prev != nullptr && !prev->stake.is_nan() && stake.is_nan())
 			{
-				auto time_lock = time_lock_blocks(prev_state, protocol::now().policy.attestation.withdrawal_time);
+				auto time_lock = time_lock_blocks(prev_state, protocol::now().policy.attestation.confirmation_time);
 				if (time_lock > 0)
 					return layer_exception("stake is time locked for the next " + to_string(time_lock) + " blocks");
 			}

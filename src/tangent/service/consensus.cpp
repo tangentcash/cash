@@ -2857,7 +2857,7 @@ namespace tangent
 					if (status)
 						goto retry;
 					else if (protocol::now().user.consensus.logging)
-						VI_INFO("attestation %s resolution delayed: ", algorithm::encoding::encode_0xhex256(*attestation_hash).c_str(), status.what().c_str());
+						VI_INFO("attestation %s queued: ", algorithm::encoding::encode_0xhex256(*attestation_hash).c_str(), status.what().c_str());
 
 					auto batch = mempool.get_attestation(*attestation_hash);
 					if (!batch)
@@ -2884,7 +2884,7 @@ namespace tangent
 					goto retry;
 				}
 				if (resolutions > 0 && protocol::now().user.consensus.logging)
-					VI_INFO("attestation resolution: %i pending", (int)resolutions);
+					VI_INFO("attestation resolver: now %i pending", (int)resolutions);
 			});
 		}
 		bool server_node::run_block_production()
@@ -3052,14 +3052,9 @@ namespace tangent
 				if (protocol::now().user.consensus.logging)
 				{
 					for (auto& [transaction_hash, error] : execution.errors)
-					{
-						if (error.is_retry() || error.is_shutdown())
-							VI_ERR("transaction %s dispatch delayed: executor busy or not available", algorithm::encoding::encode_0xhex256(transaction_hash).c_str());
-						else
-							VI_ERR("transaction %s dispatch failed: %s", algorithm::encoding::encode_0xhex256(transaction_hash).c_str(), error.what());
-					}
+						VI_WARN("transaction %s dispatch: %s%s", algorithm::encoding::encode_0xhex256(transaction_hash).c_str(), error.what(), error.is_retry_after() ? stringify::text(" (retry: after block %" PRIu64 ")", error.retry_after_timestamp()).c_str() : (error.is_retry() || error.is_shutdown() ? " (retry: later)" : ""));
 					if (execution.dispatches > 0 || !adapter.emissions.empty() || !execution.errors.empty())
-						VI_INFO("block dispatch (number: %" PRIu64", inputs: %" PRIu64 ", outputs: %" PRIu64 ", reverts: %" PRIu64 ")", tip_number, (uint64_t)execution.dispatches, (uint64_t)adapter.emissions.size(), (uint64_t)execution.errors.size());
+						VI_INFO("block dispatch (number: %" PRIu64", txns: -%" PRIu64 " / +%" PRIu64 ", reverted: %" PRIu64 ")", tip_number, (uint64_t)execution.dispatches, (uint64_t)adapter.emissions.size(), (uint64_t)execution.errors.size());
 				}
 
 				umutex<std::recursive_mutex> unique(sync.fork);

@@ -95,10 +95,10 @@ namespace tangent
 	}
 	remote_exception::remote_exception(string&& text, int8_t new_status, uint64_t new_retry_time) : std::exception(), error_message(std::move(text)), error_status(new_status), error_retry_time(new_retry_time)
 	{
-		if (error_status > 0)
-			error_message = error_message.empty() ? "result currently unavailable (may retry)" : (error_message + " (may retry)");
+		if (error_message.empty() && error_status > 0)
+			error_message = "result unavailable now";
 		else if (error_message.empty() && error_status < 0)
-			error_message = "cancelled due to a shutdown";
+			error_message = "shutdown requested";
 	}
 	remote_exception::remote_exception(string&& text) : std::exception(), error_message(std::move(text)), error_status(0)
 	{
@@ -956,7 +956,7 @@ namespace tangent
 				policy.pow.time = 1;
 				policy.pow.difficulty = 1;
 				policy.pow.security = 64;
-				policy.attestation.withdrawal_time = 2;
+				policy.attestation.confirmation_time = 2;
 				policy.attestation.min_stake_value = decimal::zero();
 				policy.participation.locking_time = 2;
 				policy.participation.min_stake_value = decimal::zero();
@@ -972,7 +972,7 @@ namespace tangent
 				account.public_key_version = 0xD;
 				account.address_version = 0x5;
 				policy.pow.base = "13c6e158fd95c9e0fb5f61b21cd36f3be9b206669ca0d6bf19449267de4e243c3ba67d6f37d92634cd0b12ea094d2c63d978a9a857691db6576a81ff90ddebff";
-				policy.attestation.withdrawal_time = 43200000;
+				policy.attestation.confirmation_time = 43200000;
 				break;
 			case tangent::network_type::mainnet:
 				break;
