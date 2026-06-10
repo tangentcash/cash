@@ -1,5 +1,5 @@
 FROM alpine:latest
-RUN apk add clang clang-dev ninja cmake libsecp256k1-dev gmp-dev libsodium-dev rocksdb-dev sqlite-dev openssl-dev zlib-dev libunwind-dev elfutils-dev
+RUN apk add clang clang-dev build-base libstdc++-dev ninja cmake libsecp256k1-dev gmp-dev libsodium-dev rocksdb-dev sqlite-dev openssl-dev zlib-dev libunwind-dev elfutils-dev
 RUN mkdir /home/tangentcash && mkdir /home/tangentcash/make
 COPY ./ /home/tangentcash/source/
 WORKDIR /home/tangentcash/source
