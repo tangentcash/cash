@@ -186,8 +186,17 @@ namespace tangent
 		if (it != blobs.end() && it->second)
 			return it->second;
 
+		auto config = blob_storage_configuration(protocol::now().user.storage.optimization, protocol::now().user.storage.blob_cache_size);
+		auto path = std::string(address.begin(), address.end());
 		rocksdb::DB* result = nullptr;
-		auto status = rocksdb::DB::Open(blob_storage_configuration(protocol::now().user.storage.optimization, protocol::now().user.storage.blob_cache_size), std::string(address.begin(), address.end()), &result);
+#if ROCKSDB_MAJOR >= 11
+		std::unique_ptr<rocksdb::DB> wrapped_result;
+		auto status = rocksdb::DB::Open(config, path, &wrapped_result);
+		result = wrapped_result.get();
+		wrapped_result.reset();
+#else
+		auto status = rocksdb::DB::Open(config, path, &result);
+#endif
 		if (!status.ok())
 		{
 			if (protocol::now().user.storage.logging)
