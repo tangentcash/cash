@@ -246,16 +246,20 @@ namespace tangent
 				ledger::block_evaluation solution;
 				ledger::block_rewards rewards;
 				hash_set<uint256_t> hashes;
-				std::atomic<bool> verifying = false;
-				std::atomic<bool> waiting = false;
-				std::atomic<bool> dirty = false;
+				std::atomic<bool> queued = false;
 			} prover;
 
 			struct
 			{
 				ledger::solver_context solver;
+				ledger::solver_context::tip_cache cache;
+				option<ledger::block_header> tip_cache = optional::none;
+				uint64_t progress_time = 0;
+				uint64_t progress_block_number = 0;
 				std::atomic<int64_t> progress = std::atomic<int64_t>(-1);
 				std::atomic<uint64_t> size = std::atomic<uint64_t>(0);
+				std::atomic<bool> busy = false;
+				std::atomic<bool> stale = false;
 			} verifier;
 
 		private:

@@ -709,10 +709,10 @@ struct generators
 	{
 		auto chain = storages::chainstate();
 		auto block_number = chain.get_latest_block_number().expect("must have parent block") - 3;
-		auto targets = chain.get_transactions_by_number(block_number, 0, 1).expect("block " + to_string(block_number) + " must have a transaction");
+		auto targets = chain.get_block_transactions_by_number(block_number, 0, 1).expect("block " + to_string(block_number) + " must have a transaction");
 		VI_PANIC(!targets.empty(), "must have last transaction");
 
-		auto& broadcast_transaction_ptr = targets.front();
+		auto& broadcast_transaction_ptr = targets.front().transaction;
 		VI_PANIC(broadcast_transaction_ptr->as_type() == transactions::broadcast::as_instance_type(), "must have withdrawal finalization as last transaction");
 
 		auto* broadcast_transaction = (transactions::broadcast*)*broadcast_transaction_ptr;
@@ -785,10 +785,10 @@ struct generators
 	{
 		auto chain = storages::chainstate();
 		auto block_number = chain.get_latest_block_number().expect("must have parent block") - 2;
-		auto targets = chain.get_transactions_by_number(block_number, 0, 1).expect("block " + to_string(block_number) + " must have a transaction");
+		auto targets = chain.get_block_transactions_by_number(block_number, 0, 1).expect("block " + to_string(block_number) + " must have a transaction");
 		VI_PANIC(!targets.empty(), "must have last transaction");
 
-		auto& broadcast_transaction_ptr = targets.front();
+		auto& broadcast_transaction_ptr = targets.front().transaction;
 		VI_PANIC(broadcast_transaction_ptr->as_type() == transactions::broadcast::as_instance_type(), "must have withdrawal finalization as last transaction");
 
 		auto* broadcast_transaction = (transactions::broadcast*)*broadcast_transaction_ptr;

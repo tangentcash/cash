@@ -1,6 +1,6 @@
 #include "chain.h"
 #include "script.h"
-#include "../storage/mempoolstate.h"
+#include "superchain.h"
 #include <rocksdb/db.h>
 #include <rocksdb/table.h>
 #define KEY_FRONT 32
@@ -188,15 +188,8 @@ namespace tangent
 
 		auto config = blob_storage_configuration(protocol::now().user.storage.optimization, protocol::now().user.storage.blob_cache_size);
 		auto path = std::string(address.begin(), address.end());
-		rocksdb::DB* result = nullptr;
-#if ROCKSDB_MAJOR >= 11
-		std::unique_ptr<rocksdb::DB> wrapped_result;
-		auto status = rocksdb::DB::Open(config, path, &wrapped_result);
-		result = wrapped_result.get();
-		wrapped_result.reset();
-#else
+		std::unique_ptr<rocksdb::DB> result;
 		auto status = rocksdb::DB::Open(config, path, &result);
-#endif
 		if (!status.ok())
 		{
 			if (protocol::now().user.storage.logging)
@@ -206,7 +199,7 @@ namespace tangent
 		}
 
 		if (protocol::now().user.storage.logging)
-			VI_DEBUG("wal append on %s (handle: 0x%" PRIXPTR ")", address.c_str(), (uintptr_t)result);
+			VI_DEBUG("wal append on %s (handle: 0x%" PRIXPTR ")", address.c_str(), (uintptr_t)result.get());
 
 		auto threads = os::hw::get_quantity_info().physical;
 		auto options = result->GetOptions();
@@ -215,8 +208,8 @@ namespace tangent
 		if (protocol::now().user.storage.flush_threads_ratio > 0.0)
 			options.env->SetBackgroundThreads((int)std::max(std::ceil(threads * protocol::now().user.storage.flush_threads_ratio), 1.0), rocksdb::Env::Priority::HIGH);
 
-		blobs[address] = result;
-		return result;
+		blobs[address] = result.get();
+		return result.release();
 	}
 	uref<sqlite::connection> repository::pull_index(const std::string_view& location, std::function<void(sqlite::connection*)>&& initializer)
 	{

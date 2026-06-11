@@ -128,15 +128,12 @@ namespace tangent
 			server_response blockstate_get_block_hash_by_number(http::connection* base, format::variables&& args);
 			server_response txnstate_get_block_transactions_by_hash(http::connection* base, format::variables&& args);
 			server_response txnstate_get_block_transactions_by_number(http::connection* base, format::variables&& args);
-			server_response txnstate_get_block_receipts_by_hash(http::connection* base, format::variables&& args);
-			server_response txnstate_get_block_receipts_by_number(http::connection* base, format::variables&& args);
 			server_response txnstate_get_pending_transactions(http::connection* base, format::variables&& args);
 			server_response txnstate_get_finalized_transactions(http::connection* base, format::variables&& args);
 			server_response txnstate_get_transactions_by_owner(http::connection* base, format::variables&& args);
 			server_response txnstate_get_transactions_by_hash(http::connection* base, format::variables&& args);
 			server_response txnstate_get_transaction_by_hash(http::connection* base, format::variables&& args);
 			server_response txnstate_get_raw_transaction_by_hash(http::connection* base, format::variables&& args);
-			server_response txnstate_get_receipt_by_transaction_hash(http::connection* base, format::variables&& args);
 			server_response chainstate_call_transaction(http::connection* base, format::variables&& args);
 			server_response chainstate_get_block_state_by_hash(http::connection* base, format::variables&& args);
 			server_response chainstate_get_block_state_by_number(http::connection* base, format::variables&& args);

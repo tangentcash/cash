@@ -147,7 +147,6 @@ namespace tangent
 		{
 			uint64_t new_tip_block_number = 0;
 			uint64_t old_tip_block_number = 0;
-			uint64_t mempool_transactions = 0;
 			int64_t transaction_delta = 0;
 			int64_t block_delta = 0;
 			int64_t state_delta = 0;
@@ -484,6 +483,12 @@ namespace tangent
 				block
 			};
 
+			struct tip_cache
+			{
+				uint64_t tip_block_number = 0;
+				uint64_t checkpoint_block_number = 0;
+			};
+
 			struct queued_transaction
 			{
 				uint256_t hash = 0;
@@ -520,7 +525,7 @@ namespace tangent
 			vector<states::validator_production> producers;
 
 			void apply_temporary_state(block_header* abstract_block, const transaction_message* abstract_transaction, transaction_receipt&& abstract_receipt);
-			option<uint64_t> apply_validator_state(const std::function<ledger::wallet* (size_t)>& try_producer, option<const block_header*>&& parent_block = optional::none);
+			option<uint64_t> apply_validator_state(const std::function<ledger::wallet* (size_t)>& try_producer, option<const block_header*>&& parent_block = optional::none, tip_cache* cache = nullptr);
 			size_t try_include_transactions(vector<uptr<transaction_message>>&& candidates, hash_set<uint256_t>* hashes = nullptr);
 			queued_transaction& force_include_transaction(uptr<transaction_message>&& candidate);
 			include_decision decide_on_inclusion(const queued_transaction& candidate) const;
@@ -532,18 +537,18 @@ namespace tangent
 			expects_lr<void> block_solution_sign(block_evaluation& evaluation);
 			expects_lr<void> solve_block_inline(block_evaluation& evaluation);
 			expects_lr<void> verify_block(const block_evaluation& solution, const algorithm::pubkeyhash_t& recovered_producer = algorithm::pubkeyhash_t(), bool verify_pow = true);
-			expects_lr<block_checkpoint> checkpoint_block(block_evaluation& solution, bool keep_reverted_transactions = true);
+			expects_lr<block_checkpoint> checkpoint_block(block_evaluation& solution, tip_cache* cache = nullptr);
 			expects_lr<void> erase_failed_transactions();
 			bool can_accept_more_transactions();
 			static expects_lr<void> solve_evaluated_block(block_evaluation& evaluation, const algorithm::pubkeyhash_t& public_key_hash, const algorithm::seckey_t& secret_key);
 			static expects_lr<void> verify_solved_block(const block_header* parent_block, const block_evaluation& solution, const algorithm::pubkeyhash_t& recovered_producer = algorithm::pubkeyhash_t(), bool verify_pow = true);
-			static expects_lr<void> validate_solved_block(solver_context& solver, const block_header* parent_block, const block_body& child_block, block_evaluation* evaluated_result = nullptr, bool verify_pow = true);
+			static expects_lr<void> validate_solved_block(solver_context& solver, const block_header* parent_block, const block_body& child_block, block_evaluation* evaluated_result = nullptr, bool verify_pow = true, tip_cache* cache = nullptr);
 			static expects_lr<void> validate_solved_empty_block(solver_context& solver, const block_header& parent_block, const block_body& child_block, const algorithm::pubkeyhash_t& recovered_producer, block_evaluation* evaluated_result = nullptr, bool verify_pow = true);
-			static expects_lr<block_checkpoint> checkpoint_solved_block(solver_context& solver, block_evaluation& solution, bool keep_reverted_transactions = true);
+			static expects_lr<block_checkpoint> checkpoint_solved_block(solver_context& solver, block_evaluation& solution, tip_cache* cache = nullptr);
 			static queued_transaction precompute_transaction_element(uptr<transaction_message>&& candidate);
 			static void precompute_transaction_list(vector<queued_transaction>& candidates);
 			static void sort_transaction_list(vector<uptr<transaction_message>>& candidates);
-			static bool requires_reorganization(const block_evaluation& solution);
+			static bool requires_reorganization(const block_evaluation& solution, tip_cache* cache = nullptr);
 		};
 	}
 }

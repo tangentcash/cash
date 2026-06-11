@@ -1,6 +1,7 @@
 #include "engine.h"
 #include <rocksdb/db.h>
 #define DB_IMMATURE 1
+#define DB_BATCH 8
 
 namespace tangent
 {
@@ -38,33 +39,41 @@ namespace tangent
 		}
 		sqlite::expects_db<void> storage_util::multi_tx_commit(const std::string_view& operation, multi_storage_index_ptr&& ptr)
 		{
-			for (auto& connection : ptr)
+			std::atomic<bool> successful = true;
+			parallel::wail_all(parallel::for_each_sequential(ptr.begin(), ptr.end(), ptr.size(), DB_BATCH, [&](storage_index_ptr* connection)
 			{
 				auto result = connection->tx_commit(operation);
 				if (!result)
-				{
-					ptr.clear();
-					return result;
-				}
+					successful = false;
+			}));
+			if (successful)
+			{
+				ptr.clear();
+				return expectation::met;
 			}
 
+			for (auto& connection : ptr)
+			{
+				if (connection->in_transaction())
+					connection->tx_rollback(operation);
+			}
 			ptr.clear();
-			return expectation::met;
+			return sqlite::expects_db<void>(sqlite::database_exception("failed to commit a transaction (rolled back)"));
 		}
 		sqlite::expects_db<void> storage_util::multi_tx_rollback(const std::string_view& operation, multi_storage_index_ptr&& ptr)
 		{
-			for (auto& connection : ptr)
+			std::atomic<bool> successful = true;
+			parallel::wail_all(parallel::for_each_sequential(ptr.begin(), ptr.end(), ptr.size(), DB_BATCH, [&](storage_index_ptr* connection)
 			{
 				auto result = connection->tx_rollback(operation);
 				if (!result)
-				{
-					ptr.clear();
-					return result;
-				}
-			}
-
+					successful = false;
+			}));
 			ptr.clear();
-			return expectation::met;
+			if (successful)
+				return expectation::met;
+
+			return sqlite::expects_db<void>(sqlite::database_exception("failed to roll back a transaction"));
 		}
 		uref<sqlite::connection> storage_util::index_storage_of(const std::string_view& location, const std::function<bool(sqlite::connection*)>& callback)
 		{

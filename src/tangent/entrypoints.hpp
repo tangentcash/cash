@@ -354,14 +354,20 @@ namespace tangent
 			}
 			static void interrupter(bool bind)
 			{
-				os::process::bind_signal(signal_code::SIG_INT, bind ? [](int)
+				if (!bind)
+				{
+					os::process::bind_signal(signal_code::SIG_INT, nullptr);
+					return;
+				}
+
+				os::process::bind_signal(signal_code::SIG_INT, [](int)
 				{
 					auto* vm = script::factory::get()->get_vm();
 					if (vm->get_debugger() && vm->get_debugger()->interrupt())
 						interrupter(true);
 					else
 						exit(1);
-				} : nullptr);
+				});
 			}
 		};
 

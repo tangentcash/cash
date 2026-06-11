@@ -338,8 +338,6 @@ namespace tangent
 			bind(0 | access_type::r, "blockstate", "getblockhashbynumber", 1, 1, "uint64 number", "uint256", "get block hash by number", std::bind(&server_node::blockstate_get_block_hash_by_number, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "txnstate", "getblocktransactionsbyhash", 1, 2, "uint256 hash, uint8? unrolling = 0", "uint256[] | txn[] | block::txn[]", "get block transactions by hash", std::bind(&server_node::txnstate_get_block_transactions_by_hash, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "txnstate", "getblocktransactionsbynumber", 1, 2, "uint64 number, uint8? unrolling = 0", "uint256[] | txn[] | block::txn[]", "get block transactions by number", std::bind(&server_node::txnstate_get_block_transactions_by_number, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "txnstate", "getblockreceiptsbyhash", 1, 2, "uint256 hash, uint8? unrolling = 0", "uint256[] | receipt[]", "get block receipts by hash", std::bind(&server_node::txnstate_get_block_receipts_by_hash, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "txnstate", "getblockreceiptsbynumber", 1, 2, "uint64 number, uint8? unrolling = 0", "uint256[] | receipt[]", "get block receipts by number", std::bind(&server_node::txnstate_get_block_receipts_by_number, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "txnstate", "getpendingtransactionsbyhash", 1, 2, "uint256 hash, uint8? unrolling = 0", "uint256[] | txn[] | block::txn[]", "get block transactions by hash", std::bind(&server_node::txnstate_get_block_transactions_by_hash, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "txnstate", "getpendingtransactionsbynumber", 1, 2, "uint64 number, uint8? unrolling = 0", "uint256[] | txn[] | block::txn[]", "get block transactions by number", std::bind(&server_node::txnstate_get_block_transactions_by_number, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "txnstate", "getfinalizedtransactions", 2, 3, "uint64 offset, uint64 count, uint8? unrolling = 0", "uint256[] | txn[] | block::txn[]", "get latest finalized transactions", std::bind(&server_node::txnstate_get_finalized_transactions, this, std::placeholders::_1, std::placeholders::_2));
@@ -347,7 +345,6 @@ namespace tangent
 			bind(0 | access_type::r, "txnstate", "gettransactionsbyhash", 1, 2, "uint256 hash, uint8? unrolling = 0", "txn | block::txn", "get transactions by hash including aliases", std::bind(&server_node::txnstate_get_transactions_by_hash, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "txnstate", "gettransactionbyhash", 1, 2, "uint256 hash, uint8? unrolling = 0", "txn | block::txn", "get transaction by hash including aliases", std::bind(&server_node::txnstate_get_transaction_by_hash, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "txnstate", "getrawtransactionbyhash", 1, 1, "uint256 hash", "string", "get raw transaction by hash", std::bind(&server_node::txnstate_get_raw_transaction_by_hash, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "txnstate", "getreceiptbytransactionhash", 1, 1, "uint256 hash", "receipt", "get receipt by transaction hash", std::bind(&server_node::txnstate_get_receipt_by_transaction_hash, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "calltransaction", 4, 32, "string asset, string from_address, string to_address, string function, any... args", "program_trace", "execute of immutable function of program assigned to to_address", std::bind(&server_node::chainstate_call_transaction, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getblockstatebyhash", 1, 2, "uint256 hash, uint8? unrolling = 0", "uint256[] | (uniform|multiform)[]", "get block state by hash", std::bind(&server_node::chainstate_get_block_state_by_hash, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getblockstatebynumber", 1, 2, "uint64 number, uint8? unrolling = 0", "uint256[] | (uniform|multiform)[]", "get block state by number", std::bind(&server_node::chainstate_get_block_state_by_number, this, std::placeholders::_1, std::placeholders::_2));
@@ -435,7 +432,7 @@ namespace tangent
 			bind(access_type::r | access_type::a, "validatorstate", "setwallet", 2, 2, "string type = 'mnemonic' | 'seed' | 'key', string entropy", "wallet", "set validator wallet from mnemonic phrase, seed value or secret key", std::bind(&server_node::validatorstate_set_wallet, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::r | access_type::a, "validatorstate", "getwallet", 0, 0, "", "wallet", "get validator wallet", std::bind(&server_node::validatorstate_get_wallet, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::r | access_type::a, "validatorstate", "verify", 2, 3, "uint64 number, uint64 count, bool? validate", "uint256[]", "verify chain and possibly re-execute each block", std::bind(&server_node::validatorstate_verify, this, std::placeholders::_1, std::placeholders::_2));
-			bind(access_type::w | access_type::a, "validatorstate", "revert", 1, 2, "uint64 number, bool? keep_reverted_transactions", "{ new_tip_block_number: uint64, old_tip_block_number: uint64, mempool_transactions: uint64, block_delta: int64, transaction_delta: int64, state_delta: int64, is_fork: bool }", "revert chainstate to block number and possibly send removed transactions to mempool", std::bind(&server_node::validatorstate_revert, this, std::placeholders::_1, std::placeholders::_2));
+			bind(access_type::w | access_type::a, "validatorstate", "revert", 1, 1, "uint64 number", "{ new_tip_block_number: uint64, old_tip_block_number: uint64, block_delta: int64, transaction_delta: int64, state_delta: int64, is_fork: bool }", "revert chainstate to block number and possibly send removed transactions to mempool", std::bind(&server_node::validatorstate_revert, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "validatorstate", "acceptnode", 1, 1, "string uri_address", "void", "try to accept and connect to a node possibly by ip address", std::bind(&server_node::validatorstate_accept_node, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "validatorstate", "rejectnode", 1, 1, "string uri_address", "void", "reject and disconnect from a node by ip address", std::bind(&server_node::validatorstate_reject_node, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "validatorstate", "submitblock", 0, 0, "", "void", "try to propose a block from mempool transactions", std::bind(&server_node::validatorstate_submit_block, this, std::placeholders::_1, std::placeholders::_2));
@@ -973,76 +970,7 @@ namespace tangent
 			uint256_t hash = args[0].as_uint256();
 			uint8_t unrolling = args.size() > 1 ? args[1].as_uint8() : 0;
 			auto chain = storages::chainstate();
-			if (unrolling == 0)
-			{
-				auto block_header = chain.get_block_header_by_hash(hash);
-				if (!block_header)
-					return server_response().error(error_codes::not_found, "block not found");
-
-				return server_response().success(block_header->as_tree());
-			}
-			else if (unrolling == 1)
-			{
-				auto block_header = chain.get_block_header_by_hash(hash);
-				if (!block_header)
-					return server_response().error(error_codes::not_found, "block not found");
-
-				auto data = block_header->as_tree();
-				auto* transactions = data.set("transactions", format::tree::list());
-				auto transaction_hashset = chain.get_block_transaction_hashset(block_header->number);
-				if (transaction_hashset)
-				{
-					for (auto& item : *transaction_hashset)
-						transactions->push(format::variable(algorithm::encoding::encode_0xhex256(item)));
-				}
-
-				return server_response().success(std::move(data));
-			}
-			else if (unrolling == 2)
-			{
-				auto block_header = chain.get_block_header_by_hash(hash);
-				if (!block_header)
-					return server_response().error(error_codes::not_found, "block not found");
-
-				auto data = block_header->as_tree();
-				auto* transactions = data.set("transactions", format::tree::list());
-				while (true)
-				{
-					auto list = chain.get_transactions_by_number(block_header->number, transactions->childs().size(), protocol::now().message.items_per_query);
-					if (!list)
-						return server_response().error(error_codes::not_found, "block not found");
-
-					for (auto& item : *list)
-						transactions->push(item->as_tree());
-					if (list->size() < protocol::now().message.items_per_query)
-						break;
-				}
-
-				return server_response().success(std::move(data));
-			}
-			else if (unrolling == 3)
-			{
-				auto block_header = chain.get_block_header_by_hash(hash);
-				if (!block_header)
-					return server_response().error(error_codes::not_found, "block not found");
-
-				auto data = block_header->as_tree();
-				auto* transactions = data.set("transactions", format::tree::list());
-				while (true)
-				{
-					auto list = chain.get_block_transactions_by_number(block_header->number, transactions->childs().size(), protocol::now().message.items_per_query);
-					if (!list)
-						return server_response().error(error_codes::not_found, "block not found");
-
-					for (auto& item : *list)
-						transactions->push(item.as_tree());
-					if (list->size() < protocol::now().message.items_per_query)
-						break;
-				}
-
-				return server_response().success(std::move(data));
-			}
-			else
+			if (unrolling > 3)
 			{
 				auto block = chain.get_block_by_hash(hash);
 				if (!block)
@@ -1050,67 +978,26 @@ namespace tangent
 
 				return server_response().success(block->as_tree());
 			}
-		}
-		server_response server_node::blockstate_get_block_by_number(http::connection*, format::variables&& args)
-		{
-			uint64_t number = args[0].as_uint64();
-			uint8_t unrolling = args.size() > 1 ? args[1].as_uint8() : 0;
-			auto chain = storages::chainstate();
-			if (unrolling == 0)
-			{
-				auto block_header = chain.get_block_header_by_number(number);
-				if (!block_header)
-					return server_response().error(error_codes::not_found, "block not found");
 
+			auto block_header = chain.get_block_header_by_hash(hash);
+			if (!block_header)
+				return server_response().error(error_codes::not_found, "block not found");
+			else if (unrolling == 0)
 				return server_response().success(block_header->as_tree());
-			}
-			else if (unrolling == 1)
-			{
-				auto block_header = chain.get_block_header_by_number(number);
-				if (!block_header)
-					return server_response().error(error_codes::not_found, "block not found");
 
-				auto data = block_header->as_tree();
-				auto* transactions = data.set("transactions", format::tree::list());
+			auto data = block_header->as_tree();
+			auto* transactions = data.set("transactions", format::tree::list());
+			if (unrolling == 1)
+			{
 				auto transaction_hashset = chain.get_block_transaction_hashset(block_header->number);
 				if (transaction_hashset)
 				{
 					for (auto& item : *transaction_hashset)
 						transactions->push(format::variable(algorithm::encoding::encode_0xhex256(item)));
 				}
-
-				return server_response().success(std::move(data));
 			}
-			else if (unrolling == 2)
+			else
 			{
-				auto block_header = chain.get_block_header_by_number(number);
-				if (!block_header)
-					return server_response().error(error_codes::not_found, "block not found");
-
-				auto data = block_header->as_tree();
-				auto* transactions = data.set("transactions", format::tree::list());
-				while (true)
-				{
-					auto list = chain.get_transactions_by_number(block_header->number, transactions->childs().size(), protocol::now().message.items_per_query);
-					if (!list)
-						return server_response().error(error_codes::not_found, "block not found");
-
-					for (auto& item : *list)
-						transactions->push(item->as_tree());
-					if (list->size() < protocol::now().message.items_per_query)
-						break;
-				}
-
-				return server_response().success(std::move(data));
-			}
-			else if (unrolling == 3)
-			{
-				auto block_header = chain.get_block_header_by_number(number);
-				if (!block_header)
-					return server_response().error(error_codes::not_found, "block not found");
-
-				auto data = block_header->as_tree();
-				auto* transactions = data.set("transactions", format::tree::list());
 				while (true)
 				{
 					auto list = chain.get_block_transactions_by_number(block_header->number, transactions->childs().size(), protocol::now().message.items_per_query);
@@ -1118,14 +1005,19 @@ namespace tangent
 						return server_response().error(error_codes::not_found, "block not found");
 
 					for (auto& item : *list)
-						transactions->push(item.as_tree());
+						transactions->push(unrolling == 2 ? item.transaction->as_tree() : item.as_tree());
 					if (list->size() < protocol::now().message.items_per_query)
 						break;
 				}
-
-				return server_response().success(std::move(data));
 			}
-			else
+			return server_response().success(std::move(data));
+		}
+		server_response server_node::blockstate_get_block_by_number(http::connection*, format::variables&& args)
+		{
+			uint64_t number = args[0].as_uint64();
+			uint8_t unrolling = args.size() > 1 ? args[1].as_uint8() : 0;
+			auto chain = storages::chainstate();
+			if (unrolling > 3)
 			{
 				auto block = chain.get_block_by_number(number);
 				if (!block)
@@ -1133,6 +1025,39 @@ namespace tangent
 
 				return server_response().success(block->as_tree());
 			}
+
+			auto block_header = chain.get_block_header_by_number(number);
+			if (!block_header)
+				return server_response().error(error_codes::not_found, "block not found");
+			else if (unrolling == 0)
+				return server_response().success(block_header->as_tree());
+
+			auto data = block_header->as_tree();
+			auto* transactions = data.set("transactions", format::tree::list());
+			if (unrolling == 1)
+			{
+				auto transaction_hashset = chain.get_block_transaction_hashset(block_header->number);
+				if (transaction_hashset)
+				{
+					for (auto& item : *transaction_hashset)
+						transactions->push(format::variable(algorithm::encoding::encode_0xhex256(item)));
+				}
+			}
+			else
+			{
+				while (true)
+				{
+					auto list = chain.get_block_transactions_by_number(block_header->number, transactions->childs().size(), protocol::now().message.items_per_query);
+					if (!list)
+						return server_response().error(error_codes::not_found, "block not found");
+
+					for (auto& item : *list)
+						transactions->push(unrolling == 2 ? item.transaction->as_tree() : item.as_tree());
+					if (list->size() < protocol::now().message.items_per_query)
+						break;
+				}
+			}
+			return server_response().success(std::move(data));
 		}
 		server_response server_node::blockstate_get_raw_block_by_hash(http::connection*, format::variables&& args)
 		{
@@ -1233,49 +1158,22 @@ namespace tangent
 			uint256_t hash = args[0].as_uint256();
 			uint8_t unrolling = args.size() > 1 ? args[1].as_uint8() : 0;
 			auto chain = storages::chainstate();
+			auto block_number = chain.get_block_number_by_hash(hash);
+			if (!block_number)
+				return server_response().error(error_codes::not_found, "block not found");
+
+			auto data = format::tree::list();
 			if (unrolling == 0)
 			{
-				auto block_number = chain.get_block_number_by_hash(hash);
-				if (!block_number)
-					return server_response().error(error_codes::not_found, "block not found");
-
 				auto hashes = chain.get_block_transaction_hashset(*block_number);
 				if (!hashes)
 					return server_response().error(error_codes::not_found, "block not found");
 
-				auto data = format::tree::list();
 				for (auto& item : *hashes)
 					data.push(format::variable(algorithm::encoding::encode_0xhex256(item)));
-				return server_response().success(std::move(data));
 			}
-			else if (unrolling == 1)
+			else if (unrolling == 1 || unrolling == 2)
 			{
-				auto block_number = chain.get_block_number_by_hash(hash);
-				if (!block_number)
-					return server_response().error(error_codes::not_found, "block not found");
-
-				auto data = format::tree::list();
-				while (true)
-				{
-					auto list = chain.get_transactions_by_number(*block_number, data.childs().size(), protocol::now().message.items_per_query);
-					if (!list)
-						return server_response().error(error_codes::not_found, "block not found");
-
-					for (auto& item : *list)
-						data.push(item->as_tree());
-					if (list->size() < protocol::now().message.items_per_query)
-						break;
-				}
-
-				return server_response().success(std::move(data));
-			}
-			else if (unrolling == 2)
-			{
-				auto block_number = chain.get_block_number_by_hash(hash);
-				if (!block_number)
-					return server_response().error(error_codes::not_found, "block not found");
-
-				auto data = format::tree::list();
 				while (true)
 				{
 					auto list = chain.get_block_transactions_by_number(*block_number, data.childs().size(), protocol::now().message.items_per_query);
@@ -1283,23 +1181,16 @@ namespace tangent
 						return server_response().error(error_codes::not_found, "block not found");
 
 					for (auto& item : *list)
-						data.push(item.as_tree());
+						data.push(unrolling == 1 ? item.transaction->as_tree() : item.as_tree());
 					if (list->size() < protocol::now().message.items_per_query)
 						break;
 				}
-
-				return server_response().success(std::move(data));
 			}
 			else
 			{
-				auto block_number = chain.get_block_number_by_hash(hash);
-				if (!block_number)
-					return server_response().error(error_codes::not_found, "block not found");
-
 				auto parties = btree_set<algorithm::pubkeyhash_t>();
 				auto aliases = btree_set<uint256_t>();
 				auto executor = ledger::executor_context(nullptr);
-				auto data = format::tree::list();
 				while (true)
 				{
 					auto list = chain.get_block_transactions_by_number(*block_number, data.childs().size(), protocol::now().message.items_per_query);
@@ -1328,69 +1219,46 @@ namespace tangent
 					if (list->size() < protocol::now().message.items_per_query)
 						break;
 				}
-
-				return server_response().success(std::move(data));
 			}
+			return server_response().success(std::move(data));
 		}
 		server_response server_node::txnstate_get_block_transactions_by_number(http::connection*, format::variables&& args)
 		{
-			uint64_t number = args[0].as_uint64();
+			uint64_t block_number = args[0].as_uint64();
 			uint8_t unrolling = args.size() > 1 ? args[1].as_uint8() : 0;
 			auto chain = storages::chainstate();
+			auto data = format::tree::list();
 			if (unrolling == 0)
 			{
-				auto hashes = chain.get_block_transaction_hashset(number);
+				auto hashes = chain.get_block_transaction_hashset(block_number);
 				if (!hashes)
 					return server_response().error(error_codes::not_found, "block not found");
 
-				auto data = format::tree::list();
 				for (auto& item : *hashes)
 					data.push(format::variable(algorithm::encoding::encode_0xhex256(item)));
-				return server_response().success(std::move(data));
 			}
-			else if (unrolling == 1)
+			else if (unrolling == 1 || unrolling == 2)
 			{
-				auto data = format::tree::list();
 				while (true)
 				{
-					auto list = chain.get_transactions_by_number(number, data.childs().size(), protocol::now().message.items_per_query);
+					auto list = chain.get_block_transactions_by_number(block_number, data.childs().size(), protocol::now().message.items_per_query);
 					if (!list)
 						return server_response().error(error_codes::not_found, "block not found");
 
 					for (auto& item : *list)
-						data.push(item->as_tree());
+						data.push(unrolling == 1 ? item.transaction->as_tree() : item.as_tree());
 					if (list->size() < protocol::now().message.items_per_query)
 						break;
 				}
-
-				return server_response().success(std::move(data));
-			}
-			else if (unrolling == 2)
-			{
-				auto data = format::tree::list();
-				while (true)
-				{
-					auto list = chain.get_block_transactions_by_number(number, data.childs().size(), protocol::now().message.items_per_query);
-					if (!list)
-						return server_response().error(error_codes::not_found, "block not found");
-
-					for (auto& item : *list)
-						data.push(item.as_tree());
-					if (list->size() < protocol::now().message.items_per_query)
-						break;
-				}
-
-				return server_response().success(std::move(data));
 			}
 			else
 			{
 				auto parties = btree_set<algorithm::pubkeyhash_t>();
 				auto aliases = btree_set<uint256_t>();
 				auto executor = ledger::executor_context(nullptr);
-				auto data = format::tree::list();
 				while (true)
 				{
-					auto list = chain.get_block_transactions_by_number(number, data.childs().size(), protocol::now().message.items_per_query);
+					auto list = chain.get_block_transactions_by_number(block_number, data.childs().size(), protocol::now().message.items_per_query);
 					if (!list)
 						return server_response().error(error_codes::not_found, "block not found");
 
@@ -1407,8 +1275,8 @@ namespace tangent
 						accounts_data->push(algorithm::signing::serialize_address(item.receipt.from));
 						for (auto& party : parties)
 							accounts_data->push(algorithm::signing::serialize_address(party));
-						for (auto& hash : aliases)
-							aliases_data->push(format::variable(algorithm::encoding::encode_0xhex256(hash)));
+						for (auto& alias : aliases)
+							aliases_data->push(format::variable(algorithm::encoding::encode_0xhex256(alias)));
 						data.push(std::move(tx_data));
 						parties.clear();
 						aliases.clear();
@@ -1416,93 +1284,8 @@ namespace tangent
 					if (list->size() < protocol::now().message.items_per_query)
 						break;
 				}
-
-				return server_response().success(std::move(data));
 			}
-		}
-		server_response server_node::txnstate_get_block_receipts_by_hash(http::connection*, format::variables&& args)
-		{
-			uint256_t hash = args[0].as_uint256();
-			uint8_t unrolling = args.size() > 1 ? args[1].as_uint8() : 0;
-			auto chain = storages::chainstate();
-			auto block_number = chain.get_block_number_by_hash(hash);
-			if (!block_number)
-				return server_response().error(error_codes::not_found, "block not found");
-
-			if (unrolling == 0)
-			{
-				auto data = format::tree::list();
-				while (true)
-				{
-					auto list = chain.get_block_receipts_by_number(*block_number, data.childs().size(), protocol::now().message.items_per_query);
-					if (!list)
-						return server_response().error(error_codes::not_found, "block not found");
-
-					for (auto& item : *list)
-						data.push(format::variable(algorithm::encoding::encode_0xhex256(item.as_hash())));
-					if (list->size() < protocol::now().message.items_per_query)
-						break;
-				}
-
-				return server_response().success(std::move(data));
-			}
-			else
-			{
-				auto data = format::tree::list();
-				while (true)
-				{
-					auto list = chain.get_block_receipts_by_number(*block_number, data.childs().size(), protocol::now().message.items_per_query);
-					if (!list)
-						return server_response().error(error_codes::not_found, "block not found");
-
-					for (auto& item : *list)
-						data.push(item.as_tree());
-					if (list->size() < protocol::now().message.items_per_query)
-						break;
-				}
-
-				return server_response().success(std::move(data));
-			}
-		}
-		server_response server_node::txnstate_get_block_receipts_by_number(http::connection*, format::variables&& args)
-		{
-			uint64_t number = args[0].as_uint64();
-			uint8_t unrolling = args.size() > 1 ? args[1].as_uint8() : 0;
-			auto chain = storages::chainstate();
-			if (unrolling == 0)
-			{
-				auto data = format::tree::list();
-				while (true)
-				{
-					auto list = chain.get_block_receipts_by_number(number, data.childs().size(), protocol::now().message.items_per_query);
-					if (!list)
-						return server_response().error(error_codes::not_found, "block not found");
-
-					for (auto& item : *list)
-						data.push(format::variable(algorithm::encoding::encode_0xhex256(item.as_hash())));
-					if (list->size() < protocol::now().message.items_per_query)
-						break;
-				}
-
-				return server_response().success(std::move(data));
-			}
-			else
-			{
-				auto data = format::tree::list();
-				while (true)
-				{
-					auto list = chain.get_block_receipts_by_number(number, data.childs().size(), protocol::now().message.items_per_query);
-					if (!list)
-						return server_response().error(error_codes::not_found, "block not found");
-
-					for (auto& item : *list)
-						data.push(item.as_tree());
-					if (list->size() < protocol::now().message.items_per_query)
-						break;
-				}
-
-				return server_response().success(std::move(data));
-			}
+			return server_response().success(std::move(data));
 		}
 		server_response server_node::txnstate_get_pending_transactions(http::connection*, format::variables&& args)
 		{
@@ -1512,39 +1295,27 @@ namespace tangent
 
 			uint8_t unrolling = args.size() > 2 ? args[2].as_uint8() : 0;
 			auto chain = storages::chainstate();
+			auto list = chain.get_pending_block_transactions(std::numeric_limits<int64_t>::max(), offset, count);
+			if (!list)
+				return server_response().error(error_codes::not_found, "block not found");
+
+			auto data = format::tree::list();
 			if (unrolling == 0)
 			{
-				auto list = chain.get_pending_block_transactions(std::numeric_limits<int64_t>::max(), offset, count);
-				if (!list)
-					return server_response().error(error_codes::not_found, "block not found");
-
-				auto data = format::tree::list();
 				for (auto& item : *list)
 					data.push(format::variable(algorithm::encoding::encode_0xhex256(item.receipt.transaction_hash)));
-				return server_response().success(std::move(data));
 			}
 			else if (unrolling == 1)
 			{
-				auto list = chain.get_pending_block_transactions(std::numeric_limits<int64_t>::max(), offset, count);
-				if (!list)
-					return server_response().error(error_codes::not_found, "block not found");
-
-				auto data = format::tree::list();
 				for (auto& item : *list)
 					data.push(item.transaction->as_tree());
-				return server_response().success(std::move(data));
 			}
 			else
 			{
-				auto list = chain.get_pending_block_transactions(std::numeric_limits<int64_t>::max(), offset, count);
-				if (!list)
-					return server_response().error(error_codes::not_found, "block not found");
-
-				auto data = format::tree::list();
 				for (auto& item : *list)
 					data.push(item.as_tree());
-				return server_response().success(std::move(data));
 			}
+			return server_response().success(std::move(data));
 		}
 		server_response server_node::txnstate_get_finalized_transactions(http::connection* base, format::variables&& args)
 		{
@@ -1554,39 +1325,27 @@ namespace tangent
 
 			uint8_t unrolling = args.size() > 2 ? args[2].as_uint8() : 0;
 			auto chain = storages::chainstate();
+			auto list = chain.get_block_transactions(offset, count);
+			if (!list)
+				return server_response().error(error_codes::not_found, "transactions not found");
+
+			auto data = format::tree::list();
 			if (unrolling == 0)
 			{
-				auto data = format::tree::list();
-				auto list = chain.get_transactions(offset, count);
-				if (!list)
-					return server_response().error(error_codes::not_found, "transactions not found");
-
 				for (auto& item : *list)
-					data.push(format::variable(algorithm::encoding::encode_0xhex256(item->as_hash())));
-				return server_response().success(std::move(data));
+					data.push(format::variable(algorithm::encoding::encode_0xhex256(item.transaction->as_hash())));
 			}
 			else if (unrolling == 1)
 			{
-				auto data = format::tree::list();
-				auto list = chain.get_transactions(offset, count);
-				if (!list)
-					return server_response().error(error_codes::not_found, "transactions not found");
-
 				for (auto& item : *list)
-					data.push(item->as_tree());
-				return server_response().success(std::move(data));
+					data.push(item.transaction->as_tree());
 			}
 			else
 			{
-				auto data = format::tree::list();
-				auto list = chain.get_block_transactions(offset, count);
-				if (!list)
-					return server_response().error(error_codes::not_found, "transactions not found");
-
 				for (auto& item : *list)
 					data.push(item.as_tree());
-				return server_response().success(std::move(data));
 			}
+			return server_response().success(std::move(data));
 		}
 		server_response server_node::txnstate_get_transactions_by_owner(http::connection*, format::variables&& args)
 		{
@@ -1601,109 +1360,75 @@ namespace tangent
 			uint8_t direction = args.size() > 3 ? args[3].as_uint8() : 1;
 			uint8_t unrolling = args.size() > 4 ? args[4].as_uint8() : 0;
 			auto chain = storages::chainstate();
+			auto list = chain.get_block_transactions_by_owner(std::numeric_limits<int64_t>::max(), owner, direction >= 1 ? 1 : -1, offset, count);
+			if (!list)
+				return server_response().error(error_codes::not_found, "transactions not found");
+
+			auto data = format::tree::list();
 			if (unrolling == 0)
 			{
-				auto data = format::tree::list();
-				auto list = chain.get_transactions_by_owner(std::numeric_limits<int64_t>::max(), owner, direction >= 1 ? 1 : -1, offset, count);
-				if (!list)
-					return server_response().error(error_codes::not_found, "transactions not found");
-
 				for (auto& item : *list)
-					data.push(format::variable(algorithm::encoding::encode_0xhex256(item->as_hash())));
-				return server_response().success(std::move(data));
+					data.push(format::variable(algorithm::encoding::encode_0xhex256(item.transaction->as_hash())));
 			}
 			else if (unrolling == 1)
 			{
-				auto data = format::tree::list();
-				auto list = chain.get_transactions_by_owner(std::numeric_limits<int64_t>::max(), owner, direction >= 1 ? 1 : -1, offset, count);
-				if (!list)
-					return server_response().error(error_codes::not_found, "transactions not found");
-
 				for (auto& item : *list)
-					data.push(item->as_tree());
-				return server_response().success(std::move(data));
+					data.push(item.transaction->as_tree());
 			}
 			else
 			{
-				auto data = format::tree::list();
-				auto list = chain.get_block_transactions_by_owner(std::numeric_limits<int64_t>::max(), owner, direction >= 1 ? 1 : -1, offset, count);
-				if (!list)
-					return server_response().error(error_codes::not_found, "transactions not found");
-
 				for (auto& item : *list)
 					data.push(item.as_tree());
-				return server_response().success(std::move(data));
 			}
+			return server_response().success(std::move(data));
 		}
 		server_response server_node::txnstate_get_transactions_by_hash(http::connection*, format::variables&& args)
 		{
 			uint256_t hash = args[0].as_uint256();
 			uint8_t unrolling = args.size() > 1 ? args[1].as_uint8() : 0;
 			auto chain = storages::chainstate();
+			auto list = chain.get_block_transactions_by_hash(hash, true);
+			if (!list)
+				return server_response().error(error_codes::not_found, "transactions not found");
+
+			auto data = format::tree::list();
 			if (unrolling == 0)
 			{
-				auto data = format::tree::list();
-				auto list = chain.get_transactions_by_hash(hash, true);
-				if (!list)
-					return server_response().error(error_codes::not_found, "transactions not found");
-
 				for (auto& item : *list)
-					data.push(format::variable(algorithm::encoding::encode_0xhex256(item->as_hash())));
-				return server_response().success(std::move(data));
+					data.push(format::variable(algorithm::encoding::encode_0xhex256(item.transaction->as_hash())));
+			}
+			else if (unrolling == 1)
+			{
+				for (auto& item : *list)
+					data.push(item.transaction->as_tree());
 			}
 			else
 			{
-				auto data = format::tree::list();
-				auto list = chain.get_block_transactions_by_hash(hash, true);
-				if (!list)
-					return server_response().error(error_codes::not_found, "transactions not found");
-
 				for (auto& item : *list)
 					data.push(item.as_tree());
-				return server_response().success(std::move(data));
 			}
+			return server_response().success(std::move(data));
 		}
 		server_response server_node::txnstate_get_transaction_by_hash(http::connection*, format::variables&& args)
 		{
 			uint256_t hash = args[0].as_uint256();
 			uint8_t unrolling = args.size() > 1 ? args[1].as_uint8() : 0;
 			auto chain = storages::chainstate();
-			if (unrolling == 0)
-			{
-				auto transaction = chain.get_transaction_by_hash(hash, true);
-				if (!transaction)
-					return server_response().error(error_codes::not_found, "transaction not found");
+			auto transaction = chain.get_block_transaction_by_hash(hash, true);
+			if (!transaction)
+				return server_response().error(error_codes::not_found, "transaction not found");
 
-				return server_response().success((*transaction)->as_tree());
-			}
-			else
-			{
-				auto transaction = chain.get_block_transaction_by_hash(hash, true);
-				if (!transaction)
-					return server_response().error(error_codes::not_found, "transaction not found");
-
-				return server_response().success(transaction->as_tree());
-			}
+			return server_response().success(unrolling == 0 ? transaction->transaction->as_tree() : transaction->as_tree());
 		}
 		server_response server_node::txnstate_get_raw_transaction_by_hash(http::connection*, format::variables&& args)
 		{
 			uint256_t hash = args[0].as_uint256();
 			auto chain = storages::chainstate();
-			auto transaction = chain.get_transaction_by_hash(hash, false);
+			auto transaction = chain.get_block_transaction_by_hash(hash, false);
 			if (!transaction)
 				return server_response().error(error_codes::not_found, "transaction not found");
 
-			return server_response().success(format::variable((*transaction)->as_message().encode()));
-		}
-		server_response server_node::txnstate_get_receipt_by_transaction_hash(http::connection*, format::variables&& args)
-		{
-			uint256_t hash = args[0].as_uint256();
-			auto chain = storages::chainstate();
-			auto receipt = chain.get_receipt_by_transaction_hash(hash);
-			if (!receipt)
-				return server_response().error(error_codes::not_found, "receipt not found");
-
-			return server_response().success(receipt->as_tree());
+			return server_response().success(format::variable(transaction->transaction->as_message().encode()));
 		}
 		server_response server_node::chainstate_call_transaction(http::connection*, format::variables&& args)
 		{
@@ -1770,53 +1495,45 @@ namespace tangent
 			uint256_t hash = args[0].as_uint256();
 			uint8_t unrolling = args.size() > 1 ? args[1].as_uint8() : 0;
 			auto chain = storages::chainstate();
+			auto block_number = chain.get_block_number_by_hash(hash);
+			if (!block_number)
+				return server_response().error(error_codes::not_found, "block not found");
+
+			auto data = format::tree::list();
 			if (unrolling == 0)
 			{
-				auto block_number = chain.get_block_number_by_hash(hash);
-				if (!block_number)
-					return server_response().error(error_codes::not_found, "block not found");
-
 				auto hashes = chain.get_block_state_hashset(*block_number);
 				if (!hashes)
 					return server_response().error(error_codes::not_found, "block not found");
 
-				auto data = format::tree::list();
 				for (auto& item : *hashes)
 					data.push(format::variable(algorithm::encoding::encode_0xhex256(item)));
-				return server_response().success(std::move(data));
 			}
 			else
 			{
-				auto block_number = chain.get_block_number_by_hash(hash);
-				if (!block_number)
-					return server_response().error(error_codes::not_found, "block not found");
-
 				auto list = chain.get_block_state_by_number(*block_number, protocol::now().message.items_per_query);
 				if (!list)
 					return server_response().error(error_codes::not_found, "block not found");
 
-				auto data = format::tree::list();
 				for (auto& [index, change] : *list)
 					data.push(change.as_tree());
-
-				return server_response().success(std::move(data));
 			}
+			return server_response().success(std::move(data));
 		}
 		server_response server_node::chainstate_get_block_state_by_number(http::connection*, format::variables&& args)
 		{
 			uint64_t number = args[0].as_uint64();
 			uint8_t unrolling = args.size() > 1 ? args[1].as_uint8() : 0;
 			auto chain = storages::chainstate();
+			auto data = format::tree::list();
 			if (unrolling == 0)
 			{
 				auto hashes = chain.get_block_state_hashset(number);
 				if (!hashes)
 					return server_response().error(error_codes::not_found, "block not found");
 
-				auto data = format::tree::list();
 				for (auto& item : *hashes)
 					data.push(format::variable(algorithm::encoding::encode_0xhex256(item)));
-				return server_response().success(std::move(data));
 			}
 			else
 			{
@@ -1824,12 +1541,10 @@ namespace tangent
 				if (!list)
 					return server_response().error(error_codes::not_found, "block not found");
 
-				auto data = format::tree::list();
 				for (auto& [index, change] : *list)
 					data.push(change.as_tree());
-
-				return server_response().success(std::move(data));
 			}
+			return server_response().success(std::move(data));
 		}
 		server_response server_node::chainstate_get_block_gas_price_by_hash(http::connection*, format::variables&& args)
 		{
@@ -3164,14 +2879,16 @@ namespace tangent
 			if (!list)
 				return server_response().error(error_codes::not_found, "transactions not found");
 
-			for (auto& item : *list)
+			if (unrolling == 0)
 			{
-				if (unrolling == 0)
+				for (auto& item : *list)
 					data.push(format::variable(algorithm::encoding::encode_0xhex256(item->as_hash())));
-				else
+			}
+			else
+			{
+				for (auto& item : *list)
 					data.push(item->as_tree());
 			}
-
 			return server_response().success(std::move(data));
 		}
 		server_response server_node::mempoolstate_get_transactions_by_owner(http::connection*, format::variables&& args)
@@ -3229,7 +2946,7 @@ namespace tangent
 			evaluation.block = std::move(*block);
 			evaluation.state = std::move(*state);
 
-			auto checkpoint = ledger::solver_context::checkpoint_solved_block(solver, evaluation, args.size() > 1 ? args[1].as_boolean() : false);
+			auto checkpoint = ledger::solver_context::checkpoint_solved_block(solver, evaluation);
 			if (consensus_service != nullptr)
 				consensus_service->release_checkpointer();
 
@@ -3239,7 +2956,6 @@ namespace tangent
 			auto result = format::tree::map();
 			result.set("new_tip_block_number", format::variable(checkpoint->new_tip_block_number));
 			result.set("old_tip_block_number", format::variable(checkpoint->old_tip_block_number));
-			result.set("mempool_transactions", format::variable(checkpoint->mempool_transactions));
 			result.set("transaction_delta", format::variable(decimal(checkpoint->transaction_delta)));
 			result.set("block_delta", format::variable(decimal(checkpoint->block_delta)));
 			result.set("state_delta", format::variable(decimal(checkpoint->state_delta)));

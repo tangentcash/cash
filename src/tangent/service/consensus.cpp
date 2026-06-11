@@ -461,26 +461,25 @@ namespace tangent
 		}
 		void relay::close_channel(const std::string_view& message)
 		{
+			auto* socket = as_socket();
 			bool graceful_shutdown = instance != nullptr && descriptor;
 			if (graceful_shutdown)
 			{
 				report_call(0, 0, true);
-				if (protocol::now().user.consensus.logging)
+				if (!aborted && protocol::now().user.consensus.logging)
 				{
 					std::string_view shutdown_message = message.empty() ? std::string_view("abnormal shutdown") : message;
 					VI_INFO("node %s channel close (%.*s)", peer_address().c_str(), (int)shutdown_message.size(), shutdown_message.data());
 				}
 			}
 
+			aborted = true;
 			cancel_queries();
 			if (deferred_pull != INVALID_TASK_ID)
 			{
 				schedule::get()->clear_timeout(deferred_pull);
 				deferred_pull = INVALID_TASK_ID;
 			}
-
-			auto* socket = as_socket();
-			aborted = true;
 			if (socket != nullptr)
 				socket->shutdown(true);
 
@@ -1010,7 +1009,7 @@ namespace tangent
 
 			auto chain = storages::chainstate();
 			auto mempool = storages::mempoolstate();
-			if (mempool.has_transaction(candidate_hash).or_else(false) || chain.get_transaction_by_hash(candidate_hash, false))
+			if (mempool.has_transaction(candidate_hash).or_else(false) || chain.has_block_transaction(candidate_hash).or_else(false))
 				return expectation::met;
 
 			auto state = chain.get_uniform(states::account_nonce::as_instance_type(), nullptr, states::account_nonce::as_instance_index(owner), 0);
@@ -1184,11 +1183,11 @@ namespace tangent
 				return remote_exception("invalid hash");
 
 			auto mempool = storages::mempoolstate();
-			if (mempool.get_transaction_by_hash(transaction_hash))
+			if (mempool.has_transaction(transaction_hash).or_else(false))
 				return expectation::met;
 
 			auto chain = storages::chainstate();
-			if (chain.get_transaction_by_hash(transaction_hash, false))
+			if (chain.has_block_transaction(transaction_hash).or_else(false))
 				return expectation::met;
 
 			query(uref(from), descriptors::fetch_transaction(), { format::variable(transaction_hash) }, protocol::now().user.tcp.timeout).then([this, from](expects_rt<exchange>&& event) mutable
@@ -1477,7 +1476,7 @@ namespace tangent
 				return remote_exception("invalid arguments");
 
 			auto chain = storages::chainstate();
-			auto block = chain.get_block_by_hash(block_hash, ELEMENTS_MANY, (uint32_t)storages::block_details::transactions | (uint32_t)storages::block_details::block_transactions);
+			auto block = chain.get_block_by_hash(block_hash, ELEMENTS_MANY, (uint32_t)storages::block_details::transactions);
 			if (block)
 				return format::variables({ format::variable(block->as_message().data) });
 
@@ -1510,7 +1509,7 @@ namespace tangent
 			uint64_t size = protocol::now().message.blocks_size_per_query, offset = 0;
 			while (block_number > 0 && size > 0)
 			{
-				auto block = chain.get_block_by_number(block_number + offset, ELEMENTS_MANY, (uint32_t)storages::block_details::transactions | (uint32_t)storages::block_details::block_transactions);
+				auto block = chain.get_block_by_number(block_number + offset, ELEMENTS_MANY, (uint32_t)storages::block_details::transactions);
 				if (!block)
 					break;
 
@@ -1557,9 +1556,9 @@ namespace tangent
 				return format::variables({ format::variable((*transaction)->as_message().data) });
 
 			auto chain = storages::chainstate();
-			transaction = chain.get_transaction_by_hash(transaction_hash, false);
-			if (transaction)
-				return format::variables({ format::variable((*transaction)->as_message().data) });
+			auto block_transaction = chain.get_block_transaction_by_hash(transaction_hash, false);
+			if (block_transaction)
+				return format::variables({ format::variable(block_transaction->transaction->as_message().data) });
 
 			return format::variables();
 		}
@@ -1581,8 +1580,12 @@ namespace tangent
 
 				auto transaction = mempool.get_transaction_by_hash(transaction_hash);
 				if (!transaction)
-					transaction = chain.get_transaction_by_hash(transaction_hash, false);
-				if (transaction)
+				{
+					auto block_transaction = chain.get_block_transaction_by_hash(transaction_hash, false);
+					if (block_transaction)
+						result.push_back(format::variable(block_transaction->transaction->as_message().data));
+				}
+				else
 					result.push_back(format::variable((*transaction)->as_message().data));
 			}
 			return expects_rt<format::variables>(std::move(result));
@@ -1997,7 +2000,7 @@ namespace tangent
 						for (size_t i = 1; i < result->args.size(); i++)
 						{
 							auto transaction_hash = result->args[i].as_uint256();
-							if (!mempool.has_transaction(transaction_hash).or_else(false) && !chain.get_transaction_by_hash(transaction_hash, false))
+							if (!mempool.has_transaction(transaction_hash).or_else(false) && !chain.has_block_transaction(transaction_hash).or_else(false))
 								transaction_hashes.insert(transaction_hash);
 						}
 					}
@@ -2093,11 +2096,11 @@ namespace tangent
 						auto chain = storages::chainstate();
 						auto parent_header = ledger::block_header();
 						auto child_header = ledger::block_header();
-						size_t begin = 1 + batch_index * batch_size;
-						size_t end = begin + (batch_index == batch_count - 1 ? block_count % batch_size : batch_size);
+						size_t begin = std::min(batch_index * batch_size, block_count);
+						size_t end = std::min(begin + batch_size, block_count);
 						for (size_t i = begin; i < end; i++)
 						{
-							auto message = format::ro_stream(result->args[i].as_string());
+							auto message = format::ro_stream(result->args[i + 1].as_string());
 							auto verification = child_header.load(message) ? child_header.verify_validity(parent_header.number > 0 ? &parent_header : nullptr) : expects_lr<void>(layer_exception("bad message"));
 							if (!verification)
 							{
@@ -2162,8 +2165,8 @@ namespace tangent
 					{
 						auto header = ledger::block_header();
 						auto producer = algorithm::pubkeyhash_t();
-						size_t begin = 1 + batch_index * batch_size;
-						size_t end = std::min(begin + (batch_index == batch_count - 1 ? block_count % batch_size : batch_size), result->args.size());
+						size_t begin = std::min(batch_index * batch_size, block_count);
+						size_t end = std::min(begin + batch_size, block_count);
 						for (size_t i = begin; i < end; i++)
 						{
 							format::ro_stream block_message = format::ro_stream(result->args[i].as_string());
@@ -2618,16 +2621,16 @@ namespace tangent
 		bool server_node::try_acquire_checkpointer()
 		{
 			umutex<std::recursive_mutex> unique(sync.fork);
-			if (prover.verifying.load())
+			if (verifier.busy.load())
 				return false;
 
-			prover.verifying = true;
+			verifier.busy = true;
 			return true;
 		}
 		void server_node::release_checkpointer()
 		{
 			umutex<std::recursive_mutex> unique(sync.fork);
-			prover.verifying = false;
+			verifier.busy = false;
 		}
 		bool server_node::run_superchain_sync(const algorithm::asset_id& asset)
 		{
@@ -2895,10 +2898,10 @@ namespace tangent
 			if (!has_production || is_syncing())
 				return false;
 
-			if (prover.waiting)
+			if (prover.queued)
 			{
 				control_sys.clear_timeout(TASK_BLOCK_PRODUCTION);
-				prover.waiting = false;
+				prover.queued = false;
 			}
 
 			return control_sys.task_if_none(TASK_BLOCK_PRODUCTION, [this](system_task&&)
@@ -2937,7 +2940,7 @@ namespace tangent
 						if (current_solution_time >= other_node_solution_time)
 							continue;
 
-						prover.waiting = true;
+						prover.queued = true;
 						control_sys.upsert_timeout(TASK_BLOCK_PRODUCTION, (uint64_t)(other_node_solution_time - current_solution_time), [this]()
 						{
 							control_sys.clear_timeout(TASK_BLOCK_PRODUCTION);
@@ -2949,7 +2952,7 @@ namespace tangent
 
 				auto span = (double)(tip ? tip->get_slot_proof_duration_average() : 0) * algorithm::wesolowski::adjustment_scaling(position).to_double();
 				if (protocol::now().user.consensus.logging && position > 0)
-					VI_WARN("block solver: performing %s (number: %" PRIu64 ", leader: %" PRIu64 ", work: < ~%.2f sec.)", position < protocol::now().policy.production.max_per_block ? "leader fallback" : "network recovery", tip ? tip->number + 1 : 1, position + 1, span / 1000.0);
+					VI_WARN("block solver: performing %s (number: %" PRIu64 ", leader: %" PRIu64 ", work: <%.2f sec.)", position < protocol::now().policy.production.max_per_block ? "leader fallback" : "network recovery", tip ? tip->number + 1 : 1, position + 1, span / 1000.0);
 
 				auto evaluation = prover.solver.block_evalution_prepare(prover.solution);
 				if (!evaluation)
@@ -3013,7 +3016,7 @@ namespace tangent
 					if (evaluation && verification)
 					{
 						if (protocol::now().user.consensus.logging)
-							VI_INFO("block %s solved (number: %" PRIu64", txns: %" PRIu64 ", pos: %" PRIu64 ", work: < ~%.2f sec.)", algorithm::encoding::encode_0xhex256(prover.solution.block.as_hash()).c_str(), prover.solution.block.number, (uint64_t)prover.solution.block.transactions.size(), position + 1, span / 1000.0);
+							VI_INFO("block %s solved (number: %" PRIu64", txns: %" PRIu64 ", pos: %" PRIu64 ", work: <%.2f sec.)", algorithm::encoding::encode_0xhex256(prover.solution.block.as_hash()).c_str(), prover.solution.block.number, (uint64_t)prover.solution.block.transactions.size(), position + 1, span / 1000.0);
 
 						prover.solver.erase_failed_transactions();
 						goto next_block;
@@ -3023,14 +3026,14 @@ namespace tangent
 						if (!evaluation)
 						{
 							if (evaluation.error().message() != "block producer must be active")
-								VI_WARN("block %s dismissed: %s (number: %" PRIu64", txns: %" PRIu64 ", pos: %" PRIu64 ", work: < ~%.2f sec.)", algorithm::encoding::encode_0xhex256(prover.solution.block.as_hash()).c_str(), evaluation.error().what(), prover.solution.block.number, (uint64_t)prover.solution.block.transactions.size(), position + 1, span / 1000.0);
+								VI_WARN("block %s dismissed: %s (number: %" PRIu64", txns: %" PRIu64 ", pos: %" PRIu64 ", work: <%.2f sec.)", algorithm::encoding::encode_0xhex256(prover.solution.block.as_hash()).c_str(), evaluation.error().what(), prover.solution.block.number, (uint64_t)prover.solution.block.transactions.size(), position + 1, span / 1000.0);
 						}
 						else
 							VI_WARN("%s", verification.error().what());
 					}
 				}
 				else if (protocol::now().user.consensus.logging)
-					VI_WARN("block %s dismissed: %s (number: %" PRIu64", txns: %" PRIu64 ", pos: %" PRIu64 ", work: < ~%.2f sec.)", algorithm::encoding::encode_0xhex256(prover.solution.block.as_hash()).c_str(), evaluation ? (solution ? "cancelled" : solution.error().what()) : evaluation.error().what(), prover.solution.block.number, (uint64_t)prover.solution.block.transactions.size(), position + 1, span / 1000.0);
+					VI_WARN("block %s dismissed: %s (number: %" PRIu64", txns: %" PRIu64 ", pos: %" PRIu64 ", work: <%.2f sec.)", algorithm::encoding::encode_0xhex256(prover.solution.block.as_hash()).c_str(), evaluation ? (solution ? "cancelled" : solution.error().what()) : evaluation.error().what(), prover.solution.block.number, (uint64_t)prover.solution.block.transactions.size(), position + 1, span / 1000.0);
 			});
 		}
 		bool server_node::run_block_dispatcher()
@@ -3075,16 +3078,17 @@ namespace tangent
 		}
 		void server_node::startup()
 		{
-			if (!protocol::now().user.consensus.server && !protocol::now().user.consensus.max_outbound_connections)
+			bool uses_server = protocol::now().user.consensus.server && protocol::now().user.consensus.max_inbound_connections > 0;
+			if (!uses_server && !protocol::now().user.consensus.max_outbound_connections)
 				return;
 
-			socket_router* config = new socket_router();
-			config->socket_timeout = (size_t)protocol::now().user.tcp.timeout;
-			config->max_connections = protocol::now().user.consensus.max_inbound_connections;
 			control_sys.activate();
-
-			if (protocol::now().user.consensus.server)
+			if (uses_server)
 			{
+				socket_router* config = new socket_router();
+				config->socket_timeout = (size_t)protocol::now().user.tcp.timeout;
+				config->max_connections = protocol::now().user.consensus.max_inbound_connections;
+
 				auto listener_status = config->listen(protocol::now().user.consensus.address, to_string(protocol::now().user.consensus.port));
 				VI_PANIC(listener_status, "server listener error: %s", listener_status.error().what());
 
@@ -3095,7 +3099,7 @@ namespace tangent
 				VI_PANIC(binding_status, "server binding error: %s", binding_status.error().what());
 
 				if (protocol::now().user.consensus.logging)
-					VI_INFO("OK consensus node listen (location: %s:%i, type: %s)", protocol::now().user.consensus.address.c_str(), (int)protocol::now().user.consensus.port, protocol::now().user.consensus.max_outbound_connections > 0 ? "in-out" : "in");
+					VI_INFO("OK consensus node listen (location: %s:%i, type: %s)", protocol::now().user.consensus.address.c_str(), (int)protocol::now().user.consensus.port, protocol::now().user.consensus.max_outbound_connections > 0 ? "in-out" : "in");		
 			}
 			else if (protocol::now().user.consensus.max_outbound_connections > 0 && protocol::now().user.consensus.logging)
 				VI_INFO("OK consensus node listen (type: out)");
@@ -3175,7 +3179,15 @@ namespace tangent
 					VI_INFO("OK consensus node shutdown");
 			}
 
-			if (is_active())
+			if (!is_active())
+				return;
+
+			if (state != server_state::working)
+			{
+				on_unlisten();
+				on_after_unlisten();
+			}
+			else
 				unlisten(false);
 		}
 		void server_node::clear_pending_neighbors()
@@ -3219,7 +3231,7 @@ namespace tangent
 			auto& fork = forks[candidate_hash];
 			fork.header = candidate_block;
 			fork.state = from;
-			prover.dirty = true;
+			verifier.stale = true;
 		}
 		expects_lr<void> server_node::accept_block(uref<relay>&& from, ledger::block_evaluation& candidate, const uint256_t& fork_tip, bool verify_pow)
 		{
@@ -3241,7 +3253,7 @@ namespace tangent
 			auto tip_block = fork_branch ? expects_lr<ledger::block_header>(fork_tip_block) : chain.get_latest_block_header();
 			auto tip_hash = tip_block ? tip_block->as_hash() : (uint256_t)0;
 			auto best_tip_work = tip_block ? tip_block->absolute_work : (uint256_t)0;
-			auto parent_block = tip_hash == candidate.block.parent_hash ? tip_block : chain.get_block_header_by_hash(candidate.block.parent_hash);
+			auto parent_block = tip_hash == candidate.block.parent_hash ? tip_block : (verifier.tip_cache && verifier.tip_cache->as_hash() == candidate_hash ? *verifier.tip_cache : chain.get_block_header_by_hash(candidate.block.parent_hash));
 			int64_t branch_length = (int64_t)candidate.block.number - (int64_t)(tip_block ? tip_block->number : 0);
 			branch_length = fork_branch ? std::abs(branch_length) : branch_length;
 			if (branch_length < 0 || (!fork_branch && candidate.block.absolute_work < best_tip_work))
@@ -3318,8 +3330,8 @@ namespace tangent
 			if (may_broadcast_early)
 				append_pending_block(uref(from), candidate_hash, &candidate.block);
 
-			auto reorganization = ledger::solver_context::requires_reorganization(candidate);
-			auto validation = fork_branch && reorganization ? expects_lr<void>(expectation::met) : ledger::solver_context::validate_solved_block(verifier.solver, parent_block.address(), candidate.block, &candidate, verify_pow);
+			auto reorganization = ledger::solver_context::requires_reorganization(candidate, &verifier.cache);
+			auto validation = fork_branch && reorganization ? expects_lr<void>(expectation::met) : ledger::solver_context::validate_solved_block(verifier.solver, parent_block.address(), candidate.block, &candidate, verify_pow, &verifier.cache);
 			if (!validation)
 			{
 				release_checkpointer();
@@ -3331,7 +3343,16 @@ namespace tangent
 				return layer_exception(stringify::text("block %s rejected: requires deep chain reorganization (disabled)", algorithm::encoding::encode_0xhex256(candidate_hash).c_str()));
 			}
 
-			auto mutation = ledger::solver_context::checkpoint_solved_block(verifier.solver, candidate);
+			if (reorganization && protocol::now().user.consensus.logging)
+				VI_WARN("block %s: running chain reorganization now (number: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), candidate.block.number);
+
+			auto mutation = ledger::solver_context::checkpoint_solved_block(verifier.solver, candidate, &verifier.cache);
+			if (mutation)
+			{
+				verifier.tip_cache = ledger::block_header(candidate.block);
+				verifier.tip_cache->checksum = candidate_hash;
+			}
+
 			release_checkpointer();
 			if (may_broadcast_early)
 				erase_pending_block(candidate_hash);
@@ -3341,25 +3362,35 @@ namespace tangent
 
 			if (protocol::now().user.consensus.logging)
 			{
-				int64_t progress = (int64_t)(10000.0 * get_sync_progress(candidate.block.number, *from));
+				int64_t precision = 5000;
+				int64_t progress = (int64_t)((double)precision * get_sync_progress(candidate.block.number, *from));
 				verifier.size += (uint64_t)((double)(uint64_t)candidate.block.gas_limit / (double)ledger::gas_cost::write_byte);
-				if (progress >= 10000 || verifier.progress < progress || mutation->is_fork)
+				if (progress >= precision || verifier.progress < progress || mutation->is_fork)
 				{
-					double size = (double)verifier.size.load() / 1000.0;
 					if (mutation->is_fork)
 					{
-						VI_INFO("block %s (number: %" PRIu64 ", sync: %.2f%%, size: ~%.2f kb, depth: %" PRIi64 ", txns: %" PRIi64 ", state: %" PRIi64 ")\n",
+						VI_INFO("block %s (number: %" PRIu64 ", sync: %.2f%%, size: %.2f kb, depth: %" PRIi64 ", txns: %" PRIi64 ", state: %" PRIi64 ")\n",
 							algorithm::encoding::encode_0xhex256(candidate_hash).c_str(),
-							candidate.block.number, (double)progress / 100.0, size,
+							candidate.block.number, (double)progress / ((double)precision / 100), (double)verifier.size.load() / 1000.0,
 							mutation->block_delta,
-							mutation->transaction_delta + mutation->mempool_transactions,
+							mutation->transaction_delta,
 							mutation->state_delta);
+					}
+					else if (progress < precision)
+					{
+						uint64_t time = protocol::now().time.now_cpu();
+						VI_INFO("block %s (number: %" PRIu64 ", sync: %.2f%%, size: %.2f kb, bps: %.1f)",
+							algorithm::encoding::encode_0xhex256(candidate_hash).c_str(),
+							candidate.block.number, (double)progress / ((double)precision / 100), (double)verifier.size.load() / 1000.0,
+							verifier.progress_time > 0 ? 1000.0 * (double)(candidate.block.number - verifier.progress_block_number) / (double)std::max<uint64_t>(1, time - verifier.progress_time) : 0.0);
+						verifier.progress_block_number = candidate.block.number;
+						verifier.progress_time = time;
 					}
 					else
 					{
-						VI_INFO("block %s (number: %" PRIu64 ", sync: %.2f%%, size: ~%.2f kb)",
+						VI_INFO("block %s (number: %" PRIu64 ", sync: %.2f%%, size: %.2f kb)",
 							algorithm::encoding::encode_0xhex256(candidate_hash).c_str(),
-							candidate.block.number, (double)progress / 100.0, size);
+							candidate.block.number, (double)progress / ((double)precision / 100), (double)verifier.size.load() / 1000.0);
 					}
 					verifier.progress = progress;
 					verifier.size = 0;
@@ -3368,7 +3399,7 @@ namespace tangent
 
 			if (events.accept_block)
 				events.accept_block(candidate_hash, candidate.block, *mutation);
-			
+
 			for (auto& transaction : candidate.block.transactions)
 			{
 				if (transaction.receipt.successful && transaction.transaction->as_type() == transactions::attestate::as_instance_type())
@@ -3377,17 +3408,19 @@ namespace tangent
 					accept_proposal_transaction(transaction);
 			}
 
-			umutex<std::recursive_mutex> unique(sync.fork);
-			for (auto& [asset, block_height] : candidate.block.witnesses)
+			if (!candidate.block.witnesses.empty())
 			{
-				auto it = witnesses.find(asset);
-				if (it != witnesses.end())
-					it->second = std::min(it->second, block_height);
-				else
-					witnesses[asset] = block_height;
+				umutex<std::recursive_mutex> unique(sync.fork);
+				for (auto& [asset, block_height] : candidate.block.witnesses)
+				{
+					auto it = witnesses.find(asset);
+					if (it != witnesses.end())
+						it->second = std::min(it->second, block_height);
+					else
+						witnesses[asset] = block_height;
+				}
 			}
 
-			unique.unlock();
 			if (may_broadcast_early || may_broadcast_lately)
 				finalize_pending_block(std::move(from), may_broadcast_lately ? candidate_hash : uint256_t((uint8_t)0), may_broadcast_lately ? candidate.block.number : 0);
 			return expectation::met;
@@ -3421,10 +3454,10 @@ namespace tangent
 			if (block_hash > 0 && block_number > 0)
 				broadcast_pending_block(uref(from), block_hash, block_number);
 
-			if (!from || !prover.dirty)
+			if (!from || !verifier.stale)
 				return;
 
-			prover.dirty = false;
+			verifier.stale = false;
 			synchronize_mempool_with(std::move(from));
 		}
 		bool server_node::accept_proposal_transaction(const ledger::block_transaction& transaction)
@@ -3502,7 +3535,7 @@ namespace tangent
 		}
 		bool server_node::is_active()
 		{
-			return state == server_state::working && control_sys.is_active();
+			return control_sys.is_active();
 		}
 		bool server_node::is_syncing()
 		{

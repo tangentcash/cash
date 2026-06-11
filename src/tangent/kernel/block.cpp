@@ -1320,15 +1320,17 @@ namespace tangent
 			auto window = storages::result_index_window();
 			auto pool = chain.get_multiforms_count_by_row_filter(states::validator_production::as_instance_type(), changelog, states::validator_production::as_instance_row(), filter, nonce).or_else(0);
 			auto size = std::min(target_size, pool);
-			auto indices = btree_set<uint64_t>();
 			auto distribution = algorithm::exponential_distribution();
+			auto indices = vector<uint64_t>();
+			indices.reserve(size);
 			while (indices.size() < size)
 			{
 				uint64_t index = (uint64_t)distribution.next(random.derive(), (uint32_t)pool);
-				if (indices.find(index) == indices.end())
+				auto it = std::find(indices.begin(), indices.end(), index);
+				if (it == indices.end())
 				{
 					window.indices.push_back(index);
-					indices.insert(index);
+					indices.insert(it, index);
 				}
 			}
 
@@ -1394,7 +1396,8 @@ namespace tangent
 
 			vector<states::validator_attestation> committee;
 			auto distribution = algorithm::exponential_distribution();
-			auto indices = btree_set<uint64_t>();
+			auto indices = vector<uint64_t>();
+			indices.reserve(pool);
 			while (indices.size() < pool)
 			{
 				auto window = storages::result_index_window();
@@ -1402,10 +1405,11 @@ namespace tangent
 				while (window.indices.size() < size)
 				{
 					uint64_t index = (uint64_t)distribution.next(random.derive(), (uint32_t)pool);
-					if (indices.find(index) == indices.end())
+					auto it = std::lower_bound(indices.begin(), indices.end(), index);
+					if (it == indices.end() || *it != index)
 					{
 						window.indices.push_back(index);
-						indices.insert(index);
+						indices.insert(it, index);
 					}
 				}
 
@@ -1456,7 +1460,8 @@ namespace tangent
 
 			vector<states::validator_participation> committee;
 			auto distribution = algorithm::exponential_distribution();
-			auto indices = btree_set<uint64_t>();
+			auto indices = vector<uint64_t>();
+			indices.reserve(pool);
 			while (indices.size() < pool)
 			{
 				auto window = storages::result_index_window();
@@ -1464,10 +1469,11 @@ namespace tangent
 				while (window.indices.size() < size)
 				{
 					uint64_t index = (uint64_t)distribution.next(random.derive(), (uint32_t)pool);
-					if (indices.find(index) == indices.end())
+					auto it = std::lower_bound(indices.begin(), indices.end(), index);
+					if (it == indices.end() || *it != index)
 					{
 						window.indices.push_back(index);
-						indices.insert(index);
+						indices.insert(it, index);
 					}
 				}
 
@@ -3117,7 +3123,7 @@ namespace tangent
 			memset(state.public_key_hash.blob, 0xFF, sizeof(algorithm::pubkeyhash_t));
 			memset(state.secret_key.blob, 0xFF, sizeof(algorithm::seckey_t));
 		}
-		option<uint64_t> solver_context::apply_validator_state(const std::function<ledger::wallet* (size_t)>& try_producer, option<const block_header*>&& parent_block)
+		option<uint64_t> solver_context::apply_validator_state(const std::function<ledger::wallet* (size_t)>& try_producer, option<const block_header*>&& parent_block, tip_cache* cache)
 		{
 			nonces.clear();
 			transactions.errors.clear();
@@ -3129,26 +3135,26 @@ namespace tangent
 			state.gas_usage = 0;
 			state.commitments = 0;
 			state.validator_active = true;
-			if (!parent_block)
+			if (parent_block)
+			{
+				tip = *parent_block ? option<block_header>(**parent_block) : option<block_header>(optional::none);
+				if (!cache || !cache->tip_block_number)
+				{
+					auto chain = storages::chainstate();
+					auto parent = chain.get_latest_block_number();
+					state.origin = (*parent_block ? parent.or_else(tip->number) < (tip->number + 1) : !parent) ? state_origin::chain : state_origin::block;
+					if (cache != nullptr)
+						cache->tip_block_number = parent.or_else(0);
+				}
+				else
+					state.origin = state_origin::chain;
+			}
+			else
 			{
 				auto chain = storages::chainstate();
 				auto parent = chain.get_latest_block_header();
 				tip = parent ? option<block_header>(std::move(*parent)) : option<block_header>(optional::none);
 				state.origin = state_origin::chain;
-			}
-			else if (*parent_block != nullptr)
-			{
-				auto chain = storages::chainstate();
-				auto parent = chain.get_latest_block_number();
-				tip = **parent_block;
-				state.origin = parent.or_else(tip->number) < (tip->number + 1) ? state_origin::chain : state_origin::block;
-			}
-			else
-			{
-				auto chain = storages::chainstate();
-				auto parent = chain.get_latest_block_number();
-				tip = option<block_header>(optional::none);
-				state.origin = parent ? state_origin::block : state_origin::chain;
 			}
 
 			auto origin = state.origin;
@@ -3431,9 +3437,9 @@ namespace tangent
 		{
 			return verify_solved_block(tip.address(), solution, recovered_producer, verify_pow);
 		}
-		expects_lr<block_checkpoint> solver_context::checkpoint_block(block_evaluation& solution, bool keep_reverted_transactions)
+		expects_lr<block_checkpoint> solver_context::checkpoint_block(block_evaluation& solution, tip_cache* cache)
 		{
-			return checkpoint_solved_block(*this, solution, keep_reverted_transactions);
+			return checkpoint_solved_block(*this, solution, cache);
 		}
 		expects_lr<void> solver_context::erase_failed_transactions()
 		{
@@ -3474,7 +3480,7 @@ namespace tangent
 
 			return solution.block.verify_integrity(parent_block, &solution.state);
 		}
-		expects_lr<void> solver_context::validate_solved_block(solver_context& solver, const block_header* parent_block, const block_body& child_block, block_evaluation* evaluated_result, bool verify_pow)
+		expects_lr<void> solver_context::validate_solved_block(solver_context& solver, const block_header* parent_block, const block_body& child_block, block_evaluation* evaluated_result, bool verify_pow, tip_cache* cache)
 		{
 			if (parent_block && (parent_block->number != child_block.number - 1 || parent_block->as_hash() != child_block.parent_hash))
 				return layer_exception("invalid parent block");
@@ -3483,7 +3489,7 @@ namespace tangent
 			if (!child_block.recover_hash(producer.public_key_hash))
 				return layer_exception("invalid producer signature");
 
-			if (!solver.apply_validator_state([&producer](size_t index) { return index > 0 ? nullptr : &producer; }, parent_block))
+			if (!solver.apply_validator_state([&producer](size_t index) { return index > 0 ? nullptr : &producer; }, parent_block, cache))
 			{
 				solver.state.public_key_hash = producer.public_key_hash;
 				if (child_block.priority != protocol::now().policy.production.max_per_block)
@@ -3611,7 +3617,7 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<block_checkpoint> solver_context::checkpoint_solved_block(solver_context& solver, block_evaluation& solution, bool keep_reverted_transactions)
+		expects_lr<block_checkpoint> solver_context::checkpoint_solved_block(solver_context& solver, block_evaluation& solution, tip_cache* cache)
 		{
 			auto chain = storages::chainstate();
 			auto mempool = storages::mempoolstate();
@@ -3626,7 +3632,7 @@ namespace tangent
 			}
 
 			block_checkpoint mutation;
-			mutation.old_tip_block_number = chain.get_latest_block_number().or_else(0);
+			mutation.old_tip_block_number = cache && cache->tip_block_number > 0 ? cache->tip_block_number : chain.get_latest_block_number().or_else(0);
 			mutation.new_tip_block_number = solution.block.number;
 			mutation.block_delta = 1;
 			mutation.transaction_delta = solution.block.transaction_count;
@@ -3634,50 +3640,20 @@ namespace tangent
 			mutation.is_fork = mutation.old_tip_block_number > 0 && mutation.old_tip_block_number >= mutation.new_tip_block_number;
 			if (mutation.is_fork)
 			{
-				uint64_t revert_number = mutation.old_tip_block_number;
-				while (keep_reverted_transactions && revert_number >= mutation.new_tip_block_number)
-				{
-					size_t offset = 0, count = ELEMENTS_MANY;
-					while (true)
-					{
-						auto transactions = chain.get_transactions_by_number(revert_number, offset, count);
-						if (!transactions || transactions->empty())
-							break;
-
-						for (auto& item : *transactions)
-						{
-							if (finalized_transactions.find(item->as_hash()) == finalized_transactions.end())
-							{
-								auto status = mempool.add_transaction(**item);
-								status.report("transaction resurrection failed");
-								mutation.mempool_transactions += status ? 1 : 0;
-							}
-						}
-
-						offset += transactions->size();
-						if (transactions->size() < count)
-							break;
-					}
-					--revert_number;
-				}
-
 				auto status = chain.revert(mutation.new_tip_block_number - 1, &mutation.block_delta, &mutation.transaction_delta, &mutation.state_delta);
 				if (!status)
 					return status.error();
 
-				if (protocol::now().user.storage.logging)
-					VI_INFO("block %s rewinded (height: %" PRIu64 ", mempool: +%" PRIu64 ", blocktrie: %" PRIi64 ", transactiontrie: %" PRIi64 ", statetrie: %" PRIi64 ")", algorithm::encoding::encode_0xhex256(solution.block.as_hash()).c_str(), mutation.new_tip_block_number, mutation.mempool_transactions, mutation.block_delta, mutation.transaction_delta, mutation.state_delta);
-
 				if (solution.block.transition_count != solution.state.size())
 				{
 					auto parent_block = chain.get_block_by_number(solution.block.number - 1);
-					auto validation = validate_solved_block(solver, parent_block.address(), solution.block, &solution);
+					auto validation = validate_solved_block(solver, parent_block.address(), solution.block, &solution, cache);
 					if (!validation)
 						return validation.error();
 				}
 			}
 
-			auto status = chain.checkpoint(solution);
+			auto status = chain.checkpoint(solution, false, cache ? &cache->checkpoint_block_number : nullptr);
 			if (!status)
 				return status.error();
 
@@ -3688,6 +3664,9 @@ namespace tangent
 				VI_ASSERT(side_effect, "side effect callback should be set");
 				side_effect();
 			}
+
+			if (cache != nullptr)
+				cache->tip_block_number = mutation.new_tip_block_number;
 
 			return mutation;
 		}
@@ -3719,10 +3698,17 @@ namespace tangent
 		{
 			VI_SORT(candidates.begin(), candidates.end(), [](const uptr<transaction_message>& a, const uptr<transaction_message>& b) { return a->nonce < b->nonce; });
 		}
-		bool solver_context::requires_reorganization(const block_evaluation& solution)
+		bool solver_context::requires_reorganization(const block_evaluation& solution, tip_cache* cache)
 		{
-			auto chain = storages::chainstate();
-			return chain.get_checkpoint_block_number().or_else(0) > solution.block.number - 1;
+			uint64_t checkpoint_block_number = cache ? cache->checkpoint_block_number : 0;
+			if (!checkpoint_block_number)
+			{
+				auto chain = storages::chainstate();
+				checkpoint_block_number = chain.get_checkpoint_block_number().or_else(0);
+				if (cache != nullptr)
+					cache->checkpoint_block_number = checkpoint_block_number;
+			}
+			return checkpoint_block_number > solution.block.number - 1;
 		}
 	}
 }

@@ -20,8 +20,7 @@ namespace tangent
 		enum class block_details
 		{
 			transactions = 1 << 0,
-			block_transactions = 1 << 1,
-			states = 1 << 2
+			states = 1 << 1
 		};
 
 		struct state_result
@@ -167,8 +166,9 @@ namespace tangent
 			chainstate& operator=(const chainstate&) = delete;
 			chainstate& operator=(chainstate&&) noexcept = delete;
 			~chainstate() noexcept;
+			expects_lr<bool> compact(uint64_t block_number, uint64_t* last_checkpoint_block_number = nullptr);
 			expects_lr<void> revert(uint64_t block_number, int64_t* block_delta = nullptr, int64_t* transaction_delta = nullptr, int64_t* state_delta = nullptr);
-			expects_lr<void> checkpoint(const ledger::block_evaluation& evaluation, bool reorganization = false);
+			expects_lr<void> checkpoint(const ledger::block_evaluation& evaluation, bool reorganization = false, uint64_t* checkpoint_block_number = nullptr);
 			expects_lr<void> dispatch(const uint256_t& transaction_hash, uint64_t retry_after_block_number_or_zero);
 			expects_lr<uint64_t> get_checkpoint_block_number();
 			expects_lr<uint64_t> get_latest_block_number();
@@ -176,9 +176,9 @@ namespace tangent
 			expects_lr<uint256_t> get_block_hash_by_number(uint64_t block_number);
 			expects_lr<decimal> get_block_gas_price(uint64_t block_number, const algorithm::asset_id& asset, double percentile);
 			expects_lr<decimal> get_block_asset_price(uint64_t block_number, const algorithm::asset_id& price_of, const algorithm::asset_id& relative_to, double percentile);
-			expects_lr<ledger::block_body> get_block_by_number(uint64_t block_number, size_t chunk = ELEMENTS_MANY, uint32_t details = (uint32_t)block_details::transactions | (uint32_t)block_details::block_transactions | (uint32_t)block_details::states);
-			expects_lr<ledger::block_body> get_block_by_hash(const uint256_t& block_hash, size_t chunk = ELEMENTS_MANY, uint32_t details = (uint32_t)block_details::transactions | (uint32_t)block_details::block_transactions | (uint32_t)block_details::states);
-			expects_lr<ledger::block_body> get_latest_block(size_t chunk = ELEMENTS_MANY, uint32_t details = (uint32_t)block_details::transactions | (uint32_t)block_details::block_transactions | (uint32_t)block_details::states);
+			expects_lr<ledger::block_body> get_block_by_number(uint64_t block_number, size_t chunk = ELEMENTS_MANY, uint32_t details = (uint32_t)block_details::transactions | (uint32_t)block_details::states);
+			expects_lr<ledger::block_body> get_block_by_hash(const uint256_t& block_hash, size_t chunk = ELEMENTS_MANY, uint32_t details = (uint32_t)block_details::transactions | (uint32_t)block_details::states);
+			expects_lr<ledger::block_body> get_latest_block(size_t chunk = ELEMENTS_MANY, uint32_t details = (uint32_t)block_details::transactions | (uint32_t)block_details::states);
 			expects_lr<ledger::block_header> get_block_header_by_number(uint64_t block_number);
 			expects_lr<ledger::block_header> get_block_header_by_hash(const uint256_t& block_hash);
 			expects_lr<ledger::block_header> get_latest_block_header();
@@ -189,19 +189,13 @@ namespace tangent
 			expects_lr<vector<uint256_t>> get_block_hashset(uint64_t block_number, size_t count);
 			expects_lr<vector<ledger::block_header>> get_block_headers(uint64_t block_number, size_t count);
 			expects_lr<ledger::block_state::log> get_block_state_by_number(uint64_t block_number, size_t chunk = ELEMENTS_MANY);
-			expects_lr<vector<uptr<ledger::transaction_message>>> get_transactions(size_t offset, size_t count);
-			expects_lr<vector<uptr<ledger::transaction_message>>> get_transactions_by_number(uint64_t block_number, size_t offset, size_t count);
-			expects_lr<vector<uptr<ledger::transaction_message>>> get_transactions_by_owner(uint64_t block_number, const algorithm::pubkeyhash_t& owner, int8_t direction, size_t offset, size_t count);
 			expects_lr<vector<ledger::block_transaction>> get_block_transactions(size_t offset, size_t count);
 			expects_lr<vector<ledger::block_transaction>> get_block_transactions_by_number(uint64_t block_number, size_t offset, size_t count);
 			expects_lr<vector<ledger::block_transaction>> get_block_transactions_by_owner(uint64_t block_number, const algorithm::pubkeyhash_t& owner, int8_t direction, size_t offset, size_t count);
-			expects_lr<vector<ledger::transaction_receipt>> get_block_receipts_by_number(uint64_t block_number, size_t offset, size_t count);
 			expects_lr<vector<ledger::block_transaction>> get_pending_block_transactions(uint64_t block_number, size_t offset, size_t count);
-			expects_lr<uptr<ledger::transaction_message>> get_transaction_by_hash(const uint256_t& transaction_hash, bool include_aliases);
-			expects_lr<vector<uptr<ledger::transaction_message>>> get_transactions_by_hash(const uint256_t& transaction_hash, bool include_aliases);
+			expects_lr<bool> has_block_transaction(const uint256_t& transaction_hash);
 			expects_lr<ledger::block_transaction> get_block_transaction_by_hash(const uint256_t& transaction_hash, bool include_aliases);
 			expects_lr<vector<ledger::block_transaction>> get_block_transactions_by_hash(const uint256_t& transaction_hash, bool include_aliases);
-			expects_lr<ledger::transaction_receipt> get_receipt_by_transaction_hash(const uint256_t& transaction_hash);
 			expects_lr<state_result> get_uniform(uint32_t type, const ledger::block_changelog* changelog, const std::string_view& index, uint64_t block_number);
 			expects_lr<state_result> get_multiform(uint32_t type, const ledger::block_changelog* changelog, const std::string_view& column, const std::string_view& row, uint64_t block_number);
 			expects_lr<vector<state_result>> get_multiforms_by_column(uint32_t type, ledger::block_changelog* changelog, const std::string_view& column, uint64_t block_number, size_t offset, size_t count);
@@ -213,7 +207,7 @@ namespace tangent
 			expects_lr<size_t> get_multiforms_count_by_row(uint32_t type, ledger::block_changelog* changelog, const std::string_view& row, uint64_t block_number);
 			expects_lr<size_t> get_multiforms_count_by_row_filter(uint32_t type, ledger::block_changelog* changelog, const std::string_view& row, const result_filter& filter, uint64_t block_number);
 			expects_lr<temporary_state_resolution> resolve_temporary_state(uint32_t type, ledger::block_changelog* changelog, const option<std::string_view>& column, const option<std::string_view>& row, uint64_t block_number);
-			expects_lr<void> resolve_block_transactions(vector<ledger::block_transaction>& result, uint64_t block_number, bool fully, size_t chunk);
+			expects_lr<void> resolve_block_transactions(vector<ledger::block_transaction>& result, uint64_t block_number, size_t chunk);
 			expects_lr<uint64_t> resolve_uniform_location(uint32_t type, const std::string_view& index);
 			expects_lr<multiform_location> resolve_multiform_location(uint32_t type, const option<std::string_view>& column, const option<std::string_view>& row);
 			expects_lr<uint64_t> resolve_account_location(const algorithm::pubkeyhash_t& account);
@@ -234,7 +228,8 @@ namespace tangent
 		private:
 			expects_lr<void> revert_internal(uint64_t block_number, int64_t* block_delta, int64_t* transaction_delta, int64_t* state_delta);
 			expects_lr<void> revert_reorganize_internal(int64_t* block_delta, int64_t* transaction_delta, int64_t* state_delta);
-			expects_lr<void> checkpoint_internal(const ledger::block_evaluation& evaluation, bool reorganization);
+			expects_lr<void> checkpoint_internal(const ledger::block_evaluation& evaluation, bool reorganization, uint64_t* checkpoint_block_number);
+			expects_lr<bool> compact_internal(uint64_t block_number, uint64_t* last_checkpoint_block_number);
 
 		private:
 			static bool make_schema(sqlite::connection* connection, const std::string_view& name);
