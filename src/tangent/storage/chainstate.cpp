@@ -1767,7 +1767,7 @@ namespace tangent
 			map.push_back(var::set::integer(block_number));
 			map.push_back(var::set::integer(block_number + count - 1));
 
-			auto cursor = get_block_storage().emplace_query(__func__, "SELECT block_hash FROM blocks WHERE block_number BETWEEN ? AND ? ORDER BY block_number DESC", &map);
+			auto cursor = get_block_storage().emplace_query(__func__, "SELECT block_hash FROM blocks WHERE block_number BETWEEN ? AND ? ORDER BY block_number ASC", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<vector<uint256_t>>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -1796,7 +1796,7 @@ namespace tangent
 				return layer_exception("invalid block range");
 
 			auto& block_storage = get_block_storage();
-			auto fetch_block_hashes = block_storage.prepare_statement(__func__, "SELECT block_hash FROM blocks WHERE block_number BETWEEN ? AND ?");
+			auto fetch_block_hashes = block_storage.prepare_statement(__func__, "SELECT block_hash FROM blocks WHERE block_number BETWEEN ? AND ? ORDER BY block_number ASC");
 			if (!fetch_block_hashes)
 				return expects_lr<vector<ledger::block_body>>(layer_exception(std::move(fetch_block_hashes.error().message())));
 
@@ -1859,7 +1859,7 @@ namespace tangent
 				return layer_exception("invalid block range");
 
 			auto& block_storage = get_block_storage();
-			auto fetch_block_hashes = block_storage.prepare_statement(__func__, "SELECT block_hash FROM blocks WHERE block_number BETWEEN ? AND ?");
+			auto fetch_block_hashes = block_storage.prepare_statement(__func__, "SELECT block_hash FROM blocks WHERE block_number BETWEEN ? AND ? ORDER BY block_number ASC");
 			if (!fetch_block_hashes)
 				return expects_lr<vector<ledger::block_header>>(layer_exception(std::move(fetch_block_hashes.error().message())));
 
@@ -2758,7 +2758,7 @@ namespace tangent
 				return status.error();
 			}
 
-			bool in_subtransaction = multiform_storage.in_transaction();
+			bool in_subtransaction = !temporary && multiform_storage.in_transaction();
 			if (!temporary)
 			{
 				if (in_subtransaction)

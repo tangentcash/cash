@@ -2054,10 +2054,10 @@ namespace tangent
 				if (old_tip_number > 0 && new_tip_number > old_tip_number)
 				{
 					auto result = coawait(query(uref(new_tip.state), descriptors::fetch_headers(), { format::variable(old_tip_number + 1), format::variable((uint8_t)1) }, protocol::now().user.tcp.timeout));
-					if (result && result->args.size() >= 3)
+					if (result && result->args.size() >= 2)
 					{
 						auto collision_tip = ledger::block_header();
-						auto message = format::ro_stream(result->args[2].as_string());
+						auto message = format::ro_stream(result->args[1].as_string());
 						if (collision_tip.load(message) && collision_tip.parent_hash == old_tip->as_hash())
 						{
 							new_tip_number = collision_tip.number;
