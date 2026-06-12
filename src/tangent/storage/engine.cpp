@@ -146,25 +146,27 @@ namespace tangent
 			return thread_invocations;
 		}
 
-		storage_index_ptr::storage_index_ptr() : invocations(0), transaction(false)
+		storage_index_ptr::storage_index_ptr() : invocations(0)
 		{
 		}
-		storage_index_ptr::storage_index_ptr(uref<sqlite::connection>&& new_connection, bool in_transaction) : connection(std::move(new_connection)), invocations(0), transaction(in_transaction)
+		storage_index_ptr::storage_index_ptr(uref<sqlite::connection>&& new_connection) : connection(std::move(new_connection)), invocations(0)
 		{
 			VI_PANIC(connection, "index connection required");
 		}
-		storage_index_ptr::storage_index_ptr(const storage_index_ptr& other) : connection(other.connection), invocations(0), transaction(false)
+		storage_index_ptr::storage_index_ptr(const storage_index_ptr& other) : connection(other.connection), invocations(0)
 		{
 		}
-		storage_index_ptr::storage_index_ptr(storage_index_ptr&& other) noexcept : connection(std::move(other.connection)), invocations(other.invocations), transaction(other.transaction)
+		storage_index_ptr::storage_index_ptr(storage_index_ptr&& other) noexcept : connection(std::move(other.connection)), invocations(other.invocations)
 		{
 			other.invocations = 0;
-			other.transaction = false;
 		}
 		storage_index_ptr::~storage_index_ptr()
 		{
 			if (connection)
+			{
+				VI_ASSERT(connection->get_ref_count() > 1 || !connection->in_transaction(), "connection must not be in transaction");
 				protocol::change().database.push_index(std::move(connection));
+			}
 		}
 		storage_index_ptr& storage_index_ptr::operator=(const storage_index_ptr& other)
 		{
@@ -174,7 +176,6 @@ namespace tangent
 			this->~storage_index_ptr();
 			connection = other.connection;
 			invocations = 0;
-			transaction = false;
 			return *this;
 		}
 		storage_index_ptr& storage_index_ptr::operator=(storage_index_ptr&& other) noexcept
@@ -185,16 +186,11 @@ namespace tangent
 			this->~storage_index_ptr();
 			connection = std::move(other.connection);
 			invocations = other.invocations;
-			transaction = other.transaction;
 			other.invocations = 0;
-			other.transaction = false;
 			return *this;
 		}
 		sqlite::expects_db<void> storage_index_ptr::tx_begin(const std::string_view& operation, sqlite::isolation type)
 		{
-			if (transaction)
-				return sqlite::database_exception("rollback or commit current transaction");
-
 			VI_ASSERT(connection, "connection not initialized (transaction begin)");
 			auto cursor = connection->tx_begin(type);
 #ifdef DB_IMMATURE
@@ -206,14 +202,10 @@ namespace tangent
 			if (!cursor)
 				return cursor.error();
 
-			transaction = true;
 			return expectation::met;
 		}
 		sqlite::expects_db<void> storage_index_ptr::tx_commit(const std::string_view& operation)
 		{
-			if (!transaction)
-				return sqlite::database_exception("current transaction not found");
-
 			VI_ASSERT(connection, "connection not initialized (transaction commit)");
 			auto cursor = connection->tx_commit(connection->get_connection());
 #ifdef DB_IMMATURE
@@ -222,14 +214,10 @@ namespace tangent
 				VI_ERR("index storage operation %.*s error (transaction commit): %s", (int)operation.size(), operation.data(), error.c_str());
 #endif
 			++invocations; ++thread_invocations;
-			transaction = false;
 			return cursor;
 		}
 		sqlite::expects_db<void> storage_index_ptr::tx_rollback(const std::string_view& operation)
 		{
-			if (!transaction)
-				return sqlite::database_exception("current transaction not found");
-
 			VI_ASSERT(connection, "connection not initialized (transaction rollback)");
 			auto cursor = connection->tx_rollback(connection->get_connection());
 #ifdef DB_IMMATURE
@@ -238,13 +226,16 @@ namespace tangent
 				VI_ERR("index storage operation %.*s error (transaction rollback): %s", (int)operation.size(), operation.data(), error.c_str());
 #endif
 			++invocations; ++thread_invocations;
-			transaction = false;
 			return cursor;
 		}
 		sqlite::expects_db<sqlite::cursor> storage_index_ptr::query(const std::string_view& operation, const std::string_view& command, size_t query_ops)
 		{
 			VI_ASSERT(connection, "connection not initialized (operation: %.*s)", (int)operation.size(), operation.data());
-			auto cursor = connection->query(command, query_ops, transaction ? connection->get_connection() : nullptr);
+#ifndef NDEBUG
+			auto cursor = connection->query(command, query_ops, connection->in_transaction() ? connection->get_connection() : nullptr);
+#else
+			auto cursor = connection->query(command, query_ops);
+#endif
 #ifdef DB_IMMATURE
 			string error = storage_util::error_of(cursor);
 			if (!error.empty())
@@ -256,7 +247,11 @@ namespace tangent
 		sqlite::expects_db<sqlite::cursor> storage_index_ptr::emplace_query(const std::string_view& operation, const std::string_view& command, schema_list* map, size_t query_ops)
 		{
 			VI_ASSERT(connection, "connection not initialized (operation: %.*s)", (int)operation.size(), operation.data());
-			auto cursor = connection->emplace_query(command, map, query_ops, transaction ? connection->get_connection() : nullptr);
+#ifndef NDEBUG
+			auto cursor = connection->emplace_query(command, map, query_ops, connection->in_transaction() ? connection->get_connection() : nullptr);
+#else
+			auto cursor = connection->emplace_query(command, map, query_ops);
+#endif
 #ifdef DB_IMMATURE
 			string error = storage_util::error_of(cursor);
 			if (!error.empty())
@@ -268,7 +263,11 @@ namespace tangent
 		sqlite::expects_db<sqlite::cursor> storage_index_ptr::prepared_query(const std::string_view& operation, sqlite::tstatement* statement)
 		{
 			VI_ASSERT(connection, "connection not initialized (operation: %.*s)", (int)operation.size(), operation.data());
-			auto cursor = connection->prepared_query(statement, transaction ? connection->get_connection() : nullptr);
+#ifndef NDEBUG
+			auto cursor = connection->prepared_query(statement, connection->in_transaction() ? connection->get_connection() : nullptr);
+#else
+			auto cursor = connection->prepared_query(statement);
+#endif
 #ifdef DB_IMMATURE
 			string error = storage_util::error_of(cursor);
 			if (!error.empty())
@@ -306,7 +305,7 @@ namespace tangent
 		}
 		bool storage_index_ptr::in_transaction() const
 		{
-			return transaction;
+			return connection ? connection->in_transaction() : false;
 		}
 		bool storage_index_ptr::may_use() const
 		{

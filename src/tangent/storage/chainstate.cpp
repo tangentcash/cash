@@ -512,43 +512,62 @@ namespace tangent
 					return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 			}
 
-			auto& blob_storage = get_blob_storage();
-			blob_storage.clear(__func__, string(1, BLOB_UNIFORM));
-			blob_storage.clear(__func__, string(1, BLOB_MULTIFORM));
-
-			uint64_t current_number = 1;
+			int64_t precision = 5000, prev_progress = 0;
+			uint64_t prev_size = 0, prev_progress_time = 0, prev_progress_block_number = 0;
 			uint64_t checkpoint_number = get_checkpoint_block_number().or_else(0);
 			uint64_t tip_number = get_latest_block_number().or_else(0);
+			uint256_t gas_limit = protocol::now().message.blocks_size_per_query * (uint64_t)ledger::gas_cost::reserved_byte;
+			size_t block_count = (size_t)(uint64_t)(gas_limit / ledger::block_header::get_block_gas_cost());
 			auto solver = ledger::solver_context();
+			auto tip_cache = ledger::solver_context::tip_cache();
 			auto parent_block = expects_lr<ledger::block_header>(layer_exception());
-			while (current_number <= tip_number)
+			while ((parent_block ? parent_block->number : 0) + 1 <= tip_number)
 			{
-				auto candidate_block = get_block_by_number(current_number);
-				if (!candidate_block)
-					return layer_exception("block " + to_string(current_number) + (checkpoint_number >= current_number ? " reorganization failed: block data pruned" : " reorganization failed: block not found"));
-				else if (current_number > 1 && checkpoint_number >= current_number - 1 && !parent_block)
-					return layer_exception("block " + to_string(current_number - 1) + " reorganization failed: parent block data pruned");
+				auto current_number = (parent_block ? parent_block->number : 0) + 1;
+				auto blocks = get_blocks(current_number, block_count, gas_limit);
+				if (!blocks)
+					return layer_exception("block " + to_string(current_number - 1) + " reorganization failed: " + blocks.error().message());
 
-				ledger::block_evaluation evaluation;
-				auto validation = ledger::solver_context::validate_solved_block(solver, parent_block.address(), *candidate_block, &evaluation);
-				if (!validation)
-					return layer_exception("block " + to_string(current_number) + " validation failed: " + validation.error().message());
+				for (auto& candidate_block : *blocks)
+				{
+					if (candidate_block.number > 1 && checkpoint_number >= candidate_block.number - 1 && !parent_block)
+						return layer_exception("block " + to_string(candidate_block.number - 1) + " reorganization failed: parent block data pruned");
 
-				auto finalization = checkpoint_internal(evaluation, true, &checkpoint_number);
-				if (!finalization)
-					return layer_exception("block " + to_string(current_number) + " checkpoint failed: " + finalization.error().message());
+					ledger::block_evaluation evaluation;
+					auto validation = ledger::solver_context::validate_solved_block(solver, parent_block.address(), candidate_block, &evaluation, false, &tip_cache);
+					if (!validation)
+						return layer_exception("block " + to_string(candidate_block.number) + " validation failed: " + validation.error().message());
 
-				if (protocol::now().user.storage.logging)
-					VI_INFO("block %s re-executed (number: %" PRIu64 ", tape: %.2f%%)", algorithm::encoding::encode_0xhex256(candidate_block->as_hash()).c_str(), current_number, 100.0 * (double)current_number / tip_number);
+					auto finalization = checkpoint_internal(evaluation, true, &checkpoint_number);
+					if (!finalization)
+						return layer_exception("block " + to_string(candidate_block.number) + " checkpoint failed: " + finalization.error().message());
 
-				parent_block = evaluation.block;
-				++current_number;
-				if (block_delta != nullptr)
-					++(*block_delta);
-				if (transaction_delta != nullptr)
-					*transaction_delta += evaluation.block.transaction_count;
-				if (state_delta != nullptr)
-					*state_delta += evaluation.block.transition_count;
+					if (protocol::now().user.consensus.logging)
+					{
+						int64_t progress = (int64_t)((double)precision * (double)candidate_block.number / tip_number);
+						prev_size += (uint64_t)((double)(uint64_t)candidate_block.gas_limit / (double)ledger::gas_cost::write_byte);
+						if (progress >= precision || prev_progress < progress)
+						{
+							uint64_t time = protocol::now().time.now_cpu();
+							VI_INFO("block %s (number: %" PRIu64 ", reorg: %.2f%%, size: %.2f kb, bps: %.1f)",
+								algorithm::encoding::encode_0xhex256(candidate_block.as_hash()).c_str(),
+								candidate_block.number, (double)progress / ((double)precision / 100), (double)prev_size / 1000.0,
+								prev_progress_time > 0 ? 1000.0 * (double)(candidate_block.number - prev_progress_block_number) / (double)std::max<uint64_t>(1, time - prev_progress_time) : 0.0);
+							prev_progress_block_number = candidate_block.number;
+							prev_progress_time = time;
+							prev_progress = progress;
+							prev_size = 0;
+						}
+					}
+
+					if (block_delta != nullptr)
+						++(*block_delta);
+					if (transaction_delta != nullptr)
+						*transaction_delta += evaluation.block.transaction_count;
+					if (state_delta != nullptr)
+						*state_delta += evaluation.block.transition_count;
+					parent_block = std::move(evaluation.block);
+				}
 			}
 
 			return expectation::met;
@@ -1179,46 +1198,33 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<void> chainstate::resolve_block_transactions(vector<ledger::block_transaction>& result, uint64_t block_number, size_t chunk)
+		expects_lr<void> chainstate::resolve_block_transactions(vector<ledger::block_transaction>& result, uint64_t block_number)
 		{
 			auto& blob_storage = get_blob_storage();
 			auto& tx_storage = get_tx_storage();
-			auto find_transactions = tx_storage.prepare_statement(__func__, "SELECT transaction_hash FROM transactions WHERE block_number = ? ORDER BY block_nonce LIMIT ? OFFSET ?");
+			auto find_transactions = tx_storage.prepare_statement(__func__, "SELECT transaction_hash FROM transactions WHERE block_number = ? ORDER BY block_nonce");
 			if (!find_transactions)
 				return expects_lr<void>(layer_exception(std::move(find_transactions.error().message())));
 
-			size_t offset = 0;
 			tx_storage.ptr()->bind_int64(*find_transactions, 0, block_number);
-			tx_storage.ptr()->bind_int64(*find_transactions, 1, chunk);
-			while (true)
+			auto cursor = get_tx_storage().prepared_query(__func__, *find_transactions);
+			if (!cursor || cursor->error())
+				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
+
+			auto& response = cursor->first();
+			result.resize(response.size());
+			if (result.empty())
+				return expectation::met;
+
+			parallel::wail_all(parallel::for_loop(result.size(), ELEMENTS_FEW, [&](size_t i)
 			{
-				tx_storage.ptr()->bind_int64(*find_transactions, 2, offset);
-				auto cursor = get_tx_storage().prepared_query(__func__, *find_transactions);
-				if (!cursor || cursor->error())
-					return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
-
-				auto& response = cursor->first();
-				size_t size = response.size();
-				if (!size)
-					break;
-
-				size_t stride = result.size();
-				result.resize(result.size() + size);
-				parallel::wail_all(parallel::for_loop(size, ELEMENTS_FEW, [&](size_t i)
-				{
-					auto transaction_hash = response[i]["transaction_hash"].get();
-					auto transaction_blob = blob_storage.load(__func__, get_block_transaction_label(transaction_hash.get_binary())).or_else(string());
-					auto transaction_message = format::ro_stream(transaction_blob);
-					auto& next = result[i + stride];
-					if (next.load(transaction_message))
-						finalize_checksum(**next.transaction, transaction_hash);
-				}));
-
-				offset += size;
-				if (size < chunk)
-					break;
-			}
-
+				auto transaction_hash = response[i]["transaction_hash"].get();
+				auto transaction_blob = blob_storage.load(__func__, get_block_transaction_label(transaction_hash.get_binary())).or_else(string());
+				auto transaction_message = format::ro_stream(transaction_blob);
+				auto& next = result[i];
+				if (next.load(transaction_message))
+					finalize_checksum(**next.transaction, transaction_hash);
+			}));
 			result.erase(std::remove_if(result.begin(), result.end(), [](const ledger::block_transaction& a) { return !a.transaction; }), result.end());
 			return expectation::met;
 		}
@@ -1438,7 +1444,7 @@ namespace tangent
 
 			return algorithm::arithmetic::divide(*b, *a);
 		}
-		expects_lr<ledger::block_body> chainstate::get_block_by_number(uint64_t block_number, size_t chunk, uint32_t details)
+		expects_lr<ledger::block_body> chainstate::get_block_by_number(uint64_t block_number, bool include_transactions)
 		{
 			schema_list map;
 			map.push_back(var::set::integer(block_number));
@@ -1447,45 +1453,45 @@ namespace tangent
 			if (!cursor || cursor->error_or_empty())
 				return expects_lr<ledger::block_body>(layer_exception(ledger::storage_util::error_of(cursor)));
 
-			ledger::block_header header;
+			ledger::block_body result;
 			auto block_hash = (*cursor)["block_hash"].get();
 			auto block_blob = get_blob_storage().load(__func__, get_block_label(block_hash.get_binary())).or_else(string());
 			auto message = format::ro_stream(block_blob);
-			if (!header.load(message))
+			if (!result.load_header(message))
 				return expects_lr<ledger::block_body>(layer_exception("block header deserialization error"));
 
-			ledger::block_body result = ledger::block_body(header);
-			if ((details & (uint32_t)block_details::transactions) && chunk > 0)
+			finalize_checksum(result, block_hash);
+			if (include_transactions && result.transaction_count > 0)
 			{
-				auto resolve = resolve_block_transactions(result.transactions, result.number, chunk);
+				auto resolve = resolve_block_transactions(result.transactions, result.number);
 				if (!resolve)
 					return resolve.error();
 			}
-			finalize_checksum(header, block_hash);
+
 			return result;
 		}
-		expects_lr<ledger::block_body> chainstate::get_block_by_hash(const uint256_t& block_hash, size_t chunk, uint32_t details)
+		expects_lr<ledger::block_body> chainstate::get_block_by_hash(const uint256_t& block_hash, bool include_transactions)
 		{
 			uint8_t hash[32];
 			block_hash.encode(hash);
 
-			ledger::block_header header;
+			ledger::block_body result;
 			auto block_blob = get_blob_storage().load(__func__, get_block_label(hash)).or_else(string());
 			auto message = format::ro_stream(block_blob);
-			if (!header.load(message))
+			if (!result.load_header(message))
 				return expects_lr<ledger::block_body>(layer_exception("block header deserialization error"));
 
-			ledger::block_body result = ledger::block_body(header);
-			if ((details & (uint32_t)block_details::transactions) && chunk > 0)
+			finalize_checksum(result, var::binary(hash, sizeof(hash)));
+			if (include_transactions && result.transaction_count > 0)
 			{
-				auto resolve = resolve_block_transactions(result.transactions, result.number, chunk);
+				auto resolve = resolve_block_transactions(result.transactions, result.number);
 				if (!resolve)
 					return resolve.error();
 			}
-			finalize_checksum(header, var::binary(hash, sizeof(hash)));
+
 			return result;
 		}
-		expects_lr<ledger::block_body> chainstate::get_latest_block(size_t chunk, uint32_t details)
+		expects_lr<ledger::block_body> chainstate::get_latest_block(bool include_transactions)
 		{
 			auto& block_storage = get_block_storage();
 			auto fetch_latest_block_hash = block_storage.prepare_statement(__func__, "SELECT block_hash FROM blocks ORDER BY block_number DESC LIMIT 1");
@@ -1496,21 +1502,21 @@ namespace tangent
 			if (!cursor || cursor->error_or_empty())
 				return expects_lr<ledger::block_body>(layer_exception(ledger::storage_util::error_of(cursor)));
 
-			ledger::block_header header;
+			ledger::block_body result;
 			auto block_hash = (*cursor)["block_hash"].get();
 			auto block_blob = get_blob_storage().load(__func__, get_block_label(block_hash.get_binary())).or_else(string());
 			auto message = format::ro_stream(block_blob);
-			if (!header.load(message))
+			if (!result.load_header(message))
 				return expects_lr<ledger::block_body>(layer_exception("block header deserialization error"));
 
-			ledger::block_body result = ledger::block_body(header);
-			if ((details & (uint32_t)block_details::transactions) && chunk > 0)
+			finalize_checksum(result, block_hash);
+			if (include_transactions && result.transaction_count > 0)
 			{
-				auto resolve = resolve_block_transactions(result.transactions, result.number, chunk);
+				auto resolve = resolve_block_transactions(result.transactions, result.number);
 				if (!resolve)
 					return resolve.error();
 			}
-			finalize_checksum(header, block_hash);
+
 			return result;
 		}
 		expects_lr<ledger::block_header> chainstate::get_block_header_by_number(uint64_t block_number)
@@ -1759,7 +1765,7 @@ namespace tangent
 
 			schema_list map;
 			map.push_back(var::set::integer(block_number));
-			map.push_back(var::set::integer(block_number + count));
+			map.push_back(var::set::integer(block_number + count - 1));
 
 			auto cursor = get_block_storage().emplace_query(__func__, "SELECT block_hash FROM blocks WHERE block_number BETWEEN ? AND ? ORDER BY block_number DESC", &map);
 			if (!cursor || cursor->error())
@@ -1784,103 +1790,149 @@ namespace tangent
 
 			return result;
 		}
+		expects_lr<vector<ledger::block_body>> chainstate::get_blocks(uint64_t block_number, uint64_t count, const uint256_t& gas_limit, bool include_transactions)
+		{
+			if (!count || !block_number)
+				return layer_exception("invalid block range");
+
+			auto& block_storage = get_block_storage();
+			auto fetch_block_hashes = block_storage.prepare_statement(__func__, "SELECT block_hash FROM blocks WHERE block_number BETWEEN ? AND ?");
+			if (!fetch_block_hashes)
+				return expects_lr<vector<ledger::block_body>>(layer_exception(std::move(fetch_block_hashes.error().message())));
+
+			block_storage.ptr()->bind_int64(*fetch_block_hashes, 0, block_number);
+			block_storage.ptr()->bind_int64(*fetch_block_hashes, 1, block_number + count - 1);
+
+			auto cursor = block_storage.prepared_query(__func__, *fetch_block_hashes);
+			if (!cursor || cursor->error())
+				return layer_exception(ledger::storage_util::error_of(cursor));
+
+			auto& blob_storage = get_blob_storage();
+			auto& response = cursor->first();
+			vector<ledger::block_body> result;
+			result.resize(response.size());
+			parallel::wail_all(parallel::for_loop(result.size(), ELEMENTS_FEW, [&](size_t i)
+			{
+				auto block_hash = response[i]["block_hash"].get();
+				auto block_blob = blob_storage.load(__func__, get_block_label(block_hash.get_binary())).or_else(string());
+				auto message = format::ro_stream(block_blob);
+				auto& next = result[i];
+				if (next.load_header(message))
+					finalize_checksum(next, block_hash);
+				else
+					next.number = 0;
+			}));
+
+			result.erase(std::remove_if(result.begin(), result.end(), [](const ledger::block_body& a) { return !a.number; }), result.end());
+			if (gas_limit > 0)
+			{
+				uint256_t gas_use = 0;
+				for (size_t i = 0; i < result.size(); i++)
+				{
+					uint256_t new_gas_use = gas_use + result[i].gas_use;
+					if (new_gas_use < gas_use || new_gas_use >= gas_limit)
+					{
+						result.erase(result.begin() + i, result.end());
+						break;
+					}
+				}
+			}
+
+			if (include_transactions)
+			{
+				for (auto& item : result)
+				{
+					if (item.transaction_count > 0)
+					{
+						auto resolve = resolve_block_transactions(item.transactions, item.number);
+						if (!resolve)
+							return resolve.error();
+					}
+				}
+			}
+
+			return expects_lr<vector<ledger::block_body>>(std::move(result));
+		}
 		expects_lr<vector<ledger::block_header>> chainstate::get_block_headers(uint64_t block_number, size_t count)
 		{
 			if (!count || !block_number)
 				return layer_exception("invalid block range");
 
-			schema_list map;
-			map.push_back(var::set::integer(block_number));
-			map.push_back(var::set::integer(block_number + count));
+			auto& block_storage = get_block_storage();
+			auto fetch_block_hashes = block_storage.prepare_statement(__func__, "SELECT block_hash FROM blocks WHERE block_number BETWEEN ? AND ?");
+			if (!fetch_block_hashes)
+				return expects_lr<vector<ledger::block_header>>(layer_exception(std::move(fetch_block_hashes.error().message())));
 
-			auto cursor = get_block_storage().emplace_query(__func__, "SELECT block_hash FROM blocks WHERE block_number BETWEEN ? AND ? ORDER BY block_number ASC", &map);
+			block_storage.ptr()->bind_int64(*fetch_block_hashes, 0, block_number);
+			block_storage.ptr()->bind_int64(*fetch_block_hashes, 1, block_number + count - 1);
+
+			auto cursor = block_storage.prepared_query(__func__, *fetch_block_hashes);
 			if (!cursor || cursor->error())
-				return expects_lr<vector<ledger::block_header>>(layer_exception(ledger::storage_util::error_of(cursor)));
+				return layer_exception(ledger::storage_util::error_of(cursor));
 
 			auto& blob_storage = get_blob_storage();
+			auto& response = cursor->first();
 			vector<ledger::block_header> result;
-			for (auto& response : *cursor)
+			result.resize(response.size());
+			parallel::wail_all(parallel::for_loop(result.size(), ELEMENTS_FEW, [&](size_t i)
 			{
-				size_t size = response.size();
-				result.resize(result.size() + size);
-				parallel::wail_all(parallel::for_loop(size, ELEMENTS_FEW, [&](size_t i)
-				{
-					auto block_hash = response[i]["block_hash"].get();
-					auto block_blob = blob_storage.load(__func__, get_block_label(block_hash.get_binary())).or_else(string());
-					auto message = format::ro_stream(block_blob);
-					result[i].load(message);
-				}));
-			}
-
-			return result;
+				auto block_hash = response[i]["block_hash"].get();
+				auto block_blob = blob_storage.load(__func__, get_block_label(block_hash.get_binary())).or_else(string());
+				auto message = format::ro_stream(block_blob);
+				auto& next = result[i];
+				if (next.load(message))
+					finalize_checksum(next, block_hash);
+				else
+					next.number = 0;
+			}));
+			result.erase(std::remove_if(result.begin(), result.end(), [](const ledger::block_header& a) { return !a.number; }), result.end());
+			return expects_lr<vector<ledger::block_header>>(std::move(result));
 		}
-		expects_lr<ledger::block_state::log> chainstate::get_block_state_by_number(uint64_t block_number, size_t chunk)
+		expects_lr<ledger::block_state::log> chainstate::get_block_state_by_number(uint64_t block_number)
 		{
 			auto& blob_storage = get_blob_storage();
 			schema_list map;
 			map.push_back(var::set::integer(block_number));
-			map.push_back(var::set::integer(chunk));
-			map.push_back(var::set::integer(0));
 
 			ledger::block_state result;
 			for (auto& [uniform_storage, type] : get_uniform_multi_storage())
 			{
-				size_t offset = 0;
-				map[2]->value = var::integer(offset);
-				while (true)
+				auto cursor = uniform_storage.emplace_query(__func__, "SELECT (SELECT index_hash FROM indices WHERE indices.index_number = snapshots.index_number) AS index_hash, hidden FROM snapshots WHERE block_number = ?", &map);
+				if (!cursor || cursor->error())
+					return expects_lr<ledger::block_state::log>(layer_exception(ledger::storage_util::error_of(cursor)));
+
+				auto& response = cursor->first();
+				size_t size = response.size();
+				for (size_t i = 0; i < size; i++)
 				{
-					auto cursor = uniform_storage.emplace_query(__func__, "SELECT (SELECT index_hash FROM indices WHERE indices.index_number = snapshots.index_number) AS index_hash, hidden FROM snapshots WHERE block_number = ? LIMIT ? OFFSET ?", &map);
-					if (!cursor || cursor->error())
-						return expects_lr<ledger::block_state::log>(layer_exception(ledger::storage_util::error_of(cursor)));
-
-					auto& response = cursor->first();
-					size_t size = response.size();
-					for (size_t i = 0; i < size; i++)
-					{
-						auto next = response[i];
-						auto index = next["index_hash"].get().get_blob();
-						auto hidden = next["hidden"].get().get_boolean();
-						auto blob = blob_storage.load(__func__, get_uniform_label(type, index, block_number)).or_else(string());
-						auto next_state = state_from_blob(block_number, type, index, std::string_view(), blob);
-						if (next_state)
-							result.emplace(std::move(next_state), hidden);
-					}
-
-					offset += size;
-					map[2]->value = var::integer(offset);
-					if (size < chunk)
-						break;
+					auto next = response[i];
+					auto index = next["index_hash"].get().get_blob();
+					auto hidden = next["hidden"].get().get_boolean();
+					auto blob = blob_storage.load(__func__, get_uniform_label(type, index, block_number)).or_else(string());
+					auto next_state = state_from_blob(block_number, type, index, std::string_view(), blob);
+					if (next_state)
+						result.emplace(std::move(next_state), hidden);
 				}
 			}
 
 			for (auto& [multiform_storage, type] : get_multiform_multi_storage())
 			{
-				size_t offset = 0;
-				map[2]->value = var::integer(offset);
-				while (true)
+				auto cursor = multiform_storage.emplace_query(__func__, "SELECT (SELECT column_hash FROM columns WHERE columns.column_number = snapshots.column_number) AS column_hash, (SELECT row_hash FROM rows WHERE rows.row_number = snapshots.row_number) AS row_hash, hidden FROM snapshots WHERE block_number = ?", &map);
+				if (!cursor || cursor->error())
+					return expects_lr<ledger::block_state::log>(layer_exception(ledger::storage_util::error_of(cursor)));
+
+				auto& response = cursor->first();
+				size_t size = response.size();
+				for (size_t i = 0; i < size; i++)
 				{
-					auto cursor = multiform_storage.emplace_query(__func__, "SELECT (SELECT column_hash FROM columns WHERE columns.column_number = snapshots.column_number) AS column_hash, (SELECT row_hash FROM rows WHERE rows.row_number = snapshots.row_number) AS row_hash, hidden FROM snapshots WHERE block_number = ? LIMIT ? OFFSET ?", &map);
-					if (!cursor || cursor->error())
-						return expects_lr<ledger::block_state::log>(layer_exception(ledger::storage_util::error_of(cursor)));
-
-					auto& response = cursor->first();
-					size_t size = response.size();
-					for (size_t i = 0; i < size; i++)
-					{
-						auto next = response[i];
-						auto column = next["column_hash"].get().get_blob();
-						auto row = next["row_hash"].get().get_blob();
-						auto hidden = next["hidden"].get().get_boolean();
-						auto blob = blob_storage.load(__func__, get_multiform_label(type, column, row, block_number)).or_else(string());
-						auto next_state = state_from_blob(block_number, type, column, row, blob);
-						if (next_state)
-							result.emplace(std::move(next_state), hidden);
-					}
-
-					offset += size;
-					map[2]->value = var::integer(offset);
-					if (size < chunk)
-						break;
+					auto next = response[i];
+					auto column = next["column_hash"].get().get_blob();
+					auto row = next["row_hash"].get().get_blob();
+					auto hidden = next["hidden"].get().get_boolean();
+					auto blob = blob_storage.load(__func__, get_multiform_label(type, column, row, block_number)).or_else(string());
+					auto next_state = state_from_blob(block_number, type, column, row, blob);
+					if (next_state)
+						result.emplace(std::move(next_state), hidden);
 				}
 			}
 
@@ -2683,7 +2735,7 @@ namespace tangent
 			auto storage = changelog->temporary_state.topics.find(type);
 			auto temporary = storage != changelog->temporary_state.topics.end();
 			if (temporary)
-				multiform_storage = ledger::storage_index_ptr((sqlite::connection*)storage->second);
+				multiform_storage = ledger::storage_index_ptr((sqlite::connection*)storage->second.first);
 			
 			multiform_writer writer;
 			fill_multiform_writer_from_block_changelog(&writer.blobs, type, column, row, changelog);
@@ -2706,13 +2758,26 @@ namespace tangent
 				return status.error();
 			}
 
+			bool in_subtransaction = multiform_storage.in_transaction();
 			if (!temporary)
 			{
-				auto transaction = multiform_storage.tx_begin(__func__, sqlite::isolation::default_isolation);
-				if (!transaction)
+				if (in_subtransaction)
 				{
-					multiform_storage.set_uses(uses);
-					return layer_exception(ledger::storage_util::error_of(transaction));
+					auto transaction = multiform_storage.query(__func__, "SAVEPOINT subtransaction");
+					if (!transaction)
+					{
+						multiform_storage.set_uses(uses);
+						return layer_exception(ledger::storage_util::error_of(transaction));
+					}
+				}
+				else
+				{
+					auto transaction = multiform_storage.tx_begin(__func__, sqlite::isolation::default_isolation);
+					if (!transaction)
+					{
+						multiform_storage.set_uses(uses);
+						return layer_exception(ledger::storage_util::error_of(transaction));
+					}
 				}
 			}
 
@@ -2721,7 +2786,10 @@ namespace tangent
 			{
 				changelog->temporary_state.effects.clear();
 				changelog->temporary_state.topics.erase(type);
-				multiform_storage.tx_rollback(__func__);
+				if (in_subtransaction)
+					multiform_storage.query(__func__, "ROLLBACK TO SAVEPOINT subtransaction");
+				else
+					multiform_storage.tx_rollback(__func__);
 				multiform_storage.set_uses(uses);
 			};
 
@@ -2788,7 +2856,7 @@ namespace tangent
 
 			storage_ptr->add_ref();
 			multiform_storage.set_uses(uses);
-			changelog->temporary_state.topics[type] = storage_ptr;
+			changelog->temporary_state.topics[type] = std::make_pair(storage_ptr, in_subtransaction);
 			for (auto& item : writer.blobs)
 				changelog->temporary_state.effects[item.message.data] = string((char*)item.rank, sizeof(item.rank));
 
@@ -2804,10 +2872,20 @@ namespace tangent
 			expects_lr<void> result = expectation::met;
 			for (auto& topic : changelog->temporary_state.topics)
 			{
-				auto storage = ledger::storage_index_ptr((sqlite::connection*)topic.second, true);
-				auto status = storage.tx_rollback(__func__);
-				if (!status)
-					result = layer_exception(ledger::storage_util::error_of(status));
+				auto& [connection_ptr, in_subtransaction] = topic.second;
+				auto storage = ledger::storage_index_ptr((sqlite::connection*)connection_ptr);
+				if (in_subtransaction)
+				{
+					auto status = storage.query(__func__, "ROLLBACK TO SAVEPOINT subtransaction");
+					if (!status)
+						result = layer_exception(ledger::storage_util::error_of(status));
+				}
+				else
+				{
+					auto status = storage.tx_rollback(__func__);
+					if (!status)
+						result = layer_exception(ledger::storage_util::error_of(status));
+				}
 			}
 
 			changelog->temporary_state.topics.clear();

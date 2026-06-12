@@ -4,7 +4,6 @@
 #include "../policy/delegations.h"
 #include "../storage/mempoolstate.h"
 #include "../storage/chainstate.h"
-#define BLOCK_COST ((size_t)gas_cost::write_byte * 1024)
 
 namespace tangent
 {
@@ -692,6 +691,11 @@ namespace tangent
 		{
 			return "block";
 		}
+		uint256_t block_header::get_block_gas_cost()
+		{
+			static uint256_t cost = ((size_t)gas_cost::write_byte * 1024);
+			return cost;
+		}
 		uint256_t block_header::get_gas_limit()
 		{
 			static uint256_t limit = protocol::now().policy.block_gas_limit;
@@ -775,6 +779,18 @@ namespace tangent
 			}
 
 			return expectation::met;
+		}
+		bool block_body::load_header(format::ro_stream& stream)
+		{
+			uint32_t type;
+			if (!stream.read_integer(stream.read_type(), &type) || type != as_type())
+				return false;
+
+			string signature_assembly;
+			if (!stream.read_string(stream.read_type(), &signature_assembly) || !algorithm::encoding::decode_bytes(signature_assembly, signature.blob, sizeof(signature)))
+				return false;
+
+			return load_header_payload(stream);
 		}
 		bool block_body::store_payload(format::wo_stream* stream) const
 		{
@@ -3384,9 +3400,10 @@ namespace tangent
 			else if (!state.validator_active)
 				return layer_exception("block producer must be active");
 
+			auto cost = block_header::get_block_gas_cost();
 			auto* parent_block = tip.address();
-			solution.block.gas_limit += BLOCK_COST;
-			solution.block.gas_use += BLOCK_COST;
+			solution.block.gas_limit += cost;
+			solution.block.gas_use += cost;
 			state.changelog.commit();
 			state.changelog.effects.finalized.swap(solution.effects);
 			state.changelog.outgoing.finalized.swap(solution.state);
@@ -3560,7 +3577,7 @@ namespace tangent
 			if (child_block.transaction_root != parent_block.transaction_root || child_block.receipt_root != parent_block.receipt_root)
 				return layer_exception("invalid transaction/receipt merkle tree root");
 
-			if (child_block.gas_use != child_block.gas_limit || child_block.gas_limit != BLOCK_COST)
+			if (child_block.gas_use != child_block.gas_limit || child_block.gas_limit != block_header::get_block_gas_cost())
 				return layer_exception("invalid gas use/limit");
 
 			if (!child_block.witnesses.empty())
@@ -3613,7 +3630,12 @@ namespace tangent
 				return layer_exception("invalid state merkle tree root");
 
 			if (evaluated_result != nullptr)
+			{
+				evaluated_result->effects.clear();
 				evaluated_result->state.swap(state_log);
+				if (&evaluated_result->block != &child_block)
+					evaluated_result->block = child_block;
+			}
 
 			return expectation::met;
 		}

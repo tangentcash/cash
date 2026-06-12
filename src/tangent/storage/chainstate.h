@@ -17,12 +17,6 @@ namespace tangent
 			less_equal
 		};
 
-		enum class block_details
-		{
-			transactions = 1 << 0,
-			states = 1 << 1
-		};
-
 		struct state_result
 		{
 			uptr<ledger::transition_state> value;
@@ -176,9 +170,9 @@ namespace tangent
 			expects_lr<uint256_t> get_block_hash_by_number(uint64_t block_number);
 			expects_lr<decimal> get_block_gas_price(uint64_t block_number, const algorithm::asset_id& asset, double percentile);
 			expects_lr<decimal> get_block_asset_price(uint64_t block_number, const algorithm::asset_id& price_of, const algorithm::asset_id& relative_to, double percentile);
-			expects_lr<ledger::block_body> get_block_by_number(uint64_t block_number, size_t chunk = ELEMENTS_MANY, uint32_t details = (uint32_t)block_details::transactions | (uint32_t)block_details::states);
-			expects_lr<ledger::block_body> get_block_by_hash(const uint256_t& block_hash, size_t chunk = ELEMENTS_MANY, uint32_t details = (uint32_t)block_details::transactions | (uint32_t)block_details::states);
-			expects_lr<ledger::block_body> get_latest_block(size_t chunk = ELEMENTS_MANY, uint32_t details = (uint32_t)block_details::transactions | (uint32_t)block_details::states);
+			expects_lr<ledger::block_body> get_block_by_number(uint64_t block_number, bool include_transactions = true);
+			expects_lr<ledger::block_body> get_block_by_hash(const uint256_t& block_hash, bool include_transactions = true);
+			expects_lr<ledger::block_body> get_latest_block(bool include_transactions = true);
 			expects_lr<ledger::block_header> get_block_header_by_number(uint64_t block_number);
 			expects_lr<ledger::block_header> get_block_header_by_hash(const uint256_t& block_hash);
 			expects_lr<ledger::block_header> get_latest_block_header();
@@ -187,8 +181,9 @@ namespace tangent
 			expects_lr<vector<uint256_t>> get_block_transaction_hashset(uint64_t block_number);
 			expects_lr<vector<uint256_t>> get_block_state_hashset(uint64_t block_number);
 			expects_lr<vector<uint256_t>> get_block_hashset(uint64_t block_number, size_t count);
+			expects_lr<vector<ledger::block_body>> get_blocks(uint64_t block_number, uint64_t count, const uint256_t& gas_limit, bool include_transactions = true);
 			expects_lr<vector<ledger::block_header>> get_block_headers(uint64_t block_number, size_t count);
-			expects_lr<ledger::block_state::log> get_block_state_by_number(uint64_t block_number, size_t chunk = ELEMENTS_MANY);
+			expects_lr<ledger::block_state::log> get_block_state_by_number(uint64_t block_number);
 			expects_lr<vector<ledger::block_transaction>> get_block_transactions(size_t offset, size_t count);
 			expects_lr<vector<ledger::block_transaction>> get_block_transactions_by_number(uint64_t block_number, size_t offset, size_t count);
 			expects_lr<vector<ledger::block_transaction>> get_block_transactions_by_owner(uint64_t block_number, const algorithm::pubkeyhash_t& owner, int8_t direction, size_t offset, size_t count);
@@ -207,7 +202,7 @@ namespace tangent
 			expects_lr<size_t> get_multiforms_count_by_row(uint32_t type, ledger::block_changelog* changelog, const std::string_view& row, uint64_t block_number);
 			expects_lr<size_t> get_multiforms_count_by_row_filter(uint32_t type, ledger::block_changelog* changelog, const std::string_view& row, const result_filter& filter, uint64_t block_number);
 			expects_lr<temporary_state_resolution> resolve_temporary_state(uint32_t type, ledger::block_changelog* changelog, const option<std::string_view>& column, const option<std::string_view>& row, uint64_t block_number);
-			expects_lr<void> resolve_block_transactions(vector<ledger::block_transaction>& result, uint64_t block_number, size_t chunk);
+			expects_lr<void> resolve_block_transactions(vector<ledger::block_transaction>& result, uint64_t block_number);
 			expects_lr<uint64_t> resolve_uniform_location(uint32_t type, const std::string_view& index);
 			expects_lr<multiform_location> resolve_multiform_location(uint32_t type, const option<std::string_view>& column, const option<std::string_view>& row);
 			expects_lr<uint64_t> resolve_account_location(const algorithm::pubkeyhash_t& account);

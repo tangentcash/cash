@@ -1459,11 +1459,12 @@ namespace tangent
 				return format::variables({ });
 
 			format::variables result;
-			result.reserve(headers->size() + 1);
-			result.push_back(format::variable(pivot_number + headers->size() - 1));
-			for (auto& item : *headers)
-				result.push_back(format::variable(item.as_message().data));
-
+			result.resize(headers->size() + 1);
+			result[0] = format::variable(pivot_number + headers->size() - 1);
+			parallel::wail_all(parallel::for_loop(result.size() - 1, ELEMENTS_BULK, [&](size_t i)
+			{
+				result[i + 1] = format::variable(headers->at(i).as_message().data);
+			}));
 			return expects_rt<format::variables>(std::move(result));
 		}
 		expects_rt<format::variables> server_node::fetch_block(uref<relay>&&, const exchange& event)
@@ -1476,7 +1477,7 @@ namespace tangent
 				return remote_exception("invalid arguments");
 
 			auto chain = storages::chainstate();
-			auto block = chain.get_block_by_hash(block_hash, ELEMENTS_MANY, (uint32_t)storages::block_details::transactions);
+			auto block = chain.get_block_by_hash(block_hash);
 			if (block)
 				return format::variables({ format::variable(block->as_message().data) });
 
@@ -1505,20 +1506,18 @@ namespace tangent
 					block_number = *result;
 			}
 
+			uint256_t gas_limit = protocol::now().message.blocks_size_per_query * (uint64_t)ledger::gas_cost::reserved_byte;
+			size_t block_count = (size_t)(uint64_t)(gas_limit / ledger::block_header::get_block_gas_cost());
+			auto blocks = chain.get_blocks(block_number, block_count, gas_limit);
+			if (!blocks || blocks->empty())
+				return format::variables({ });
+
 			format::variables result;
-			uint64_t size = protocol::now().message.blocks_size_per_query, offset = 0;
-			while (block_number > 0 && size > 0)
+			result.reserve(blocks->size());
+			parallel::wail_all(parallel::for_loop(result.size(), ELEMENTS_BULK, [&](size_t i)
 			{
-				auto block = chain.get_block_by_number(block_number + offset, ELEMENTS_MANY, (uint32_t)storages::block_details::transactions);
-				if (!block)
-					break;
-
-				auto message = block->as_message();
-				result.push_back(format::variable(message.data));
-				size -= std::min(size, message.data.size());
-				++offset;
-			}
-
+				result[i] = format::variable(blocks->at(i).as_message().data);
+			}));
 			return expects_rt<format::variables>(std::move(result));
 		}
 		expects_rt<format::variables> server_node::fetch_mempool(uref<relay>&&, const exchange& event)
@@ -2041,6 +2040,11 @@ namespace tangent
 		{
 			return coasync<expects_rt<void>>([this, fork = std::move(fork)]() mutable -> expects_promise_rt<void>
 			{
+				if (!try_acquire_checkpointer())
+					coreturn remote_exception("checkpointer busy");
+				else
+					release_checkpointer();
+
 				std::mutex batch_mutex;
 				auto& [new_tip_fork_hash, new_tip] = fork;
 				auto new_tip_number = new_tip.header.number;
@@ -2147,7 +2151,7 @@ namespace tangent
 				while (is_active() && (new_tip_number > 0 || new_tip_hash > 0))
 				{
 					if (protocol::now().user.consensus.logging)
-						VI_INFO("fork %s fetch: bodies (size: %.2f kb)", algorithm::encoding::encode_0xhex256(new_tip_fork_hash).c_str(), (double)protocol::now().message.blocks_size_per_query / 1000.0);
+						VI_INFO("fork %s fetch: bodies (size: <%.2f kb)", algorithm::encoding::encode_0xhex256(new_tip_fork_hash).c_str(), (double)protocol::now().message.blocks_size_per_query / 1000.0);
 
 					auto result = coawait(query(uref(new_tip.state), descriptors::fetch_blocks(), { format::variable(new_tip_hash), format::variable(new_tip_number) }, protocol::now().user.tcp.timeout));
 					if (!result)

@@ -46,6 +46,7 @@ namespace tangent
 		enum class gas_cost
 		{
 			write_tx_byte = 64,
+			reserved_byte = 56,
 			write_byte = 32,
 			erase_byte = 2,
 			read_byte = 1,
@@ -120,7 +121,7 @@ namespace tangent
 		{
 			struct
 			{
-				hash_map<uint32_t, void*> topics;
+				hash_map<uint32_t, std::pair<void*, bool>> topics;
 				hash_map<string, string> effects;
 			} temporary_state;
 			struct
@@ -209,6 +210,7 @@ namespace tangent
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
+			static uint256_t get_block_gas_cost();
 			static uint256_t get_gas_limit();
 			static uint256_t get_slot_gas_limit();
 			static uint256_t get_gas_work(const uint256_t& gas_use, const uint256_t& gas_limit, uint64_t priority);
@@ -228,6 +230,7 @@ namespace tangent
 			block_body& operator=(const block_body&) = default;
 			block_body& operator=(block_body&&) = default;
 			expects_lr<void> verify_integrity(const block_header* parent_block, const block_state::log* state) const;
+			bool load_header(format::ro_stream& stream);
 			bool store_payload(format::wo_stream* stream) const override;
 			bool load_payload(format::ro_stream& stream) override;
 			bool store_header_payload(format::wo_stream* stream) const;

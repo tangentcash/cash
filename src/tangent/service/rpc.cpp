@@ -1511,7 +1511,7 @@ namespace tangent
 			}
 			else
 			{
-				auto list = chain.get_block_state_by_number(*block_number, protocol::now().message.items_per_query);
+				auto list = chain.get_block_state_by_number(*block_number);
 				if (!list)
 					return server_response().error(error_codes::not_found, "block not found");
 
@@ -1537,7 +1537,7 @@ namespace tangent
 			}
 			else
 			{
-				auto list = chain.get_block_state_by_number(number, protocol::now().message.items_per_query);
+				auto list = chain.get_block_state_by_number(number);
 				if (!list)
 					return server_response().error(error_codes::not_found, "block not found");
 
@@ -2948,7 +2948,11 @@ namespace tangent
 
 			auto checkpoint = ledger::solver_context::checkpoint_solved_block(solver, evaluation);
 			if (consensus_service != nullptr)
+			{
+				consensus_service->verifier.cache = ledger::solver_context::tip_cache();
+				consensus_service->verifier.tip_cache = optional::none;
 				consensus_service->release_checkpointer();
+			}
 
 			if (!checkpoint)
 				return server_response().error(error_codes::bad_params, checkpoint.error().message());
