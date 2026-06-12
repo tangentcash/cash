@@ -1451,16 +1451,14 @@ namespace tangent
 			if (!branch_number || !branch_length)
 				return remote_exception("invalid branch");
 
-			const uint64_t blocks_count = std::min(protocol::now().message.headers_per_query, branch_length);
-			const uint64_t pivot_number = branch_number > blocks_count ? branch_number - blocks_count : 1;
 			auto chain = storages::chainstate();
-			auto headers = chain.get_block_headers(pivot_number, blocks_count);
+			auto headers = chain.get_block_headers(branch_number, std::min(protocol::now().message.headers_per_query, branch_length));
 			if (!headers || headers->empty())
 				return format::variables({ });
 
 			format::variables result;
 			result.resize(headers->size() + 1);
-			result[0] = format::variable(pivot_number + headers->size() - 1);
+			result[0] = format::variable(branch_number + headers->size() - 1);
 			parallel::wail_all(parallel::for_loop(result.size() - 1, ELEMENTS_BULK, [&](size_t i)
 			{
 				result[i + 1] = format::variable(headers->at(i).as_message().data);
@@ -1513,7 +1511,7 @@ namespace tangent
 				return format::variables({ });
 
 			format::variables result;
-			result.reserve(blocks->size());
+			result.resize(blocks->size());
 			parallel::wail_all(parallel::for_loop(result.size(), ELEMENTS_BULK, [&](size_t i)
 			{
 				result[i] = format::variable(blocks->at(i).as_message().data);
@@ -2074,7 +2072,7 @@ namespace tangent
 					if (protocol::now().user.consensus.logging)
 						VI_INFO("fork %s fetch: headers (range: [%" PRIu64 "; %" PRIu64 "])", algorithm::encoding::encode_0xhex256(new_tip_fork_hash).c_str(), new_tip_number - (protocol::now().message.headers_per_query > new_tip_number ? 1 : protocol::now().message.headers_per_query), new_tip_number);
 					
-					auto result = coawait(query(uref(new_tip.state), descriptors::fetch_headers(), { format::variable(new_tip_number), format::variable(new_tip_number > old_tip_number ? 1 + new_tip_number - (old_tip_number - 1) : protocol::now().message.headers_per_query) }, protocol::now().user.tcp.timeout));
+					auto result = coawait(query(uref(new_tip.state), descriptors::fetch_headers(), { format::variable(new_tip_number), format::variable(new_tip_number > old_tip_number ? new_tip_number - old_tip_number : protocol::now().message.headers_per_query) }, protocol::now().user.tcp.timeout));
 					if (!result)
 						coreturn result.error();
 					else if (result->args.empty())
