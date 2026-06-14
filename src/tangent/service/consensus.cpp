@@ -3043,7 +3043,10 @@ namespace tangent
 			if (is_syncing())
 				return false;
 
-			auto tip_number = storages::chainstate().get_latest_block_number().or_else(0);
+			auto tip_number = std::max<uint64_t>(storages::chainstate().get_latest_block_number().or_else(0), 1) - 1;
+			if (!tip_number)
+				return false;
+
 			return control_sys.async_task_if_none(TASK_BLOCK_DISPATCHER, [this, tip_number]() -> promise<void>
 			{
 				auto adapter = server_delegation_adapter(this);
@@ -3452,7 +3455,7 @@ namespace tangent
 		}
 		void server_node::finalize_pending_block(uref<relay>&& from, const uint256_t& block_hash, uint64_t block_number)
 		{
-			control_sys.upsert_timeout(TASK_BLOCK_DISPATCHER "_runner", protocol::now().policy.pow.time, [this]() { run_block_dispatcher(); });
+			control_sys.upsert_timeout(TASK_BLOCK_DISPATCHER "_runner", protocol::now().policy.pow.time / 2, [this]() { run_block_dispatcher(); });
 			if (block_hash > 0 && block_number > 0)
 				broadcast_pending_block(uref(from), block_hash, block_number);
 
