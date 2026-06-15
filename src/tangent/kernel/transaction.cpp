@@ -1070,7 +1070,7 @@ namespace tangent
 			if (!stream.read_boolean(stream.read_type(), &services.has_attestation))
 				return false;
 
-			address = socket_address(ip_address, ip_port);
+			address = socket_address(ip_address, ports.consensus > 0 ? ports.consensus : ip_port);
 			return true;
 		}
 		bool node::is_valid() const

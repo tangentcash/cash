@@ -201,7 +201,7 @@ namespace tangent
 		class server_node final : public socket_server
 		{
 		public:
-			struct fork_header
+			struct tip_header
 			{
 				ledger::block_header header;
 				uref<relay> state;
@@ -228,7 +228,6 @@ namespace tangent
 				std::recursive_mutex account;
 				std::recursive_mutex attestation;
 				std::recursive_mutex neighbor;
-				std::recursive_mutex fork;
 				std::recursive_mutex tip;
 				std::mutex inventory;
 				std::mutex fetcher;
@@ -268,14 +267,14 @@ namespace tangent
 			hash_map<uint256_t, neighbor_callback> neighbors;
 			hash_map<uint8_t, callable> callables;
 			hash_map<void*, uref<relay>> nodes;
-			hash_map<uint256_t, format::wo_stream> pending_blocks;
+			hash_map<uint256_t, format::wo_stream> maybe_tips;
 			hash_set<outbound_node*> pending_nodes;
 			forwarder inventory;
 			system_control control_sys;
 
 		public:
 			btree_map<algorithm::pubkeyhash_t, relay_descriptor> descriptors;
-			hash_map<uint256_t, fork_header> forks;
+			hash_map<uint256_t, tip_header> tips;
 			relay_descriptor* runner_descriptor;
 
 		public:
@@ -308,7 +307,7 @@ namespace tangent
 			expects_promise_rt<uref<relay>> connect_to_physical_node(const socket_address& address);
 			expects_promise_rt<btree_set<algorithm::pubkeyhash_t>> connect_to_logical_nodes(btree_set<algorithm::pubkeyhash_t>&& accounts);
 			expects_promise_rt<void> synchronize_mempool_with(uref<relay>&& state);
-			expects_promise_rt<void> resolve_and_verify_fork(std::pair<uint256_t, fork_header>&& fork);
+			expects_promise_rt<void> resolve_and_verify_fork(const std::pair<uint256_t, tip_header>* fork);
 			expects_promise_rt<exchange> query(uref<relay>&& state, const callable::descriptor& descriptor, format::variables&& args, uint64_t timeout_ms, bool force_call = false);
 			expects_promise_rt<exchange> indirect_query(const algorithm::pubkeyhash_t& account, const callable::descriptor& descriptor, format::variables&& args, uint64_t timeout_ms, bool force_call = false);
 			expects_lr<void> notify(uref<relay>&& state, const callable::descriptor& descriptor, format::variables&& args);
@@ -328,8 +327,8 @@ namespace tangent
 			void startup();
 			void shutdown();
 			void clear_pending_neighbors();
-			void clear_pending_fork(relay* state);
-			void accept_pending_fork(uref<relay>&& state, const uint256_t& candidate_hash, ledger::block_header&& candidate_block);
+			void clear_tip(relay* state, ledger::block_header* prev_best);
+			void accept_tip(uref<relay>&& state, const uint256_t& candidate_hash, ledger::block_header&& candidate_block);
 			void disconnect_node(uref<relay>&& state, const std::string_view& message);
 			void disconnect_node_by_account(const algorithm::pubkeyhash_t& account, const std::string_view& message);
 			expects_lr<void> accept_block(uref<relay>&& from, ledger::block_evaluation& candidate, const uint256_t& fork_tip, bool verify_pow = true);
@@ -348,7 +347,7 @@ namespace tangent
 			service_control::service_node get_entrypoint();
 			std::recursive_mutex& get_mutex();
 			const hash_map<void*, uref<relay>>& get_nodes() const;
-			option<std::pair<uint256_t, fork_header>> get_best_fork_header();
+			option<std::pair<uint256_t, tip_header>> get_best_tip_header();
 
 		private:
 			expects_promise_system<http::response_frame> queued_fetch_external(const algorithm::asset_id& asset, const std::string_view& location, const std::string_view& method, const http::fetch_frame& options);
@@ -361,10 +360,10 @@ namespace tangent
 			void announce_peer(uref<relay>&& state, bool available);
 			void fill_node_services(relay_descriptor& descriptor);
 			void fill_node_neighbors(relay_descriptor& descriptor);
-			void append_pending_block(uref<relay>&& from, const uint256_t& block_hash, ledger::block_body* tip);
-			void erase_pending_block(const uint256_t& block_hash);
-			void broadcast_pending_block(uref<relay>&& from, const uint256_t& block_hash, uint64_t block_number);
-			void finalize_pending_block(uref<relay>&& from, const uint256_t& block_hash, uint64_t block_number);
+			void append_pending_tip(uref<relay>&& from, const uint256_t& block_hash, ledger::block_body* tip);
+			void erase_pending_tip(const uint256_t& block_hash);
+			void broadcast_pending_tip(uref<relay>&& from, const uint256_t& block_hash, uint64_t block_number);
+			void finalize_pending_tip(uref<relay>&& from, const uint256_t& block_hash, uint64_t block_number);
 			bool accept_proposal_transaction(const ledger::block_transaction& transaction);
 			void pull_messages(uref<relay>&& state);
 			void push_messages(uref<relay>&& state);

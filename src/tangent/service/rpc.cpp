@@ -3291,14 +3291,14 @@ namespace tangent
 				connections->push(std::move(node_data));
 			}
 
-			auto* forks = data.set("forks", format::tree::list());
-			for (auto& fork : consensus_service->forks)
+			auto* tips = data.set("tips", format::tree::list());
+			for (auto& tip : consensus_service->tips)
 			{
-				auto* item = forks->push(format::tree::map());
-				item->set("fork_hash", format::variable(algorithm::encoding::encode_0xhex256(fork.first)));
-				item->set("tip_hash", algorithm::encoding::serialize_uint256(fork.second.header.as_hash()));
-				item->set("tip_number", algorithm::encoding::serialize_uint256(fork.second.header.number));
-				item->set("progress", format::variable(decimal(consensus_service->get_sync_progress(block_header ? block_header->number : 0, *fork.second.state))));
+				auto* item = tips->push(format::tree::map());
+				item->set("base_hash", format::variable(algorithm::encoding::encode_0xhex256(tip.first)));
+				item->set("best_hash", algorithm::encoding::serialize_uint256(tip.second.header.as_hash()));
+				item->set("best_number", algorithm::encoding::serialize_uint256(tip.second.header.number));
+				item->set("progress", format::variable(decimal(consensus_service->get_sync_progress(block_header ? block_header->number : 0, *tip.second.state))));
 			}
 
 			switch (protocol::now().user.network)

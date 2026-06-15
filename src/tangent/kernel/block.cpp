@@ -348,7 +348,7 @@ namespace tangent
 			if (proof.empty() || difficulty != target_difficulty)
 				return layer_exception("invalid wesolowski target");
 
-			uint256_t gas_work = get_gas_work(gas_use, gas_limit, priority);
+			uint256_t gas_work = get_gas_work(number, priority, difficulty, gas_use, gas_limit);
 			if (!gas_limit || gas_use > gas_limit || absolute_work < gas_work)
 				return layer_exception("invalid gas work");
 
@@ -706,24 +706,25 @@ namespace tangent
 			static uint256_t limit = algorithm::wesolowski::adjustment_interval() * get_gas_limit();
 			return limit;
 		}
-		uint256_t block_header::get_gas_work(const uint256_t& gas_use, const uint256_t& gas_limit, uint64_t priority)
+		uint256_t block_header::get_gas_work(uint64_t block_number, uint64_t priority, uint64_t difficulty, const uint256_t& gas_use, const uint256_t& gas_limit)
 		{
-			if (!gas_limit)
-				return 0;
-
 			auto& policy = protocol::now().policy;
-			uint256_t alignment = 16;
+			uint256_t alignment = 16, work;
 			uint256_t committee = policy.production.max_per_block;
 			uint256_t multiplier = priority >= committee ? 0 : math64u::pow3(committee - priority);
-			uint256_t work = (multiplier * gas_use) / gas_limit;
-			return work - (work % alignment) + alignment;
+			if (protocol::now().on(fork_id::sqrt_absolute_work, block_number))
+				work = (difficulty / policy.pow.difficulty) * multiplier * gas_use / get_gas_limit();
+			else
+				work = gas_limit > 0 ? (multiplier * gas_use) / gas_limit : 0;
+			uint256_t aligned_work = work - (work % alignment) + alignment;
+			return aligned_work;
 		}
-		bool block_header::is_genesis_epoch(const uint64_t block_number)
+		bool block_header::is_genesis_epoch(uint64_t block_number)
 		{
 			uint64_t ending_block_number = protocol::now().policy.emission.genesis_epoch_length;
 			return ending_block_number > 0 && block_number <= ending_block_number;
 		}
-		decimal block_header::get_coinbase_value(const uint64_t block_number)
+		decimal block_header::get_coinbase_value(uint64_t block_number)
 		{
 			auto& emission = protocol::now().policy.emission;
 			if (is_genesis_epoch(block_number))
@@ -887,7 +888,7 @@ namespace tangent
 			}
 
 			bool cumulative = get_slot_length() > 1;
-			absolute_work = (parent_block ? parent_block->absolute_work : uint256_t(0)) + get_gas_work(gas_use, gas_limit, priority);
+			absolute_work = (parent_block ? parent_block->absolute_work : uint256_t(0)) + get_gas_work(number, priority, difficulty, gas_use, gas_limit);
 			slot_duration = (cumulative && parent_block ? parent_block->slot_duration + parent_block->get_proof_accounted_duration() : uint256_t(0));
 			slot_gas_use = (cumulative && parent_block ? parent_block->slot_gas_use : uint256_t(0)) + gas_use;
 			transaction_count = (uint32_t)transactions.size();

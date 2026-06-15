@@ -31,7 +31,8 @@ namespace tangent
 	enum class fork_id
 	{
 		key_bind_commitment = 400000,
-		key_bind_uniqueness = 840000
+		key_bind_uniqueness = 840000,
+		sqrt_absolute_work = 890000
 	};
 
 	enum class network_type

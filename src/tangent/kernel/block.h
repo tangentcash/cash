@@ -213,9 +213,9 @@ namespace tangent
 			static uint256_t get_block_gas_cost();
 			static uint256_t get_gas_limit();
 			static uint256_t get_slot_gas_limit();
-			static uint256_t get_gas_work(const uint256_t& gas_use, const uint256_t& gas_limit, uint64_t priority);
-			static bool is_genesis_epoch(const uint64_t block_number);
-			static decimal get_coinbase_value(const uint64_t block_number);
+			static uint256_t get_gas_work(uint64_t block_number, uint64_t priority, uint64_t difficulty, const uint256_t& gas_use, const uint256_t& gas_limit);
+			static bool is_genesis_epoch(uint64_t block_number);
+			static decimal get_coinbase_value(uint64_t block_number);
 		};
 
 		struct block_body final : block_header
