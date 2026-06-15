@@ -137,7 +137,7 @@ namespace tangent
 				if (gas_price.is_nan() || gas_price.is_negative())
 					return layer_exception("invalid gas price");
 
-				if (gas_price.is_positive() && algorithm::arithmetic::fixed256(gas_price) < 1)
+				if (gas_price.is_positive() && gas_price < protocol::now().policy.production.min_gas_price)
 					return layer_exception("invalid gas price");
 			}
 			else if (!gas_price.is_zero())

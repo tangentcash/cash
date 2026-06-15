@@ -331,7 +331,7 @@ namespace tangent
 			void accept_tip(uref<relay>&& state, const uint256_t& candidate_hash, ledger::block_header&& candidate_block);
 			void disconnect_node(uref<relay>&& state, const std::string_view& message);
 			void disconnect_node_by_account(const algorithm::pubkeyhash_t& account, const std::string_view& message);
-			expects_lr<void> accept_block(uref<relay>&& from, ledger::block_evaluation& candidate, const uint256_t& fork_tip, bool verify_pow = true);
+			expects_lr<void> accept_block(uref<relay>&& from, ledger::block_evaluation& candidate, const ledger::block_header* fork_tip, bool verify_pow = true);
 			bool connected_to_ip_address(const socket_address& address);
 			relay_descriptor* find_descriptor(const algorithm::pubkeyhash_t& account);
 			uref<relay> find_by_ip_address(const socket_address& address);

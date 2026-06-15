@@ -1165,7 +1165,7 @@ namespace tangent
 					format::ro_stream block_message = format::ro_stream(event->args.front().as_string());
 					if (candidate.block.load(block_message))
 					{
-						auto status = accept_block(std::move(from), candidate, 0);
+						auto status = accept_block(std::move(from), candidate, nullptr);
 						if (!status && protocol::now().user.consensus.logging)
 							VI_WARN("%s", status.error().what());
 					}
@@ -2165,7 +2165,7 @@ namespace tangent
 
 						new_tip_hash = tip.block.as_hash();
 						new_tip_number = tip.block.number + 1;
-						auto status = accept_block(uref(new_tip.state), tip, new_tip_fork_hash, false);
+						auto status = accept_block(uref(new_tip.state), tip, &new_tip.header, false);
 						if (!status)
 							coreturn remote_exception(std::move(status.error().message()));
 						else if (!is_active())
@@ -3199,45 +3199,36 @@ namespace tangent
 			if (!from || !candidate_hash || !is_active())
 				return;
 
+			size_t replacements = 0;
 			umutex<std::recursive_mutex> unique(sync.tip);
 		retry:
 			for (auto& fork_candidate_tip : tips)
 			{
 				if (*fork_candidate_tip.second.state == *from)
 				{
+					++replacements;
 					tips.erase(fork_candidate_tip.first);
 					goto retry;
 				}
 			}
 
 			if (protocol::now().user.consensus.logging)
-				VI_INFO("tip %s added (height: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), candidate_block.number);
+				VI_INFO("tip %s added (height: %" PRIu64 ", dropped: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), candidate_block.number, (uint64_t)replacements);
 
 			auto& fork = tips[candidate_hash];
 			fork.header = candidate_block;
 			fork.state = from;
 			verifier.stale = true;
 		}
-		expects_lr<void> server_node::accept_block(uref<relay>&& from, ledger::block_evaluation& candidate, const uint256_t& fork_tip, bool verify_pow)
+		expects_lr<void> server_node::accept_block(uref<relay>&& from, ledger::block_evaluation& candidate, const ledger::block_header* fork_tip, bool verify_pow)
 		{
 			uint256_t candidate_hash = candidate.block.as_hash();
 			auto chain = storages::chainstate();
 			if (!fork_tip && chain.get_block_header_by_hash(candidate_hash))
 				return expectation::met;
 
-			bool fork_branch = fork_tip > 0;
-			auto fork_tip_block = ledger::block_header();
-			if (fork_branch)
-			{
-				umutex<std::recursive_mutex> unique(sync.tip);
-				auto it = tips.find(fork_tip);
-				if (it == tips.end())
-					return layer_exception(stringify::text("block %s rejected: stale tip", algorithm::encoding::encode_0xhex256(candidate_hash).c_str()));
-
-				fork_tip_block = it->second.header;
-			}
-
-			auto tip_block = fork_branch ? expects_lr<ledger::block_header>(fork_tip_block) : chain.get_latest_block_header();
+			bool fork_branch = fork_tip != nullptr;
+			auto tip_block = fork_branch ? expects_lr<ledger::block_header>(*fork_tip) : chain.get_latest_block_header();
 			auto tip_hash = tip_block ? tip_block->as_hash() : (uint256_t)0;
 			auto best_tip_work = tip_block ? tip_block->absolute_work : (uint256_t)0;
 			auto parent_block = tip_hash == candidate.block.parent_hash ? tip_block : (verifier.tip_cache && verifier.tip_cache->as_hash() == candidate_hash ? *verifier.tip_cache : chain.get_block_header_by_hash(candidate.block.parent_hash));

@@ -712,7 +712,7 @@ namespace tangent
 			uint256_t alignment = 16, work;
 			uint256_t committee = policy.production.max_per_block;
 			uint256_t multiplier = priority >= committee ? 0 : math64u::pow3(committee - priority);
-			if (protocol::now().on(fork_id::sqrt_absolute_work, block_number))
+			if (protocol::now().on(fork_id::difficulty_gas_work, block_number))
 				work = (difficulty / policy.pow.difficulty) * multiplier * gas_use / get_gas_limit();
 			else
 				work = gas_limit > 0 ? (multiplier * gas_use) / gas_limit : uint256_t(0);
@@ -1280,9 +1280,13 @@ namespace tangent
 			if (gas_calculation)
 				return expectation::met;
 
-			if (!transaction->implements_commitment(nullptr) && (options & (uint8_t)flags::congestion) && !transaction->gas_price.is_positive())
+			bool pays_for_gas = transaction->gas_price.is_positive();
+			if (pays_for_gas && transaction->gas_price < protocol::now().policy.production.min_gas_price)
+				return layer_exception("gas price must be at least " + protocol::now().policy.production.min_gas_price.to_string());
+
+			if (!transaction->implements_commitment(nullptr) && (options & (uint8_t)flags::congestion) && !pays_for_gas)
 				return layer_exception("must pay for gas - network congestion requirement");
-			else if (!transaction->gas_price.is_positive() || (options & (uint8_t)flags::evaluation))
+			else if (!pays_for_gas || (options & (uint8_t)flags::evaluation))
 				return expectation::met;
 
 			auto asset = transaction->gas_asset();
@@ -3283,8 +3287,8 @@ namespace tangent
 			if (new_gas_limit < state.gas_usage || new_gas_limit > block_header::get_gas_limit())
 				return include_decision::not_includable;
 
-			if (!item.candidate->implements_commitment(nullptr) && (((uint8_t)state.executor.options & (uint8_t)executor_context::flags::congestion) && !item.candidate->gas_price.is_positive()))
-				return include_decision::not_includable;
+			if (!item.candidate->implements_commitment(nullptr) && ((uint8_t)state.executor.options & (uint8_t)executor_context::flags::congestion))
+				return item.candidate->gas_price.is_positive() && item.candidate->gas_price < protocol::now().policy.production.min_gas_price ? include_decision::not_executable : include_decision::not_includable;
 			else if (item.candidate->implements_commitment(nullptr) && state.commitments + 1 > protocol::now().policy.commitments_per_block)
 				return include_decision::not_includable;
 

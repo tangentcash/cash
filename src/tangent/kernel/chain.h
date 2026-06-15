@@ -32,7 +32,7 @@ namespace tangent
 	{
 		key_bind_commitment = 400000,
 		key_bind_uniqueness = 840000,
-		sqrt_absolute_work = 890000
+		difficulty_gas_work = 890000
 	};
 
 	enum class network_type
@@ -313,6 +313,7 @@ namespace tangent
 			{
 				uint64_t max_per_block = 12;
 				uint256_t min_network_congestion = 250000;
+				decimal min_gas_price = std::string_view("0.0000000001");
 				decimal min_stake_value = std::string_view("12");
 			} production;
 			struct
