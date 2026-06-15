@@ -2150,7 +2150,7 @@ namespace tangent
 					if (protocol::now().user.consensus.logging)
 						VI_INFO("tip %s fetch: blocks (size: <%.2f kb)", algorithm::encoding::encode_0xhex256(new_tip_fork_hash).c_str(), (double)protocol::now().message.blocks_size_per_query / 1000.0);
 
-					auto result = coawait(query(uref(new_tip.state), descriptors::fetch_blocks(), { format::variable(new_tip_number > 0 ? 0 : new_tip_hash), format::variable(new_tip_number) }, protocol::now().user.tcp.timeout));
+					auto result = coawait(query(uref(new_tip.state), descriptors::fetch_blocks(), { format::variable(new_tip_number > 0 ? uint256_t(0) : new_tip_hash), format::variable(new_tip_number) }, protocol::now().user.tcp.timeout));
 					if (!result)
 						coreturn result.error();
 					else if (result->args.empty())

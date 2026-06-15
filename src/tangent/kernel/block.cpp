@@ -715,7 +715,7 @@ namespace tangent
 			if (protocol::now().on(fork_id::sqrt_absolute_work, block_number))
 				work = (difficulty / policy.pow.difficulty) * multiplier * gas_use / get_gas_limit();
 			else
-				work = gas_limit > 0 ? (multiplier * gas_use) / gas_limit : 0;
+				work = gas_limit > 0 ? (multiplier * gas_use) / gas_limit : uint256_t(0);
 			uint256_t aligned_work = work - (work % alignment) + alignment;
 			return aligned_work;
 		}
