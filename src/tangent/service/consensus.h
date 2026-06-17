@@ -306,7 +306,7 @@ namespace tangent
 			expects_promise_rt<socket_address> find_node_from_discovery();
 			expects_promise_rt<uref<relay>> connect_to_physical_node(const socket_address& address);
 			expects_promise_rt<btree_set<algorithm::pubkeyhash_t>> connect_to_logical_nodes(btree_set<algorithm::pubkeyhash_t>&& accounts);
-			expects_promise_rt<void> synchronize_mempool_with(uref<relay>&& state);
+			expects_promise_rt<uint64_t> synchronize_mempool_with(uref<relay>&& state);
 			expects_promise_rt<void> resolve_and_verify_fork(const std::pair<uint256_t, tip_header>* fork);
 			expects_promise_rt<exchange> query(uref<relay>&& state, const callable::descriptor& descriptor, format::variables&& args, uint64_t timeout_ms, bool force_call = false);
 			expects_promise_rt<exchange> indirect_query(const algorithm::pubkeyhash_t& account, const callable::descriptor& descriptor, format::variables&& args, uint64_t timeout_ms, bool force_call = false);
@@ -320,6 +320,7 @@ namespace tangent
 			bool run_superchain_sync(const algorithm::asset_id& asset);
 			bool run_topology_optimization();
 			bool run_mempool_vacuum();
+			bool run_mempool_sync();
 			bool run_fork_resolution();
 			bool run_attestation_resolution();
 			bool run_block_production();

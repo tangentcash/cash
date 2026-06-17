@@ -259,8 +259,8 @@ namespace tangent
 			uint32_t max_body_size = 1024 * 1024 * 24;
 			uint32_t decimal_precision = 18;
 			uint32_t integer_precision = 78;
-			uint64_t hashes_per_query = 8192;
-			uint64_t headers_per_query = 2048;
+			uint64_t hashes_per_query = 32768;
+			uint64_t headers_per_query = 8192;
 			uint64_t blocks_size_per_query = 1024 * 1024 * 8;
 			uint64_t transactions_per_query = 32;
 			uint64_t items_per_query = 512;
@@ -329,7 +329,7 @@ namespace tangent
 			uint64_t account_nonce_step_limit = 1048576;
 			uint64_t block_gas_limit = 40'000'000;
 			uint64_t commitments_per_block = 20;
-			uint64_t gasless_size_limit = 512;
+			uint64_t zero_gas_prize_size_limit = 512;
 		} policy;
 
 	private:

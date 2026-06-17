@@ -7,6 +7,7 @@
 #include <random>
 #define TASK_TOPOLOGY_OPTIMIZATION "topology_optimization"
 #define TASK_MEMPOOL_VACUUM "mempool_vacuum"
+#define TASK_MEMPOOL_SYNC "mempool_sync"
 #define TASK_FORK_RESOLUTION "fork_resolution"
 #define TASK_SUPERCHAIN_SYNC "superchain_sync"
 #define TASK_ATTESTATION_RESOLUTION "attestation_resolution"
@@ -1025,7 +1026,7 @@ namespace tangent
 			uint256_t commitment_hash = 0;
 			if (!candidate_tx->implements_commitment(&commitment_hash) && !candidate_tx->gas_price.is_positive())
 			{
-				if (candidate_message.data.size() > protocol::now().policy.gasless_size_limit)
+				if (candidate_message.data.size() > protocol::now().policy.zero_gas_prize_size_limit)
 				{
 					if (protocol::now().user.consensus.logging)
 						VI_WARN("transaction %s %.*s validation failed: must pay for gas (anti-spam, large transaction)", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data());
@@ -1977,11 +1978,11 @@ namespace tangent
 				goto exit;
 			});
 		}
-		expects_promise_rt<void> server_node::synchronize_mempool_with(uref<relay>&& from)
+		expects_promise_rt<uint64_t> server_node::synchronize_mempool_with(uref<relay>&& from)
 		{
-			return coasync<expects_rt<void>>([this, from]() -> expects_promise_rt<void>
+			return coasync<expects_rt<uint64_t>>([this, from]() -> expects_promise_rt<uint64_t>
 			{
-				uint64_t cursor = 0;
+				uint64_t cursor = 0, count = 0;
 				while (is_active())
 				{
 					auto result = coawait(query(uref(from), descriptors::fetch_mempool(), { format::variable(cursor) }, protocol::now().user.tcp.timeout));
@@ -2021,7 +2022,10 @@ namespace tangent
 								format::ro_stream transaction_message = format::ro_stream(transaction.as_string());
 								uptr<ledger::transaction_message> candidate = tangent::transactions::resolver::from_stream(transaction_message);
 								if (candidate && candidate->load(transaction_message))
+								{
 									accept_transaction(uref(from), std::move(candidate));
+									++count;
+								}
 							}
 						}
 					}
@@ -2031,7 +2035,7 @@ namespace tangent
 					if (result->args.size() < transactions_count)
 						break;
 				}
-				coreturn expectation::met;
+				coreturn count;
 			}, true);
 		}
 		expects_promise_rt<void> server_node::resolve_and_verify_fork(const std::pair<uint256_t, tip_header>* fork)
@@ -2668,57 +2672,45 @@ namespace tangent
 		{
 			return control_sys.async_task_if_none(TASK_TOPOLOGY_OPTIMIZATION, [this]() -> promise<void>
 			{
-				algorithm::pubkeyhash_t worst_account;
-				hash_set<algorithm::pubkeyhash_t> current_nodes;
-				{
-					uint64_t worst_preference = std::numeric_limits<uint64_t>::max();
-					umutex<std::recursive_mutex> unique(exclusive);
-					current_nodes.reserve(nodes.size());
-					for (auto& node : nodes)
-					{
-						auto* descriptor = node.second->as_descriptor();
-						if (descriptor != nullptr && node.second->as_outbound_node() != nullptr)
-						{
-							uint64_t preference = descriptor->first.get_preference();
-							current_nodes.insert(descriptor->second.public_key_hash);
-							if (worst_preference > preference)
-							{
-								worst_account = descriptor->second.public_key_hash;
-								worst_preference = preference;
-							}
-						}
-					}
-				}
-
-				auto may_connect_to_node = [this]() { return is_active() && size_of(node_type::outbound) < protocol::now().user.consensus.max_outbound_connections; };
-				hash_map<algorithm::pubkeyhash_t, socket_address> replacement_nodes;
-				replacement_nodes.reserve(current_nodes.size());
-				if (!worst_account.empty() || !current_nodes.empty())
-				{
-					auto mempool = storages::mempoolstate();
-					for (auto& account : current_nodes)
-					{
-						auto better_node = mempool.get_better_node(account);
-						if (better_node && current_nodes.find(better_node->second.public_key_hash) == current_nodes.end() && !connected_to_ip_address(better_node->first.address))
-							replacement_nodes[account] = std::move(better_node->first.address);
-					}
-					if (replacement_nodes.empty() && !may_connect_to_node() && mempool.get_connectable_unknown_nodes_count().or_else(0) > 0)
-						disconnect_node_by_account(worst_account, "trying unknown node instead");
-				}
-				for (auto& [account, address] : replacement_nodes)
-				{
-					disconnect_node_by_account(account, "better node found");
-					if (may_connect_to_node())
-						coawait(connect_to_physical_node(address));
-				}
-
+				bool has_dropped_nodes = false;
+				auto too_many_outbound_nodes = [this]() { return size_of(node_type::outbound) >= protocol::now().user.consensus.max_outbound_connections; };
 				hash_set<uint256_t> passed_candidates;
 				expects_rt<socket_address> candidate_address = socket_address();
-				while (candidate_address && may_connect_to_node())
+				while (is_active() && candidate_address)
 				{
 					candidate_address = coawait(find_node_from_discovery());
-					if (!candidate_address)
+					if (!candidate_address || find_by_ip_address(*candidate_address))
 						break;
+
+					if (too_many_outbound_nodes())
+					{
+						if (has_dropped_nodes)
+							break;
+
+						bool no_droppable_nodes = !is_active(); has_dropped_nodes = true;
+						while (!no_droppable_nodes && too_many_outbound_nodes() && !find_by_ip_address(*candidate_address))
+						{
+							algorithm::pubkeyhash_t worst_account;
+							uint64_t worst_preference = std::numeric_limits<uint64_t>::max();
+							umutex<std::recursive_mutex> unique(exclusive);
+							for (auto& node : nodes)
+							{
+								auto* descriptor = node.second->as_descriptor();
+								uint64_t preference = descriptor && node.second->as_outbound_node() ? descriptor->first.get_preference() : std::numeric_limits<uint64_t>::max();
+								if (worst_preference > preference)
+								{
+									worst_account = descriptor->second.public_key_hash;
+									worst_preference = preference;
+								}
+							}
+
+							no_droppable_nodes = is_active() ? worst_account.empty() : true;
+							if (!no_droppable_nodes)
+								disconnect_node_by_account(worst_account, "trying another node");
+						}
+						if (no_droppable_nodes || find_by_ip_address(*candidate_address))
+							break;
+					}
 
 					auto ip_value = candidate_address->get_ip_value().or_else(0);
 					auto ip_port = candidate_address->get_ip_port().or_else(0);
@@ -2758,6 +2750,44 @@ namespace tangent
 					else
 						VI_ERR("mempool transaction vacuum failed: ", expirations.what().c_str());
 				}
+			});
+		}
+		bool server_node::run_mempool_sync()
+		{
+			return control_sys.async_task_if_none(TASK_MEMPOOL_SYNC, [this]() -> promise<void>
+			{
+				if (is_syncing())
+					coreturn_void;
+
+				algorithm::pubkeyhash_t best_account;
+				{
+					uint64_t best_preference = std::numeric_limits<uint64_t>::min();
+					umutex<std::recursive_mutex> unique(exclusive);
+					for (auto& node : nodes)
+					{
+						auto* descriptor = node.second->as_descriptor();
+						uint64_t preference = descriptor ? descriptor->first.get_preference() : std::numeric_limits<uint64_t>::min();
+						if (best_preference < preference)
+						{
+							best_account = descriptor->second.public_key_hash;
+							best_preference = preference;
+						}
+					}
+				}
+
+				auto best = find_by_account(best_account);
+				if (!best)
+					coreturn_void;
+
+				auto transactions_count = coawait(synchronize_mempool_with(std::move(best)));
+				if (transactions_count.or_else(1) > 0 && protocol::now().user.consensus.logging)
+				{
+					if (transactions_count)
+						VI_INFO("mempool sync: OK (transactions: +%" PRIu64 ")", *transactions_count);
+					else
+						VI_ERR("mempool sync failed: ", transactions_count.what().c_str());
+				}
+				coreturn_void;
 			});
 		}
 		bool server_node::run_fork_resolution()
@@ -3129,8 +3159,9 @@ namespace tangent
 			bind_query(descriptors::delegate_execution(), std::bind(&server_node::delegate_execution, this, std::placeholders::_2, std::placeholders::_3));
 			control_sys.interval_if_none(TASK_TOPOLOGY_OPTIMIZATION "_runner", 180000, std::bind(&server_node::run_topology_optimization, this));
 			control_sys.interval_if_none(TASK_BLOCK_DISPATCH_RETRIAL "_runner", 120000, std::bind(&server_node::run_block_dispatcher, this));
-			control_sys.interval_if_none(TASK_ATTESTATION_RESOLUTION "_runner", 180000, std::bind(&server_node::run_attestation_resolution, this));
+			control_sys.interval_if_none(TASK_ATTESTATION_RESOLUTION "_runner", 300000, std::bind(&server_node::run_attestation_resolution, this));
 			control_sys.interval_if_none(TASK_MEMPOOL_VACUUM "_runner", 180000, std::bind(&server_node::run_mempool_vacuum, this));
+			control_sys.interval_if_none(TASK_MEMPOOL_SYNC "_runner", 240000, std::bind(&server_node::run_mempool_sync, this));
 			run_topology_optimization();
 			run_mempool_vacuum();
 			run_attestation_resolution();
@@ -3627,6 +3658,9 @@ namespace tangent
 		}
 		uref<relay> server_node::find_by_account(const algorithm::pubkeyhash_t& account)
 		{
+			if (account.empty())
+				return nullptr;
+
 			umutex<std::recursive_mutex> unique(exclusive);
 			for (auto& node : nodes)
 			{
