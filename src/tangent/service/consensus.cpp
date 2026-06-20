@@ -2160,10 +2160,36 @@ namespace tangent
 					else if (result->args.empty())
 						break;
 
-					for (auto& block_data : result->args)
+					std::atomic<size_t> max_block_count = result->args.size();
+					size_t batch_size = 64, block_count = max_block_count.load();
+					size_t batch_count = block_count / batch_size + (block_count % batch_size == 0 ? 0 : 1);
+					if (block_count > batch_size && protocol::now().user.consensus.logging)
+						VI_INFO("tip %s verify: proofs (size: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(new_tip_fork_hash).c_str(), (uint64_t)block_count);
+
+					for (auto& task : parallel::for_loop(batch_count, 2 * batch_size, [&](size_t batch_index)
+					{
+						auto header = ledger::block_header();
+						auto producer = algorithm::pubkeyhash_t();
+						size_t begin = std::min(batch_index * batch_size, block_count);
+						size_t end = std::min(begin + batch_size, block_count);
+						for (size_t i = begin; i < end; i++)
+						{
+							format::ro_stream block_message = format::ro_stream(result->args[i].as_string());
+							if (!header.load(block_message) || !header.recover_hash(producer) || !header.verify_proof(producer))
+							{
+								size_t prev = max_block_count.load();
+								while (prev > i && !max_block_count.compare_exchange_weak(prev, i));
+								break;
+							}
+						}
+					}))
+						coawait(std::move(task));
+
+					size_t safe_block_count = max_block_count.load();
+					for (size_t i = 0; i < safe_block_count; i++)
 					{
 						ledger::block_evaluation tip;
-						format::ro_stream block_message = format::ro_stream(block_data.as_string());
+						format::ro_stream block_message = format::ro_stream(result->args[i].as_string());
 						if (!tip.block.load(block_message))
 							coreturn remote_exception("block violates message protocol");
 
@@ -2175,6 +2201,9 @@ namespace tangent
 						else if (!is_active())
 							coreturn remote_exception::shutdown();
 					}
+
+					if (safe_block_count < result->args.size())
+						coreturn remote_exception("stopping due to " + to_string(result->args.size() - safe_block_count) + " blocks with invalid proofs");
 				}
 
 				if (new_tip_hash > 0)
