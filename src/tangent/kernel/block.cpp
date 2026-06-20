@@ -1284,7 +1284,7 @@ namespace tangent
 			if (pays_for_gas && transaction->gas_price < protocol::now().policy.production.min_gas_price)
 				return layer_exception("gas price must be at least " + protocol::now().policy.production.min_gas_price.to_string());
 
-			if (!transaction->implements_commitment(nullptr) && (options & (uint8_t)flags::congestion) && !pays_for_gas)
+			if (!transaction->commitment_priority(nullptr) && (options & (uint8_t)flags::congestion) && !pays_for_gas)
 				return layer_exception("must pay for gas - network congestion requirement");
 			else if (!pays_for_gas || (options & (uint8_t)flags::evaluation))
 				return expectation::met;
@@ -2686,7 +2686,7 @@ namespace tangent
 
 			auto& policy = protocol::now().policy;
 			if (block != nullptr && candidate->receipt.block_number <= block->number && block->number - candidate->receipt.block_number > policy.participation.referencing_time / policy.pow.time)
-				return layer_exception("block transaction reference is too far into the past");
+				return layer_exception("block transaction not found");
 
 			if (!may_have_distinct_asset && transaction && transaction->asset != candidate->transaction->asset)
 				return layer_exception("block transaction asset is distinct");
@@ -2695,6 +2695,22 @@ namespace tangent
 				candidate = ((transactions::rollup*)*candidate->transaction)->resolve_block_transaction(candidate->receipt, transaction_hash);
 
 			return candidate;
+		}
+		expects_lr<uint64_t> executor_context::get_block_number_by_hash(const uint256_t& block_hash) const
+		{
+			if (!block_hash)
+				return expects_lr<uint64_t>(0);
+
+			auto chain = storages::chainstate();
+			auto block_number = chain.get_block_number_by_hash(block_hash);
+			if (!block_number)
+				return block_number.error();
+
+			auto& policy = protocol::now().policy;
+			if (block != nullptr && *block_number <= block->number && block->number - *block_number > policy.participation.referencing_time / policy.pow.time)
+				return layer_exception("block not found");
+
+			return block_number;
 		}
 		algorithm::wesolowski::distribution executor_context::get_random(const uint256_t& seed, block_header* from_block, ledger::transaction_receipt* from_receipt)
 		{
@@ -3260,7 +3276,7 @@ namespace tangent
 					auto& nonce = nonces[algorithm::pubkeyhash_t(item.owner)];
 					nonce = std::max(item.candidate->nonce, nonce);
 					state.gas_usage += item.candidate->gas_limit;
-					state.commitments += item.candidate->implements_commitment(nullptr) ? 1 : 0;
+					state.commitments += item.candidate->commitment_priority(nullptr) ? 1 : 0;
 					transactions.pending.emplace_back(std::move(item));
 					++transactions.queued;
 				}
@@ -3287,9 +3303,10 @@ namespace tangent
 			if (new_gas_limit < state.gas_usage || new_gas_limit > block_header::get_gas_limit())
 				return include_decision::not_includable;
 
-			if (!item.candidate->implements_commitment(nullptr) && ((uint8_t)state.executor.options & (uint8_t)executor_context::flags::congestion))
+			bool commitment = !!item.candidate->commitment_priority(nullptr);
+			if (!commitment && ((uint8_t)state.executor.options & (uint8_t)executor_context::flags::congestion))
 				return item.candidate->gas_price.is_positive() && item.candidate->gas_price < protocol::now().policy.production.min_gas_price ? include_decision::not_executable : include_decision::not_includable;
-			else if (item.candidate->implements_commitment(nullptr) && state.commitments + 1 > protocol::now().policy.commitments_per_block)
+			else if (commitment && state.commitments + 1 > protocol::now().policy.commitments_per_block)
 				return include_decision::not_includable;
 
 			auto map_nonce = nonces.find(algorithm::pubkeyhash_t(item.owner));
@@ -3336,7 +3353,7 @@ namespace tangent
 			uint8_t state_options = state.executor.options;
 			for (auto& item : transactions.pending)
 			{
-				uint8_t tx_options = item.candidate->implements_commitment(nullptr) ? (uint8_t)executor_context::flags::pedantic : 0;
+				uint8_t tx_options = item.candidate->commitment_priority(nullptr) ? (uint8_t)executor_context::flags::pedantic : 0;
 				auto execution = executor_context::execute_tx(&state.executor, item.owner, *item.candidate, item.hash, item.size, state_options | tx_options);
 				if (execution)
 				{
@@ -3531,7 +3548,7 @@ namespace tangent
 
 				auto& info = solver.force_include_transaction(transactions::resolver::from_copy(*transaction.transaction));
 				childs[transaction.receipt.transaction_hash] = std::make_pair(&transaction, (const solver_context::queued_transaction*)&info);
-				commitments += transaction.transaction->implements_commitment(nullptr) ? 1 : 0;
+				commitments += transaction.transaction->commitment_priority(nullptr) ? 1 : 0;
 			}
 			if (commitments > protocol::now().policy.commitments_per_block)
 				return layer_exception("too many commitment transactions");
@@ -3654,7 +3671,7 @@ namespace tangent
 			{
 				uint256_t commitment_hash;
 				finalized_transactions.insert(transaction.receipt.transaction_hash);
-				if (transaction.transaction->implements_commitment(&commitment_hash) && commitment_hash > 0)
+				if (transaction.transaction->commitment_priority(&commitment_hash) && commitment_hash > 0)
 					finalized_commitments.insert(commitment_hash);
 			}
 

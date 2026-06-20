@@ -32,7 +32,8 @@ namespace tangent
 	{
 		key_bind_commitment = 400000,
 		key_bind_uniqueness = 840000,
-		difficulty_gas_work = 890000
+		difficulty_gas_work = 890000,
+		consensus_challenge = 920000
 	};
 
 	enum class network_type
@@ -281,6 +282,12 @@ namespace tangent
 		{
 			struct
 			{
+				struct
+				{
+					uint64_t validity_time = 240000;
+					uint32_t difficulty = 13;
+					uint16_t steps = 256;
+				} tx;
 				std::string_view base = "83e0bd24dc6b0ee3206aa7d8aebeb7134f505341d43b5c8320d8258eb98ab96b48b21742e0dfb24d227b247d056f99d63e2b1b0ba31323b3dc395950e73ea99e";
 				uint64_t time = 12000;
 				uint64_t adjustment_time = 120000;

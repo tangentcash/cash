@@ -393,6 +393,7 @@ namespace tangent
 			expects_lr<states::witness_account> get_witness_account_tagged(const algorithm::asset_id& asset, const std::string_view& address, size_t offset) const;
 			expects_lr<states::witness_transaction> get_witness_transaction(const algorithm::asset_id& asset, const std::string_view& transaction_id) const;
 			expects_lr<block_transaction> get_block_transaction_instance(const uint256_t& transaction_hash, bool may_have_distinct_asset = false) const;
+			expects_lr<uint64_t> get_block_number_by_hash(const uint256_t& block_hash) const;
 			algorithm::wesolowski::distribution get_random(const uint256_t& seed, block_header* from_block = nullptr, ledger::transaction_receipt* from_receipt = nullptr);
 			uint64_t get_validation_nonce() const;
 			uint256_t get_gas_use() const;

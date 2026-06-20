@@ -100,6 +100,14 @@ namespace tangent
 		typedef vector<uint8_t> paillier_scalar_t;
 		typedef uint256_t(*hash_function)(const uint256_t&, const uint256_t&);
 
+		class pow256
+		{
+		public:
+			static uint64_t solve(const uint256_t& block_hash, const pubkeyhash_t& account, uint64_t account_nonce);
+			static bool verify(const uint256_t& block_hash, const pubkeyhash_t& account, uint64_t account_nonce, uint64_t solution);
+			static uint256_t target();
+		};
+
 		class wesolowski
 		{
 		public:

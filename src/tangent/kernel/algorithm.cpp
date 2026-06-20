@@ -134,6 +134,55 @@ namespace tangent
 			}
 		};
 
+		uint64_t pow256::solve(const uint256_t& block_hash, const pubkeyhash_t& account, uint64_t account_nonce)
+		{
+			auto& tx = protocol::change().policy.pow.tx;
+			size_t offset = sizeof(block_hash) + sizeof(account_nonce) + sizeof(account.blob);
+			uint64_t encoded_account_nonce = os::hw::to_endianness(os::hw::endian::big, account_nonce);
+			uint8_t challenge[sizeof(block_hash) + sizeof(account_nonce) + sizeof(account.blob) + 20 * sizeof(uint8_t)], hash[64];
+			memcpy(challenge + sizeof(block_hash), &encoded_account_nonce, sizeof(encoded_account_nonce));
+			memcpy(challenge + sizeof(block_hash) + sizeof(encoded_account_nonce), account.blob, sizeof(account.blob));
+			block_hash.encode(challenge);
+
+			uint64_t solution = 0; uint256_t hash_value, target_value = target();
+			while (!solution || hash_value > target_value)
+			{
+				uint64_t encoded_solution = os::hw::to_endianness(os::hw::endian::big, ++solution);
+				hashing::hash160((uint8_t*)&encoded_solution, sizeof(encoded_solution), challenge + offset);
+				hashing::hash512(challenge, sizeof(challenge), hash);
+				for (uint16_t i = 0; i < tx.steps; i++)
+					hashing::hash256(hash, i > 0 ? sizeof(hash) / 2 : sizeof(hash), hash);
+				hash_value.decode(hash);
+			}
+			return solution;
+		}
+		bool pow256::verify(const uint256_t& block_hash, const pubkeyhash_t& account, uint64_t account_nonce, uint64_t solution)
+		{
+			if (!solution)
+				return false;
+
+			auto& tx = protocol::now().policy.pow.tx;
+			size_t offset = sizeof(block_hash) + sizeof(account_nonce) + sizeof(account.blob);
+			uint64_t encoded_account_nonce = os::hw::to_endianness(os::hw::endian::big, account_nonce);
+			uint64_t encoded_solution = os::hw::to_endianness(os::hw::endian::big, solution);
+			uint8_t challenge[sizeof(block_hash) + sizeof(account_nonce) + sizeof(account.blob) + 20 * sizeof(uint8_t)], hash[64];
+			memcpy(challenge + sizeof(block_hash), &encoded_account_nonce, sizeof(encoded_account_nonce));
+			memcpy(challenge + sizeof(block_hash) + sizeof(account_nonce), account.blob, sizeof(account.blob));
+			block_hash.encode(challenge);
+			hashing::hash160((uint8_t*)&encoded_solution, sizeof(encoded_solution), challenge + offset);
+			hashing::hash512(challenge, sizeof(challenge), hash);
+			for (uint16_t i = 0; i < tx.steps; i++)
+				hashing::hash256(hash, i > 0 ? sizeof(hash) / 2 : sizeof(hash), hash);
+
+			uint256_t hash_value;
+			hash_value.decode(hash);
+			return hash_value <= target();
+		}
+		uint256_t pow256::target()
+		{
+			return uint256_t(2 << uint256_t(256 - protocol::now().policy.pow.tx.difficulty)) - uint256_t(1);
+		}
+
 		uint256_t wesolowski::distribution::derive()
 		{
 			return derive(nonce++);
@@ -735,7 +784,8 @@ namespace tangent
 		bool signing::derive_seed_from_password(const uint8_t* input, size_t input_size, uint8_t* output, size_t output_size)
 		{
 			const uint8_t salt[crypto_pwhash_SALTBYTES + 1] = "ecf64bb58acc059f";
-			return crypto_pwhash(output, output_size, (const char*)input, input_size, salt, 3, 1 << 20, 1) == 0;
+			const uint32_t operations = 3, memory = 1 << 20;
+			return crypto_pwhash(output, output_size, (const char*)input, input_size, salt, operations, memory, crypto_pwhash_ALG_ARGON2I13) == 0;
 		}
 		bool signing::split_secret_into_shares(const uint8_t* message_in, size_t message_in_size, uint8_t threshold, uint8_t count, btree_set<share_t>& shares)
 		{

@@ -740,16 +740,18 @@ namespace tangent
 				return layer_exception("transaction owner recovery error");
 
 			uint256_t commitment_hash = 0;
+			uint64_t commitment_priority = value.commitment_priority(&commitment_hash);
 			decimal quality = decimal::nan();
-			if (!value.implements_commitment(&commitment_hash))
+			if (!commitment_priority)
 			{
-				auto median_gas_price = get_gas_price(value.asset, fee_percentile(fee_priority::medium));
-				decimal delta_gas = median_gas_price && median_gas_price->is_positive() ? value.gas_price / *median_gas_price : 1.0;
+				decimal median_gas_price = get_gas_price(value.asset, fee_percentile(fee_priority::medium)).or_else(decimal::nan());
+				decimal delta_gas = median_gas_price.is_positive() ? value.gas_price / median_gas_price : 1.0;
 				decimal max_gas = delta_gas.is_positive() ? algorithm::arithmetic::divide(value.gas_price * value.gas_limit.to_decimal(), delta_gas) : decimal::zero();
 				decimal multiplier = 2 << 20;
 				quality = max_gas * multiplier;
-				commitment_hash = uint256_t(0);
 			}
+			else
+				quality = -((int64_t)commitment_priority);
 
 			uint8_t asset[32], other_hash[32];
 			value.asset.encode(asset);
@@ -763,7 +765,7 @@ namespace tangent
 			map.push_back(var::set::binary(owner.view()));
 			map.push_back(var::set::binary(asset, sizeof(asset)));
 			map.push_back(var::set::integer(value.nonce));
-			map.push_back(quality.is_nan() ? var::set::null() : var::set::integer(quality.to_uint64()));
+			map.push_back(var::set::integer(quality.to_int64()));
 			map.push_back(var::set::integer(protocol::now().time.now_cpu() + TRANSACTION_EXPIRATION));
 			map.push_back(var::set::string(value.gas_price.to_string()));
 			map.push_back(var::set::binary(message.data));
@@ -1072,11 +1074,11 @@ namespace tangent
 
 			std::string_view command;
 			if (flags & (uint8_t)transaction_queue::commitment)
-				command = "SELECT message FROM transactions WHERE quality IS NULL ORDER BY epoch ASC, time ASC NULLS LAST LIMIT ? OFFSET ?";
+				command = "SELECT message FROM transactions WHERE quality < 0 ORDER BY epoch ASC, quality ASC NULLS LAST LIMIT ? OFFSET ?";
 			else if (flags & (uint8_t)transaction_queue::congestion)
 				command = "SELECT message FROM transactions WHERE quality > 0 ORDER BY epoch ASC, quality DESC NULLS LAST LIMIT ? OFFSET ?";
 			else
-				command = "SELECT message FROM transactions WHERE quality IS NOT NULL ORDER BY epoch ASC, quality DESC NULLS LAST LIMIT ? OFFSET ?";
+				command = "SELECT message FROM transactions WHERE quality >= 0 ORDER BY epoch ASC, quality DESC NULLS LAST LIMIT ? OFFSET ?";
 
 			auto cursor = get_peer_storage().emplace_query(__func__, command, &map);
 			if (!cursor || cursor->error())

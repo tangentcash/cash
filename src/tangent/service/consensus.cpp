@@ -1024,7 +1024,7 @@ namespace tangent
 			}
 
 			uint256_t commitment_hash = 0;
-			if (!candidate_tx->implements_commitment(&commitment_hash) && !candidate_tx->gas_price.is_positive())
+			if (!candidate_tx->commitment_priority(&commitment_hash) && !candidate_tx->gas_price.is_positive())
 			{
 				if (candidate_message.data.size() > protocol::now().policy.zero_gas_prize_size_limit)
 				{
@@ -2740,13 +2740,10 @@ namespace tangent
 					auto* value = (states::account_nonce*)(state ? state->ptr() : nullptr);
 					return value ? value->nonce : 0; 
 				});
-				if (protocol::now().user.consensus.logging)
+				if (expirations.or_else(1) > 0 && protocol::now().user.consensus.logging)
 				{
 					if (expirations)
-					{
-						if (*expirations > 0)
-							VI_INFO("mempool transaction vacuum: OK (transactions: %i)", (int)*expirations);
-					}
+						VI_INFO("mempool transaction vacuum: OK (transactions: %i)", (int)*expirations);
 					else
 						VI_ERR("mempool transaction vacuum failed: ", expirations.what().c_str());
 				}
@@ -2759,33 +2756,28 @@ namespace tangent
 				if (is_syncing())
 					coreturn_void;
 
-				algorithm::pubkeyhash_t best_account;
-				{
-					uint64_t best_preference = std::numeric_limits<uint64_t>::min();
-					umutex<std::recursive_mutex> unique(exclusive);
-					for (auto& node : nodes)
-					{
-						auto* descriptor = node.second->as_descriptor();
-						uint64_t preference = descriptor ? descriptor->first.get_preference() : std::numeric_limits<uint64_t>::min();
-						if (best_preference < preference)
-						{
-							best_account = descriptor->second.public_key_hash;
-							best_preference = preference;
-						}
-					}
-				}
-
-				auto best = find_by_account(best_account);
-				if (!best)
+				umutex<std::recursive_mutex> unique(exclusive);
+				if (nodes.empty())
+					coreturn_void;
+					
+				auto it = nodes.begin();
+				std::advance(it, math<size_t>::random() % nodes.size());
+				auto descriptor = it->second->as_descriptor();
+				if (!descriptor)
 					coreturn_void;
 
-				auto transactions_count = coawait(synchronize_mempool_with(std::move(best)));
+				auto random = find_by_account(descriptor->second.public_key_hash);
+				unique.unlock();
+				if (!random)
+					coreturn_void;
+
+				auto transactions_count = coawait(synchronize_mempool_with(std::move(random)));
 				if (transactions_count.or_else(1) > 0 && protocol::now().user.consensus.logging)
 				{
 					if (transactions_count)
 						VI_INFO("mempool sync: OK (transactions: +%" PRIu64 ")", *transactions_count);
 					else
-						VI_ERR("mempool sync failed: ", transactions_count.what().c_str());
+						VI_ERR("mempool sync failed: %s", transactions_count.what().c_str());
 				}
 				coreturn_void;
 			});

@@ -132,7 +132,7 @@ namespace tangent
 			if (gas_limit > ledger::block_header::get_gas_limit())
 				return layer_exception("gas limit requirement not met (max: " + ledger::block_header::get_gas_limit().to_string() + ")");
 
-			if (!implements_commitment(nullptr))
+			if (!commitment_priority(nullptr))
 			{
 				if (gas_price.is_nan() || gas_price.is_negative())
 					return layer_exception("invalid gas price");
@@ -235,11 +235,11 @@ namespace tangent
 		{
 			asset = algorithm::asset::id_of(blockchain, token, contract_address);
 		}
-		bool transaction_message::implements_commitment(uint256_t* event_hash) const
+		uint64_t transaction_message::commitment_priority(uint256_t* event_hash) const
 		{
 			if (event_hash != nullptr)
 				*event_hash = uint256_t(0);
-			return false;
+			return 0;
 		}
 		uint256_t transaction_message::gas_asset() const
 		{
@@ -253,7 +253,7 @@ namespace tangent
 			data.set("type", format::variable(as_typename()));
 			data.set("asset", algorithm::asset::serialize(asset));
 			data.set("nonce", format::variable(nonce));
-			data.set("gas_price", implements_commitment(nullptr) ? format::variable() : format::variable(gas_price));
+			data.set("gas_price", commitment_priority(nullptr) ? format::variable() : format::variable(gas_price));
 			data.set("gas_limit", algorithm::encoding::serialize_uint256(gas_limit));
 			return data;
 		}
@@ -291,12 +291,6 @@ namespace tangent
 				return false;
 
 			return load_body(stream);
-		}
-		bool commitment_message::implements_commitment(uint256_t* event_hash) const
-		{
-			if (event_hash != nullptr)
-				*event_hash = uint256_t(0);
-			return true;
 		}
 
 		bool transaction_receipt::store_payload(format::wo_stream* stream) const
@@ -500,9 +494,10 @@ namespace tangent
 			if (!prev)
 				return 0;
 
-			auto current = prev->block_number < block_number ? prev->block_number - block_number : 0;
-			auto target = milliseconds / protocol::now().policy.pow.time;
-			return target < current ? target - current : 0;
+			auto lock_block_number = prev->block_number;
+			auto unlock_block_number = lock_block_number + (milliseconds / protocol::now().policy.pow.time);
+			auto blocks_until_unlock = block_number <= unlock_block_number ? unlock_block_number - block_number : 0;
+			return blocks_until_unlock;
 		}
 
 		uniform_state::uniform_state(uint64_t new_block_number) : transition_state(new_block_number)

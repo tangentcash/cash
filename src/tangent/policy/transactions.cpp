@@ -614,7 +614,7 @@ namespace tangent
 
 				for (auto& transaction : group.second)
 				{
-					if (!transaction || transaction->as_type() == as_type() || transaction->implements_commitment(nullptr))
+					if (!transaction || transaction->as_type() == as_type() || transaction->commitment_priority(nullptr))
 						return layer_exception("invalid sub-transaction");
 
 					if (transaction->asset != group.first || !transaction->gas_price.is_nan() || transaction->gas_limit > 0)
@@ -969,6 +969,12 @@ namespace tangent
 			if (!bridge_hash)
 				return layer_exception("invalid bridge hash");
 
+			if (protocol::now().on(fork_id::consensus_challenge, block_number))
+			{
+				if (!pow_challenge.solution)
+					return layer_exception("invalid pow challenge setup");
+			}
+
 			return ledger::commitment_message::validate(block_number);
 		}
 		expects_lr<void> route::execute(ledger::executor_context* executor) const
@@ -976,6 +982,17 @@ namespace tangent
 			auto validation = ledger::commitment_message::execute(executor);
 			if (!validation)
 				return validation.error();
+
+			if (protocol::now().on(fork_id::consensus_challenge, executor->receipt.block_number))
+			{
+				auto& policy = protocol::now().policy;
+				auto block_number = executor->get_block_number_by_hash(pow_challenge.block_hash).or_else(std::numeric_limits<uint64_t>::max());
+				if (block_number == std::numeric_limits<uint64_t>::max() || executor->receipt.block_number <= block_number || executor->receipt.block_number - block_number > policy.pow.tx.validity_time / policy.pow.time)
+					return layer_exception("pow challenge expired");
+				
+				if (!algorithm::pow256::verify(pow_challenge.block_hash, executor->receipt.from, nonce, pow_challenge.solution))
+					return layer_exception("invalid pow challenge");
+			}
 
 			auto* params = superchain::bridge::get()->get_network_params(asset);
 			if (!params)
@@ -1094,13 +1111,35 @@ namespace tangent
 		bool route::store_body(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
+			if (pow_challenge.block_hash > 0 || pow_challenge.solution > 0)
+			{
+				stream->write_boolean(true);
+				stream->write_integer(pow_challenge.block_hash);
+				stream->write_integer(pow_challenge.solution);
+			}
 			stream->write_integer(bridge_hash);
 			stream->write_string(routing_address);
 			return true;
 		}
 		bool route::load_body(format::ro_stream& stream)
 		{
-			if (!stream.read_integer(stream.read_type(), &bridge_hash))
+			auto type = stream.read_type();
+			if (type == format::viewable::true_type)
+			{
+				bool pow_challenge_extension;
+				if (!stream.read_boolean(type, &pow_challenge_extension) || !pow_challenge_extension)
+					return false;
+
+				if (!stream.read_integer(stream.read_type(), &pow_challenge.block_hash))
+					return false;
+
+				if (!stream.read_integer(stream.read_type(), &pow_challenge.solution))
+					return false;
+
+				type = stream.read_type();
+			}
+
+			if (!stream.read_integer(type, &bridge_hash))
 				return false;
 
 			if (!stream.read_string(stream.read_type(), &routing_address))
@@ -1117,6 +1156,15 @@ namespace tangent
 			auto participants = get_participants(receipt);
 			parties.insert(participants.begin(), participants.end());
 			return true;
+		}
+		uint64_t route::commitment_priority(uint256_t* event_hash) const
+		{
+			return 1;
+		}
+		void route::solve_pow_challenge(const algorithm::pubkeyhash_t& owner, uint64_t owner_nonce, const uint256_t& block_hash)
+		{
+			pow_challenge.block_hash = block_hash;
+			pow_challenge.solution = algorithm::pow256::solve(block_hash, owner, owner_nonce);
 		}
 		void route::set_routing_address(const std::string_view& new_address)
 		{
@@ -1151,6 +1199,12 @@ namespace tangent
 			format::tree data = ledger::commitment_message::as_tree();
 			data.set("bridge_hash", algorithm::encoding::serialize_uint256(bridge_hash));
 			data.set("routing_address", format::variable(routing_address));
+			if (pow_challenge.block_hash > 0 || pow_challenge.solution > 0)
+			{
+				auto* pow_challenge_data = data.set("pow_challenge", format::tree::map());
+				pow_challenge_data->set("block_hash", algorithm::encoding::serialize_uint256(pow_challenge.block_hash));
+				pow_challenge_data->set("solution", algorithm::encoding::serialize_uint256(pow_challenge.solution));
+			}
 			return data;
 		}
 		uint32_t route::as_delegation_type() const
@@ -1354,6 +1408,10 @@ namespace tangent
 				parties.insert(algorithm::pubkeyhash_t(parent->receipt.from));
 
 			return true;
+		}
+		uint64_t bind::commitment_priority(uint256_t* event_hash) const
+		{
+			return 5;
 		}
 		format::tree bind::as_tree() const
 		{
@@ -1600,6 +1658,10 @@ namespace tangent
 				parties.insert(algorithm::pubkeyhash_t(parent->receipt.from));
 
 			return true;
+		}
+		uint64_t imbind::commitment_priority(uint256_t* event_hash) const
+		{
+			return 6;
 		}
 		expects_lr<algorithm::composition::cpubkey_t> imbind::to_group_public_key(algorithm::composition::compositor* compositor) const
 		{
@@ -2485,6 +2547,10 @@ namespace tangent
 
 			return true;
 		}
+		uint64_t rebind::commitment_priority(uint256_t* event_hash) const
+		{
+			return 4;
+		}
 		format::tree rebind::as_tree() const
 		{
 			format::tree data = ledger::commitment_message::as_tree();
@@ -2835,6 +2901,10 @@ namespace tangent
 				aliases.insert(message.hash());
 			}
 			return true;
+		}
+		uint64_t broadcast::commitment_priority(uint256_t* event_hash) const
+		{
+			return 3;
 		}
 		void broadcast::set_proof(const uint256_t& new_withdraw_hash, expects_lr<superchain::finalized_transaction>&& new_proof)
 		{
@@ -3646,6 +3716,12 @@ namespace tangent
 			}
 			return true;
 		}
+		uint64_t attestate::commitment_priority(uint256_t* event_hash) const
+		{
+			if (event_hash != nullptr)
+				*event_hash = proof.as_hash();
+			return 2;
+		}
 		void attestate::set_finalized_proof(uint64_t block_id, const std::string_view& transaction_id, const vector<superchain::value_transfer>& inputs, const vector<superchain::value_transfer>& outputs)
 		{
 			superchain::computed_transaction witness;
@@ -3676,12 +3752,6 @@ namespace tangent
 				return false;
 
 			commitments[commitment_hash].insert(commitment_signature);
-			return true;
-		}
-		bool attestate::implements_commitment(uint256_t* event_hash) const
-		{
-			if (event_hash != nullptr)
-				*event_hash = proof.as_hash();
 			return true;
 		}
 		format::tree attestate::as_tree() const

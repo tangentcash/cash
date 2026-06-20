@@ -1,5 +1,4 @@
 #include "chainstate.h"
-#include "../policy/transactions.h"
 #include "../policy/states.h"
 #define BLOB_BLOCK 'b'
 #define BLOB_TRANSACTION 't'

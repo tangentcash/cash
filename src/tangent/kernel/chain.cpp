@@ -958,6 +958,7 @@ namespace tangent
 				policy.pow.time = 1;
 				policy.pow.difficulty = 1;
 				policy.pow.security = 64;
+				policy.pow.tx.difficulty = 1;
 				policy.attestation.confirmation_time = 2;
 				policy.attestation.min_stake_value = decimal::zero();
 				policy.participation.locking_time = 2;
