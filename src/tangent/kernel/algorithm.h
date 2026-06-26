@@ -386,11 +386,18 @@ namespace tangent
 				secp256k1_schnorr
 			};
 
+			struct shared_message
+			{
+				vector<uint8_t> message;
+				vector<chashsig_t> keys;
+				uint256_t checksum;
+			};
+
 			struct compositor
 			{
 				virtual ~compositor() = default;
 				virtual expects_lr<void> setup_public_key(const uint8_t* message, size_t message_size, uint16_t participants) = 0;
-				virtual expects_lr<void> setup_signature(const cpubkey_t& public_key, const uint8_t* message, size_t message_size, uint16_t participants) = 0;
+				virtual expects_lr<void> setup_signature(const cpubkey_t& public_key, const uint8_t* message, size_t message_size, const shared_message* shared, uint16_t participants) = 0;
 				virtual expects_lr<void> aggregate(const cseckey_t& secret_key) = 0;
 				virtual expects_lr<void> derive_tweaking_key(const uint8_t* seed, size_t seed_size, size_t key_size, paillier_scalar_t* public_key) const = 0;
 				virtual expects_lr<void> tweak_secret_key(const paillier_scalar_t& public_key, size_t key_size, const cseckey_t& tweak, cseckey_t* secret_key_input_output, paillier_scalar_t* accumulator_output) const = 0;
@@ -421,7 +428,7 @@ namespace tangent
 			static expects_lr<uptr<compositor>> make_compositor_from_copy(const compositor* other);
 			static expects_lr<uptr<compositor>> make_compositor_from_stream(type alg, format::ro_stream& stream);
 			static expects_lr<uptr<compositor>> make_public_key_compositor(type alg, const uint8_t* message, size_t message_size, uint16_t participants);
-			static expects_lr<uptr<compositor>> make_signature_compositor(type alg, const cpubkey_t& public_key, const uint8_t* message, size_t message_size, uint16_t participants);
+			static expects_lr<uptr<compositor>> make_signature_compositor(type alg, const cpubkey_t& public_key, const uint8_t* message, size_t message_size, const shared_message* shared, uint16_t participants);
 
 		public:
 			template <typename T>

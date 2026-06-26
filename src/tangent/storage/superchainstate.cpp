@@ -140,7 +140,7 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<superchain::coin_utxo> superchainstate::get_utxo(const std::string_view& transaction_id, uint64_t index)
+		expects_lr<superchain::coin_utxo> superchainstate::get_utxo(const std::string_view& transaction_id, uint64_t index, bool unspent_only)
 		{
 			format::wo_stream transaction_id_index;
 			transaction_id_index.write_string(transaction_id);
@@ -149,7 +149,7 @@ namespace tangent
 			schema_list map;
 			map.push_back(var::set::binary(transaction_id_index.data));
 
-			auto cursor = get_storage().emplace_query(__func__, "SELECT message FROM coins WHERE transaction_id_index = ? AND spent = FALSE", &map);
+			auto cursor = get_storage().emplace_query(__func__, unspent_only ? "SELECT message FROM coins WHERE transaction_id_index = ? AND spent = FALSE" : "SELECT message FROM coins WHERE transaction_id_index = ?", &map);
 			if (!cursor || cursor->error_or_empty())
 				return expects_lr<superchain::coin_utxo>(layer_exception(ledger::storage_util::error_of(cursor)));
 

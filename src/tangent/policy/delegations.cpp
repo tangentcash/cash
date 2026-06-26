@@ -1428,9 +1428,11 @@ namespace tangent
 					message = memory::init<superchain::prepared_transaction>(std::move(*maybe_message));
 				}
 
+			recompute:
 				auto finalization = expects_lr<superchain::finalized_transaction>(layer_exception());
 				auto result = expects_rt<void>(remote_exception::shutdown());
-				auto shared_message = message->as_shared_message();
+				auto shared = message->as_shared_message();
+				auto keygen = shared && shared->keys.empty();
 				auto* input = message->next_input_for_aggregation();
 				while (input != nullptr)
 				{
@@ -1446,12 +1448,12 @@ namespace tangent
 					if (!delegates)
 						coreturn delegates.error().is_retry() || delegates.error().is_shutdown() ? expects_rt<void>(std::move(delegates.error())) : cancel(algorithm::pubkeyhash_t(), std::move(delegates.error()));
 
-					auto& input_message = shared_message ? *shared_message : input->message;
+					auto& seed_message = shared ? shared->message : input->message;
 					auto chosen = account->group.begin();
-					std::advance(chosen, (size_t)(algorithm::hashing::hash256i(input_message.data(), input_message.size()) % uint256_t(account->group.size())));
+					std::advance(chosen, (size_t)(algorithm::hashing::hash256i(seed_message.data(), seed_message.size()) % uint256_t(account->group.size())));
 					if (!compositor)
 					{
-						auto maybe_compositor = algorithm::composition::make_signature_compositor(input->alg, input->public_key, input_message.data(), input_message.size(), (uint16_t)account->group.size());
+						auto maybe_compositor = algorithm::composition::make_signature_compositor(input->alg, input->public_key, input->message.data(), input->message.size(), shared.address(), (uint16_t)account->group.size());
 						if (!maybe_compositor)
 							coreturn cancel(algorithm::pubkeyhash_t(), remote_exception(std::move(maybe_compositor.error().message())));
 
@@ -1490,12 +1492,21 @@ namespace tangent
 						delegates->erase(participant);
 					}
 
-					auto subfinalization = compositor->derive_signature(&message->next_input_for_aggregation()->signature);
+					auto& signature = message->next_input_for_aggregation()->signature;
+					auto subfinalization = compositor->derive_signature(&signature);
 					if (!subfinalization)
 						coreturn cancel(algorithm::pubkeyhash_t(), remote_exception(std::move(subfinalization.error().message())));
+					else if (keygen && shared)
+						shared->keys.push_back(signature);
 
 					input = message->next_input_for_aggregation();
 					compositor.destroy();
+				}
+
+				if (keygen && !shared->keys.empty())
+				{
+					message->requires_shared_message(*shared);
+					goto recompute;
 				}
 
 				finalization = finalize_transaction(algorithm::asset::base_id_of(withdraw->asset), std::move(**message));

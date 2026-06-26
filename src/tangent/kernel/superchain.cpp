@@ -368,6 +368,11 @@ namespace tangent
 			if (!link.store_payload(stream))
 				return false;
 
+			if (!extra.empty())
+			{
+				stream->write_boolean(true);
+				stream->write_string(extra);
+			}
 			stream->write_string(transaction_id);
 			stream->write_integer(index);
 			stream->write_decimal(value);
@@ -386,7 +391,22 @@ namespace tangent
 			if (!link.load_payload(stream))
 				return false;
 
-			if (!stream.read_string(stream.read_type(), &transaction_id))
+			auto type = stream.read_type();
+			if (type == format::viewable::true_type)
+			{
+				bool has_extra;
+				if (!stream.read_boolean(type, &has_extra) || !has_extra)
+					return false;
+
+				if (!stream.read_string(stream.read_type(), &extra))
+					return false;
+
+				type = stream.read_type();
+			}
+			else
+				extra.clear();
+
+			if (!stream.read_string(type, &transaction_id))
 				return false;
 
 			if (!stream.read_integer(stream.read_type(), &index))
@@ -486,6 +506,8 @@ namespace tangent
 				data.set("asset", algorithm::asset::serialize(get_asset(0)));
 			data.set("value", format::variable(value));
 			data.set("type", format::variable(is_account() ? "account" : "utxo"));
+			if (!extra.empty())
+				data.set("extra", format::variable(format::util::encode_0xhex(extra)));
 			auto* tokens_data = data.set("tokens", format::tree::list());
 			for (auto& [hash, item] : tokens)
 			{
@@ -768,8 +790,8 @@ namespace tangent
 		}
 		prepared_transaction& prepared_transaction::requires_shared_input(algorithm::composition::type new_alg, const algorithm::composition::cpubkey_t& new_public_key, coin_utxo&& input)
 		{
-			uint8_t dummy_hash = 0xFF;
-			return requires_input(new_alg, new_public_key, &dummy_hash, sizeof(dummy_hash), std::move(input));
+			uint16_t index = os::hw::to_endianness<uint16_t>(os::hw::endian::little, (uint16_t)inputs.size());
+			return requires_input(new_alg, new_public_key, (uint8_t*)&index, sizeof(index), std::move(input));
 		}
 		prepared_transaction& prepared_transaction::requires_account_input(algorithm::composition::type new_alg, wallet_link&& signer, const algorithm::composition::cpubkey_t& new_public_key, uint8_t* new_message, size_t new_message_size, hash_map<algorithm::asset_id, decimal>&& input)
 		{
@@ -786,14 +808,23 @@ namespace tangent
 			outputs.push_back(coin_utxo(wallet_link::from_address(to_address), std::move(output)));
 			return *this;
 		}
-		prepared_transaction& prepared_transaction::requires_shared_message(const uint8_t* message, size_t message_size)
+		prepared_transaction& prepared_transaction::requires_shared_message(const algorithm::composition::shared_message& shared)
 		{
-			VI_ASSERT(message != nullptr, "message should be set");
+			for (auto& input : inputs)
+				input.signature.clear();
+
+			format::wo_stream stream;
+			stream.write_integer(shared.checksum);
+			stream.write_integer((uint16_t)shared.keys.size());
+			for (auto& input : shared.keys)
+				stream.write_string(std::string_view((char*)input.data(), input.size()));
+
 			uint32_t header = os::hw::to_endianness<uint32_t>(os::hw::endian::big, SHARED_MESSAGE_HEADER_MAGIC);
 			string packed_message;
-			packed_message.resize(sizeof(header) + message_size);
+			packed_message.resize(sizeof(header) + stream.data.size() + shared.message.size());
 			memcpy(packed_message.data(), &header, sizeof(header));
-			memcpy(packed_message.data() + sizeof(header), message, message_size);
+			memcpy(packed_message.data() + sizeof(header), stream.data.data(), stream.data.size());
+			memcpy(packed_message.data() + sizeof(header) + stream.data.size(), shared.message.data(), shared.message.size());
 			abi.clear();
 			requires_abi(format::variable(packed_message));
 			return *this;
@@ -896,15 +927,15 @@ namespace tangent
 			}
 			return nullptr;
 		}
-		option<vector<uint8_t>> prepared_transaction::as_shared_message() const
+		option<algorithm::composition::shared_message> prepared_transaction::as_shared_message() const
 		{
 			if (abi.size() != 1)
 				return optional::none;
 
-			uint8_t dummy_hash = 0xFF;
+			uint16_t dummy_index = 0xFFFF;
 			for (auto& item : inputs)
 			{
-				if (item.message.size() != sizeof(dummy_hash) || item.message.front() != dummy_hash)
+				if (item.message.size() != sizeof(dummy_index))
 					return optional::none;
 			}
 
@@ -917,10 +948,30 @@ namespace tangent
 			if (memcmp(packed_message.data(), &header, sizeof(header)) != 0)
 				return optional::none;
 
-			vector<uint8_t> result;
-			result.resize(packed_message.size() - sizeof(header));
-			memcpy(result.data(), packed_message.data() + sizeof(header), packed_message.size() - sizeof(header));
-			return option<vector<uint8_t>>(std::move(result));
+			algorithm::composition::shared_message shared;
+			shared.message.resize(packed_message.size() - sizeof(header));
+			memcpy(shared.message.data(), packed_message.data() + sizeof(header), packed_message.size() - sizeof(header));
+
+			format::ro_stream stream = format::ro_stream(std::string_view((char*)shared.message.data(), shared.message.size()));
+			if (!stream.read_integer(stream.read_type(), &shared.checksum))
+				return optional::none;
+
+			uint16_t keys_size = 0;
+			if (!stream.read_integer(stream.read_type(), &keys_size))
+				return optional::none;
+
+			shared.keys.reserve(keys_size);
+			for (uint16_t i = 0; i < keys_size; i++)
+			{
+				string key;
+				if (!stream.read_string(stream.read_type(), &key) || key.empty())
+					return optional::none;
+
+				shared.keys.push_back(algorithm::composition::to_cstorage<algorithm::composition::chashsig_t>(key));
+			}
+
+			shared.message.erase(shared.message.begin(), shared.message.begin() + stream.seek);
+			return option<algorithm::composition::shared_message>(std::move(shared));
 		}
 		prepared_transaction::status prepared_transaction::as_status() const
 		{
@@ -1555,9 +1606,9 @@ namespace tangent
 
 			return expects_lr<vector<coin_utxo>>(std::move(values));
 		}
-		expects_lr<coin_utxo> utxo_translation_unit::get_utxo(const std::string_view& transaction_id, uint64_t index)
+		expects_lr<coin_utxo> utxo_translation_unit::get_utxo(const std::string_view& transaction_id, uint64_t index, bool unspent_only)
 		{
-			return bridge::get()->get_utxo(native_asset, transaction_id, index);
+			return bridge::get()->get_utxo(native_asset, transaction_id, index, unspent_only);
 		}
 		expects_lr<void> utxo_translation_unit::update_utxo(const computed_transaction& computed)
 		{
@@ -1576,7 +1627,7 @@ namespace tangent
 				if (input.is_account() || !input.link.has_all())
 					continue;
 
-				auto result = receive_utxo(computed.transaction_id, input.index, computed.block_id, input);
+				auto result = receive_utxo(input.transaction_id.empty() ? computed.transaction_id : input.transaction_id, input.index, computed.block_id, input);
 				if (!result)
 					return result;
 			}
@@ -2748,10 +2799,10 @@ namespace tangent
 
 			return utxo_implementation->update_utxo(computed);
 		}
-		expects_lr<coin_utxo> bridge::get_utxo(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint64_t index)
+		expects_lr<coin_utxo> bridge::get_utxo(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint64_t index, bool unspent_only)
 		{
 			storages::superchainstate state = storages::superchainstate(asset);
-			return state.get_utxo(transaction_id, index);
+			return state.get_utxo(transaction_id, index, unspent_only);
 		}
 		expects_lr<vector<coin_utxo>> bridge::get_utxos(const algorithm::asset_id& asset, const wallet_link& link, size_t offset, size_t count)
 		{
@@ -2767,6 +2818,22 @@ namespace tangent
 		{
 			storages::superchainstate state = storages::superchainstate(asset);
 			return state.set_cache(policy, key, value);
+		}
+		expects_lr<string> bridge::get_ref(const algorithm::asset_id& asset, const std::string_view& key)
+		{
+			string key_ref = string("R:").append(key);
+			storages::superchainstate state = storages::superchainstate(asset);
+			auto result = state.get_property(key_ref);
+			if (!result)
+				return result.error();
+
+			return expects_lr<string>(result->value.as_blob());
+		}
+		expects_lr<void> bridge::set_ref(const algorithm::asset_id& asset, const std::string_view& key, const std::string_view& value)
+		{
+			string key_ref = string("R:").append(key);
+			storages::superchainstate state = storages::superchainstate(asset);
+			return state.set_property(key_ref, format::variable(value));
 		}
 		option<string> bridge::get_contract_address(const algorithm::asset_id& asset)
 		{

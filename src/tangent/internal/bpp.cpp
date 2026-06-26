@@ -1,753 +1,700 @@
-/**
- * Bulletproofs+ Range Proof Implementation
- *
- * This file contains the minimal implementation of the Bulletproofs+ prove function.
- * It relies on external primitives defined in the ExternalCrypto namespace.
- *
- */
-
 #include "bpp.h"
-#include "sha3.h"
+
+#include <stdexcept>
+#include <string>
+#include <utility>
 #include "rand.h"
-#include <sodium.h>
+
+extern "C"
+{
+#include "monero.h"
+}
 
 namespace xmr_bpp
 {
-    /**
-     * Compute domain scalar from index using SHA3
-     * Formula: scalar(sha3(domain_salt || index))
-     * Uses BULLETPROOFS_PLUS_DOMAIN_0 scalar from crypto_constants.h
-     */
-    static scalar_t compute_domain_scalar(uint32_t index)
+    namespace
     {
-        uint8_t hash_input[40];
-        uint8_t* ptr = hash_input;
+        constexpr size_t maxN = 64;
+        constexpr size_t maxM = 16;
 
-        // SALT_DOMAIN = 202053504f4e534f52454420425920444f4e5554532041524520474f4f442020
-        const uint8_t SALT_DOMAIN[32] = {
-            0x20, 0x20, 0x53, 0x50, 0x4f, 0x4e, 0x53, 0x4f,
-            0x52, 0x45, 0x44, 0x20, 0x42, 0x59, 0x20, 0x44,
-            0x4f, 0x4e, 0x55, 0x54, 0x53, 0x20, 0x41, 0x52,
-            0x45, 0x20, 0x47, 0x4f, 0x4f, 0x44, 0x20, 0x20
+        constexpr uint8_t H_BYTES[32] = {
+            0x8b, 0x65, 0x59, 0x70, 0x15, 0x37, 0x99, 0xaf,
+            0x2a, 0xea, 0xdc, 0x9f, 0xf1, 0xad, 0xd0, 0xea,
+            0x6c, 0x72, 0x51, 0xd5, 0x41, 0x54, 0xcf, 0xa9,
+            0x2c, 0x17, 0x3a, 0x0d, 0xd3, 0x9c, 0x1f, 0x94
         };
-        memcpy(ptr, SALT_DOMAIN, 32);
-        ptr += 32;
 
-        // Write index as uint64 (little endian)
-        for (int i = 0; i < 8; ++i)
-            *ptr++ = (index >> (i * 8)) & 0xFF;
+        constexpr char HASH_KEY_BULLETPROOF_PLUS_EXPONENT[] = "bulletproof_plus";
+        constexpr char HASH_KEY_BULLETPROOF_PLUS_TRANSCRIPT[] = "bulletproof_plus_transcript";
 
-        hash_t h;
-        sha3_256(hash_input, sizeof(hash_input), h.b32);
-
-        scalar_t s;
-        crypto_core_ed25519_scalar_reduce(s.b32, h.b32);
-        return s;
-    }
-    static point_t compute_domain_point(uint32_t index)
-    {
-        uint8_t hash_input[40];
-        uint8_t* ptr = hash_input;
-
-        // SALT_DOMAIN = 202053504f4e534f52454420425920444f4e5554532041524520474f4f442020
-        const uint8_t SALT_DOMAIN[32] = {
-            0x20, 0x20, 0x53, 0x50, 0x4f, 0x4e, 0x53, 0x4f,
-            0x52, 0x45, 0x44, 0x20, 0x42, 0x59, 0x20, 0x44,
-            0x4f, 0x4e, 0x55, 0x54, 0x53, 0x20, 0x41, 0x52,
-            0x45, 0x20, 0x47, 0x4f, 0x4f, 0x44, 0x20, 0x20
+        struct constants_t
+        {
+            scalar_t zero, one, two, minus_one, inv_eight, minus_inv_eight;
+            point_t G, H, initial_transcript;
         };
-        memcpy(ptr, SALT_DOMAIN, 32);
-        ptr += 32;
 
-        // Write index as uint64 (little endian)
-        for (int i = 0; i < 8; ++i)
-            *ptr++ = (index >> (i * 8)) & 0xFF;
-
-        hash_t h;
-        sha3_256(hash_input, sizeof(hash_input), h.b32);
-
-        point_t point;
-        memcpy(point.b32, h.b32, 32);
-        return point;
-    }
-
-    // ========================================================================
-    // SCALAR OPERATIONS (using libsodium crypto_core_ed25519_scalar_*)
-    // ========================================================================
-    scalar_t scalar_one()
-    {
-        scalar_t out;
-        out.b32[0] = 1;
-        return out;
-    }
-    scalar_t scalar_uint64(uint64_t value)
-    {
-        scalar_t out;
-        for (size_t i = 0; i < 8; ++i)
-            out.b32[i] = (value >> (i * 8)) & 0xFF;
-        return out;
-    }
-    scalar_t scalar_random()
-    {
-        scalar_t out;
-        random_buffer(out.b32, 32);
-
-        hash_t h;
-        sha3_256(out.b32, 32, h.b32);
-        crypto_core_ed25519_scalar_reduce(out.b32, h.b32);
-        return out;
-    }
-    scalar_t scalar_pow(const scalar_t& base, size_t exp)
-    {
-        if (exp == 0)
-            return scalar_one();
-
-        scalar_t result = base;
-        for (size_t i = 1; i < exp; ++i)
+        point_t point_identity()
         {
-            scalar_t temp;
-            crypto_core_ed25519_scalar_mul(temp.b32, result.b32, base.b32);
-            result = temp;
-        }
-        return result;
-    }
-    scalar_vec_t scalar_vec_pow(const scalar_t& s, size_t n)
-    {
-        scalar_vec_t result;
-        result.reserve(n);
-        if (n == 0)
-            return result;
-
-        // FIX: Return ascending powers: [s^1, s^2, ..., s^n]
-        // Original returned descending powers [s^n, s^(n-1), ..., s^1]
-        scalar_t current = s;
-        for (size_t i = 0; i < n; ++i)
-        {
-            result.push_back(current);
-            crypto_core_ed25519_scalar_mul(current.b32, current.b32, s.b32);
-        }
-        return result;
-    }
-
-    // ========================================================================
-    // POINT OPERATIONS (using libsodium public API)
-    // ========================================================================
-    point_t point_generator_G()
-    {
-        // Ed25519 generator point G (compressed)
-        static const uint8_t ED25519_G_BYTES[32] =
-        {
-            0x21, 0x69, 0x36, 0xd3, 0xcd, 0x6e, 0x53, 0xfe,
-            0xc0, 0xa4, 0xe2, 0x31, 0xfb, 0xd6, 0x1e, 0x84,
-            0x59, 0x4a, 0x59, 0x5e, 0x77, 0xb5, 0xc3, 0xb9,
-            0x94, 0xdb, 0x8a, 0x23, 0xf3, 0x19, 0x97, 0x26
-        };
-        point_t g;
-        memcpy(g.b32, ED25519_G_BYTES, 32);
-        return g;
-    }
-    point_t point_generator_H()
-    {
-        // Ed25519 generator H (sha512("H") reduced)
-        static const uint8_t ED25519_H_BYTES[32] =
-        {
-            0x58, 0x50, 0x8a, 0x3c, 0x7f, 0x47, 0x3a, 0x28,
-            0x9d, 0x6f, 0xb6, 0xe7, 0x40, 0x4d, 0xa1, 0x06,
-            0x80, 0x41, 0x18, 0x99, 0xba, 0x52, 0x45, 0x32,
-            0x69, 0x03, 0x89, 0x7f, 0x4e, 0x9e, 0x55, 0x9b
-        };
-        point_t h;
-        memcpy(h.b32, ED25519_H_BYTES, 32);
-        return h;
-    }
-    void point_vec_inner_product(point_t& out, const point_vec_t& P, const scalar_vec_t& s)
-    {
-        if (P.size() != s.size())
-            throw std::runtime_error("Point and scalar vectors must have same size");
-
-        memset(out.b32, 0, 32);
-        for (size_t i = 0; i < P.size(); ++i)
-        {
-            point_t term;
-            if (crypto_scalarmult_ed25519(term.b32, s[i].b32, P[i].b32) == -1)
-                throw std::runtime_error("Failed to multiply point by scalar");
-
-            crypto_core_ed25519_add(out.b32, out.b32, term.b32);
-        }
-    }
-
-    // ========================================================================
-    // TRANSCRIPT IMPLEMENTATION
-    // ========================================================================
-    void transcript_t::update(const point_t& p)
-    {
-        hash_t h, combined;
-        sha3_256(p.b32, sizeof(p.b32), h.b32);
-
-        scalar_t input;
-        crypto_core_ed25519_scalar_reduce(input.b32, h.b32);
-
-        SHA3_CTX ctx;
-        sha3_256_Init(&ctx);
-        sha3_Update(&ctx, state.b32, sizeof(state.b32));
-        sha3_Update(&ctx, input.b32, sizeof(input.b32));
-        sha3_Final(&ctx, combined.b32);
-        crypto_core_ed25519_scalar_reduce(state.b32, combined.b32);
-    }
-    void transcript_t::update(const scalar_t& s)
-    {
-        hash_t combined;
-        SHA3_CTX ctx;
-        sha3_256_Init(&ctx);
-        sha3_Update(&ctx, state.b32, sizeof(state.b32));
-        sha3_Update(&ctx, s.b32, sizeof(s.b32));
-        sha3_Final(&ctx, combined.b32);
-        crypto_core_ed25519_scalar_reduce(state.b32, combined.b32);
-    }
-    scalar_t transcript_t::challenge()
-    {
-        hash_t h;
-        sha3_256(state.b32, sizeof(state.b32), h.b32);
-
-        scalar_t challenge;
-        crypto_core_ed25519_scalar_reduce(challenge.b32, h.b32);
-        if (challenge.empty())
-            throw std::runtime_error("Transcript challenge cannot be zero");
-
-        return challenge;
-    }
-
-    // ============================================================================
-    // GENERATE EXPONENTS
-    // ============================================================================
-    // Generates L and R generator points for the inner product protocol
-    // using SHA3 hashing with domain separation.
-    // 
-    // Original: writer.uint64(i); writer.pod(DOMAIN1); hash = sha3(writer)
-    // This matches the original crypto-master implementation.
-    std::pair<std::vector<point_t>, std::vector<point_t>> generate_exponents(size_t count)
-    {
-        const point_t BPP_DOMAIN_1 = compute_domain_point(16);
-        const point_t BPP_DOMAIN_2 = compute_domain_point(17);
-        std::vector<point_t> L, R;
-        L.reserve(count);
-        R.reserve(count);
-        for (size_t i = 0; i < count; ++i)
-        {
-            // L_i = H(uint64(i) || DOMAIN1) - matches original implementation
-            uint8_t hash_input[40];
-            uint8_t* ptr = hash_input;
-
-            // Write index as uint64 (little endian)
-            for (int j = 0; j < 8; ++j)
-                *ptr++ = (i >> (j * 8)) & 0xFF;
-
-            // Copy DOMAIN1 bytes
-            for (int j = 0; j < 32; ++j)
-                *ptr++ = BPP_DOMAIN_1.b32[j];
-
-            hash_t hash_output;
-            sha3_256(hash_input, sizeof(hash_input), hash_output.b32);
-
-            point_t L_i = point_t(hash_output.b32);
-            L.push_back(L_i);
-
-            // R_i = H(uint64(i) || DOMAIN2) - recompute hash_input from scratch
-            hash_input[0] = 0;
-            ptr = hash_input;
-
-            // Write index as uint64 (little endian)
-            for (int j = 0; j < 8; ++j)
-                *ptr++ = (i >> (j * 8)) & 0xFF;
-
-            // Copy DOMAIN2 bytes
-            for (int j = 0; j < 32; ++j)
-                *ptr++ = BPP_DOMAIN_2.b32[j];
-
-            sha3_256(hash_input, sizeof(hash_input), hash_output.b32);
-            point_t R_i = point_t(hash_output.b32);
-            R.push_back(R_i);
-        }
-        return std::make_pair(std::move(L), std::move(R));
-    }
-
-    // ============================================================================
-    // GLOBAL PRECOMPUTED VALUES
-    // ============================================================================
-    static const std::vector<scalar_t> powers_of_two = []()
-    {
-        std::vector<scalar_t> result;
-        result.reserve(64);
-        scalar_t current = scalar_one();
-        result.push_back(current);
-
-        scalar_t two;
-        two.b32[0] = 2;
-
-        for (int i = 1; i < 64; ++i)
-        {
-            scalar_t next;
-            crypto_core_ed25519_scalar_mul(next.b32, current.b32, two.b32);
-            result.push_back(next);
-            current = next;
-        }
-        return result;
-    }();
-
-    // ============================================================================
-    // PROVE FUNCTION
-    // ============================================================================
-    // Main entry point for Bulletproofs+ range proof generation.
-    std::tuple<proof_t, std::vector<point_t>> prove(const std::vector<uint64_t>& amounts, const std::vector<scalar_t>& blinding_factors, size_t N)
-    {
-        // Validate N
-        if (N == 0)
-            throw std::range_error("N must be at least 1-bit");
-
-        if (N > 64)
-            throw std::range_error("N must not exceed 64-bits");
-
-        // Validate inputs match
-        if (amounts.size() != blinding_factors.size())
-            throw std::runtime_error("amounts and blinding factors must be the same size");
-
-        if (amounts.empty())
-            throw std::runtime_error("amounts is empty");
-
-        // Validate blinding factors are non-zero
-        for (const auto& bf : blinding_factors)
-        {
-            if (bf.empty())
-                throw std::invalid_argument("blinding factor cannot be zero");
+            point_t out;
+            out.b32[0] = 1;
+            return out;
         }
 
-        const size_t M = amounts.size();
-
-        // Round N to next power of 2 - matches Crypto::pow2_round behavior
-        // N must be in range [1, 64]
-        size_t N_rounded = 1;
-        while (N_rounded < N && N_rounded < 64)
-            N_rounded *= 2;
-        N = N_rounded;
-        if (N > 64) N = 64;
-
-        // Generate exponent vectors
-        const size_t MN = M * N;
-        const auto [_Gi, _Hi] = generate_exponents(MN);
-        // one_MN = vector of ones of size MN
-        // FIX: Initialize all elements to 1, not just first element
-        scalar_vec_t one_MN(MN, scalar_one());
-
-        // Build aL (bit decomposition of amounts) and aR
-        std::vector<point_t> V;
-        std::vector<scalar_t> aL, aR;
-        for (size_t i = 0; i < M; ++i)
+        bool equal(const scalar_t& lhs, const scalar_t& rhs)
         {
-            // Generate Pedersen commitment for this amount
-            // C = (gamma * G) + (amount * H)
-            point_t commitment_G, commitment_H;
-            if (crypto_scalarmult_ed25519(commitment_G.b32, blinding_factors[i].b32, point_generator_G().b32) == -1)
-                throw std::invalid_argument("failed to generate commitment G");
+            return std::memcmp(lhs.b32, rhs.b32, 32) == 0;
+        }
 
-            scalar_t amount_scalar = scalar_uint64(amounts[i]);
-            if (crypto_scalarmult_ed25519(commitment_H.b32, amount_scalar.b32, point_generator_H().b32) == -1)
-                throw std::invalid_argument("failed to generate commitment H");
+        bool equal(const point_t& lhs, const point_t& rhs)
+        {
+            return std::memcmp(lhs.b32, rhs.b32, 32) == 0;
+        }
 
-            crypto_core_ed25519_add(commitment_G.b32, commitment_G.b32, commitment_H.b32);
-            V.push_back(commitment_G);
+        scalar_t scalar_uint64(uint64_t value)
+        {
+            scalar_t out;
+            for (size_t i = 0; i < 8; ++i)
+                out.b32[i] = static_cast<uint8_t>((value >> (i * 8)) & 0xff);
+            return out;
+        }
 
-            // Convert amount to bits
-            // FIX: Push 0s for unset bits, not just 1s
-            for (size_t bit = 0; bit < N; ++bit)
+        scalar_t scalar_random()
+        {
+            scalar_t out;
+            do
             {
-                if (amounts[i] & (1ULL << bit))
-                    aL.push_back(scalar_one());
-                else
-                    aL.push_back(scalar_t {});  // Push zero for unset bit
-            }
+                random_buffer(out.b32, sizeof(out.b32));
+                sc_reduce32(out.b32);
+            } while (out.empty());
+            return out;
         }
 
-        // aR = aL - one_MN (subtract ONE from each element)
-        aR = aL;
-        for (size_t i = 0; i < MN; ++i)
-            crypto_core_ed25519_scalar_sub(aR[i].b32, aR[i].b32, scalar_one().b32);
-
-        const scalar_t BPP_DOMAIN_0 = compute_domain_scalar(15);
-    try_setup:
-        // Initialize transcript with domain separator
-        transcript_t tr;
-        tr.init(BPP_DOMAIN_0);
-
-        // Generate random alpha
-        scalar_t alpha = scalar_random();
-        if (alpha.empty())
-            goto try_setup;
-
-        // Update transcript with commitments
-        tr.update(V);
-
-        // Compute A = INV_EIGHT * (aL . Gi + aR . Hi + alpha * G)
-        point_t A_inner_L, A_inner_R, A_alpha_G, A_combined;
-        point_vec_inner_product(A_inner_L, _Gi, aL);
-        point_vec_inner_product(A_inner_R, _Hi, aR);
-        if (crypto_scalarmult_ed25519(A_alpha_G.b32, alpha.b32, point_generator_G().b32) == -1)
-            goto try_setup;
-
-        crypto_core_ed25519_add(A_combined.b32, A_inner_L.b32, A_inner_R.b32);
-        crypto_core_ed25519_add(A_combined.b32, A_combined.b32, A_alpha_G.b32);
-
-        // Scale A by 1/8
-        scalar_t inv_eight = scalar_uint64(8);
-        crypto_core_ed25519_scalar_invert(inv_eight.b32, inv_eight.b32);
-        point_t _A;
-        if (crypto_scalarmult_ed25519(_A.b32, inv_eight.b32, A_combined.b32) == -1)
-            goto try_setup;
-
-        tr.update(_A);
-        // Get challenge y
-        scalar_t _y = tr.challenge();
-        if (_y.empty())
-            goto try_setup;
-
-        tr.update(_y);
-        // Get challenge z
-        scalar_t z = tr.challenge();
-        // FIX: Retry when z is empty (invalid), not when it's valid
-        if (z.empty())
-            goto try_setup;
-
-        // Build d vector: d[j*N + i] = z^(2*(j+1)) * 2^i
-        // This matches: d.append(z.pow(2 * (j + 1)) * powers_of_two[i])
-        std::vector<scalar_t> d;
-        d.reserve(MN);
-        for (size_t j = 0; j < M; ++j)
+        void scalar_add(scalar_t& out, const scalar_t& lhs, const scalar_t& rhs)
         {
-            scalar_t z_pow = scalar_pow(z, 2 * (j + 1));
-            for (size_t i = 0; i < N; ++i)
+            scalar_t tmp;
+            sc_add(tmp.b32, lhs.b32, rhs.b32);
+            out = tmp;
+        }
+
+        void scalar_sub(scalar_t& out, const scalar_t& lhs, const scalar_t& rhs)
+        {
+            scalar_t tmp;
+            sc_sub(tmp.b32, lhs.b32, rhs.b32);
+            out = tmp;
+        }
+
+        void scalar_mul(scalar_t& out, const scalar_t& lhs, const scalar_t& rhs)
+        {
+            scalar_t tmp;
+            sc_mul(tmp.b32, lhs.b32, rhs.b32);
+            out = tmp;
+        }
+
+        void scalar_muladd(scalar_t& out, const scalar_t& a, const scalar_t& b, const scalar_t& c)
+        {
+            scalar_t tmp;
+            sc_muladd(tmp.b32, a.b32, b.b32, c.b32);
+            out = tmp;
+        }
+
+        void scalar_invert(scalar_t& out, const scalar_t& value)
+        {
+            if (value.empty())
+                throw std::runtime_error("cannot invert zero scalar");
+            scalar_t tmp;
+            sc_invert(tmp.b32, value.b32);
+            out = tmp;
+        }
+
+        void write_varint(uint64_t value, std::string& out)
+        {
+            while (value >= 0x80)
             {
-                scalar_t d_i;
-                crypto_core_ed25519_scalar_mul(d_i.b32, z_pow.b32, powers_of_two[i].b32);
-                d.push_back(d_i);
+                out.push_back(static_cast<char>((value & 0x7f) | 0x80));
+                value >>= 7;
             }
+            out.push_back(static_cast<char>(value));
         }
 
-        // aL1 = aL - (one_MN * z) = aL - z (since one_MN is all ones)
-        std::vector<scalar_t> aL1 = aL;
-        for (size_t i = 0; i < MN; ++i)
-            crypto_core_ed25519_scalar_sub(aL1[i].b32, aL1[i].b32, z.b32);
-
-        // yexp = y.pow_expand(MN, true, false) - ascending powers: [y^1, y^2, ..., y^MN]
-        scalar_vec_t y_powers = scalar_vec_pow(_y, MN);
-        // aR1 = aR + (d * yexp) + (one_MN * z)
-        std::vector<scalar_t> aR1 = aR;
-        for (size_t i = 0; i < MN; ++i)
+        scalar_t hash_to_scalar_bytes(const uint8_t* data, size_t size)
         {
-            scalar_t term;
-            crypto_core_ed25519_scalar_mul(term.b32, d[i].b32, y_powers[i].b32);
-            crypto_core_ed25519_scalar_add(term.b32, term.b32, z.b32);
-            crypto_core_ed25519_scalar_add(aR1[i].b32, aR1[i].b32, term.b32);
+            scalar_t out;
+            xmr_fast_hash(out.b32, data, size);
+            sc_reduce32(out.b32);
+            return out;
         }
 
-        // Compute alpha1
-        scalar_t alpha1 = alpha;
-        // ypow = y.pow(MN + 1)
-        scalar_t y_pow = scalar_pow(_y, MN + 1);
-        for (size_t j = 0; j < M; ++j)
+        scalar_t hash_to_scalar_keys(const std::vector<point_t>& keys)
         {
-            scalar_t z_pow = scalar_pow(z, 2 * (j + 1)), term;
-            crypto_core_ed25519_scalar_mul(term.b32, z_pow.b32, blinding_factors[j].b32);
-            crypto_core_ed25519_scalar_mul(term.b32, term.b32, y_pow.b32);
-            crypto_core_ed25519_scalar_add(alpha1.b32, alpha1.b32, term.b32);
+            std::vector<uint8_t> data;
+            data.reserve(keys.size() * 32);
+            for (const auto& key : keys)
+                data.insert(data.end(), key.b32, key.b32 + 32);
+            return hash_to_scalar_bytes(data.data(), data.size());
         }
 
-        // Compute inner product round
-        auto weighted_inner_product = [](const std::vector<scalar_t>& a, const std::vector<scalar_t>& b, const scalar_t& y) -> scalar_t
+        scalar_t hash_to_scalar_pair(const scalar_t& state, const point_t& update)
         {
-            if (a.size() != b.size())
-                throw std::invalid_argument("weighted inner product vectors must be of the same size");
+            uint8_t data[64];
+            std::memcpy(data, state.b32, 32);
+            std::memcpy(data + 32, update.b32, 32);
+            return hash_to_scalar_bytes(data, sizeof(data));
+        }
 
+        scalar_t hash_to_scalar_triple(const scalar_t& state, const point_t& update0, const point_t& update1)
+        {
+            uint8_t data[96];
+            std::memcpy(data, state.b32, 32);
+            std::memcpy(data + 32, update0.b32, 32);
+            std::memcpy(data + 64, update1.b32, 32);
+            return hash_to_scalar_bytes(data, sizeof(data));
+        }
+
+        point_t point_from_p3(const ge_p3& p3)
+        {
+            point_t out;
+            ge_p3_tobytes(out.b32, &p3);
+            return out;
+        }
+
+        ge_p3 point_to_p3(const point_t& point)
+        {
+            ge_p3 p3;
+            if (ge_frombytes_vartime(&p3, point.b32) != 0)
+                throw std::runtime_error("failed to decode point");
+            return p3;
+        }
+
+        point_t point_hash_key(const scalar_t& key)
+        {
+            scalar_t hash_key;
+            xmr_fast_hash(hash_key.b32, key.b32, sizeof(key.b32));
+
+            ge_p2 hash_p2;
+            ge_fromfe_frombytes_vartime(&hash_p2, hash_key.b32);
+
+            ge_p1p1 hash8_p1p1;
+            ge_mul8(&hash8_p1p1, &hash_p2);
+
+            ge_p3 hash8_p3;
+            ge_p1p1_to_p3(&hash8_p3, &hash8_p1p1);
+            return point_from_p3(hash8_p3);
+        }
+
+        point_t point_hash_bytes(const uint8_t* data, size_t size)
+        {
+            scalar_t first_hash;
+            xmr_fast_hash(first_hash.b32, data, size);
+            return point_hash_key(first_hash);
+        }
+
+        point_t point_add(const point_t& lhs, const point_t& rhs)
+        {
+            const point_t identity = point_identity();
+            if (equal(lhs, identity))
+                return rhs;
+            if (equal(rhs, identity))
+                return lhs;
+
+            ge_p3 lhs_p3 = point_to_p3(lhs);
+            ge_p3 rhs_p3 = point_to_p3(rhs);
+            ge_cached rhs_cached;
+            ge_p3_to_cached(&rhs_cached, &rhs_p3);
+
+            ge_p1p1 sum_p1p1;
+            ge_add(&sum_p1p1, &lhs_p3, &rhs_cached);
+
+            ge_p3 sum_p3;
+            ge_p1p1_to_p3(&sum_p3, &sum_p1p1);
+            return point_from_p3(sum_p3);
+        }
+
+        point_t point_scalar_mul(const point_t& point, const scalar_t& scalar)
+        {
+            if (scalar.empty() || equal(point, point_identity()))
+                return point_identity();
+
+            ge_p3 p3 = point_to_p3(point);
+            ge_p2 result;
+            ge_scalarmult(&result, scalar.b32, &p3);
+
+            point_t out;
+            ge_tobytes(out.b32, &result);
+            return out;
+        }
+
+        point_t point_base_mul(const scalar_t& scalar)
+        {
+            point_t out;
+            sc_mul_g(out.b32, scalar.b32);
+            return out;
+        }
+
+        point_t add_keys2(const scalar_t& a, const scalar_t& b, const point_t& B)
+        {
+            ge_p3 B_p3 = point_to_p3(B);
+            ge_p2 result;
+            ge_double_scalarmult_base_vartime(&result, b.b32, &B_p3, a.b32);
+
+            point_t out;
+            ge_tobytes(out.b32, &result);
+            return out;
+        }
+
+        point_t point_multiexp(const std::vector<std::pair<scalar_t, point_t>>& terms)
+        {
+            point_t acc = point_identity();
+            for (const auto& term : terms)
+            {
+                if (term.first.empty())
+                    continue;
+                acc = point_add(acc, point_scalar_mul(term.second, term.first));
+            }
+            return acc;
+        }
+
+        void hadamard_fold(std::vector<point_t>& points, const scalar_t& a, const scalar_t& b)
+        {
+            if ((points.size() & 1) != 0)
+                throw std::runtime_error("cannot fold odd point vector");
+
+            const size_t half = points.size() / 2;
+            for (size_t i = 0; i < half; ++i)
+            {
+                ge_p3 left = point_to_p3(points[i]);
+                ge_p3 right = point_to_p3(points[half + i]);
+                ge_dsmp precomp[2];
+                ge_dsm_precomp(precomp[0], &left);
+                ge_dsm_precomp(precomp[1], &right);
+                ge_double_scalarmult_precomp_vartime2_p3(&left, a.b32, precomp[0], b.b32, precomp[1]);
+                points[i] = point_from_p3(left);
+            }
+            points.resize(half);
+        }
+
+        std::vector<scalar_t> scalar_powers(const scalar_t& base, size_t count)
+        {
+            if (count == 0)
+                throw std::runtime_error("scalar power count must be nonzero");
+
+            std::vector<scalar_t> out(count);
+            out[0].b32[0] = 1;
+            for (size_t i = 1; i < count; ++i)
+                scalar_mul(out[i], out[i - 1], base);
+            return out;
+        }
+
+        std::vector<scalar_t> vector_add(const std::vector<scalar_t>& lhs, const std::vector<scalar_t>& rhs)
+        {
+            if (lhs.size() != rhs.size())
+                throw std::runtime_error("scalar vector size mismatch");
+
+            std::vector<scalar_t> out(lhs.size());
+            for (size_t i = 0; i < lhs.size(); ++i)
+                scalar_add(out[i], lhs[i], rhs[i]);
+            return out;
+        }
+
+        std::vector<scalar_t> vector_add(const std::vector<scalar_t>& lhs, const scalar_t& rhs)
+        {
+            std::vector<scalar_t> out(lhs.size());
+            for (size_t i = 0; i < lhs.size(); ++i)
+                scalar_add(out[i], lhs[i], rhs);
+            return out;
+        }
+
+        std::vector<scalar_t> vector_sub(const std::vector<scalar_t>& lhs, const scalar_t& rhs)
+        {
+            std::vector<scalar_t> out(lhs.size());
+            for (size_t i = 0; i < lhs.size(); ++i)
+                scalar_sub(out[i], lhs[i], rhs);
+            return out;
+        }
+
+        std::vector<scalar_t> vector_scalar(
+            const std::vector<scalar_t>& values,
+            size_t start,
+            size_t stop,
+            const scalar_t& multiplier)
+        {
+            if (start >= stop || stop > values.size())
+                throw std::runtime_error("invalid vector slice");
+
+            std::vector<scalar_t> out(stop - start);
+            for (size_t i = start; i < stop; ++i)
+                scalar_mul(out[i - start], values[i], multiplier);
+            return out;
+        }
+
+        scalar_t weighted_inner_product(
+            const std::vector<scalar_t>& lhs,
+            size_t lhs_start,
+            const std::vector<scalar_t>& rhs,
+            size_t rhs_start,
+            size_t count,
+            const scalar_t& y)
+        {
             scalar_t result;
+            scalar_t y_power;
+            y_power.b32[0] = 1;
+
+            for (size_t i = 0; i < count; ++i)
+            {
+                scalar_t term;
+                scalar_mul(term, lhs[lhs_start + i], rhs[rhs_start + i]);
+                scalar_mul(y_power, y_power, y);
+                scalar_muladd(result, term, y_power, result);
+            }
+            return result;
+        }
+
+        scalar_t weighted_inner_product(
+            const std::vector<scalar_t>& lhs,
+            const std::vector<scalar_t>& rhs,
+            size_t rhs_start,
+            const scalar_t& y)
+        {
+            scalar_t result;
+            scalar_t y_power;
+            y_power.b32[0] = 1;
+
+            for (size_t i = 0; i < lhs.size(); ++i)
+            {
+                scalar_t term;
+                scalar_mul(term, lhs[i], rhs[rhs_start + i]);
+                scalar_mul(y_power, y_power, y);
+                scalar_muladd(result, term, y_power, result);
+            }
+            return result;
+        }
+
+        constants_t make_constants()
+        {
+            constants_t c;
+            c.one.b32[0] = 1;
+            c.two.b32[0] = 2;
+            scalar_sub(c.minus_one, c.zero, c.one);
+
+            scalar_t eight = scalar_uint64(8);
+            scalar_invert(c.inv_eight, eight);
+            scalar_sub(c.minus_inv_eight, c.zero, c.inv_eight);
+
+            c.G = point_base_mul(c.one);
+            std::memcpy(c.H.b32, H_BYTES, 32);
+            c.initial_transcript = point_hash_bytes(
+                reinterpret_cast<const uint8_t*>(HASH_KEY_BULLETPROOF_PLUS_TRANSCRIPT),
+                std::strlen(HASH_KEY_BULLETPROOF_PLUS_TRANSCRIPT));
+            return c;
+        }
+
+        const constants_t& constants()
+        {
+            static const constants_t c = make_constants();
+            return c;
+        }
+
+        void init_exponents(std::vector<point_t>& Gi, std::vector<point_t>& Hi, size_t count)
+        {
+            const constants_t& c = constants();
+            Gi.resize(count);
+            Hi.resize(count);
+            for (size_t i = 0; i < count; ++i)
+            {
+                std::string h_hash(reinterpret_cast<const char*>(c.H.b32), 32);
+                h_hash += HASH_KEY_BULLETPROOF_PLUS_EXPONENT;
+                write_varint(i * 2, h_hash);
+                Hi[i] = point_hash_bytes(reinterpret_cast<const uint8_t*>(h_hash.data()), h_hash.size());
+
+                std::string g_hash(reinterpret_cast<const char*>(c.H.b32), 32);
+                g_hash += HASH_KEY_BULLETPROOF_PLUS_EXPONENT;
+                write_varint(i * 2 + 1, g_hash);
+                Gi[i] = point_hash_bytes(reinterpret_cast<const uint8_t*>(g_hash.data()), g_hash.size());
+            }
+        }
+
+        point_t vector_exponent(
+            const std::vector<scalar_t>& a,
+            const std::vector<scalar_t>& b,
+            const std::vector<point_t>& Gi,
+            const std::vector<point_t>& Hi)
+        {
+            std::vector<std::pair<scalar_t, point_t>> terms;
+            terms.reserve(a.size() * 2);
             for (size_t i = 0; i < a.size(); ++i)
             {
-                scalar_t term, y_pow = scalar_pow(y, i + 1);
-                crypto_core_ed25519_scalar_mul(term.b32, a[i].b32, b[i].b32);
-                crypto_core_ed25519_scalar_mul(term.b32, term.b32, y_pow.b32);
-                crypto_core_ed25519_scalar_add(result.b32, result.b32, term.b32);
+                terms.push_back({ a[i], Gi[i] });
+                terms.push_back({ b[i], Hi[i] });
             }
-            return result;
-        };
-
-        // Recursive inner product rounds
-        std::vector<point_t> Gi = _Gi;
-        std::vector<point_t> Hi = _Hi;
-        std::vector<scalar_t> a = aL1;
-        std::vector<scalar_t> b = aR1;
-        scalar_t _alpha = alpha1;
-        scalar_t y = _y;
-        auto n = static_cast<size_t>(Gi.size());
-        proof_t p;
-        while (n > 1)
-        {
-            n /= 2;
-
-            // Split vectors in half
-            std::vector<scalar_t> a1(a.begin(), a.begin() + n);
-            std::vector<scalar_t> a2(a.begin() + n, a.end());
-            std::vector<scalar_t> b1(b.begin(), b.begin() + n);
-            std::vector<scalar_t> b2(b.begin() + n, b.end());
-            std::vector<point_t> G1(Gi.begin(), Gi.begin() + n);
-            std::vector<point_t> G2(Gi.begin() + n, Gi.end());
-            std::vector<point_t> H1(Hi.begin(), Hi.begin() + n);
-            std::vector<point_t> H2(Hi.begin() + n, Hi.end());
-
-            // Generate random d values
-            scalar_t dL = scalar_random();
-            scalar_t dR = scalar_random();
-            if (dL.empty() || dR.empty())
-                goto try_setup;
-
-            // Compute cL = weighted_inner_product(a1, b2, y)
-            // Compute cR = weighted_inner_product(a2 * y^n, b1, y)
-            scalar_t cL = weighted_inner_product(a1, b2, y);
-            scalar_t y_pow_n = scalar_pow(y, n);
-            std::vector<scalar_t> a2_scaled;
-            for (auto& s : a2)
-            {
-                scalar_t scaled;
-                crypto_core_ed25519_scalar_mul(scaled.b32, s.b32, y_pow_n.b32);
-                a2_scaled.push_back(scaled);
-            }
-
-            scalar_t cR = weighted_inner_product(a2_scaled, b1, y);
-            // Compute y^n and y^(-n)
-            scalar_t y_pow_n_full = scalar_pow(y, n), y_inv;
-            crypto_core_ed25519_scalar_invert(y_inv.b32, y.b32);
-            scalar_t y_inv_pow_n = scalar_pow(y_inv, n);
-
-            // Compute L point:
-            // L = INV_EIGHT * ((a1 * y^(-n)) . G2 + b2 . H1 + cL*H + dL*G)
-            point_t L_term1, L_term2, L_term3, L_combined;
-            // (a1 * y^(-n)) . G2
-            std::vector<scalar_t> a1_scaled;
-            for (auto& s : a1)
-            {
-                scalar_t scaled;
-                crypto_core_ed25519_scalar_mul(scaled.b32, s.b32, y_inv_pow_n.b32);
-                a1_scaled.push_back(scaled);
-            }
-
-            point_vec_inner_product(L_term1, G2, a1_scaled);
-            // b2 . H1
-            point_vec_inner_product(L_term2, H1, b2);
-
-            // cL * H + dL * G
-            point_t cL_H, dL_G;
-            if (crypto_scalarmult_ed25519(cL_H.b32, cL.b32, point_generator_H().b32) == -1)
-                goto try_setup;
-            if (crypto_scalarmult_ed25519(dL_G.b32, dL.b32, point_generator_G().b32) == -1)
-                goto try_setup;
-            crypto_core_ed25519_add(L_term3.b32, cL_H.b32, dL_G.b32);
-
-            // Combine L terms
-            crypto_core_ed25519_add(L_combined.b32, L_term1.b32, L_term2.b32);
-            crypto_core_ed25519_add(L_combined.b32, L_combined.b32, L_term3.b32);
-
-            // Scale by 1/8
-            scalar_t inv_eight = scalar_uint64(8);
-            crypto_core_ed25519_scalar_invert(inv_eight.b32, inv_eight.b32);
-
-            point_t L_point;
-            if (crypto_scalarmult_ed25519(L_point.b32, inv_eight.b32, L_combined.b32) == -1)
-                goto try_setup;
-
-            // Compute R point:
-            // R = INV_EIGHT * ((a2 * y^n) . G1 + b1 . H2 + cR*H + dR*G)
-            point_t R_term1, R_term2, R_term3, R_combined;
-            // (a2 * y^n) . G1
-            point_vec_inner_product(R_term1, G1, a2_scaled);
-            // b1 . H2
-            point_vec_inner_product(R_term2, H2, b1);
-
-            // cR * H + dR * G
-            point_t cR_H, dR_G;
-            if (crypto_scalarmult_ed25519(cR_H.b32, cR.b32, point_generator_H().b32) == -1)
-                goto try_setup;
-            if (crypto_scalarmult_ed25519(dR_G.b32, dR.b32, point_generator_G().b32) == -1)
-                goto try_setup;
-            crypto_core_ed25519_add(R_term3.b32, cR_H.b32, dR_G.b32);
-
-            // Combine R terms
-            crypto_core_ed25519_add(R_combined.b32, R_term1.b32, R_term2.b32);
-            crypto_core_ed25519_add(R_combined.b32, R_combined.b32, R_term3.b32);
-
-            // Scale by 1/8
-            point_t R_point;
-            if (crypto_scalarmult_ed25519(R_point.b32, inv_eight.b32, R_combined.b32) == -1)
-                goto try_setup;
-            p.L.push_back(L_point);
-            p.R.push_back(R_point);
-            tr.update(L_point);
-            tr.update(R_point);
-
-            const scalar_t x = tr.challenge();
-            if (x.empty())
-                goto try_setup;
-
-            // Update Gi = G1.dbl_mult(x^(-1), G2, x * y^(-n))
-            // This is: Gi_new = x^(-1)*G1 + x*y^(-n)*G2
-            scalar_t x_inv;
-            crypto_core_ed25519_scalar_invert(x_inv.b32, x.b32);
-
-            std::vector<point_t> new_Gi;
-            for (size_t i = 0; i < n; ++i)
-            {
-                // Gi = G1*x^(-1) + G2*x*y^(-n)
-                scalar_t g1_coeff = x_inv;
-                scalar_t g2_coeff;
-                crypto_core_ed25519_scalar_mul(g2_coeff.b32, x.b32, y_inv_pow_n.b32);
-
-                point_t g1_scaled, g2_scaled;
-                if (crypto_scalarmult_ed25519(g1_scaled.b32, g1_coeff.b32, G1[i].b32) == -1)
-                    goto try_setup;
-                if (crypto_scalarmult_ed25519(g2_scaled.b32, g2_coeff.b32, G2[i].b32) == -1)
-                    goto try_setup;
-
-                point_t new_G;
-                crypto_core_ed25519_add(new_G.b32, g1_scaled.b32, g2_scaled.b32);
-                new_Gi.push_back(new_G);
-            }
-            Gi = std::move(new_Gi);
-
-            // Update Hi = H1.dbl_mult(x, H2, x^(-1))
-            // This is: Hi_new = x*H1 + x^(-1)*H2
-            std::vector<point_t> new_Hi;
-            for (size_t i = 0; i < n; ++i)
-            {
-                // Hi = H1*x + H2*x^(-1)
-                scalar_t h1_coeff = x;
-                scalar_t h2_coeff;
-                crypto_core_ed25519_scalar_invert(h2_coeff.b32, x.b32);
-
-                point_t h1_scaled, h2_scaled;
-                if (crypto_scalarmult_ed25519(h1_scaled.b32, h1_coeff.b32, H1[i].b32) == -1)
-                    goto try_setup;
-                if (crypto_scalarmult_ed25519(h2_scaled.b32, h2_coeff.b32, H2[i].b32) == -1)
-                    goto try_setup;
-
-                point_t new_H;
-                crypto_core_ed25519_add(new_H.b32, h1_scaled.b32, h2_scaled.b32);
-                new_Hi.push_back(new_H);
-            }
-            Hi = std::move(new_Hi);
-
-            // Update a = (a1 * x) + (a2 * y^n * x^(-1))
-            // Update b = (b1 * x^(-1)) + (b2 * x)
-            // Update alpha = dL * x^2 + alpha + dR * x^(-2)
-
-            scalar_t x_sq, x_inv_sq;
-            crypto_core_ed25519_scalar_mul(x_sq.b32, x.b32, x.b32);
-            crypto_core_ed25519_scalar_invert(x_inv_sq.b32, x_sq.b32);
-
-            for (size_t i = 0; i < n; ++i)
-            {
-                // a[i] = a1[i] * x + a2[i] * y^n * x^(-1)
-                scalar_t a1_term;
-                crypto_core_ed25519_scalar_mul(a1_term.b32, a1[i].b32, x.b32);
-                scalar_t a2_term;
-                crypto_core_ed25519_scalar_mul(a2_term.b32, a2[i].b32, y_pow_n_full.b32);
-                crypto_core_ed25519_scalar_mul(a2_term.b32, a2_term.b32, x_inv.b32);
-                crypto_core_ed25519_scalar_add(a[i].b32, a1_term.b32, a2_term.b32);
-
-                // b[i] = b1[i] * x^(-1) + b2[i] * x
-                scalar_t b1_term;
-                crypto_core_ed25519_scalar_mul(b1_term.b32, b1[i].b32, x_inv.b32);
-                scalar_t b2_term;
-                crypto_core_ed25519_scalar_mul(b2_term.b32, b2[i].b32, x.b32);
-                crypto_core_ed25519_scalar_add(b[i].b32, b1_term.b32, b2_term.b32);
-            }
-
-            // alpha = dL * x^2 + alpha + dR * x^(-2)
-            scalar_t dL_x_sq, dR_x_inv_sq;
-            crypto_core_ed25519_scalar_mul(dL_x_sq.b32, dL.b32, x_sq.b32);
-            crypto_core_ed25519_scalar_mul(dR_x_inv_sq.b32, dR.b32, x_inv_sq.b32);
-            crypto_core_ed25519_scalar_add(dL_x_sq.b32, dL_x_sq.b32, _alpha.b32);
-            crypto_core_ed25519_scalar_add(dL_x_sq.b32, dL_x_sq.b32, dR_x_inv_sq.b32);
-            _alpha = dL_x_sq;
+            return point_multiexp(terms);
         }
 
-        // Final round
-    try_prove:
-        scalar_t r = scalar_random();
-        scalar_t s = scalar_random();
-        scalar_t _d = scalar_random();
-        scalar_t eta = scalar_random();
-        if (r.empty() || s.empty() || _d.empty() || eta.empty())
-            goto try_prove;
+        point_t compute_LR(
+            size_t size,
+            const scalar_t& y,
+            const std::vector<point_t>& G,
+            size_t G0,
+            const std::vector<point_t>& H,
+            size_t H0,
+            const std::vector<scalar_t>& a,
+            size_t a0,
+            const std::vector<scalar_t>& b,
+            size_t b0,
+            const scalar_t& c,
+            const scalar_t& d)
+        {
+            const constants_t& k = constants();
+            std::vector<std::pair<scalar_t, point_t>> terms;
+            terms.reserve(size * 2 + 2);
 
-        // Compute rybsya = r * y * b[0] + s * y * a[0]
-        scalar_t ry, sy, rybsya;
-        crypto_core_ed25519_scalar_mul(ry.b32, r.b32, y.b32);
-        crypto_core_ed25519_scalar_mul(ry.b32, ry.b32, b[0].b32);
-        crypto_core_ed25519_scalar_mul(sy.b32, s.b32, y.b32);
-        crypto_core_ed25519_scalar_mul(sy.b32, sy.b32, a[0].b32);
-        crypto_core_ed25519_scalar_add(rybsya.b32, ry.b32, sy.b32);
+            for (size_t i = 0; i < size; ++i)
+            {
+                scalar_t g_scalar, h_scalar, temp;
+                scalar_mul(temp, a[a0 + i], y);
+                scalar_mul(g_scalar, temp, k.inv_eight);
+                scalar_mul(h_scalar, b[b0 + i], k.inv_eight);
+                terms.push_back({ g_scalar, G[G0 + i] });
+                terms.push_back({ h_scalar, H[H0 + i] });
+            }
 
-        // A = INV_EIGHT * (r*G1[0] + s*H1[0] + rybsya*H + d*G)
-        point_t A_rG, A_sH, A_rybsyaH, A_dG, _A_combined;
-        if (crypto_scalarmult_ed25519(A_rG.b32, r.b32, Gi[0].b32) == -1)
-            goto try_prove;
-        if (crypto_scalarmult_ed25519(A_sH.b32, s.b32, Hi[0].b32) == -1)
-            goto try_prove;
-        if (crypto_scalarmult_ed25519(A_rybsyaH.b32, rybsya.b32, point_generator_H().b32) == -1)
-            goto try_prove;
-        if (crypto_scalarmult_ed25519(A_dG.b32, _d.b32, point_generator_G().b32) == -1)
-            goto try_prove;
-        crypto_core_ed25519_add(_A_combined.b32, A_rG.b32, A_sH.b32);
-        crypto_core_ed25519_add(_A_combined.b32, _A_combined.b32, A_rybsyaH.b32);
-        crypto_core_ed25519_add(_A_combined.b32, _A_combined.b32, A_dG.b32);
-        if (crypto_scalarmult_ed25519(p.A.b32, inv_eight.b32, _A_combined.b32) == -1)
-            goto try_prove;
+            scalar_t c_scaled, d_scaled;
+            scalar_mul(c_scaled, c, k.inv_eight);
+            scalar_mul(d_scaled, d, k.inv_eight);
+            terms.push_back({ c_scaled, k.H });
+            terms.push_back({ d_scaled, k.G });
+            return point_multiexp(terms);
+        }
+    }
 
-        // B = INV_EIGHT * ((r * y * s) * H + eta * G)
-        scalar_t ry_s;
-        crypto_core_ed25519_scalar_mul(ry_s.b32, r.b32, y.b32);
-        crypto_core_ed25519_scalar_mul(ry_s.b32, ry_s.b32, s.b32);
+    std::tuple<proof_t, std::vector<point_t>> prove(
+        const std::vector<uint64_t>& amounts,
+        const std::vector<scalar_t>& blinding_factors,
+        size_t N)
+    {
+        const constants_t& k = constants();
+        if (N != 64)
+            throw std::runtime_error("Monero Bulletproofs+ proofs must use 64-bit ranges");
+        if (amounts.empty() || amounts.size() != blinding_factors.size() || amounts.size() > maxM)
+            throw std::runtime_error("invalid Bulletproofs+ input sizes");
+        for (const scalar_t& gamma : blinding_factors)
+        {
+            if (sc_check(gamma.b32) != 0)
+                throw std::runtime_error("invalid Bulletproofs+ mask scalar");
+        }
 
-        point_t B_rybsH, B_etaG, B_combined;
-        if (crypto_scalarmult_ed25519(B_rybsH.b32, ry_s.b32, point_generator_H().b32) == -1)
-            goto try_prove;
-        if (crypto_scalarmult_ed25519(B_etaG.b32, eta.b32, point_generator_G().b32) == -1)
-            goto try_prove;
-        crypto_core_ed25519_add(B_combined.b32, B_rybsH.b32, B_etaG.b32);
-        if (crypto_scalarmult_ed25519(p.B.b32, inv_eight.b32, B_combined.b32) == -1)
-            goto try_prove;
+        size_t M = 1, logM = 0;
+        while (M < amounts.size())
+        {
+            M <<= 1;
+            ++logM;
+        }
+        const size_t logN = 6;
+        const size_t logMN = logM + logN;
+        const size_t MN = M * N;
 
-        tr.update(p.A);
-        tr.update(p.B);
+        std::vector<point_t> Gi, Hi;
+        init_exponents(Gi, Hi, MN);
 
-        const scalar_t x = tr.challenge();
-        if (x.empty())
-            goto try_prove;
+        std::vector<point_t> V(amounts.size());
+        std::vector<point_t> output_commitments(amounts.size());
+        std::vector<scalar_t> sv(amounts.size());
+        for (size_t i = 0; i < amounts.size(); ++i)
+        {
+            sv[i] = scalar_uint64(amounts[i]);
 
-        // r1 = r + a[0] * x
-        scalar_t r1_term;
-        crypto_core_ed25519_scalar_mul(r1_term.b32, a[0].b32, x.b32);
-        crypto_core_ed25519_scalar_add(p.r1.b32, r.b32, r1_term.b32);
+            output_commitments[i] = add_keys2(blinding_factors[i], sv[i], k.H);
 
-        // s1 = s + b[0] * x
-        scalar_t s1_term;
-        crypto_core_ed25519_scalar_mul(s1_term.b32, b[0].b32, x.b32);
-        crypto_core_ed25519_scalar_add(p.s1.b32, s.b32, s1_term.b32);
+            scalar_t gamma8, sv8;
+            scalar_mul(gamma8, blinding_factors[i], k.inv_eight);
+            scalar_mul(sv8, sv[i], k.inv_eight);
+            V[i] = add_keys2(gamma8, sv8, k.H);
+        }
 
-        // d1 = eta + d * x + alpha * x^2
-        scalar_t x_sq;
-        crypto_core_ed25519_scalar_mul(x_sq.b32, x.b32, x.b32);
+        std::vector<scalar_t> aL(MN), aR(MN), aL8(MN), aR8(MN);
+        for (size_t j = 0; j < M; ++j)
+        {
+            for (size_t i = N; i-- > 0;)
+            {
+                const bool bit = j < amounts.size() && ((amounts[j] >> i) & 1);
+                if (bit)
+                {
+                    aL[j * N + i] = k.one;
+                    aL8[j * N + i] = k.inv_eight;
+                    aR[j * N + i] = k.zero;
+                    aR8[j * N + i] = k.zero;
+                }
+                else
+                {
+                    aL[j * N + i] = k.zero;
+                    aL8[j * N + i] = k.zero;
+                    aR[j * N + i] = k.minus_one;
+                    aR8[j * N + i] = k.minus_inv_eight;
+                }
+            }
+        }
 
-        scalar_t d_x, alpha_x_sq;
-        crypto_core_ed25519_scalar_mul(d_x.b32, _d.b32, x.b32);
-        crypto_core_ed25519_scalar_mul(alpha_x_sq.b32, _alpha.b32, x_sq.b32);
-        crypto_core_ed25519_scalar_add(p.d1.b32, eta.b32, d_x.b32);
-        crypto_core_ed25519_scalar_add(p.d1.b32, p.d1.b32, alpha_x_sq.b32);
-        return std::make_pair(std::move(p), std::move(V));
+        for (;;)
+        {
+            scalar_t transcript(k.initial_transcript.b32);
+            const scalar_t V_hash = hash_to_scalar_keys(V);
+            transcript = hash_to_scalar_pair(transcript, point_t(V_hash.b32));
+
+            scalar_t alpha = scalar_random();
+            point_t pre_A = vector_exponent(aL8, aR8, Gi, Hi);
+            scalar_t alpha8;
+            scalar_mul(alpha8, alpha, k.inv_eight);
+            point_t A = point_add(pre_A, point_base_mul(alpha8));
+
+            scalar_t y = hash_to_scalar_pair(transcript, A);
+            if (y.empty())
+                continue;
+
+            scalar_t z = hash_to_scalar_bytes(y.b32, 32);
+            transcript = z;
+            if (z.empty())
+                continue;
+
+            scalar_t z_squared;
+            scalar_mul(z_squared, z, z);
+
+            std::vector<scalar_t> d(MN);
+            d[0] = z_squared;
+            for (size_t i = 1; i < N; ++i)
+                scalar_mul(d[i], d[i - 1], k.two);
+            for (size_t j = 1; j < M; ++j)
+            {
+                for (size_t i = 0; i < N; ++i)
+                    scalar_mul(d[j * N + i], d[(j - 1) * N + i], z_squared);
+            }
+
+            std::vector<scalar_t> y_powers = scalar_powers(y, MN + 2);
+            std::vector<scalar_t> aL1 = vector_sub(aL, z);
+            std::vector<scalar_t> aR1 = vector_add(aR, z);
+            std::vector<scalar_t> d_y(MN);
+            for (size_t i = 0; i < MN; ++i)
+                scalar_mul(d_y[i], d[i], y_powers[MN - i]);
+            aR1 = vector_add(aR1, d_y);
+
+            scalar_t alpha1 = alpha;
+            scalar_t z_pow = k.one;
+            for (size_t j = 0; j < amounts.size(); ++j)
+            {
+                scalar_t temp;
+                scalar_mul(z_pow, z_pow, z_squared);
+                scalar_mul(temp, y_powers[MN + 1], z_pow);
+                scalar_muladd(alpha1, temp, blinding_factors[j], alpha1);
+            }
+
+            std::vector<point_t> Gprime = Gi;
+            std::vector<point_t> Hprime = Hi;
+            std::vector<scalar_t> aprime = aL1;
+            std::vector<scalar_t> bprime = aR1;
+
+            scalar_t yinv;
+            scalar_invert(yinv, y);
+            std::vector<scalar_t> yinvpow(MN);
+            yinvpow[0] = k.one;
+            for (size_t i = 1; i < MN; ++i)
+                scalar_mul(yinvpow[i], yinvpow[i - 1], yinv);
+
+            proof_t proof;
+            proof.A = A;
+            proof.L.resize(logMN);
+            proof.R.resize(logMN);
+
+            size_t nprime = MN;
+            size_t round = 0;
+            bool retry_proof = false;
+            while (nprime > 1)
+            {
+                nprime /= 2;
+
+                scalar_t cL = weighted_inner_product(aprime, 0, bprime, nprime, nprime, y);
+                std::vector<scalar_t> a2_scaled = vector_scalar(aprime, nprime, aprime.size(), y_powers[nprime]);
+                scalar_t cR = weighted_inner_product(a2_scaled, bprime, 0, y);
+
+                scalar_t dL = scalar_random();
+                scalar_t dR = scalar_random();
+
+                proof.L[round] = compute_LR(nprime, yinvpow[nprime], Gprime, nprime, Hprime, 0, aprime, 0, bprime, nprime, cL, dL);
+                proof.R[round] = compute_LR(nprime, y_powers[nprime], Gprime, 0, Hprime, nprime, aprime, nprime, bprime, 0, cR, dR);
+
+                scalar_t challenge = hash_to_scalar_triple(transcript, proof.L[round], proof.R[round]);
+                if (challenge.empty())
+                {
+                    retry_proof = true;
+                    break;
+                }
+                transcript = challenge;
+
+                scalar_t challenge_inv;
+                scalar_invert(challenge_inv, challenge);
+
+                scalar_t temp;
+                scalar_mul(temp, yinvpow[nprime], challenge);
+                hadamard_fold(Gprime, challenge_inv, temp);
+                hadamard_fold(Hprime, challenge, challenge_inv);
+
+                scalar_mul(temp, challenge_inv, y_powers[nprime]);
+                aprime = vector_add(vector_scalar(aprime, 0, nprime, challenge), vector_scalar(aprime, nprime, aprime.size(), temp));
+                bprime = vector_add(vector_scalar(bprime, 0, nprime, challenge_inv), vector_scalar(bprime, nprime, bprime.size(), challenge));
+
+                scalar_t challenge_squared, challenge_squared_inv;
+                scalar_mul(challenge_squared, challenge, challenge);
+                scalar_mul(challenge_squared_inv, challenge_inv, challenge_inv);
+                scalar_muladd(alpha1, dL, challenge_squared, alpha1);
+                scalar_muladd(alpha1, dR, challenge_squared_inv, alpha1);
+
+                ++round;
+            }
+            if (retry_proof)
+                continue;
+
+            scalar_t r = scalar_random();
+            scalar_t s = scalar_random();
+            scalar_t d_final = scalar_random();
+            scalar_t eta = scalar_random();
+
+            std::vector<std::pair<scalar_t, point_t>> A1_terms;
+            A1_terms.reserve(4);
+
+            scalar_t r8, s8, d8, h_scalar;
+            scalar_mul(r8, r, k.inv_eight);
+            scalar_mul(s8, s, k.inv_eight);
+            scalar_mul(d8, d_final, k.inv_eight);
+
+            scalar_t temp, temp2;
+            scalar_mul(temp, r, y);
+            scalar_mul(temp, temp, bprime[0]);
+            scalar_mul(temp2, s, y);
+            scalar_mul(temp2, temp2, aprime[0]);
+            scalar_add(temp, temp, temp2);
+            scalar_mul(h_scalar, temp, k.inv_eight);
+
+            A1_terms.push_back({ r8, Gprime[0] });
+            A1_terms.push_back({ s8, Hprime[0] });
+            A1_terms.push_back({ d8, k.G });
+            A1_terms.push_back({ h_scalar, k.H });
+            proof.A1 = point_multiexp(A1_terms);
+
+            scalar_t B_h_scalar, eta8;
+            scalar_mul(B_h_scalar, r, y);
+            scalar_mul(B_h_scalar, B_h_scalar, s);
+            scalar_mul(B_h_scalar, B_h_scalar, k.inv_eight);
+            scalar_mul(eta8, eta, k.inv_eight);
+            proof.B = add_keys2(eta8, B_h_scalar, k.H);
+
+            scalar_t e = hash_to_scalar_triple(transcript, proof.A1, proof.B);
+            if (e.empty())
+                continue;
+
+            scalar_t e_squared;
+            scalar_mul(e_squared, e, e);
+            scalar_muladd(proof.r1, aprime[0], e, r);
+            scalar_muladd(proof.s1, bprime[0], e, s);
+            scalar_muladd(proof.d1, d_final, e, eta);
+            scalar_muladd(proof.d1, alpha1, e_squared, proof.d1);
+
+            return std::make_tuple(std::move(proof), std::move(output_commitments));
+        }
     }
 }

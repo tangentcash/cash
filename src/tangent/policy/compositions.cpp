@@ -9,6 +9,7 @@ extern "C"
 #include "../internal/secp256k1.h"
 #include "../internal/ed25519.h"
 #include "../internal/sha2.h"
+#include "../internal/sha3.h"
 #include "../internal/monero.h"
 }
 
@@ -363,15 +364,15 @@ namespace tangent
 		{
 			algorithm::composition::cpubkey_t temp_public_key;
 			temp_public_key.resize(sizeof(ed25519_point_t));
-			auto status = setup_signature(temp_public_key, new_message, new_message_size, new_participants);
+			auto status = setup_signature(temp_public_key, new_message, new_message_size, nullptr, new_participants);
 			if (!status)
 				return status.error();
 
 			z_steps = new_participants;
-			group_public_key.clear();
+			cumulative_key.clear();
 			return expectation::met;
 		}
-		expects_lr<void> ed25519_compositor::setup_signature(const algorithm::composition::cpubkey_t& new_public_key, const uint8_t* new_message, size_t new_message_size, uint16_t new_participants)
+		expects_lr<void> ed25519_compositor::setup_signature(const algorithm::composition::cpubkey_t& new_public_key, const uint8_t* new_message, size_t new_message_size, const algorithm::composition::shared_message* new_shared, uint16_t new_participants)
 		{
 			VI_ASSERT(new_message != nullptr, "message should be set");
 			if (new_public_key.size() != sizeof(ed25519_point_t))
@@ -382,7 +383,7 @@ namespace tangent
 			cumulative_s = ed25519_scalar_t();
 			z_steps = 0;
 			r_steps = s_steps = participants = new_participants;
-			group_public_key = std::string_view((char*)new_public_key.data(), new_public_key.size());
+			cumulative_key = std::string_view((char*)new_public_key.data(), new_public_key.size());
 			message.resize(new_message_size);
 			memcpy(message.data(), new_message, new_message_size);
 			return expectation::met;
@@ -412,9 +413,9 @@ namespace tangent
 				uint8_t secret_key_buffer[64] = { 0 }, public_key[32] = { 0 };
 				memcpy(secret_key_buffer, secret_key.data(), secret_key.size());
 				ed25519_publickey_ext(secret_key_buffer, public_key);
-				if (group_public_key.empty())
-					memcpy(group_public_key.blob, public_key, sizeof(public_key));
-				else if (crypto_core_ed25519_add(group_public_key.blob, public_key, group_public_key.blob) != 0)
+				if (cumulative_key.empty())
+					memcpy(cumulative_key.blob, public_key, sizeof(public_key));
+				else if (crypto_core_ed25519_add(cumulative_key.blob, public_key, cumulative_key.blob) != 0)
 					return layer_exception("invalid secret key");
 
 				--z_steps;
@@ -450,7 +451,7 @@ namespace tangent
 				crypto_hash_sha512_state hash;
 				crypto_hash_sha512_init(&hash);
 				crypto_hash_sha512_update(&hash, cumulative_r.blob, sizeof(cumulative_r.blob));
-				crypto_hash_sha512_update(&hash, group_public_key.blob, sizeof(group_public_key.blob));
+				crypto_hash_sha512_update(&hash, cumulative_key.blob, sizeof(cumulative_key.blob));
 				crypto_hash_sha512_update(&hash, message.data(), message.size());
 				crypto_hash_sha512_final(&hash, hram);
 				crypto_core_ed25519_scalar_reduce(hram, hram);
@@ -503,8 +504,8 @@ namespace tangent
 		expects_lr<void> ed25519_compositor::derive_public_key(algorithm::composition::cpubkey_t* output) const
 		{
 			VI_ASSERT(output != nullptr, "output should be set");
-			output->resize(sizeof(group_public_key));
-			memcpy(output->data(), group_public_key.blob, sizeof(group_public_key));
+			output->resize(sizeof(cumulative_key));
+			memcpy(output->data(), cumulative_key.blob, sizeof(cumulative_key));
 			return expectation::met;
 		}
 		expects_lr<void> ed25519_compositor::derive_signature(algorithm::composition::chashsig_t* output) const
@@ -573,7 +574,7 @@ namespace tangent
 				stream->write_integer(index);
 			stream->write_string(cumulative_r.optimized_view());
 			stream->write_string(cumulative_s.optimized_view());
-			stream->write_string(group_public_key.optimized_view());
+			stream->write_string(cumulative_key.optimized_view());
 			stream->write_string(std::string_view((char*)message.data(), message.size()));
 			return true;
 		}
@@ -610,7 +611,7 @@ namespace tangent
 				return false;
 
 
-			if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, group_public_key.blob, sizeof(group_public_key)))
+			if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, cumulative_key.blob, sizeof(cumulative_key)))
 				return false;
 
 			if (!stream.read_string(stream.read_type(), &intermediate))
@@ -626,7 +627,7 @@ namespace tangent
 			if (participants != next->participants || message != next->message)
 				return false;
 
-			if (z_steps == next->z_steps && !group_public_key.equals(next->group_public_key))
+			if (z_steps == next->z_steps && !cumulative_key.equals(next->cumulative_key))
 				return false;
 
 			return steps_left() >= next->steps_left();
@@ -643,17 +644,25 @@ namespace tangent
 				stream->write_integer((uint8_t)utxo.clsag.s.size());
 				for (auto& s : utxo.clsag.s)
 					stream->write_string(std::string_view((char*)s.data(), s.size()));
-				stream->write_string(std::string_view((char*)utxo.pseudo_out.blinding_factor, sizeof(utxo.pseudo_out.blinding_factor)));
 				stream->write_string(std::string_view((char*)utxo.pseudo_out.mask, sizeof(utxo.pseudo_out.mask)));
-				stream->write_integer((uint8_t)utxo.key_offsets.size());
-				for (auto& key_offset : utxo.key_offsets)
-					stream->write_integer(key_offset);
+				stream->write_string(std::string_view((char*)utxo.pseudo_out.key, sizeof(utxo.pseudo_out.key)));
+				stream->write_string(std::string_view((char*)utxo.prev_out.commitment_mask, sizeof(utxo.prev_out.commitment_mask)));
+				stream->write_string(std::string_view((char*)utxo.prev_out.derivation_scalar, sizeof(utxo.prev_out.derivation_scalar)));
+				stream->write_integer(utxo.prev_out.index);
+				stream->write_integer((uint8_t)utxo.keys.size());
+				for (auto& key_offset : utxo.keys)
+				{
+					stream->write_string(std::string_view((char*)key_offset.key, sizeof(key_offset.key)));
+					stream->write_string(std::string_view((char*)key_offset.mask, sizeof(key_offset.mask)));
+					stream->write_integer(key_offset.index);
+					stream->write_boolean(key_offset.decoy);
+				}
 				stream->write_string(std::string_view((char*)utxo.key_image, sizeof(utxo.key_image)));
-				stream->write_integer(utxo.key_offset_out);
 			}
 			stream->write_integer((uint16_t)vout.size());
 			for (auto& utxo : vout)
 			{
+				stream->write_integer(utxo.target.tag);
 				stream->write_string(std::string_view((char*)utxo.target.key, sizeof(utxo.target.key)));
 				stream->write_string(std::string_view((char*)utxo.ecdh_info.amount, sizeof(utxo.ecdh_info.amount)));
 				stream->write_string(std::string_view((char*)utxo.out_pk.blinding_factor, sizeof(utxo.out_pk.blinding_factor)));
@@ -672,6 +681,7 @@ namespace tangent
 			stream->write_integer((uint8_t)bpp.r.size());
 			for (auto& r : bpp.r)
 				stream->write_string(std::string_view((char*)r.data(), r.size()));
+			stream->write_string(std::string_view((char*)tx_key, sizeof(tx_key)));
 			stream->write_integer(fee);
 			return true;
 		}
@@ -680,7 +690,7 @@ namespace tangent
 			string intermediate;
 			auto read_string256 = [&](format::viewable type, uint8_t data[32]) -> bool
 			{
-				if (!stream.read_string(stream.read_type(), &intermediate) || intermediate.size() != 32)
+				if (!stream.read_string(type, &intermediate) || intermediate.size() != 32)
 					return false;
 
 				memcpy(data, intermediate.data(), intermediate.size());
@@ -714,10 +724,19 @@ namespace tangent
 					utxo.clsag.s.push_back(s);
 				}
 
-				if (!read_string256(stream.read_type(), utxo.pseudo_out.blinding_factor))
+				if (!read_string256(stream.read_type(), utxo.pseudo_out.mask))
 					return false;
 
-				if (!read_string256(stream.read_type(), utxo.pseudo_out.mask))
+				if (!read_string256(stream.read_type(), utxo.pseudo_out.key))
+					return false;
+
+				if (!read_string256(stream.read_type(), utxo.prev_out.commitment_mask))
+					return false;
+
+				if (!read_string256(stream.read_type(), utxo.prev_out.derivation_scalar))
+					return false;
+
+				if (!stream.read_integer(stream.read_type(), &utxo.prev_out.index))
 					return false;
 
 				uint8_t key_offsets_size;
@@ -726,17 +745,23 @@ namespace tangent
 
 				for (uint8_t j = 0; j < key_offsets_size; j++)
 				{
-					uint64_t key_offset;
-					if (!stream.read_integer(stream.read_type(), &key_offset))
+					txin_to_key::ref ref;
+					if (!read_string256(stream.read_type(), ref.key))
 						return false;
 
-					utxo.key_offsets.push_back(key_offset);
+					if (!read_string256(stream.read_type(), ref.mask))
+						return false;
+
+					if (!stream.read_integer(stream.read_type(), &ref.index))
+						return false;
+
+					if (!stream.read_boolean(stream.read_type(), &ref.decoy))
+						return false;
+
+					utxo.keys.push_back(std::move(ref));
 				}
 
 				if (!read_string256(stream.read_type(), utxo.key_image))
-					return false;
-
-				if (!stream.read_integer(stream.read_type(), &utxo.key_offset_out))
 					return false;
 
 				vin.push_back(std::move(utxo));
@@ -750,6 +775,9 @@ namespace tangent
 			for (uint8_t i = 0; i < vout_size; i++)
 			{
 				clsag_message::tx_out utxo;
+				if (!stream.read_integer(stream.read_type(), &utxo.target.tag))
+					return false;
+
 				if (!read_string256(stream.read_type(), utxo.target.key))
 					return false;
 
@@ -816,19 +844,13 @@ namespace tangent
 				bpp.r.push_back(r);
 			}
 
+			if (!read_string256(stream.read_type(), tx_key))
+				return false;
+
 			if (!stream.read_integer(stream.read_type(), &fee))
 				return false;
 
 			return true;
-		}
-		void ed25519_clsag_compositor::clsag_message::write_varint(uint64_t i, vector<uint8_t>& buffer) const
-		{
-			while (i >= 0x80)
-			{
-				buffer.push_back(static_cast<uint8_t>((i & 0x7f) | 0x80));
-				i >>= 7;
-			}
-			buffer.push_back(static_cast<uint8_t>(i));
 		}
 		void ed25519_clsag_compositor::clsag_message::write_prefix(vector<uint8_t>& buffer) const
 		{
@@ -837,24 +859,25 @@ namespace tangent
 			write_varint(vin.size(), buffer); // vin.size
 			for (const auto& in : vin) // vin
 			{
-				buffer.push_back(0x3); // vin[i].tag: txin_to_key
+				buffer.push_back(0x2); // vin[i].tag: txin_to_key
 				write_varint(0, buffer); // vin[i].amount: legacy (zero)
-				write_varint(in.key_offsets.size(), buffer); // vin[i].key_offsets.size
-				for (uint64_t offset : in.key_offsets)
-					write_varint(offset, buffer); // vin[i].key_offsets[j]: index
+				write_varint(in.keys.size(), buffer); // vin[i].key_offsets.size
+				for (auto& offset : in.keys)
+					write_varint(offset.index, buffer); // vin[i].key_offsets[j]: index
 				buffer.insert(buffer.end(), in.key_image, in.key_image + 32); // vin[i].key_image: 32 bytes
 			}
 			write_varint(vout.size(), buffer); // vout.size
 			for (const auto& out : vout) // vout
 			{
 				write_varint(0, buffer); // vout[i].amount: legacy (zero)
-				buffer.push_back(0x2); // vout[i].target.tag: txout_to_key
+				buffer.push_back(0x3); // vout[i].target.tag: txout_to_tagged_key
 				buffer.insert(buffer.end(), out.target.key, out.target.key + 32); // vout[i].target.key: 32 bytes
+				buffer.push_back(out.target.tag); // vout[i].target.view_tag: 1 byte
 			}
 			write_varint(extra.size(), buffer); // extra field size
 			buffer.insert(buffer.end(), extra.begin(), extra.end()); // extra field data
 		}
-		void ed25519_clsag_compositor::clsag_message::write_rct_sig_base(vector<uint8_t>& buffer) const
+		void ed25519_clsag_compositor::clsag_message::write_rctsig_base(vector<uint8_t>& buffer) const
 		{
 			buffer.push_back(0x6); // rct_signatures.type: RCTTypeBulletproofPlus 
 			write_varint(fee, buffer); // rct_signatures.txn_fee: fee to be paid
@@ -863,40 +886,81 @@ namespace tangent
 			for (auto& proof : vout) // rct_signatures.out_pk (based on vout.size)
 				buffer.insert(buffer.end(), proof.out_pk.mask, proof.out_pk.mask + 32); // rct_signatures.out_pk[i].mask: 32 bytes
 		}
-		void ed25519_clsag_compositor::clsag_message::write_bpp(vector<uint8_t>& buffer) const
+		void ed25519_clsag_compositor::clsag_message::write_rctsig_prunable(vector<uint8_t>& buffer, bool no_clsag, bool no_pseudo_size) const
 		{
+			if (!no_pseudo_size)
+				write_varint(1, buffer); // rct_signatures.p.bulletproofs_plus.size: one aggregated proof
 			buffer.insert(buffer.end(), bpp.a, bpp.a + 32); // rct_signatures.p.bulletproofs_plus[0].a: 32 bytes
 			buffer.insert(buffer.end(), bpp.a1, bpp.a1 + 32); // rct_signatures.p.bulletproofs_plus[0].a1: 32 bytes
 			buffer.insert(buffer.end(), bpp.b, bpp.b + 32); // rct_signatures.p.bulletproofs_plus[0].b: 32 bytes
 			buffer.insert(buffer.end(), bpp.r1, bpp.r1 + 32); // rct_signatures.p.bulletproofs_plus[0].r1: 32 bytes
 			buffer.insert(buffer.end(), bpp.s1, bpp.s1 + 32); // rct_signatures.p.bulletproofs_plus[0].s1: 32 bytes
 			buffer.insert(buffer.end(), bpp.d1, bpp.d1 + 32); // rct_signatures.p.bulletproofs_plus[0].d1: 32 bytes
-			write_varint(bpp.l.size(), buffer); // rct_signatures.p.bulletproofs_plus[0].l.size
+			if (!no_pseudo_size)
+				write_varint(bpp.l.size(), buffer); // rct_signatures.p.bulletproofs_plus[0].l.size
 			for (const auto& l : bpp.l)
 				buffer.insert(buffer.end(), l.data(), l.data() + 32); // rct_signatures.p.bulletproofs_plus[0].l[j]: 32 bytes
-			write_varint(bpp.r.size(), buffer); // rct_signatures.p.bulletproofs_plus[0].r.size
+			if (!no_pseudo_size)
+				write_varint(bpp.r.size(), buffer); // rct_signatures.p.bulletproofs_plus[0].r.size
 			for (const auto& r : bpp.r)
 				buffer.insert(buffer.end(), r.data(), r.data() + 32); // rct_signatures.p.bulletproofs_plus[0].r[j]: 32 bytes
+			if (!no_clsag)
+			{
+				for (const auto& proof : vin) // rct_signatures.clsags (based on vin.size)
+				{
+					for (const auto& s : proof.clsag.s) // rct_signatures.clsags[i].s (based on vin[0].key_offsets.size)
+						buffer.insert(buffer.end(), s.data(), s.data() + 32); // rct_signatures.clsags[i].s[j]: 32 bytes
+					buffer.insert(buffer.end(), proof.clsag.c1, proof.clsag.c1 + 32); // rct_signatures.clsags[i].c1: 32 bytes
+					buffer.insert(buffer.end(), proof.clsag.d, proof.clsag.d + 32); // rct_signatures.clsags[i].d: 32 bytes
+				}
+			}
+			if (!no_pseudo_size)
+			{
+				for (const auto& proof : vin) // rct_signatures.pseudo_outs (based on vin.size)
+					buffer.insert(buffer.end(), proof.pseudo_out.key, proof.pseudo_out.key + 32); // rct_signatures.pseudo_outs[i]: 32 bytes
+			}
 		}
-		void ed25519_clsag_compositor::clsag_message::as_rct_hash(uint8_t rct_hash[32]) const
+		void ed25519_clsag_compositor::clsag_message::write_all(vector<uint8_t>& buffer, bool no_clsag, bool no_pseudo_size) const
 		{
-			vector<uint8_t> prefix; uint8_t prefix_hash[32];
+			write_prefix(buffer);
+			write_rctsig_base(buffer);
+			write_rctsig_prunable(buffer, no_clsag, no_pseudo_size);
+		}
+		void ed25519_clsag_compositor::clsag_message::as_prefix_hash(uint8_t prefix_hash[32]) const
+		{
+			vector<uint8_t> prefix;
 			write_prefix(prefix);
 			xmr_fast_hash(prefix_hash, prefix.data(), prefix.size());
+		}
+		void ed25519_clsag_compositor::clsag_message::as_rctsig_base_hash(uint8_t rctsig_base_hash[32]) const
+		{
+			vector<uint8_t> rctsig_base;
+			write_rctsig_base(rctsig_base);
+			xmr_fast_hash(rctsig_base_hash, rctsig_base.data(), rctsig_base.size());
+		}
+		void ed25519_clsag_compositor::clsag_message::as_rctsig_prunable_hash(uint8_t rctsig_prunable_hash[32]) const
+		{
+			vector<uint8_t> rctsig_prunable;
+			write_rctsig_prunable(rctsig_prunable, true, true);
+			xmr_fast_hash(rctsig_prunable_hash, rctsig_prunable.data(), rctsig_prunable.size());
+		}
+		void ed25519_clsag_compositor::clsag_message::as_id_hash(uint8_t id_hash[32], bool no_clsag, bool no_pseudo_size) const
+		{
+			vector<uint8_t> prefix, rctsig_base, rctsig_prunable;
+			write_prefix(prefix);
+			write_rctsig_base(rctsig_base);
+			write_rctsig_prunable(rctsig_prunable, no_clsag, no_pseudo_size);
 
-			vector<uint8_t> rct_base; uint8_t rct_base_hash[32];
-			write_rct_sig_base(rct_base);
-			xmr_fast_hash(rct_base_hash, rct_base.data(), rct_base.size());
+			uint8_t prefix_hash[32], rctsig_base_hash[32], rctsig_prunable_hash[32];
+			xmr_fast_hash(prefix_hash, prefix.data(), prefix.size());
+			xmr_fast_hash(rctsig_base_hash, rctsig_base.data(), rctsig_base.size());
+			xmr_fast_hash(rctsig_prunable_hash, rctsig_prunable.data(), rctsig_prunable.size());
 
-			vector<uint8_t> bpp; uint8_t bpp_hash[32];
-			write_bpp(bpp);
-			xmr_fast_hash(bpp_hash, bpp.data(), bpp.size());
-
-			uint8_t prefix_rct_base_bpp_hash[96];
-			memcpy(prefix_rct_base_bpp_hash + 00, prefix_hash, 32);
-			memcpy(prefix_rct_base_bpp_hash + 32, rct_base_hash, 32);
-			memcpy(prefix_rct_base_bpp_hash + 64, bpp_hash, 32);
-			xmr_fast_hash(rct_hash, prefix_rct_base_bpp_hash, sizeof(prefix_rct_base_bpp_hash));
+			uint8_t id[96];
+			memcpy(id + 00, prefix_hash, 32);
+			memcpy(id + 32, rctsig_base_hash, 32);
+			memcpy(id + 64, rctsig_prunable_hash, 32);
+			xmr_fast_hash(id_hash, id, sizeof(id));
 		}
 		format::tree ed25519_clsag_compositor::clsag_message::as_tree() const
 		{
@@ -912,19 +976,30 @@ namespace tangent
 				for (auto& s : utxo.clsag.s)
 					clsag_s_data->push(format::variable(format::util::encode_0xhex(std::string_view((char*)s.data(), s.size()))));
 				auto* pseudo_out_data = utxo_data->set("pseudo_out", format::tree::map());
-				pseudo_out_data->set("blinding_factor", format::variable(format::util::encode_0xhex(std::string_view((char*)utxo.pseudo_out.blinding_factor, sizeof(utxo.pseudo_out.blinding_factor)))));
 				pseudo_out_data->set("mask", format::variable(format::util::encode_0xhex(std::string_view((char*)utxo.pseudo_out.mask, sizeof(utxo.pseudo_out.mask)))));
-				auto* key_offsets_data = utxo_data->set("key_offsets", format::tree::list());
-				for (auto& key_offset : utxo.key_offsets)
-					key_offsets_data->push(format::variable(key_offset));
-				pseudo_out_data->set("key_image", format::variable(format::util::encode_0xhex(std::string_view((char*)utxo.key_image, sizeof(utxo.key_image)))));
-				pseudo_out_data->set("key_offset_out", format::variable(utxo.key_offset_out));
+				pseudo_out_data->set("key", format::variable(format::util::encode_0xhex(std::string_view((char*)utxo.pseudo_out.key, sizeof(utxo.pseudo_out.key)))));
+				auto* prev_out_data = utxo_data->set("prev_out", format::tree::map());
+				prev_out_data->set("commitment_mask", format::variable(format::util::encode_0xhex(std::string_view((char*)utxo.prev_out.commitment_mask, sizeof(utxo.prev_out.commitment_mask)))));
+				prev_out_data->set("derivation_scalar", format::variable(format::util::encode_0xhex(std::string_view((char*)utxo.prev_out.derivation_scalar, sizeof(utxo.prev_out.derivation_scalar)))));
+				prev_out_data->set("index", format::variable(utxo.prev_out.index));
+				auto* keys_data = utxo_data->set("keys", format::tree::list());
+				for (auto& key : utxo.keys)
+				{
+					auto* key_data = keys_data->push(format::tree::map());
+					key_data->set("key", format::variable(format::util::encode_0xhex(std::string_view((char*)key.key, sizeof(key.key)))));
+					key_data->set("mask", format::variable(format::util::encode_0xhex(std::string_view((char*)key.mask, sizeof(key.mask)))));
+					key_data->set("index", format::variable(key.index));
+					key_data->set("decoy", format::variable(key.decoy));
+				}
+				utxo_data->set("key_image", format::variable(format::util::encode_0xhex(std::string_view((char*)utxo.key_image, sizeof(utxo.key_image)))));
 			}
 			auto* vout_data = data.set("vout", format::tree::list());
 			for (auto& utxo : vout)
 			{
 				auto* utxo_data = vout_data->push(format::tree::map());
-				utxo_data->set("target", format::tree::map())->set("key", format::variable(format::util::encode_0xhex(std::string_view((char*)utxo.target.key, sizeof(utxo.target.key)))));
+				auto* target_data = utxo_data->set("target", format::tree::map());
+				target_data->set("key", format::variable(format::util::encode_0xhex(std::string_view((char*)utxo.target.key, sizeof(utxo.target.key)))));
+				target_data->set("tag", format::variable(utxo.target.tag));
 				utxo_data->set("ecdh_info", format::tree::map())->set("amount", format::variable(format::util::encode_0xhex(std::string_view((char*)utxo.ecdh_info.amount, sizeof(utxo.ecdh_info.amount)))));
 				auto* out_pk_data = utxo_data->set("out_pk", format::tree::map());
 				out_pk_data->set("blinding_factor", format::variable(format::util::encode_0xhex(std::string_view((char*)utxo.out_pk.blinding_factor, sizeof(utxo.out_pk.blinding_factor)))));
@@ -944,6 +1019,8 @@ namespace tangent
 			auto* bpp_r_data = bpp_data->set("r", format::tree::list());
 			for (auto& r : bpp.r)
 				bpp_r_data->push(format::variable(format::util::encode_0xhex(std::string_view((char*)r.data(), r.size()))));
+			auto* tx_data = data.set("tx", format::tree::map());
+			tx_data->set("tx_key", format::variable(format::util::encode_0xhex(std::string_view((char*)tx_key, sizeof(tx_key)))));
 			data.set("fee", format::variable(fee));
 			return data;
 		}
@@ -967,37 +1044,50 @@ namespace tangent
 
 		expects_lr<void> ed25519_clsag_compositor::setup_public_key(const uint8_t* new_message, size_t new_message_size, uint16_t new_participants)
 		{
-			algorithm::composition::cpubkey_t temp_public_key;
-			temp_public_key.resize(sizeof(ed25519_point_t));
-			auto status = setup_signature(temp_public_key, new_message, new_message_size, new_participants);
-			if (!status)
-				return status.error();
-
-			z_steps = new_participants;
-			group_public_key.clear();
-			return expectation::met;
+			return setup_signature(algorithm::composition::cpubkey_t(), new_message, new_message_size, nullptr, new_participants);
 		}
-		expects_lr<void> ed25519_clsag_compositor::setup_signature(const algorithm::composition::cpubkey_t& public_key, const uint8_t* new_message, size_t new_message_size, uint16_t new_participants)
+		expects_lr<void> ed25519_clsag_compositor::setup_signature(const algorithm::composition::cpubkey_t& public_key, const uint8_t* new_message, size_t new_message_size, const algorithm::composition::shared_message* new_shared, uint16_t new_participants)
 		{
 			VI_ASSERT(new_message != nullptr, "message should be set");
-			if (public_key.size() != sizeof(ed25519_point_t))
+			if (!public_key.empty() && public_key.size() != sizeof(ed25519_point_t))
 				return layer_exception("invalid public key size");
-
-			if (new_message_size != sizeof(ed25519_point_t))
+			
+			if (new_shared != nullptr)
 			{
-				format::ro_stream stream = format::ro_stream(std::string_view((char*)new_message, new_message_size));
-				if (!message.load(stream))
+				if (new_message_size != sizeof(vin_index))
 					return layer_exception("invalid input message");
+
+				memcpy(&vin_index, new_message, sizeof(vin_index));
+				format::ro_stream stream = format::ro_stream(std::string_view((char*)new_shared->message.data(), new_shared->message.size()));
+				if (!message.load(stream))
+					return layer_exception("invalid shared message");
+
+				size_t key_inputs_size = std::min(new_shared->keys.size(), message.vin.size());
+				for (size_t i = 0; i < key_inputs_size; i++)
+				{
+					auto& vin = message.vin[i];
+					auto& key_image = new_shared->keys[i];
+					if (key_image.size() != sizeof(vin.key_image))
+						return layer_exception("invalid key input size");
+
+					memcpy(vin.key_image, key_image.data(), key_image.size());
+				}
+
+				i_steps = new_shared->keys.empty() || new_shared->keys.size() < message.vin.size() ? new_participants : 0;
+				a_steps = s_steps = i_steps > 0 ? 0 : new_participants;
 			}
 			else
 			{
-				message = clsag_message();
-				message.extra.insert(message.extra.end(), new_message, new_message + new_message_size);
+				if (new_message_size != sizeof(ed25519_point_t))
+					return layer_exception("invalid input message");
+
+				derive_pseudo_message(new_message, new_message_size, message, vin_index);
+				i_steps = a_steps = s_steps = new_participants;
 			}
 
-			group_public_key = public_key;
+			z_steps = public_key.empty() ? new_participants : 0;
+			cumulative_key = public_key;
 			participants = new_participants;
-			z_steps = 0;
 			return expectation::met;
 		}
 		expects_lr<void> ed25519_clsag_compositor::aggregate(const algorithm::composition::cseckey_t& secret_key)
@@ -1005,34 +1095,255 @@ namespace tangent
 			if (secret_key.size() != sizeof(ed25519_scalar_t))
 				return layer_exception("invalid secret key size");
 
+			if (vin_index >= message.vin.size())
+				return layer_exception("invalid vin index");
+
+			auto& vin = message.vin[vin_index];
+			auto ring_member = std::find_if(vin.keys.begin(), vin.keys.end(), [](const clsag_message::txin_to_key::ref& r) { return !r.decoy; });
+			auto key_index = ring_member == vin.keys.end() ? std::numeric_limits<size_t>::max() : std::distance(vin.keys.begin(), ring_member);
+			if (key_index == std::numeric_limits<size_t>::max())
+				return layer_exception("invalid vin key index");
+
+			auto vin_key_alpha = [&](const clsag_message::txin_to_key& vin, uint8_t a_i[32]) -> bool
+			{
+				uint8_t seed_buffer[128];
+				message.as_prefix_hash(seed_buffer);
+				memcpy(seed_buffer + sizeof(vin.key_image) * 1, vin.key_image, sizeof(vin.key_image));
+				memcpy(seed_buffer + sizeof(vin.key_image) * 2, secret_key.data(), sizeof(vin.key_image));
+				memcpy(seed_buffer + sizeof(vin.key_image) * 3, vin.pseudo_out.mask, sizeof(vin.pseudo_out.mask));
+				hash_to_scalar(seed_buffer, sizeof(seed_buffer), a_i);
+				return sc_valid(a_i) != 0;
+			};
+			auto vin_key_mu_P_C = [&](const clsag_message::txin_to_key& vin, uint8_t mu_P[32], uint8_t mu_C[32]) -> bool
+			{
+				auto n = vin.keys.size();
+				const unsigned char HASH_KEY_CLSAG_AGG_0[] = "CLSAG_agg_0";
+				const unsigned char HASH_KEY_CLSAG_AGG_1[] = "CLSAG_agg_1";
+				vector<std::array<uint8_t, 32>> mu_P_to_hash(2 * n + 4);
+				vector<std::array<uint8_t, 32>> mu_C_to_hash(2 * n + 4);
+				sc_0(mu_P_to_hash[0].data());
+				sc_0(mu_C_to_hash[0].data());
+				memcpy(mu_P_to_hash[0].data(), HASH_KEY_CLSAG_AGG_0, sizeof(HASH_KEY_CLSAG_AGG_0) - 1);
+				memcpy(mu_C_to_hash[0].data(), HASH_KEY_CLSAG_AGG_1, sizeof(HASH_KEY_CLSAG_AGG_1) - 1);
+				for (size_t i = 1; i < n + 1; ++i)
+				{
+					auto& member = vin.keys[i - 1];
+					memcpy(mu_P_to_hash[i].data(), member.key, sizeof(member.key));
+					memcpy(mu_C_to_hash[i].data(), member.key, sizeof(member.key));
+				}
+				for (size_t i = n + 1; i < 2 * n + 1; ++i)
+				{
+					auto& member = vin.keys[i - n - 1];
+					memcpy(mu_P_to_hash[i].data(), member.mask, sizeof(member.mask));
+					memcpy(mu_C_to_hash[i].data(), member.mask, sizeof(member.mask));
+				}
+				memcpy(mu_P_to_hash[2 * n + 1].data(), cumulative_I.blob, sizeof(cumulative_I.blob));
+				memcpy(mu_P_to_hash[2 * n + 2].data(), vin.clsag.d, sizeof(vin.clsag.d));
+				memcpy(mu_P_to_hash[2 * n + 3].data(), vin.pseudo_out.key, sizeof(vin.pseudo_out.key));
+				memcpy(mu_C_to_hash[2 * n + 1].data(), cumulative_I.blob, sizeof(cumulative_I.blob));
+				memcpy(mu_C_to_hash[2 * n + 2].data(), vin.clsag.d, sizeof(vin.clsag.d));
+				memcpy(mu_C_to_hash[2 * n + 3].data(), vin.pseudo_out.key, sizeof(vin.pseudo_out.key));
+
+				vector<uint8_t> mu_P_to_hash8, mu_C_to_hash8;
+				vector32_to_vector8(mu_P_to_hash, mu_P_to_hash8);
+				vector32_to_vector8(mu_C_to_hash, mu_C_to_hash8);
+				hash_to_scalar(mu_P_to_hash8.data(), mu_P_to_hash8.size(), mu_P);
+				hash_to_scalar(mu_C_to_hash8.data(), mu_C_to_hash8.size(), mu_C);
+				return sc_valid(mu_P) != 0 && sc_valid(mu_C) != 0;
+			};
 			if (z_steps > 0)
 			{
 				uint8_t secret_key_buffer[64] = { 0 }, public_key[32] = { 0 };
 				memcpy(secret_key_buffer, secret_key.data(), secret_key.size());
 				ed25519_publickey_ext(secret_key_buffer, public_key);
-				if (group_public_key.empty())
-					memcpy(group_public_key.blob, public_key, sizeof(public_key));
-				else if (crypto_core_ed25519_add(group_public_key.blob, public_key, group_public_key.blob) != 0)
-					return layer_exception("invalid secret key");
+				if (cumulative_key.empty())
+					memcpy(cumulative_key.blob, public_key, sizeof(public_key));
+				else if (crypto_core_ed25519_add(cumulative_key.blob, public_key, cumulative_key.blob) != 0)
+					return layer_exception("invalid key derivation");
 
-				--z_steps;
+				if (!--z_steps)
+				{
+					uint8_t dsG[32];
+					sc_mul_g(dsG, vin.prev_out.derivation_scalar);
+					if (ge_add_w(ring_member->key, dsG, cumulative_key.blob) != 0)
+						return layer_exception("invalid pG derivation");
+				}
 			}
-
-			/* BEGIN MPC PSEUDO PROTOCOL BLOCK */
-			for (auto& vin : message.vin)
+			else if (i_steps > 0)
 			{
-				// TODO: vin.key_image = crypto.generate_key_image(utxo.priv_key, utxo.pub_key);
-			}
+				uint8_t I_i[32], H[32];
+				hash_to_point(ring_member->key, sizeof(ring_member->key), H);
+				if (ge_scalarmult_s(I_i, H, secret_key.data()) != 0)
+					return layer_exception("invalid I derivation");
 
-			uint8_t rct_hash[32];
-			message.as_rct_hash(rct_hash);
-			for (auto& vin : message.vin)
+				if (cumulative_I.empty())
+					memcpy(cumulative_I.blob, I_i, sizeof(I_i));
+				else if (crypto_core_ed25519_add(cumulative_I.blob, I_i, cumulative_I.blob) != 0)
+					return layer_exception("invalid I derivation");
+
+				if (!--i_steps)
+				{
+					uint8_t dsH[32];
+					ge_scalarmult_s(dsH, H, vin.prev_out.derivation_scalar);
+					if (ge_add_w(cumulative_I.blob, dsH, cumulative_I.blob) != 0)
+						return layer_exception("invalid I derivation");
+				}
+			}
+			else if (a_steps > 0)
 			{
-				// TODO: vin.clsag = crypto.generate_clsag(rct_hash, vin.key_offsets, utxo.priv_key, vin.pseudo_out.blinding_factor, vin.key_offset_out);
-			}
-			/* END MPC PSEUDO PROTOCOL BLOCK */
+				if (cumulative_I.empty())
+				{
+					memcpy(cumulative_I.blob, vin.key_image, sizeof(vin.key_image));
+					if (cumulative_I.empty())
+						return layer_exception("invalid I derivation");
+				}
+				else if (sc_isnonzero(vin.key_image) == 0)
+					memcpy(vin.key_image, cumulative_I.blob, sizeof(cumulative_I.blob));
+				else if (memcmp(cumulative_I.blob, vin.key_image, sizeof(vin.key_image)) != 0)
+					return layer_exception("invalid I derivation");
 
-			/* Not implemented yet */
+				uint8_t H[32], a_i[32];
+				hash_to_point(ring_member->key, sizeof(ring_member->key), H);
+				if (!vin_key_alpha(vin, a_i))
+					return layer_exception("invalid a(i) derivation");
+
+				uint8_t aH_i[32];
+				if (ge_scalarmult_s(aH_i, H, a_i) != 0)
+					return layer_exception("invalid aH derivation");
+
+				uint8_t aG_i[32];
+				sc_mul_g(aG_i, a_i);
+				if (cumulative_aG.empty() || cumulative_aH.empty())
+				{
+					memcpy(cumulative_aG.blob, aG_i, sizeof(aG_i));
+					memcpy(cumulative_aH.blob, aH_i, sizeof(aH_i));
+				}
+				else if (crypto_core_ed25519_add(cumulative_aG.blob, aG_i, cumulative_aG.blob) != 0 || crypto_core_ed25519_add(cumulative_aH.blob, aH_i, cumulative_aH.blob) != 0)
+					return layer_exception("invalid aG, aH or I derivation");
+
+				if (!--a_steps)
+				{
+					uint8_t z[32], D[32];
+					sc_sub(z, vin.prev_out.commitment_mask, vin.pseudo_out.mask);
+					if (ge_scalarmult_s(D, H, z) != 0)
+						return layer_exception("invalid D derivation");
+					else if (sc_valid(z) == 0 && sc_isnonzero(z) != 0)
+						return layer_exception("invalid z derivation");
+
+					ge_p3 I_3, D_3;
+					if (ge_frombytes_vartime(&I_3, cumulative_I.blob) != 0 || ge_frombytes_vartime(&D_3, D) != 0)
+						return layer_exception("invalid I or D derivation");
+
+					ge_dsmp I_precomp, D_precomp;
+					ge_dsm_precomp(I_precomp, &I_3);
+					ge_dsm_precomp(D_precomp, &D_3);
+					if (ge_scalarmult_i8(vin.clsag.d, D) != 0)
+						return layer_exception("invalid D derivation");
+
+					uint8_t mu_P[32], mu_C[32];
+					if (!vin_key_mu_P_C(vin, mu_P, mu_C))
+						return layer_exception("invalid mu_P or mu_C derivation");
+
+					uint8_t mlsag_prehash_to_hash[96], mlsag_prehash[32];
+					message.as_prefix_hash(mlsag_prehash_to_hash);
+					message.as_rctsig_base_hash(mlsag_prehash_to_hash + 32);
+					message.as_rctsig_prunable_hash(mlsag_prehash_to_hash + 64);
+					xmr_fast_hash(mlsag_prehash, mlsag_prehash_to_hash, sizeof(mlsag_prehash_to_hash));
+
+					size_t n = vin.keys.size();
+					const unsigned char HASH_KEY_CLSAG_ROUND[] = "CLSAG_round";
+					vector<std::array<uint8_t, 32>> c_to_hash(2 * n + 5);
+					sc_0(c_to_hash[0].data());
+					memcpy(c_to_hash[0].data(), HASH_KEY_CLSAG_ROUND, sizeof(HASH_KEY_CLSAG_ROUND) - 1);
+					for (size_t i = 1; i < n + 1; ++i)
+					{
+						auto& member = vin.keys[i - 1];
+						memcpy(c_to_hash[i].data(), member.key, sizeof(member.key));
+						memcpy(c_to_hash[i + n].data(), member.mask, sizeof(member.mask));
+					}
+					memcpy(c_to_hash[2 * n + 1].data(), vin.pseudo_out.key, sizeof(vin.pseudo_out.key));
+					memcpy(c_to_hash[2 * n + 2].data(), mlsag_prehash, sizeof(mlsag_prehash));
+					memcpy(c_to_hash[2 * n + 3].data(), cumulative_aG.blob, sizeof(cumulative_aG.blob));
+					memcpy(c_to_hash[2 * n + 4].data(), cumulative_aH.blob, sizeof(cumulative_aH.blob));
+
+					vector<uint8_t> c_to_hash8; uint8_t c[32];
+					vector32_to_vector8(c_to_hash, c_to_hash8);
+					hash_to_scalar(c_to_hash8.data(), c_to_hash8.size(), c);
+					if (sc_valid(c) == 0)
+						return layer_exception("invalid c derivation");
+
+					size_t i = (key_index + 1) % n;
+					if (i == 0)
+						memcpy(vin.clsag.c1, c, sizeof(c));
+
+					vin.clsag.s.resize(n);
+					while (i != key_index)
+					{
+						auto& s_i = vin.clsag.s[i]; auto& member = vin.keys[i];
+						crypto::fill_random_bytes(s_i.data(), s_i.size());
+						hash_to_scalar(s_i.data(), s_i.size(), s_i.data());
+						if (sc_valid(s_i.data()) == 0)
+							return layer_exception("invalid s(i) derivation");
+
+						uint8_t c_i[32], c_p[32], c_c[32];
+						sc_mul(c_p, mu_P, c);
+						sc_mul(c_c, mu_C, c);
+						sc_0(c_i);
+
+						uint8_t C_i[32];
+						if (ge_sub_w(C_i, member.mask, vin.pseudo_out.key) != 0)
+							return layer_exception("invalid C(i) derivation");
+
+						ge_p3 P_3, C_3, H_3; uint8_t H_i[32];
+						hash_to_point(member.key, sizeof(member.key), H_i);
+						if (ge_frombytes_vartime(&P_3, member.key) != 0 || ge_frombytes_vartime(&C_3, C_i) != 0 || ge_frombytes_vartime(&H_3, H_i) != 0)
+							return layer_exception("invalid P, C or H derivation");
+
+						ge_dsmp P_precomp, C_precomp, H_precomp;
+						ge_dsm_precomp(P_precomp, &P_3);
+						ge_dsm_precomp(C_precomp, &C_3);
+						ge_dsm_precomp(H_precomp, &H_3);
+
+						uint8_t L[32], R[32];
+						ge_addKeys_aGbBcC(L, s_i.data(), c_p, P_precomp, c_c, C_precomp);
+						ge_addKeys_aAbBcC(R, s_i.data(), H_precomp, c_p, I_precomp, c_c, D_precomp);
+						memcpy(c_to_hash[2 * n + 3].data(), L, sizeof(L));
+						memcpy(c_to_hash[2 * n + 4].data(), R, sizeof(R));
+						vector32_to_vector8(c_to_hash, c_to_hash8);
+						hash_to_scalar(c_to_hash8.data(), c_to_hash8.size(), c_i);
+						memcpy(c, c_i, sizeof(c_i));
+						if (sc_valid(c) == 0)
+							return layer_exception("invalid c(i) derivation");
+
+						i = (i + 1) % n;
+						if (i == 0)
+							memcpy(vin.clsag.c1, c, sizeof(c));
+					}
+
+					auto& s_i = vin.clsag.s[key_index];
+					uint8_t s[32], mu_P_ds[32], mu_C_z[32];
+					sc_mul(mu_P_ds, mu_P, vin.prev_out.derivation_scalar);
+					sc_mul(mu_C_z, mu_C, z);
+					sc_add(s, mu_P_ds, mu_C_z);
+					sc_mul(s, s, c);
+					sc_negate(s_i.data(), s);
+					sc_mul(cumulative_c_mu_P.blob, mu_P, c);
+					if (sc_valid(s_i.data()) == 0 || sc_valid(cumulative_c_mu_P.blob) == 0)
+						return layer_exception("invalid s(i) derivation");
+				}
+			}
+			else if (s_steps > 0)
+			{
+				if (key_index >= vin.clsag.s.size() || vin.clsag.s.size() != vin.keys.size())
+					return layer_exception("invalid s derivation");
+
+				auto& s_i = vin.clsag.s[key_index];
+				uint8_t a_i[32], a_c_mu_P_x[32];
+				vin_key_alpha(vin, a_i);
+				sc_mulsub(a_c_mu_P_x, cumulative_c_mu_P.blob, secret_key.data(), a_i);
+				sc_add(s_i.data(), s_i.data(), a_c_mu_P_x);
+				--s_steps;
+			}
 			return expectation::met;
 		}
 		expects_lr<void> ed25519_clsag_compositor::derive_tweaking_key(const uint8_t* seed, size_t seed_size, size_t key_size, algorithm::paillier_scalar_t* public_key) const
@@ -1072,27 +1383,237 @@ namespace tangent
 		expects_lr<void> ed25519_clsag_compositor::derive_public_key(algorithm::composition::cpubkey_t* output) const
 		{
 			VI_ASSERT(output != nullptr, "output should be set");
-			output->resize(sizeof(group_public_key));
-			memcpy(output->data(), group_public_key.blob, sizeof(group_public_key));
+			output->resize(sizeof(cumulative_key));
+			memcpy(output->data(), cumulative_key.blob, sizeof(cumulative_key));
 			return expectation::met;
 		}
 		expects_lr<void> ed25519_clsag_compositor::derive_signature(algorithm::composition::chashsig_t* output) const
 		{
 			VI_ASSERT(output != nullptr, "output should be set");
-			/* Not implemented yet */
-			output->resize(64, 0xCC);
-			return expectation::met;
+			if (vin_index >= message.vin.size())
+				return layer_exception("invalid vin index");
+
+			auto& vin = message.vin[vin_index];
+			if (sc_isnonzero(vin.key_image) == 0)
+			{
+				if (cumulative_I.empty())
+					return layer_exception("invalid I derivation");
+
+				output->resize(sizeof(cumulative_I.blob));
+				memcpy(output->data(), cumulative_I.blob, sizeof(cumulative_I.blob));
+				return expectation::met;
+			}
+
+			if (vin.keys.size() != vin.clsag.s.size())
+				return layer_exception("invalid s size");
+
+			auto ring_member = std::find_if(vin.keys.begin(), vin.keys.end(), [](const clsag_message::txin_to_key::ref& r) { return !r.decoy; });
+			if (ring_member == vin.keys.end())
+				return layer_exception("invalid key index");
+
+			size_t offset = sizeof(ring_member->key) + sizeof(vin.key_image) + sizeof(vin.clsag.c1) + sizeof(vin.clsag.d);
+			output->resize(offset + sizeof(std::array<uint8_t, 32>) * vin.keys.size());
+			memcpy(output->data(), ring_member->key, sizeof(ring_member->key));
+			memcpy(output->data() + sizeof(ring_member->key), vin.key_image, sizeof(vin.key_image));
+			memcpy(output->data() + sizeof(ring_member->key) + sizeof(vin.key_image), vin.clsag.c1, sizeof(vin.clsag.c1));
+			memcpy(output->data() + sizeof(ring_member->key) + sizeof(vin.key_image) + sizeof(vin.clsag.c1), vin.clsag.d, sizeof(vin.clsag.d));
+			for (size_t i = 0; i < vin.clsag.s.size(); i++)
+				memcpy(output->data() + offset + sizeof(std::array<uint8_t, 32>) * i, vin.clsag.s[i].data(), vin.clsag.s[i].size());
+
+			format::wo_stream signable;
+			if (!message.store(&signable))
+				return layer_exception("failed to store the message");
+
+			return verify_signature((uint8_t*)signable.data.data(), signable.data.size(), *output, algorithm::composition::cpubkey_t());
 		}
 		expects_lr<void> ed25519_clsag_compositor::verify_signature(const uint8_t* new_message, size_t new_message_size, const algorithm::composition::chashsig_t& signature, const algorithm::composition::cpubkey_t& public_key) const
 		{
 			VI_ASSERT(new_message != nullptr, "message should be set");
-			if (public_key.size() != sizeof(ed25519_point_t))
+			if (!public_key.empty() && public_key.size() != sizeof(ed25519_point_t))
 				return layer_exception("invalid public key");
 
-			if (signature.size() != 64)
-				return layer_exception("invalid signature");
+			if (vin_index < message.vin.size() && sc_isnonzero(message.vin[vin_index].key_image) == 0)
+			{
+				if (signature.size() != sizeof(ed25519_point_t) || signature.empty())
+					return layer_exception("invalid key image");
 
-			/* Not implemented yet */
+				return expectation::met;
+			}
+
+			clsag_message pseudo_message; uint16_t pseudo_index = vin_index;
+			if (new_message_size != sizeof(ed25519_point_t))
+			{
+				format::ro_stream signable = format::ro_stream(std::string_view((char*)new_message, new_message_size));
+				if (!pseudo_message.load(signable) || pseudo_index >= pseudo_message.vin.size())
+					return layer_exception("failed to load the message");
+
+				const auto& vin = pseudo_message.vin[pseudo_index];
+				size_t n = vin.keys.size();
+				size_t offset = sizeof(vin.key_image) * 2 + sizeof(vin.clsag.c1) + sizeof(vin.clsag.d);
+				size_t size = offset + sizeof(std::array<uint8_t, 32>) * n;
+				if (signature.size() != size || vin.clsag.s.size() != n)
+					return layer_exception("invalid signature size");
+
+				auto ring_member = std::find_if(vin.keys.begin(), vin.keys.end(), [](const clsag_message::txin_to_key::ref& r) { return !r.decoy; });
+				if (ring_member == vin.keys.end())
+					return layer_exception("invalid key index");
+
+				if (memcmp(ring_member->key, signature.data(), sizeof(ring_member->key)) != 0)
+					return layer_exception("invalid key constant");
+				else if (memcmp(vin.key_image, signature.data() + 32, sizeof(vin.key_image)) != 0)
+					return layer_exception("invalid key image constant");
+				else if (memcmp(vin.clsag.c1, signature.data() + 64, sizeof(vin.clsag.c1)) != 0 || sc_valid(vin.clsag.c1) == 0)
+					return layer_exception("invalid c1 constant");
+				else if (memcmp(vin.clsag.d, signature.data() + 96, sizeof(vin.clsag.d)) != 0)
+					return layer_exception("invalid d constant");
+
+				for (size_t i = 0; i < n; i++)
+				{
+					if (memcmp(vin.clsag.s[i].data(), signature.data() + offset + i * sizeof(std::array<uint8_t, 32>), sizeof(std::array<uint8_t, 32>)) != 0 || sc_valid(vin.clsag.s[i].data()) == 0)
+						return layer_exception("invalid s constant");
+				}
+			}
+			else
+			{
+				derive_pseudo_message(new_message, new_message_size, pseudo_message, pseudo_index);
+				if (pseudo_index >= pseudo_message.vin.size())
+					return layer_exception("failed to derive the message");
+
+				auto& vin = pseudo_message.vin[pseudo_index];
+				size_t n = vin.keys.size();
+				size_t offset = sizeof(vin.key_image) * 2 + sizeof(vin.clsag.c1) + sizeof(vin.clsag.d);
+				size_t size = offset + sizeof(std::array<uint8_t, 32>) * n;
+				if (signature.size() != size)
+					return layer_exception("invalid signature size");
+
+				auto ring_member = std::find_if(vin.keys.begin(), vin.keys.end(), [](const clsag_message::txin_to_key::ref& r) { return !r.decoy; });
+				if (ring_member == vin.keys.end())
+					return layer_exception("invalid key index");
+
+				vin.clsag.s.resize(n);
+				memcpy(ring_member->key, signature.data(), sizeof(ed25519_point_t));
+				memcpy(vin.key_image, signature.data() + 32, sizeof(ed25519_point_t));
+				memcpy(vin.clsag.c1, signature.data() + 64, sizeof(ed25519_point_t));
+				memcpy(vin.clsag.d, signature.data() + 96, sizeof(ed25519_point_t));
+				for (size_t i = 0; i < n; i++)
+					memcpy(vin.clsag.s[i].data(), signature.data() + offset + i * sizeof(std::array<uint8_t, 32>), sizeof(ed25519_point_t));
+			}
+
+			const auto& vin = pseudo_message.vin[pseudo_index]; ge_p3 I_3;
+			if (ge_frombytes_vartime(&I_3, vin.key_image) != 0)
+				return layer_exception("invalid key image constant");
+
+			ge_dsmp I_precomp; uint8_t D[32];
+			ge_dsm_precomp(I_precomp, &I_3);
+			ge_scalarmult_8(D, vin.clsag.d);
+
+			ge_p3 D_3;
+			if (ge_frombytes_vartime(&D_3, D) != 0)
+				return layer_exception("invalid d constant");
+
+			ge_dsmp D_precomp;
+			ge_dsm_precomp(D_precomp, &D_3);
+
+			size_t n = vin.keys.size();
+			const unsigned char HASH_KEY_CLSAG_AGG_0[] = "CLSAG_agg_0";
+			const unsigned char HASH_KEY_CLSAG_AGG_1[] = "CLSAG_agg_1";
+			vector<std::array<uint8_t, 32>> mu_P_to_hash(2 * n + 4);
+			vector<std::array<uint8_t, 32>> mu_C_to_hash(2 * n + 4);
+			sc_0(mu_P_to_hash[0].data());
+			sc_0(mu_C_to_hash[0].data());
+			memcpy(mu_P_to_hash[0].data(), HASH_KEY_CLSAG_AGG_0, sizeof(HASH_KEY_CLSAG_AGG_0) - 1);
+			memcpy(mu_C_to_hash[0].data(), HASH_KEY_CLSAG_AGG_1, sizeof(HASH_KEY_CLSAG_AGG_1) - 1);
+			for (size_t i = 1; i < n + 1; ++i)
+			{
+				const auto& member = vin.keys[i - 1];
+				memcpy(mu_P_to_hash[i].data(), member.key, 32);
+				memcpy(mu_C_to_hash[i].data(), member.key, 32);
+			}
+			for (size_t i = n + 1; i < 2 * n + 1; ++i)
+			{
+				const auto& member = vin.keys[i - n - 1];
+				memcpy(mu_P_to_hash[i].data(), member.mask, 32);
+				memcpy(mu_C_to_hash[i].data(), member.mask, 32);
+			}
+			memcpy(mu_P_to_hash[2 * n + 1].data(), vin.key_image, 32);
+			memcpy(mu_P_to_hash[2 * n + 2].data(), vin.clsag.d, 32);
+			memcpy(mu_P_to_hash[2 * n + 3].data(), vin.pseudo_out.key, 32);
+			memcpy(mu_C_to_hash[2 * n + 1].data(), vin.key_image, 32);
+			memcpy(mu_C_to_hash[2 * n + 2].data(), vin.clsag.d, 32);
+			memcpy(mu_C_to_hash[2 * n + 3].data(), vin.pseudo_out.key, 32);
+
+			vector<uint8_t> mu_P_to_hash8, mu_C_to_hash8; uint8_t mu_P[32], mu_C[32];
+			vector32_to_vector8(mu_P_to_hash, mu_P_to_hash8);
+			vector32_to_vector8(mu_C_to_hash, mu_C_to_hash8);
+			hash_to_scalar(mu_P_to_hash8.data(), mu_P_to_hash8.size(), mu_P);
+			hash_to_scalar(mu_C_to_hash8.data(), mu_C_to_hash8.size(), mu_C);
+			if (sc_valid(mu_P) == 0 || sc_valid(mu_C) == 0)
+				return layer_exception("invalid mu_P or mu_C constant");
+
+			uint8_t mlsag_prehash_to_hash[96], mlsag_prehash[32];
+			pseudo_message.as_prefix_hash(mlsag_prehash_to_hash);
+			pseudo_message.as_rctsig_base_hash(mlsag_prehash_to_hash + 32);
+			pseudo_message.as_rctsig_prunable_hash(mlsag_prehash_to_hash + 64);
+			xmr_fast_hash(mlsag_prehash, mlsag_prehash_to_hash, sizeof(mlsag_prehash_to_hash));
+
+			const unsigned char HASH_KEY_CLSAG_ROUND[] = "CLSAG_round";
+			vector<std::array<uint8_t, 32>> c_to_hash(2 * n + 5);
+			sc_0(c_to_hash[0].data());
+			memcpy(c_to_hash[0].data(), HASH_KEY_CLSAG_ROUND, sizeof(HASH_KEY_CLSAG_ROUND) - 1);
+			for (size_t i = 1; i < n + 1; ++i)
+			{
+				const auto& member = vin.keys[i - 1];
+				memcpy(c_to_hash[i].data(), member.key, 32);
+				memcpy(c_to_hash[i + n].data(), member.mask, 32);
+			}
+			memcpy(c_to_hash[2 * n + 1].data(), vin.pseudo_out.key, 32);
+			memcpy(c_to_hash[2 * n + 2].data(), mlsag_prehash, 32);
+
+			uint8_t c[32];
+			memcpy(c, vin.clsag.c1, 32);
+
+			vector<uint8_t> c_to_hash8;
+			for (size_t i = 0; i < n; ++i)
+			{
+				const auto& s_i = vin.clsag.s[i];
+				const auto& member = vin.keys[i];
+				uint8_t c_p[32], c_c[32];
+				sc_mul(c_p, mu_P, c);
+				sc_mul(c_c, mu_C, c);
+
+				uint8_t C_i[32];
+				if (ge_sub_w(C_i, member.mask, vin.pseudo_out.key) != 0)
+					return layer_exception("invalid C(i) constant");
+
+				uint8_t H_i[32];
+				hash_to_point(member.key, 32, H_i);
+
+				ge_p3 P_3, C_3, H_3;
+				if (ge_frombytes_vartime(&P_3, member.key) != 0 || ge_frombytes_vartime(&C_3, C_i) != 0 || ge_frombytes_vartime(&H_3, H_i) != 0)
+					return layer_exception("invalid P, C or H constant");
+
+				ge_dsmp P_precomp, C_precomp, H_precomp;
+				ge_dsm_precomp(P_precomp, &P_3);
+				ge_dsm_precomp(C_precomp, &C_3);
+				ge_dsm_precomp(H_precomp, &H_3);
+
+				uint8_t L[32], R[32];
+				ge_addKeys_aGbBcC(L, s_i.data(), c_p, P_precomp, c_c, C_precomp);
+				ge_addKeys_aAbBcC(R, s_i.data(), H_precomp, c_p, I_precomp, c_c, D_precomp);
+				memcpy(c_to_hash[2 * n + 3].data(), L, 32);
+				memcpy(c_to_hash[2 * n + 4].data(), R, 32);
+				vector32_to_vector8(c_to_hash, c_to_hash8);
+
+				uint8_t c_i[32];
+				hash_to_scalar(c_to_hash8.data(), c_to_hash8.size(), c_i);
+				memcpy(c, c_i, sizeof(c_i));
+				if (sc_valid(c) == 0)
+					return layer_exception("invalid c constant");
+			}
+
+			if (memcmp(c, vin.clsag.c1, 32) != 0)
+				return layer_exception("invalid signature (c1 check fail)");
+
 			return expectation::met;
 		}
 		algorithm::composition::type ed25519_clsag_compositor::alg_type() const
@@ -1106,57 +1627,332 @@ namespace tangent
 			else if (z_steps > 0)
 				return algorithm::composition::phase::any_input;
 
+			if (i_steps == participants)
+				return algorithm::composition::phase::any_input_after_reset;
+			else if (i_steps > 0)
+				return algorithm::composition::phase::any_input;
+
+			if (a_steps == participants)
+				return algorithm::composition::phase::any_input_after_reset;
+			else if (a_steps > 0)
+				return algorithm::composition::phase::any_input;
+
+			if (s_steps == participants)
+				return algorithm::composition::phase::any_input_after_reset;
+			else if (s_steps > 0)
+				return algorithm::composition::phase::any_input;
+
 			return algorithm::composition::phase::finalized;
 		}
 		uint32_t ed25519_clsag_compositor::steps_left() const
 		{
-			return z_steps;
+			return z_steps + i_steps + a_steps + s_steps;
 		}
 		bool ed25519_clsag_compositor::store(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
-			stream->write_string(group_public_key.optimized_view());
+			stream->write_string(cumulative_key.optimized_view());
+			stream->write_string(cumulative_I.optimized_view());
+			stream->write_string(cumulative_aH.optimized_view());
+			stream->write_string(cumulative_aG.optimized_view());
+			stream->write_string(cumulative_c_mu_P.optimized_view());
 			stream->write_integer(participants);
+			stream->write_integer(vin_index);
 			stream->write_integer(z_steps);
-			return true;
+			stream->write_integer(i_steps);
+			stream->write_integer(a_steps);
+			stream->write_integer(s_steps);
+			return message.store_payload(stream);
 		}
 		bool ed25519_clsag_compositor::load(format::ro_stream& stream)
 		{
 			string intermediate;
-			if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, group_public_key.blob, sizeof(group_public_key)))
+			if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, cumulative_key.blob, sizeof(cumulative_key)))
+				return false;
+
+			if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, cumulative_I.blob, sizeof(cumulative_I)))
+				return false;
+
+			if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, cumulative_aH.blob, sizeof(cumulative_aH)))
+				return false;
+
+			if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, cumulative_aG.blob, sizeof(cumulative_aG)))
+				return false;
+
+			if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, cumulative_c_mu_P.blob, sizeof(cumulative_c_mu_P)))
 				return false;
 
 			if (!stream.read_integer(stream.read_type(), &participants))
 				return false;
 
+			if (!stream.read_integer(stream.read_type(), &vin_index))
+				return false;
+
 			if (!stream.read_integer(stream.read_type(), &z_steps))
 				return false;
 
-			return true;
+			if (!stream.read_integer(stream.read_type(), &i_steps))
+				return false;
+
+			if (!stream.read_integer(stream.read_type(), &a_steps))
+				return false;
+
+			if (!stream.read_integer(stream.read_type(), &s_steps))
+				return false;
+
+			return message.load_payload(stream);
 		}
 		bool ed25519_clsag_compositor::may_transition_to(const compositor& next_ptr) const
 		{
 			auto* next = (const ed25519_clsag_compositor*)&next_ptr;
-			if (z_steps == next->z_steps && !group_public_key.equals(next->group_public_key))
+			if (participants != next->participants || vin_index != next->vin_index)
+				return false;
+			/*
+			if (z_steps == next->z_steps && !cumulative_key.equals(next->cumulative_key))
 				return false;
 
-			/* Not implemented yet */
+			if (i_steps == next->i_steps && !cumulative_I.equals(next->cumulative_I))
+				return false;
+
+			if (a_steps == next->a_steps && (!cumulative_aG.equals(next->cumulative_aG) || !cumulative_aH.equals(next->cumulative_aH)))
+				return false;
+
+			uint8_t hash_prev[32], hash_next[32];
+			message.as_id_hash(hash_prev, true);
+			next->message.as_id_hash(hash_next, true);
+			if (memcmp(hash_prev, hash_next, sizeof(hash_next)) != 0)
+				return false;
+			*/
 			return steps_left() >= next->steps_left();
+		}
+		bool ed25519_clsag_compositor::generate_derivation_key(const uint8_t transaction_public_key[32], const uint8_t private_view_key[32], uint8_t derivation_key[32])
+		{
+			ge_p3 m3;
+			if (ge_frombytes_vartime(&m3, transaction_public_key) != 0)
+				return false;
+
+			ge_p2 m2;
+			ge_scalarmult(&m2, private_view_key, &m3);
+
+			ge_p1p1 m11;
+			ge_mul8(&m11, &m2);
+			ge_p1p1_to_p2(&m2, &m11);
+			ge_tobytes(derivation_key, &m2);
+			return true;
+		}
+		void ed25519_clsag_compositor::derive_private_key(const uint8_t derivation_scalar[32], const uint8_t private_spend_key[32], uint8_t private_key[32])
+		{
+			sc_add(private_key, private_spend_key, derivation_scalar);
+		}
+		bool ed25519_clsag_compositor::derive_public_key(const uint8_t derivation_scalar[32], const uint8_t public_spend_key[32], uint8_t public_key[32])
+		{
+			ge_p3 m3_1;
+			if (ge_frombytes_vartime(&m3_1, public_spend_key) != 0)
+				return false;
+
+			ge_p3 m3_2;
+			ge_scalarmult_base(&m3_2, derivation_scalar);
+
+			ge_cached m3_3;
+			ge_p3_to_cached(&m3_3, &m3_2);
+
+			ge_p1p1 m11;
+			ge_add(&m11, &m3_1, &m3_3);
+
+			ge_p2 m2;
+			ge_p1p1_to_p2(&m2, &m11);
+			ge_tobytes(public_key, &m2);
+			return true;
+		}
+		void ed25519_clsag_compositor::derivation_to_scalar(const uint8_t derivation_key[32], uint64_t derivation_index, uint8_t derivation_scalar[32])
+		{
+			uint8_t derivation[42] = { 0 };
+			memcpy(derivation, derivation_key, 32);
+			size_t size = 32 + write_varint_fixed(derivation_index, derivation + 32);
+			hash_to_scalar(derivation, size, derivation_scalar);
+		}
+		uint8_t ed25519_clsag_compositor::derivation_to_view_tag(const uint8_t derivation_key[32], uint64_t derivation_index)
+		{
+			uint8_t buf[8 + 32 + 10]; uint8_t* p = buf;
+			memcpy(p, "view_tag", 8); p += 8;
+			memcpy(p, derivation_key, 32); p += 32;
+
+			uint64_t i = derivation_index;
+			while (i >= 0x80)
+			{
+				*p++ = static_cast<uint8_t>((i & 0x7f) | 0x80);
+				i >>= 7;
+			}
+			*p++ = static_cast<uint8_t>(i);
+
+			uint8_t h[32];
+			xmr_fast_hash(h, buf, p - buf);
+			return h[0];
+		}
+		void ed25519_clsag_compositor::hash_to_scalar(const uint8_t* buffer, size_t buffer_size, uint8_t scalar[32])
+		{
+			xmr_fast_hash(scalar, buffer, buffer_size);
+			sc_reduce32(scalar);
+		}
+		void ed25519_clsag_compositor::hash_to_point(const uint8_t* buffer, size_t buffer_size, uint8_t point[32])
+		{
+			ge_p2 m2;
+			xmr_fast_hash(point, buffer, buffer_size);
+			ge_fromfe_frombytes_vartime(&m2, point);
+
+			ge_p1p1 m11;
+			ge_mul8(&m11, &m2);
+
+			ge_p3 m3;
+			ge_p1p1_to_p3(&m3, &m11);
+			ge_p3_tobytes(point, &m3);
+		}
+		bool ed25519_clsag_compositor::pedersen_commit(const uint8_t mask[32], const uint8_t amount[32], uint8_t commitment[32])
+		{
+			static uint8_t h[32] = { 139, 101, 89, 112, 21, 55, 153, 175, 42, 234, 220, 159, 241, 173, 208, 234, 108, 114, 81, 213, 65, 84, 207, 169, 44, 23, 58, 13, 211, 156, 31, 148 };
+
+			ge_p3 m3;
+			if (ge_frombytes_vartime(&m3, h) != 0)
+				return false;
+
+			if (sc_check(amount) != 0 || sc_valid(mask) == 0)
+				return false;
+
+			ge_p2 m2;
+			ge_double_scalarmult_base_vartime(&m2, amount, &m3, mask);
+			ge_tobytes(commitment, &m2);
+			return true;
+		}
+		void ed25519_clsag_compositor::derive_known_private_view_key(const uint8_t public_spend_key[32], uint8_t private_view_key[32])
+		{
+			uint8_t hash[32];
+			xmr_fast_hash(hash, public_spend_key, sizeof(hash));
+			memcpy(private_view_key, hash, sizeof(hash));
+			sc_reduce32(private_view_key);
+		}
+		void ed25519_clsag_compositor::derive_known_public_view_key(const uint8_t public_spend_key[32], uint8_t public_view_key[32])
+		{
+			uint8_t private_view_key[32];
+			derive_known_private_view_key(public_spend_key, private_view_key);
+			crypto_scalarmult_ed25519_base_noclamp(public_view_key, private_view_key);
+		}
+		void ed25519_clsag_compositor::encode_amount_256(uint64_t amount_in, uint8_t amount_out[32])
+		{
+			amount_in = os::hw::to_endianness(os::hw::endian::little, amount_in);
+			memset(amount_out, 0, 32);
+			memcpy(amount_out, &amount_in, sizeof(amount_in));
+		}
+		void ed25519_clsag_compositor::vector32_to_vector8(const vector<std::array<uint8_t, 32>>& in, vector<uint8_t>& out)
+		{
+			out.resize(in.size() * 32);
+			for (size_t i = 0; i < in.size(); i++)
+				memcpy(out.data() + i * 32, in[i].data(), 32);
+		}
+		void ed25519_clsag_compositor::derive_pseudo_message(const uint8_t* message, size_t message_size, clsag_message& out, uint16_t& index_out)
+		{
+			VI_ASSERT(message != nullptr, "message should be set");
+			uint64_t random_nonce = 0;
+			auto sc_derive = [&](uint8_t x[32])
+			{
+				uint8_t buffer[40]; uint64_t nonce = os::hw::to_endianness(os::hw::endian::little, random_nonce++);
+				memcpy(buffer, message, message_size);
+				memcpy(buffer + message_size, &nonce, sizeof(nonce));
+				hash_to_scalar(buffer, sizeof(buffer), x);
+			};
+
+			index_out = 0;
+			out = clsag_message();
+			out.fee = 1234;
+			out.vout.resize(1);
+			out.vin.resize(1);
+			out.extra.resize(32);
+			out.bpp.l.resize(2);
+			out.bpp.r.resize(2);
+			sc_derive(out.extra.data());
+			sc_derive(out.tx_key);
+			sc_derive(out.bpp.a);
+			sc_derive(out.bpp.a1);
+			sc_derive(out.bpp.b);
+			sc_derive(out.bpp.r1);
+			sc_derive(out.bpp.s1);
+			sc_derive(out.bpp.d1);
+			for (auto& x : out.bpp.l)
+				sc_derive(x.data());
+			for (auto& x : out.bpp.r)
+				sc_derive(x.data());
+
+			auto& vout = out.vout[0];
+			sc_derive(vout.target.key);
+			sc_derive(vout.ecdh_info.amount);
+			sc_derive(vout.out_pk.blinding_factor);
+			sc_mul_g(vout.out_pk.mask, vout.out_pk.blinding_factor);
+
+			auto& vin = out.vin[0];
+			vin.keys.resize(3);
+			sc_derive(vin.pseudo_out.mask);
+			sc_derive(vin.prev_out.derivation_scalar);
+			sc_derive(vin.prev_out.commitment_mask);
+
+			uint8_t z[32];
+			sc_sub(z, vin.prev_out.commitment_mask, vin.pseudo_out.mask);
+			sc_mul_g(vin.pseudo_out.key, vin.pseudo_out.mask);
+
+			uint64_t index = 123, ring_index = 1;
+			auto& real = vin.keys[ring_index];
+			real.decoy = false;
+			real.index = 123 + ring_index;
+			vin.prev_out.index = real.index;
+			memset(real.key, 0, sizeof(real.key));
+			sc_mul_g(real.mask, vin.prev_out.commitment_mask);
+			for (size_t i = 0; i < vin.keys.size(); ++i)
+			{
+				if (i == ring_index)
+					continue;
+
+				uint8_t fake_p[32], fake_mask[32];
+				auto& member = vin.keys[i];
+				member.decoy = true;
+				member.index = index + i;
+				sc_derive(fake_p);
+				sc_derive(fake_mask);
+				sc_mul_g(member.key, fake_p);
+				sc_mul_g(member.mask, fake_mask);
+			}
+		}
+		void ed25519_clsag_compositor::write_varint(uint64_t i, vector<uint8_t>& buffer)
+		{
+			while (i >= 0x80)
+			{
+				buffer.push_back(static_cast<uint8_t>((i & 0x7f) | 0x80));
+				i >>= 7;
+			}
+			buffer.push_back(static_cast<uint8_t>(i));
+		}
+		size_t ed25519_clsag_compositor::write_varint_fixed(uint64_t i, uint8_t buffer[10])
+		{
+			size_t offset = 0;
+			while (i >= 0x80)
+			{
+				buffer[offset++] = static_cast<uint8_t>((i & 0x7f) | 0x80);
+				i >>= 7;
+			}
+			buffer[offset++] = static_cast<uint8_t>(i);
+			return offset;
 		}
 
 		expects_lr<void> secp256k1_compositor::setup_public_key(const uint8_t* new_message, size_t new_message_size, uint16_t new_participants)
 		{
 			algorithm::composition::cpubkey_t temp_public_key;
 			temp_public_key.resize(sizeof(secp256k1_point_t));
-			auto status = setup_signature(temp_public_key, new_message, new_message_size, new_participants);
+			auto status = setup_signature(temp_public_key, new_message, new_message_size, nullptr, new_participants);
 			if (!status)
 				return status.error();
 
 			z_steps = new_participants;
-			group_public_key.clear();
+			cumulative_key.clear();
 			return expectation::met;
 		}
-		expects_lr<void> secp256k1_compositor::setup_signature(const algorithm::composition::cpubkey_t& new_public_key, const uint8_t* new_message, size_t new_message_size, uint16_t new_participants)
+		expects_lr<void> secp256k1_compositor::setup_signature(const algorithm::composition::cpubkey_t& new_public_key, const uint8_t* new_message, size_t new_message_size, const algorithm::composition::shared_message* new_shared, uint16_t new_participants)
 		{
 			VI_ASSERT(new_message != nullptr, "message should be set");
 			if (new_message_size != sizeof(message_hash))
@@ -1179,18 +1975,18 @@ namespace tangent
 				if (secp256k1_ec_pubkey_parse(context, &uncompressed_public_key, new_public_key.data(), new_public_key.size()) != 1)
 					return layer_exception("invalid public key");
 
-				size_t key_size = sizeof(group_public_key);
-				if (secp256k1_ec_pubkey_serialize(context, group_public_key.blob, &key_size, &uncompressed_public_key, SECP256K1_EC_COMPRESSED) != 1)
+				size_t key_size = sizeof(cumulative_key);
+				if (secp256k1_ec_pubkey_serialize(context, cumulative_key.blob, &key_size, &uncompressed_public_key, SECP256K1_EC_COMPRESSED) != 1)
 					return layer_exception("invalid public key");
 			}
 			else
-				group_public_key = std::string_view((char*)new_public_key.data(), new_public_key.size());
+				cumulative_key = std::string_view((char*)new_public_key.data(), new_public_key.size());
 
 			indices.clear();
 			cumulative_r = secp256k1_point_t();
 			cumulative_s = secp256k1_scalar_t();
 			cumulative_i.clear();
-			group_paillier_key.clear();
+			encryption_key.clear();
 			z_steps = 0;
 			r_steps = multiplications;
 			i_steps = additions;
@@ -1234,24 +2030,24 @@ namespace tangent
 				if (secp256k1_ec_pubkey_create(context, &next_public_key, secret_key.data()) != 1)
 					return layer_exception("invalid secret key");
 
-				if (group_public_key.empty())
+				if (cumulative_key.empty())
 				{
-					size_t key_size = sizeof(group_public_key);
-					if (secp256k1_ec_pubkey_serialize(context, group_public_key.blob, &key_size, &next_public_key, SECP256K1_EC_COMPRESSED) != 1)
+					size_t key_size = sizeof(cumulative_key);
+					if (secp256k1_ec_pubkey_serialize(context, cumulative_key.blob, &key_size, &next_public_key, SECP256K1_EC_COMPRESSED) != 1)
 						return layer_exception("invalid secret key");
 				}
 				else
 				{
 					secp256k1_pubkey prev_public_key, result_public_key;
-					if (secp256k1_ec_pubkey_parse(context, &prev_public_key, group_public_key.blob, sizeof(group_public_key)) != 1)
+					if (secp256k1_ec_pubkey_parse(context, &prev_public_key, cumulative_key.blob, sizeof(cumulative_key)) != 1)
 						return layer_exception("invalid intermediate public key");
 
 					secp256k1_pubkey* public_keys[2] = { &prev_public_key, &next_public_key };
 					if (secp256k1_ec_pubkey_combine(context, &result_public_key, public_keys, 2) != 1)
 						return layer_exception("invalid secret key");
 
-					size_t key_size = sizeof(group_public_key);
-					if (secp256k1_ec_pubkey_serialize(context, group_public_key.blob, &key_size, &result_public_key, SECP256K1_EC_COMPRESSED) != 1)
+					size_t key_size = sizeof(cumulative_key);
+					if (secp256k1_ec_pubkey_serialize(context, cumulative_key.blob, &key_size, &result_public_key, SECP256K1_EC_COMPRESSED) != 1)
 						return layer_exception("invalid secret key");
 				}
 
@@ -1295,14 +2091,14 @@ namespace tangent
 					paillier_seckey_init(&paillier_secret_key);
 					paillier_pubkey_init(&paillier_public_key);
 					calculate_paillier_keypair(&paillier_public_key, &paillier_secret_key, p_bits, secret_key, &k);
-					paillier_store_public_key(&paillier_public_key, &group_paillier_key);
+					paillier_store_public_key(&paillier_public_key, &encryption_key);
 					paillier_pubkey_clear(&paillier_public_key);
 					paillier_seckey_clear(&paillier_secret_key);
 				}
 			}
 			else if (i_steps > 0)
 			{
-				if (cumulative_r.empty() || group_paillier_key.empty())
+				if (cumulative_r.empty() || encryption_key.empty())
 					return layer_exception("invalid compositor state");
 
 				bignum256 n = { 0 };
@@ -1318,7 +2114,7 @@ namespace tangent
 				paillier_pubkey paillier_public_key;
 				paillier_pubkey_init(&paillier_public_key);
 
-				auto key_status = paillier_load_public_key(group_paillier_key, &paillier_public_key, p_bits);
+				auto key_status = paillier_load_public_key(encryption_key, &paillier_public_key, p_bits);
 				if (!key_status)
 					return layer_exception("invalid group paillier key: " + key_status.what());
 
@@ -1374,7 +2170,7 @@ namespace tangent
 			}
 			else if (s_steps > 0)
 			{
-				if (cumulative_i.empty() || group_paillier_key.empty() || indices.empty())
+				if (cumulative_i.empty() || encryption_key.empty() || indices.empty())
 					return layer_exception("invalid compositor state");
 
 				bignum256 k;
@@ -1390,7 +2186,7 @@ namespace tangent
 				indices.erase(indices.begin());
 				if (--s_steps > 0)
 				{
-					auto key_status = paillier_load_public_key(group_paillier_key, &paillier_public_key, p_bits);
+					auto key_status = paillier_load_public_key(encryption_key, &paillier_public_key, p_bits);
 					if (!key_status)
 						return layer_exception("invalid group key: " + key_status.what());
 
@@ -1502,8 +2298,8 @@ namespace tangent
 		expects_lr<void> secp256k1_compositor::derive_public_key(algorithm::composition::cpubkey_t* output) const
 		{
 			VI_ASSERT(output != nullptr, "output should be set");
-			output->resize(sizeof(group_public_key));
-			memcpy(output->data(), group_public_key.blob, sizeof(group_public_key));
+			output->resize(sizeof(cumulative_key));
+			memcpy(output->data(), cumulative_key.blob, sizeof(cumulative_key));
 			return expectation::met;
 		}
 		expects_lr<void> secp256k1_compositor::derive_signature(algorithm::composition::chashsig_t* output) const
@@ -1540,7 +2336,7 @@ namespace tangent
 				return layer_exception("invalid signature");
 
 			auto copy = *this;
-			auto status = copy.setup_signature(public_key, message, message_size, additions);
+			auto status = copy.setup_signature(public_key, message, message_size, nullptr, additions);
 			if (!status)
 				return status;
 
@@ -1624,11 +2420,11 @@ namespace tangent
 			stream->write_integer(i_steps);
 			stream->write_integer(s_steps);
 			stream->write_integer(p_bits);
-			stream->write_string(group_public_key.optimized_view());
+			stream->write_string(cumulative_key.optimized_view());
 			stream->write_string(cumulative_r.optimized_view());
 			stream->write_string(cumulative_s.optimized_view());
 			stream->write_string(std::string_view((char*)cumulative_i.data(), cumulative_i.size()));
-			stream->write_string(std::string_view((char*)group_paillier_key.data(), group_paillier_key.size()));
+			stream->write_string(std::string_view((char*)encryption_key.data(), encryption_key.size()));
 			stream->write_string(std::string_view((char*)message_hash, sizeof(message_hash)));
 			stream->write_integer((uint16_t)indices.size());
 			for (auto& index : indices)
@@ -1659,7 +2455,7 @@ namespace tangent
 				return false;
 
 			string intermediate;
-			if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, group_public_key.blob, sizeof(group_public_key)))
+			if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, cumulative_key.blob, sizeof(cumulative_key)))
 				return false;
 
 			if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, cumulative_r.blob, sizeof(cumulative_r)))
@@ -1676,8 +2472,8 @@ namespace tangent
 			if (!stream.read_string(stream.read_type(), &intermediate))
 				return false;
 
-			group_paillier_key.resize(intermediate.size());
-			memcpy(group_paillier_key.data(), intermediate.data(), intermediate.size());
+			encryption_key.resize(intermediate.size());
+			memcpy(encryption_key.data(), intermediate.data(), intermediate.size());
 			if (!stream.read_string(stream.read_type(), &intermediate) || intermediate.size() != sizeof(message_hash))
 				return false;
 
@@ -1701,10 +2497,10 @@ namespace tangent
 			if (additions != next->additions || multiplications != next->multiplications || p_bits != next->p_bits || memcmp(message_hash, next->message_hash, sizeof(message_hash)) != 0)
 				return false;
 
-			if (z_steps == next->z_steps && !group_public_key.equals(next->group_public_key))
+			if (z_steps == next->z_steps && !cumulative_key.equals(next->cumulative_key))
 				return false;
 
-			if (!group_paillier_key.empty() && !next->group_paillier_key.empty() && group_paillier_key != next->group_paillier_key)
+			if (!encryption_key.empty() && !next->encryption_key.empty() && encryption_key != next->encryption_key)
 				return false;
 
 			return steps_left() >= next->steps_left();
@@ -1714,18 +2510,18 @@ namespace tangent
 		{
 			algorithm::composition::cpubkey_t temp_public_key;
 			temp_public_key.resize(sizeof(secp256k1_point_t));
-			auto status = setup_signature(temp_public_key, new_message, new_message_size, new_participants);
+			auto status = setup_signature(temp_public_key, new_message, new_message_size, nullptr, new_participants);
 			if (!status)
 				return status.error();
 
 			z_steps = new_participants;
-			group_public_key.clear();
+			cumulative_key.clear();
 			return expectation::met;
 		}
-		expects_lr<void> secp256k1_schnorr_compositor::setup_signature(const algorithm::composition::cpubkey_t& new_public_key, const uint8_t* new_message, size_t new_message_size, uint16_t new_participants)
+		expects_lr<void> secp256k1_schnorr_compositor::setup_signature(const algorithm::composition::cpubkey_t& new_public_key, const uint8_t* new_message, size_t new_message_size, const algorithm::composition::shared_message* new_shared, uint16_t new_participants)
 		{
 			VI_ASSERT(new_message != nullptr, "message should be set");
-			if (new_public_key.size() != sizeof(group_public_key) && new_public_key.size() != sizeof(group_public_key) + sizeof(group_public_key_tweak))
+			if (new_public_key.size() != sizeof(cumulative_key) && new_public_key.size() != sizeof(cumulative_key) + sizeof(group_public_key_tweak))
 				return layer_exception("invalid public key size");
 
 			if (new_message_size != sizeof(message_hash))
@@ -1738,8 +2534,8 @@ namespace tangent
 			cumulative_s = secp256k1_scalar_t();
 			z_steps = 0;
 			r_steps = s_steps = participants = new_participants;
-			group_public_key = std::string_view((char*)new_public_key.data(), sizeof(group_public_key));
-			group_public_key_tweak = std::string_view((char*)new_public_key.data() + sizeof(group_public_key), new_public_key.size() - sizeof(group_public_key));
+			cumulative_key = std::string_view((char*)new_public_key.data(), sizeof(cumulative_key));
+			group_public_key_tweak = std::string_view((char*)new_public_key.data() + sizeof(cumulative_key), new_public_key.size() - sizeof(cumulative_key));
 			return expectation::met;
 		}
 		expects_lr<void> secp256k1_schnorr_compositor::aggregate(const algorithm::composition::cseckey_t& secret_key)
@@ -1789,24 +2585,24 @@ namespace tangent
 				if (secp256k1_ec_pubkey_create(context, &next_public_key, secret_key.data()) != 1)
 					return layer_exception("invalid secret key");
 
-				if (group_public_key.empty())
+				if (cumulative_key.empty())
 				{
-					size_t key_size = sizeof(group_public_key);
-					if (secp256k1_ec_pubkey_serialize(context, group_public_key.blob, &key_size, &next_public_key, SECP256K1_EC_COMPRESSED) != 1)
+					size_t key_size = sizeof(cumulative_key);
+					if (secp256k1_ec_pubkey_serialize(context, cumulative_key.blob, &key_size, &next_public_key, SECP256K1_EC_COMPRESSED) != 1)
 						return layer_exception("invalid secret key");
 				}
 				else
 				{
 					secp256k1_pubkey prev_public_key, result_public_key;
-					if (secp256k1_ec_pubkey_parse(context, &prev_public_key, group_public_key.blob, sizeof(group_public_key)) != 1)
+					if (secp256k1_ec_pubkey_parse(context, &prev_public_key, cumulative_key.blob, sizeof(cumulative_key)) != 1)
 						return layer_exception("invalid intermediate public key");
 
 					secp256k1_pubkey* public_keys[2] = { &prev_public_key, &next_public_key };
 					if (secp256k1_ec_pubkey_combine(context, &result_public_key, public_keys, 2) != 1)
 						return layer_exception("invalid secret key");
 
-					size_t key_size = sizeof(group_public_key);
-					if (secp256k1_ec_pubkey_serialize(context, group_public_key.blob, &key_size, &result_public_key, SECP256K1_EC_COMPRESSED) != 1)
+					size_t key_size = sizeof(cumulative_key);
+					if (secp256k1_ec_pubkey_serialize(context, cumulative_key.blob, &key_size, &result_public_key, SECP256K1_EC_COMPRESSED) != 1)
 						return layer_exception("invalid secret key");
 				}
 
@@ -1818,7 +2614,7 @@ namespace tangent
 			retry_nonce:
 				bignum256 k;
 				uint256_t& index = indices.back();
-				if (!calculate_nonce(&k, message_hash, group_public_key, secret_key, ++index))
+				if (!calculate_nonce(&k, message_hash, cumulative_key, secret_key, ++index))
 					goto retry_nonce;
 
 				curve_point r;
@@ -1839,7 +2635,7 @@ namespace tangent
 				}
 
 				bignum256 e;
-				if (!calculate_challenge(&e, r, message_hash, group_public_key))
+				if (!calculate_challenge(&e, r, message_hash, cumulative_key))
 					goto retry_nonce;
 
 				cumulative_r = to_compressed_point_secp256k1(r);
@@ -1856,11 +2652,11 @@ namespace tangent
 
 				bignum256 e;
 				curve_point r = from_compressed_point_secp256k1(cumulative_r);
-				if (!calculate_challenge(&e, r, message_hash, group_public_key))
+				if (!calculate_challenge(&e, r, message_hash, cumulative_key))
 					return layer_exception("invalid public r");
 
 				bignum256 k;
-				if (!calculate_nonce(&k, message_hash, group_public_key, secret_key, indices.front()))
+				if (!calculate_nonce(&k, message_hash, cumulative_key, secret_key, indices.front()))
 					return layer_exception("invalid private k");
 
 				bignum256 s;
@@ -1873,7 +2669,7 @@ namespace tangent
 					if (bn_is_zero(&s))
 						return layer_exception("invalid taproot tweak");
 				}
-				bn_cnegate(group_public_key.blob[0] == SECP256K1_TAG_PUBKEY_ODD, &s, &secp256k1.order);
+				bn_cnegate(cumulative_key.blob[0] == SECP256K1_TAG_PUBKEY_ODD, &s, &secp256k1.order);
 				bn_multiply(&e, &s, &secp256k1.order);
 				bn_addmod(&s, &k, &secp256k1.order);
 				if (bn_is_zero(&s))
@@ -1930,8 +2726,8 @@ namespace tangent
 		expects_lr<void> secp256k1_schnorr_compositor::derive_public_key(algorithm::composition::cpubkey_t* output) const
 		{
 			VI_ASSERT(output != nullptr, "output should be set");
-			output->resize(sizeof(group_public_key));
-			memcpy(output->data(), group_public_key.blob, sizeof(group_public_key));
+			output->resize(sizeof(cumulative_key));
+			memcpy(output->data(), cumulative_key.blob, sizeof(cumulative_key));
 			return expectation::met;
 		}
 		expects_lr<void> secp256k1_schnorr_compositor::derive_signature(algorithm::composition::chashsig_t* output) const
@@ -1958,7 +2754,7 @@ namespace tangent
 				return layer_exception("invalid signature");
 
 			auto copy = *this;
-			auto status = copy.setup_signature(public_key, message, message_size, participants);
+			auto status = copy.setup_signature(public_key, message, message_size, nullptr, participants);
 			if (!status)
 				return status;
 
@@ -2011,7 +2807,7 @@ namespace tangent
 				stream->write_integer(index);
 			stream->write_string(cumulative_r.optimized_view());
 			stream->write_string(cumulative_s.optimized_view());
-			stream->write_string(group_public_key.optimized_view());
+			stream->write_string(cumulative_key.optimized_view());
 			stream->write_string(group_public_key_tweak.optimized_view());
 			stream->write_string(std::string_view((char*)message_hash, sizeof(message_hash)));
 			return true;
@@ -2048,7 +2844,7 @@ namespace tangent
 			if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, cumulative_s.blob, sizeof(cumulative_s)))
 				return false;
 
-			if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, group_public_key.blob, sizeof(group_public_key)))
+			if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, cumulative_key.blob, sizeof(cumulative_key)))
 				return false;
 
 			if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, group_public_key_tweak.blob, sizeof(group_public_key_tweak)))
@@ -2066,7 +2862,7 @@ namespace tangent
 			if (participants != next->participants || memcmp(message_hash, next->message_hash, sizeof(message_hash)) != 0 || !group_public_key_tweak.equals(next->group_public_key_tweak))
 				return false;
 
-			if (z_steps == next->z_steps && !group_public_key.equals(next->group_public_key))
+			if (z_steps == next->z_steps && !cumulative_key.equals(next->cumulative_key))
 				return false;
 
 			return steps_left() >= next->steps_left();

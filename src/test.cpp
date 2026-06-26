@@ -1411,12 +1411,22 @@ struct tests
 		};
 		auto validate_transaction = [&](const algorithm::asset_id& asset, const superchain::computed_wallet& wallet, superchain::prepared_transaction& prepared, const std::string_view& feature, const std::string_view& expected_calldata)
 		{
+		recompute:
+			auto shared = prepared.as_shared_message();
+			auto keygen = shared && shared->keys.empty();
 			for (auto& input : prepared.inputs)
 			{
-				auto state = algorithm::composition::make_signature_compositor(input.alg, input.public_key, input.message.data(), input.message.size(), 1).expect("state initialization error");
+				auto state = algorithm::composition::make_signature_compositor(input.alg, input.public_key, input.message.data(), input.message.size(), shared.address(), 1).expect("state initialization error");
 				while (state->next_phase() != algorithm::composition::phase::finalized)
 					state->aggregate(wallet.secret_key).expect("signature aggregation error");
 				state->derive_signature(&input.signature);
+				if (shared)
+					shared->keys.push_back(input.signature);
+			}
+			if (keygen && !shared->keys.empty())
+			{
+				prepared.requires_shared_message(*shared);
+				goto recompute;
 			}
 
 			superchain::finalized_transaction finalized = offchain->finalize_transaction(asset, std::move(prepared)).expect("prepared transaction finalization error");
@@ -2037,7 +2047,7 @@ struct tests
 				VI_PANIC(actual_balance >= target_balance, "actual balance is expected to be %s but is %s", target_balance.to_string().c_str(), actual_balance.to_string().c_str());
 			}
 
-			auto target_balance = balance - withdrawal_value;
+			auto target_balance = native_asset == asset ? (balance - withdrawal_value - bridge_fee) : (balance - withdrawal_value);
 			auto actual_balance = executor.get_account_balance(asset, user3.public_key_hash).or_else(states::account_balance(user3.public_key_hash, asset, nullptr)).get_balance();
 			VI_PANIC(actual_balance >= target_balance, "actual balance is expected to be %s but is %s", target_balance.to_string().c_str(), actual_balance.to_string().c_str());
 		});
@@ -2502,7 +2512,7 @@ int main(int argc, char* argv[])
 		auto token = data->get_var("tok").get_blob();
 		auto contract = data->get_var("ctn").get_blob();
 		auto url = data->get_var("url").get_blob();
-		auto from_address = data->get_var("int").get_blob();
+		auto from_address = data->get_var("pay").get_blob();
 		auto to_address = data->get_var("out").get_blob();
 		auto amount = data->get_var("amt").get_decimal();
 		auto fee = data->get_var("fee").get_decimal();

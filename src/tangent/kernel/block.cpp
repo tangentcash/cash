@@ -2064,6 +2064,8 @@ namespace tangent
 				auto hash = chain->decode_address(address.second);
 				if (!hash)
 					return layer_exception(stringify::text("error applying \"%s\" address: %s", address.second.c_str(), hash.error().message().c_str()));
+				else if (hash->empty() || std::all_of(hash->begin(), hash->end(), [](char c) { return c == '\0'; }))
+					return layer_exception(stringify::text("error applying \"%s\" address: zero is reserved", address.second.c_str(), hash.error().message().c_str()));
 
 				segments[*hash][address.first] = address.second;
 			}

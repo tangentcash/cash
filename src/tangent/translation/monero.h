@@ -37,34 +37,38 @@ namespace tangent
 					static const char* get_block();
 					static const char* get_fee_estimate();
 					static const char* get_output_distribution();
+					static const char* get_outs();
 					static const char* get_o_indexes();
 				};
 
-				struct pseudo_transaction_input
+				struct pseudo_transaction
 				{
-					vector<uint64_t> key_offsets;
-					uint8_t key_image[32] = { 0 };
-					uint64_t amount = 0;
-					bool is_coinbase;
-				};
+					struct input
+					{
+						vector<uint64_t> key_offsets;
+						uint8_t key_image[32] = { 0 };
+						uint64_t amount = 0;
+						bool is_coinbase;
+					};
 
-				struct pseudo_transaction_output
-				{
-					uint8_t ring_out_key[32] = { 0 };
-					uint8_t key[32] = { 0 };
-					uint8_t view_tag = 0;
-					uint64_t amount = 0;
-					string ecdh_amount;
-					string ecdh_mask;
-				};
+					struct output
+					{
+						uint8_t ring_out_key[32] = { 0 };
+						uint8_t key[32] = { 0 };
+						uint8_t view_tag = 0;
+						uint64_t amount = 0;
+						string ecdh_amount;
+						string ecdh_mask;
+					};
 
-				struct pseudo_transaction_body
-				{
 					vector<algorithm::storage_type<uint8_t, 32>> public_keys;
-					vector<uint64_t> spending_key_offsets;
+					vector<input> inputs;
+					vector<output> outputs;
+					string to_address;
 					string encrypted_payment_id;
 					string payment_id;
 					string hash;
+					decimal fee;
 				};
 
 			protected:
@@ -94,24 +98,9 @@ namespace tangent
 
 			public:
 				virtual expects_promise_rt<vector<uint64_t>> get_output_indices(const std::string_view& transaction_id);
-				virtual bool generate_key_image(const uint8_t derivation_scalar[32], const uint8_t public_spend_key[32], const uint8_t public_view_key[32], const uint8_t private_spend_key[32], uint8_t key_image[32]);
-				virtual bool generate_derivation_key(const uint8_t transaction_public_key[32], const uint8_t private_view_key[32], uint8_t derivation_key[32]);
-				virtual bool generate_derivation_key_out(const uint8_t transaction_private_key[32], const uint8_t public_view_key[32], uint8_t derivation_key[32]);
-				virtual void derive_private_key(const uint8_t derivation_scalar[32], const uint8_t private_spend_key[32], uint8_t private_key[32]);
-				virtual bool derive_public_key(const uint8_t derivation_scalar[32], const uint8_t public_spend_key[32], uint8_t public_key[32]);
-				virtual void derivation_to_scalar(const uint8_t derivation_key[32], uint64_t derivation_index, uint8_t derivation_scalar[32]);
-				virtual void hash_to_scalar(const uint8_t* buffer, size_t buffer_size, uint8_t scalar[32]);
-				virtual void hash_to_point(const uint8_t* buffer, size_t buffer_size, uint8_t point[32]);
-				virtual bool pedersen_commit(uint8_t mask[32], uint8_t amount[32], uint8_t commitment[32]);
-				virtual void derive_known_private_view_key(const uint8_t public_spend_key[32], uint8_t private_view_key[32]);
-				virtual void derive_known_public_view_key(const uint8_t public_spend_key[32], uint8_t public_view_key[32]);
-				virtual void encode_amount_256(uint64_t amount_in, uint8_t amount_out[32]);
-				virtual pseudo_transaction_body decode_pseudo_transaction_info(const format::tree& transaction_data);
-				virtual vector<pseudo_transaction_input> decode_pseudo_transaction_inputs(const format::tree& transaction_data);
-				virtual vector<pseudo_transaction_output> decode_pseudo_transaction_outputs(const format::tree& transaction_data);
-				virtual decimal from_piconero(const uint256_t& value);
-				virtual uint256_t to_piconero(const decimal& value);
-				virtual uint64_t get_network_type() const;
+				virtual pseudo_transaction decode_pseudo_transaction(const format::tree& transaction_data);
+				virtual decimal from_atomic(const uint256_t& value);
+				virtual uint256_t to_atomic(const decimal& value);
 			};
 		}
 	}

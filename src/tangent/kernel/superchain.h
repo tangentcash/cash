@@ -113,6 +113,7 @@ namespace tangent
 			btree_map<uint256_t, token_utxo> tokens;
 			wallet_link link;
 			string transaction_id;
+			string extra;
 			decimal value;
 			uint64_t index = 0;
 
@@ -186,13 +187,13 @@ namespace tangent
 			prepared_transaction& requires_account_input(algorithm::composition::type new_alg, wallet_link&& new_link, const algorithm::composition::cpubkey_t& new_public_key, uint8_t* new_message, size_t new_message_size, hash_map<algorithm::asset_id, decimal>&& input);
 			prepared_transaction& requires_output(coin_utxo&& output);
 			prepared_transaction& requires_account_output(const std::string_view& to_address, hash_map<algorithm::asset_id, decimal>&& output);
-			prepared_transaction& requires_shared_message(const uint8_t* message, size_t message_size);
+			prepared_transaction& requires_shared_message(const algorithm::composition::shared_message& shared);
 			prepared_transaction& requires_abi(format::variable&& value);
 			format::variable* load_abi(size_t* ptr);
 			bool store_payload(format::wo_stream* stream) const override;
 			bool load_payload(format::ro_stream& stream) override;
 			signable_coin_utxo* next_input_for_aggregation();
-			option<vector<uint8_t>> as_shared_message() const;
+			option<algorithm::composition::shared_message> as_shared_message() const;
 			status as_status() const;
 			format::tree as_tree() const override;
 			uint32_t as_type() const override;
@@ -403,7 +404,7 @@ namespace tangent
 			virtual expects_promise_rt<coin_utxo> get_transaction_output(const std::string_view& transaction_id, uint64_t index) = 0;
 			virtual expects_promise_rt<decimal> calculate_balance(const algorithm::asset_id& for_asset, const wallet_link& link) override;
 			virtual expects_lr<vector<coin_utxo>> calculate_utxo(const wallet_link& link, option<balance_query>&& query);
-			virtual expects_lr<coin_utxo> get_utxo(const std::string_view& transaction_id, uint64_t index);
+			virtual expects_lr<coin_utxo> get_utxo(const std::string_view& transaction_id, uint64_t index, bool unspent_only = true);
 			virtual expects_lr<void> update_utxo(const computed_transaction& computed);
 			virtual expects_lr<void> receive_utxo(const std::string_view& transaction_id, uint64_t index, uint64_t receiver_block_id, const coin_utxo& output);
 			virtual expects_lr<void> spend_utxo(const std::string_view& transaction_id, uint64_t index, uint64_t spender_block_id);
@@ -480,10 +481,12 @@ namespace tangent
 			expects_lr<void> revive_utxo(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint64_t index);
 			expects_lr<void> revive_utxo_tree(const algorithm::asset_id& asset, const computed_transaction& computed);
 			expects_lr<void> update_utxo_tree(const algorithm::asset_id& asset, const computed_transaction& computed);
-			expects_lr<coin_utxo> get_utxo(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint64_t index);
+			expects_lr<coin_utxo> get_utxo(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint64_t index, bool unspent_only = true);
 			expects_lr<vector<coin_utxo>> get_utxos(const algorithm::asset_id& asset, const wallet_link& link, size_t offset, size_t count);
 			expects_lr<format::tree> load_cache(const algorithm::asset_id& asset, cache_policy policy, const std::string_view& key);
 			expects_lr<void> store_cache(const algorithm::asset_id& asset, cache_policy policy, const std::string_view& key, const format::tree& value);
+			expects_lr<string> get_ref(const algorithm::asset_id& asset, const std::string_view& key);
+			expects_lr<void> set_ref(const algorithm::asset_id& asset, const std::string_view& key, const std::string_view& value);
 			option<string> get_contract_address(const algorithm::asset_id& asset);
 			vector<algorithm::asset_id> get_assets(bool observing_only = false);
 			hash_map<algorithm::asset_id, translation_unit::chainparams> get_assets_with_params();

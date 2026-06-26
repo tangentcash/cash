@@ -1518,14 +1518,14 @@ namespace tangent
 
 			return expects_lr<uptr<composition::compositor>>(std::move(state_ptr));
 		}
-		expects_lr<uptr<composition::compositor>> composition::make_signature_compositor(type alg, const cpubkey_t& public_key, const uint8_t* message, size_t message_size, uint16_t participants)
+		expects_lr<uptr<composition::compositor>> composition::make_signature_compositor(type alg, const cpubkey_t& public_key, const uint8_t* message, size_t message_size, const shared_message* shared, uint16_t participants)
 		{
 			auto state = make_compositor(alg);
 			if (!state)
 				return layer_exception("invalid type");
 
 			auto& state_ptr = *state;
-			auto configuration = state_ptr->setup_signature(public_key, message, message_size, participants);
+			auto configuration = state_ptr->setup_signature(public_key, message, message_size, shared, participants);
 			if (!configuration)
 				return configuration.error();
 
