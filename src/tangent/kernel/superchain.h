@@ -145,6 +145,7 @@ namespace tangent
 			bool reverted = false;
 
 			computed_transaction() = default;
+			void rebuild_index();
 			void add_input(coin_utxo&& input);
 			void add_output(coin_utxo&& output);
 			bool store_payload(format::wo_stream* stream) const override;
@@ -403,7 +404,7 @@ namespace tangent
 			virtual ~utxo_translation_unit() = default;
 			virtual expects_promise_rt<coin_utxo> get_transaction_output(const std::string_view& transaction_id, uint64_t index) = 0;
 			virtual expects_promise_rt<decimal> calculate_balance(const algorithm::asset_id& for_asset, const wallet_link& link) override;
-			virtual expects_lr<vector<coin_utxo>> calculate_utxo(const wallet_link& link, option<balance_query>&& query);
+			virtual expects_lr<vector<coin_utxo>> calculate_utxo(const wallet_link& link, option<balance_query>&& query, bool confirmed_only = false);
 			virtual expects_lr<coin_utxo> get_utxo(const std::string_view& transaction_id, uint64_t index, bool unspent_only = true);
 			virtual expects_lr<void> update_utxo(const computed_transaction& computed);
 			virtual expects_lr<void> receive_utxo(const std::string_view& transaction_id, uint64_t index, uint64_t receiver_block_id, const coin_utxo& output);
@@ -482,11 +483,9 @@ namespace tangent
 			expects_lr<void> revive_utxo_tree(const algorithm::asset_id& asset, const computed_transaction& computed);
 			expects_lr<void> update_utxo_tree(const algorithm::asset_id& asset, const computed_transaction& computed);
 			expects_lr<coin_utxo> get_utxo(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint64_t index, bool unspent_only = true);
-			expects_lr<vector<coin_utxo>> get_utxos(const algorithm::asset_id& asset, const wallet_link& link, size_t offset, size_t count);
+			expects_lr<vector<coin_utxo>> get_utxos(const algorithm::asset_id& asset, const wallet_link& link, size_t offset, size_t count, bool confirmed_only = false);
 			expects_lr<format::tree> load_cache(const algorithm::asset_id& asset, cache_policy policy, const std::string_view& key);
 			expects_lr<void> store_cache(const algorithm::asset_id& asset, cache_policy policy, const std::string_view& key, const format::tree& value);
-			expects_lr<string> get_ref(const algorithm::asset_id& asset, const std::string_view& key);
-			expects_lr<void> set_ref(const algorithm::asset_id& asset, const std::string_view& key, const std::string_view& value);
 			option<string> get_contract_address(const algorithm::asset_id& asset);
 			vector<algorithm::asset_id> get_assets(bool observing_only = false);
 			hash_map<algorithm::asset_id, translation_unit::chainparams> get_assets_with_params();

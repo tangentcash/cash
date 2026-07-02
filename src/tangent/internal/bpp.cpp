@@ -3,11 +3,11 @@
 #include <stdexcept>
 #include <string>
 #include <utility>
-#include "rand.h"
 
 extern "C"
 {
 #include "monero.h"
+#include "sha3.h"
 }
 
 namespace xmr_bpp
@@ -58,12 +58,16 @@ namespace xmr_bpp
             return out;
         }
 
-        scalar_t scalar_random()
+        scalar_t scalar_derive(seed_t& seeder)
         {
             scalar_t out;
             do
             {
-                random_buffer(out.b32, sizeof(out.b32));
+                uint8_t buffer[64];
+                scalar_t nonce = scalar_uint64(seeder.nonce++);
+                memcpy(buffer + 00, seeder.seed, 32);
+                memcpy(buffer + 32, nonce.b32, 32);
+                sha3_256(buffer, sizeof(buffer), out.b32);
                 sc_reduce32(out.b32);
             } while (out.empty());
             return out;
@@ -466,6 +470,7 @@ namespace xmr_bpp
     }
 
     std::tuple<proof_t, std::vector<point_t>> prove(
+        seed_t& seeder,
         const std::vector<uint64_t>& amounts,
         const std::vector<scalar_t>& blinding_factors,
         size_t N)
@@ -538,7 +543,7 @@ namespace xmr_bpp
             const scalar_t V_hash = hash_to_scalar_keys(V);
             transcript = hash_to_scalar_pair(transcript, point_t(V_hash.b32));
 
-            scalar_t alpha = scalar_random();
+            scalar_t alpha = scalar_derive(seeder);
             point_t pre_A = vector_exponent(aL8, aR8, Gi, Hi);
             scalar_t alpha8;
             scalar_mul(alpha8, alpha, k.inv_eight);
@@ -612,8 +617,8 @@ namespace xmr_bpp
                 std::vector<scalar_t> a2_scaled = vector_scalar(aprime, nprime, aprime.size(), y_powers[nprime]);
                 scalar_t cR = weighted_inner_product(a2_scaled, bprime, 0, y);
 
-                scalar_t dL = scalar_random();
-                scalar_t dR = scalar_random();
+                scalar_t dL = scalar_derive(seeder);
+                scalar_t dR = scalar_derive(seeder);
 
                 proof.L[round] = compute_LR(nprime, yinvpow[nprime], Gprime, nprime, Hprime, 0, aprime, 0, bprime, nprime, cL, dL);
                 proof.R[round] = compute_LR(nprime, y_powers[nprime], Gprime, 0, Hprime, nprime, aprime, nprime, bprime, 0, cR, dR);
@@ -649,10 +654,10 @@ namespace xmr_bpp
             if (retry_proof)
                 continue;
 
-            scalar_t r = scalar_random();
-            scalar_t s = scalar_random();
-            scalar_t d_final = scalar_random();
-            scalar_t eta = scalar_random();
+            scalar_t r = scalar_derive(seeder);
+            scalar_t s = scalar_derive(seeder);
+            scalar_t d_final = scalar_derive(seeder);
+            scalar_t eta = scalar_derive(seeder);
 
             std::vector<std::pair<scalar_t, point_t>> A1_terms;
             A1_terms.reserve(4);

@@ -496,7 +496,7 @@ namespace tangent
 		}
 		bool block_header::solve(const algorithm::pubkeyhash_t& public_key_hash)
 		{
-			proof = algorithm::wesolowski::evaluate(difficulty, as_solution(public_key_hash).data);
+			proof = algorithm::wesolowski::evaluate(number, difficulty, as_solution(public_key_hash).data);
 			evaluation_time = protocol::now().time.now();
 			return !proof.empty();
 		}
@@ -514,7 +514,7 @@ namespace tangent
 		}
 		bool block_header::verify_proof(const algorithm::pubkeyhash_t& public_key_hash) const
 		{
-			return algorithm::wesolowski::verify(difficulty, as_solution(public_key_hash).data, proof);
+			return algorithm::wesolowski::verify(number, difficulty, as_solution(public_key_hash).data, proof);
 		}
 		void block_header::set_parent_block(const block_header* parent_block)
 		{
@@ -2975,7 +2975,7 @@ namespace tangent
 			VI_ASSERT(runner_wallet != nullptr, "runner wallet should be set");
 			uint8_t entropy_source_1[sizeof(asset)], entropy_source_2[sizeof(hash)];
 			auto entropy_source_3 = runner_wallet->secret_key.view();
-			auto entropy_source_4 = format::util::decode_0xhex(protocol::now().policy.pow.base);
+			auto& entropy_source_4 = protocol::now().policy.participation.root;
 			auto entropy_source_0 = owner.view();
 			asset.encode(entropy_source_1);
 			hash.encode(entropy_source_2);
@@ -2986,7 +2986,7 @@ namespace tangent
 			entropy_source.write_string(algorithm::hashing::hash512(entropy_source_1, sizeof(entropy_source_1)));
 			entropy_source.write_string(algorithm::hashing::hash512(entropy_source_2, sizeof(entropy_source_2)));
 			entropy_source.write_string(algorithm::hashing::hash512((uint8_t*)entropy_source_3.data(), entropy_source_3.size()));
-			entropy_source.write_string(algorithm::hashing::hash512((uint8_t*)entropy_source_4.data(), entropy_source_4.size()));
+			entropy_source.write_string(algorithm::hashing::hash512(entropy_source_4, sizeof(entropy_source_4)));
 			entropy_source.write_string(algorithm::hashing::hash512((uint8_t*)entropy_source.data.data(), entropy_source.data.size()));
 
 			uint8_t entropy[64];

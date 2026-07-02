@@ -2,8 +2,6 @@
 #define TAN_TRANSLATION_MONERO_H
 #include "../kernel/superchain.h"
 
-struct sc_chainparams_;
-
 namespace tangent
 {
 	namespace superchain
@@ -71,6 +69,13 @@ namespace tangent
 					decimal fee;
 				};
 
+				struct address_prefix
+				{
+					uint8_t standard_address = 0;
+					uint8_t integrated_address = 0;
+					uint8_t subaddress = 0;
+				};
+
 			protected:
 				chainparams netdata;
 
@@ -93,7 +98,7 @@ namespace tangent
 				virtual expects_lr<string> encode_transaction_id(const std::string_view& transaction_id) override;
 				virtual expects_lr<string> decode_transaction_id(const std::string_view& transaction_id) override;
 				virtual expects_lr<address_map> to_addresses(const std::string_view& public_key) override;
-				virtual const sc_chainparams_* get_chain();
+				virtual address_prefix get_address_prefix() const;
 				virtual const chainparams& get_chainparams() const override;
 
 			public:

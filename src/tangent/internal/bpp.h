@@ -37,6 +37,12 @@ namespace xmr_bpp
     using scalar_vec_t = std::vector<scalar_t>;
     using point_vec_t = std::vector<point_t>;
 
+    struct seed_t
+    {
+        uint8_t seed[32];
+        uint64_t nonce = 0;
+    };
+
     struct proof_t
     {
         point_t A, A1, B;
@@ -45,6 +51,7 @@ namespace xmr_bpp
     };
 
     std::tuple<proof_t, std::vector<point_t>> prove(
+        seed_t& seeder,
         const std::vector<uint64_t>& amounts,
         const std::vector<scalar_t>& blinding_factors,
         size_t N = 64);

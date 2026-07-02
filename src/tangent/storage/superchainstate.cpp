@@ -161,7 +161,7 @@ namespace tangent
 
 			return value;
 		}
-		expects_lr<vector<superchain::coin_utxo>> superchainstate::get_utxos(const superchain::wallet_link& link, size_t offset, size_t count)
+		expects_lr<vector<superchain::coin_utxo>> superchainstate::get_utxos(const superchain::wallet_link& link, size_t offset, size_t count, bool confirmed_only)
 		{
 			if (!link.has_any())
 				return expects_lr<vector<superchain::coin_utxo>>(layer_exception("invalid link"));
@@ -173,7 +173,7 @@ namespace tangent
 			map.push_back(var::set::integer(count));
 			map.push_back(var::set::integer(offset));
 
-			auto cursor = get_storage().emplace_query(__func__, "SELECT message FROM coins WHERE spent = FALSE AND $? = ? ORDER BY receiver_block_id ASC NULLS LAST LIMIT ? OFFSET ?", &map);
+			auto cursor = get_storage().emplace_query(__func__, stringify::text("SELECT message FROM coins WHERE spent = FALSE%s AND $? = ? ORDER BY receiver_block_id ASC NULLS LAST LIMIT ? OFFSET ?", confirmed_only ? " AND receiver_block_id IS NOT NULL" : ""), &map);
 			if (!cursor || cursor->error())
 				return expects_lr<vector<superchain::coin_utxo>>(layer_exception(ledger::storage_util::error_of(cursor)));
 

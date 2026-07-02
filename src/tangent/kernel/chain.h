@@ -33,7 +33,8 @@ namespace tangent
 		key_bind_commitment = 400000,
 		key_bind_uniqueness = 840000,
 		difficulty_gas_work = 890000,
-		consensus_challenge = 920000
+		consensus_challenge = 920000,
+		base_to_root_modulo = 1001000
 	};
 
 	enum class network_type
@@ -145,8 +146,8 @@ namespace tangent
 		secret_box key;
 
 	public:
-		string init(const std::string_view& maybe_data, bool interactive);
-		void use(network_type type, const std::string_view& data, bool interactive);
+		string init(const std::string_view& maybe_data, bool encrypted);
+		void use(network_type type, const std::string_view& data, bool encrypted);
 		expects_lr<string> encrypt(const std::string_view& data) const;
 		expects_lr<string> decrypt(const std::string_view& data) const;
 	};
@@ -196,7 +197,7 @@ namespace tangent
 			struct
 			{
 				uptr<format::tree> options;
-				uint64_t polling_frequency = 90000;
+				uint64_t polling_frequency = 60000;
 				uint32_t cache1_size = 4096;
 				uint32_t cache2_size = 16384;
 				bool listener = false;
@@ -249,7 +250,7 @@ namespace tangent
 			hash_set<string> bootstrap_nodes;
 			network_type network = network_type::mainnet;
 			string keystate;
-			bool interactive = false;
+			bool encrypted = false;
 		} user;
 		struct protocol_messaging_config
 		{
@@ -288,7 +289,7 @@ namespace tangent
 					uint32_t difficulty = 13;
 					uint16_t steps = 256;
 				} tx;
-				std::string_view base = "83e0bd24dc6b0ee3206aa7d8aebeb7134f505341d43b5c8320d8258eb98ab96b48b21742e0dfb24d227b247d056f99d63e2b1b0ba31323b3dc395950e73ea99e";
+				uint8_t root[256];
 				uint64_t time = 12000;
 				uint64_t adjustment_time = 120000;
 				uint64_t difficulty = 2048;
@@ -308,6 +309,7 @@ namespace tangent
 			} attestation;
 			struct
 			{
+				uint8_t root[64];
 				uint64_t locking_time = 691200000;
 				uint64_t referencing_time = 1382400000;
 				uint64_t min_per_account = 7;
@@ -350,7 +352,6 @@ namespace tangent
 
 	public:
 		std::mutex mutex;
-		string wesolowski;
 		repository database;
 		keystate box;
 		timepoint time;

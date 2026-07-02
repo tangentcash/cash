@@ -126,20 +126,19 @@ namespace tangent
 			};
 
 		public:
-			static uint64_t calibrate(uint64_t confidence, uint64_t target_time = protocol::now().policy.pow.time);
-			static uint64_t adjust(uint64_t prev_difficulty, uint64_t prev_time, uint64_t target_index);
+			static uint64_t adjust(uint64_t prev_difficulty, uint64_t prev_time, uint64_t target_block_number);
 			static uint64_t scale(uint64_t difficulty, const decimal& multiplier);
-			static string evaluate(uint64_t difficulty, const std::string_view& message);
-			static bool verify(uint64_t difficulty, const std::string_view& message, const std::string_view& proof);
+			static string evaluate(uint64_t block_number, uint64_t difficulty, const std::string_view& message);
+			static bool verify(uint64_t block_number, uint64_t difficulty, const std::string_view& message, const std::string_view& proof);
 			static int8_t compare(const std::string_view& proof1, const std::string_view& proof2);
 			static uint64_t adjustment_interval();
-			static uint64_t adjustment_index(uint64_t index);
-			static decimal adjustment_scaling(uint64_t index);
+			static uint64_t adjustment_block_number(uint64_t block_number);
+			static decimal adjustment_scaling(uint64_t block_number);
 			static format::tree serialize(uint64_t difficulty, const std::string_view& proof, const decimal& scaling = decimal::nan());
 			static uint128_t kdifficulty(uint64_t difficulty);
 
 		private:
-			static bool evaluate_or_proof(uint64_t difficulty, const std::string_view& message, const std::string_view& proof_in, string* proof_out);
+			static bool evaluate_or_proof(uint64_t block_number, uint64_t difficulty, const std::string_view& message, const std::string_view& proof_in, string* proof_out);
 		};
 
 		class segwit

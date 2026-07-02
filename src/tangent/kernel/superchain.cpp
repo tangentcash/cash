@@ -466,6 +466,9 @@ namespace tangent
 					return status;
 			}
 
+			if (extra.size() > 72)
+				return layer_exception("extra data too big");
+
 			return expectation::met;
 		}
 		expects_lr<void> coin_utxo::validate_as_output() const
@@ -485,6 +488,9 @@ namespace tangent
 				if (!status)
 					return status;
 			}
+
+			if (extra.size() > 72)
+				return layer_exception("extra data too big");
 
 			return expectation::met;
 		}
@@ -545,6 +551,17 @@ namespace tangent
 			return "coin_utxo";
 		}
 
+		void computed_transaction::rebuild_index()
+		{
+			btree_map<uint256_t, coin_utxo> prev_inputs;
+			btree_map<uint256_t, coin_utxo> prev_outputs;
+			inputs.swap(prev_inputs);
+			outputs.swap(prev_outputs);
+			for (auto& [hash, input] : prev_inputs)
+				inputs[input.as_hash(true)] = std::move(input);
+			for (auto& [hash, output] : prev_outputs)
+				outputs[output.as_hash(true)] = std::move(output);
+		}
 		void computed_transaction::add_input(coin_utxo&& input)
 		{
 			inputs[input.as_hash()] = std::move(input);
@@ -817,7 +834,14 @@ namespace tangent
 			stream.write_integer(shared.checksum);
 			stream.write_integer((uint16_t)shared.keys.size());
 			for (auto& input : shared.keys)
-				stream.write_string(std::string_view((char*)input.data(), input.size()));
+			{
+				size_t size = input.size();
+				auto* ptr = input.data() + size;
+				while (size > 0 && !*(--ptr))
+					--size;
+				stream.write_integer(input.size());
+				stream.write_string(std::string_view((char*)input.data(), size));
+			}
 
 			uint32_t header = os::hw::to_endianness<uint32_t>(os::hw::endian::big, SHARED_MESSAGE_HEADER_MAGIC);
 			string packed_message;
@@ -963,10 +987,15 @@ namespace tangent
 			shared.keys.reserve(keys_size);
 			for (uint16_t i = 0; i < keys_size; i++)
 			{
-				string key;
-				if (!stream.read_string(stream.read_type(), &key) || key.empty())
+				uint16_t size = 0;
+				if (!stream.read_integer(stream.read_type(), &size))
 					return optional::none;
 
+				string key;
+				if (!stream.read_string(stream.read_type(), &key))
+					return optional::none;
+
+				key.resize(size, 0);
 				shared.keys.push_back(algorithm::composition::to_cstorage<algorithm::composition::chashsig_t>(key));
 			}
 
@@ -984,11 +1013,12 @@ namespace tangent
 					return status::invalid;
 			}
 
-			for (auto& item : outputs)
+			for (size_t i = 0; i < outputs.size(); i++)
 			{
+				auto& item = outputs[i];
 				if (!item.validate_as_output())
 					return status::invalid;
-				else if (!item.is_account() && !item.transaction_id.empty())
+				else if (!item.is_account() && (!item.transaction_id.empty() || item.index != (uint64_t)i))
 					return status::invalid;
 			}
 
@@ -1552,7 +1582,7 @@ namespace tangent
 
 			return expects_promise_rt<decimal>(std::move(balance));
 		}
-		expects_lr<vector<coin_utxo>> utxo_translation_unit::calculate_utxo(const wallet_link& link, option<balance_query>&& query)
+		expects_lr<vector<coin_utxo>> utxo_translation_unit::calculate_utxo(const wallet_link& link, option<balance_query>&& query, bool confirmed_only)
 		{
 			vector<coin_utxo> values;
 			decimal current_value = decimal::zero();
@@ -1572,7 +1602,7 @@ namespace tangent
 			while (continue_accumulation())
 			{
 				const size_t count = 64;
-				auto outputs = bridge::get()->get_utxos(native_asset, link, values.size(), count);
+				auto outputs = bridge::get()->get_utxos(native_asset, link, values.size(), count, confirmed_only);
 				if (!outputs || outputs->empty())
 					break;
 
@@ -2106,6 +2136,7 @@ namespace tangent
 						auto computed = coawait(implementation->link_transaction(log.block_height, log.block_hash, item));
 						if (computed)
 						{
+							computed->rebuild_index();
 							computed->block_id = log.block_height;
 							normalize_transaction_id(asset, &computed->transaction_id);
 							log.receipts.push_back(std::move(*computed));
@@ -2127,8 +2158,6 @@ namespace tangent
 					{
 						state.add_incoming_transaction(new_transaction);
 						transaction_ids.insert(algorithm::asset::handle_of(asset) + ":" + new_transaction.transaction_id);
-						if (utxo_implementation != nullptr)
-							utxo_implementation->update_utxo(new_transaction).report("failed to update utxo set from " + new_transaction.transaction_id);
 					}
 					logs.push_back(std::move(log));
 				}
@@ -2213,14 +2242,7 @@ namespace tangent
 			if (protocol::now().user.superchain.logging)
 				VI_INFO("%s broadcast transaction: %s (ref: %s)", algorithm::asset::blockchain_of(asset).c_str(), finalized.as_tree().as_json().c_str(), algorithm::encoding::encode_0xhex256(external_id).c_str());
 
-			return implementation->broadcast_transaction(finalized).then<expects_rt<void>>([implementation, new_transaction = std::move(new_transaction)](expects_rt<void>&& result) mutable -> expects_rt<void>
-			{
-				auto* utxo_implementation = result ? utxo_translation_unit::from(implementation) : nullptr;
-				if (utxo_implementation != nullptr)
-					utxo_implementation->update_utxo(new_transaction).report("failed to update utxo set from " + new_transaction.transaction_id);
-
-				return result;
-			});
+			return implementation->broadcast_transaction(finalized);
 		}
 		expects_promise_rt<prepared_transaction> bridge::prepare_transaction(const algorithm::asset_id& asset, const wallet_link& from_link, const value_transfer& to, const decimal& max_fee)
 		{
@@ -2804,10 +2826,10 @@ namespace tangent
 			storages::superchainstate state = storages::superchainstate(asset);
 			return state.get_utxo(transaction_id, index, unspent_only);
 		}
-		expects_lr<vector<coin_utxo>> bridge::get_utxos(const algorithm::asset_id& asset, const wallet_link& link, size_t offset, size_t count)
+		expects_lr<vector<coin_utxo>> bridge::get_utxos(const algorithm::asset_id& asset, const wallet_link& link, size_t offset, size_t count, bool confirmed_only)
 		{
 			storages::superchainstate state = storages::superchainstate(asset);
-			return state.get_utxos(link, offset, count);
+			return state.get_utxos(link, offset, count, confirmed_only);
 		}
 		expects_lr<format::tree> bridge::load_cache(const algorithm::asset_id& asset, cache_policy policy, const std::string_view& key)
 		{
@@ -2818,22 +2840,6 @@ namespace tangent
 		{
 			storages::superchainstate state = storages::superchainstate(asset);
 			return state.set_cache(policy, key, value);
-		}
-		expects_lr<string> bridge::get_ref(const algorithm::asset_id& asset, const std::string_view& key)
-		{
-			string key_ref = string("R:").append(key);
-			storages::superchainstate state = storages::superchainstate(asset);
-			auto result = state.get_property(key_ref);
-			if (!result)
-				return result.error();
-
-			return expects_lr<string>(result->value.as_blob());
-		}
-		expects_lr<void> bridge::set_ref(const algorithm::asset_id& asset, const std::string_view& key, const std::string_view& value)
-		{
-			string key_ref = string("R:").append(key);
-			storages::superchainstate state = storages::superchainstate(asset);
-			return state.set_property(key_ref, format::variable(value));
 		}
 		option<string> bridge::get_contract_address(const algorithm::asset_id& asset)
 		{
@@ -2894,6 +2900,7 @@ namespace tangent
 				{ "BCH", chain<translations::bitcoin_cash>(this) },
 				{ "DOGE", chain<translations::dogecoin>(this) },
 				{ "LTC", chain<translations::litecoin>(this) },
+				{ "XMR", chain<translations::monero>(this) },
 #ifdef TAN_TEST
 				{ "BTG", chain<translations::bitcoin_gold>(this) },
 				{ "BSV", chain<translations::bitcoin_sv>(this) },
@@ -2914,7 +2921,6 @@ namespace tangent
 				{ "OP", chain<translations::optimism>(this) },
 				{ "S", chain<translations::sonic>(this) },
 				{ "ZK", chain<translations::zksync>(this) },
-				{ "XMR", chain<translations::monero>(this) },
 #endif
 			};
 			return registrations;

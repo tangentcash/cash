@@ -359,6 +359,14 @@ namespace tangent
 
 			return expectation::met;
 		}
+		static std::string_view to_optimized_uint256(const uint8_t blob[32])
+		{
+			size_t size = 32;
+			auto* ptr = blob + size;
+			while (size > 0 && !*(--ptr))
+				--size;
+			return std::string_view((char*)blob, size);
+		}
 
 		expects_lr<void> ed25519_compositor::setup_public_key(const uint8_t* new_message, size_t new_message_size, uint16_t new_participants)
 		{
@@ -627,61 +635,95 @@ namespace tangent
 			if (participants != next->participants || message != next->message)
 				return false;
 
-			if (z_steps == next->z_steps && !cumulative_key.equals(next->cumulative_key))
+			if ((z_steps == next->z_steps) != cumulative_key.equals(next->cumulative_key))
+				return false;
+
+			if ((r_steps == next->r_steps) != cumulative_r.equals(next->cumulative_r))
+				return false;
+
+			if (r_steps == next->r_steps && s_steps == next->s_steps && indices != next->indices)
+				return false;
+
+			if (r_steps != next->r_steps && indices.size() >= next->indices.size())
+				return false;
+
+			if (s_steps != next->s_steps && indices.size() <= next->indices.size())
+				return false;
+
+			if ((s_steps == next->s_steps) != cumulative_s.equals(next->cumulative_s))
 				return false;
 
 			return steps_left() >= next->steps_left();
 		}
 
+		void ed25519_clsag_compositor::clsag_message::optimize_index(uint16_t* vin_index_inout)
+		{
+			uint8_t prev_key_image[32];
+			if (vin_index_inout && *vin_index_inout < vin.size())
+				memcpy(prev_key_image, vin[*vin_index_inout].key_image, 32);
+
+			std::sort(vin.begin(), vin.end(), [](const txin_to_key& a, const txin_to_key& b) { return std::memcmp(a.key_image, b.key_image, 32) > 0; });
+			if (!vin_index_inout || *vin_index_inout >= vin.size())
+				return;
+
+			for (uint16_t i = 0; i < vin.size(); i++)
+			{
+				if (!memcmp(prev_key_image, vin[i].key_image, 32))
+				{
+					*vin_index_inout = i;
+					break;
+				}
+			}
+		}
 		bool ed25519_clsag_compositor::clsag_message::store_payload(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
 			stream->write_integer((uint16_t)vin.size());
 			for (auto& utxo : vin)
 			{
-				stream->write_string(std::string_view((char*)utxo.clsag.c1, sizeof(utxo.clsag.c1)));
-				stream->write_string(std::string_view((char*)utxo.clsag.d, sizeof(utxo.clsag.d)));
+				stream->write_string(to_optimized_uint256(utxo.clsag.c1));
+				stream->write_string(to_optimized_uint256(utxo.clsag.d));
 				stream->write_integer((uint8_t)utxo.clsag.s.size());
 				for (auto& s : utxo.clsag.s)
-					stream->write_string(std::string_view((char*)s.data(), s.size()));
-				stream->write_string(std::string_view((char*)utxo.pseudo_out.mask, sizeof(utxo.pseudo_out.mask)));
-				stream->write_string(std::string_view((char*)utxo.pseudo_out.key, sizeof(utxo.pseudo_out.key)));
-				stream->write_string(std::string_view((char*)utxo.prev_out.commitment_mask, sizeof(utxo.prev_out.commitment_mask)));
-				stream->write_string(std::string_view((char*)utxo.prev_out.derivation_scalar, sizeof(utxo.prev_out.derivation_scalar)));
+					stream->write_string(to_optimized_uint256(s.data()));
+				stream->write_string(to_optimized_uint256(utxo.pseudo_out.mask));
+				stream->write_string(to_optimized_uint256(utxo.pseudo_out.key));
+				stream->write_string(to_optimized_uint256(utxo.prev_out.commitment_mask));
+				stream->write_string(to_optimized_uint256(utxo.prev_out.derivation_scalar));
 				stream->write_integer(utxo.prev_out.index);
 				stream->write_integer((uint8_t)utxo.keys.size());
 				for (auto& key_offset : utxo.keys)
 				{
-					stream->write_string(std::string_view((char*)key_offset.key, sizeof(key_offset.key)));
-					stream->write_string(std::string_view((char*)key_offset.mask, sizeof(key_offset.mask)));
+					stream->write_string(to_optimized_uint256(key_offset.key));
+					stream->write_string(to_optimized_uint256(key_offset.mask));
 					stream->write_integer(key_offset.index);
 					stream->write_boolean(key_offset.decoy);
 				}
-				stream->write_string(std::string_view((char*)utxo.key_image, sizeof(utxo.key_image)));
+				stream->write_string(to_optimized_uint256(utxo.key_image));
 			}
 			stream->write_integer((uint16_t)vout.size());
 			for (auto& utxo : vout)
 			{
 				stream->write_integer(utxo.target.tag);
-				stream->write_string(std::string_view((char*)utxo.target.key, sizeof(utxo.target.key)));
-				stream->write_string(std::string_view((char*)utxo.ecdh_info.amount, sizeof(utxo.ecdh_info.amount)));
-				stream->write_string(std::string_view((char*)utxo.out_pk.blinding_factor, sizeof(utxo.out_pk.blinding_factor)));
-				stream->write_string(std::string_view((char*)utxo.out_pk.mask, sizeof(utxo.out_pk.mask)));
+				stream->write_string(to_optimized_uint256(utxo.target.key));
+				stream->write_string(to_optimized_uint256(utxo.ecdh_info.amount));
+				stream->write_string(to_optimized_uint256(utxo.out_pk.blinding_factor));
+				stream->write_string(to_optimized_uint256(utxo.out_pk.mask));
 			}
 			stream->write_string(std::string_view((char*)extra.data(), extra.size()));
-			stream->write_string(std::string_view((char*)bpp.a, sizeof(bpp.a)));
-			stream->write_string(std::string_view((char*)bpp.a1, sizeof(bpp.a1)));
-			stream->write_string(std::string_view((char*)bpp.b, sizeof(bpp.b)));
-			stream->write_string(std::string_view((char*)bpp.r1, sizeof(bpp.r1)));
-			stream->write_string(std::string_view((char*)bpp.s1, sizeof(bpp.s1)));
-			stream->write_string(std::string_view((char*)bpp.d1, sizeof(bpp.d1)));
+			stream->write_string(to_optimized_uint256(bpp.a));
+			stream->write_string(to_optimized_uint256(bpp.a1));
+			stream->write_string(to_optimized_uint256(bpp.b));
+			stream->write_string(to_optimized_uint256(bpp.r1));
+			stream->write_string(to_optimized_uint256(bpp.s1));
+			stream->write_string(to_optimized_uint256(bpp.d1));
 			stream->write_integer((uint8_t)bpp.l.size());
 			for (auto& l : bpp.l)
-				stream->write_string(std::string_view((char*)l.data(), l.size()));
+				stream->write_string(to_optimized_uint256(l.data()));
 			stream->write_integer((uint8_t)bpp.r.size());
 			for (auto& r : bpp.r)
-				stream->write_string(std::string_view((char*)r.data(), r.size()));
-			stream->write_string(std::string_view((char*)tx_key, sizeof(tx_key)));
+				stream->write_string(to_optimized_uint256(r.data()));
+			stream->write_string(to_optimized_uint256(tx_key));
 			stream->write_integer(fee);
 			return true;
 		}
@@ -690,9 +732,10 @@ namespace tangent
 			string intermediate;
 			auto read_string256 = [&](format::viewable type, uint8_t data[32]) -> bool
 			{
-				if (!stream.read_string(type, &intermediate) || intermediate.size() != 32)
+				if (!stream.read_string(type, &intermediate) || intermediate.size() > 32)
 					return false;
 
+				memset(data, 0, 32);
 				memcpy(data, intermediate.data(), intermediate.size());
 				return true;
 			};
@@ -852,7 +895,7 @@ namespace tangent
 
 			return true;
 		}
-		void ed25519_clsag_compositor::clsag_message::write_prefix(vector<uint8_t>& buffer) const
+		void ed25519_clsag_compositor::clsag_message::write_prefix(vector<uint8_t>& buffer, bool no_key_image) const
 		{
 			write_varint(0x2, buffer); // version: v2
 			write_varint(0x0, buffer); // unlock_time: instant (zero)		
@@ -864,7 +907,8 @@ namespace tangent
 				write_varint(in.keys.size(), buffer); // vin[i].key_offsets.size
 				for (auto& offset : in.keys)
 					write_varint(offset.index, buffer); // vin[i].key_offsets[j]: index
-				buffer.insert(buffer.end(), in.key_image, in.key_image + 32); // vin[i].key_image: 32 bytes
+				if (!no_key_image)
+					buffer.insert(buffer.end(), in.key_image, in.key_image + 32); // vin[i].key_image: 32 bytes
 			}
 			write_varint(vout.size(), buffer); // vout.size
 			for (const auto& out : vout) // vout
@@ -944,10 +988,10 @@ namespace tangent
 			write_rctsig_prunable(rctsig_prunable, true, true);
 			xmr_fast_hash(rctsig_prunable_hash, rctsig_prunable.data(), rctsig_prunable.size());
 		}
-		void ed25519_clsag_compositor::clsag_message::as_id_hash(uint8_t id_hash[32], bool no_clsag, bool no_pseudo_size) const
+		void ed25519_clsag_compositor::clsag_message::as_id_hash(uint8_t id_hash[32], bool no_clsag, bool no_pseudo_size, bool no_key_image) const
 		{
 			vector<uint8_t> prefix, rctsig_base, rctsig_prunable;
-			write_prefix(prefix);
+			write_prefix(prefix, no_key_image);
 			write_rctsig_base(rctsig_base);
 			write_rctsig_prunable(rctsig_prunable, no_clsag, no_pseudo_size);
 
@@ -1075,6 +1119,11 @@ namespace tangent
 
 				i_steps = new_shared->keys.empty() || new_shared->keys.size() < message.vin.size() ? new_participants : 0;
 				a_steps = s_steps = i_steps > 0 ? 0 : new_participants;
+				if (!i_steps)
+				{
+					message.optimize_index(&vin_index);
+					cumulative_I.clear();
+				}
 			}
 			else
 			{
@@ -1104,52 +1153,31 @@ namespace tangent
 			if (key_index == std::numeric_limits<size_t>::max())
 				return layer_exception("invalid vin key index");
 
-			auto vin_key_alpha = [&](const clsag_message::txin_to_key& vin, uint8_t a_i[32]) -> bool
+			auto calculate_nonce = [&](const clsag_message::txin_to_key& vin, uint8_t a_i[32])
 			{
-				uint8_t seed_buffer[128];
+				uint8_t seed_buffer[128], message_hash[32];
 				message.as_prefix_hash(seed_buffer);
 				memcpy(seed_buffer + sizeof(vin.key_image) * 1, vin.key_image, sizeof(vin.key_image));
 				memcpy(seed_buffer + sizeof(vin.key_image) * 2, secret_key.data(), sizeof(vin.key_image));
 				memcpy(seed_buffer + sizeof(vin.key_image) * 3, vin.pseudo_out.mask, sizeof(vin.pseudo_out.mask));
-				hash_to_scalar(seed_buffer, sizeof(seed_buffer), a_i);
-				return sc_valid(a_i) != 0;
-			};
-			auto vin_key_mu_P_C = [&](const clsag_message::txin_to_key& vin, uint8_t mu_P[32], uint8_t mu_C[32]) -> bool
-			{
-				auto n = vin.keys.size();
-				const unsigned char HASH_KEY_CLSAG_AGG_0[] = "CLSAG_agg_0";
-				const unsigned char HASH_KEY_CLSAG_AGG_1[] = "CLSAG_agg_1";
-				vector<std::array<uint8_t, 32>> mu_P_to_hash(2 * n + 4);
-				vector<std::array<uint8_t, 32>> mu_C_to_hash(2 * n + 4);
-				sc_0(mu_P_to_hash[0].data());
-				sc_0(mu_C_to_hash[0].data());
-				memcpy(mu_P_to_hash[0].data(), HASH_KEY_CLSAG_AGG_0, sizeof(HASH_KEY_CLSAG_AGG_0) - 1);
-				memcpy(mu_C_to_hash[0].data(), HASH_KEY_CLSAG_AGG_1, sizeof(HASH_KEY_CLSAG_AGG_1) - 1);
-				for (size_t i = 1; i < n + 1; ++i)
-				{
-					auto& member = vin.keys[i - 1];
-					memcpy(mu_P_to_hash[i].data(), member.key, sizeof(member.key));
-					memcpy(mu_C_to_hash[i].data(), member.key, sizeof(member.key));
-				}
-				for (size_t i = n + 1; i < 2 * n + 1; ++i)
-				{
-					auto& member = vin.keys[i - n - 1];
-					memcpy(mu_P_to_hash[i].data(), member.mask, sizeof(member.mask));
-					memcpy(mu_C_to_hash[i].data(), member.mask, sizeof(member.mask));
-				}
-				memcpy(mu_P_to_hash[2 * n + 1].data(), cumulative_I.blob, sizeof(cumulative_I.blob));
-				memcpy(mu_P_to_hash[2 * n + 2].data(), vin.clsag.d, sizeof(vin.clsag.d));
-				memcpy(mu_P_to_hash[2 * n + 3].data(), vin.pseudo_out.key, sizeof(vin.pseudo_out.key));
-				memcpy(mu_C_to_hash[2 * n + 1].data(), cumulative_I.blob, sizeof(cumulative_I.blob));
-				memcpy(mu_C_to_hash[2 * n + 2].data(), vin.clsag.d, sizeof(vin.clsag.d));
-				memcpy(mu_C_to_hash[2 * n + 3].data(), vin.pseudo_out.key, sizeof(vin.pseudo_out.key));
+				xmr_fast_hash(message_hash, seed_buffer, sizeof(seed_buffer));
 
-				vector<uint8_t> mu_P_to_hash8, mu_C_to_hash8;
-				vector32_to_vector8(mu_P_to_hash, mu_P_to_hash8);
-				vector32_to_vector8(mu_C_to_hash, mu_C_to_hash8);
-				hash_to_scalar(mu_P_to_hash8.data(), mu_P_to_hash8.size(), mu_P);
-				hash_to_scalar(mu_C_to_hash8.data(), mu_C_to_hash8.size(), mu_C);
-				return sc_valid(mu_P) != 0 && sc_valid(mu_C) != 0;
+				uint256_t index = 0;
+				while (true)
+				{
+					uint8_t index_nonce[32];
+					index.encode(index_nonce);
+					++index;
+
+					uint8_t ask[32], nonce[32];
+					sha256_Raw(secret_key.data(), secret_key.size(), ask);
+					if (secp256k1_nonce_function_rfc6979(nonce, message_hash, ask, nullptr, index_nonce, 0) != 1)
+						continue;
+
+					hash_to_scalar(nonce, sizeof(nonce), a_i);
+					if (sc_valid(a_i) != 0)
+						break;
+				}
 			};
 			if (z_steps > 0)
 			{
@@ -1202,12 +1230,9 @@ namespace tangent
 				else if (memcmp(cumulative_I.blob, vin.key_image, sizeof(vin.key_image)) != 0)
 					return layer_exception("invalid I derivation");
 
-				uint8_t H[32], a_i[32];
+				uint8_t H[32], a_i[32], aH_i[32];
 				hash_to_point(ring_member->key, sizeof(ring_member->key), H);
-				if (!vin_key_alpha(vin, a_i))
-					return layer_exception("invalid a(i) derivation");
-
-				uint8_t aH_i[32];
+				calculate_nonce(vin, a_i);
 				if (ge_scalarmult_s(aH_i, H, a_i) != 0)
 					return layer_exception("invalid aH derivation");
 
@@ -1240,8 +1265,41 @@ namespace tangent
 					if (ge_scalarmult_i8(vin.clsag.d, D) != 0)
 						return layer_exception("invalid D derivation");
 
+					auto n = vin.keys.size();
+					const unsigned char HASH_KEY_CLSAG_AGG_0[] = "CLSAG_agg_0";
+					const unsigned char HASH_KEY_CLSAG_AGG_1[] = "CLSAG_agg_1";
+					vector<std::array<uint8_t, 32>> mu_P_to_hash(2 * n + 4);
+					vector<std::array<uint8_t, 32>> mu_C_to_hash(2 * n + 4);
+					sc_0(mu_P_to_hash[0].data());
+					sc_0(mu_C_to_hash[0].data());
+					memcpy(mu_P_to_hash[0].data(), HASH_KEY_CLSAG_AGG_0, sizeof(HASH_KEY_CLSAG_AGG_0) - 1);
+					memcpy(mu_C_to_hash[0].data(), HASH_KEY_CLSAG_AGG_1, sizeof(HASH_KEY_CLSAG_AGG_1) - 1);
+					for (size_t i = 1; i < n + 1; ++i)
+					{
+						auto& member = vin.keys[i - 1];
+						memcpy(mu_P_to_hash[i].data(), member.key, sizeof(member.key));
+						memcpy(mu_C_to_hash[i].data(), member.key, sizeof(member.key));
+					}
+					for (size_t i = n + 1; i < 2 * n + 1; ++i)
+					{
+						auto& member = vin.keys[i - n - 1];
+						memcpy(mu_P_to_hash[i].data(), member.mask, sizeof(member.mask));
+						memcpy(mu_C_to_hash[i].data(), member.mask, sizeof(member.mask));
+					}
+					memcpy(mu_P_to_hash[2 * n + 1].data(), cumulative_I.blob, sizeof(cumulative_I.blob));
+					memcpy(mu_P_to_hash[2 * n + 2].data(), vin.clsag.d, sizeof(vin.clsag.d));
+					memcpy(mu_P_to_hash[2 * n + 3].data(), vin.pseudo_out.key, sizeof(vin.pseudo_out.key));
+					memcpy(mu_C_to_hash[2 * n + 1].data(), cumulative_I.blob, sizeof(cumulative_I.blob));
+					memcpy(mu_C_to_hash[2 * n + 2].data(), vin.clsag.d, sizeof(vin.clsag.d));
+					memcpy(mu_C_to_hash[2 * n + 3].data(), vin.pseudo_out.key, sizeof(vin.pseudo_out.key));
+
 					uint8_t mu_P[32], mu_C[32];
-					if (!vin_key_mu_P_C(vin, mu_P, mu_C))
+					vector<uint8_t> mu_P_to_hash8, mu_C_to_hash8;
+					vector32_to_vector8(mu_P_to_hash, mu_P_to_hash8);
+					vector32_to_vector8(mu_C_to_hash, mu_C_to_hash8);
+					hash_to_scalar(mu_P_to_hash8.data(), mu_P_to_hash8.size(), mu_P);
+					hash_to_scalar(mu_C_to_hash8.data(), mu_C_to_hash8.size(), mu_C);
+					if (sc_valid(mu_P) == 0 || sc_valid(mu_C) == 0)
 						return layer_exception("invalid mu_P or mu_C derivation");
 
 					uint8_t mlsag_prehash_to_hash[96], mlsag_prehash[32];
@@ -1250,7 +1308,6 @@ namespace tangent
 					message.as_rctsig_prunable_hash(mlsag_prehash_to_hash + 64);
 					xmr_fast_hash(mlsag_prehash, mlsag_prehash_to_hash, sizeof(mlsag_prehash_to_hash));
 
-					size_t n = vin.keys.size();
 					const unsigned char HASH_KEY_CLSAG_ROUND[] = "CLSAG_round";
 					vector<std::array<uint8_t, 32>> c_to_hash(2 * n + 5);
 					sc_0(c_to_hash[0].data());
@@ -1276,12 +1333,20 @@ namespace tangent
 					if (i == 0)
 						memcpy(vin.clsag.c1, c, sizeof(c));
 
+					uint8_t base_hash[32];
+					message.as_hash(true).encode(base_hash);
 					vin.clsag.s.resize(n);
 					while (i != key_index)
 					{
-						auto& s_i = vin.clsag.s[i]; auto& member = vin.keys[i];
-						crypto::fill_random_bytes(s_i.data(), s_i.size());
-						hash_to_scalar(s_i.data(), s_i.size(), s_i.data());
+						uint8_t seed[138] = { 0 };
+						memcpy(seed + 00, mlsag_prehash, sizeof(mlsag_prehash));
+						memcpy(seed + 32, base_hash, sizeof(base_hash));
+						memcpy(seed + 64, c, sizeof(c));
+						memcpy(seed + 96, secret_key.data(), secret_key.size());
+						write_varint_fixed(i, seed + 128);
+
+						auto& s_i = vin.clsag.s[i];
+						hash_to_scalar(seed, sizeof(seed), s_i.data());
 						if (sc_valid(s_i.data()) == 0)
 							return layer_exception("invalid s(i) derivation");
 
@@ -1290,7 +1355,7 @@ namespace tangent
 						sc_mul(c_c, mu_C, c);
 						sc_0(c_i);
 
-						uint8_t C_i[32];
+						uint8_t C_i[32]; auto& member = vin.keys[i];
 						if (ge_sub_w(C_i, member.mask, vin.pseudo_out.key) != 0)
 							return layer_exception("invalid C(i) derivation");
 
@@ -1339,7 +1404,7 @@ namespace tangent
 
 				auto& s_i = vin.clsag.s[key_index];
 				uint8_t a_i[32], a_c_mu_P_x[32];
-				vin_key_alpha(vin, a_i);
+				calculate_nonce(vin, a_i);
 				sc_mulsub(a_c_mu_P_x, cumulative_c_mu_P.blob, secret_key.data(), a_i);
 				sc_add(s_i.data(), s_i.data(), a_c_mu_P_x);
 				--s_steps;
@@ -1707,22 +1772,76 @@ namespace tangent
 			auto* next = (const ed25519_clsag_compositor*)&next_ptr;
 			if (participants != next->participants || vin_index != next->vin_index)
 				return false;
-			/*
-			if (z_steps == next->z_steps && !cumulative_key.equals(next->cumulative_key))
+
+			if ((z_steps == next->z_steps) != cumulative_key.equals(next->cumulative_key))
 				return false;
 
-			if (i_steps == next->i_steps && !cumulative_I.equals(next->cumulative_I))
+			if ((i_steps == next->i_steps) != cumulative_I.equals(next->cumulative_I))
+			{
+				if (a_steps <= next->a_steps || cumulative_I.equals(next->cumulative_I))
+					return false;
+			}
+
+			if ((a_steps == next->a_steps) != cumulative_aH.equals(next->cumulative_aH))
 				return false;
 
-			if (a_steps == next->a_steps && (!cumulative_aG.equals(next->cumulative_aG) || !cumulative_aH.equals(next->cumulative_aH)))
+			if ((a_steps == next->a_steps) != cumulative_aG.equals(next->cumulative_aG))
 				return false;
+
+			if (a_steps > 0 && !next->a_steps && cumulative_c_mu_P.equals(next->cumulative_c_mu_P))
+				return false;
+
+			if (vin_index < message.vin.size())
+			{
+				if (next->vin_index >= next->message.vin.size())
+					return false;
+
+				auto& vin = message.vin[vin_index];
+				auto next_vin = next->message.vin[next->vin_index];
+				auto ring_member = std::find_if(vin.keys.begin(), vin.keys.end(), [](const clsag_message::txin_to_key::ref& r) { return !r.decoy; });
+				auto next_ring_member = std::find_if(next_vin.keys.begin(), next_vin.keys.end(), [](const clsag_message::txin_to_key::ref& r) { return !r.decoy; });
+				auto key_index = ring_member == vin.keys.end() ? std::numeric_limits<size_t>::max() : std::distance(vin.keys.begin(), ring_member);
+				auto next_key_index = next_ring_member == next_vin.keys.end() ? std::numeric_limits<size_t>::max() : std::distance(next_vin.keys.begin(), next_ring_member);
+				if (key_index != next_key_index || vin.clsag.s.size() > next_vin.clsag.s.size())
+					return false;
+
+				if (key_index != std::numeric_limits<size_t>::max() && key_index < vin.clsag.s.size())
+				{
+					auto& s_i = vin.clsag.s[key_index];
+					auto& next_s_i = next_vin.clsag.s[next_key_index];
+					if ((s_steps == next->s_steps) != (s_i == next_s_i))
+						return false;
+				}
+
+				vector<uint8_t> a, b;
+				a.insert(a.end(), vin.clsag.c1, vin.clsag.c1 + 32);
+				a.insert(a.end(), vin.clsag.d, vin.clsag.d + 32);
+				b.insert(b.end(), next_vin.clsag.c1, next_vin.clsag.c1 + 32);
+				b.insert(b.end(), next_vin.clsag.d, next_vin.clsag.d + 32);
+				for (auto& s : vin.clsag.s)
+					a.insert(a.end(), s.data(), s.data() + 32);
+				for (auto& s : next_vin.clsag.s)
+					b.insert(b.end(), s.data(), s.data() + 32);
+				
+				bool clsag_updated = algorithm::hashing::hash256i(std::string_view((char*)a.data(), a.size())) != algorithm::hashing::hash256i(std::string_view((char*)b.data(), b.size()));
+				if (a_steps > 0 && next->a_steps > 0 && clsag_updated)
+					return false;
+
+				if (a_steps > 0 && !next->a_steps)
+				{
+					if (!clsag_updated)
+						return false;
+				}
+				else if ((s_steps == next->s_steps) != !clsag_updated)
+					return false;
+			}
 
 			uint8_t hash_prev[32], hash_next[32];
-			message.as_id_hash(hash_prev, true);
-			next->message.as_id_hash(hash_next, true);
+			message.as_id_hash(hash_prev, true, true, true);
+			next->message.as_id_hash(hash_next, true, true, true);
 			if (memcmp(hash_prev, hash_next, sizeof(hash_next)) != 0)
 				return false;
-			*/
+
 			return steps_left() >= next->steps_left();
 		}
 		bool ed25519_clsag_compositor::generate_derivation_key(const uint8_t transaction_public_key[32], const uint8_t private_view_key[32], uint8_t derivation_key[32])
@@ -1851,10 +1970,10 @@ namespace tangent
 		void ed25519_clsag_compositor::derive_pseudo_message(const uint8_t* message, size_t message_size, clsag_message& out, uint16_t& index_out)
 		{
 			VI_ASSERT(message != nullptr, "message should be set");
-			uint64_t random_nonce = 0;
+			uint64_t sc_nonce = 0;
 			auto sc_derive = [&](uint8_t x[32])
 			{
-				uint8_t buffer[40]; uint64_t nonce = os::hw::to_endianness(os::hw::endian::little, random_nonce++);
+				uint8_t buffer[40]; uint64_t nonce = os::hw::to_endianness(os::hw::endian::little, sc_nonce++);
 				memcpy(buffer, message, message_size);
 				memcpy(buffer + message_size, &nonce, sizeof(nonce));
 				hash_to_scalar(buffer, sizeof(buffer), x);
@@ -2497,10 +2616,38 @@ namespace tangent
 			if (additions != next->additions || multiplications != next->multiplications || p_bits != next->p_bits || memcmp(message_hash, next->message_hash, sizeof(message_hash)) != 0)
 				return false;
 
-			if (z_steps == next->z_steps && !cumulative_key.equals(next->cumulative_key))
+			if ((z_steps == next->z_steps) != cumulative_key.equals(next->cumulative_key))
 				return false;
 
-			if (!encryption_key.empty() && !next->encryption_key.empty() && encryption_key != next->encryption_key)
+			if ((r_steps == next->r_steps) != cumulative_r.equals(next->cumulative_r))
+				return false;
+
+			if ((i_steps == next->i_steps && (s_steps == next->s_steps || (s_steps > 0 && !next->s_steps))) != (cumulative_i == next->cumulative_i))
+				return false;
+
+			if (s_steps > 0 && !next->s_steps)
+			{
+				if (cumulative_s.equals(next->cumulative_s))
+					return false;
+			}
+			else if (!cumulative_s.equals(next->cumulative_s))
+				return false;
+
+			if (r_steps > 0 && !next->r_steps)
+			{
+				if (!encryption_key.empty() || next->encryption_key.empty())
+					return false;
+			}
+			else if (encryption_key != next->encryption_key)
+				return false;
+
+			if (r_steps == next->r_steps && s_steps == next->s_steps && indices != next->indices)
+				return false;
+
+			if (r_steps != next->r_steps && indices.size() >= next->indices.size())
+				return false;
+
+			if (s_steps != next->s_steps && indices.size() <= next->indices.size())
 				return false;
 
 			return steps_left() >= next->steps_left();
@@ -2862,7 +3009,22 @@ namespace tangent
 			if (participants != next->participants || memcmp(message_hash, next->message_hash, sizeof(message_hash)) != 0 || !group_public_key_tweak.equals(next->group_public_key_tweak))
 				return false;
 
-			if (z_steps == next->z_steps && !cumulative_key.equals(next->cumulative_key))
+			if ((z_steps == next->z_steps) != cumulative_key.equals(next->cumulative_key))
+				return false;
+
+			if ((r_steps == next->r_steps) != cumulative_r.equals(next->cumulative_r))
+				return false;
+
+			if ((s_steps == next->s_steps) != cumulative_s.equals(next->cumulative_s))
+				return false;
+
+			if (r_steps == next->r_steps && s_steps == next->s_steps && indices != next->indices)
+				return false;
+
+			if (r_steps != next->r_steps && indices.size() >= next->indices.size())
+				return false;
+
+			if (s_steps != next->s_steps && indices.size() <= next->indices.size())
 				return false;
 
 			return steps_left() >= next->steps_left();

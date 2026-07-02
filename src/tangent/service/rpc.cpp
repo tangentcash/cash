@@ -317,7 +317,7 @@ namespace tangent
 				VI_INFO("OK rpc node listen (location: %s:%i)", protocol::now().user.rpc.address.c_str(), (int)protocol::now().user.rpc.port);
 
 			bind(0, "websocket", "subscribe", 1, 3, "string addresses, bool? blocks, bool? transactions", "uint64", "subscribe to streams of incoming blocks and transactions optionally include blocks and transactions relevant to comma separated address list", std::bind(&server_node::web_socket_subscribe, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0, "websocket", "unsubscribe", 1, 1, "", "void", "unsubscribe from all streams", std::bind(&server_node::web_socket_unsubscribe, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0, "websocket", "unsubscribe", 0, 0, "", "void", "unsubscribe from all streams", std::bind(&server_node::web_socket_unsubscribe, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0, "utility", "encodeaddress", 1, 1, "string public_key_hash", "string", "encode public key hash", std::bind(&server_node::utility_encode_address, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0, "utility", "decodeaddress", 1, 1, "string address", "string", "decode address", std::bind(&server_node::utility_decode_address, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0, "utility", "decodemessage", 1, 1, "string message", "any[]", "decode message", std::bind(&server_node::utility_decode_message, this, std::placeholders::_1, std::placeholders::_2));
@@ -2321,6 +2321,7 @@ namespace tangent
 			for (auto& item : *list)
 			{
 				auto* bridge = (states::bridge_instance*)item.ptr();
+				auto queue_stride = states::bridge_queue::as_instance_column(bridge->ref.asset, bridge->ref.hash);
 				auto balance_stride = states::bridge_balance::as_instance_row(bridge->ref.hash);
 				auto* next = data.push(format::tree::map());
 				next->set("instance", bridge->as_tree());
@@ -2363,6 +2364,24 @@ namespace tangent
 					if (balances->size() != count)
 						break;
 				}
+
+				auto queue = next->set("queue", format::tree::list());
+				while (true)
+				{
+					auto transactions = chain.get_multiforms_by_column(states::bridge_queue::as_instance_type(), nullptr, queue_stride, 0, queue->childs().size(), count);
+					if (!transactions)
+						break;
+
+					for (auto& state : *transactions)
+					{
+						auto* ref = state.as<states::bridge_queue>();
+						if (asset == algorithm::asset::base_id_of(ref->asset))
+							queue->push(state.ptr()->as_tree());
+					}
+
+					if (transactions->size() != count)
+						break;
+				}
 			}
 			return server_response().success(std::move(data));
 		}
@@ -2388,6 +2407,7 @@ namespace tangent
 			for (auto& item : *list)
 			{
 				auto* balance_state = (states::bridge_balance*)item.ptr();
+				auto queue_stride = states::bridge_queue::as_instance_column(balance_state->asset, balance_state->bridge_hash);
 				auto balance_stride = states::bridge_balance::as_instance_row(balance_state->bridge_hash);
 				auto bridge_state = chain.get_multiform(states::bridge_instance::as_instance_type(), nullptr, bridge_stride, states::bridge_instance::as_instance_row(balance_state->bridge_hash), 0);
 				auto* next = data.push(format::tree::map());
@@ -2430,6 +2450,24 @@ namespace tangent
 					}
 
 					if (states->size() != count)
+						break;
+				}
+
+				auto queue = next->set("queue", format::tree::list());
+				while (true)
+				{
+					auto transactions = chain.get_multiforms_by_column(states::bridge_queue::as_instance_type(), nullptr, queue_stride, 0, queue->childs().size(), count);
+					if (!transactions)
+						break;
+
+					for (auto& state : *transactions)
+					{
+						auto* ref = state.as<states::bridge_queue>();
+						if (asset == algorithm::asset::base_id_of(ref->asset))
+							queue->push(state.ptr()->as_tree());
+					}
+
+					if (transactions->size() != count)
 						break;
 				}
 			}

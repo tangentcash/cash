@@ -1,12 +1,11 @@
 #include "monero.h"
 #include "../policy/compositions.h"
 #include "../internal/bpp.h"
+#include <random>
 #include <sodium.h>
 extern "C"
 {
-#include "../internal/bitcoin.h"
 #include "../internal/monero.h"
-#include "../internal/sha3.h"
 }
 
 namespace tangent
@@ -89,7 +88,7 @@ namespace tangent
 				netdata.composition = algorithm::composition::type::ed25519_clsag;
 				netdata.routing = routing_policy::utxo;
 				netdata.tokenization = token_policy::none;
-				netdata.sync_latency = 10;
+				netdata.sync_latency = 20;
 				netdata.divisibility = algorithm::arithmetic::fixed(1000000000000);
 				netdata.transaction_expires = false;
 			}
@@ -239,17 +238,29 @@ namespace tangent
 					auto* offchain = superchain::bridge::get();
 					for (auto& input : pseudo.inputs)
 					{
-						auto key_offset = from_string<uint64_t>(offchain->get_ref(native_asset, string("KI:").append(codec::base64_encode(std::string_view((char*)input.key_image, sizeof(input.key_image))))).or_else(string()));
-						if (key_offset && std::find(input.key_offsets.begin(), input.key_offsets.end(), *key_offset) != input.key_offsets.end())
-						{
-							auto utxo = get_utxo(to_string(*key_offset), 0, false);
-							if (utxo)
-							{
-								if (!utxo->link.address.empty())
-									result.signers.insert(utxo->link.address);
-								result.add_input(std::move(*utxo));
-							}
-						}
+						if (input.is_coinbase)
+							continue;
+
+						auto ref = offchain->load_cache(native_asset, cache_policy::lifetime_cache, string("K").append(codec::base64_encode(std::string_view((char*)input.key_image, sizeof(input.key_image)))));
+						if (!ref)
+							continue;
+
+						auto buffer = ref->value.as_blob();
+						auto message = format::ro_stream(buffer);
+						if (!ref)
+							continue;
+
+						auto transaction_id = string(); auto index = uint64_t(0);
+						if (!message.read_string(message.read_type(), &transaction_id) || !message.read_integer(message.read_type(), &index))
+							continue;
+
+						auto utxo = get_utxo(transaction_id, index, false);
+						if (!utxo)
+							continue;
+
+						if (!utxo->link.address.empty())
+							result.signers.insert(utxo->link.address);
+						result.add_input(std::move(*utxo));
 					}
 
 					while (true)
@@ -353,6 +364,7 @@ namespace tangent
 										value = from_baseline_value(output.amount);
 
 									coin_utxo new_output;
+									new_output.transaction_id = result.transaction_id;
 									new_output.link = link.second;
 									new_output.value = std::move(value);
 									new_output.index = (uint64_t)i;
@@ -378,24 +390,18 @@ namespace tangent
 					if (!indices)
 						coreturn expects_rt<computed_transaction>(indices.error());
 
-					btree_map<uint256_t, coin_utxo> indexable_outputs;
 					for (auto& [hash, output] : result.outputs)
 					{
 						auto out = output.index < indices->size() ? unpack_prev_out(output) : option<unsigned_transaction::txin_to_key::out>(optional::none);
-						if (!out)
-							continue;
-
-						auto indexable_output = output;
-						out->index = indices->at(output.index);
-						pack_prev_out(indexable_output, *out);
-						indexable_output.transaction_id = to_string(out->index);
-						indexable_output.index = 0;
-						indexable_outputs[indexable_output.as_hash()] = std::move(indexable_output);
+						if (out)
+						{
+							out->index = indices->at(output.index);
+							pack_prev_out(output, *out);
+						}
 					}
 
 					decimal sending_value = decimal::zero();
 					decimal receiving_value = decimal::zero();
-					result.outputs = std::move(indexable_outputs);
 					for (auto& [hash, input] : result.inputs)
 						sending_value += input.value;
 					for (auto& [hash, output] : result.outputs)
@@ -417,11 +423,12 @@ namespace tangent
 						new_output.transaction_id = algorithm::asset::handle_of(native_asset);
 						new_output.index = std::numeric_limits<uint32_t>::max();
 						new_output.value = sending_value - receiving_value - pseudo.fee;
-						auto to_address = offchain->get_ref(native_asset, string("TX:").append(result.transaction_id));
-						if (to_address && decode_address(*to_address))
+						auto ref = offchain->load_cache(native_asset, cache_policy::lifetime_cache, string("T").append(result.transaction_id));
+						auto to_address = ref ? ref->value.as_blob() : string();
+						if (!to_address.empty() && decode_address(to_address))
 						{
-							auto to_link = find_linked_addresses({ *to_address });
-							new_output.link = to_link ? std::move(to_link->begin()->second) : wallet_link::from_address(*to_address);
+							auto to_link = find_linked_addresses({ to_address });
+							new_output.link = to_link ? std::move(to_link->begin()->second) : wallet_link::from_address(to_address);
 						}
 						else
 							new_output.link = wallet_link::from_address(encode_address(std::string_view((char*)null_key, sizeof(null_key))).or_else(string()));
@@ -444,8 +451,13 @@ namespace tangent
 					bool invalid_input = hex_data->child_var("invalid_input").as_boolean();
 					bool invalid_output = hex_data->child_var("invalid_output").as_boolean();
 					bool low_mixin = hex_data->child_var("low_mixin").as_boolean();
+					bool nonzero_unlock_time = hex_data->child_var("nonzero_unlock_time").as_boolean();
+					bool not_relayed = hex_data->child_var("not_relayed").as_boolean();
 					bool overspend = hex_data->child_var("overspend").as_boolean();
+					bool sanity_check_failed = hex_data->child_var("sanity_check_failed").as_boolean();
 					bool too_big = hex_data->child_var("too_big").as_boolean();
+					bool too_few_outputs = hex_data->child_var("too_few_outputs").as_boolean();
+					bool tx_extra_too_big = hex_data->child_var("tx_extra_too_big").as_boolean();
 					if (double_spend)
 						return expects_rt<void>(remote_exception("transaction double spends inputs"));
 					else if (fee_too_low)
@@ -456,10 +468,25 @@ namespace tangent
 						return expects_rt<void>(remote_exception("transaction uses invalid output"));
 					else if (low_mixin)
 						return expects_rt<void>(remote_exception("transaction mixin count is too low"));
+					else if (nonzero_unlock_time)
+						return expects_rt<void>(remote_exception("transaction unlock time is invalid"));
+					else if (not_relayed)
+						return expects_rt<void>(remote_exception("transaction failed to relay"));
 					else if (overspend)
 						return expects_rt<void>(remote_exception("transaction overspends inputs"));
+					else if (sanity_check_failed)
+						return expects_rt<void>(remote_exception("transaction sanity check failed"));
 					else if (too_big)
 						return expects_rt<void>(remote_exception("transaction is too big"));
+					else if (too_few_outputs)
+						return expects_rt<void>(remote_exception("transaction has too few outputs"));
+					else if (tx_extra_too_big)
+						return expects_rt<void>(remote_exception("transaction extra is too big"));
+
+					auto status = hex_data->child_var("status").as_blob();
+					auto reason = hex_data->child_var("reason").as_blob();
+					if (status != "OK")
+						return expects_rt<void>(remote_exception(reason.empty() ? "send transaction failed" : reason));
 
 					return expects_rt<void>(expectation::met);
 				});
@@ -484,11 +511,15 @@ namespace tangent
 						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
 
 					decimal total_value = to.value + fee_value;
-					auto possible_inputs = calculate_utxo(from_link, balance_query(total_value, { }));
+					auto possible_inputs = calculate_utxo(from_link, balance_query(total_value, { }), true);
 					decimal input_value = possible_inputs ? get_utxo_value(*possible_inputs, optional::none) : 0.0;
 					if (!possible_inputs || possible_inputs->empty())
-						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", input_value.to_string().c_str(), total_value.to_string().c_str())));
-					
+					{
+						auto unconfirmed_inputs = calculate_utxo(from_link, balance_query(total_value, { }), false);
+						bool pending_confirmations = unconfirmed_inputs && !unconfirmed_inputs->empty();
+						coreturn expects_rt<prepared_transaction>(pending_confirmations ? remote_exception::retry_later("awaiting utxo confirmation") : remote_exception(stringify::text("insufficient funds: %s < %s", input_value.to_string().c_str(), total_value.to_string().c_str())));
+					}
+
 					if (inputs_count != possible_inputs->size())
 					{
 						inputs_count = possible_inputs->size();
@@ -506,9 +537,23 @@ namespace tangent
 					else if (is_subaddress(*change_public_spend_view_key))
 						coreturn expects_rt<prepared_transaction>(remote_exception("invalid change address (must be standard address)"));
 
+					uint8_t value256[32], link256[32], input256[32];
+					to_atomic(total_value).encode(value256);
+					from_link.as_hash(true).encode(link256);
+
+					vector<uint8_t> seed;
+					seed.insert(seed.end(), value256, value256 + 32);
+					seed.insert(seed.end(), link256, link256 + 32);
+					seed.insert(seed.end(), (uint8_t*)to_public_spend_view_key->data(), (uint8_t*)to_public_spend_view_key->data() + 64);
+					seed.insert(seed.end(), (uint8_t*)change_public_spend_view_key->data(), (uint8_t*)change_public_spend_view_key->data() + 64);
+					for (auto& input : *possible_inputs)
+					{
+						input.as_hash(true).encode(input256);
+						seed.insert(seed.end(), input256, input256 + 32);
+					}
+
 					unsigned_transaction tx;
-					crypto::fill_random_bytes(tx.tx_key, sizeof(tx.tx_key));
-					cryptonote::hash_to_scalar(tx.tx_key, sizeof(tx.tx_key), tx.tx_key);
+					cryptonote::hash_to_scalar(seed.data(), seed.size(), tx.tx_key);
 					tx.fee = (uint64_t)to_atomic(fee_value);
 					tx.extra.resize(33, TX_EXTRA_TAG_PUBKEY);
 					sc_mul_g(tx.extra.data() + 1, tx.tx_key);
@@ -562,15 +607,19 @@ namespace tangent
 					else if (!change_output)
 						coreturn expects_rt<prepared_transaction>(remote_exception("failed to build the change output"));
 
-					size_t lock_time = 60, ring_size = 16;
 					auto block_height = coawait(get_latest_block_height());
 					if (!block_height)
 						coreturn block_height.error();
 
+					uint64_t ring_size = 16;
+					uint64_t total_ring_size = ring_size * possible_inputs->size();
+					uint64_t min_total_ring_size = 1 + total_ring_size * 8 / 10;
+					uint64_t lower_block_margin = 60 + total_ring_size;
+					uint64_t upper_block_margin = 60;
 					format::tree map;
 					map.set("amounts", format::tree::list())->push(format::variable((uint8_t)0));
-					map.set("from_height", format::variable(*block_height - lock_time - ring_size));
-					map.set("to_height", format::variable(*block_height - lock_time));
+					map.set("from_height", format::variable(*block_height <= lower_block_margin ? 1 : *block_height - lower_block_margin));
+					map.set("to_height", format::variable(*block_height <= upper_block_margin ? 1 : *block_height - upper_block_margin));
 					map.set("cumulative", format::variable(true));
 					map.set("binary", format::variable(false));
 
@@ -594,7 +643,7 @@ namespace tangent
 						unique_output_indices.insert(prev_out->index);
 					}
 
-					if (unique_output_indices.size() < ring_size)
+					if (unique_output_indices.size() < min_total_ring_size)
 						coreturn expects_rt<prepared_transaction>(remote_exception("failed to find enough decoy outputs"));
 
 					vector<uint64_t> output_indices;
@@ -621,6 +670,10 @@ namespace tangent
 						}
 					}
 
+					size_t output_indices_offset = 0;
+					std::random_device random;
+					std::mt19937_64 generator(random());
+					std::shuffle(output_indices.begin(), output_indices.end(), generator);
 					tx.vout.push_back(std::move(*main_output));
 					tx.vout.push_back(std::move(*change_output));
 					for (auto& utxo : *possible_inputs)
@@ -636,8 +689,8 @@ namespace tangent
 						unique_output_indices.clear();
 						unique_output_indices.insert(out->first);
 						while (unique_output_indices.size() < ring_size)
-							unique_output_indices.insert(output_indices[(size_t)(crypto::random() % (uint64_t)output_indices.size())]);
-
+							unique_output_indices.insert(output_indices[(output_indices_offset++) % output_indices.size()]);
+		
 						unsigned_transaction::txin_to_key vin;
 						vin.prev_out = *prev_out;
 						vin.keys.reserve(unique_output_indices.size());
@@ -668,9 +721,13 @@ namespace tangent
 
 					try
 					{
+						xmr_bpp::seed_t seeder;
+						memcpy(seeder.seed, tx.tx_key, sizeof(tx.tx_key));
+						seeder.nonce = (uint64_t)(tx.as_hash() % uint256_t(std::numeric_limits<uint64_t>::max()));
+
 						xmr_bpp::scalar_vec_t blinding_factors = { xmr_bpp::scalar_t(tx.vout[0].out_pk.blinding_factor), xmr_bpp::scalar_t(tx.vout[1].out_pk.blinding_factor) };
 						std::vector<uint64_t> amounts = { (uint64_t)to_atomic(to.value), (uint64_t)to_atomic(change_value) };
-						auto [proof, pedersen_commitments] = xmr_bpp::prove(amounts, blinding_factors);
+						auto [proof, pedersen_commitments] = xmr_bpp::prove(seeder, amounts, blinding_factors);
 						memcpy(tx.bpp.a, proof.A.b32, sizeof(proof.A.b32));
 						memcpy(tx.bpp.a1, proof.A1.b32, sizeof(proof.A1.b32));
 						memcpy(tx.bpp.b, proof.B.b32, sizeof(proof.B.b32));
@@ -737,7 +794,7 @@ namespace tangent
 					auto to_link = find_linked_addresses({ to.address });
 					result.requires_output(coin_utxo(to_link ? std::move(to_link->begin()->second) : wallet_link::from_address(to.address), string(), 0, decimal(to.value)));
 					if (change_value.is_positive())
-						result.requires_output(coin_utxo(wallet_link(change_link), string(), 0, decimal(change_value)));
+						result.requires_output(coin_utxo(wallet_link(change_link), string(), 1, decimal(change_value)));
 					coreturn expects_rt<prepared_transaction>(std::move(result));
 				});
 			}
@@ -753,7 +810,7 @@ namespace tangent
 					return layer_exception("invalid tx abi");
 
 				unsigned_transaction checksum_tx = tx;
-				for (auto& vin : tx.vin)
+				for (auto& vin : checksum_tx.vin)
 				{
 					vin.clsag = unsigned_transaction::txin_to_key::sig();
 					memset(vin.key_image, 0, sizeof(vin.key_image));
@@ -784,6 +841,7 @@ namespace tangent
 
 				uint8_t tx_id[32];
 				vector<uint8_t> tx_data;
+				tx.optimize_index(nullptr);
 				tx.write_all(tx_data);
 				tx.as_id_hash(tx_id);
 
@@ -793,10 +851,19 @@ namespace tangent
 					return validation.error();
 
 				auto* offchain = superchain::bridge::get();
-				offchain->set_ref(native_asset, string("TX:").append(result.hashdata), result.prepared.outputs.front().link.address);
-				for (auto& vin : tx.vin)
-					offchain->set_ref(native_asset, string("KI:").append(codec::base64_encode(std::string_view((char*)vin.key_image, sizeof(vin.key_image)))), to_string(vin.prev_out.index));
+				for (size_t i = 0; i < tx.vin.size(); i++)
+				{
+					auto& utxo = result.prepared.inputs[i];
+					if (utxo.utxo.transaction_id.empty())
+						return layer_exception("invalid input utxo");
 
+					auto& vin = tx.vin[i];
+					auto message = format::wo_stream();
+					message.write_string(utxo.utxo.transaction_id);
+					message.write_integer(utxo.utxo.index);
+					offchain->store_cache(native_asset, cache_policy::lifetime_cache, string("K").append(codec::base64_encode(std::string_view((char*)vin.key_image, sizeof(vin.key_image)))), format::variable(message.data));
+				}
+				offchain->store_cache(native_asset, cache_policy::lifetime_cache, string("T").append(result.hashdata), format::variable(result.prepared.outputs.front().link.address));
 				return expects_lr<finalized_transaction>(std::move(result));
 			}
 			expects_lr<secret_box> monero::encode_secret_key(const secret_box& secret_key)
@@ -903,50 +970,24 @@ namespace tangent
 				if (public_key_hash.size() != 64 && public_key_hash.size() != 65)
 					return layer_exception("not a valid raw public spend-view keypair");
 
-				uint64_t network_tag = public_key_hash.size() == 65 ? (uint8_t)public_key_hash[64] : 0;
-				switch (protocol::now().user.network)
-				{
-					case network_type::mainnet:
-					case network_type::regtest:
-						network_tag = network_tag > 0 ? network_tag : 0x12;
-						break;
-					case network_type::testnet:
-						network_tag = network_tag > 0 ? network_tag : 0x35;
-						break;
-					default:
-						VI_PANIC(false, "invalid network type");
-						break;
-				}
-
 				char address[256] = { 0 };
-				if (xmr_base58_addr_encode_check(network_tag, (uint8_t*)public_key_hash.data(), 64, address, sizeof(address)) == 0)
+				uint64_t type = public_key_hash.size() == 65 ? (uint8_t)public_key_hash[64] : get_address_prefix().standard_address;
+				if (xmr_base58_addr_encode_check(type, (uint8_t*)public_key_hash.data(), 64, address, sizeof(address)) == 0)
 					return layer_exception("not a valid public spend-view key");
 
 				return string(address, strnlen(address, sizeof(address)));
 			}
 			expects_lr<string> monero::decode_address(const std::string_view& address)
 			{
-				uint8_t buffer[128]; uint64_t network_tag;
-				if (xmr_base58_addr_decode_check(address.data(), address.size(), &network_tag, buffer, sizeof(buffer)) == 0)
+				uint8_t buffer[128]; uint64_t type;
+				if (xmr_base58_addr_decode_check(address.data(), address.size(), &type, buffer, sizeof(buffer)) == 0)
 					return layer_exception("not a valid address data");
 
-				switch (protocol::now().user.network)
-				{
-					case network_type::mainnet:
-					case network_type::regtest:
-						if (network_tag != 0x12 && network_tag != 0x13 && network_tag != 0x2a)
-							return layer_exception("invalid address type");
-						break;
-					case network_type::testnet:
-						if (network_tag != 0x35 && network_tag != 0x36 && network_tag != 0x3f)
-							return layer_exception("invalid address type");
-						break;
-					default:
-						VI_PANIC(false, "invalid network type");
-						break;
-				}
+				auto prefix = get_address_prefix();
+				if (type != prefix.standard_address && type != prefix.integrated_address && type != prefix.subaddress)
+					return layer_exception("invalid address type");
 
-				buffer[64] = (uint8_t)network_tag;
+				buffer[64] = (uint8_t)type;
 				return string((char*)buffer, 65);
 			}
 			expects_lr<string> monero::encode_transaction_id(const std::string_view& transaction_id)
@@ -985,19 +1026,30 @@ namespace tangent
 				address_map result = { { (uint8_t)1, *address } };
 				return expects_lr<address_map>(std::move(result));
 			}
-			const sc_chainparams_* monero::get_chain()
+			monero::address_prefix monero::get_address_prefix() const
 			{
 				switch (protocol::now().user.network)
 				{
 					case network_type::regtest:
-						return &btc_chainparams_regtest;
-					case network_type::testnet:
-						return &btc_chainparams_test;
 					case network_type::mainnet:
-						return &btc_chainparams_main;
+					{
+						address_prefix prefix;
+						prefix.standard_address = 0x12;
+						prefix.integrated_address = 0x13;
+						prefix.subaddress = 0x2a;
+						return prefix;
+					}
+					case network_type::testnet:
+					{
+						address_prefix prefix;
+						prefix.standard_address = 0x18;
+						prefix.integrated_address = 0x19;
+						prefix.subaddress = 0x24;
+						return prefix;
+					}
 					default:
 						VI_PANIC(false, "invalid network type");
-						return nullptr;
+						return address_prefix();
 				}
 			}
 			const monero::chainparams& monero::get_chainparams() const

@@ -1,4 +1,5 @@
 #include "control.h"
+#include <vitex/vitex.h>
 #include <iostream>
 #define LOCKED_TASK_ID std::numeric_limits<uint64_t>::max()
 
@@ -439,7 +440,12 @@ namespace tangent
 			policy.threads[((size_t)difficulty::sync)] = (size_t)std::max(std::ceil(threads * protocol::now().user.storage.computation_threads_ratio), 1.0);
 			policy.threads[((size_t)difficulty::timeout)] = 1;
 		}
-
+#ifdef NDEBUG
+		bool release = true;
+#else
+		bool release = false;
+#endif
+		VI_INFO("tangentcash p2p %s node v%i.%i", release ? "release" : "debug", (int)protocol::now().message.major_version, (int)protocol::now().message.minor_version);
 		policy.threads[((size_t)difficulty::sync)] = std::max<size_t>(policy.threads[((size_t)difficulty::sync)], 6);
 		if (protocol::now().user.logs.control_logging)
 			VI_INFO("service launch (services: %i)", (int)services.size());

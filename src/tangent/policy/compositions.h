@@ -109,16 +109,17 @@ namespace tangent
 				uint8_t tx_key[32] = { 0 };
 				uint64_t fee = 0;
 
+				void optimize_index(uint16_t* vin_index_inout);
 				bool store_payload(format::wo_stream* stream) const override;
 				bool load_payload(format::ro_stream& stream) override;
-				void write_prefix(vector<uint8_t>& buffer) const;
+				void write_prefix(vector<uint8_t>& buffer, bool no_key_image = false) const;
 				void write_rctsig_base(vector<uint8_t>& buffer) const;
 				void write_rctsig_prunable(vector<uint8_t>& buffer, bool no_clsag = false, bool no_pseudo_size = false) const;
 				void write_all(vector<uint8_t>& buffer, bool no_clsag = false, bool no_pseudo_size = false) const;
 				void as_prefix_hash(uint8_t prefix_hash[32]) const;
 				void as_rctsig_base_hash(uint8_t rctsig_base_hash[32]) const;
 				void as_rctsig_prunable_hash(uint8_t rctsig_prunable_hash[32]) const;
-				void as_id_hash(uint8_t id_hash[32], bool no_clsag = false, bool no_pseudo_size = false) const;
+				void as_id_hash(uint8_t id_hash[32], bool no_clsag = false, bool no_pseudo_size = false, bool no_key_image = false) const;
 				format::tree as_tree() const override;
 				uint32_t as_type() const override;
 				std::string_view as_typename() const override;

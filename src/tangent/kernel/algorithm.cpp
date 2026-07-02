@@ -88,49 +88,15 @@ namespace tangent
 				mpz::import0((uint8_t*)input_y.data(), input_y.size(), l);
 				return true;
 			}
-			static void wesolowski_order(mpz_t order)
+			static void wesolowski_order(mpz_t order, uint64_t block_number)
 			{
 				auto& params = protocol::change();
-				if (!params.wesolowski.empty())
-					return mpz::import0((uint8_t*)params.wesolowski.data(), params.wesolowski.size(), order);
-
-				auto& policy = protocol::now().policy;
-				auto entropy = format::util::decode_0xhex(policy.pow.base);
-
-				mpz_t seed;
-				mpz_init(seed);
-
-				uint8_t mdata[64];
-				hashing::hash512((uint8_t*)entropy.data(), entropy.size(), mdata);
-				mpz::import0(mdata, sizeof(mdata), seed);
-
-				uint16_t half_bits = policy.pow.security / 2;
-				gmp_randstate_t random;
-				gmp_randinit_mt(random);
-
-				mpz_t order_p, order_q;
-				mpz_init(order_p);
-				mpz_init(order_q);
-				gmp_randseed(random, seed);
-				mpz_urandomb(order_p, random, half_bits);
-				mpz_urandomb(order_q, random, half_bits);
-				do
+				if (!params.on(fork_id::base_to_root_modulo, block_number))
 				{
-					mpz_urandomb(order_p, random, half_bits);
-					mpz_nextprime(order_p, order_p);
-				} while (mpz_sizeinbase(order_p, 2) < half_bits);
-				do
-				{
-					mpz_urandomb(order_q, random, half_bits);
-					mpz_nextprime(order_q, order_q);
-				} while (mpz_sizeinbase(order_q, 2) < half_bits);
-				mpz_mul(order, order_p, order_q);
-				mpz_clear(order_p);
-				mpz_clear(order_q);
-				gmp_randclear(random);
-
-				umutex<std::mutex> unique(params.mutex);
-				params.wesolowski = mpz::export0(order);
+					uint8_t base[256] = { 0x9f, 0xdf, 0x38, 0xe0, 0xee, 0x4b, 0x0, 0x59, 0xdd, 0xa2, 0x23, 0x28, 0x89, 0x3c, 0x5c, 0x15, 0x2b, 0xb6, 0xba, 0xe4, 0x66, 0xa7, 0xe7, 0x70, 0xb5, 0x12, 0x52, 0x26, 0x5c, 0xf3, 0x20, 0xd, 0x90, 0x38, 0xc8, 0xdc, 0x1a, 0x23, 0xa8, 0x8a, 0xa9, 0x8c, 0x3a, 0xc9, 0x36, 0x81, 0x73, 0x5f, 0x7, 0xa, 0x59, 0xad, 0x46, 0xaa, 0xcd, 0xd3, 0xea, 0xf, 0xf9, 0xae, 0x38, 0xdf, 0x2, 0x1, 0x7e, 0x59, 0x4b, 0xf5, 0x42, 0x55, 0x1d, 0x1, 0xc7, 0x35, 0x48, 0x3e, 0x33, 0x5f, 0x51, 0xfd, 0x14, 0xca, 0xad, 0x17, 0x60, 0x33, 0x47, 0x27, 0xc5, 0xe7, 0x26, 0xe7, 0xcb, 0x25, 0x76, 0x56, 0x5c, 0x46, 0x8b, 0x26, 0x73, 0xb5, 0x1f, 0x44, 0x4f, 0x88, 0x37, 0xa2, 0xa0, 0xfc, 0xf8, 0xba, 0x78, 0xd, 0x56, 0xe, 0x9b, 0xf7, 0x26, 0xd1, 0x85, 0x63, 0x35, 0x47, 0xbc, 0xa5, 0xbb, 0x78, 0x6a, 0x69, 0x6b, 0xf1, 0x41, 0x30, 0x70, 0x9, 0x99, 0xae, 0x2b, 0x59, 0x93, 0x6c, 0x51, 0xb8, 0xf3, 0xa4, 0x5e, 0x25, 0x94, 0x38, 0x40, 0x0, 0xc8, 0x64, 0xd0, 0x68, 0x1a, 0x5, 0x5a, 0xba, 0xa5, 0x92, 0x75, 0xab, 0xb, 0xe4, 0xc9, 0xa5, 0xe1, 0x61, 0x69, 0x52, 0x90, 0xda, 0x9f, 0x20, 0x14, 0x75, 0x60, 0x60, 0x1b, 0xe8, 0x12, 0x54, 0x88, 0x95, 0x40, 0x95, 0x7, 0x6e, 0x7e, 0x79, 0x85, 0x6a, 0xf1, 0x16, 0xf, 0xaf, 0x2a, 0x66, 0xba, 0x16, 0xcd, 0x82, 0x86, 0xc9, 0x2e, 0x8e, 0xaa, 0x5c, 0xed, 0x3c, 0x18, 0xf6, 0xd0, 0xa5, 0x3c, 0xdc, 0xcf, 0x71, 0x49, 0x6, 0x2d, 0x89, 0x77, 0x32, 0xcf, 0x2f, 0x9a, 0x9c, 0x65, 0x20, 0x75, 0x59, 0x83, 0xe7, 0x4e, 0xe, 0xe9, 0x30, 0xee, 0x66, 0xbe, 0x14, 0x95, 0xb6, 0xdb, 0xf, 0x25, 0x16, 0xe0, 0x30, 0xa7, 0x21, 0x75, 0xf };
+					return mpz::import0(base, sizeof(base), order);
+				}
+				return mpz::import0(params.policy.pow.root, sizeof(params.policy.pow.root), order);
 			}
 		};
 
@@ -195,39 +161,13 @@ namespace tangent
 			return hashing::hash256i(std::string_view(data, sizeof(data)));
 		}
 
-		uint64_t wesolowski::calibrate(uint64_t confidence, uint64_t target_time)
-		{
-			uint64_t target_nonce = confidence;
-			uint64_t difficulty = protocol::now().policy.pow.difficulty;
-			while (true)
-			{
-			retry:
-				uint64_t start_time = protocol::now().time.now();
-				auto signature = evaluate(difficulty, *crypto::random_bytes(math32u::random(256, 1024)));
-				if (signature.empty())
-					break;
-
-				uint64_t end_time = protocol::now().time.now();
-				uint64_t delta_time = end_time - start_time;
-				if (1'000'000 * delta_time / target_time < 50'000)
-				{
-					if (!target_nonce--)
-						break;
-					goto retry;
-				}
-
-				difficulty = adjust(difficulty, delta_time, adjustment_interval());
-				target_nonce = confidence;
-			}
-			return difficulty;
-		}
-		uint64_t wesolowski::adjust(uint64_t prev_difficulty, uint64_t prev_time, uint64_t target_index)
+		uint64_t wesolowski::adjust(uint64_t prev_difficulty, uint64_t prev_time, uint64_t target_block_number)
 		{
 			uint64_t default_difficulty = protocol::now().policy.pow.difficulty;
-			if (target_index <= 1)
+			if (target_block_number <= 1)
 				return default_difficulty;
 
-			if (adjustment_index(target_index) != target_index)
+			if (adjustment_block_number(target_block_number) != target_block_number)
 			{
 			leave_as_is:
 				return std::max(prev_difficulty, default_difficulty);
@@ -267,35 +207,44 @@ namespace tangent
 				new_difficulty = std::max((decimal(new_difficulty) * multiplier).to_uint64(), protocol::now().policy.pow.difficulty);
 			return new_difficulty;
 		}
-		string wesolowski::evaluate(uint64_t difficulty, const std::string_view& message)
+		string wesolowski::evaluate(uint64_t block_number, uint64_t difficulty, const std::string_view& message)
 		{
 			string result;
-			evaluate_or_proof(difficulty, message, std::string_view(), &result);
+			evaluate_or_proof(block_number, difficulty, message, std::string_view(), &result);
 			return result;
 		}
-		bool wesolowski::verify(uint64_t difficulty, const std::string_view& message, const std::string_view& proof)
+		bool wesolowski::verify(uint64_t block_number, uint64_t difficulty, const std::string_view& message, const std::string_view& proof)
 		{
-			return evaluate_or_proof(difficulty, message, proof, nullptr);
+			return evaluate_or_proof(block_number, difficulty, message, proof, nullptr);
 		}
-		bool wesolowski::evaluate_or_proof(uint64_t difficulty, const std::string_view& message, const std::string_view& proof_in, string* proof_out)
+		bool wesolowski::evaluate_or_proof(uint64_t block_number, uint64_t difficulty, const std::string_view& message, const std::string_view& proof_in, string* proof_out)
 		{
-			mpz_t x, n;
+			mpz_t x, n, n1;
 			mpz_init(x);
 			mpz_init(n);
-			mpz::wesolowski_order(n);
+			mpz::wesolowski_order(n, block_number);
+			mpz_init_set(n1, n);
+			mpz_sub_ui(n1, n1, 1);
 
 			uint8_t hash[64];
 			hashing::hash512((uint8_t*)message.data(), message.size(), hash);
 			mpz::import0(hash, sizeof(hash), x);
+			bool valid_challenge = mpz_cmp_ui(x, 1) > 0 && mpz_cmp(x, n1) < 0;
+			mpz_clear(n1);
+			if (!valid_challenge)
+			{
+				mpz_clear(x);
+				mpz_clear(n);
+				return false;
+			}
 
 			bool success = false;
 			if (proof_in.empty())
 			{
 				mpz_t l, p;
-				mpz_init_set_ui(l, 2);
-				mpz_init(p);
+				mpz_init(l);
 				mpz_ui_pow_ui(l, 2, (unsigned long)difficulty);
-				mpz_ui_pow_ui(p, 2, (unsigned long)difficulty);
+				mpz_init_set(p, l);
 				mpz_powm(l, x, l, n);
 				mpz_add(l, x, l);
 
@@ -395,22 +344,22 @@ namespace tangent
 			auto& policy = protocol::now().policy;
 			return policy.pow.adjustment_time / policy.pow.time;
 		}
-		uint64_t wesolowski::adjustment_index(uint64_t index)
+		uint64_t wesolowski::adjustment_block_number(uint64_t block_number)
 		{
-			return index - index % adjustment_interval();
+			return block_number - block_number % adjustment_interval();
 		}
-		decimal wesolowski::adjustment_scaling(uint64_t index)
+		decimal wesolowski::adjustment_scaling(uint64_t block_number)
 		{
-			if (index == 0)
+			if (block_number == 0)
 				return 1;
 
-			bool outside_priority = index >= protocol::now().policy.production.max_per_block;
+			bool outside_priority = block_number >= protocol::now().policy.production.max_per_block;
 			if (outside_priority)
 				return protocol::now().policy.pow.bump_outside_priority;
 
 			auto scale = decimal(protocol::now().policy.pow.bump_per_priority);
 			auto result = scale;
-			while (index--)
+			while (block_number--)
 				result *= scale;
 			return result;
 		}
@@ -421,8 +370,8 @@ namespace tangent
 				return format::tree();
 
 			auto data = format::tree::map();
-			data.set("x", format::variable(format::util::encode_0xhex(mpz::export0(p))));
-			data.set("y", format::variable(format::util::encode_0xhex(mpz::export0(l))));
+			data.set("p", format::variable(format::util::encode_0xhex(mpz::export0(p))));
+			data.set("l", format::variable(format::util::encode_0xhex(mpz::export0(l))));
 			if (scaling.is_positive())
 				data.set("scaling", format::variable(scaling));
 			data.set("kdifficulty", algorithm::encoding::serialize_uint256(kdifficulty(difficulty)));

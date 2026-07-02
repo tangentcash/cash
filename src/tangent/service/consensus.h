@@ -255,6 +255,7 @@ namespace tangent
 				option<ledger::block_header> tip_cache = optional::none;
 				uint64_t progress_time = 0;
 				uint64_t progress_block_number = 0;
+				double progress_bps = 0.0;
 				std::atomic<int64_t> progress = std::atomic<int64_t>(-1);
 				std::atomic<uint64_t> size = std::atomic<uint64_t>(0);
 				std::atomic<bool> busy = false;

@@ -3,7 +3,6 @@
 #include "../storage/chainstate.h"
 #include "../policy/transactions.h"
 #include "../policy/delegations.h"
-#include "../translation/bitcoin.h"
 #include <random>
 #define TASK_TOPOLOGY_OPTIMIZATION "topology_optimization"
 #define TASK_MEMPOOL_VACUUM "mempool_vacuum"
@@ -26,6 +25,50 @@ namespace tangent
 			uint32_t length;
 		};
 
+		static string uint256_to_label(const uint256_t& hash, size_t margin = 11)
+		{
+			string result = algorithm::encoding::encode_0xhex256(hash);
+			if (result.size() > margin * 2 + 3)
+				result.replace(margin, result.size() - 2 * margin, "...");
+			return result;
+		}
+		static string seconds_to_duration(uint64_t base_seconds)
+		{
+			if (!base_seconds)
+				return "0 seconds";
+
+			constexpr double SEC_PER_MIN = 60.0;
+			constexpr double SEC_PER_HOUR = 60.0 * SEC_PER_MIN;
+			constexpr double SEC_PER_DAY = 24.0 * SEC_PER_HOUR;
+			constexpr double SEC_PER_WEEK = 7.0 * SEC_PER_DAY;
+			constexpr double SEC_PER_MONTH = (365.2425 / 12.0) * SEC_PER_DAY;
+			constexpr double SEC_PER_YEAR = 365.2425 * SEC_PER_DAY;
+			auto to_duration = [](double value, const std::string_view& duration)
+			{
+				if (std::abs(value - std::round(value)) < 1e-3)
+					return stringify::text("%" PRIi64 " %.*s%s", (int64_t)value, (int)duration.size(), duration.data(), value > 1 ? "s" : "");
+
+				char buffer[64];
+				auto text = to_string_view(buffer, sizeof(buffer), value);
+				auto index = text.find('.');
+				text = index != std::string_view::npos ? text.substr(0, index + 2) : text;
+				return stringify::text("%.*s %.*s%s", (int)text.size(), text.data(), (int)duration.size(), duration.data(), value > 1 ? "s" : "");
+			};
+			double seconds = (double)base_seconds;
+			if (seconds >= SEC_PER_YEAR)
+				return to_duration(seconds / SEC_PER_YEAR, "year");
+			else if (seconds >= SEC_PER_MONTH)
+				return to_duration(seconds / SEC_PER_MONTH, "month");
+			else if (seconds >= SEC_PER_WEEK)
+				return to_duration(seconds / SEC_PER_WEEK, "week");
+			else if (seconds >= SEC_PER_DAY)
+				return to_duration(seconds / SEC_PER_DAY, "day");
+			else if (seconds >= SEC_PER_HOUR)
+				return to_duration(seconds / SEC_PER_HOUR, "hour");
+			else if (seconds >= SEC_PER_MIN)
+				return to_duration(seconds / SEC_PER_MIN, "minute");
+			return to_duration(seconds, "second");
+		}
 		static option<socket_address> text_address_to_socket_address(const std::string_view& value)
 		{
 			auto ip_address = value.substr(0, value.find(':'));
@@ -982,7 +1025,7 @@ namespace tangent
 			{
 				auto purpose = candidate_tx->as_typename();
 				if (protocol::now().user.consensus.logging)
-					VI_ERR("transaction %s %.*s error: %s", algorithm::encoding::encode_0xhex256(candidate_tx->as_hash()).c_str(), (int)purpose.size(), purpose.data(), status.what().c_str());
+					VI_ERR("transaction %s %.*s error: %s", uint256_to_label(candidate_tx->as_hash()).c_str(), (int)purpose.size(), purpose.data(), status.what().c_str());
 				return status;
 			}
 
@@ -1004,7 +1047,7 @@ namespace tangent
 			if (!candidate_tx->recover_hash(owner))
 			{
 				if (protocol::now().user.consensus.logging)
-					VI_WARN("transaction %s %.*s validation failed: invalid signature", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data());
+					VI_WARN("transaction %s %.*s validation failed: invalid signature", uint256_to_label(candidate_hash).c_str(), (int)purpose.size(), purpose.data());
 				return layer_exception("signature key recovery failed");
 			}
 
@@ -1019,7 +1062,7 @@ namespace tangent
 			if (candidate_tx->nonce < nonce)
 			{
 				if (protocol::now().user.consensus.logging)
-					VI_WARN("transaction %s %.*s validation failed: invalid nonce (expired)", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data());
+					VI_WARN("transaction %s %.*s validation failed: invalid nonce (expired)", uint256_to_label(candidate_hash).c_str(), (int)purpose.size(), purpose.data());
 				return layer_exception("nonce is too old");
 			}
 
@@ -1029,7 +1072,7 @@ namespace tangent
 				if (candidate_message.data.size() > protocol::now().policy.zero_gas_prize_size_limit)
 				{
 					if (protocol::now().user.consensus.logging)
-						VI_WARN("transaction %s %.*s validation failed: must pay for gas (anti-spam, large transaction)", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data());
+						VI_WARN("transaction %s %.*s validation failed: must pay for gas (anti-spam, large transaction)", uint256_to_label(candidate_hash).c_str(), (int)purpose.size(), purpose.data());
 					return layer_exception("must pay for gas (anti-spam, large transaction)");
 				}
 
@@ -1037,7 +1080,7 @@ namespace tangent
 				if (tip && tip->network_congestion())
 				{
 					if (protocol::now().user.consensus.logging)
-						VI_WARN("transaction %s %.*s validation failed: must pay for gas (anti-spam, network congestion)", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data());
+						VI_WARN("transaction %s %.*s validation failed: must pay for gas (anti-spam, network congestion)", uint256_to_label(candidate_hash).c_str(), (int)purpose.size(), purpose.data());
 					return layer_exception("must pay for gas (anti-spam, network congestion)");
 				}
 			}
@@ -1050,7 +1093,7 @@ namespace tangent
 				{
 					mempool.add_transaction_observation(candidate_hash);
 					if (protocol::now().user.consensus.logging)
-						VI_WARN("transaction %s %.*s simulation failed: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data(), simulation.error().what());
+						VI_WARN("transaction %s %.*s simulation failed: %s", uint256_to_label(candidate_hash).c_str(), (int)purpose.size(), purpose.data(), simulation.error().what());
 					return simulation.error();
 				}
 				bypass_cooldown = true;
@@ -1062,7 +1105,7 @@ namespace tangent
 				if (!validation)
 				{
 					if (protocol::now().user.consensus.logging)
-						VI_WARN("transaction %s %.*s validation failed: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data(), validation.error().what());
+						VI_WARN("transaction %s %.*s validation failed: %s", uint256_to_label(candidate_hash).c_str(), (int)purpose.size(), purpose.data(), validation.error().what());
 					return validation.error();
 				}
 			}
@@ -1127,7 +1170,7 @@ namespace tangent
 			if (!action)
 			{
 				if (protocol::now().user.consensus.logging)
-					VI_WARN("transaction %s %.*s mempool rejection: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)purpose.size(), purpose.data(), action.error().what());
+					VI_WARN("transaction %s %.*s mempool rejection: %s", uint256_to_label(candidate_hash).c_str(), (int)purpose.size(), purpose.data(), action.error().what());
 				return action.error();
 			}
 
@@ -1139,7 +1182,7 @@ namespace tangent
 
 			size_t notifications = notify_all_except(uref(from), descriptors::broadcast_transaction_hash(), { format::variable(candidate_hash) });
 			if (notifications > 0 && protocol::now().user.consensus.logging)
-				VI_DEBUG("transaction %s broadcasted to %i nodes (type: %.*s)", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), (int)notifications, (int)purpose.size(), purpose.data());
+				VI_DEBUG("transaction %s broadcasted to %i nodes (type: %.*s)", uint256_to_label(candidate_hash).c_str(), (int)notifications, (int)purpose.size(), purpose.data());
 
 			run_block_production();
 			return expectation::met;
@@ -1243,7 +1286,7 @@ namespace tangent
 
 			size_t notifications = notify_all_except(std::move(from), descriptors::broadcast_attestation(), format::variables(event.args));
 			if (notifications > 0 && protocol::now().user.consensus.logging)
-				VI_DEBUG("attestation %s broadcasted to %i nodes", algorithm::encoding::encode_0xhex256(commitment_hash).c_str(), (int)notifications);
+				VI_DEBUG("attestation %s broadcasted to %i nodes", uint256_to_label(commitment_hash).c_str(), (int)notifications);
 
 			return expectation::met;
 		}
@@ -1663,7 +1706,7 @@ namespace tangent
 
 				size_t notifications = args.size() > 2 ? notify_all(descriptors::broadcast_attestation(), std::move(args)) : 0;
 				if (notifications > 0 && protocol::now().user.consensus.logging)
-					VI_DEBUG("attestation %s broadcasted to %i nodes (signatures: %i)", algorithm::encoding::encode_0xhex256(receipt.as_attestation_hash()).c_str(), (int)notifications, (int)signatures.size());	
+					VI_DEBUG("attestation %s broadcasted to %i nodes (signatures: %i)", uint256_to_label(receipt.as_attestation_hash()).c_str(), (int)notifications, (int)signatures.size());
 			}
 
 			return expectation::met;
@@ -2049,6 +2092,7 @@ namespace tangent
 
 				std::mutex batch_mutex;
 				auto& [new_tip_fork_hash, new_tip] = *fork;
+				auto tip_label = uint256_to_label(new_tip_fork_hash);
 				auto new_tip_number = new_tip.header.number;
 				auto new_tip_hash = uint256_t(0);
 				auto old_tip = storages::chainstate().get_latest_block_header();
@@ -2074,7 +2118,7 @@ namespace tangent
 				while (is_active() && old_tip_number > 0 && new_tip_number > 0)
 				{
 					if (protocol::now().user.consensus.logging)
-						VI_INFO("tip %s fetch: headers (range: [%" PRIu64 "; %" PRIu64 "])", algorithm::encoding::encode_0xhex256(new_tip_fork_hash).c_str(), new_tip_number - (protocol::now().message.headers_per_query > new_tip_number ? 1 : protocol::now().message.headers_per_query), new_tip_number);
+						VI_INFO("tip %s fetch: headers (range: [%" PRIu64 "; %" PRIu64 "])", tip_label.c_str(), new_tip_number - (protocol::now().message.headers_per_query > new_tip_number ? 1 : protocol::now().message.headers_per_query), new_tip_number);
 					
 					auto result = coawait(query(uref(new_tip.state), descriptors::fetch_headers(), { format::variable(new_tip_number), format::variable(new_tip_number > old_tip_number ? new_tip_number - old_tip_number : protocol::now().message.headers_per_query) }, protocol::now().user.tcp.timeout));
 					if (!result)
@@ -2089,7 +2133,7 @@ namespace tangent
 					if (protocol::now().user.consensus.logging)
 					{
 						uint64_t blocks_count = (uint64_t)(result->args.size() - 1);
-						VI_INFO("tip %s verify: headers (range: [%" PRIu64 "; %" PRIu64 "])", algorithm::encoding::encode_0xhex256(new_tip_fork_hash).c_str(), new_tip_number - (blocks_count > new_tip_number ? 1 : blocks_count), new_tip_number);
+						VI_INFO("tip %s verify: headers (range: [%" PRIu64 "; %" PRIu64 "])", tip_label.c_str(), new_tip_number - (blocks_count > new_tip_number ? 1 : blocks_count), new_tip_number);
 					}
 
 					option<remote_exception> error = optional::none;
@@ -2111,7 +2155,7 @@ namespace tangent
 							if (!verification)
 							{
 								umutex<std::mutex> unique(batch_mutex);
-								error = remote_exception(stringify::text("invalid block header (height: %" PRIu64 "): %s", child_header.number, verification.error().what()));
+								error = remote_exception(stringify::text("invalid block header (number: %" PRIu64 "): %s", child_header.number, verification.error().what()));
 								break;
 							}
 
@@ -2146,53 +2190,72 @@ namespace tangent
 				}
 
 				if (new_tip_hash > 0 && protocol::now().user.consensus.logging)
-					VI_INFO("tip %s collision (height: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(new_tip_fork_hash).c_str(), new_tip_number);
+					VI_INFO("tip %s collision (number: %" PRIu64 ")", tip_label.c_str(), new_tip_number);
 
 				new_tip_number = new_tip_hash > 0 ? 0 : 1;
+				ledger::block_evaluation tip;
+				btree_map<uint64_t, ledger::block_body> candidate_blocks;
+				vector<hash_map<uint64_t, ledger::block_body>> split_candidate_blocks;
+				expects_rt<exchange> result = expects_rt<exchange>(remote_exception());
+				option<expects_rt<exchange>> cached_result = optional::none;
 				while (is_active() && (new_tip_number > 0 || new_tip_hash > 0))
 				{
-					if (protocol::now().user.consensus.logging)
-						VI_INFO("tip %s fetch: blocks (size: <%.2f kb)", algorithm::encoding::encode_0xhex256(new_tip_fork_hash).c_str(), (double)protocol::now().message.blocks_size_per_query / 1000.0);
+					if (!cached_result)
+					{
+						if (protocol::now().user.consensus.logging)
+							VI_INFO("tip %s fetch: blocks (size: <%.2f kb)", tip_label.c_str(), (double)protocol::now().message.blocks_size_per_query / 1000.0);
 
-					auto result = coawait(query(uref(new_tip.state), descriptors::fetch_blocks(), { format::variable(new_tip_number > 0 ? uint256_t(0) : new_tip_hash), format::variable(new_tip_number) }, protocol::now().user.tcp.timeout));
+						result = coawait(query(uref(new_tip.state), descriptors::fetch_blocks(), { format::variable(new_tip_number > 0 ? uint256_t(0) : new_tip_hash), format::variable(new_tip_number) }, protocol::now().user.tcp.timeout));
+					}
+					else
+						result = std::move(*cached_result);
 					if (!result)
 						coreturn result.error();
 					else if (result->args.empty())
 						break;
 
-					std::atomic<size_t> max_block_count = result->args.size();
-					size_t batch_size = 64, block_count = max_block_count.load();
+					size_t batch_size = 64, block_count = result->args.size();
 					size_t batch_count = block_count / batch_size + (block_count % batch_size == 0 ? 0 : 1);
 					if (block_count > batch_size && protocol::now().user.consensus.logging)
-						VI_INFO("tip %s verify: proofs (size: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(new_tip_fork_hash).c_str(), (uint64_t)block_count);
+						VI_INFO("tip %s verify: proofs (size: %" PRIu64 ")", tip_label.c_str(), (uint64_t)block_count);
 
+					split_candidate_blocks.resize(batch_count);
 					for (auto& task : parallel::for_loop(batch_count, 2 * batch_size, [&](size_t batch_index)
 					{
-						auto header = ledger::block_header();
-						auto producer = algorithm::pubkeyhash_t();
 						size_t begin = std::min(batch_index * batch_size, block_count);
 						size_t end = std::min(begin + batch_size, block_count);
+						auto& queue = split_candidate_blocks[batch_index];
+						queue.reserve(end - begin);
+						queue.clear();
+
+						algorithm::pubkeyhash_t producer;
 						for (size_t i = begin; i < end; i++)
 						{
+							ledger::block_body block;
 							format::ro_stream block_message = format::ro_stream(result->args[i].as_string());
-							if (!header.load(block_message) || !header.recover_hash(producer) || !header.verify_proof(producer))
-							{
-								size_t prev = max_block_count.load();
-								while (prev > i && !max_block_count.compare_exchange_weak(prev, i));
+							if (!block.load(block_message) || !block.recover_hash(producer) || !block.verify_proof(producer))
 								break;
-							}
+
+							queue[block.number] = std::move(block);
 						}
 					}))
 						coawait(std::move(task));
 
-					size_t safe_block_count = max_block_count.load();
-					for (size_t i = 0; i < safe_block_count; i++)
+					candidate_blocks.clear();
+					for (auto& queue : split_candidate_blocks)
 					{
-						ledger::block_evaluation tip;
-						format::ro_stream block_message = format::ro_stream(result->args[i].as_string());
-						if (!tip.block.load(block_message))
-							coreturn remote_exception("block violates message protocol");
+						for (auto& [key, value] : queue)
+							candidate_blocks.emplace(key, std::move(value));
+					}
 
+					auto next_tip_number = candidate_blocks.empty() ? 0 : (candidate_blocks.rbegin()->first + 1);
+					if (protocol::now().user.consensus.logging)
+						VI_INFO("tip %s prefetch: blocks (size: <%.2f kb)", tip_label.c_str(), (double)protocol::now().message.blocks_size_per_query / 1000.0);
+
+					auto pending_cached_result = next_tip_number > 0 ? query(uref(new_tip.state), descriptors::fetch_blocks(), { format::variable(uint8_t(0)), format::variable(next_tip_number) }, protocol::now().user.tcp.timeout) : expects_promise_rt<exchange>(remote_exception::shutdown());
+					for (auto& [block_number, block] : candidate_blocks)
+					{
+						tip.block = std::move(block);
 						new_tip_hash = tip.block.as_hash();
 						new_tip_number = tip.block.number + 1;
 						auto status = accept_block(uref(new_tip.state), tip, &new_tip.header, false);
@@ -2202,8 +2265,18 @@ namespace tangent
 							coreturn remote_exception::shutdown();
 					}
 
-					if (safe_block_count < result->args.size())
-						coreturn remote_exception("stopping due to " + to_string(result->args.size() - safe_block_count) + " blocks with invalid proofs");
+					if (candidate_blocks.size() < result->args.size())
+						coreturn remote_exception("stopping due to " + to_string(result->args.size() - candidate_blocks.size()) + " blocks with invalid proofs");
+					
+					if (next_tip_number > 0 && next_tip_number == new_tip_number)
+					{
+						if (protocol::now().user.consensus.logging && pending_cached_result.is_pending())
+							VI_INFO("tip %s prefetch: awaiting completion", tip_label.c_str());
+
+						cached_result = std::move(coawait(std::move(pending_cached_result)));
+					}
+					else
+						cached_result = optional::none;
 				}
 
 				if (new_tip_hash > 0)
@@ -2823,7 +2896,7 @@ namespace tangent
 				auto from = uref(best_fork->second.state);
 				auto status = coawait(resolve_and_verify_fork(best_fork.address()));
 				if (!status && protocol::now().user.consensus.logging)
-					VI_WARN("%s (tip %.8s.. dropped)", status.what().c_str(), algorithm::encoding::encode_0xhex256(candidate_hash).c_str());
+					VI_WARN("%s (tip %.8s.. dropped)", status.what().c_str(), uint256_to_label(candidate_hash).c_str());
 
 				auto new_best_fork = get_best_tip_header();
 				clear_tip(*from, status ? &best_fork->second.header : nullptr);
@@ -2870,7 +2943,7 @@ namespace tangent
 					if (status)
 						goto retry;
 					else if (protocol::now().user.consensus.logging)
-						VI_INFO("attestation %s queued: ", algorithm::encoding::encode_0xhex256(*attestation_hash).c_str(), status.what().c_str());
+						VI_INFO("attestation %s queued: ", uint256_to_label(*attestation_hash).c_str(), status.what().c_str());
 
 					auto batch = mempool.get_attestation(*attestation_hash);
 					if (!batch)
@@ -2892,7 +2965,7 @@ namespace tangent
 
 						size_t notifications = args.size() > 2 ? notify_all(descriptors::broadcast_attestation(), std::move(args)) : 0;
 						if (notifications > 0 && protocol::now().user.consensus.logging)
-							VI_DEBUG("attestation %s re-broadcasted to %i nodes", algorithm::encoding::encode_0xhex256(commitment_hash).c_str(), (int)notifications);			
+							VI_DEBUG("attestation %s re-broadcasted to %i nodes", uint256_to_label(commitment_hash).c_str(), (int)notifications);
 					}
 					goto retry;
 				}
@@ -3026,7 +3099,7 @@ namespace tangent
 					if (evaluation && verification)
 					{
 						if (protocol::now().user.consensus.logging)
-							VI_INFO("block %s solved (number: %" PRIu64", txns: %" PRIu64 ", pos: %" PRIu64 ", work: <%.2f sec.)", algorithm::encoding::encode_0xhex256(prover.solution.block.as_hash()).c_str(), prover.solution.block.number, (uint64_t)prover.solution.block.transactions.size(), position + 1, span / 1000.0);
+							VI_INFO("block %s solved (number: %" PRIu64", txns: %" PRIu64 ", pos: %" PRIu64 ", work: <%.2f sec.)", uint256_to_label(prover.solution.block.as_hash()).c_str(), prover.solution.block.number, (uint64_t)prover.solution.block.transactions.size(), position + 1, span / 1000.0);
 
 						prover.solver.erase_failed_transactions();
 						goto next_block;
@@ -3036,14 +3109,14 @@ namespace tangent
 						if (!evaluation)
 						{
 							if (evaluation.error().message() != "block producer must be active")
-								VI_WARN("block %s dismissed: %s (number: %" PRIu64", txns: %" PRIu64 ", pos: %" PRIu64 ", work: <%.2f sec.)", algorithm::encoding::encode_0xhex256(prover.solution.block.as_hash()).c_str(), evaluation.error().what(), prover.solution.block.number, (uint64_t)prover.solution.block.transactions.size(), position + 1, span / 1000.0);
+								VI_WARN("block %s dismissed: %s (number: %" PRIu64", txns: %" PRIu64 ", pos: %" PRIu64 ", work: <%.2f sec.)", uint256_to_label(prover.solution.block.as_hash()).c_str(), evaluation.error().what(), prover.solution.block.number, (uint64_t)prover.solution.block.transactions.size(), position + 1, span / 1000.0);
 						}
 						else
 							VI_WARN("%s", verification.error().what());
 					}
 				}
 				else if (protocol::now().user.consensus.logging)
-					VI_WARN("block %s dismissed: %s (number: %" PRIu64", txns: %" PRIu64 ", pos: %" PRIu64 ", work: <%.2f sec.)", algorithm::encoding::encode_0xhex256(prover.solution.block.as_hash()).c_str(), evaluation ? (solution ? "cancelled" : solution.error().what()) : evaluation.error().what(), prover.solution.block.number, (uint64_t)prover.solution.block.transactions.size(), position + 1, span / 1000.0);
+					VI_WARN("block %s dismissed: %s (number: %" PRIu64", txns: %" PRIu64 ", pos: %" PRIu64 ", work: <%.2f sec.)", uint256_to_label(prover.solution.block.as_hash()).c_str(), evaluation ? (solution ? "cancelled" : solution.error().what()) : evaluation.error().what(), prover.solution.block.number, (uint64_t)prover.solution.block.transactions.size(), position + 1, span / 1000.0);
 			});
 		}
 		bool server_node::run_block_dispatcher()
@@ -3232,7 +3305,7 @@ namespace tangent
 					if (from == *it->second.state || (prev_best && it->second.header < *prev_best))
 					{
 						if (protocol::now().user.consensus.logging)
-							VI_INFO("tip %s dropped (height: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(it->first).c_str(), it->second.header.number);
+							VI_INFO("tip %s dropped (number: %" PRIu64 ")", uint256_to_label(it->first).c_str(), it->second.header.number);
 						it = tips.erase(it);
 					}
 					else
@@ -3265,7 +3338,7 @@ namespace tangent
 			}
 
 			if (protocol::now().user.consensus.logging)
-				VI_INFO("tip %s added (height: %" PRIu64 ", dropped: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), candidate_block.number, (uint64_t)replacements);
+				VI_INFO("tip %s added (number: %" PRIu64 ", dropped: %" PRIu64 ")", uint256_to_label(candidate_hash).c_str(), candidate_block.number, (uint64_t)replacements);
 
 			auto& fork = tips[candidate_hash];
 			fork.header = candidate_block;
@@ -3295,7 +3368,7 @@ namespace tangent
 											   \
 												<+> = ignore (smaller branch)
 				*/
-				return layer_exception(stringify::text("block %s rejected: inferior fork %s (length: %" PRIi64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), branch_length < 0 ? "branch" : "work", branch_length));
+				return layer_exception(stringify::text("block %s rejected: inferior fork %s (length: %" PRIi64 ")", uint256_to_label(candidate_hash).c_str(), branch_length < 0 ? "branch" : "work", branch_length));
 			}
 			else if (branch_length == 0 && tip_block && tip_hash != candidate_hash && candidate.block < *tip_block)
 			{
@@ -3304,13 +3377,13 @@ namespace tangent
 													 /
 					<+> - <+> - <+> - <+> - <+> - <+> - <+>
 				*/
-				return layer_exception(stringify::text("block %s rejected: inferior fork", algorithm::encoding::encode_0xhex256(candidate_hash).c_str()));
+				return layer_exception(stringify::text("block %s rejected: inferior fork", uint256_to_label(candidate_hash).c_str()));
 			}
 			else if (!parent_block && candidate.block.number > 1)
 			{
 				auto verification = from ? candidate.block.verify_validity(parent_block.address()) : expects_lr<void>(layer_exception("unexpected orphan"));
 				if (!verification)
-					return layer_exception(stringify::text("block %s rejected: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), verification.error().what()));
+					return layer_exception(stringify::text("block %s rejected: %s", uint256_to_label(candidate_hash).c_str(), verification.error().what()));
 
 				umutex<std::recursive_mutex> unique(sync.tip);
 				if (tips.find(candidate_hash) != tips.end())
@@ -3333,7 +3406,7 @@ namespace tangent
 					}
 				}
 				if (!better_than_prev_fork)
-					return layer_exception(stringify::text("block %s rejected: inferior fork orphan", algorithm::encoding::encode_0xhex256(candidate_hash).c_str()));
+					return layer_exception(stringify::text("block %s rejected: inferior fork orphan", uint256_to_label(candidate_hash).c_str()));
 
 				/*
 					<+> - <+> - <+> - <+> - <+> - <+> ----
@@ -3343,7 +3416,12 @@ namespace tangent
 				accept_tip(uref(from), candidate_hash, ledger::block_header(candidate.block));
 				run_fork_resolution();
 				if (protocol::now().user.consensus.logging)
-					VI_INFO("block %s new best found (height: %" PRIu64 ", distance: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), candidate.block.number, std::abs((int64_t)(tip_block ? tip_block->number : 0) - (int64_t)candidate.block.number));
+				{
+					auto distance = (uint64_t)std::abs((int64_t)(tip_block ? tip_block->number : 0) - (int64_t)candidate.block.number);
+					VI_INFO("block %s %s ahead (number: %" PRIu64 ", eta: %s)",
+						uint256_to_label(candidate_hash).c_str(), seconds_to_duration(distance * protocol::now().policy.pow.time / 1000).c_str(),
+						candidate.block.number, verifier.progress_bps > 0.1 ? seconds_to_duration(std::max<uint64_t>((uint64_t)((double)distance / verifier.progress_bps), 1)).c_str() : "N/A");
+				}
 				return expectation::met;
 			}
 
@@ -3353,7 +3431,7 @@ namespace tangent
 											<+> - <+> = possible reorganization
 			*/
 			if (!try_acquire_checkpointer())
-				return layer_exception(stringify::text("block %s checkpoint skipped: checkpointer busy", algorithm::encoding::encode_0xhex256(candidate_hash).c_str()));
+				return layer_exception(stringify::text("block %s checkpoint skipped: checkpointer busy", uint256_to_label(candidate_hash).c_str()));
 
 			bool may_broadcast_early = from && !fork_tip;
 			bool may_broadcast_lately = !from && !fork_tip;
@@ -3365,16 +3443,16 @@ namespace tangent
 			if (!validation)
 			{
 				release_checkpointer();
-				return layer_exception(stringify::text("block %s rejected: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), validation.error().what()));
+				return layer_exception(stringify::text("block %s rejected: %s", uint256_to_label(candidate_hash).c_str(), validation.error().what()));
 			}
 			else if (reorganization && !protocol::now().user.consensus.reorganizable)
 			{
 				release_checkpointer();
-				return layer_exception(stringify::text("block %s rejected: requires deep chain reorganization (disabled)", algorithm::encoding::encode_0xhex256(candidate_hash).c_str()));
+				return layer_exception(stringify::text("block %s rejected: requires deep chain reorganization (disabled)", uint256_to_label(candidate_hash).c_str()));
 			}
 
 			if (reorganization && protocol::now().user.consensus.logging)
-				VI_WARN("block %s: running chain reorganization now (number: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), candidate.block.number);
+				VI_WARN("block %s: running chain reorganization now (number: %" PRIu64 ")", uint256_to_label(candidate_hash).c_str(), candidate.block.number);
 
 			auto mutation = ledger::solver_context::checkpoint_solved_block(verifier.solver, candidate, &verifier.cache);
 			if (mutation)
@@ -3388,7 +3466,7 @@ namespace tangent
 				erase_pending_tip(candidate_hash);
 
 			if (!mutation)
-				return layer_exception(stringify::text("block %s checkpoint failed: %s", algorithm::encoding::encode_0xhex256(candidate_hash).c_str(), mutation.error().what()));
+				return layer_exception(stringify::text("block %s checkpoint failed: %s", uint256_to_label(candidate_hash).c_str(), mutation.error().what()));
 
 			if (protocol::now().user.consensus.logging)
 			{
@@ -3400,27 +3478,23 @@ namespace tangent
 					if (mutation->is_fork)
 					{
 						VI_INFO("block %s (number: %" PRIu64 ", sync: %.2f%%, size: %.2f kb, depth: %" PRIi64 ", txns: %" PRIi64 ", state: %" PRIi64 ")\n",
-							algorithm::encoding::encode_0xhex256(candidate_hash).c_str(),
-							candidate.block.number, (double)progress / ((double)precision / 100), (double)verifier.size.load() / 1000.0,
-							mutation->block_delta,
-							mutation->transaction_delta,
-							mutation->state_delta);
+							uint256_to_label(candidate_hash).c_str(), candidate.block.number, (double)progress / ((double)precision / 100), (double)verifier.size.load() / 1000.0,
+							mutation->block_delta, mutation->transaction_delta, mutation->state_delta);
 					}
 					else if (progress < precision)
 					{
 						uint64_t time = protocol::now().time.now_cpu();
+						double bps = verifier.progress_time > 0 ? 1000.0 * (double)(candidate.block.number - verifier.progress_block_number) / (double)std::max<uint64_t>(1, time - verifier.progress_time) : 0.0;
 						VI_INFO("block %s (number: %" PRIu64 ", sync: %.2f%%, size: %.2f kb, bps: %.1f)",
-							algorithm::encoding::encode_0xhex256(candidate_hash).c_str(),
-							candidate.block.number, (double)progress / ((double)precision / 100), (double)verifier.size.load() / 1000.0,
-							verifier.progress_time > 0 ? 1000.0 * (double)(candidate.block.number - verifier.progress_block_number) / (double)std::max<uint64_t>(1, time - verifier.progress_time) : 0.0);
+							uint256_to_label(candidate_hash).c_str(), candidate.block.number, (double)progress / ((double)precision / 100), (double)verifier.size.load() / 1000.0, bps);
+						verifier.progress_bps = verifier.progress_bps > 1.0 ? verifier.progress_bps * 0.75 + bps * 0.25 : bps;
 						verifier.progress_block_number = candidate.block.number;
 						verifier.progress_time = time;
 					}
 					else
 					{
 						VI_INFO("block %s (number: %" PRIu64 ", sync: %.2f%%, size: %.2f kb)",
-							algorithm::encoding::encode_0xhex256(candidate_hash).c_str(),
-							candidate.block.number, (double)progress / ((double)precision / 100), (double)verifier.size.load() / 1000.0);
+							uint256_to_label(candidate_hash).c_str(), candidate.block.number, (double)progress / ((double)precision / 100), (double)verifier.size.load() / 1000.0);
 					}
 					verifier.progress = progress;
 					verifier.size = 0;
@@ -3476,7 +3550,7 @@ namespace tangent
 
 			size_t notifications = notify_all_except(uref(from), descriptors::broadcast_block_hash(), { format::variable(block_hash) });
 			if (notifications > 0 && protocol::now().user.consensus.logging)
-				VI_DEBUG("block %s broadcasted to %i nodes (height: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(block_hash).c_str(), (int)notifications, block_number);
+				VI_DEBUG("block %s broadcasted to %i nodes (number: %" PRIu64 ")", uint256_to_label(block_hash).c_str(), (int)notifications, block_number);
 		}
 		void server_node::finalize_pending_tip(uref<relay>&& from, const uint256_t& block_hash, uint64_t block_number)
 		{
@@ -3499,20 +3573,20 @@ namespace tangent
 				if (transaction.receipt.successful)
 				{
 					if (protocol::now().user.consensus.logging)
-						VI_DEBUG("transaction %s finalized (type: %.*s)", algorithm::encoding::encode_0xhex256(transaction.transaction->as_hash()).c_str(), (int)purpose.size(), purpose.data());
+						VI_DEBUG("transaction %s finalized (type: %.*s)", uint256_to_label(transaction.transaction->as_hash()).c_str(), (int)purpose.size(), purpose.data());
 					for (auto& [account, descriptor] : descriptors)
 						fill_node_services(descriptor);
 					run_block_production();
 				}
 				else if (protocol::now().user.consensus.logging)
-					VI_ERR("transaction %s %.*s error: %s", algorithm::encoding::encode_0xhex256(transaction.transaction->as_hash()).c_str(), (int)purpose.size(), purpose.data(), transaction.receipt.get_error_messages().or_else(string("execution error")).c_str());
+					VI_ERR("transaction %s %.*s error: %s", uint256_to_label(transaction.transaction->as_hash()).c_str(), (int)purpose.size(), purpose.data(), transaction.receipt.get_error_messages().or_else(string("execution error")).c_str());
 			}
 			else if (protocol::now().user.consensus.logging)
 			{
 				if (transaction.receipt.successful)
-					VI_DEBUG("transaction %s finalized (type: %.*s)", algorithm::encoding::encode_0xhex256(transaction.transaction->as_hash()).c_str(), (int)purpose.size(), purpose.data());
+					VI_DEBUG("transaction %s finalized (type: %.*s)", uint256_to_label(transaction.transaction->as_hash()).c_str(), (int)purpose.size(), purpose.data());
 				else
-					VI_ERR("transaction %s %.*s error: %s", algorithm::encoding::encode_0xhex256(transaction.transaction->as_hash()).c_str(), (int)purpose.size(), purpose.data(), transaction.receipt.get_error_messages().or_else(string("execution error")).c_str());
+					VI_ERR("transaction %s %.*s error: %s", uint256_to_label(transaction.transaction->as_hash()).c_str(), (int)purpose.size(), purpose.data(), transaction.receipt.get_error_messages().or_else(string("execution error")).c_str());
 			}
 			return true;
 		}
