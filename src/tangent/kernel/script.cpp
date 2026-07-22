@@ -22,6 +22,7 @@ extern "C"
 #define SCRIPT_TYPE_ARRAY "array"
 #define SCRIPT_TYPE_VARYING "varying"
 #define SCRIPT_TYPE_MAPPING "mapping"
+#define SCRIPT_TYPE_LISTING "listing"
 #define SCRIPT_TYPE_RANGING "ranging"
 #define SCRIPT_TYPE_PMUT "pmut"
 #define SCRIPT_TYPE_PCONST "pconst"
@@ -105,27 +106,27 @@ namespace tangent
 		exception_repr::exception_repr() : context(nullptr)
 		{
 		}
-		exception_repr::exception_repr(immediate_context* new_context) : context(new_context)
+		exception_repr::exception_repr(immediate_context* new_context, size_t offset) : context(new_context)
 		{
 			auto value = context ? context->get_exception_string() : std::string_view();
 			if (!value.empty() && (context ? !context->will_exception_be_caught() : false))
 			{
 				load_exception_data(value);
-				origin = load_stack_here();
+				origin = load_stack_here(offset);
 			}
 		}
-		exception_repr::exception_repr(const std::string_view& value) : context(immediate_context::get())
+		exception_repr::exception_repr(const std::string_view& value, size_t offset) : context(immediate_context::get())
 		{
 			load_exception_data(value);
-			origin = load_stack_here();
+			origin = load_stack_here(offset);
 		}
-		exception_repr::exception_repr(const std::string_view& new_type, const std::string_view& new_text) : type(new_type), text(new_text), context(immediate_context::get())
+		exception_repr::exception_repr(const std::string_view& new_type, const std::string_view& new_text, size_t offset) : type(new_type), text(new_text), context(immediate_context::get())
 		{
-			origin = load_stack_here();
+			origin = load_stack_here(offset);
 		}
-		exception_repr::exception_repr(const string_repr& new_type, const string_repr& new_text) : type(new_type.view()), text(new_text.view()), context(immediate_context::get())
+		exception_repr::exception_repr(const string_repr& new_type, const string_repr& new_text, size_t offset) : type(new_type.view()), text(new_text.view()), context(immediate_context::get())
 		{
-			origin = load_stack_here();
+			origin = load_stack_here(offset);
 		}
 		void exception_repr::load_exception_data(const std::string_view& value)
 		{
@@ -176,7 +177,7 @@ namespace tangent
 			data.append(origin.empty() ? load_stack_here() : origin);
 			return data;
 		}
-		string exception_repr::load_stack_here() const
+		string exception_repr::load_stack_here(size_t offset) const
 		{
 			string data;
 			if (!context)
@@ -186,13 +187,20 @@ namespace tangent
 			stream << '\n';
 
 			size_t callstack_size = context->get_callstack_size();
+			callstack_size = offset < callstack_size ? callstack_size - offset : 0;
+
 			size_t top_callstack_size = callstack_size;
 			for (size_t i = 0; i < callstack_size; i++)
 			{
 				int column_number = 0;
 				int line_number = context->get_line_number(i, &column_number);
 				function next = context->get_function(i);
-				stream << "  #" << --top_callstack_size << " at program:" << (line_number > 0 ? line_number : 0) << ":" << (column_number > 0 ? column_number : 0) << " in \"" << (next.get_decl().empty() ? "[optimized]" : next.get_decl()) << "\"";
+				stream << "  #" << (--top_callstack_size) + offset;
+				if (line_number > 0 || column_number > 0)
+					stream << " at program:" << (line_number > 0 ? line_number : 0) << ":" << (column_number > 0 ? column_number : 0);
+				else
+					stream << " at [optimized]";
+				stream << " in \"" << (next.get_decl().empty() ? "[optimized]" : next.get_decl()) << "\"";
 				if (top_callstack_size > 0)
 					stream << "\n";
 			}
@@ -2049,10 +2057,12 @@ namespace tangent
 			generic_context inout = generic_context(generic);
 			auto object = (address_repr*)inout.get_object_address();
 			auto& function = *inout.get_arg_object<string_repr>(0);
+			auto* context = immediate_context::get();
 			void* output_value = inout.get_address_of_return_location();
 			int output_type_id = inout.get_return_addressable_type_id();
 			VI_ASSERT(inout.get_generic() != nullptr, "generic context should be set");
 			VI_ASSERT(object != nullptr, "this object should be set");
+			VI_ASSERT(context != nullptr, "context should be set");
 
 			format::wo_stream stream;
 			for (size_t i = args_offset; i < inout.get_args_count(); i++)
@@ -2077,7 +2087,7 @@ namespace tangent
 			}
 			else
 			{
-				auto* immutable_program = program::fetch_immutable_or_throw();
+				auto* immutable_program = (program*)program::fetch_immutable_or_throw();
 				if (immutable_program != nullptr)
 				{
 					auto execution = immutable_program->subexecute(object->hash, payable, ccall::const_call, function.view(), std::move(function_args), output_value, output_type_id);
@@ -2540,6 +2550,181 @@ namespace tangent
 				return false;
 
 			if (!storage_repr::template_callback(type.get_sub_type(1), type.get_sub_type_id(1)))
+				return false;
+
+			dont_garbage_collect = true;
+			return true;
+		}
+
+		listing_repr::listing_repr(asITypeInfo* new_type) : container_repr(new_type), length(optional::none)
+		{
+		}
+		listing_repr::~listing_repr()
+		{
+			reset();
+		}
+		void listing_repr::reset()
+		{
+			auto value_type = type.get_sub_type(0);
+			for (auto& [index, value] : list)
+				value.destroy(value_type);
+			length = optional::none;
+			list.clear();
+		}
+		void listing_repr::clear()
+		{
+			uint32_t count = size() + 1;
+			auto value_type = type.get_sub_type_id(0);
+			for (uint32_t i = 0; i < count; i++)
+				contract::uniform_store_slot(slot, &i, (int)type_id::uint32_t, nullptr, i > 0 ? value_type : (int)type_id::uint32_t);
+			reset();
+			length = 0;
+		}
+		uint32_t listing_repr::size()
+		{
+			if (!length)
+			{
+				uint32_t length_index = 0, length_value = 0;
+				length = contract::uniform_load_slot(slot, &length_index, (int)type_id::uint32_t, &length_value, (int)type_id::uint32_t, false) ? length_value : 0;
+			}
+			return *length;
+		}
+		bool listing_repr::empty()
+		{
+			return !size();
+		}
+		const void* listing_repr::load_first()
+		{
+			if (empty())
+			{
+				contract::throw_ptr(exception_repr(exception_repr::category::storage(), "range [0; 1) is out of bounds (size: 0)"));
+				return nullptr;
+			}
+			return load_at(0);
+		}
+		const void* listing_repr::load_last()
+		{
+			if (empty())
+			{
+				contract::throw_ptr(exception_repr(exception_repr::category::storage(), "range [0; 1) is out of bounds (size: 0)"));
+				return nullptr;
+			}
+			return load_at(size() - 1);
+		}
+		const void* listing_repr::load_at(uint32_t index)
+		{
+			const void* new_value = try_load_at(index);
+			if (!new_value)
+				contract::throw_ptr(exception_repr(exception_repr::category::storage(), stringify::text("range [%i; %i) is out of bounds (size: %i)", index, index + 1, size())));
+			return new_value;
+		}
+		const void* listing_repr::try_load_at(uint32_t index)
+		{
+			auto* vm = type.get_vm();
+			if (!slot || !vm)
+				return nullptr;
+
+			auto it = list.find(index);
+			if (it != list.end())
+				return it->second.address();
+
+			auto& value = list[index]; uint32_t value_index = index + 1;
+			if (!value.copy(nullptr, type.get_sub_type_id(0), type.get_sub_type(0)))
+			{
+			error:
+				value.hidden = true;
+				return nullptr;
+			}
+			else if (!contract::uniform_load_slot(slot, &value_index, (int)type_id::uint32_t, value.value, type.get_sub_type_id(0), false))
+				goto error;
+
+			return value.address();
+		}
+		void listing_repr::store_at(uint32_t index, const void* new_value)
+		{
+			if (index > size())
+				return contract::throw_ptr(exception_repr(exception_repr::category::storage(), stringify::text("range [%i; %i) is out of bounds (size: %i)", index, index + 1, size())));
+
+			uint32_t length_index = 0;
+			if (!new_value)
+			{
+				uint32_t new_value_index = size();
+				if (index == new_value_index)
+					return contract::throw_ptr(exception_repr(exception_repr::category::storage(), stringify::text("range [%i; %i) is out of bounds (size: %i)", index, index + 1, size())));
+
+				uint32_t old_value_index = index + 1;
+				if (old_value_index != size() && new_value_index > 1)
+				{
+					const void* back_value = load_at(new_value_index - 1);
+					if (!back_value)
+						return;
+
+					contract::uniform_store_slot(slot, &old_value_index, (int)type_id::uint32_t, back_value, type.get_sub_type_id(0));
+				}
+				*length = new_value_index - 1;
+				contract::uniform_store_slot(slot, &new_value_index, (int)type_id::uint32_t, nullptr, type.get_sub_type_id(0));
+				contract::uniform_store_slot(slot, &length_index, (int)type_id::uint32_t, length.address(), (int)type_id::uint32_t);
+
+				auto cache = list.find(index);
+				if (cache != list.end())
+					cache->second.destroy(type.get_sub_type(0));
+				cache = list.find(new_value_index - 1);
+				if (cache != list.end())
+					cache->second.destroy(type.get_sub_type(0));
+			}
+			else
+			{
+				auto& value = list[index];
+				if (!slot || !value.copy(new_value, type.get_sub_type_id(0), type.get_sub_type(0)))
+					return contract::throw_ptr(exception_repr(exception_repr::category::storage(), "listing store failed"));
+
+				uint32_t value_index = index + 1;
+				contract::uniform_store_slot(slot, &value_index, (int)type_id::uint32_t, value.value, type.get_sub_type_id(0));
+				if (index == size())
+				{
+					*length = value_index;
+					contract::uniform_store_slot(slot, &length_index, (int)type_id::uint32_t, length.address(), (int)type_id::uint32_t);
+				}
+			}
+		}
+		void listing_repr::erase_at(uint32_t index)
+		{
+			store_at(index, nullptr);
+		}
+		void listing_repr::insert_last(const void* value)
+		{
+			store_at(size(), value);
+		}
+		void listing_repr::insert_first(const void* value)
+		{
+			if (!empty())
+			{
+				const void* prev_value = load_at(0);
+				if (!prev_value)
+					return;
+
+				insert_last(prev_value);
+			}
+			store_at(0, value);
+		}
+		void listing_repr::remove_last()
+		{
+			if (empty())
+				return contract::throw_ptr(exception_repr(exception_repr::category::storage(), "range [0; 1) is out of bounds (size: 0)"));
+
+			erase_at(size() - 1);
+		}
+		void listing_repr::remove_first()
+		{
+			if (empty())
+				return contract::throw_ptr(exception_repr(exception_repr::category::storage(), "range [0; 1) is out of bounds (size: 0)"));
+
+			erase_at(0);
+		}
+		bool listing_repr::template_callback(asITypeInfo* t, bool& dont_garbage_collect)
+		{
+			auto type = vitex::scripting::type_info(t);
+			if (!storage_repr::template_callback(type.get_sub_type(0), type.get_sub_type_id(0)))
 				return false;
 
 			dont_garbage_collect = true;
@@ -3176,14 +3361,15 @@ namespace tangent
 			if (!status)
 				return contract::throw_ptr(exception_repr(exception_repr::category::argument(), std::string_view(status.error().message())));
 
-			auto type = factory::get()->get_vm()->get_type_info_by_id(object_type_id);
-			auto name = type.is_valid() ? type.get_name() : std::string_view("primitive");
-			auto reader = stream.ro();
 			format::variables returns;
+			auto reader = stream.ro();
+			auto type = factory::get()->get_vm()->get_type_info_by_id(object_type_id);
+			auto id = type.is_valid() ? type.get_name() : std::string_view("primitive");
 			if (!format::variables_util::deserialize_flat_from(reader, &returns))
-				return contract::throw_ptr(exception_repr(exception_repr::category::argument(), stringify::text("event %.*s load failed", (int)name.size(), name.data())));
+				return contract::throw_ptr(exception_repr(exception_repr::category::argument(), stringify::text("event %.*s load failed", (int)id.size(), id.data())));
 
-			auto data = p->executor->emit_event(algorithm::hashing::hash32d(name), std::move(returns), true);
+			auto code = algorithm::hashing::hash32d(id);
+			auto data = immediate_context::get()->is_nested() ? p->executor->emit_forwarded_event(code, p->callable(), std::move(returns), true) : p->executor->emit_event(code, std::move(returns), true);
 			if (!data)
 				return contract::throw_ptr(exception_repr(exception_repr::category::storage(), std::string_view(data.error().message())));
 
@@ -3204,14 +3390,15 @@ namespace tangent
 			if (!status)
 				return contract::throw_ptr(exception_repr(exception_repr::category::argument(), std::string_view(status.error().message())));
 
-			auto type = factory::get()->get_vm()->get_type_info_by_id(event_type_id);
-			auto name = type.is_valid() ? type.get_name() : std::string_view("primitive");
-			auto reader = stream.ro();
 			format::variables returns;
+			auto reader = stream.ro();
+			auto type = factory::get()->get_vm()->get_type_info_by_id(event_type_id);
+			auto id = type.is_valid() ? type.get_name() : std::string_view("primitive");
 			if (!format::variables_util::deserialize_flat_from(reader, &returns))
-				return contract::throw_ptr(exception_repr(exception_repr::category::argument(), stringify::text("event %.*s load failed", (int)name.size(), name.data())));
-
-			auto data = p->executor->emit_event(algorithm::hashing::hash32d(name), std::move(returns), true);
+				return contract::throw_ptr(exception_repr(exception_repr::category::argument(), stringify::text("event %.*s load failed", (int)id.size(), id.data())));
+			
+			auto code = algorithm::hashing::hash32d(id);
+			auto data = immediate_context::get()->is_nested() ? p->executor->emit_forwarded_event(code, p->callable(), std::move(returns), true) : p->executor->emit_event(code, std::move(returns), true);
 			if (!data)
 				contract::throw_ptr(exception_repr(exception_repr::category::storage(), std::string_view(data.error().message())));
 
@@ -3227,18 +3414,19 @@ namespace tangent
 			int32_t event_index = inout.get_arg_dword(0);
 			void* object_value = inout.get_arg_address(1);
 			int object_type_id = inout.get_arg_type_id(1);
+			address_repr* target_address = (address_repr*)inout.get_arg_address(2);
 			auto type = factory::get()->get_vm()->get_type_info_by_id(object_type_id);
 			auto name = type.is_valid() ? type.get_name() : std::string_view("primitive");
 			auto id = algorithm::hashing::hash32d(name);
 			auto* event = event_index < 0 ? p->executor->receipt.reverse_find_event(id, (size_t)(-event_index)) : p->executor->receipt.find_event(id, (size_t)event_index);
-			if (!event)
+			if (!event || (target_address && !target_address->empty() ? (event->emitter.empty() ? target_address->hash == p->callable() : target_address->hash == event->emitter) : false))
 			{
 				inout.set_return_byte(false);
 				return;
 			}
 
 			format::wo_stream writer;
-			if (!format::variables_util::serialize_flat_into(*event, &writer))
+			if (!format::variables_util::serialize_flat_into(event->args, &writer))
 			{
 				inout.set_return_byte(false);
 				return;
@@ -3258,18 +3446,19 @@ namespace tangent
 			int32_t event_index = inout.get_arg_dword(1);
 			void* object_value = inout.get_arg_address(2);
 			int object_type_id = inout.get_arg_type_id(2);
+			address_repr* target_address = (address_repr*)inout.get_arg_address(3);
 			auto type = factory::get()->get_vm()->get_type_info_by_id(event_type_id);
 			auto name = type.is_valid() ? type.get_name() : std::string_view("primitive");
 			auto id = algorithm::hashing::hash32d(name);
 			auto* event = event_index < 0 ? p->executor->receipt.reverse_find_event(id, (size_t)(-event_index)) : p->executor->receipt.find_event(id, (size_t)event_index);
-			if (!event)
+			if (!event || (target_address && !target_address->empty() ? (event->emitter.empty() ? target_address->hash == p->callable() : target_address->hash == event->emitter) : false))
 			{
 				inout.set_return_byte(false);
 				return;
 			}
 
 			format::wo_stream writer;
-			if (!format::variables_util::serialize_flat_into(*event, &writer))
+			if (!format::variables_util::serialize_flat_into(event->args, &writer))
 			{
 				inout.set_return_byte(false);
 				return;
@@ -3286,17 +3475,18 @@ namespace tangent
 
 			generic_context inout = generic_context(generic);
 			int32_t event_index = inout.get_arg_dword(0);
+			address_repr* target_address = (address_repr*)inout.get_arg_address(1);
 			void* object_value = inout.get_address_of_return_location();
 			int object_type_id = inout.get_return_addressable_type_id();
 			auto type = factory::get()->get_vm()->get_type_info_by_id(object_type_id);
 			auto name = type.is_valid() ? type.get_name() : std::string_view("primitive");
 			auto id = algorithm::hashing::hash32d(name);
 			auto* event = event_index < 0 ? p->executor->receipt.reverse_find_event(id, (size_t)(-event_index - 1)) : p->executor->receipt.find_event(id, (size_t)event_index);
-			if (!event)
+			if (!event || (target_address && !target_address->empty() ? (event->emitter.empty() ? target_address->hash == p->callable() : target_address->hash == event->emitter) : false))
 				return contract::throw_ptr(exception_repr(exception_repr::category::argument(), stringify::text("event %.*s[%i] not found", (int)name.size(), name.data(), event_index)));
 
 			format::wo_stream writer;
-			if (!format::variables_util::serialize_flat_into(*event, &writer))
+			if (!format::variables_util::serialize_flat_into(event->args, &writer))
 				return contract::throw_ptr(exception_repr(exception_repr::category::argument(), stringify::text("event %.*s[%i] store failed", (int)name.size(), name.data(), event_index)));
 
 			format::ro_stream reader = writer.ro();
@@ -3313,17 +3503,18 @@ namespace tangent
 			generic_context inout = generic_context(generic);
 			int event_type_id = inout.get_arg_type_id(0);
 			int32_t event_index = inout.get_arg_dword(1);
+			address_repr* target_address = (address_repr*)inout.get_arg_address(2);
 			void* object_value = inout.get_address_of_return_location();
 			int object_type_id = inout.get_return_addressable_type_id();
 			auto type = factory::get()->get_vm()->get_type_info_by_id(event_type_id);
 			auto name = type.is_valid() ? type.get_name() : std::string_view("primitive");
 			auto id = algorithm::hashing::hash32d(name);
 			auto* event = event_index < 0 ? p->executor->receipt.reverse_find_event(id, (size_t)(-event_index - 1)) : p->executor->receipt.find_event(id, (size_t)event_index);
-			if (!event)
+			if (!event || (target_address && !target_address->empty() ? (event->emitter.empty() ? target_address->hash == p->callable() : target_address->hash == event->emitter) : false))
 				return contract::throw_ptr(exception_repr(exception_repr::category::argument(), stringify::text("event %.*s[%i] not found", (int)name.size(), name.data(), event_index)));
 
 			format::wo_stream writer;
-			if (!format::variables_util::serialize_flat_into(*event, &writer))
+			if (!format::variables_util::serialize_flat_into(event->args, &writer))
 				return contract::throw_ptr(exception_repr(exception_repr::category::argument(), stringify::text("event %.*s[%i] store failed", (int)name.size(), name.data(), event_index)));
 
 			format::ro_stream reader = writer.ro();
@@ -4340,13 +4531,13 @@ namespace tangent
 		{
 			return has_exception_at(immediate_context::get());
 		}
-		exception_repr contract::get_exception_at(immediate_context* context)
+		exception_repr contract::get_exception_at(immediate_context* context, size_t offset)
 		{
-			return exception_repr(context);
+			return exception_repr(context, offset);
 		}
-		exception_repr contract::get_exception()
+		exception_repr contract::get_exception(size_t offset)
 		{
-			return get_exception_at(immediate_context::get());
+			return get_exception_at(immediate_context::get(), offset);
 		}
 
 		expects_lr<void> marshall::store(format::wo_stream* stream, const void* value, int value_type_id)
@@ -4505,7 +4696,7 @@ namespace tangent
 					value = value_type_id & (int)vitex::scripting::type_id::handle_t ? *(void**)value : value;
 					if (name == SCRIPT_TYPE_ADDRESS)
 					{
-						stream = algorithm::signing::serialize_address(((address_repr*)value)->hash);
+						stream = format::tree(algorithm::signing::serialize_address(((address_repr*)value)->hash));
 						return expectation::met;
 					}
 					else if (name == SCRIPT_TYPE_PAYABLE)
@@ -4584,7 +4775,7 @@ namespace tangent
 				}
 			}
 		}
-		expects_lr<void> marshall::load(format::ro_stream& stream, void* value, int value_type_id)
+		expects_lr<void> marshall::load(format::ro_stream& stream, void* value, int value_type_id, bool allow_partial)
 		{
 			if (!value)
 				return layer_exception("load failed for null type");
@@ -4749,7 +4940,7 @@ namespace tangent
 						array->resize(size);
 						for (uint32_t i = 0; i < size; i++)
 						{
-							auto status = load(stream, array->at(i), sub_type_id);
+							auto status = load(stream, array->at(i), sub_type_id, false);
 							if (!status)
 								return status;
 						}
@@ -4763,7 +4954,10 @@ namespace tangent
 						size_t properties = object.get_properties_count();
 						for (size_t i = 0; i < properties; i++)
 						{
-							auto status = load(stream, object.get_address_of_property(i), object.get_property_type_id(i));
+							if (allow_partial && stream.is_eof())
+								break;
+
+							auto status = load(stream, object.get_address_of_property(i), object.get_property_type_id(i), false);
 							if (!status)
 								return status;
 						}
@@ -4783,7 +4977,7 @@ namespace tangent
 				}
 			}
 		}
-		expects_lr<void> marshall::load(format::tree& stream, void* value, int value_type_id)
+		expects_lr<void> marshall::load(format::tree& stream, void* value, int value_type_id, bool allow_partial)
 		{
 			if (!value)
 				return layer_exception("load failed for null type");
@@ -4920,7 +5114,7 @@ namespace tangent
 						array->resize(size);
 						for (uint32_t i = 0; i < size; i++)
 						{
-							auto status = load(stream.childs()[i], array->at(i), sub_type_id);
+							auto status = load(stream.childs()[i], array->at(i), sub_type_id, false);
 							if (!status)
 								return status;
 						}
@@ -4936,10 +5130,12 @@ namespace tangent
 						{
 							std::string_view field = object.get_property_name(i);
 							auto* substream = (format::tree*)stream.child(field);
-							if (!substream)
+							if (!substream && !allow_partial)
 								return layer_exception(stringify::text("load failed for %s type while searching for %s property", field.data(), field.data()));
+							else if (!substream && allow_partial)
+								break;
 
-							auto status = load(*substream, object.get_address_of_property(i), object.get_property_type_id(i));
+							auto status = load(*substream, object.get_address_of_property(i), object.get_property_type_id(i), false);
 							if (!status)
 								return status;
 						}
@@ -5036,6 +5232,7 @@ namespace tangent
 			auto abi_type = vm->set_struct_address("abi", sizeof(abi_repr), (size_t)object_behaviours::value | bridge::type_traits_of<abi_repr>());
 			auto varying_type = vm->set_template_class_address("varying<class t>", "varying<t>", sizeof(varying_repr), (size_t)object_behaviours::pattern | (size_t)object_behaviours::value | bridge::type_traits_of<varying_repr>());
 			auto mapping_type = vm->set_template_class_address("mapping<class k, class v>", "mapping<k, v>", sizeof(mapping_repr), (size_t)object_behaviours::pattern | (size_t)object_behaviours::value | bridge::type_traits_of<mapping_repr>());
+			auto listing_type = vm->set_template_class_address("listing<class v>", "listing<v>", sizeof(listing_repr), (size_t)object_behaviours::pattern | (size_t)object_behaviours::value | bridge::type_traits_of<listing_repr>());
 			auto ranging_type = vm->set_template_class_address("ranging<class c, class r, class v>", "ranging<c, r, v>", sizeof(ranging_repr), (size_t)object_behaviours::pattern | (size_t)object_behaviours::value | bridge::type_traits_of<ranging_repr>());
 			auto ranging_slice_type = vm->set_struct_address("ranging_slice", sizeof(ranging_slice_repr), (size_t)object_behaviours::value | bridge::type_traits_of<ranging_slice_repr>());
 			array_type->set_behaviour_address("array<t>@ f(int&in)", behaviours::factory, WRAP_FN_PR(array_repr::construct, (asITypeInfo*), array_repr*), convention::generic_call);
@@ -5339,6 +5536,21 @@ namespace tangent
 			mapping_type->set_method_address("void insert_if(bool, const k&in, const v&in)", WRAP_MFN(mapping_repr, store_if), convention::generic_call);
 			mapping_type->set_method_address("const v& opIndex(const k&in) const", WRAP_MFN(mapping_repr, load), convention::generic_call);
 			mapping_type->set_method_address("bool has(const k&in) const", WRAP_MFN(mapping_repr, has), convention::generic_call);
+			listing_type->set_behaviour_address("void f(int&in)", behaviours::construct, WRAP_CON(listing_repr, (asITypeInfo*)), convention::generic_call);
+			listing_type->set_behaviour_address("void f()", behaviours::destruct, WRAP_DES(listing_repr), convention::generic_call);
+			listing_type->set_behaviour_address("bool f(int&in, bool&out)", behaviours::template_callback, WRAP_FN(listing_repr::template_callback), convention::generic_call);
+			listing_type->set_method_address("usize size() const", WRAP_MFN(listing_repr, size), convention::generic_call);
+			listing_type->set_method_address("bool empty() const", WRAP_MFN(listing_repr, empty), convention::generic_call);
+			listing_type->set_method_address("void clear()", WRAP_MFN(listing_repr, clear), convention::generic_call);
+			listing_type->set_method_address("void erase(usize)", WRAP_MFN(listing_repr, erase_at), convention::generic_call);
+			listing_type->set_method_address("void set(usize, const v&in)", WRAP_MFN(listing_repr, store_at), convention::generic_call);
+			listing_type->set_method_address("void push(const v&in)", WRAP_MFN(listing_repr, insert_last), convention::generic_call);
+			listing_type->set_method_address("void push_front(const v&in)", WRAP_MFN(listing_repr, insert_first), convention::generic_call);
+			listing_type->set_method_address("void pop()", WRAP_MFN(listing_repr, remove_last), convention::generic_call);
+			listing_type->set_method_address("void pop_front()", WRAP_MFN(listing_repr, remove_first), convention::generic_call);
+			listing_type->set_method_address("const v& front() const", WRAP_MFN(listing_repr, load_first), convention::generic_call);
+			listing_type->set_method_address("const v& back() const", WRAP_MFN(listing_repr, load_last), convention::generic_call);
+			listing_type->set_method_address("const v& opIndex(usize) const", WRAP_MFN(listing_repr, load_at), convention::generic_call);
 			ranging_type->set_behaviour_address("void f(int&in)", behaviours::construct, WRAP_CON(ranging_repr, (asITypeInfo*)), convention::generic_call);
 			ranging_type->set_behaviour_address("void f()", behaviours::destruct, WRAP_DES(ranging_repr), convention::generic_call);
 			ranging_type->set_behaviour_address("bool f(int&in, bool&out)", behaviours::template_callback, WRAP_FN(ranging_repr::template_callback), convention::generic_call);
@@ -5375,10 +5587,10 @@ namespace tangent
 			vm->begin_namespace("log");
 			vm->set_function("void emit(const ?&in)", &contract::log_emit, convention::generic_call);
 			vm->set_function("void event(const ?&in, const ?&in)", &contract::log_event, convention::generic_call);
-			vm->set_function("bool into(int32, ?&out)", &contract::log_into, convention::generic_call);
-			vm->set_function("bool event_into(const ?&in, int32, ?&out)", &contract::log_event_into, convention::generic_call);
-			vm->set_function("t get<t>(int32)", &contract::log_get, convention::generic_call);
-			vm->set_function("t get_event<t>(const ?&in, int32)", &contract::log_get_event, convention::generic_call);
+			vm->set_function("bool into(int32, ?&out, const address&in = address())", &contract::log_into, convention::generic_call);
+			vm->set_function("bool event_into(const ?&in, int32, ?&out, const address&in = address())", &contract::log_event_into, convention::generic_call);
+			vm->set_function("t get<t>(int32, const address&in = address())", &contract::log_get, convention::generic_call);
+			vm->set_function("t get_event<t>(const ?&in, int32, const address&in = address())", &contract::log_get_event, convention::generic_call);
 			vm->end_namespace();
 
 			vm->begin_namespace("block");
@@ -5911,7 +6123,7 @@ namespace tangent
 
 				auto type = vm->get_type_info_by_id(info.type_id);
 				auto name = type.is_valid() ? type.get_name() : std::string_view("primitive");
-				if (name != SCRIPT_TYPE_VARYING && name != SCRIPT_TYPE_MAPPING && name != SCRIPT_TYPE_RANGING)
+				if (name != SCRIPT_TYPE_VARYING && name != SCRIPT_TYPE_MAPPING && name != SCRIPT_TYPE_LISTING && name != SCRIPT_TYPE_RANGING)
 				{
 					auto decl = module->get_property_decl(i, true);
 					vmc_log.append(stringify::text(SCRIPT_VM " illegal property declaration \"%.*s\"\r\n", (int)decl.size(), decl.data()));
@@ -5943,7 +6155,7 @@ namespace tangent
 
 				auto type = vm->get_type_info_by_id(info.type_id);
 				auto name = type.is_valid() ? type.get_name() : std::string_view("primitive");
-				if (name == SCRIPT_TYPE_VARYING || name == SCRIPT_TYPE_MAPPING || name == SCRIPT_TYPE_RANGING)
+				if (name == SCRIPT_TYPE_VARYING || name == SCRIPT_TYPE_MAPPING || name == SCRIPT_TYPE_LISTING || name == SCRIPT_TYPE_RANGING)
 				{
 					auto value = (container_repr*)module.get_address_of_property(i);
 					value->slot = (uint8_t)(i + 1);
@@ -6014,7 +6226,7 @@ namespace tangent
 			return (int)virtual_error::success;
 		}
 
-		program::program(ledger::executor_context* new_executor, library&& new_module, program* new_parent) : executor(new_executor), parent(new_parent), module(new_module)
+		program::program(ledger::executor_context* new_executor, library&& new_module, program* new_parent) : executor(new_executor), module(new_module)
 		{
 		}
 		expects_lr<void> program::execute(const payable_repr& payable, ccall mutability, const std::string_view& entrypoint, const format::variables& args, std::function<expects_lr<void>(void*, int)>&& return_callback)
@@ -6036,11 +6248,13 @@ namespace tangent
 			if (!binders)
 				return binders.error();
 
+			size_t depth_in = 0, depth_out = 0;
 			auto* vm = entrypoint.get_vm();
 			auto* caller = immediate_context::get();
 			auto* coroutine = caller ? caller : vm->request_context();
 			auto* prev_mutable_program = coroutine->get_user_data(SCRIPT_TAG_MUTABLE_PROGRAM);
 			auto* prev_immutable_program = coroutine->get_user_data(SCRIPT_TAG_IMMUTABLE_PROGRAM);
+			bool inline_call = caller != coroutine;
 			auto resolver = expects_lr<void>(layer_exception());
 			auto execution = expects_vm<vitex::scripting::execution>(vitex::scripting::execution::error);
 			auto resolve = [this, &resolver, &entrypoint, &return_callback](immediate_context* coroutine)
@@ -6050,52 +6264,51 @@ namespace tangent
 				if (!output_value && output_type_id > 0 && output_type_id <= (int)type_id::double_t)
 					output_value = coroutine->get_address_of_return_value();
 
-				if (return_callback && output_value != nullptr && output_type_id > 0)
+				if (return_callback)
 					resolver = return_callback(output_value, output_type_id);
 				else
 					resolver = expectation::met;
 			};
-			coroutine->set_user_data(mutability == ccall::deploy_call || mutability == ccall::paying_call ? (caller ? prev_mutable_program : this) : nullptr, SCRIPT_TAG_MUTABLE_PROGRAM);
+			coroutine->set_user_data(mutability == ccall::deploy_call || mutability == ccall::paying_call ? this : nullptr, SCRIPT_TAG_MUTABLE_PROGRAM);
 			coroutine->set_user_data(this, SCRIPT_TAG_IMMUTABLE_PROGRAM);
+			coroutine->is_nested(&depth_in);
 			cache.payable = payable;
-			if (caller != coroutine)
+			if (inline_call)
 			{
 				coroutine->set_line_callback(std::bind(&program::dispatch_coroutine, this, std::placeholders::_1));
 				coroutine->set_exception_callback(std::bind(&program::dispatch_exception, this, std::placeholders::_1));
 			}
 
-			bool initialized = false; auto* top = parent;
-			while (top != nullptr && !initialized)
-			{
-				initialized = top->module.get_module() == module.get_module();
-				top = top->parent;
-			}
-
-			auto preparation = factory::get()->reset_module(module, caller != coroutine ? coroutine : nullptr);
-			if (initialized || preparation)
+			auto preparation = factory::get()->reset_module(module, inline_call ? coroutine : nullptr);
+			if (preparation)
 			{
 				auto binder = [&binders](immediate_context* coroutine) { for (auto& bind : *binders) bind(coroutine); };
-				execution = caller != coroutine ? coroutine->execute_inline_call(entrypoint, binder) : coroutine->execute_subcall(entrypoint, binder, resolve);
-				if (caller != coroutine)
+				execution = inline_call ? coroutine->execute_inline_call(entrypoint, binder) : coroutine->execute_subcall(entrypoint, binder, resolve);
+				if (inline_call)
 					resolve(coroutine);
 			}
 
 			auto name = entrypoint.get_module_name();
-			auto exception = coroutine->get_state() == execution::aborted ? exception_repr(exception_repr::category::execution(), "ran out of gas") : contract::get_exception_at(coroutine);
+			auto exception = coroutine->get_state() == execution::aborted ? exception_repr(exception_repr::category::execution(), "ran out of gas") : contract::get_exception_at(coroutine, inline_call ? 0 : (depth_in + 1));
 			coroutine->set_user_data(prev_mutable_program, SCRIPT_TAG_MUTABLE_PROGRAM);
 			coroutine->set_user_data(prev_immutable_program, SCRIPT_TAG_IMMUTABLE_PROGRAM);
-			if (caller != coroutine)
+			coroutine->is_nested(&depth_out);
+			if (inline_call)
 				vm->return_context(coroutine);
+			else if (depth_in < depth_out)
+				coroutine->pop_state();
 			if (execution && *execution == execution::finished && preparation && exception.empty())
 				return resolver;
 
+			string base_message = exception.text.empty() ? (preparation ? string("illegal operation") : preparation.error().message()) : exception.text;
 			string error_message;
-			error_message.append(1, '(').append(exception.type.empty() ? exception_repr::category::execution() : exception.type).append(") ");
-			error_message.append(exception.text.empty() ? (preparation ? preparation.error().message() : string("illegal operation")) : exception.text);
+			if (base_message.empty() || base_message.front() != '(')
+				error_message.append(1, '(').append(exception.type.empty() ? exception_repr::category::execution() : exception.type).append(") ");
+			error_message.append(base_message);
 			error_message.append(exception.origin);
 			return layer_exception(std::move(error_message));
 		}
-		expects_lr<void> program::subexecute(const algorithm::pubkeyhash_t& target, const payable_repr& payable, ccall mutability, const std::string_view& entrypoint, format::variables&& args, void* output_value, int output_type_id) const
+		expects_lr<void> program::subexecute(const algorithm::pubkeyhash_t& target, const payable_repr& payable, ccall mutability, const std::string_view& entrypoint, format::variables&& args, void* output_value, int output_type_id)
 		{
 			if (entrypoint.empty())
 				return layer_exception(stringify::text("illegal subcall to %s program: illegal operation", address_repr(target).to_string().data()));
@@ -6112,19 +6325,21 @@ namespace tangent
 			transaction.gas_limit = executor->get_gas_left();
 			transaction.nonce = 0;
 
-			ledger::transaction_receipt receipt;
-			receipt.transaction_hash = transaction.as_hash();
-			receipt.absolute_gas_use = executor->block->gas_use;
-			receipt.block_number = executor->block->number;
-			receipt.from = callable();
+			auto subexecutor = ledger::executor_context(executor->changelog, executor->solver, executor->block, &transaction);
+			subexecutor.receipt.transaction_hash = transaction.as_hash();
+			subexecutor.receipt.absolute_gas_use = executor->block->gas_use;
+			subexecutor.receipt.block_number = executor->block->number;
+			subexecutor.receipt.from = callable();
 
-			auto subcontext = ledger::executor_context(executor->changelog, executor->solver, executor->block, &transaction);
-			subcontext.receipt = std::move(receipt);
-
-			auto subexecution = transaction.subexecute(&subcontext, [&](const transactions::call::payable_array& payable_ptr, void* module_ptr)
+			auto prev_cache = std::move(cache);
+			auto* prev_executor = executor;
+			auto prev_module = module;
+			auto subexecution = transaction.subexecute(&subexecutor, [&](const transactions::call::payable_array& payable_ptr, void* module_ptr)
 			{
-				auto script = program(&subcontext, (asIScriptModule*)module_ptr, (program*)this);
-				return script.execute(payable_repr(transactions::call::payable_array(payable_ptr)), mutability, entrypoint, transaction.args, [&](void* result_value, int return_type_id) -> expects_lr<void>
+				executor = &subexecutor;
+				cache = cache_storage();
+				module = library((asIScriptModule*)module_ptr);
+				return execute(payable_repr(transactions::call::payable_array(payable_ptr)), mutability, entrypoint, transaction.args, [&](void* result_value, int return_type_id) -> expects_lr<void>
 				{
 					format::wo_stream stream;
 					auto serialization = marshall::store(&stream, result_value, return_type_id);
@@ -6135,12 +6350,15 @@ namespace tangent
 					serialization = marshall::load(reader, output_value, output_type_id);
 					if (!serialization)
 						return layer_exception(stringify::text("illegal subcall to %s program on function \"%.*s\": %s", address_repr(target).to_string().data(), (int)entrypoint.size(), entrypoint.data(), serialization.error().what()));
-
+					
 					return expectation::met;
 				});
 			});
-			executor->receipt.events.insert(executor->receipt.events.begin(), subcontext.receipt.events.begin(), subcontext.receipt.events.end());
-			executor->receipt.relative_gas_use += subcontext.receipt.relative_gas_use;
+			cache = std::move(prev_cache);
+			module = prev_module;
+			executor = prev_executor;
+			executor->receipt.events.insert(executor->receipt.events.end(), subexecutor.receipt.events.begin(), subexecutor.receipt.events.end());
+			executor->receipt.relative_gas_use += subexecutor.receipt.relative_gas_use;
 			return subexecution;
 		}
 		expects_lr<vector<std::function<void(immediate_context*)>>> program::dispatch_arguments(ccall* mutability, const function& entrypoint, const format::variables* args) const

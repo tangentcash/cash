@@ -98,7 +98,14 @@ namespace tangent
 
 		struct transaction_receipt final : uniform_serializer
 		{
-			vector<std::pair<uint32_t, format::variables>> events;
+			struct receipt_event
+			{
+				format::variables args;
+				algorithm::pubkeyhash_t emitter;
+				uint32_t event;
+			};
+
+			vector<receipt_event> events;
 			algorithm::pubkeyhash_t from;
 			uint256_t transaction_hash = 0;
 			uint256_t absolute_gas_use = 0;
@@ -110,9 +117,10 @@ namespace tangent
 			bool store_payload(format::wo_stream* stream) const override;
 			bool load_payload(format::ro_stream& stream) override;
 			void emit_event(uint32_t type, format::variables&& values);
-			const format::variables* find_event(uint32_t type, size_t offset = 0) const;
-			const format::variables* reverse_find_event(uint32_t type, size_t offset = 0) const;
-			option<string> get_error_messages() const;
+			void emit_forwarded_event(uint32_t type, const algorithm::pubkeyhash_t& emitter, format::variables&& values);
+			const receipt_event* find_event(uint32_t type, size_t offset = 0) const;
+			const receipt_event* reverse_find_event(uint32_t type, size_t offset = 0) const;
+			option<string> get_error_message() const;
 			format::tree as_tree() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
@@ -124,9 +132,14 @@ namespace tangent
 				emit_event(t::as_instance_type(), std::move(values));
 			}
 			template <typename t>
-			vector<const format::variables*> find_events(size_t offset = 0) const
+			void emit_forwarded_event(const algorithm::pubkeyhash_t& emitter, format::variables&& values)
 			{
-				vector<const format::variables*> result;
+				emit_forwarded_event(t::as_instance_type(), std::move(values));
+			}
+			template <typename t>
+			vector<const receipt_event*> find_events(size_t offset = 0) const
+			{
+				vector<const receipt_event*> result;
 				while (true)
 				{
 					auto* event = find_event(t::as_instance_type(), offset++);
@@ -138,12 +151,12 @@ namespace tangent
 				return result;
 			}
 			template <typename t>
-			const format::variables* find_event(size_t offset = 0) const
+			const receipt_event* find_event(size_t offset = 0) const
 			{
 				return find_event(t::as_instance_type(), offset);
 			}
 			template <typename t>
-			const format::variables* reverse_find_event(size_t offset = 0) const
+			const receipt_event* reverse_find_event(size_t offset = 0) const
 			{
 				return reverse_find_event(t::as_instance_type(), offset);
 			}

@@ -180,7 +180,8 @@ struct tester
 		auto& params = protocol::change();
 		auto path = params.database.location();
 		params.database.reset();
-		os::directory::remove(path);
+		if (os::directory::is_exists(path))
+			os::directory::remove(path).expect("busy file");
 
 		auto chain = storages::chainstate();
 		callback();
@@ -2104,7 +2105,7 @@ struct tests
 
 			auto* confirmation_event = confirmation.receipt.find_event<transactions::broadcast>();
 			auto* confirmation_transaction = (transactions::broadcast*)*confirmation.transaction;
-			VI_PANIC(confirmation_transaction->proof && !confirmation_event, "withdrawal confirmation failed: %s", confirmation_event ? (confirmation_event->empty() ? "unknown error" : confirmation_event->front().as_blob().c_str()) : confirmation_transaction->proof.what().c_str());
+			VI_PANIC(confirmation_transaction->proof && !confirmation_event, "withdrawal confirmation failed: %s", confirmation_event ? (confirmation_event->args.empty() ? "unknown error" : confirmation_event->args.front().as_blob().c_str()) : confirmation_transaction->proof.what().c_str());
 			term->fwrite_line(" - block required for transaction %s", confirmation_transaction->proof->hashdata.c_str());
 			receive_transaction();
 

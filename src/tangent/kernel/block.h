@@ -121,7 +121,7 @@ namespace tangent
 		{
 			struct
 			{
-				hash_map<uint32_t, std::pair<void*, bool>> topics;
+				hash_map<uint32_t, void*> topics;
 				hash_map<string, string> effects;
 			} temporary_state;
 			struct
@@ -319,6 +319,7 @@ namespace tangent
 			expects_lr<void> store(transition_state* value, bool paid);
 			expects_lr<void> emit_witness(const algorithm::asset_id& asset, uint64_t block_number);
 			expects_lr<void> emit_event(uint32_t type, format::variables&& values, bool paid);
+			expects_lr<void> emit_forwarded_event(uint32_t type, const algorithm::pubkeyhash_t& emitter, format::variables&& values, bool paid);
 			expects_lr<void> burn_gas();
 			expects_lr<void> burn_gas(const uint256_t& value);
 			expects_lr<void> verify_account_nonce() const;

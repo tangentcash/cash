@@ -3579,14 +3579,14 @@ namespace tangent
 					run_block_production();
 				}
 				else if (protocol::now().user.consensus.logging)
-					VI_ERR("transaction %s %.*s error: %s", uint256_to_label(transaction.transaction->as_hash()).c_str(), (int)purpose.size(), purpose.data(), transaction.receipt.get_error_messages().or_else(string("execution error")).c_str());
+					VI_ERR("transaction %s %.*s error: %s", uint256_to_label(transaction.transaction->as_hash()).c_str(), (int)purpose.size(), purpose.data(), transaction.receipt.get_error_message().or_else(string("execution error")).c_str());
 			}
 			else if (protocol::now().user.consensus.logging)
 			{
 				if (transaction.receipt.successful)
 					VI_DEBUG("transaction %s finalized (type: %.*s)", uint256_to_label(transaction.transaction->as_hash()).c_str(), (int)purpose.size(), purpose.data());
 				else
-					VI_ERR("transaction %s %.*s error: %s", uint256_to_label(transaction.transaction->as_hash()).c_str(), (int)purpose.size(), purpose.data(), transaction.receipt.get_error_messages().or_else(string("execution error")).c_str());
+					VI_ERR("transaction %s %.*s error: %s", uint256_to_label(transaction.transaction->as_hash()).c_str(), (int)purpose.size(), purpose.data(), transaction.receipt.get_error_message().or_else(string("execution error")).c_str());
 			}
 			return true;
 		}

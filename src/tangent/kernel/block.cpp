@@ -272,6 +272,10 @@ namespace tangent
 			if (this == &other)
 				return *this;
 
+			temporary_state.topics = std::move(temporary_state.topics);
+			temporary_state.effects = std::move(temporary_state.effects);
+			effects.pending = std::move(effects.pending);
+			effects.finalized = std::move(effects.finalized);
 			outgoing = std::move(other.outgoing);
 			incoming = std::move(other.incoming);
 			return *this;
@@ -1234,6 +1238,21 @@ namespace tangent
 			receipt.emit_event(event, std::move(values));
 			return expectation::met;
 		}
+		expects_lr<void> executor_context::emit_forwarded_event(uint32_t event, const algorithm::pubkeyhash_t& emitter, format::variables&& values, bool paid)
+		{
+			if (paid)
+			{
+				format::wo_stream stream;
+				format::variables_util::serialize_merge_into(values, &stream);
+				stream.write_integer(event);
+
+				auto status = burn_gas(stream.data.size() * (size_t)gas_cost::write_byte);
+				if (!status)
+					return status;
+			}
+			receipt.emit_forwarded_event(event, emitter, std::move(values));
+			return expectation::met;
+		}
 		expects_lr<void> executor_context::burn_gas()
 		{
 			if (!transaction)
@@ -2065,7 +2084,7 @@ namespace tangent
 				if (!hash)
 					return layer_exception(stringify::text("error applying \"%s\" address: %s", address.second.c_str(), hash.error().message().c_str()));
 				else if (hash->empty() || std::all_of(hash->begin(), hash->end(), [](char c) { return c == '\0'; }))
-					return layer_exception(stringify::text("error applying \"%s\" address: zero is reserved", address.second.c_str(), hash.error().message().c_str()));
+					return layer_exception(stringify::text("error applying \"%s\" address: zero is reserved", address.second.c_str()));
 
 				segments[*hash][address.first] = address.second;
 			}
@@ -2838,8 +2857,8 @@ namespace tangent
 			if (!storage)
 				return storage.error();
 
-			bool discard = (executor->receipt.events.size() == 1 && executor->receipt.events.front().first == 0 && executor->receipt.events.front().second.size() == 1);
-			auto execution = discard ? expects_lr<void>(layer_exception(executor->receipt.events.front().second.front().as_blob())) : executor->transaction->execute(executor);
+			bool discard = (executor->receipt.events.size() == 1 && executor->receipt.events.front().event == 0 && executor->receipt.events.front().args.size() == 1);
+			auto execution = discard ? expects_lr<void>(layer_exception(executor->receipt.events.front().args.front().as_blob())) : executor->transaction->execute(executor);
 			executor->receipt.successful = !!execution;
 			if (!executor->receipt.successful && executor->changelog != nullptr)
 				executor->changelog->outgoing.revert();

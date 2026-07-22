@@ -255,18 +255,24 @@ namespace tangent
 			size_t offset = 0;
 			parties.insert(get_account());
 
-			const format::variables* event = receipt.find_event<states::account_balance>();
+			auto* event = receipt.find_event<states::account_balance>();
 			while (event != nullptr)
 			{
-				auto from = event->size() > 1 ? event->at(1).as_string() : std::string_view();
+				auto from = event->args.size() > 1 ? event->args.at(1).as_string() : std::string_view();
 				if (from.size() == sizeof(algorithm::pubkeyhash_t))
 					parties.insert(algorithm::pubkeyhash_t(from));
 
-				auto to = event->size() > 2 ? event->at(2).as_string() : std::string_view();
+				auto to = event->args.size() > 2 ? event->args.at(2).as_string() : std::string_view();
 				if (to.size() == sizeof(algorithm::pubkeyhash_t))
 					parties.insert(algorithm::pubkeyhash_t(to));
 
 				event = receipt.find_event<states::account_balance>(++offset);
+			}
+
+			for (auto& event : receipt.events)
+			{
+				if (!event.emitter.empty())
+					parties.insert(event.emitter);
 			}
 			return true;
 		}
@@ -406,7 +412,7 @@ namespace tangent
 					auto balance_in = balance_out;
 					for (auto& event_args : executor->receipt.find_events<states::account_balance>())
 					{
-						auto& args = *event_args;
+						auto& args = event_args->args;
 						if (args.size() != 4 || args[0].as_uint256() != paying_asset || !args[1].is_string())
 							continue;
 
@@ -498,14 +504,14 @@ namespace tangent
 		bool call::recover_many(const ledger::executor_context*, const ledger::transaction_receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const
 		{
 			size_t offset = 0;
-			const format::variables* event = receipt.find_event<states::account_balance>();
+			auto* event = receipt.find_event<states::account_balance>();
 			while (event != nullptr)
 			{
-				auto from = event->size() > 1 ? event->at(1).as_string() : std::string_view();
+				auto from = event->args.size() > 1 ? event->args.at(1).as_string() : std::string_view();
 				if (from.size() == sizeof(algorithm::pubkeyhash_t))
 					parties.insert(algorithm::pubkeyhash_t(from));
 
-				auto to = event->size() > 2 ? event->at(2).as_string() : std::string_view();
+				auto to = event->args.size() > 2 ? event->args.at(2).as_string() : std::string_view();
 				if (to.size() == sizeof(algorithm::pubkeyhash_t))
 					parties.insert(algorithm::pubkeyhash_t(to));
 
@@ -513,6 +519,11 @@ namespace tangent
 			}
 
 			parties.insert(algorithm::pubkeyhash_t(callable));
+			for (auto& event : receipt.events)
+			{
+				if (!event.emitter.empty())
+					parties.insert(event.emitter);
+			}
 			return true;
 		}
 		void call::call_to(const algorithm::pubkeyhash_t& new_callable, const std::string_view& new_function, format::variables&& new_args, bool pipeline_pay)
@@ -878,14 +889,14 @@ namespace tangent
 			for (auto& event : receipt.events)
 			{
 				++offset;
-				if (event.first != rollup::as_instance_type() || event.second.size() != 2)
+				if (event.event != rollup::as_instance_type() || event.args.size() != 2)
 					continue;
 
-				uint256_t candidate_hash = event.second[0].as_uint256();
+				uint256_t candidate_hash = event.args[0].as_uint256();
 				if (candidate_hash == transaction_hash)
 				{
 					begin = offset - 1;
-					transaction.receipt.relative_gas_use = event.second[1].as_uint256();
+					transaction.receipt.relative_gas_use = event.args[1].as_uint256();
 					continue;
 				}
 				else if (begin != std::string::npos)
@@ -1177,8 +1188,8 @@ namespace tangent
 		algorithm::pubkeyhash_t route::get_attester(const ledger::transaction_receipt& receipt) const
 		{
 			auto* event = receipt.find_event<route>();
-			if (event != nullptr && !event->empty() && event->front().as_string().size() == sizeof(algorithm::pubkeyhash_t))
-				return algorithm::pubkeyhash_t(event->front().as_blob());
+			if (event != nullptr && !event->args.empty() && event->args.front().as_string().size() == sizeof(algorithm::pubkeyhash_t))
+				return algorithm::pubkeyhash_t(event->args.front().as_blob());
 
 			return algorithm::pubkeyhash_t();
 		}
@@ -1189,8 +1200,8 @@ namespace tangent
 			for (size_t i = 1; i < events.size(); i++)
 			{
 				auto& event = events[i];
-				if (!event->empty() && event->front().as_string().size() == sizeof(algorithm::pubkeyhash_t))
-					result.insert(algorithm::pubkeyhash_t(event->front().as_blob()));
+				if (!event->args.empty() && event->args.front().as_string().size() == sizeof(algorithm::pubkeyhash_t))
+					result.insert(algorithm::pubkeyhash_t(event->args.front().as_blob()));
 			}
 			return result;
 		}
@@ -2166,10 +2177,10 @@ namespace tangent
 		{
 			vector<migration_ref> results;
 			auto* event = receipt.find_event<setup>();
-			if (!event || event->size() != 2)
+			if (!event || event->args.size() != 2)
 				return expects_lr<vector<migration_ref>>(std::move(results));
 
-			bool requires_self_migration = event->front().as_boolean();
+			bool requires_self_migration = event->args.front().as_boolean();
 			if (!requires_self_migration && migrations.empty())
 				return expects_lr<vector<migration_ref>>(std::move(results));
 
@@ -2278,8 +2289,8 @@ namespace tangent
 		{
 			auto new_participant = algorithm::pubkeyhash_t();
 			auto* event = receipt.find_event<setup>();
-			if (event && event->size() == 2 && event->back().as_string().size() == sizeof(algorithm::pubkeyhash_t))
-				new_participant = algorithm::pubkeyhash_t(event->back().as_blob());
+			if (event && event->args.size() == 2 && event->args.back().as_string().size() == sizeof(algorithm::pubkeyhash_t))
+				new_participant = algorithm::pubkeyhash_t(event->args.back().as_blob());
 			return new_participant;
 		}
 		format::tree setup::as_tree() const
@@ -2711,8 +2722,8 @@ namespace tangent
 		algorithm::pubkeyhash_t withdraw::get_attester(const ledger::transaction_receipt& receipt) const
 		{
 			auto* event = receipt.find_event<withdraw>();
-			if (event != nullptr && !event->empty() && event->front().as_string().size() == sizeof(algorithm::pubkeyhash_t))
-				return algorithm::pubkeyhash_t(event->front().as_blob());
+			if (event != nullptr && !event->args.empty() && event->args.front().as_string().size() == sizeof(algorithm::pubkeyhash_t))
+				return algorithm::pubkeyhash_t(event->args.front().as_blob());
 
 			return algorithm::pubkeyhash_t();
 		}
@@ -3696,13 +3707,13 @@ namespace tangent
 		{
 			for (auto& event : receipt.find_events<states::account_balance>())
 			{
-				if (event->size() >= 2 && event->at(1).as_string().size() == sizeof(algorithm::pubkeyhash_t))
-					parties.insert(algorithm::pubkeyhash_t(event->at(1).as_blob()));
+				if (event->args.size() >= 2 && event->args.at(1).as_string().size() == sizeof(algorithm::pubkeyhash_t))
+					parties.insert(algorithm::pubkeyhash_t(event->args.at(1).as_blob()));
 			}
 			for (auto& event : receipt.find_events<states::bridge_balance>())
 			{
-				if (event->size() >= 2 && event->at(1).as_string().size() == sizeof(algorithm::pubkeyhash_t))
-					parties.insert(algorithm::pubkeyhash_t(event->at(1).as_blob()));
+				if (event->args.size() >= 2 && event->args.at(1).as_string().size() == sizeof(algorithm::pubkeyhash_t))
+					parties.insert(algorithm::pubkeyhash_t(event->args.at(1).as_blob()));
 			}
 			return true;
 		}

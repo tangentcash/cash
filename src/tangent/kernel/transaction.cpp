@@ -306,8 +306,13 @@ namespace tangent
 			stream->write_integer((uint16_t)events.size());
 			for (auto& item : events)
 			{
-				stream->write_integer(item.first);
-				if (!format::variables_util::serialize_merge_into(item.second, stream))
+				if (!item.emitter.empty())
+				{
+					stream->write_boolean(true);
+					stream->write_string(item.emitter.optimized_view());
+				}
+				stream->write_integer(item.event);
+				if (!format::variables_util::serialize_merge_into(item.args, stream))
 					return false;
 			}
 			return true;
@@ -344,51 +349,74 @@ namespace tangent
 			events.reserve((size_t)size);
 			for (uint16_t i = 0; i < size; i++)
 			{
-				uint32_t type;
-				if (!stream.read_integer(stream.read_type(), &type))
+				auto next = receipt_event();
+				auto type = stream.read_type();
+				if (type == format::viewable::true_type)
+				{
+					bool emitter_extension = true;
+					if (!stream.read_boolean(type, &emitter_extension) && !emitter_extension)
+						return false;
+
+					if (!stream.read_string(stream.read_type(), &from_assembly) || !algorithm::encoding::decode_bytes(from_assembly, next.emitter.blob, sizeof(next.emitter)))
+						return false;
+
+					type = stream.read_type();
+				}
+
+				if (!stream.read_integer(type, &next.event))
 					return false;
 
-				format::variables values;
-				if (!format::variables_util::deserialize_merge_from(stream, &values))
+				if (!format::variables_util::deserialize_merge_from(stream, &next.args))
 					return false;
 
-				events.emplace_back(std::make_pair(type, std::move(values)));
+				events.emplace_back(std::move(next));
 			}
 
 			return true;
 		}
 		void transaction_receipt::emit_event(uint32_t type, format::variables&& values)
 		{
-			events.emplace_back(std::make_pair(type, std::move(values)));
+			receipt_event next;
+			next.event = type;
+			next.args = std::move(values);
+			events.emplace_back(std::move(next));
 		}
-		const format::variables* transaction_receipt::find_event(uint32_t type, size_t offset) const
+		void transaction_receipt::emit_forwarded_event(uint32_t type, const algorithm::pubkeyhash_t& forwarder, format::variables&& values)
+		{
+			receipt_event next;
+			next.emitter = forwarder;
+			next.event = type;
+			next.args = std::move(values);
+			events.emplace_back(std::move(next));
+		}
+		const transaction_receipt::receipt_event* transaction_receipt::find_event(uint32_t type, size_t offset) const
 		{
 			for (auto& item : events)
 			{
-				if (item.first == type && !offset--)
-					return &item.second;
+				if (item.event == type && !offset--)
+					return &item;
 			}
 			return nullptr;
 		}
-		const format::variables* transaction_receipt::reverse_find_event(uint32_t type, size_t offset) const
+		const transaction_receipt::receipt_event* transaction_receipt::reverse_find_event(uint32_t type, size_t offset) const
 		{
 			for (auto it = events.rbegin(); it != events.rend(); ++it)
 			{
 				auto& item = *it;
-				if (item.first == type && !offset--)
-					return &item.second;
+				if (item.event == type && !offset--)
+					return &item;
 			}
 			return nullptr;
 		}
-		option<string> transaction_receipt::get_error_messages() const
+		option<string> transaction_receipt::get_error_message() const
 		{
 			string messages;
 			size_t offset = 0;
 			while (true)
 			{
 				auto* event = find_event(0, offset++);
-				if (event && !event->empty())
-					messages.append(event->front().as_blob()).push_back('\n');
+				if (event && !event->args.empty())
+					messages.append(event->args.front().as_blob()).push_back('\n');
 				else if (!event)
 					break;
 			}
@@ -414,8 +442,10 @@ namespace tangent
 			for (auto& item : events)
 			{
 				auto* event_data = events_data->push(format::tree::map());
-				event_data->set("event", format::variable(item.first));
-				event_data->set("args", format::variables_util::serialize(item.second));
+				if (!item.emitter.empty())
+					event_data->set("emitter", algorithm::signing::serialize_address(item.emitter));
+				event_data->set("event", format::variable(item.event));
+				event_data->set("args", format::variables_util::serialize(item.args));
 			}
 			return data;
 		}

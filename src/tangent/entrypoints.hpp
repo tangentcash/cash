@@ -29,6 +29,7 @@ namespace tangent
 				script::payable_repr payable;
 				algorithm::pubkeyhash_t from;
 				algorithm::pubkeyhash_t to;
+				uint64_t block_number = 1;
 			} state;
 			struct
 			{
@@ -87,13 +88,9 @@ namespace tangent
 				tracer.events.clear();
 				auto execution = execute(script::payable_repr(transactions::call::payable_array(tracer.contextual->pays)), mutability, entrypoint, args, [this](void* address, int type_id) -> expects_lr<void>
 				{
-					tracer.returning = format::tree::map();
 					auto serialization = script::marshall::store(tracer.returning, address, type_id);
 					if (!serialization)
-					{
-						tracer.returning = format::tree();
 						return layer_exception("return value error: " + serialization.error().message());
-					}
 
 					return expectation::met;
 				});
@@ -103,15 +100,17 @@ namespace tangent
 					executor->emit_event(0, { format::variable(execution.what()) }, false);
 
 				tracer.log = format::tree::list();
-				for (auto& [event, params] : executor->receipt.events)
+				for (auto& item : executor->receipt.events)
 				{
 					auto target = tracer.events.find(tracer.log.childs().size());
 					auto* next = tracer.log.push(format::tree::map());
-					next->set("type", format::variable(event));
+					next->set("type", format::variable(item.event));
+					if (!item.emitter.empty())
+						next->set("emitter", algorithm::signing::serialize_address(item.emitter));
 					if (target == tracer.events.end())
 					{
-						uptr<ledger::transition_state> temp = states::resolver::from_type(event);
-						next->set(temp ? temp->as_typename() : "__internal__", serialize_event_args(params));
+						uptr<ledger::transition_state> temp = states::resolver::from_type(item.event);
+						next->set(temp ? temp->as_typename() : "__non_standard__", serialize_event_args(item.args));
 					}
 					else
 						next->set(target->second.key, target->second);
@@ -308,6 +307,7 @@ namespace tangent
 				state.from = algorithm::pubkeyhash_t();
 				state.to = algorithm::pubkeyhash_t();
 				state.payable = script::payable_repr();
+				state.block_number = 1;
 				module = nullptr;
 				program.path.clear();
 				program.log.clear();
@@ -327,7 +327,7 @@ namespace tangent
 			}
 			uint64_t virtual_block_number() const override
 			{
-				return 1;
+				return state.block_number;
 			}
 			uint256_t state_root_hash() const
 			{
@@ -343,14 +343,25 @@ namespace tangent
 			}
 			format::tree serialize_event_args(const format::variables& value) const
 			{
-				format::variables copy = value;
-				for (auto& item : copy)
+				if (value.size() != 1)
 				{
-					auto data = item.as_string();
-					if (data.size() == sizeof(algorithm::pubkeyhash_t) && !format::variables_util::is_ascii_encoding(data))
-						item = format::variable(algorithm::signing::encode_address((uint8_t*)data.data()));
+					format::variables copy = value;
+					for (auto& item : copy)
+					{
+						auto data = item.as_string();
+						if (data.size() == sizeof(algorithm::pubkeyhash_t) && !format::variables_util::is_ascii_encoding(data))
+							item = format::variable(algorithm::signing::encode_address((uint8_t*)data.data()));
+					}
+					return format::variables_util::serialize(copy);
 				}
-				return format::variables_util::serialize(copy);
+				else
+				{
+					auto data = value.front().as_string();
+					if (data.size() == sizeof(algorithm::pubkeyhash_t) && !format::variables_util::is_ascii_encoding(data))
+						return format::variable(algorithm::signing::encode_address((uint8_t*)data.data()));
+
+					return value.front();
+				}
 			}
 			static void interrupter(bool bind)
 			{
@@ -511,6 +522,19 @@ namespace tangent
 						ok(value.to_string() + " " + algorithm::asset::name_of(asset));
 
 					return true;
+				}
+				else if (method == "block")
+				{
+					if (args.size() > 1)
+					{
+						auto block_number = from_string<uint64_t>(args[1]);
+						if (!block_number)
+							return err(block_number.what());
+
+						context.state.block_number = std::max<uint64_t>(*block_number, 1);
+					}
+
+					return ok(to_string(context.state.block_number));
 				}
 				else if (method == "compile")
 				{
@@ -944,6 +968,7 @@ namespace tangent
 						"execp [path]                                            -- run predefined execution plan (json file of format: [[\"method\", value_or_object_or_array_args?...], ...])\n"
 						"from [address?|?]                                       -- get/set caller address (if ? then random)\n"
 						"to [address?|?]                                         -- get/set contract address (if ? then random)\n"
+						"block [number?]                                         -- get/set virtual block number\n"
 						"fund [value?] [blockchain?] [token?] [contract?]        -- get/set caller address balance\n"
 						"pay [value?] [blockchain?] [token?] [contract?]         -- get/set caller address paying value\n"
 						"pay_funded [value?] [blockchain?] [token?] [contract?]  -- combination of fund then pay\n"

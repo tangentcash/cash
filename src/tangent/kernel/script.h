@@ -221,10 +221,10 @@ namespace tangent
 			vitex::scripting::immediate_context* context;
 
 			exception_repr();
-			exception_repr(vitex::scripting::immediate_context* context);
-			exception_repr(const std::string_view& data);
-			exception_repr(const std::string_view& type, const std::string_view& text);
-			exception_repr(const string_repr& type, const string_repr& text);
+			exception_repr(vitex::scripting::immediate_context* context, size_t offset = 0);
+			exception_repr(const std::string_view& data, size_t offset = 0);
+			exception_repr(const std::string_view& type, const std::string_view& text, size_t offset = 0);
+			exception_repr(const string_repr& type, const string_repr& text, size_t offset = 0);
 			exception_repr(const exception_repr&) = default;
 			exception_repr& operator=(const exception_repr&) = default;
 			void load_exception_data(const std::string_view& data);
@@ -233,7 +233,7 @@ namespace tangent
 			string_repr get_what() const;
 			string to_exception_string() const;
 			string to_full_exception_string() const;
-			string load_stack_here() const;
+			string load_stack_here(size_t offset = 0) const;
 			bool empty() const;
 		};
 
@@ -593,6 +593,30 @@ namespace tangent
 			static bool template_callback(asITypeInfo* t, bool& dont_garbage_collect);
 		};
 
+		struct listing_repr : container_repr
+		{
+			btree_map<uint32_t, storage_repr> list;
+			option<uint32_t> length;
+
+			listing_repr(asITypeInfo* new_type);
+			~listing_repr();
+			void reset() override;
+			void clear();
+			uint32_t size();
+			bool empty();
+			const void* load_first();
+			const void* load_last();
+			const void* load_at(uint32_t index);
+			const void* try_load_at(uint32_t index);
+			void store_at(uint32_t index, const void* value);
+			void erase_at(uint32_t index);
+			void insert_last(const void* value);
+			void insert_first(const void* value);
+			void remove_last();
+			void remove_first();
+			static bool template_callback(asITypeInfo* t, bool& dont_garbage_collect);
+		};
+
 		struct ranging_slice_repr
 		{
 			format::wo_stream subject;
@@ -749,8 +773,8 @@ namespace tangent
 			static void rethrow();
 			static bool has_exception_at(vitex::scripting::immediate_context* context);
 			static bool has_exception();
-			static exception_repr get_exception_at(vitex::scripting::immediate_context* context);
-			static exception_repr get_exception();
+			static exception_repr get_exception_at(vitex::scripting::immediate_context* context, size_t offset = 0);
+			static exception_repr get_exception(size_t offset = 0);
 		};
 
 		class marshall
@@ -759,8 +783,8 @@ namespace tangent
 			static expects_lr<void> index(format::wo_stream* stream, const void* value, int value_type_id);
 			static expects_lr<void> store(format::wo_stream* stream, const void* value, int value_type_id);
 			static expects_lr<void> store(format::tree& stream, const void* value, int value_type_id);
-			static expects_lr<void> load(format::ro_stream& stream, void* value, int value_type_id);
-			static expects_lr<void> load(format::tree& stream, void* value, int value_type_id);
+			static expects_lr<void> load(format::ro_stream& stream, void* value, int value_type_id, bool allow_partial = true);
+			static expects_lr<void> load(format::tree& stream, void* value, int value_type_id, bool allow_partial = true);
 		};
 
 		struct cmodule
@@ -822,20 +846,19 @@ namespace tangent
 
 		struct program
 		{
-			struct
+			struct cache_storage
 			{
 				hash_map<string, hash_map<string, uptr<states::account_multiform>>> index[2];
 				option<algorithm::wesolowski::distribution> distribution = optional::none;
 				option<payable_repr> payable = optional::none;
 			} cache;
 			ledger::executor_context* executor;
-			program* parent;
 			library module;
 
 			program(ledger::executor_context* new_executor, library&& new_module, program* new_parent = nullptr);
 			virtual expects_lr<void> execute(const payable_repr& payable, ccall mutability, const std::string_view& entrypoint, const format::variables& args, std::function<expects_lr<void>(void*, int)>&& return_callback);
 			virtual expects_lr<void> execute(const payable_repr& payable, ccall mutability, const function& entrypoint, const format::variables& args, std::function<expects_lr<void>(void*, int)>&& return_callback);
-			virtual expects_lr<void> subexecute(const algorithm::pubkeyhash_t& target, const payable_repr& payable, ccall mutability, const std::string_view& entrypoint, format::variables&& args, void* output_value, int output_type_id) const;
+			virtual expects_lr<void> subexecute(const algorithm::pubkeyhash_t& target, const payable_repr& payable, ccall mutability, const std::string_view& entrypoint, format::variables&& args, void* output_value, int output_type_id);
 			virtual expects_lr<vector<std::function<void(immediate_context*)>>> dispatch_arguments(ccall* mutability, const function& entrypoint, const format::variables* args) const;
 			virtual void dispatch_event(int event_type_id, const void* object_value, int object_type_id);
 			virtual void dispatch_exception(immediate_context* coroutine);
