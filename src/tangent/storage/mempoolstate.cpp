@@ -632,7 +632,7 @@ namespace tangent
 			schema_list map;
 			map.push_back(var::set::integer(offset));
 
-			auto cursor = get_peer_storage().emplace_query(__func__, "SELECT hash FROM (SELECT hash, COUNT(*) OVER (PARTITION BY hash, commitment) AS signatures FROM commitments) counts ORDER BY signatures DESC LIMIT 1 OFFSET ?", &map);
+			auto cursor = get_peer_storage().emplace_query(__func__, "SELECT DISTINCT hash FROM (SELECT hash, COUNT(*) OVER (PARTITION BY hash, commitment) AS signatures FROM commitments) counts ORDER BY signatures DESC LIMIT 1 OFFSET ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<uint256_t>(layer_exception(ledger::storage_util::error_of(cursor)));
 			else if (cursor->empty())

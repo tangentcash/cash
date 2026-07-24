@@ -3858,14 +3858,17 @@ namespace tangent
 
 			return expectation::met;
 		}
-		void attestate::optimize_proofs_and_commitments(const ledger::executor_context* executor, const algorithm::asset_id& asset, btree_map<uint256_t, superchain::computed_transaction>& proofs, btree_map<uint256_t, btree_set<algorithm::hashsig_t>>& commitments)
+		void attestate::optimize_proofs_and_commitments(const ledger::executor_context* executor, const algorithm::asset_id& asset, btree_map<uint256_t, superchain::computed_transaction>& proofs, btree_map<uint256_t, btree_set<algorithm::hashsig_t>>& commitments, vector<string>* errors)
 		{
 			for (auto it = proofs.begin(); it != proofs.end();)
 			{
-				if (!it->second.validate_with(asset))
+				auto validation = it->second.validate_with(asset);
+				if (!validation)
 				{
 					commitments.erase(it->first);
 					it = proofs.erase(it);
+					if (errors != nullptr)
+						errors->push_back(validation.what());
 				}
 				else
 					++it;
@@ -3886,11 +3889,19 @@ namespace tangent
 						continue;
 					}
 					else if (duplicates.find(attester) != duplicates.end())
+					{
+						if (errors != nullptr)
+							errors->push_back("duplicate attester signature");
 						goto strip_out;
+					}
 
 					auto attestation = executor->get_verified_validator_attestation(asset, attester);
 					if (!attestation)
+					{
+						if (errors != nullptr)
+							errors->push_back(attestation.what());
 						goto strip_out;
+					}
 
 					weights.push_back(std::make_pair(signature, std::move(attestation->stake)));
 					duplicates.insert(attester);
