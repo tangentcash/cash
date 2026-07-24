@@ -2991,7 +2991,7 @@ namespace tangent
 						++offset;
 					}
 					else if (!status && protocol::now().user.consensus.logging)
-						VI_INFO("attestation %s verification failed: ", uint256_to_label(*attestation_hash).c_str(), status.what().c_str());
+						VI_INFO("attestation %s verification failed: %s", uint256_to_label(*attestation_hash).c_str(), status.what().c_str());
 					goto retry;
 				}
 			});
