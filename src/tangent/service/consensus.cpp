@@ -493,7 +493,7 @@ namespace tangent
 		{
 			descriptor = memory::init<relay_descriptor>(std::move(new_descriptor));
 			if (protocol::now().user.consensus.logging)
-				VI_INFO("node %s channel open %s (port: %s, tag: v%s, account: %s)", peer_address().c_str(), connection_type().data(), peer_service().c_str(), descriptor->first.as_version().c_str() + 2, descriptor->second.get_address().c_str());
+				VI_INFO("node %s channel open %s (port: %s, version: v%i.%i, account: %s)", peer_address().c_str(), connection_type().data(), peer_service().c_str(), descriptor->first.fork_version, descriptor->first.patch_version, descriptor->second.get_address().c_str());
 
 			auto* socket = as_socket();
 			if (socket != nullptr)
@@ -991,10 +991,8 @@ namespace tangent
 				auto& [node, wallet] = descriptor;
 				fill_node_services(descriptor);
 				fill_node_neighbors(descriptor);
-				VI_PANIC(wallet.has_secret_key(), "server descriptor %s wallet must have a secret key", wallet.get_address().c_str());
-
-				node.major_version = protocol::now().message.major_version;
-				node.minor_version = protocol::now().message.minor_version;
+				node.patch_version = PATCH_VERSION;
+				node.fork_version = FORK_VERSION;
 				node.ports.consensus = protocol::now().user.consensus.port;
 				node.ports.discovery = protocol::now().user.discovery.port;
 				node.ports.rpc = protocol::now().user.rpc.port;
@@ -1002,6 +1000,7 @@ namespace tangent
 				node.services.has_discovery = protocol::now().user.discovery.server;
 				node.services.has_superchain = protocol::now().user.superchain.listener;
 				node.services.has_rpc = protocol::now().user.rpc.server && protocol::now().user.rpc.username.empty();
+				VI_PANIC(wallet.has_secret_key(), "server descriptor %s wallet must have a secret key", wallet.get_address().c_str());
 
 				bool runner = account == runner_account;
 				auto result = accept_node(mempool, descriptor, runner ? node_category::runner : node_category::neighbor);
@@ -1415,8 +1414,8 @@ namespace tangent
 				return remote_exception("invalid message");
 			else if (!algorithm::signing::recover(handshake_proof(peer_node, peer_time, nullptr), peer_wallet.public_key, peer_signature))
 				return remote_exception("invalid signature");
-			else if (peer_node.major_version != protocol::now().message.major_version)
-				return remote_exception("version " + peer_node.as_version() + " not supported");
+			else if (peer_node.fork_version != FORK_VERSION)
+				return remote_exception(stringify::text("node v%i.%i not supported", peer_node.fork_version, peer_node.patch_version));
 
 			auto mempool = storages::mempoolstate();
 			uint64_t peer_latency = peer_time > system_time ? peer_time - system_time : system_time - peer_time;

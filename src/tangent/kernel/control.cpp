@@ -445,7 +445,7 @@ namespace tangent
 #else
 		bool release = false;
 #endif
-		VI_INFO("tangentcash p2p %s node v%i.%i", release ? "release" : "debug", (int)protocol::now().message.major_version, (int)protocol::now().message.minor_version);
+		VI_INFO("tangentcash p2p %s node v%i.%i", release ? "release" : "debug", (int)FORK_VERSION, (int)PATCH_VERSION);
 		policy.threads[((size_t)difficulty::sync)] = std::max<size_t>(policy.threads[((size_t)difficulty::sync)], 6);
 		if (protocol::now().user.logs.control_logging)
 			VI_INFO("service launch (services: %i)", (int)services.size());

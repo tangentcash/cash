@@ -2262,8 +2262,6 @@ int main(int argc, char* argv[])
 				ledger::wallet wallet = ledger::wallet::from_seed(stringify::text("00000%i", (int)i));
 				ledger::node node;
 				node.address = socket_address(params.user.consensus.address, params.user.consensus.port);
-				node.major_version = protocol::now().message.major_version;
-				node.minor_version = protocol::now().message.minor_version;
 				storages::mempoolstate().apply_node(std::make_pair(node, wallet), i == 0 ? storages::node_peer::runner : storages::node_peer::neighbor);
 				accounts.push(wallet.as_tree());
 			}
@@ -2277,8 +2275,6 @@ int main(int argc, char* argv[])
 				ledger::wallet wallet = ledger::wallet::from_seed(stringify::text("00000%i", *test_account - 1));
 				ledger::node node;
 				node.address = socket_address(params.user.consensus.address, params.user.consensus.port);
-				node.major_version = protocol::now().message.major_version;
-				node.minor_version = protocol::now().message.minor_version;
 				storages::mempoolstate().apply_node(std::make_pair(node, wallet), storages::node_peer::runner);
 				console::get()->write_line(wallet.as_tree().as_json(true));
 			}

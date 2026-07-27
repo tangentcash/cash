@@ -3356,9 +3356,8 @@ namespace tangent
 			}
 
 			auto version = data.set("version", format::tree::map());
-			version->set("major", format::variable(protocol::now().message.major_version));
-			version->set("minor", format::variable(protocol::now().message.minor_version));
-			version->set("tag", consensus_service->runner_descriptor ? format::variable(consensus_service->runner_descriptor->first.as_version()) : format::variable());
+			version->set("fork", format::variable((uint32_t)FORK_VERSION));
+			version->set("patch", format::variable((uint32_t)PATCH_VERSION));
 			data.set("checkpoint", algorithm::encoding::serialize_uint256(chain.get_checkpoint_block_number().or_else(0)));
 			return server_response().success(std::move(data));
 		}

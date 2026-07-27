@@ -316,14 +316,13 @@ namespace tangent
 			} services;
 
 			socket_address address;
-			uint32_t minor_version = 0;
-			uint32_t major_version = 0;
+			uint32_t fork_version = (uint32_t)FORK_VERSION;
+			uint32_t patch_version = (uint32_t)PATCH_VERSION;
 
 			bool store_payload(format::wo_stream* stream) const override;
 			bool load_payload(format::ro_stream& stream) override;
 			bool is_valid() const;
 			uint64_t get_preference() const;
-			string as_version() const;
 			format::tree as_tree() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;

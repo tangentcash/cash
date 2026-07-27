@@ -4629,7 +4629,7 @@ namespace tangent
 					else if (value_type_id & (int)vitex::scripting::type_id::script_object_t)
 					{
 						auto object = script_object((asIScriptObject*)value);
-						size_t properties = object.get_properties_count();
+						size_t properties = type.get_properties_count();
 						for (size_t i = 0; i < properties; i++)
 						{
 							void* address = object.get_address_of_property(i);
@@ -4749,7 +4749,7 @@ namespace tangent
 					else if (value_type_id & (int)vitex::scripting::type_id::script_object_t)
 					{
 						auto object = script_object((asIScriptObject*)value);
-						size_t properties = object.get_properties_count();
+						size_t properties = type.get_properties_count();
 						stream = format::tree::map();
 						stream.childs().reserve(properties);
 						for (size_t i = 0; i < properties; i++)
@@ -4951,7 +4951,7 @@ namespace tangent
 					else if (value_type_id & (int)vitex::scripting::type_id::script_object_t)
 					{
 						auto object = script_object((asIScriptObject*)value);
-						size_t properties = object.get_properties_count();
+						size_t properties = type.get_properties_count();
 						for (size_t i = 0; i < properties; i++)
 						{
 							if (allow_partial && stream.is_eof())
@@ -5125,7 +5125,7 @@ namespace tangent
 					else if (value_type_id & (int)vitex::scripting::type_id::script_object_t)
 					{
 						auto object = script_object((asIScriptObject*)value);
-						size_t properties = object.get_properties_count();
+						size_t properties = type.get_properties_count();
 						for (size_t i = 0; i < properties; i++)
 						{
 							std::string_view field = object.get_property_name(i);

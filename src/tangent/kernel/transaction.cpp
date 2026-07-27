@@ -1001,8 +1001,8 @@ namespace tangent
 				stream->write_string(neighbor.optimized_view());
 			stream->write_string(address.get_ip_address().or_else(string()));
 			stream->write_integer(address.get_ip_port().or_else(0));
-			stream->write_integer(minor_version);
-			stream->write_integer(major_version);
+			stream->write_integer(patch_version);
+			stream->write_integer(fork_version);
 			stream->write_integer(availability.latency);
 			stream->write_integer(availability.timestamp);
 			stream->write_integer(availability.calls);
@@ -1044,10 +1044,10 @@ namespace tangent
 			if (!stream.read_integer(stream.read_type(), &ip_port))
 				return false;
 
-			if (!stream.read_integer(stream.read_type(), &minor_version))
+			if (!stream.read_integer(stream.read_type(), &patch_version))
 				return false;
 
-			if (!stream.read_integer(stream.read_type(), &major_version))
+			if (!stream.read_integer(stream.read_type(), &fork_version))
 				return false;
 
 			if (!stream.read_integer(stream.read_type(), &availability.latency))
@@ -1116,7 +1116,9 @@ namespace tangent
 		{
 			format::tree data;
 			data.set("address", format::variable(address.get_ip_address().or_else("[bad_address]") + ":" + to_string(address.get_ip_port().or_else(0))));
-			data.set("version", format::variable(as_version()));
+			auto version = data.set("version", format::tree::map());
+			version->set("fork", format::variable(fork_version));
+			version->set("patch", format::variable(patch_version));
 
 			auto* availability_data = data.set("availability", format::tree::map());
 			auto* neighbors_data = availability_data->set("neighbors", format::tree::list());
@@ -1142,17 +1144,6 @@ namespace tangent
 			services_data->set("participation", format::variable(services.has_participation));
 			services_data->set("attestation", format::variable(services.has_attestation));
 			return data;
-		}
-		string node::as_version() const
-		{
-			uint8_t major_version_data[16], minor_version_data[16], data[32];
-			size_t major_version_data_size = sizeof(major_version_data);
-			size_t minor_version_data_size = sizeof(minor_version_data);
-			uint128_t(major_version).encode_compact(major_version_data, &major_version_data_size);
-			uint128_t(minor_version).encode_compact(minor_version_data, &minor_version_data_size);
-			memcpy(data, major_version_data, major_version_data_size);
-			memcpy(data + major_version_data_size, minor_version_data, minor_version_data_size);
-			return "0x" + codec::hex_encode(std::string_view((char*)data, major_version_data_size + minor_version_data_size));
 		}
 		uint32_t node::as_type() const
 		{

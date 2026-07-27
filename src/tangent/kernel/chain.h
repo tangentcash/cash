@@ -25,7 +25,9 @@ namespace tangent
 		ELEMENTS_FEW = 1 << 5,
 		ELEMENTS_BULK = 1 << 9,
 		ELEMENTS_MANY = 1 << 12,
-		ELEMENTS_HUGE = 1 << 17
+		ELEMENTS_HUGE = 1 << 17,
+		FORK_VERSION = 5,
+		PATCH_VERSION = 1
 	};
 
 	enum class fork_id
@@ -255,8 +257,6 @@ namespace tangent
 		struct protocol_messaging_config
 		{
 			uint64_t packet_magic = 0x73d308e9;
-			uint32_t major_version = 0x10;
-			uint32_t minor_version = 0x00;
 			uint32_t max_message_size = 0xffffff;
 			uint32_t max_body_size = 1024 * 1024 * 24;
 			uint32_t decimal_precision = 18;
