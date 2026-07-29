@@ -6133,16 +6133,10 @@ namespace tangent
 
 			return expects_lr<cmodule>(std::move(module));
 		}
-		expects_lr<void> factory::reset_module(library& module, immediate_context* target_context)
+		expects_lr<void> factory::reset_module(immediate_context* context, library& module)
 		{
-			auto* context = target_context ? target_context : vm->request_context();
-			if (!context)
-				return layer_exception("failed to allocate the context");
-
+			VI_ASSERT(context != nullptr, "context should be set");
 			auto status = module.reset_properties(context->get_context());
-			if (!target_context)
-				vm->return_context(context);
-
 			if (!status)
 				return layer_exception(std::move(status.error().message()));
 
@@ -6150,17 +6144,18 @@ namespace tangent
 			for (size_t i = 0; i < count; i++)
 			{
 				property_info info;
-				if (!module.get_property(i, &info))
-					continue;
+				auto property = module.get_property(i, &info);
+				if (!property)
+					return layer_exception(stringify::text("faulty global variable %i: ", (int)i) + property.error().message());
 
 				auto type = vm->get_type_info_by_id(info.type_id);
 				auto name = type.is_valid() ? type.get_name() : std::string_view("primitive");
-				if (name == SCRIPT_TYPE_VARYING || name == SCRIPT_TYPE_MAPPING || name == SCRIPT_TYPE_LISTING || name == SCRIPT_TYPE_RANGING)
-				{
-					auto value = (container_repr*)module.get_address_of_property(i);
-					value->slot = (uint8_t)(i + 1);
-					value->reset();
-				}
+				if (name != SCRIPT_TYPE_VARYING && name != SCRIPT_TYPE_MAPPING && name != SCRIPT_TYPE_LISTING && name != SCRIPT_TYPE_RANGING)
+					return layer_exception(stringify::text("faulty global variable %i: type %.*s not allowed", (int)i, (int)name.size(), name.data()));
+				
+				auto value = (container_repr*)module.get_address_of_property(i);
+				value->slot = (uint8_t)(i + 1);
+				value->reset();
 			}
 
 			return expectation::met;
@@ -6251,54 +6246,56 @@ namespace tangent
 			size_t depth_in = 0, depth_out = 0;
 			auto* vm = entrypoint.get_vm();
 			auto* caller = immediate_context::get();
-			auto* coroutine = caller ? caller : vm->request_context();
-			auto* prev_mutable_program = coroutine->get_user_data(SCRIPT_TAG_MUTABLE_PROGRAM);
-			auto* prev_immutable_program = coroutine->get_user_data(SCRIPT_TAG_IMMUTABLE_PROGRAM);
-			bool inline_call = caller != coroutine;
-			auto resolver = expects_lr<void>(layer_exception());
-			auto execution = expects_vm<vitex::scripting::execution>(vitex::scripting::execution::error);
-			auto resolve = [this, &resolver, &entrypoint, &return_callback](immediate_context* coroutine)
-			{
-				int output_type_id = entrypoint.get_return_type_id();
-				void* output_value = coroutine->get_return_address();
-				if (!output_value && output_type_id > 0 && output_type_id <= (int)type_id::double_t)
-					output_value = coroutine->get_address_of_return_value();
-
-				if (return_callback)
-					resolver = return_callback(output_value, output_type_id);
-				else
-					resolver = expectation::met;
-			};
-			coroutine->set_user_data(mutability == ccall::deploy_call || mutability == ccall::paying_call ? this : nullptr, SCRIPT_TAG_MUTABLE_PROGRAM);
-			coroutine->set_user_data(this, SCRIPT_TAG_IMMUTABLE_PROGRAM);
-			coroutine->is_nested(&depth_in);
+			auto* context = caller ? caller : vm->request_context();
+			auto* prev_mutable_program = context->get_user_data(SCRIPT_TAG_MUTABLE_PROGRAM);
+			auto* prev_immutable_program = context->get_user_data(SCRIPT_TAG_IMMUTABLE_PROGRAM);
+			auto* next_mutable_program = mutability == ccall::deploy_call || mutability == ccall::paying_call ? this : nullptr;
+			context->set_user_data(next_mutable_program, SCRIPT_TAG_MUTABLE_PROGRAM);
+			context->set_user_data(this, SCRIPT_TAG_IMMUTABLE_PROGRAM);
+			context->is_nested(&depth_in);
 			cache.payable = payable;
-			if (inline_call)
-			{
-				coroutine->set_line_callback(std::bind(&program::dispatch_coroutine, this, std::placeholders::_1));
-				coroutine->set_exception_callback(std::bind(&program::dispatch_exception, this, std::placeholders::_1));
-			}
 
-			auto preparation = factory::get()->reset_module(module, inline_call ? coroutine : nullptr);
+			auto top_call = caller != context;
+			auto* subcontext = top_call ? context : vm->request_context();
+			subcontext->set_user_data(next_mutable_program, SCRIPT_TAG_MUTABLE_PROGRAM);
+			subcontext->set_user_data(this, SCRIPT_TAG_IMMUTABLE_PROGRAM);
+			subcontext->set_line_callback(std::bind(&program::dispatch_coroutine, this, std::placeholders::_1));
+			subcontext->set_exception_callback(std::bind(&program::dispatch_exception, this, std::placeholders::_1));
+			auto preparation = factory::get()->reset_module(subcontext, module);
+			auto execution = expects_vm<vitex::scripting::execution>(vitex::scripting::execution::error);
+			auto resolution = expects_lr<void>(layer_exception());
 			if (preparation)
 			{
-				auto binder = [&binders](immediate_context* coroutine) { for (auto& bind : *binders) bind(coroutine); };
-				execution = inline_call ? coroutine->execute_inline_call(entrypoint, binder) : coroutine->execute_subcall(entrypoint, binder, resolve);
-				if (inline_call)
-					resolve(coroutine);
+				auto binder = [&binders](immediate_context* context) { for (auto& bind : *binders) bind(context); };
+				auto resolver = [this, &resolution, &entrypoint, &return_callback](immediate_context* context)
+				{
+					int output_type_id = entrypoint.get_return_type_id();
+					void* output_value = context->get_return_address();
+					if (!output_value && output_type_id > 0 && output_type_id <= (int)type_id::double_t)
+						output_value = context->get_address_of_return_value();
+					if (return_callback)
+						resolution = return_callback(output_value, output_type_id);
+					else
+						resolution = expectation::met;
+				};
+				if (top_call)
+				{
+					execution = context->execute_inline_call(entrypoint, binder);
+					resolver(context);
+				}
+				else
+					execution = context->execute_subcall(entrypoint, binder, resolver);
 			}
 
-			auto name = entrypoint.get_module_name();
-			auto exception = coroutine->get_state() == execution::aborted ? exception_repr(exception_repr::category::execution(), "ran out of gas") : contract::get_exception_at(coroutine, inline_call ? 0 : (depth_in + 1));
-			coroutine->set_user_data(prev_mutable_program, SCRIPT_TAG_MUTABLE_PROGRAM);
-			coroutine->set_user_data(prev_immutable_program, SCRIPT_TAG_IMMUTABLE_PROGRAM);
-			coroutine->is_nested(&depth_out);
-			if (inline_call)
-				vm->return_context(coroutine);
-			else if (depth_in < depth_out)
-				coroutine->pop_state();
+			auto exception = context->get_state() == execution::aborted ? exception_repr(exception_repr::category::execution(), "ran out of gas") : contract::get_exception_at(context, top_call ? 0 : (depth_in + 1));
+			context->set_user_data(prev_mutable_program, SCRIPT_TAG_MUTABLE_PROGRAM);
+			context->set_user_data(prev_immutable_program, SCRIPT_TAG_IMMUTABLE_PROGRAM);
+			context->is_nested(&depth_out);
+			vm->return_context(top_call ? context : subcontext);
+			if (!top_call && depth_in < depth_out)
+				context->pop_state();
 			if (execution && *execution == execution::finished && preparation && exception.empty())
-				return resolver;
+				return resolution;
 
 			string base_message = exception.text.empty() ? (preparation ? string("illegal operation") : preparation.error().message()) : exception.text;
 			string error_message;

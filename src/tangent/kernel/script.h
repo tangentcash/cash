@@ -835,7 +835,7 @@ namespace tangent
 			void return_module(cmodule&& value);
 			string export_predefined_symbols();
 			expects_lr<cmodule> compile_module(const std::string_view& hashcode, const std::function<expects_lr<string>()>& unpacked_code_callback);
-			expects_lr<void> reset_module(library& module, immediate_context* context);
+			expects_lr<void> reset_module(immediate_context* context, library& module);
 			virtual_machine* get_vm();
 
 		private:

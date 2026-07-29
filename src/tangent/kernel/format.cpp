@@ -1393,6 +1393,8 @@ namespace tangent
 				return variable(uint256_t(any, 10));
 			else if (stringify::has_number(any))
 				return variable(decimal(any));
+			else if (any == "nan")
+				return variable(decimal::nan());
 			else if (any == "true")
 				return variable(true);
 			else if (any == "false")
