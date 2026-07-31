@@ -498,8 +498,9 @@ namespace tangent
 			uint256_t to_public_key_hash() const;
 			bool empty() const;
 			static void call(asIScriptGeneric* generic);
+			static void protected_call(asIScriptGeneric* generic);
 			static void static_call(asIScriptGeneric* generic);
-			static void execute_call(asIScriptGeneric* generic, const payable_repr& value, size_t args_offset);
+			static void execute_call(asIScriptGeneric* generic, const payable_repr& value, size_t args_offset, bool non_reentrant);
 			static bool equals(const address_repr& a, const address_repr& b);
 		};
 
@@ -852,13 +853,14 @@ namespace tangent
 				option<algorithm::wesolowski::distribution> distribution = optional::none;
 				option<payable_repr> payable = optional::none;
 			} cache;
+			hash_set<algorithm::pubkeyhash_t> reentrancy_guards;
 			ledger::executor_context* executor;
 			library module;
 
-			program(ledger::executor_context* new_executor, library&& new_module, program* new_parent = nullptr);
+			program(ledger::executor_context* new_executor, library&& new_module);
 			virtual expects_lr<void> execute(const payable_repr& payable, ccall mutability, const std::string_view& entrypoint, const format::variables& args, std::function<expects_lr<void>(void*, int)>&& return_callback);
 			virtual expects_lr<void> execute(const payable_repr& payable, ccall mutability, const function& entrypoint, const format::variables& args, std::function<expects_lr<void>(void*, int)>&& return_callback);
-			virtual expects_lr<void> subexecute(const algorithm::pubkeyhash_t& target, const payable_repr& payable, ccall mutability, const std::string_view& entrypoint, format::variables&& args, void* output_value, int output_type_id);
+			virtual expects_lr<void> subexecute(const algorithm::pubkeyhash_t& target, const payable_repr& payable, ccall mutability, bool non_reentrant, const std::string_view& entrypoint, format::variables&& args, void* output_value, int output_type_id);
 			virtual expects_lr<vector<std::function<void(immediate_context*)>>> dispatch_arguments(ccall* mutability, const function& entrypoint, const format::variables* args) const;
 			virtual void dispatch_event(int event_type_id, const void* object_value, int object_type_id);
 			virtual void dispatch_exception(immediate_context* coroutine);

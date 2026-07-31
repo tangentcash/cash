@@ -2046,13 +2046,18 @@ namespace tangent
 		void address_repr::call(asIScriptGeneric* generic)
 		{
 			generic_context inout = generic_context(generic);
-			execute_call(generic, *inout.get_arg_object<payable_repr>(1), 2);
+			execute_call(generic, *inout.get_arg_object<payable_repr>(1), 2, false);
+		}
+		void address_repr::protected_call(asIScriptGeneric* generic)
+		{
+			generic_context inout = generic_context(generic);
+			execute_call(generic, *inout.get_arg_object<payable_repr>(1), 2, true);
 		}
 		void address_repr::static_call(asIScriptGeneric* generic)
 		{
-			execute_call(generic, payable_repr(), 1);
+			execute_call(generic, payable_repr(), 1, false);
 		}
-		void address_repr::execute_call(asIScriptGeneric* generic, const payable_repr& payable, size_t args_offset)
+		void address_repr::execute_call(asIScriptGeneric* generic, const payable_repr& payable, size_t args_offset, bool non_reentrant)
 		{
 			generic_context inout = generic_context(generic);
 			auto object = (address_repr*)inout.get_object_address();
@@ -2081,7 +2086,7 @@ namespace tangent
 			auto* p = program::fetch_mutable();
 			if (p != nullptr)
 			{
-				auto execution = p->subexecute(object->hash, payable, ccall::paying_call, function.view(), std::move(function_args), output_value, output_type_id);
+				auto execution = p->subexecute(object->hash, payable, ccall::paying_call, non_reentrant, function.view(), std::move(function_args), output_value, output_type_id);
 				if (!execution)
 					return contract::throw_ptr(exception_repr(exception_repr::category::execution(), std::string_view(execution.error().message())));
 			}
@@ -2090,7 +2095,7 @@ namespace tangent
 				auto* immutable_program = (program*)program::fetch_immutable_or_throw();
 				if (immutable_program != nullptr)
 				{
-					auto execution = immutable_program->subexecute(object->hash, payable, ccall::const_call, function.view(), std::move(function_args), output_value, output_type_id);
+					auto execution = immutable_program->subexecute(object->hash, payable, ccall::const_call, non_reentrant, function.view(), std::move(function_args), output_value, output_type_id);
 					if (!execution)
 						return contract::throw_ptr(exception_repr(exception_repr::category::execution(), std::string_view(execution.error().message())));
 				}
@@ -5491,6 +5496,7 @@ namespace tangent
 			address_type->set_method_address("real320 reserve_of(const uint256&in) const", WRAP_MFN(address_repr, reserve_of), convention::generic_call);
 			address_type->set_method_address("bool callable(const string&in) const", WRAP_MFN(address_repr, callable), convention::generic_call);
 			address_type->set_method_extern("t static_call<t>(const string&in, const ?&in ...) const", &address_repr::static_call, convention::generic_call);
+			address_type->set_method_extern("t protected_call<t>(const string&in, const payable&in, const ?&in ...) const", &address_repr::protected_call, convention::generic_call);
 			address_type->set_method_extern("t call<t>(const string&in, const payable&in, const ?&in ...) const", &address_repr::call, convention::generic_call);
 			address_type->set_operator_address("bool opEquals(const address&in) const", WRAP_OBJ_FIRST(address_repr::equals), convention::generic_call);
 			batch_payout_type->set_behaviour_address("void f()", behaviours::construct, WRAP_CON(batch_payout_repr, ()), convention::generic_call);
@@ -6221,7 +6227,7 @@ namespace tangent
 			return (int)virtual_error::success;
 		}
 
-		program::program(ledger::executor_context* new_executor, library&& new_module, program* new_parent) : executor(new_executor), module(new_module)
+		program::program(ledger::executor_context* new_executor, library&& new_module) : executor(new_executor), module(new_module)
 		{
 		}
 		expects_lr<void> program::execute(const payable_repr& payable, ccall mutability, const std::string_view& entrypoint, const format::variables& args, std::function<expects_lr<void>(void*, int)>&& return_callback)
@@ -6305,7 +6311,7 @@ namespace tangent
 			error_message.append(exception.origin);
 			return layer_exception(std::move(error_message));
 		}
-		expects_lr<void> program::subexecute(const algorithm::pubkeyhash_t& target, const payable_repr& payable, ccall mutability, const std::string_view& entrypoint, format::variables&& args, void* output_value, int output_type_id)
+		expects_lr<void> program::subexecute(const algorithm::pubkeyhash_t& target, const payable_repr& payable, ccall mutability, bool non_reentrant, const std::string_view& entrypoint, format::variables&& args, void* output_value, int output_type_id)
 		{
 			if (entrypoint.empty())
 				return layer_exception(stringify::text("illegal subcall to %s program: illegal operation", address_repr(target).to_string().data()));
@@ -6313,6 +6319,11 @@ namespace tangent
 			auto link = executor->get_account_program(target);
 			if (!link)
 				return layer_exception(stringify::text("illegal subcall to %s program on function \"%.*s\": illegal operation", address_repr(target).to_string().data(), (int)entrypoint.size(), entrypoint.data()));
+
+			if (mutability != ccall::const_call && reentrancy_guards.find(target) != reentrancy_guards.end())
+				return layer_exception(stringify::text("illegal subcall to %s program on function \"%.*s\": reentrancy guard", address_repr(target).to_string().data(), (int)entrypoint.size(), entrypoint.data()));
+			else if (mutability != ccall::const_call && non_reentrant)
+				reentrancy_guards.insert(target);
 
 			auto transaction = transactions::call();
 			transaction.call_to(target, entrypoint, std::move(args), false);
@@ -6356,6 +6367,8 @@ namespace tangent
 			executor = prev_executor;
 			executor->receipt.events.insert(executor->receipt.events.end(), subexecutor.receipt.events.begin(), subexecutor.receipt.events.end());
 			executor->receipt.relative_gas_use += subexecutor.receipt.relative_gas_use;
+			if (mutability != ccall::const_call && non_reentrant)
+				reentrancy_guards.erase(target);
 			return subexecution;
 		}
 		expects_lr<vector<std::function<void(immediate_context*)>>> program::dispatch_arguments(ccall* mutability, const function& entrypoint, const format::variables* args) const

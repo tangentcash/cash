@@ -30,7 +30,7 @@ namespace tangent
 				algorithm::pubkeyhash_t from;
 				algorithm::pubkeyhash_t to;
 				uint64_t block_number = 1;
-			} state;
+			} env;
 			struct
 			{
 				string path;
@@ -177,8 +177,8 @@ namespace tangent
 					function_args.erase(function_args.begin());
 
 					auto transaction = transactions::call();
-					transaction.call_to(state.to, function_decl, std::move(function_args), false);
-					transaction.pays = state.payable.payments;
+					transaction.call_to(env.to, function_decl, std::move(function_args), false);
+					transaction.pays = env.payable.payments;
 
 					auto message = transaction.as_message();
 					data = std::move(message.data);
@@ -203,10 +203,10 @@ namespace tangent
 				if (program.path.empty())
 					return layer_exception("program not bound");
 
-				if (state.from.empty())
+				if (env.from.empty())
 					return layer_exception("caller address not valid");
 
-				if (state.to.empty())
+				if (env.to.empty())
 					return layer_exception("contract address not valid");
 
 				auto entrypoint = module.get_function_by_decl(function);
@@ -215,14 +215,14 @@ namespace tangent
 				if (!entrypoint.is_valid())
 					return layer_exception("illegal call to function: null function");
 
-				auto assignment = assign_transaction(algorithm::asset::native(), state.from, state.to, state.payable.payments, function, args);
+				auto assignment = assign_transaction(algorithm::asset::native(), env.from, env.to, env.payable.payments, function, args);
 				if (!assignment)
 					return assignment.error();
 
 				auto read_only = mutability_of(entrypoint) == script::ccall::const_call;
 				if (!read_only)
 				{
-					for (auto& [account, balances] : state.balances)
+					for (auto& [account, balances] : env.balances)
 					{
 						for (auto& [asset, value] : balances)
 						{
@@ -239,9 +239,9 @@ namespace tangent
 						}
 					}
 
-					for (auto& [paying_asset, paying_value] : state.payable.payments)
+					for (auto& [paying_asset, paying_value] : env.payable.payments)
 					{
-						auto payment = executor->apply_payment(paying_asset, state.from, state.to, paying_value);
+						auto payment = executor->apply_payment(paying_asset, env.from, env.to, paying_value);
 						if (!payment)
 							return payment.error();
 					}
@@ -269,8 +269,8 @@ namespace tangent
 					return execution.error();
 
 				tracer.solver.state.changelog.commit();
-				state.payable = script::payable_repr();
-				state.balances.clear();
+				env.payable = script::payable_repr();
+				env.balances.clear();
 				return expectation::met;
 			}
 			void dispatch_event(int event_type_id, const void* object_value, int object_type_id) override
@@ -303,11 +303,11 @@ namespace tangent
 			}
 			void reset()
 			{
-				state.balances.clear();
-				state.from = algorithm::pubkeyhash_t();
-				state.to = algorithm::pubkeyhash_t();
-				state.payable = script::payable_repr();
-				state.block_number = 1;
+				env.balances.clear();
+				env.from = algorithm::pubkeyhash_t();
+				env.to = algorithm::pubkeyhash_t();
+				env.payable = script::payable_repr();
+				env.block_number = 1;
 				module = nullptr;
 				program.path.clear();
 				program.log.clear();
@@ -327,7 +327,7 @@ namespace tangent
 			}
 			uint64_t virtual_block_number() const override
 			{
-				return state.block_number;
+				return env.block_number;
 			}
 			uint256_t state_root_hash() const
 			{
@@ -404,17 +404,17 @@ namespace tangent
 					{
 						if (args[1] != "?")
 						{
-							if (!algorithm::signing::decode_address(args[1], context.state.from))
+							if (!algorithm::signing::decode_address(args[1], context.env.from))
 								return err("not a valid address");
 						}
 						else
-							crypto::fill_random_bytes(context.state.from.blob, sizeof(algorithm::pubkeyhash_t));
+							crypto::fill_random_bytes(context.env.from.blob, sizeof(algorithm::pubkeyhash_t));
 					}
 
-					if (context.state.from.empty())
+					if (context.env.from.empty())
 						return ok("null");
 
-					return ok(algorithm::signing::encode_address(context.state.from));
+					return ok(algorithm::signing::encode_address(context.env.from));
 				}
 				else if (method == "to")
 				{
@@ -422,17 +422,17 @@ namespace tangent
 					{
 						if (args[1] != "?")
 						{
-							if (!algorithm::signing::decode_address(args[1], context.state.to))
+							if (!algorithm::signing::decode_address(args[1], context.env.to))
 								return err("not a valid address");
 						}
 						else
-							crypto::fill_random_bytes(context.state.to.blob, sizeof(algorithm::pubkeyhash_t));
+							crypto::fill_random_bytes(context.env.to.blob, sizeof(algorithm::pubkeyhash_t));
 					}
 
-					if (context.state.to.empty())
+					if (context.env.to.empty())
 						return ok("null");
 
-					return ok(algorithm::signing::encode_address(context.state.to));
+					return ok(algorithm::signing::encode_address(context.env.to));
 				}
 				else if (method == "pay")
 				{
@@ -446,12 +446,12 @@ namespace tangent
 						if (!algorithm::asset::is_any(asset))
 							return err("not a valid asset");
 
-						if (!context.state.payable.plus(asset, value.is_positive() ? value : -context.state.payable.of(asset)))
+						if (!context.env.payable.plus(asset, value.is_positive() ? value : -context.env.payable.of(asset)))
 							return err("failed to pay");
 					}
 
-					std::erase_if(context.state.payable.payments, [](const std::pair<algorithm::asset_id, decimal>& item) { return !item.second.is_positive(); });
-					for (auto& [asset, value] : context.state.payable.payments)
+					std::erase_if(context.env.payable.payments, [](const std::pair<algorithm::asset_id, decimal>& item) { return !item.second.is_positive(); });
+					for (auto& [asset, value] : context.env.payable.payments)
 						ok(value.to_string() + " " + algorithm::asset::name_of(asset));
 					return true;
 				}
@@ -468,12 +468,12 @@ namespace tangent
 							return err("not a valid asset");
 
 						if (value.is_positive())
-							context.state.balances[context.state.from][asset] = std::move(value);
+							context.env.balances[context.env.from][asset] = std::move(value);
 						else
-							context.state.balances[context.state.from].erase(asset);
+							context.env.balances[context.env.from].erase(asset);
 					}
 
-					for (auto& [account, balances] : context.state.balances)
+					for (auto& [account, balances] : context.env.balances)
 					{
 						for (auto& [asset, value] : balances)
 						{
@@ -497,16 +497,16 @@ namespace tangent
 						if (!algorithm::asset::is_any(asset))
 							return err("not a valid asset");
 
-						if (!context.state.payable.plus(asset, value.is_positive() ? value : -context.state.payable.of(asset)))
+						if (!context.env.payable.plus(asset, value.is_positive() ? value : -context.env.payable.of(asset)))
 							return err("failed to pay");
 
 						if (value.is_positive())
-							context.state.balances[context.state.from][asset] = value;
+							context.env.balances[context.env.from][asset] = value;
 						else
-							context.state.balances[context.state.from].erase(asset);
+							context.env.balances[context.env.from].erase(asset);
 					}
 
-					for (auto& [account, balances] : context.state.balances)
+					for (auto& [account, balances] : context.env.balances)
 					{
 						for (auto& [asset, value] : balances)
 						{
@@ -517,8 +517,8 @@ namespace tangent
 						}
 					}
 
-					std::erase_if(context.state.payable.payments, [](const std::pair<algorithm::asset_id, decimal>& item) { return !item.second.is_positive(); });
-					for (auto& [asset, value] : context.state.payable.payments)
+					std::erase_if(context.env.payable.payments, [](const std::pair<algorithm::asset_id, decimal>& item) { return !item.second.is_positive(); });
+					for (auto& [asset, value] : context.env.payable.payments)
 						ok(value.to_string() + " " + algorithm::asset::name_of(asset));
 
 					return true;
@@ -531,10 +531,10 @@ namespace tangent
 						if (!block_number)
 							return err(block_number.what());
 
-						context.state.block_number = std::max<uint64_t>(*block_number, 1);
+						context.env.block_number = std::max<uint64_t>(*block_number, 1);
 					}
 
-					return ok(to_string(context.state.block_number));
+					return ok(to_string(context.env.block_number));
 				}
 				else if (method == "compile")
 				{
