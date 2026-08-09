@@ -100,7 +100,7 @@ PE_CPP_IMPORT void paillier_seckey_clear(paillier_seckey* priv);
  * @param[in] len input bit length of public modulus
  * @return 0 if no error
  */
-PE_CPP_IMPORT void paillier_keypair_random(
+PE_CPP_IMPORT int paillier_keypair_random(
 	paillier_pubkey* pub,
 	paillier_seckey* priv,
 	mp_bitcnt_t len);
@@ -120,7 +120,7 @@ PE_CPP_IMPORT void paillier_keypair_derive(
  * @param[in] pub input public key
  * @return 0 if no error
  */
-PE_CPP_IMPORT void paillier_encrypt(
+PE_CPP_IMPORT int paillier_encrypt(
 	mpz_t ciphertext,
 	mpz_t plaintext,
 	paillier_pubkey* pub);
@@ -153,7 +153,7 @@ PE_CPP_IMPORT void paillier_homomorphic_add(
 	mpz_t ciphertext2,
 	paillier_pubkey* pub);
 
-PE_CPP_IMPORT void paillier_homomorphic_addc(
+PE_CPP_IMPORT int paillier_homomorphic_addc(
 	mpz_t ciphertext2,
 	mpz_t ciphertext1,
 	mpz_t constant,

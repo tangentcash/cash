@@ -16,10 +16,10 @@ namespace tangent
 			scheme.hostname = parent_scheme.hostname;
 		}
 
-		socket_address primary_candidate = socket_address(scheme.hostname, scheme.port > 0 ? scheme.port : protocol::now().user.consensus.port);
+		socket_address primary_candidate = socket_address(scheme.hostname, scheme.port > 0 ? scheme.port : kernel::params().user.consensus.port);
 		if (!primary_candidate.is_valid())
 		{
-			auto secondary_candidate = dns::get()->lookup(scheme.hostname, to_string(scheme.port > 0 ? scheme.port : protocol::now().user.consensus.port), dns_check::listen);
+			auto secondary_candidate = dns::get()->lookup(scheme.hostname, to_string(scheme.port > 0 ? scheme.port : kernel::params().user.consensus.port), dns_check::listen);
 			if (!secondary_candidate)
 				return;
 
@@ -31,11 +31,11 @@ namespace tangent
 		}
 
 		if (scheme.protocol == "tcp" || scheme.protocol == "tcps")
-			address = socket_address(scheme.hostname, scheme.port > 0 ? scheme.port : protocol::now().user.consensus.port);
+			address = socket_address(scheme.hostname, scheme.port > 0 ? scheme.port : kernel::params().user.consensus.port);
 		else if (scheme.protocol == "http" || scheme.protocol == "https")
-			address = socket_address(scheme.hostname, scheme.port > 0 ? scheme.port : protocol::now().user.discovery.port);
+			address = socket_address(scheme.hostname, scheme.port > 0 ? scheme.port : kernel::params().user.discovery.port);
 		else if (scheme.protocol == "rpc" || scheme.protocol == "rpcs")
-			address = socket_address(scheme.hostname, scheme.port > 0 ? scheme.port : protocol::now().user.rpc.port);
+			address = socket_address(scheme.hostname, scheme.port > 0 ? scheme.port : kernel::params().user.rpc.port);
 		secure = address.is_valid() && scheme.protocol.back() == 's';
 	}
 	bool system_endpoint::is_valid() const
@@ -90,19 +90,19 @@ namespace tangent
 		umutex<std::recursive_mutex> unique(sync);
 		if (!active)
 		{
-			if (protocol::now().user.logs.control_logging)
+			if (kernel::params().user.logs.control_logging)
 				VI_INFO("cancel %.*s lock on %.*s service: shutdown", (int)name.size(), name.data(), (int)service_name.size(), service_name.data());
 			return false;
 		}
 
 		VI_ASSERT(timers != nullptr, "timers should be initialized");
-		if (protocol::now().user.logs.control_logging && timers->find(key_lookup_cast(name)) == timers->end())
+		if (kernel::params().user.logs.control_logging && timers->find(key_lookup_cast(name)) == timers->end())
 			VI_INFO("OK spawn %.*s locked task on %.*s service (mode: lock-timeout)", (int)name.size(), name.data(), (int)service_name.size(), service_name.data());
 
 		auto& timer = (*timers)[string(name)];
 		if (timer != INVALID_TASK_ID)
 		{
-			if (protocol::now().user.logs.control_logging)
+			if (kernel::params().user.logs.control_logging)
 				VI_INFO("cancel %.*s lock on %.*s service: in use", (int)name.size(), name.data(), (int)service_name.size(), service_name.data());
 			return false;
 		}
@@ -115,7 +115,7 @@ namespace tangent
 		umutex<std::recursive_mutex> unique(sync);
 		if (!active)
 		{
-			if (protocol::now().user.logs.control_logging)
+			if (kernel::params().user.logs.control_logging)
 				VI_INFO("cancel %.*s unlock on %.*s service: shutdown", (int)name.size(), name.data(), (int)service_name.size(), service_name.data());
 			return false;
 		}
@@ -123,7 +123,7 @@ namespace tangent
 		VI_ASSERT(timers != nullptr, "timers should be initialized");
 		if (timers->find(key_lookup_cast(name)) == timers->end())
 		{
-			if (protocol::now().user.logs.control_logging)
+			if (kernel::params().user.logs.control_logging)
 				VI_INFO("cancel %.*s unlock on %.*s service: not locked", (int)name.size(), name.data(), (int)service_name.size(), service_name.data());
 			return false;
 		}
@@ -138,13 +138,13 @@ namespace tangent
 		umutex<std::recursive_mutex> unique(sync);
 		if (!active)
 		{
-			if (protocol::now().user.logs.control_logging)
+			if (kernel::params().user.logs.control_logging)
 				VI_INFO("cancel %.*s task on %.*s service: shutdown", (int)name.size(), name.data(), (int)service_name.size(), service_name.data());
 			return false;
 		}
 
 		VI_ASSERT(tasks != nullptr, "tasks should be initialized");
-		if (protocol::now().user.logs.control_logging && tasks->find(key_lookup_cast(name)) == tasks->end())
+		if (kernel::params().user.logs.control_logging && tasks->find(key_lookup_cast(name)) == tasks->end())
 			VI_INFO("OK spawn %.*s task on %.*s service (mode: task)", (int)name.size(), name.data(), (int)service_name.size(), service_name.data());
 
 		auto id = string(name);
@@ -156,7 +156,7 @@ namespace tangent
 		if (task)
 			return true;
 
-		if (protocol::now().user.logs.control_logging)
+		if (kernel::params().user.logs.control_logging)
 			VI_INFO("cancel %.*s task on %.*s service: inactive", (int)name.size(), name.data(), (int)service_name.size(), service_name.data());
 		return false;
 	}
@@ -165,13 +165,13 @@ namespace tangent
 		umutex<std::recursive_mutex> unique(sync);
 		if (!active)
 		{
-			if (protocol::now().user.logs.control_logging)
+			if (kernel::params().user.logs.control_logging)
 				VI_INFO("cancel %.*s async task on %.*s service: shutdown", (int)name.size(), name.data(), (int)service_name.size(), service_name.data());
 			return false;
 		}
 
 		VI_ASSERT(tasks != nullptr, "tasks should be initialized");
-		if (protocol::now().user.logs.control_logging && tasks->find(key_lookup_cast(name)) == tasks->end())
+		if (kernel::params().user.logs.control_logging && tasks->find(key_lookup_cast(name)) == tasks->end())
 			VI_INFO("OK spawn %.*s async task on %.*s service (mode: async task)", (int)name.size(), name.data(), (int)service_name.size(), service_name.data());
 
 		auto id = string(name);
@@ -189,7 +189,7 @@ namespace tangent
 		if (task)
 			return true;
 
-		if (protocol::now().user.logs.control_logging)
+		if (kernel::params().user.logs.control_logging)
 			VI_INFO("cancel %.*s async task on %.*s service: inactive", (int)name.size(), name.data(), (int)service_name.size(), service_name.data());
 		return false;
 	}
@@ -198,13 +198,15 @@ namespace tangent
 		umutex<std::recursive_mutex> unique(sync);
 		if (!active)
 		{
-			if (protocol::now().user.logs.control_logging)
+			if (kernel::params().user.logs.control_logging)
 				VI_INFO("cancel %.*s interval on %.*s service: shutdown", (int)name.size(), name.data(), (int)service_name.size(), service_name.data());
 			return false;
 		}
+		else if (ms == LOCKED_TASK_ID)
+			return false;
 
 		VI_ASSERT(timers != nullptr, "timers should be initialized");
-		if (protocol::now().user.logs.control_logging && timers->find(key_lookup_cast(name)) == timers->end())
+		if (kernel::params().user.logs.control_logging && timers->find(key_lookup_cast(name)) == timers->end())
 			VI_INFO("OK spawn %.*s task on %.*s service (mode: interval, delay: %" PRIu64 " ms)", (int)name.size(), name.data(), (int)service_name.size(), service_name.data(), ms);
 
 		auto& timer = (*timers)[string(name)];
@@ -215,7 +217,7 @@ namespace tangent
 		if (timer != INVALID_TASK_ID)
 			return true;
 
-		if (protocol::now().user.logs.control_logging)
+		if (kernel::params().user.logs.control_logging)
 			VI_INFO("cancel %.*s interval on %.*s service: inactive", (int)name.size(), name.data(), (int)service_name.size(), service_name.data());
 		return false;
 	}
@@ -224,13 +226,15 @@ namespace tangent
 		umutex<std::recursive_mutex> unique(sync);
 		if (!active)
 		{
-			if (protocol::now().user.logs.control_logging)
-			VI_INFO("cancel %.*s timeout on %.*s service: shutdown", (int)name.size(), name.data(), (int)service_name.size(), service_name.data());
+			if (kernel::params().user.logs.control_logging)
+				VI_INFO("cancel %.*s timeout on %.*s service: shutdown", (int)name.size(), name.data(), (int)service_name.size(), service_name.data());
 			return false;
 		}
+		else if (ms == LOCKED_TASK_ID)
+			return false;
 
 		VI_ASSERT(timers != nullptr, "timers should be initialized");
-		if (protocol::now().user.logs.control_logging && timers->find(key_lookup_cast(name)) == timers->end())
+		if (kernel::params().user.logs.control_logging && timers->find(key_lookup_cast(name)) == timers->end())
 			VI_INFO("OK spawn %.*s task on %.*s service (mode: timeout, delay: %" PRIu64 " ms)", (int)name.size(), name.data(), (int)service_name.size(), service_name.data(), ms);
 
 		auto& timer = (*timers)[string(name)];
@@ -241,7 +245,7 @@ namespace tangent
 		if (timer != INVALID_TASK_ID)
 			return true;
 
-		if (protocol::now().user.logs.control_logging)
+		if (kernel::params().user.logs.control_logging)
 			VI_INFO("cancel %.*s timeout on %.*s service: inactive", (int)name.size(), name.data(), (int)service_name.size(), service_name.data());
 		return false;
 	}
@@ -250,13 +254,15 @@ namespace tangent
 		umutex<std::recursive_mutex> unique(sync);
 		if (!active)
 		{
-			if (protocol::now().user.logs.control_logging)
-			VI_INFO("cancel %.*s timeout on %.*s service: shutdown", (int)name.size(), name.data(), (int)service_name.size(), service_name.data());
+			if (kernel::params().user.logs.control_logging)
+				VI_INFO("cancel %.*s timeout on %.*s service: shutdown", (int)name.size(), name.data(), (int)service_name.size(), service_name.data());
 			return false;
 		}
+		else if (ms == LOCKED_TASK_ID)
+			return false;
 
 		VI_ASSERT(timers != nullptr, "timers should be initialized");
-		if (protocol::now().user.logs.control_logging && timers->find(key_lookup_cast(name)) == timers->end())
+		if (kernel::params().user.logs.control_logging && timers->find(key_lookup_cast(name)) == timers->end())
 			VI_INFO("OK spawn %.*s task on %.*s service (mode: upsert-timeout, delay: %" PRIu64 " ms)", (int)name.size(), name.data(), (int)service_name.size(), service_name.data(), ms);
 
 		auto& timer = (*timers)[string(name)];
@@ -267,7 +273,7 @@ namespace tangent
 		if (timer != INVALID_TASK_ID)
 			return true;
 
-		if (protocol::now().user.logs.control_logging)
+		if (kernel::params().user.logs.control_logging)
 			VI_INFO("cancel %.*s timeout on %.*s service: inactive", (int)name.size(), name.data(), (int)service_name.size(), service_name.data());
 		return false;
 	}
@@ -320,14 +326,14 @@ namespace tangent
 		{
 			for (auto& timer_id : *timers)
 				queue->clear_timeout(timer_id.second);
-			if (protocol::now().user.logs.control_logging && !timers->empty())
+			if (kernel::params().user.logs.control_logging && !timers->empty())
 				VI_INFO("OK clear timers on %.*s service (timers: %" PRIu64 ")", (int)service_name.size(), service_name.data(), (uint64_t)timers->size());
 			if (fully)
 				memory::deinit(timers);
 			else
 				timers->clear();
 		}
-		
+
 		if (fully && tasks != nullptr)
 		{
 			auto time = date_time().milliseconds();
@@ -349,7 +355,7 @@ namespace tangent
 				while (has_task(*it))
 				{
 					std::this_thread::sleep_for(std::chrono::milliseconds(1));
-					if (requires_warning && protocol::now().user.logs.control_logging && date_time().milliseconds() - time > 3000)
+					if (requires_warning && kernel::params().user.logs.control_logging && date_time().milliseconds() - time > 3000)
 					{
 						VI_WARN("task %s stall on %.*s service", it->c_str(), (int)service_name.size(), service_name.data());
 						requires_warning = false;
@@ -362,7 +368,7 @@ namespace tangent
 			if (requires_retry)
 				goto retry;
 
-			if (finalized_tasks > 0 && protocol::now().user.logs.control_logging)
+			if (finalized_tasks > 0 && kernel::params().user.logs.control_logging)
 				VI_INFO("OK finalized tasks on %.*s service (tasks: %" PRIu64 ")", (int)service_name.size(), service_name.data(), (uint64_t)finalized_tasks);
 			memory::deinit(tasks);
 		}
@@ -398,7 +404,7 @@ namespace tangent
 	}
 	void service_control::shutdown(int signal) noexcept
 	{
-		if (protocol::now().user.logs.control_logging)
+		if (kernel::params().user.logs.control_logging)
 			VI_INFO("service shutdown (signal: %i, state: OK)", signal);
 
 		instance = nullptr;
@@ -429,7 +435,7 @@ namespace tangent
 		policy.ping = [this]() { return exit_code == (int)0xFFFFFFFF; };
 		policy.max_recycles = 0;
 
-		if (protocol::now().user.storage.computation_threads_ratio > 0.0)
+		if (kernel::params().user.storage.computation_threads_ratio > 0.0)
 		{
 			auto threads = os::hw::get_quantity_info().logical;
 #ifndef VI_CXX20
@@ -437,7 +443,7 @@ namespace tangent
 #else
 			policy.threads[((size_t)difficulty::async)] = 1;
 #endif
-			policy.threads[((size_t)difficulty::sync)] = (size_t)std::max(std::ceil(threads * protocol::now().user.storage.computation_threads_ratio), 1.0);
+			policy.threads[((size_t)difficulty::sync)] = (size_t)std::max(std::ceil(threads * kernel::params().user.storage.computation_threads_ratio), 1.0);
 			policy.threads[((size_t)difficulty::timeout)] = 1;
 		}
 #ifdef NDEBUG
@@ -447,7 +453,7 @@ namespace tangent
 #endif
 		VI_INFO("tangentcash p2p %s node v%i.%i", release ? "release" : "debug", (int)FORK_VERSION, (int)PATCH_VERSION);
 		policy.threads[((size_t)difficulty::sync)] = std::max<size_t>(policy.threads[((size_t)difficulty::sync)], 6);
-		if (protocol::now().user.logs.control_logging)
+		if (kernel::params().user.logs.control_logging)
 			VI_INFO("service launch (services: %i)", (int)services.size());
 
 		multiplexer::get()->rescale(300, 256);

@@ -196,21 +196,30 @@ typedef struct jacobian_curve_point {
 } jacobian_curve_point;
 
 // generate random K for signing/side-channel noise
-static void generate_k_random(bignum256 *k, const bignum256 *prime) {
-  do {
-    int i = 0;
-    for (i = 0; i < 8; i++) {
-      k->val[i] = random32() & ((1u << BN_BITS_PER_LIMB) - 1);
-    }
-    k->val[8] = random32() & ((1u << BN_BITS_LAST_LIMB) - 1);
-    // check that k is in range and not zero.
-  } while (bn_is_zero(k) || !bn_is_less(k, prime));
+static int generate_k_random(bignum256 *k, const bignum256 *prime) {
+    uint32_t r;
+    do {
+        int i = 0;
+        for (i = 0; i < 8; i++) {
+            if (random_u32(&r) != 0)
+                return -1;
+
+            k->val[i] = r & ((1u << BN_BITS_PER_LIMB) - 1);
+        }
+        if (random_u32(&r) != 0)
+            return -1;
+
+        k->val[8] = r & ((1u << BN_BITS_LAST_LIMB) - 1);
+        // check that k is in range and not zero.
+    } while (bn_is_zero(k) || !bn_is_less(k, prime));
+    return 0;
 }
 
-void curve_to_jacobian(const curve_point *p, jacobian_curve_point *jp,
+int curve_to_jacobian(const curve_point *p, jacobian_curve_point *jp,
                        const bignum256 *prime) {
   // randomize z coordinate
-  generate_k_random(&jp->z, prime);
+  if (generate_k_random(&jp->z, prime) != 0)
+      return -1;
 
   jp->x = jp->z;
   bn_multiply(&jp->z, &jp->x, prime);
@@ -221,6 +230,7 @@ void curve_to_jacobian(const curve_point *p, jacobian_curve_point *jp,
 
   bn_multiply(&p->x, &jp->x, prime);
   bn_multiply(&p->y, &jp->y, prime);
+  return 0;
 }
 
 void jacobian_to_curve(const jacobian_curve_point *jp, curve_point *p,
@@ -511,7 +521,11 @@ int point_multiply(const ecdsa_curve *curve, const bignum256 *k,
   sign = (bits >> 4) - 1;
   bits ^= sign;
   bits &= 15;
-  curve_to_jacobian(&pmult[bits >> 1], &jres, prime);
+  if (curve_to_jacobian(&pmult[bits >> 1], &jres, prime) != 0) {
+      point_set_infinity(res);
+      return 1;
+  }
+
   for (i = 62; i >= 0; i--) {
     // sign = sign(a[i+1])  (0xffffffff for negative, 0 for positive)
     // invariant jres = (-1)^sign sum_{j=i+1..63} (a[j] * 16^{j-i-1} * p)
@@ -616,7 +630,11 @@ int scalar_multiply(const ecdsa_curve *curve, const bignum256 *k,
   lowbits = a.val[0] & ((1 << 5) - 1);
   lowbits ^= (lowbits >> 4) - 1;
   lowbits &= 15;
-  curve_to_jacobian(&curve->cp[0][lowbits >> 1], &jres, prime);
+  if (curve_to_jacobian(&curve->cp[0][lowbits >> 1], &jres, prime) != 0) {
+      point_set_infinity(res);
+      return 1;
+  }
+
   for (i = 1; i < 64; i++) {
     // invariant res = sign(a[i-1]) sum_{j=0..i-1} (a[j] * 16^j * G)
 

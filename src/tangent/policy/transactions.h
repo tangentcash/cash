@@ -113,6 +113,11 @@ namespace tangent
 				uint256_t block_hash = 0;
 				uint64_t solution = 0;
 			} pow_challenge;
+			struct
+			{
+				string public_key;
+				string signature;
+			} ownership_challenge;
 			uint256_t bridge_hash;
 			string routing_address;
 
@@ -124,6 +129,7 @@ namespace tangent
 			uint64_t commitment_priority(uint256_t* event_hash) const override;
 			void solve_pow_challenge(const algorithm::pubkeyhash_t& owner, uint64_t owner_nonce, const uint256_t& block_hash);
 			void set_routing_address(const std::string_view& new_address);
+			void set_ownership_proof(const std::string_view& new_signature, const std::string_view& new_public_key);
 			void set_bridge_hash(const uint256_t& new_bridge_hash);
 			algorithm::pubkeyhash_t get_attester(const ledger::transaction_receipt& receipt) const;
 			btree_set<algorithm::pubkeyhash_t> get_participants(const ledger::transaction_receipt& receipt) const;
@@ -134,6 +140,7 @@ namespace tangent
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
 			static void challenge(const uint256_t& route_hash, uint8_t message_hash[32]);
+			static string as_ownership_challenge(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& from, const std::string_view& address, uint64_t nonce);
 		};
 
 		struct bind final : ledger::commitment_message
@@ -345,9 +352,9 @@ namespace tangent
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
-			static expects_lr<void> verify_proof_commitment(ledger::executor_context* executor, const algorithm::asset_id& asset, const btree_map<uint256_t, btree_set<algorithm::hashsig_t>>& commitments, uint256_t& best_commitment_hash, btree_map<uint256_t, btree_set<algorithm::pubkeyhash_t>>& attesters);
+			static expects_lr<void> verify_proof_commitment(ledger::executor_context* executor, const algorithm::asset_id& asset, const btree_map<uint256_t, btree_set<algorithm::hashsig_t>>& commitments, uint256_t& best_commitment_hash, btree_map<uint256_t, btree_set<algorithm::pubkeyhash_t>>& attesters, uint64_t block_number = (uint64_t)fork_id::attesters_hardening);
 			static void optimize_proofs_and_commitments(const ledger::executor_context* executor, const algorithm::asset_id& asset, btree_map<uint256_t, superchain::computed_transaction>& proofs, btree_map<uint256_t, btree_set<algorithm::hashsig_t>>& commitments, vector<string>* errors = nullptr);
-			static bool commit_to_proof(const superchain::computed_transaction& new_proof, const algorithm::seckey_t& secret_key, uint256_t& commitment_hash, algorithm::hashsig_t& commitment_signature);
+			static bool commit_to_proof(const algorithm::asset_id& asset, const superchain::computed_transaction& new_proof, const algorithm::seckey_t& secret_key, uint256_t& commitment_hash, algorithm::hashsig_t& commitment_signature);
 		};
 
 		class resolver

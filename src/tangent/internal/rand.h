@@ -33,7 +33,7 @@
 #define RAND_CPP_IMPORT
 #endif
 
-RAND_CPP_IMPORT uint32_t random32(void);
-RAND_CPP_IMPORT void random_buffer(uint8_t *buf, size_t len);
+RAND_CPP_IMPORT int random_u32(uint32_t* output);
+RAND_CPP_IMPORT int random_u8a(uint8_t *buf, size_t len);
 
 #endif

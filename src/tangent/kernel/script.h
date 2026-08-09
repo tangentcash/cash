@@ -178,7 +178,7 @@ namespace tangent
 			void copy_buffer(const char* buffer, uint32_t buffer_size);
 			void move_buffer(string_repr&& other);
 			void resize_buffer(uint32_t required_size);
-			void require_buffer_capacity(uint32_t required_capacity);
+			bool require_buffer_capacity(uint32_t required_capacity);
 			uint128_t from_string_uint128(int base) const;
 			uint256_t from_string_uint256(int base) const;
 			decimal from_string_decimal(int base) const;

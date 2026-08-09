@@ -69,7 +69,7 @@ namespace tangent
 
 			relay_descriptor* callee = nullptr;
 			format::variables args;
-			uint64_t time = protocol::now().time.now_cpu();
+			uint64_t time = kernel::params().time.now_cpu();
 			uint32_t session = 0;
 			uint8_t descriptor = 0;
 			side type;
@@ -260,6 +260,7 @@ namespace tangent
 				double progress_bps = 0.0;
 				std::atomic<int64_t> progress = std::atomic<int64_t>(-1);
 				std::atomic<uint64_t> size = std::atomic<uint64_t>(0);
+				std::atomic<bool> slow = false;
 				std::atomic<bool> busy = false;
 				std::atomic<bool> stale = false;
 			} verifier;

@@ -77,7 +77,7 @@ namespace tangent
 		}
 		uref<sqlite::connection> storage_util::index_storage_of(const std::string_view& location, const std::function<bool(sqlite::connection*)>& callback)
 		{
-			auto connection = protocol::change().database.pull_index(location, [&location, &callback](sqlite::connection* connection)
+			auto connection = kernel::mparams().database.pull_index(location, [&location, &callback](sqlite::connection* connection)
 			{
 				VI_PANIC(callback(connection), "index configuration error (path: %.*s)", (int)location.size(), location.data());
 			});
@@ -87,6 +87,7 @@ namespace tangent
 		uref<sqlite::connection> storage_util::index_storage_named_of(const std::string_view& location, const std::string_view& name, const std::function<bool(sqlite::connection*, const std::string_view&)>& callback)
 		{
 			char buffer[256] = { 0 };
+			VI_PANIC(location.size() + name.size() + 1 <= sizeof(buffer), "database name is too long");
 			memcpy(buffer, location.data(), location.size());
 			memcpy(buffer + location.size() + 1, name.data(), name.size());
 			buffer[location.size()] = '.';
@@ -94,7 +95,7 @@ namespace tangent
 		}
 		rocksdb::DB* storage_util::blob_storage_of(const std::string_view& location)
 		{
-			auto* connection = protocol::change().database.pull_blob_ref(location);
+			auto* connection = kernel::mparams().database.pull_blob_ref(location);
 			VI_PANIC(connection, "blob connection error (path: %.*s)", (int)location.size(), location.data());
 			return connection;
 		}
@@ -165,7 +166,7 @@ namespace tangent
 			if (connection)
 			{
 				VI_ASSERT(connection->get_ref_count() > 1 || !connection->in_transaction(), "connection must not be in transaction");
-				protocol::change().database.push_index(std::move(connection));
+				kernel::mparams().database.push_index(std::move(connection));
 			}
 		}
 		storage_index_ptr& storage_index_ptr::operator=(const storage_index_ptr& other)

@@ -49,22 +49,38 @@ namespace tangent
 			}
 			expects_promise_rt<uint8_t> cardano::get_token_decimals(const std::string_view& policy_id, const std::string_view& hex_symbol)
 			{
-				auto url = stringify::text("https://raw.githubusercontent.com/cardano-foundation/cardano-token-registry/refs/heads/master/mappings/%.*s%.*s.json", (int)policy_id.size(), policy_id.data(), (int)hex_symbol.size(), hex_symbol.data());
-				return execute_http("GET", url, std::string_view(), std::string_view(), cache_policy::lifetime_cache).then<expects_rt<uint8_t>>([](expects_rt<format::tree>&& result) -> expects_rt<uint8_t>
+				if (!format::util::is_hex_encoding(policy_id))
+					return expects_promise_rt<uint8_t>(remote_exception("non-standard policy id (must be hex encoded)"));
+
+				if (!format::util::is_hex_encoding(hex_symbol))
+					return expects_promise_rt<uint8_t>(remote_exception("non-standard symbol (must be hex encoded)"));
+
+				string subject = string(policy_id) + string(hex_symbol);
+				return coasync<expects_rt<uint8_t>>([this, subject = std::move(subject)]() mutable -> expects_promise_rt<uint8_t>
 				{
-					if (!result)
-						return result.error();
-
-					if (result->value.is_string())
+					auto try_metadata = [](expects_rt<format::tree>&& metadata) -> expects_rt<uint8_t>
 					{
-						auto data = format::tree::from_json(result->value.as_string());
-						if (!data)
-							return remote_exception(std::move(data.error().message()));
+						if (!metadata)
+							return metadata.error();
 
-						result = std::move(*data);
-					}
+						if (metadata->value.is_string())
+						{
+							auto data = format::tree::from_json(metadata->value.as_string());
+							if (!data)
+								return remote_exception(std::move(data.error().message()));
 
-					return result->child_var("decimals.value").as_uint8();
+							metadata = std::move(*data);
+						}
+
+						return metadata->child_var("decimals.value").as_uint8();
+					};
+					auto metadata = coawait(execute_http("GET", stringify::text("https://tokens.cardano.org/metadata/%s", subject.c_str()), std::string_view(), std::string_view(), cache_policy::lifetime_cache));
+					auto maybe_result = try_metadata(std::move(metadata));
+					if (maybe_result)
+						coreturn expects_promise_rt<uint8_t>(std::move(maybe_result));
+
+					metadata = coawait(execute_http("GET", stringify::text("https://raw.githubusercontent.com/cardano-foundation/cardano-token-registry/refs/heads/master/mappings/%s.json", subject.c_str()), std::string_view(), std::string_view(), cache_policy::lifetime_cache));
+					coreturn expects_promise_rt<uint8_t>(try_metadata(std::move(metadata)));
 				});
 			}
 			expects_promise_rt<uint64_t> cardano::get_latest_block_height()
@@ -289,44 +305,55 @@ namespace tangent
 					}
 				}
 
-				coin_utxo new_input;
-				new_input.transaction_id = tx.transaction_id + "!";
-				new_input.value = decimal::zero();
-				new_input.index = (uint32_t)tx.inputs.size();
-
 				bool is_coinbase = false;
 				for (auto& [asset, value] : balance)
 				{
-					if (!value.is_negative())
-						continue;
-
-					is_coinbase = true;
-					if (asset != native_asset)
+					if (value.is_negative())
 					{
-						for (auto& [hash, output] : tx.outputs)
-						{
-							coin_utxo::token_utxo* token_utxo = nullptr;
-							for (auto& [token_hash, token] : output.tokens)
-							{
-								if (token.get_asset(native_asset) == asset)
-								{
-									token_utxo = &token;
-									break;
-								}
-							}
-							if (token_utxo != nullptr)
-							{
-								new_input.apply_token_value(token_utxo->contract_address, token_utxo->symbol, -value, token_utxo->decimals);
-								break;
-							}
-						}
+						is_coinbase = true;
+						break;
 					}
-					else
-						new_input.value = -value;
 				}
 
-				if (is_coinbase)
+				if (is_coinbase && !tx.outputs.empty())
+				{
+					auto null_address = decode_address(tx.outputs.begin()->second.link.address);
+					if (!null_address)
+						coreturn expects_rt<computed_transaction>(remote_exception(std::move(null_address.error().message())));
+
+					memset(null_address->data() + 1, 0, null_address->size() - 1);
+					null_address = encode_address(*null_address);
+					if (!null_address)
+						coreturn expects_rt<computed_transaction>(remote_exception(std::move(null_address.error().message())));
+
+					coin_utxo new_input;
+					new_input.transaction_id = tx.transaction_id + "!";
+					new_input.index = (uint32_t)tx.inputs.size();
+					for (auto& [hash, input] : tx.inputs)
+					{
+						new_input.value -= input.value;
+						for (auto& [token_hash, token] : input.tokens)
+							new_input.apply_token_value(token.contract_address, token.symbol, -token.value, token.decimals);
+					}
+					for (auto& [hash, output] : tx.outputs)
+					{
+						new_input.value += output.value;
+						for (auto& [token_hash, token] : output.tokens)
+							new_input.apply_token_value(token.contract_address, token.symbol, token.value, token.decimals);
+					}
+					for (auto it = new_input.tokens.begin(); it != new_input.tokens.end();)
+					{
+						if (!it->second.value.is_positive())
+							it = new_input.tokens.erase(it);
+						else
+							++it;
+					}
+					if (new_input.value.is_negative())
+						new_input.value = decimal::zero();
 					tx.add_input(std::move(new_input));
+				}
+				else if (is_coinbase)
+					coreturn expects_rt<computed_transaction>(remote_exception("invalid coinbase"));
 
 				coreturn expects_rt<computed_transaction>(std::move(tx));
 			}
@@ -622,7 +649,7 @@ namespace tangent
 			expects_lr<string> cardano::encode_address(const std::string_view& public_key_hash)
 			{
 				std::string encoded_address;
-				if (!Cardano::bech32_encode(protocol::now().is(network_type::mainnet) ? "addr" : "addr_test", (uint8_t*)public_key_hash.data(), (uint16_t)public_key_hash.size(), encoded_address))
+				if (!Cardano::bech32_encode(kernel::params().is(network_type::mainnet) ? "addr" : "addr_test", (uint8_t*)public_key_hash.data(), (uint16_t)public_key_hash.size(), encoded_address))
 					return layer_exception("invalid decoded public key hash");
 
 				return copy<string>(encoded_address);
@@ -634,6 +661,18 @@ namespace tangent
 					return layer_exception("invalid address");
 
 				return string((char*)data, data_size);
+			}
+			expects_lr<string> cardano::encode_signature(const std::string_view& signature)
+			{
+				return codec::hex_encode(signature);
+			}
+			expects_lr<string> cardano::decode_signature(const std::string_view& signature)
+			{
+				auto result = codec::hex_decode(signature);
+				if (result.size() != 64)
+					return layer_exception("invalid hex signature");
+
+				return result;
 			}
 			expects_lr<string> cardano::encode_transaction_id(const std::string_view& transaction_id)
 			{
@@ -660,7 +699,7 @@ namespace tangent
 				}
 
 				std::string address;
-				const auto network = (protocol::now().is(network_type::mainnet) ? Cardano::Network::Mainnet : Cardano::Network::Testnet);
+				const auto network = (kernel::params().is(network_type::mainnet) ? Cardano::Network::Mainnet : Cardano::Network::Testnet);
 				if (raw_public_key.size() != XVK_LENGTH)
 				{
 					uint8_t extended_public_key[XVK_LENGTH] = { 0 };
@@ -693,7 +732,7 @@ namespace tangent
 			}
 			string cardano::get_network()
 			{
-				return protocol::now().is(network_type::mainnet) ? "mainnet" : "preprod";
+				return kernel::params().is(network_type::mainnet) ? "mainnet" : "preprod";
 			}
 			size_t cardano::get_tx_fee_blocks()
 			{

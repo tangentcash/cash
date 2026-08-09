@@ -611,6 +611,18 @@ namespace tangent
 				result.append(tag);
 				return result;
 			}
+			expects_lr<string> ripple::encode_signature(const std::string_view& signature)
+			{
+				return codec::hex_encode(signature, true);
+			}
+			expects_lr<string> ripple::decode_signature(const std::string_view& signature)
+			{
+				auto result = codec::hex_decode(signature);
+				if (result.size() != 64)
+					return layer_exception("invalid hex signature");
+
+				return result;
+			}
 			expects_lr<string> ripple::encode_transaction_id(const std::string_view& transaction_id)
 			{
 				return codec::hex_encode(transaction_id, true);
@@ -725,7 +737,7 @@ namespace tangent
 			}
 			const sc_chainparams_* ripple::get_chain()
 			{
-				switch (protocol::now().user.network)
+				switch (kernel::params().user.network)
 				{
 					case network_type::regtest:
 						return &xrp_chainparams_regtest;

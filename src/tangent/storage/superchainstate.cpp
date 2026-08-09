@@ -630,8 +630,8 @@ namespace tangent
 			CREATE TRIGGER IF NOT EXISTS cache2_capacity AFTER INSERT ON cache2 BEGIN
 				DELETE FROM cache2 WHERE id = (SELECT id FROM cache2 ORDER BY id ASC) AND (SELECT COUNT(1) FROM cache2) > max_cache2_capacity;
 			END;);
-			stringify::replace(command, "max_cache1_capacity", to_string(protocol::now().user.superchain.cache1_size));
-			stringify::replace(command, "max_cache2_capacity", to_string(protocol::now().user.superchain.cache2_size));
+			stringify::replace(command, "max_cache1_capacity", to_string(kernel::params().user.superchain.cache1_size));
+			stringify::replace(command, "max_cache2_capacity", to_string(kernel::params().user.superchain.cache2_size));
 
 			auto cursor = connection->query(command);
 			cursor.report("superchainstate configuration failed");

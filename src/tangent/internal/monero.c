@@ -1053,16 +1053,22 @@ bool xmr_base58_decode(const char* b58, size_t b58sz, void* data, size_t* binsz)
 	for (size_t i = 0; i < full_block_count; ++i)
 	{
 		if (!decode_block(b58 + i * full_encoded_block_size, full_encoded_block_size, data_bin + i * full_block_size))
+		{
+			*binsz = 0;
 			return false;
+		}
 	}
 
 	if (0 < last_block_size)
 	{
-		if (!decode_block(b58 + full_block_count * full_encoded_block_size, last_block_size,
-			data_bin + full_block_count * full_block_size))
+		if (!decode_block(b58 + full_block_count * full_encoded_block_size, last_block_size, data_bin + full_block_count * full_block_size))
+		{
+			*binsz = 0;
 			return false;
+		}
 	}
 
+	*binsz = data_size;
 	return true;
 }
 
@@ -1189,15 +1195,15 @@ static void xmr_hash_ge25519_to_scalar(bignum256modm r, const ge25519* p)
 	xmr_hash_to_scalar(r, buff, sizeof(buff));
 }
 
-void xmr_gen_range_sig(xmr_range_sig_t* sig, ge25519* C, bignum256modm mask,
+int xmr_gen_range_sig(xmr_range_sig_t* sig, ge25519* C, bignum256modm mask,
 					   xmr_amount amount, bignum256modm* last_mask)
 {
 	bignum256modm ai[64] = { 0 };
 	bignum256modm alpha[64] = { 0 };
-	xmr_gen_range_sig_ex(sig, C, mask, amount, last_mask, ai, alpha);
+	return xmr_gen_range_sig_ex(sig, C, mask, amount, last_mask, ai, alpha);
 }
 
-void xmr_gen_range_sig_ex(xmr_range_sig_t* sig, ge25519* C, bignum256modm mask,
+int xmr_gen_range_sig_ex(xmr_range_sig_t* sig, ge25519* C, bignum256modm mask,
 						  xmr_amount amount, bignum256modm* last_mask,
 						  bignum256modm ai[64], bignum256modm alpha[64])
 {
@@ -1227,7 +1233,9 @@ void xmr_gen_range_sig_ex(xmr_range_sig_t* sig, ge25519* C, bignum256modm mask,
 	// First pass, generates: ai, alpha, Ci, ee, s1
 	for (unsigned ii = 0; ii < n; ++ii)
 	{
-		xmr_random_scalar(ai[ii]);
+		if (xmr_random_scalar(ai[ii]) != 0)
+			return -1;
+
 		if (last_mask != NULL && ii == n - 1)
 		{
 			sub256_modm(ai[ii], *last_mask, a);
@@ -1235,7 +1243,8 @@ void xmr_gen_range_sig_ex(xmr_range_sig_t* sig, ge25519* C, bignum256modm mask,
 
 		add256_modm(a, a, ai[ii]);  // creating the total mask since you have to
 		// pass this to receiver...
-		xmr_random_scalar(alpha[ii]);
+		if (xmr_random_scalar(alpha[ii]) != 0)
+			return -1;
 
 		ge25519_scalarmult_base_niels(&L, ge25519_niels_base_multiples, alpha[ii]);
 		ge25519_scalarmult_base_niels(&C_tmp, ge25519_niels_base_multiples, ai[ii]);
@@ -1249,9 +1258,10 @@ void xmr_gen_range_sig_ex(xmr_range_sig_t* sig, ge25519* C, bignum256modm mask,
 
 		if (BB(ii) == 0)
 		{
-			xmr_random_scalar(si);
-			xmr_hash_ge25519_to_scalar(c, &L);
+			if (xmr_random_scalar(si) != 0)
+				return -1;
 
+			xmr_hash_ge25519_to_scalar(c, &L);
 			ge25519_add(&C_tmp, &C_tmp, &C_h, 1);  // Ci[ii] -= c_h
 			xmr_add_keys2_vartime(&L, si, c, &C_tmp);
 
@@ -1282,9 +1292,10 @@ void xmr_gen_range_sig_ex(xmr_range_sig_t* sig, ge25519* C, bignum256modm mask,
 		}
 		else
 		{
-			xmr_random_scalar(si);
-			contract256_modm(sig->asig.s0[ii], si);
+			if (xmr_random_scalar(si) != 0)
+				return -1;
 
+			contract256_modm(sig->asig.s0[ii], si);
 			ge25519_unpack_vartime(&C_tmp, sig->Ci[ii]);
 			xmr_add_keys2_vartime(&L, si, ee, &C_tmp);
 			xmr_hash_ge25519_to_scalar(c, &L);
@@ -1300,15 +1311,19 @@ void xmr_gen_range_sig_ex(xmr_range_sig_t* sig, ge25519* C, bignum256modm mask,
 	copy256_modm(mask, a);
 	contract256_modm(sig->asig.ee, ee);
 #undef BB
+	return 0;
 }
 
 void ge25519_set_xmr_h(ge25519* r) { ge25519_copy(r, &xmr_h); }
 
-void xmr_random_scalar(bignum256modm m)
+int xmr_random_scalar(bignum256modm m)
 {
 	unsigned char buff[32] = { 0 };
-	random_buffer(buff, sizeof(buff));
+	if (random_u8a(buff, sizeof(buff)) != 0)
+		return -1;
+
 	expand256_modm(m, buff, sizeof(buff));
+	return 0;
 }
 
 void xmr_fast_hash(uint8_t* hash, const void* data, size_t length)

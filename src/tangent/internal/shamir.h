@@ -30,7 +30,7 @@ typedef uint8_t sss_Share[sss_SHARE_LEN]; /* One share of a secret which is shar
  * If you are looking for a function that *just* creates shares of arbitrary
  * data, you should use the `sss_create_shares` function in `sss.h`.
  */
-void sss_create_keyshares(sss_Keyshare* out,
+int sss_create_keyshares(sss_Keyshare* out,
                           const uint8_t key[32],
                           uint8_t n,
                           uint8_t k);
@@ -65,7 +65,7 @@ void sss_combine_keyshares(uint8_t key[32],
  * `out`. The caller has to guarantee that this array will fit at least `n`
  * instances of `sss_Share`.
  */
-void sss_create_shares(sss_Share* out,
+int sss_create_shares(sss_Share* out,
                        const uint8_t* data,
                        uint8_t n,
                        uint8_t k);

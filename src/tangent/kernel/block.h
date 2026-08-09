@@ -316,7 +316,8 @@ namespace tangent
 			void defer_side_effect(task_callback&& callback);
 			expects_lr<void> query(transition_state* value, bool paid_in_full);
 			expects_lr<void> load(transition_state* value, bool paid);
-			expects_lr<void> store(transition_state* value, bool paid);
+			expects_lr<void> store(transition_state* value, bool paid, bool force_delete = false);
+			expects_lr<void> reset(transition_state* value, bool paid);
 			expects_lr<void> emit_witness(const algorithm::asset_id& asset, uint64_t block_number);
 			expects_lr<void> emit_event(uint32_t type, format::variables&& values, bool paid);
 			expects_lr<void> emit_forwarded_event(uint32_t type, const algorithm::pubkeyhash_t& emitter, format::variables&& values, bool paid);
@@ -356,6 +357,7 @@ namespace tangent
 			expects_lr<states::witness_account> apply_witness_account(const algorithm::pubkeyhash_t& owner, const algorithm::asset_id& asset, const address_map& addresses);
 			expects_lr<states::witness_account> apply_witness_routing_account(const algorithm::pubkeyhash_t& owner, const algorithm::asset_id& asset, const address_map& addresses);
 			expects_lr<states::witness_account> apply_witness_bridge_account(const algorithm::pubkeyhash_t& owner, const algorithm::asset_id& asset, const uint256_t& bridge_hash, const address_map& addresses, bool active = true);
+			expects_lr<states::witness_account> reset_witness_account(const algorithm::pubkeyhash_t& owner, const algorithm::asset_id& asset, const address_map& addresses);
 			expects_lr<states::witness_transaction> apply_witness_transaction(const algorithm::asset_id& asset, const std::string_view& transaction_id);
 			expects_lr<states::account_nonce> get_account_nonce(const algorithm::pubkeyhash_t& owner) const;
 			expects_lr<states::account_program> get_account_program(const algorithm::pubkeyhash_t& owner) const;

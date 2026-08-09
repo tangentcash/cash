@@ -2,8 +2,7 @@
 #include "../policy/states.h"
 #define BLOB_BLOCK 'b'
 #define BLOB_TRANSACTION 't'
-#define BLOB_UNIFORM 'u'
-#define BLOB_MULTIFORM 'm'
+#define BLOB_STATE 'u'
 #undef NULL
 
 namespace tangent
@@ -221,7 +220,7 @@ namespace tangent
 		static string get_uniform_label(uint32_t type, const std::string_view& index, uint64_t number)
 		{
 			format::wo_stream message;
-			message.data.append(1, BLOB_UNIFORM);
+			message.data.append(1, BLOB_STATE);
 			message.write_typeless(type);
 			message.write_typeless(number);
 			message.write_typeless(index.data(), index.size());
@@ -230,7 +229,7 @@ namespace tangent
 		static string get_multiform_label(uint32_t type, const std::string_view& column, const std::string_view& row, uint64_t number)
 		{
 			format::wo_stream message;
-			message.data.append(1, BLOB_UNIFORM);
+			message.data.append(1, BLOB_STATE);
 			message.write_typeless(type);
 			message.write_typeless(number);
 			message.write_typeless(column.data(), column.size());
@@ -523,7 +522,7 @@ namespace tangent
 			uint64_t prev_size = 0, prev_progress_time = 0, prev_progress_block_number = 0;
 			uint64_t checkpoint_number = get_checkpoint_block_number().or_else(0);
 			uint64_t tip_number = get_latest_block_number().or_else(0);
-			uint256_t gas_limit = protocol::now().message.blocks_size_per_query * (uint64_t)ledger::gas_cost::reserved_byte;
+			uint256_t gas_limit = kernel::params().message.blocks_size_per_query * (uint64_t)ledger::gas_cost::reserved_byte;
 			size_t block_count = (size_t)(uint64_t)(gas_limit / ledger::block_header::get_block_gas_cost());
 			auto solver = ledger::solver_context();
 			auto tip_cache = ledger::solver_context::tip_cache();
@@ -549,13 +548,13 @@ namespace tangent
 					if (!finalization)
 						return layer_exception("block " + to_string(candidate_block.number) + " checkpoint failed: " + finalization.error().message());
 
-					if (protocol::now().user.consensus.logging)
+					if (kernel::params().user.consensus.logging)
 					{
 						int64_t progress = (int64_t)((double)precision * (double)candidate_block.number / tip_number);
 						prev_size += (uint64_t)((double)(uint64_t)candidate_block.gas_limit / (double)ledger::gas_cost::write_byte);
 						if (progress >= precision || prev_progress < progress)
 						{
-							uint64_t time = protocol::now().time.now_cpu();
+							uint64_t time = kernel::params().time.now_cpu();
 							VI_INFO("block %s (number: %" PRIu64 ", reorg: %.2f%%, size: %.2f kb, bps: %.1f)",
 								algorithm::encoding::encode_0xhex256(candidate_block.as_hash()).c_str(),
 								candidate_block.number, (double)progress / ((double)precision / 100), (double)prev_size / 1000.0,
@@ -721,8 +720,8 @@ namespace tangent
 			vector<promise<void>> queue;
 			vector<transaction_blob> transactions;
 			size_t concurrency = std::max<size_t>(1, parallel::get_threads());
-			bool transaction_to_account_index = protocol::now().user.storage.transaction_to_account_index;
-			bool transaction_to_alias_index = protocol::now().user.storage.transaction_to_alias_index;
+			bool transaction_to_account_index = kernel::params().user.storage.transaction_to_account_index;
+			bool transaction_to_alias_index = kernel::params().user.storage.transaction_to_alias_index;
 			if (!reorganization)
 			{
 				auto cursor = get_tx_storage().prepared_query(__func__, *fetch_transaction_nonce);
@@ -1062,7 +1061,7 @@ namespace tangent
 		}
 		expects_lr<bool> chainstate::compact_internal(uint64_t block_number, uint64_t* cached_checkpoint_block_number)
 		{
-			auto checkpoint_size = protocol::now().user.storage.checkpoint_size;
+			auto checkpoint_size = kernel::params().user.storage.checkpoint_size;
 			if (!checkpoint_size)
 				return expects_lr<bool>(false);
 
@@ -1181,7 +1180,7 @@ namespace tangent
 			if (!cursor || cursor->error())
 				return expects_lr<bool>(layer_exception(ledger::storage_util::error_of(cursor)));
 
-			if (protocol::now().user.storage.logging)
+			if (kernel::params().user.storage.logging)
 				VI_INFO("state compaction checkpoint %" PRIu64 " (state_delta: -%" PRIu64 ")", compaction_block_number, state_delta);
 
 			if (cached_checkpoint_block_number)
@@ -2158,12 +2157,10 @@ namespace tangent
 			if (changelog != nullptr)
 			{
 				auto candidate = changelog->outgoing.find(type, index);
+				if (!candidate)
+					candidate = changelog->incoming.find(type, index);
 				if (candidate)
-					return state_result(std::move(*candidate), true);
-
-				candidate = changelog->incoming.find(type, index);
-				if (candidate)
-					return state_result(std::move(*candidate), true);
+					return *candidate ? expects_lr<state_result>(state_result(std::move(*candidate), true)) : expects_lr<state_result>(layer_exception("uniform state not found"));
 			}
 
 			auto location = resolve_uniform_location(type, index);
@@ -2218,12 +2215,10 @@ namespace tangent
 			if (changelog != nullptr)
 			{
 				auto candidate = changelog->outgoing.find(type, column, row);
+				if (!candidate)
+					candidate = changelog->incoming.find(type, column, row);
 				if (candidate)
-					return state_result(std::move(*candidate), true);
-
-				candidate = changelog->incoming.find(type, column, row);
-				if (candidate)
-					return state_result(std::move(*candidate), true);
+					return *candidate ? expects_lr<state_result>(state_result(std::move(*candidate), true)) : expects_lr<state_result>(layer_exception("multiform state not found"));
 			}
 
 			auto location = resolve_multiform_location(type, column, row);

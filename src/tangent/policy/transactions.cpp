@@ -2,6 +2,8 @@
 #include "delegations.h"
 #include "../kernel/script.h"
 #include "../kernel/superchain.h"
+#include "../internal/sha2.h"
+#include "../internal/sha3.h"
 
 namespace tangent
 {
@@ -64,9 +66,8 @@ namespace tangent
 			auto type = stream.read_type();
 			if (format::util::is_string(type))
 			{
-				string owner_assembly;
 				algorithm::pubkeyhash_t owner;
-				if (!stream.read_string(type, &owner_assembly) || !algorithm::encoding::decode_bytes(owner_assembly, owner.blob, sizeof(owner)))
+				if (!stream.read_optimized_view(type, owner.blob, sizeof(owner)))
 					return false;
 
 				decimal value;
@@ -86,9 +87,8 @@ namespace tangent
 				to.reserve(transfers_size);
 				for (uint16_t i = 0; i < transfers_size; i++)
 				{
-					string owner_assembly;
 					algorithm::pubkeyhash_t owner;
-					if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_bytes(owner_assembly, owner.blob, sizeof(owner)))
+					if (!stream.read_optimized_view(stream.read_type(), owner.blob, sizeof(owner)))
 						return false;
 
 					decimal value;
@@ -472,8 +472,7 @@ namespace tangent
 		}
 		bool call::load_body(format::ro_stream& stream)
 		{
-			string callable_assembly;
-			if (!stream.read_string(stream.read_type(), &callable_assembly) || !algorithm::encoding::decode_bytes(callable_assembly, callable.blob, sizeof(callable)))
+			if (!stream.read_optimized_view(stream.read_type(), callable.blob, sizeof(callable)))
 				return false;
 
 			if (!stream.read_string(stream.read_type(), &function))
@@ -670,6 +669,13 @@ namespace tangent
 				uint64_t transaction_nonce = transaction->nonce;
 				uint8_t transaction_code = transaction->signature.blob[0];
 				uint8_t execution_flags = (uint8_t)ledger::executor_context::flags::pedantic | (uint8_t)ledger::executor_context::flags::preserve_events;
+				auto destructor = uscope([&]()
+				{
+					transaction->signature.blob[0] = transaction_code;
+					transaction->nonce = transaction_nonce;
+					transaction->gas_limit = 0;
+					transaction->gas_price = decimal::nan();
+				});
 				if (internal_transaction)
 				{
 					transaction->nonce = nonce;
@@ -684,10 +690,6 @@ namespace tangent
 				transaction->gas_price = decimal::zero();
 				transaction->gas_limit = gas_limit - executor->receipt.relative_gas_use;
 				auto execution = ledger::executor_context::execute_tx(&internal_executor, owner, transaction, transaction_hash, 0, execution_flags);
-				transaction->signature.blob[0] = transaction_code;
-				transaction->nonce = transaction_nonce;
-				transaction->gas_limit = 0;
-				transaction->gas_price = decimal::nan();
 				if (!execution)
 					return layer_exception("sub-transaction " + algorithm::encoding::encode_0xhex256(transaction_hash) + " execution failed: " + execution.error().message());
 
@@ -980,11 +982,21 @@ namespace tangent
 			if (!bridge_hash)
 				return layer_exception("invalid bridge hash");
 
-			if (protocol::now().on(fork_id::consensus_challenge, block_number))
+			if (kernel::params().on(fork_id::consensus_challenge, block_number))
 			{
 				if (!pow_challenge.solution)
 					return layer_exception("invalid pow challenge setup");
 			}
+
+			bool has_ownership_challenge = !ownership_challenge.public_key.empty() || !ownership_challenge.signature.empty();
+			if (has_ownership_challenge && routing_address.empty())
+				return layer_exception("invalid ownership challenge setup");
+
+			if (has_ownership_challenge && ownership_challenge.public_key.empty())
+				return layer_exception("public key is required for ownership challenge");
+
+			if (has_ownership_challenge && ownership_challenge.signature.empty())
+				return layer_exception("signature is required for ownership challenge");
 
 			return ledger::commitment_message::validate(block_number);
 		}
@@ -994,9 +1006,9 @@ namespace tangent
 			if (!validation)
 				return validation.error();
 
-			if (protocol::now().on(fork_id::consensus_challenge, executor->receipt.block_number))
+			if (kernel::params().on(fork_id::consensus_challenge, executor->receipt.block_number))
 			{
-				auto& policy = protocol::now().policy;
+				auto& policy = kernel::params().policy;
 				auto block_number = executor->get_block_number_by_hash(pow_challenge.block_hash).or_else(std::numeric_limits<uint64_t>::max());
 				if (block_number == std::numeric_limits<uint64_t>::max() || executor->receipt.block_number <= block_number || executor->receipt.block_number - block_number > policy.pow.tx.validity_time / policy.pow.time)
 					return layer_exception("pow challenge expired");
@@ -1012,9 +1024,74 @@ namespace tangent
 			bool routing_address_application = !routing_address.empty();
 			if (routing_address_application)
 			{
+				bool has_ownership_challenge = !ownership_challenge.public_key.empty() && !ownership_challenge.signature.empty();
 				auto collision = executor->get_witness_account_tagged(asset, routing_address, 0);
 				if (collision)
-					return layer_exception("routing account address " + routing_address + " taken");
+				{
+					if (!has_ownership_challenge)
+						return layer_exception("routing account address " + routing_address + " taken");
+
+					auto* chain = superchain::bridge::get()->get_network(asset);
+					if (!chain)
+						return layer_exception("invalid operation");
+
+					auto addresses = chain->to_addresses(ownership_challenge.public_key);
+					if (!addresses)
+						return addresses.error();
+
+					bool collision_match = false;
+					for (auto& [type, address] : *addresses)
+					{
+						if (address == routing_address)
+						{
+							collision_match = true;
+							break;
+						}
+					}
+					if (!collision_match)
+						return layer_exception("invalid public key");
+
+					auto raw_signature = chain->decode_signature(ownership_challenge.signature);
+					if (!raw_signature)
+						return raw_signature.error();
+
+					auto raw_public_key = chain->decode_public_key(ownership_challenge.public_key);
+					if (!raw_public_key)
+						return raw_public_key.error();
+
+					auto compositor = algorithm::composition::make_compositor(chain->get_chainparams().composition);
+					if (!compositor)
+						return compositor.error();
+
+					auto raw_message = as_ownership_challenge(asset, executor->receipt.from, routing_address, nonce);
+					auto packed_signature = algorithm::composition::to_cstorage<algorithm::composition::chashsig_t>(*raw_signature);
+					auto packed_public_key = algorithm::composition::to_cstorage<algorithm::composition::cpubkey_t>(*raw_public_key);
+					auto verification = (*compositor)->verify_signature((uint8_t*)raw_message.data(), raw_message.size(), packed_signature, packed_public_key, (uint8_t)algorithm::composition::verify::user_message);
+					if (!verification)
+					{
+						uint8_t message[32];
+						sha256_Raw((uint8_t*)raw_message.data(), raw_message.size(), message);
+						verification = (*compositor)->verify_signature(message, sizeof(message), packed_signature, packed_public_key, (uint8_t)algorithm::composition::verify::user_message);
+						if (!verification)
+						{
+							sha256_Raw(message, sizeof(message), message);
+							verification = (*compositor)->verify_signature(message, sizeof(message), packed_signature, packed_public_key, (uint8_t)algorithm::composition::verify::user_message);
+							if (!verification)
+							{
+								keccak_256((uint8_t*)raw_message.data(), raw_message.size(), message);
+								verification = (*compositor)->verify_signature(message, sizeof(message), packed_signature, packed_public_key, (uint8_t)algorithm::composition::verify::user_message);
+								if (!verification)
+									return verification.error();
+							}
+						}
+					}
+
+					auto status = executor->reset_witness_account(collision->ref.owner, asset, *addresses);
+					if (!status)
+						return status.error();
+				}
+				else if (has_ownership_challenge)
+					return layer_exception("ownership challenge required for collisions only");
 
 				auto status = executor->apply_witness_routing_account(executor->receipt.from, asset, { { (uint8_t)1, string(routing_address) } });
 				if (!status)
@@ -1129,6 +1206,12 @@ namespace tangent
 				stream->write_integer(pow_challenge.solution);
 			}
 			stream->write_integer(bridge_hash);
+			if (!ownership_challenge.public_key.empty() || !ownership_challenge.signature.empty())
+			{
+				stream->write_boolean(true);
+				stream->write_string(ownership_challenge.public_key);
+				stream->write_string(ownership_challenge.signature);
+			}
 			stream->write_string(routing_address);
 			return true;
 		}
@@ -1153,7 +1236,23 @@ namespace tangent
 			if (!stream.read_integer(type, &bridge_hash))
 				return false;
 
-			if (!stream.read_string(stream.read_type(), &routing_address))
+			type = stream.read_type();
+			if (type == format::viewable::true_type)
+			{
+				bool ownership_challenge_extension;
+				if (!stream.read_boolean(type, &ownership_challenge_extension) || !ownership_challenge_extension)
+					return false;
+
+				if (!stream.read_string(stream.read_type(), &ownership_challenge.public_key))
+					return false;
+
+				if (!stream.read_string(stream.read_type(), &ownership_challenge.signature))
+					return false;
+
+				type = stream.read_type();
+			}
+
+			if (!stream.read_string(type, &routing_address))
 				return false;
 
 			return true;
@@ -1180,6 +1279,11 @@ namespace tangent
 		void route::set_routing_address(const std::string_view& new_address)
 		{
 			routing_address = new_address;
+		}
+		void route::set_ownership_proof(const std::string_view& new_signature, const std::string_view& new_public_key)
+		{
+			ownership_challenge.signature = new_signature;
+			ownership_challenge.public_key = new_public_key;
 		}
 		void route::set_bridge_hash(const uint256_t& new_bridge_hash)
 		{
@@ -1216,6 +1320,12 @@ namespace tangent
 				pow_challenge_data->set("block_hash", algorithm::encoding::serialize_uint256(pow_challenge.block_hash));
 				pow_challenge_data->set("solution", algorithm::encoding::serialize_uint256(pow_challenge.solution));
 			}
+			if (!ownership_challenge.public_key.empty() || !ownership_challenge.signature.empty())
+			{
+				auto* ownership_challenge_data = data.set("ownership_challenge", format::tree::map());
+				ownership_challenge_data->set("public_key", format::variable(ownership_challenge.public_key));
+				ownership_challenge_data->set("signature", format::variable(ownership_challenge.signature));
+			}
 			return data;
 		}
 		uint32_t route::as_delegation_type() const
@@ -1246,10 +1356,16 @@ namespace tangent
 			route_hash.encode(transaction_hash);
 			algorithm::hashing::hash256(transaction_hash, sizeof(transaction_hash), message_hash);
 		}
+		string route::as_ownership_challenge(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& from, const std::string_view& address, uint64_t nonce)
+		{
+			auto blockchain = algorithm::asset::blockchain_of(asset);
+			auto from_address = algorithm::signing::encode_address(from);
+			return stringify::text("%s:%.*s:%s:%" PRIu64, from_address.c_str(), (int)address.size(), address.data(), blockchain.c_str(), nonce);
+		}
 
 		expects_lr<void> bind::validate(uint64_t block_number) const
 		{
-			if (protocol::now().on(fork_id::key_bind_commitment, block_number))
+			if (kernel::params().on(fork_id::key_bind_commitment, block_number))
 				return layer_exception("operation not permitted");
 
 			if (!algorithm::asset::token_of(asset).empty())
@@ -1276,7 +1392,7 @@ namespace tangent
 			route::challenge(route_hash, message_hash);
 
 			auto& compositor_ptr = *compositor;
-			auto status = compositor_ptr->verify_signature(message_hash, sizeof(message_hash), group_signature, group_public_key);
+			auto status = compositor_ptr->verify_signature(message_hash, sizeof(message_hash), group_signature, group_public_key, (uint8_t)algorithm::composition::verify::auth_message);
 			if (!status)
 				return status;
 
@@ -1486,7 +1602,7 @@ namespace tangent
 			uint8_t message_hash[32];
 			route::challenge(route_hash, message_hash);
 
-			auto status = compositor_ptr->verify_signature(message_hash, sizeof(message_hash), proof.key_commitment, *group_public_key);
+			auto status = compositor_ptr->verify_signature(message_hash, sizeof(message_hash), proof.key_commitment, *group_public_key, (uint8_t)algorithm::composition::verify::auth_message);
 			if (!status)
 				return status;
 
@@ -1571,7 +1687,7 @@ namespace tangent
 			ref.owner = parent->receipt.from;
 			ref.asset = asset;
 			ref.hash = parent_transaction->bridge_hash;
-			if (protocol::now().on(fork_id::key_bind_uniqueness, executor->receipt.block_number))
+			if (kernel::params().on(fork_id::key_bind_uniqueness, executor->receipt.block_number))
 			{
 				for (auto& address : *addresses)
 				{
@@ -1638,8 +1754,7 @@ namespace tangent
 			if (!stream.read_integer(stream.read_type(), &route_hash))
 				return false;
 
-			string correction_commitment_assembly;
-			if (!stream.read_string(stream.read_type(), &correction_commitment_assembly) || !algorithm::encoding::decode_bytes(correction_commitment_assembly, proof.correction_commitment.blob, sizeof(proof.correction_commitment)))
+			if (!stream.read_optimized_view(stream.read_type(), proof.correction_commitment.blob, sizeof(proof.correction_commitment)))
 				return false;
 
 			string correction_key_assembly;
@@ -1767,7 +1882,7 @@ namespace tangent
 				if (!setup.fee_rate.is_positive())
 					return layer_exception("invalid fee rate");
 
-				if (setup.security_level < protocol::now().policy.participation.min_per_account || setup.security_level > protocol::now().policy.participation.max_per_account)
+				if (setup.security_level < kernel::params().policy.participation.min_per_account || setup.security_level > kernel::params().policy.participation.max_per_account)
 					return layer_exception("invalid security level");
 			}
 
@@ -1806,7 +1921,7 @@ namespace tangent
 				if (!requirement)
 					return layer_exception("must be an active attester to request migration");
 
-				auto time_lock = protocol::now().policy.attestation.confirmation_time / protocol::now().policy.pow.time;
+				auto time_lock = kernel::params().policy.attestation.confirmation_time / kernel::params().policy.pow.time;
 				auto time_delta = parent->receipt.block_number < executor->receipt.block_number ? executor->receipt.block_number - parent->receipt.block_number : 0;
 				if (time_delta <= time_lock)
 					return layer_exception("broadcast time lock active - retry after block number " + to_string(parent->receipt.block_number + time_lock));
@@ -1889,7 +2004,7 @@ namespace tangent
 
 				auto cost = (uint64_t)ledger::gas_cost::write_tx_byte;
 				auto bridge_hash = executor->get_random(executor->receipt.transaction_hash).derive();
-				auto payment = executor->burn_gas(cost * cost * cost * (1 + (protocol::now().policy.participation.max_per_account - setup.security_level)));
+				auto payment = executor->burn_gas(cost * cost * cost * (1 + (kernel::params().policy.participation.max_per_account - setup.security_level)));
 				if (!payment)
 					return payment.error();
 
@@ -2018,8 +2133,8 @@ namespace tangent
 				if (!stream.read_integer(stream.read_type(), &broadcast_hash))
 					return false;
 
-				algorithm::pubkeyhash_t participant; string participant_assembly;
-				if (!stream.read_string(stream.read_type(), &participant_assembly) || !algorithm::encoding::decode_bytes(participant_assembly, participant.blob, sizeof(participant)))
+				algorithm::pubkeyhash_t participant;
+				if (!stream.read_optimized_view(stream.read_type(), participant.blob, sizeof(participant)))
 					return false;
 
 				migrations[broadcast_hash] = participant;
@@ -2429,7 +2544,7 @@ namespace tangent
 				if (!group_public_key)
 					return group_public_key.error();
 
-				auto status = compositor_ptr->verify_signature(message_hash, sizeof(message_hash), proof.key_commitment, *group_public_key);
+				auto status = compositor_ptr->verify_signature(message_hash, sizeof(message_hash), proof.key_commitment, *group_public_key, (uint8_t)algorithm::composition::verify::auth_message);
 				if (!status)
 					return status;
 
@@ -2531,8 +2646,7 @@ namespace tangent
 			for (uint16_t i = 0; i < proofs_size; i++)
 			{
 				imbind::binding_proof proof;
-				string correction_commitment_assembly;
-				if (!stream.read_string(stream.read_type(), &correction_commitment_assembly) || !algorithm::encoding::decode_bytes(correction_commitment_assembly, proof.correction_commitment.blob, sizeof(proof.correction_commitment)))
+				if (!stream.read_optimized_view(stream.read_type(), proof.correction_commitment.blob, sizeof(proof.correction_commitment)))
 					return false;
 
 				string correction_key_assembly;
@@ -2790,12 +2904,26 @@ namespace tangent
 
 			if (proof)
 			{
+				auto shared = proof->prepared.as_shared_message();
+				for (auto& input : proof->prepared.inputs)
+				{
+					auto compositor = algorithm::composition::make_compositor(input.alg);
+					if (!compositor)
+						return compositor.error();
+
+					auto& compositor_ptr = *compositor;
+					auto& input_message = shared ? shared->message : input.message;
+					auto status = compositor_ptr->verify_signature(input_message.data(), input_message.size(), input.signature, input.public_key, (uint8_t)algorithm::composition::verify::tx_message);
+					if (!status)
+						return status;
+				}
+
 				auto fee_transfer = executor->apply_transfer(fee_asset, parent->receipt.from, -bridge->fee_rate, -bridge->fee_rate);
 				if (!fee_transfer)
 					return fee_transfer.error();
 
 				auto attester = parent_transaction->get_attester(parent->receipt);
-				auto attestation = executor->apply_validator_attestation_reward(fee_asset, attester, bridge->fee_rate * protocol::now().policy.attestation.fee_rate);
+				auto attestation = executor->apply_validator_attestation_reward(fee_asset, attester, bridge->fee_rate * kernel::params().policy.attestation.fee_rate);
 				if (!attestation)
 					return attestation.error();
 
@@ -2851,7 +2979,7 @@ namespace tangent
 			if (!log)
 				return log.error();
 
-			auto queue = executor->apply_bridge_queue(asset, parent_transaction->bridge_hash, parent->receipt.transaction_hash, false);
+			auto queue = executor->apply_bridge_queue(fee_asset, parent_transaction->bridge_hash, parent->receipt.transaction_hash, false);
 			if (!queue)
 				return queue.error();
 
@@ -3163,7 +3291,7 @@ namespace tangent
 			if (witness)
 				return layer_exception("broadcast is considered final either by attestation or older protest");
 
-			auto time_lock = protocol::now().policy.attestation.confirmation_time / protocol::now().policy.pow.time;
+			auto time_lock = kernel::params().policy.attestation.confirmation_time / kernel::params().policy.pow.time;
 			auto time_delta = parent->receipt.block_number < executor->receipt.block_number ? executor->receipt.block_number - parent->receipt.block_number : 0;
 			if (time_delta <= time_lock)
 				return layer_exception("broadcast time lock active - retry after block number " + to_string(parent->receipt.block_number + time_lock));
@@ -3182,7 +3310,7 @@ namespace tangent
 			if (!bridge)
 				return bridge.error();
 
-			auto queue = executor->apply_bridge_queue(asset, origin_transaction->bridge_hash, origin->receipt.transaction_hash, false);
+			auto queue = executor->apply_bridge_queue(base_asset, origin_transaction->bridge_hash, origin->receipt.transaction_hash, false);
 			if (!queue)
 				return queue.error();
 
@@ -3198,7 +3326,7 @@ namespace tangent
 				return expectation::met;
 
 			auto reward_unspent = bridge->fee_rate;
-			auto reward_spent = reward_unspent * protocol::now().policy.attestation.fee_rate;
+			auto reward_spent = reward_unspent * kernel::params().policy.attestation.fee_rate;
 			reward_unspent -= reward_spent;
 
 			auto next_attestation = executor->apply_validator_attestation_reward(base_asset, attester, -reward_spent);
@@ -3283,7 +3411,7 @@ namespace tangent
 			{
 				if (!commitment_hash)
 					return layer_exception("invalid commitment hash");
-				else if (signatures.size() > protocol::now().policy.attestation.max_per_transaction)
+				else if (signatures.size() > kernel::params().policy.attestation.max_per_transaction)
 					return layer_exception("too many commitment attesters");
 
 				for (auto& commitment_signature : signatures)
@@ -3316,10 +3444,10 @@ namespace tangent
 
 			uint256_t best_commitment_hash = 0;
 			btree_map<uint256_t, btree_set<algorithm::pubkeyhash_t>> attesters;
-			auto verification = verify_proof_commitment(executor, asset, commitments, best_commitment_hash, attesters);
+			auto verification = verify_proof_commitment(executor, asset, commitments, best_commitment_hash, attesters, executor->receipt.block_number);
 			if (!verification)
 				return verification;
-			else if (best_commitment_hash != proof.as_hash())
+			else if (best_commitment_hash != proof.as_proof_hash(asset, executor->receipt.block_number))
 				return layer_exception("provided proof is not the chosen one");
 
 			decimal network_fee = decimal::zero();
@@ -3335,6 +3463,8 @@ namespace tangent
 			}
 			for (auto& [hash, output] : proof.outputs)
 				network_fee -= output.value;
+			if (network_fee.is_negative())
+				network_fee = decimal::zero();
 
 			auto base_asset = algorithm::asset::base_id_of(asset);
 			auto& succeeding_attesters = attesters[best_commitment_hash];
@@ -3457,7 +3587,7 @@ namespace tangent
 				auto bridge = executor->get_bridge_instance(algorithm::asset::base_id_of(asset), withdrawer_hash);
 				if (bridge)
 				{
-					auto reward = bridge->fee_rate * (1 - protocol::now().policy.attestation.fee_rate);
+					auto reward = bridge->fee_rate * (1 - kernel::params().policy.attestation.fee_rate);
 					auto applicable = std::max<decimal>(reward - network_fee, decimal::zero());
 					if (it == penalties.end())
 						penalties[base_asset] = -applicable;
@@ -3569,7 +3699,7 @@ namespace tangent
 					if (penalty_value.is_zero_or_nan())
 						continue;
 
-					auto participation_cut = protocol::now().policy.participation.fee_rate;
+					auto participation_cut = kernel::params().policy.participation.fee_rate;
 					auto attestation_cut = 1 - participation_cut;
 					if (!failing_attesters.empty() && penalty_value.is_negative())
 					{
@@ -3622,7 +3752,7 @@ namespace tangent
 						else if (!bridge)
 							break;
 
-						auto reward = bridge->fee_rate * (1 - protocol::now().policy.attestation.fee_rate);
+						auto reward = bridge->fee_rate * (1 - kernel::params().policy.attestation.fee_rate);
 						auto applicable = std::max<decimal>(reward - network_fee, decimal::zero());
 						delta_transfer = executor->apply_transfer(base_asset, transfer_account, applicable, decimal::zero());
 						if (!delta_transfer)
@@ -3693,8 +3823,8 @@ namespace tangent
 				auto& signatures = commitments[commitment_hash];
 				for (uint16_t j = 0; j < signatures_size; j++)
 				{
-					algorithm::hashsig_t commitment; string signature_assembly;
-					if (!stream.read_string(stream.read_type(), &signature_assembly) || !algorithm::encoding::decode_bytes(signature_assembly, commitment.blob, sizeof(commitment)))
+					algorithm::hashsig_t commitment;
+					if (!stream.read_optimized_view(stream.read_type(), commitment.blob, sizeof(commitment)))
 						return false;
 
 					signatures.insert(commitment);
@@ -3730,7 +3860,7 @@ namespace tangent
 		uint64_t attestate::commitment_priority(uint256_t* event_hash) const
 		{
 			if (event_hash != nullptr)
-				*event_hash = proof.as_hash();
+				*event_hash = proof.as_proof_hash(asset);
 			return 2;
 		}
 		void attestate::set_finalized_proof(uint64_t block_id, const std::string_view& transaction_id, const vector<superchain::value_transfer>& inputs, const vector<superchain::value_transfer>& outputs)
@@ -3759,7 +3889,7 @@ namespace tangent
 		{
 			uint256_t commitment_hash;
 			algorithm::hashsig_t commitment_signature;
-			if (!commit_to_proof(proof, secret_key, commitment_hash, commitment_signature))
+			if (!commit_to_proof(asset, proof, secret_key, commitment_hash, commitment_signature))
 				return false;
 
 			commitments[commitment_hash].insert(commitment_signature);
@@ -3795,7 +3925,7 @@ namespace tangent
 		{
 			return "attestate";
 		}
-		expects_lr<void> attestate::verify_proof_commitment(ledger::executor_context* executor, const algorithm::asset_id& asset, const btree_map<uint256_t, btree_set<algorithm::hashsig_t>>& commitments, uint256_t& best_commitment_hash, btree_map<uint256_t, btree_set<algorithm::pubkeyhash_t>>& attesters)
+		expects_lr<void> attestate::verify_proof_commitment(ledger::executor_context* executor, const algorithm::asset_id& asset, const btree_map<uint256_t, btree_set<algorithm::hashsig_t>>& commitments, uint256_t& best_commitment_hash, btree_map<uint256_t, btree_set<algorithm::pubkeyhash_t>>& attesters, uint64_t block_number)
 		{
 			btree_set<algorithm::pubkeyhash_t> duplicates;
 			best_commitment_hash = 0;
@@ -3840,13 +3970,19 @@ namespace tangent
 				}
 			}
 
-			if (!best_commitment_hash || !best_commitment_size || best_commitment_stake.is_negative())
+			auto& params = kernel::params();
+			if (!best_commitment_hash || best_commitment_stake.is_negative() || !best_commitment_size)
 				return layer_exception("proof requires more attestations");
 
-			auto& params = protocol::now();
 			auto best_attesters = executor->calculate_attesters(asset, params.policy.attestation.max_per_transaction);
 			if (!best_attesters)
 				return best_attesters.error();
+			
+			size_t attesters_threshold = kernel::params().on(fork_id::attesters_hardening, block_number) ? params.policy.attestation.min_per_transaction + 1 : 1;
+			if (best_attesters->size() < attesters_threshold)
+				return layer_exception("asset attestation is not activated");
+			else if (best_commitment_size < std::min((uint64_t)best_attesters->size(), params.policy.attestation.min_per_transaction))
+				return layer_exception("proof requires more attestations");
 
 			decimal min_commitment_stake = decimal::zero();
 			for (auto& attester : *best_attesters)
@@ -3908,7 +4044,7 @@ namespace tangent
 				}
 
 				std::sort(weights.begin(), weights.end(), [](const std::pair<algorithm::hashsig_t, decimal>& a, const std::pair<algorithm::hashsig_t, decimal>& b) { return a.second > b.second; });
-				for (size_t i = protocol::now().policy.attestation.max_per_transaction; i < weights.size(); i++)
+				for (size_t i = kernel::params().policy.attestation.max_per_transaction; i < weights.size(); i++)
 					removals[commitment_hash].insert(weights[i].first);
 			}
 
@@ -3926,9 +4062,9 @@ namespace tangent
 					++it;
 			}
 		}
-		bool attestate::commit_to_proof(const superchain::computed_transaction& new_proof, const algorithm::seckey_t& secret_key, uint256_t& commitment_hash, algorithm::hashsig_t& signature)
+		bool attestate::commit_to_proof(const algorithm::asset_id& asset, const superchain::computed_transaction& new_proof, const algorithm::seckey_t& secret_key, uint256_t& commitment_hash, algorithm::hashsig_t& signature)
 		{
-			commitment_hash = new_proof.as_hash();
+			commitment_hash = new_proof.as_proof_hash(asset);
 			return algorithm::signing::sign(commitment_hash, secret_key, signature);
 		}
 

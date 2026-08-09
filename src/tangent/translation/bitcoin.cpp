@@ -362,12 +362,29 @@ namespace tangent
 
 					if (is_coinbase && !tx.outputs.empty())
 					{
+						auto null_address = decode_address(tx.outputs.begin()->second.link.address);
+						if (!null_address)
+							coreturn expects_rt<computed_transaction>(remote_exception(std::move(null_address.error().message())));
+
+						memset(null_address->data() + 1, 0, null_address->size() - 1);
+						null_address = encode_address(*null_address);
+						if (!null_address)
+							coreturn expects_rt<computed_transaction>(remote_exception(std::move(null_address.error().message())));
+
 						coin_utxo new_input;
 						new_input.transaction_id = tx.transaction_id + "!";
-						new_input.value = tx.outputs.begin()->second.value;
 						new_input.index = (uint32_t)tx.inputs.size();
+						new_input.link = wallet_link::from_address(*null_address);
+						for (auto& [hash, input] : tx.inputs)
+							new_input.value -= input.value;
+						for (auto& [hash, output] : tx.outputs)
+							new_input.value += output.value;
+						if (new_input.value.is_negative())
+							new_input.value = decimal::zero();
 						tx.add_input(std::move(new_input));
 					}
+					else if (is_coinbase)
+						coreturn expects_rt<computed_transaction>(remote_exception("invalid coinbase"));
 
 					coreturn expects_rt<computed_transaction>(std::move(tx));
 				});
@@ -476,7 +493,7 @@ namespace tangent
 						if (fee_estimate)
 						{
 							auto fee_per_byte = fee_estimate->child_var("feerate").as_decimal() * netdata.divisibility;
-							fee_per_byte /= decimal(1000).truncate(protocol::now().message.decimal_precision);
+							fee_per_byte /= decimal(1000).truncate(kernel::params().message.decimal_precision);
 							if (fee_per_byte.is_positive() && fee_per_byte >= min_fee_rate)
 								coreturn expects_rt<computed_fee>(computed_fee::fee_per_byte(fee_per_byte / netdata.divisibility, (size_t)std::ceil(2 * virtual_size)));
 						}
@@ -541,16 +558,16 @@ namespace tangent
 									if (!fee.is_zero() && !fee.is_positive())
 										continue;
 
-									fee = (fee * netdata.divisibility).truncate(protocol::now().message.decimal_precision);
+									fee = (fee * netdata.divisibility).truncate(kernel::params().message.decimal_precision);
 									if (!transaction.has("size"))
 									{
 										if (transaction.has("hex"))
-											fee /= decimal(std::max<size_t>(1, transaction.child("hex")->value.as_string().size())).truncate(protocol::now().message.decimal_precision);
+											fee /= decimal(std::max<size_t>(1, transaction.child("hex")->value.as_string().size())).truncate(kernel::params().message.decimal_precision);
 										else
-											fee /= decimal(virtual_size).truncate(protocol::now().message.decimal_precision);
+											fee /= decimal(virtual_size).truncate(kernel::params().message.decimal_precision);
 									}
 									else
-										fee /= decimal(std::max<int64_t>(1, transaction.child("size")->value.as_uint64())).truncate(protocol::now().message.decimal_precision);
+										fee /= decimal(std::max<int64_t>(1, transaction.child("size")->value.as_uint64())).truncate(kernel::params().message.decimal_precision);
 
 									fee = std::max(min_fee_rate, fee);
 									fee_rates.push_back(std::move(fee));
@@ -586,7 +603,7 @@ namespace tangent
 								auto median_fee = block_stats->child_var("medianfee").as_decimal();
 								auto median_tx_size = block_stats->child_var("mediantxsize").as_decimal();
 								if ((median_fee.is_zero() || median_fee.is_positive()) && (median_tx_size.is_zero() || median_tx_size.is_positive()))
-									fee_rates.push_back(std::max(min_fee_rate, median_fee / median_tx_size.truncate(protocol::now().message.decimal_precision)));
+									fee_rates.push_back(std::max(min_fee_rate, median_fee / median_tx_size.truncate(kernel::params().message.decimal_precision)));
 
 								auto fee_rate_50th_percentile = block_stats->child_var("feerate_percentiles.2").as_decimal();
 								if (fee_rate_50th_percentile.is_zero() || fee_rate_50th_percentile.is_positive())
@@ -744,7 +761,9 @@ namespace tangent
 					return layer_exception("not a valid raw private key");
 
 				auto* chain = get_chain();
+				auto data = secret_key.expose<KEY_LIMIT>();
 				char encoded_private_key[256]; size_t encoded_private_key_size = sizeof(encoded_private_key);
+				memcpy(private_key.privkey, data.view.data(), data.view.size());
 				btc_privkey_encode_wif(&private_key, chain, encoded_private_key, &encoded_private_key_size);
 				return secret_box::secure(std::string_view(encoded_private_key, strnlen(encoded_private_key, encoded_private_key_size)));
 			}
@@ -773,6 +792,9 @@ namespace tangent
 			}
 			expects_lr<string> bitcoin::encode_address(const std::string_view& public_key_hash)
 			{
+				if (public_key_hash.size() < 2)
+					return layer_exception("invalid public key hash");
+
 				auto* chain = get_chain();
 				auto type = public_key_hash[0];
 				auto data = public_key_hash.substr(1);
@@ -926,6 +948,18 @@ namespace tangent
 
 				++data_size;
 				return string((char*)data, data_size);
+			}
+			expects_lr<string> bitcoin::encode_signature(const std::string_view& signature)
+			{
+				return codec::hex_encode(signature);
+			}
+			expects_lr<string> bitcoin::decode_signature(const std::string_view& signature)
+			{
+				auto result = codec::hex_decode(signature);
+				if (result.size() != 65)
+					return layer_exception("invalid hex signature");
+
+				return result;
 			}
 			expects_lr<string> bitcoin::encode_transaction_id(const std::string_view& transaction_id)
 			{
@@ -1466,7 +1500,7 @@ namespace tangent
 
 				data_size = sizeof(uint8_t) * address.size() * 2;
 				int new_size = btc_base58_decode_check(address_data.c_str(), data, data_size);
-				if (!new_size)
+				if (!new_size || new_size < 4)
 				{
 				try_public_key:
 					if (!format::util::is_hex_encoding(address))
@@ -1531,7 +1565,7 @@ namespace tangent
 			}
 			const sc_chainparams_* bitcoin::get_chain()
 			{
-				switch (protocol::now().user.network)
+				switch (kernel::params().user.network)
 				{
 					case network_type::regtest:
 						return &btc_chainparams_regtest;
@@ -1581,7 +1615,7 @@ namespace tangent
 			}
 			const sc_chainparams_* bitcoin_cash::get_chain()
 			{
-				switch (protocol::now().user.network)
+				switch (kernel::params().user.network)
 				{
 					case network_type::regtest:
 						return &bch_chainparams_regtest;
@@ -1608,7 +1642,7 @@ namespace tangent
 			}
 			const sc_chainparams_* bitcoin_gold::get_chain()
 			{
-				switch (protocol::now().user.network)
+				switch (kernel::params().user.network)
 				{
 					case network_type::regtest:
 						return &btg_chainparams_regtest;
@@ -1712,7 +1746,7 @@ namespace tangent
 			}
 			const sc_chainparams_* bitcoin_sv::get_chain()
 			{
-				switch (protocol::now().user.network)
+				switch (kernel::params().user.network)
 				{
 					case network_type::regtest:
 						return &bsv_chainparams_regtest;
@@ -1739,7 +1773,7 @@ namespace tangent
 			}
 			const sc_chainparams_* dash::get_chain()
 			{
-				switch (protocol::now().user.network)
+				switch (kernel::params().user.network)
 				{
 					case network_type::regtest:
 						return &dash_chainparams_regtest;
@@ -1762,7 +1796,7 @@ namespace tangent
 			}
 			const sc_chainparams_* digibyte::get_chain()
 			{
-				switch (protocol::now().user.network)
+				switch (kernel::params().user.network)
 				{
 					case network_type::regtest:
 						return &dgb_chainparams_regtest;
@@ -1786,7 +1820,7 @@ namespace tangent
 			}
 			const sc_chainparams_* dogecoin::get_chain()
 			{
-				switch (protocol::now().user.network)
+				switch (kernel::params().user.network)
 				{
 					case network_type::regtest:
 						return &doge_chainparams_regtest;
@@ -1811,7 +1845,7 @@ namespace tangent
 			}
 			const sc_chainparams_* ecash::get_chain()
 			{
-				switch (protocol::now().user.network)
+				switch (kernel::params().user.network)
 				{
 					case network_type::regtest:
 						return &xec_chainparams_regtest;
@@ -1838,7 +1872,7 @@ namespace tangent
 			}
 			const sc_chainparams_* litecoin::get_chain()
 			{
-				switch (protocol::now().user.network)
+				switch (kernel::params().user.network)
 				{
 					case network_type::regtest:
 						return &ltc_chainparams_regtest;
@@ -1872,7 +1906,7 @@ namespace tangent
 			}
 			const sc_chainparams_* zcash::get_chain()
 			{
-				switch (protocol::now().user.network)
+				switch (kernel::params().user.network)
 				{
 					case network_type::regtest:
 						return &zec_chainparams_regtest;

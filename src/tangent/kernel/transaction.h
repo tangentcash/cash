@@ -233,9 +233,12 @@ namespace tangent
 			btree_map<algorithm::pubkeyhash_t, share_pair> shares;
 			vector<uint8_t> key;
 
+			~distribution_key();
 			bool store_payload(format::wo_stream* stream) const override;
 			bool load_payload(format::ro_stream& stream) override;
 			format::tree as_tree() const override;
+			format::wo_stream as_message() const override;
+			format::wo_stream as_signable() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			uint256_t as_ref_hash() const;
@@ -250,6 +253,7 @@ namespace tangent
 			algorithm::pubkey_t public_key;
 			algorithm::pubkeyhash_t public_key_hash;
 
+			~wallet();
 			bool set_secret_key(const algorithm::seckey_t& value);
 			void set_public_key(const algorithm::pubkey_t& value);
 			void set_public_key_hash(const algorithm::pubkeyhash_t& value);
@@ -272,7 +276,9 @@ namespace tangent
 			string get_address() const;
 			expects_lr<uint64_t> get_latest_nonce() const;
 			format::tree as_tree() const override;
-			format::tree as_public_tree() const;
+			format::tree as_secret_tree() const;
+			format::wo_stream as_message() const override;
+			format::wo_stream as_signable() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();

@@ -95,7 +95,7 @@ namespace tangent
 					return expectation::met;
 				});
 				executor->receipt.successful = !!execution;
-				executor->receipt.block_time = protocol::now().time.now();
+				executor->receipt.block_time = kernel::params().time.now();
 				if (!executor->receipt.successful)
 					executor->emit_event(0, { format::variable(execution.what()) }, false);
 
@@ -384,7 +384,7 @@ namespace tangent
 
 		int script(const inline_args& environment)
 		{
-			auto params = protocol(environment);
+			auto params = kernel(environment);
 			auto context = script_context();
 			auto* terminal = console::get();
 			auto directory = *os::directory::get_working();
@@ -1029,7 +1029,7 @@ namespace tangent
 		}
 		int node(const inline_args& environment)
 		{
-			auto params = protocol(environment);
+			auto params = kernel(environment);
 			consensus::server_node consensus_service;
 			discovery::server_node discovery_service;
 			rpc::server_node rpc_service = rpc::server_node(&consensus_service);

@@ -69,7 +69,7 @@ void sha3_512n(const unsigned char* seed, size_t seed_len, unsigned char* out, s
 	}
 }
 
-void mpz_random_prime(mpz_t prime, mp_bitcnt_t len)
+int mpz_random_prime(mpz_t prime, mp_bitcnt_t len)
 {
 	mpz_t random_num;
 	mpz_init(random_num);
@@ -77,13 +77,19 @@ void mpz_random_prime(mpz_t prime, mp_bitcnt_t len)
 	char* seed = (char*)malloc(sizeof(char) * seed_size);
 	do
 	{
-		random_buffer((uint8_t*)seed, seed_size);
+		if (random_u8a((uint8_t*)seed, seed_size) != 0)
+		{
+			mpz_clear(random_num);
+			free(seed);
+			return -1;
+		}
 		mpz_import(random_num, seed_size, 1, sizeof(seed[0]), 0, 0, seed);
 		mpz_setbit(random_num, len - 1);
 		mpz_nextprime(prime, random_num);
 	} while (len != (mp_bitcnt_t)mpz_sizeinbase(prime, 2));
 	mpz_clear(random_num);
 	free(seed);
+	return 0;
 }
 
 void mpz_derive_prime(mpz_t prime, mp_bitcnt_t len, uint8_t preseed[64])
@@ -239,7 +245,7 @@ void paillier_ell(mpz_t result, mpz_t input, mpz_t ninv, mp_bitcnt_t len)
  * Since /dev/random is one of the sources of randomness in prime generation, the program may block.
  * In that case, you have to wait or move your mouse to feed /dev/random with fresh randomness.
  */
-void paillier_keypair_random(paillier_pubkey* pub, paillier_seckey* priv, mp_bitcnt_t len)
+int paillier_keypair_random(paillier_pubkey* pub, paillier_seckey* priv, mp_bitcnt_t len)
 {
 	mpz_t p, q, n2, temp, mask, g;
 	mpz_init(p);
@@ -253,8 +259,11 @@ void paillier_keypair_random(paillier_pubkey* pub, paillier_seckey* priv, mp_bit
 	priv->len = len;
 retry:
 	//generate p and q
-	mpz_random_prime(p, len / 2);
-	mpz_random_prime(q, len / 2);
+	if (mpz_random_prime(p, len / 2) != 0)
+		return -1;
+
+	if (mpz_random_prime(q, len / 2) != 0)
+		return -1;
 
 	//calculate modulus n=p*q
 	mpz_mul(pub->n, p, q);
@@ -298,6 +307,7 @@ retry:
 	mpz_clear(temp);
 	mpz_clear(mask);
 	mpz_clear(g);
+	return 0;
 }
 
 void paillier_keypair_derive(paillier_pubkey* pub, paillier_seckey* priv, mp_bitcnt_t len, const unsigned char* message, mp_bitcnt_t message_size)
@@ -375,7 +385,7 @@ retry:
  * The function calculates c=g^m*r^n mod n^2 with r random number.
  * Encryption benefits from the fact that g=1+n, because (1+n)^m = 1+n*m mod n^2.
  */
-void paillier_encrypt(mpz_t ciphertext, mpz_t plaintext, paillier_pubkey* pub)
+int paillier_encrypt(mpz_t ciphertext, mpz_t plaintext, paillier_pubkey* pub)
 {
 	mpz_t n2, r;
 	mpz_init(n2);
@@ -389,7 +399,14 @@ void paillier_encrypt(mpz_t ciphertext, mpz_t plaintext, paillier_pubkey* pub)
 	size_t seed_size = BIT2BYTE(pub_len);
 	uint8_t* seed = malloc(seed_size);
 retry:
-	random_buffer(seed, seed_size);
+	if (random_u8a(seed, seed_size) != 0)
+	{
+		free(seed);
+		mpz_clear(n2);
+		mpz_clear(r);
+		return -1;
+	}
+
 	mpz_import(r, seed_size, 1, sizeof(seed[0]), 0, 0, seed);
 	mpz_mod(r, r, pub->n);
 	if (mpz_cmp_ui(r, 0) == 0)
@@ -409,6 +426,7 @@ retry:
 	mpz_mod(ciphertext, ciphertext, n2);
 	mpz_clear(n2);
 	mpz_clear(r);
+	return 0;
 }
 
 /**
@@ -444,13 +462,19 @@ void paillier_homomorphic_add(mpz_t ciphertext3, mpz_t ciphertext1, mpz_t cipher
 	mpz_clear(n2);
 }
 
-void paillier_homomorphic_addc(mpz_t ciphertext2, mpz_t ciphertext1, mpz_t constant, paillier_pubkey* pub)
+int paillier_homomorphic_addc(mpz_t ciphertext2, mpz_t ciphertext1, mpz_t constant, paillier_pubkey* pub)
 {
 	mpz_t ciphertext3;
 	mpz_init(ciphertext3);
-	paillier_encrypt(ciphertext3, constant, pub);
+	if (paillier_encrypt(ciphertext3, constant, pub) != 0)
+	{
+		mpz_clear(ciphertext3);
+		return -1;
+	}
+
 	paillier_homomorphic_add(ciphertext2, ciphertext1, ciphertext3, pub);
 	mpz_clear(ciphertext3);
+	return 0;
 }
 
 /**

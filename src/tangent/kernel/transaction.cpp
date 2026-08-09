@@ -68,8 +68,7 @@ namespace tangent
 			if (!stream.read_integer(stream.read_type(), &type) || type != as_type())
 				return false;
 
-			string signature_assembly;
-			if (!stream.read_string(stream.read_type(), &signature_assembly) || !algorithm::encoding::decode_bytes(signature_assembly, signature.blob, sizeof(signature)))
+			if (!stream.read_optimized_view(stream.read_type(), signature.blob, sizeof(signature)))
 				return false;
 
 			if (!load_payload(stream))
@@ -137,7 +136,7 @@ namespace tangent
 				if (gas_price.is_nan() || gas_price.is_negative())
 					return layer_exception("invalid gas price");
 
-				if (gas_price.is_positive() && gas_price < protocol::now().policy.production.min_gas_price)
+				if (gas_price.is_positive() && gas_price < kernel::params().policy.production.min_gas_price)
 					return layer_exception("invalid gas price");
 			}
 			else if (!gas_price.is_zero())
@@ -337,8 +336,7 @@ namespace tangent
 			if (!stream.read_boolean(stream.read_type(), &successful))
 				return false;
 
-			string from_assembly;
-			if (!stream.read_string(stream.read_type(), &from_assembly) || !algorithm::encoding::decode_bytes(from_assembly, from.blob, sizeof(from)))
+			if (!stream.read_optimized_view(stream.read_type(), from.blob, sizeof(from)))
 				return false;
 
 			uint16_t size;
@@ -357,7 +355,7 @@ namespace tangent
 					if (!stream.read_boolean(type, &emitter_extension) && !emitter_extension)
 						return false;
 
-					if (!stream.read_string(stream.read_type(), &from_assembly) || !algorithm::encoding::decode_bytes(from_assembly, next.emitter.blob, sizeof(next.emitter)))
+					if (!stream.read_optimized_view(stream.read_type(), next.emitter.blob, sizeof(next.emitter)))
 						return false;
 
 					type = stream.read_type();
@@ -525,7 +523,7 @@ namespace tangent
 				return 0;
 
 			auto lock_block_number = prev->block_number;
-			auto unlock_block_number = lock_block_number + (milliseconds / protocol::now().policy.pow.time);
+			auto unlock_block_number = lock_block_number + (milliseconds / kernel::params().policy.pow.time);
 			auto blocks_until_unlock = block_number <= unlock_block_number ? unlock_block_number - block_number : 0;
 			return blocks_until_unlock;
 		}
@@ -623,7 +621,16 @@ namespace tangent
 			store_row(&message);
 			return message.data;
 		}
-		
+
+		distribution_key::~distribution_key()
+		{
+			std::fill(key.begin(), key.end(), 0);
+			for (auto& [owner, share] : shares)
+			{
+				share.recv = algorithm::share_t();
+				share.sent = algorithm::share_t();
+			}
+		}
 		bool distribution_key::store_payload(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
@@ -648,8 +655,7 @@ namespace tangent
 			if (!stream.read_integer(stream.read_type(), &ref.asset))
 				return false;
 
-			string owner_assembly;
-			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_bytes(owner_assembly, ref.owner.blob, sizeof(ref.owner)))
+			if (!stream.read_optimized_view(stream.read_type(), ref.owner.blob, sizeof(ref.owner)))
 				return false;
 
 			string key_assembly;
@@ -663,15 +669,15 @@ namespace tangent
 			shares.clear();
 			for (uint8_t i = 0; i < shares_size; i++)
 			{
-				string participant_assembly; algorithm::pubkeyhash_t participant;
-				if (!stream.read_string(stream.read_type(), &participant_assembly) || !algorithm::encoding::decode_bytes(participant_assembly, participant.blob, sizeof(participant)))
+				algorithm::pubkeyhash_t participant;
+				if (!stream.read_optimized_view(stream.read_type(), participant.blob, sizeof(participant)))
 					return false;
 
 				auto& pair = shares[participant]; string share_assembly;
-				if (!stream.read_string(stream.read_type(), &share_assembly) || !algorithm::encoding::decode_bytes(share_assembly, pair.recv.blob, sizeof(pair.recv)))
+				if (!stream.read_optimized_view(stream.read_type(), pair.recv.blob, sizeof(pair.recv)))
 					return false;
 
-				if (!stream.read_string(stream.read_type(), &share_assembly) || !algorithm::encoding::decode_bytes(share_assembly, pair.sent.blob, sizeof(pair.sent)))
+				if (!stream.read_optimized_view(stream.read_type(), pair.sent.blob, sizeof(pair.sent)))
 					return false;
 			}
 
@@ -695,6 +701,23 @@ namespace tangent
 				share_data->set("sent", format::variable(format::util::encode_0xhex(share.sent.optimized_view())));
 			}
 			return data;
+		}
+		format::wo_stream distribution_key::as_message() const
+		{
+			format::wo_stream message;
+			message.zeroing = true;
+			if (!store(&message))
+				message.clear();
+			return message;
+		}
+		format::wo_stream distribution_key::as_signable() const
+		{
+			format::wo_stream message;
+			message.zeroing = true;
+			message.write_integer(as_type());
+			if (!store_payload(&message))
+				message.clear();
+			return message;
 		}
 		uint32_t distribution_key::as_type() const
 		{
@@ -726,6 +749,10 @@ namespace tangent
 			return message.hash();
 		}
 
+		wallet::~wallet()
+		{
+			secret_key = algorithm::seckey_t();
+		}
 		bool wallet::set_secret_key(const algorithm::seckey_t& value)
 		{
 			secret_key = value;
@@ -927,19 +954,36 @@ namespace tangent
 		format::tree wallet::as_tree() const
 		{
 			format::tree data;
-			data.set("secret_key", algorithm::signing::serialize_secret_key(secret_key));
 			data.set("public_key", algorithm::signing::serialize_public_key(public_key));
-			data.set("public_key_hash", format::variable(format::util::encode_0xhex(public_key_hash.optimized_view())));
+			data.set("public_key_hash", format::variable(format::util::encode_0xhex(public_key_hash.view())));
 			data.set("address", algorithm::signing::serialize_address(public_key_hash));
 			return data;
 		}
-		format::tree wallet::as_public_tree() const
+		format::tree wallet::as_secret_tree() const
 		{
 			format::tree data;
+			data.set("secret_key", algorithm::signing::serialize_secret_key(secret_key));
 			data.set("public_key", algorithm::signing::serialize_public_key(public_key));
-			data.set("public_key_hash", format::variable(format::util::encode_0xhex(public_key_hash.optimized_view())));
+			data.set("public_key_hash", format::variable(format::util::encode_0xhex(public_key_hash.view())));
 			data.set("address", algorithm::signing::serialize_address(public_key_hash));
 			return data;
+		}
+		format::wo_stream wallet::as_message() const
+		{
+			format::wo_stream message;
+			message.zeroing = true;
+			if (!store(&message))
+				message.clear();
+			return message;
+		}
+		format::wo_stream wallet::as_signable() const
+		{
+			format::wo_stream message;
+			message.zeroing = true;
+			message.write_integer(as_type());
+			if (!store_payload(&message))
+				message.clear();
+			return message;
 		}
 		uint32_t wallet::as_type() const
 		{
@@ -1029,8 +1073,8 @@ namespace tangent
 			availability.neighbors.clear();
 			for (uint16_t i = 0; i < neighbors_size; i++)
 			{
-				string public_key_assembly; algorithm::pubkey_t public_key;
-				if (!stream.read_string(stream.read_type(), &public_key_assembly) || !algorithm::encoding::decode_bytes(public_key_assembly, public_key.blob, sizeof(public_key)))
+				algorithm::pubkey_t public_key;
+				if (!stream.read_optimized_view(stream.read_type(), public_key.blob, sizeof(public_key)))
 					return false;
 
 				availability.neighbors.insert(public_key);

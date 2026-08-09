@@ -28,7 +28,7 @@ namespace tangent
 					pay2_cash_script_hash = (1 << 7),
 					pay2_cash_public_key_hash = (1 << 8),
 					pay2_unified_public_key_hash = (1 << 9),
-					all = (pay2_public_key | pay2_public_key_hash | pay2_script_hash | pay2_witness_public_key_hash | pay2_witness_public_key_hash | pay2_witness_script_hash | pay2_taproot | pay2_tapscript | pay2_cash_public_key_hash | pay2_cash_script_hash | pay2_unified_public_key_hash)
+					all = (pay2_public_key | pay2_script_hash | pay2_public_key_hash | pay2_witness_script_hash | pay2_witness_public_key_hash | pay2_tapscript | pay2_taproot | pay2_cash_script_hash | pay2_cash_public_key_hash | pay2_unified_public_key_hash)
 				};
 
 				struct btc_tx_context
@@ -96,6 +96,8 @@ namespace tangent
 				virtual expects_lr<string> decode_public_key(const std::string_view& public_key) override;
 				virtual expects_lr<string> encode_address(const std::string_view& public_key_hash) override;
 				virtual expects_lr<string> decode_address(const std::string_view& address) override;
+				virtual expects_lr<string> encode_signature(const std::string_view& signature) override;
+				virtual expects_lr<string> decode_signature(const std::string_view& signature) override;
 				virtual expects_lr<string> encode_transaction_id(const std::string_view& transaction_id) override;
 				virtual expects_lr<string> decode_transaction_id(const std::string_view& transaction_id) override;
 				virtual expects_lr<address_map> to_addresses(const std::string_view& public_key) override;

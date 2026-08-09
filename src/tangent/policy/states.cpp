@@ -20,7 +20,7 @@ namespace tangent
 			auto* prev = (account_nonce*)prev_state;
 			if (!prev)
 			{
-				if (nonce > protocol::now().policy.account_nonce_step_limit && nonce != std::numeric_limits<uint64_t>::max())
+				if (nonce > kernel::params().policy.account_nonce_step_limit && nonce != std::numeric_limits<uint64_t>::max())
 					return layer_exception("invalid starting nonce");
 			}
 			else if (prev->nonce == std::numeric_limits<uint64_t>::max() || nonce == std::numeric_limits<uint64_t>::max())
@@ -28,8 +28,8 @@ namespace tangent
 				if (prev->nonce != nonce)
 					return layer_exception("account nonce must stay frozen");
 			}
-			else if (prev->nonce >= nonce || nonce - prev->nonce > protocol::now().policy.account_nonce_step_limit)
-				return layer_exception("invalid nonce (received: " + to_string(nonce) + ", expected: " + to_string(prev->nonce + 1) + "-" + to_string(prev->nonce + protocol::now().policy.account_nonce_step_limit) + ")");
+			else if (prev->nonce >= nonce || nonce - prev->nonce > kernel::params().policy.account_nonce_step_limit)
+				return layer_exception("invalid nonce (received: " + to_string(nonce) + ", expected: " + to_string(prev->nonce + 1) + "-" + to_string(prev->nonce + kernel::params().policy.account_nonce_step_limit) + ")");
 
 			return expectation::met;
 		}
@@ -41,8 +41,7 @@ namespace tangent
 		}
 		bool account_nonce::load_index(format::ro_stream& stream)
 		{
-			string owner_assembly;
-			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_bytes(owner_assembly, owner.blob, sizeof(owner)))
+			if (!stream.read_optimized_view(stream.read_type(), owner.blob, sizeof(owner)))
 				return false;
 
 			return true;
@@ -112,8 +111,7 @@ namespace tangent
 		}
 		bool account_program::load_index(format::ro_stream& stream)
 		{
-			string owner_assembly;
-			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_bytes(owner_assembly, owner.blob, sizeof(owner)))
+			if (!stream.read_optimized_view(stream.read_type(), owner.blob, sizeof(owner)))
 				return false;
 
 			return true;
@@ -190,8 +188,7 @@ namespace tangent
 		}
 		bool account_uniform::load_index(format::ro_stream& stream)
 		{
-			string owner_assembly;
-			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_bytes(owner_assembly, owner.blob, sizeof(owner)))
+			if (!stream.read_optimized_view(stream.read_type(), owner.blob, sizeof(owner)))
 				return false;
 
 			if (!stream.read_string(stream.read_type(), &index))
@@ -275,8 +272,7 @@ namespace tangent
 		}
 		bool account_multiform::load_column(format::ro_stream& stream)
 		{
-			string owner_assembly;
-			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_bytes(owner_assembly, owner.blob, sizeof(owner)))
+			if (!stream.read_optimized_view(stream.read_type(), owner.blob, sizeof(owner)))
 				return false;
 
 			if (!stream.read_string(stream.read_type(), &column))
@@ -293,8 +289,7 @@ namespace tangent
 		}
 		bool account_multiform::load_row(format::ro_stream& stream)
 		{
-			string owner_assembly;
-			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_bytes(owner_assembly, owner.blob, sizeof(owner)))
+			if (!stream.read_optimized_view(stream.read_type(), owner.blob, sizeof(owner)))
 				return false;
 
 			if (!stream.read_string(stream.read_type(), &row))
@@ -401,8 +396,7 @@ namespace tangent
 		}
 		bool account_balance::load_column(format::ro_stream& stream)
 		{
-			string owner_assembly;
-			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_bytes(owner_assembly, owner.blob, sizeof(owner)))
+			if (!stream.read_optimized_view(stream.read_type(), owner.blob, sizeof(owner)))
 				return false;
 
 			return true;
@@ -505,8 +499,8 @@ namespace tangent
 
 			if (stake.is_negative())
 				return layer_exception("invalid stake");
-			else if (!stake.is_nan() && !ledger::block_header::is_genesis_epoch(block_number) && stake < protocol::now().policy.production.min_stake_value)
-				return layer_exception(stringify::text("minimum stake requirement not met (%s %s)", protocol::now().policy.production.min_stake_value.to_string().c_str(), protocol::now().policy.token.c_str()));
+			else if (!stake.is_nan() && !ledger::block_header::is_genesis_epoch(block_number) && stake < kernel::params().policy.production.min_stake_value)
+				return layer_exception(stringify::text("minimum stake requirement not met (%s %s)", kernel::params().policy.production.min_stake_value.to_string().c_str(), kernel::params().policy.token.c_str()));
 
 			return expectation::met;
 		}
@@ -518,8 +512,7 @@ namespace tangent
 		}
 		bool validator_production::load_column(format::ro_stream& stream)
 		{
-			string owner_assembly;
-			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_bytes(owner_assembly, owner.blob, sizeof(owner)))
+			if (!stream.read_optimized_view(stream.read_type(), owner.blob, sizeof(owner)))
 				return false;
 
 			return true;
@@ -624,8 +617,7 @@ namespace tangent
 		}
 		bool validator_production_reward::load_column(format::ro_stream& stream)
 		{
-			string owner_assembly;
-			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_bytes(owner_assembly, owner.blob, sizeof(owner)))
+			if (!stream.read_optimized_view(stream.read_type(), owner.blob, sizeof(owner)))
 				return false;
 
 			return true;
@@ -711,13 +703,13 @@ namespace tangent
 
 			if (stake.is_negative())
 				return layer_exception("invalid stake");
-			else if (!stake.is_nan() && stake < protocol::now().policy.participation.min_stake_value)
-				return layer_exception(stringify::text("minimum stake requirement not met (%s %s)", protocol::now().policy.participation.min_stake_value.to_string().c_str(), protocol::now().policy.token.c_str()));
+			else if (!stake.is_nan() && stake < kernel::params().policy.participation.min_stake_value)
+				return layer_exception(stringify::text("minimum stake requirement not met (%s %s)", kernel::params().policy.participation.min_stake_value.to_string().c_str(), kernel::params().policy.token.c_str()));
 
 			auto* prev = (validator_participation*)prev_state;
 			if (prev != nullptr && !prev->stake.is_nan() && stake.is_nan())
 			{
-				auto time_lock = time_lock_blocks(prev_state, protocol::now().policy.participation.locking_time);
+				auto time_lock = time_lock_blocks(prev_state, kernel::params().policy.participation.locking_time);
 				if (time_lock > 0)
 					return layer_exception("stake is time locked for the next " + to_string(time_lock) + " blocks");
 			}
@@ -732,8 +724,7 @@ namespace tangent
 		}
 		bool validator_participation::load_column(format::ro_stream& stream)
 		{
-			string owner_assembly;
-			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_bytes(owner_assembly, owner.blob, sizeof(owner)))
+			if (!stream.read_optimized_view(stream.read_type(), owner.blob, sizeof(owner)))
 				return false;
 
 			return true;
@@ -834,8 +825,7 @@ namespace tangent
 		}
 		bool validator_participation_reward::load_column(format::ro_stream& stream)
 		{
-			string owner_assembly;
-			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_bytes(owner_assembly, owner.blob, sizeof(owner)))
+			if (!stream.read_optimized_view(stream.read_type(), owner.blob, sizeof(owner)))
 				return false;
 
 			return true;
@@ -937,8 +927,7 @@ namespace tangent
 		}
 		bool validator_participation_ref::load_column(format::ro_stream& stream)
 		{
-			string owner_assembly;
-			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_bytes(owner_assembly, owner.blob, sizeof(owner)))
+			if (!stream.read_optimized_view(stream.read_type(), owner.blob, sizeof(owner)))
 				return false;
 
 			return true;
@@ -959,8 +948,7 @@ namespace tangent
 			if (!stream.read_integer(stream.read_type(), &ref.hash))
 				return false;
 
-			string owner_assembly;
-			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_bytes(owner_assembly, ref.owner.blob, sizeof(ref.owner)))
+			if (!stream.read_optimized_view(stream.read_type(), ref.owner.blob, sizeof(ref.owner)))
 				return false;
 
 			return true;
@@ -1038,8 +1026,8 @@ namespace tangent
 
 			if (stake.is_negative())
 				return layer_exception("invalid stake");
-			else if (!stake.is_nan() && stake < protocol::now().policy.attestation.min_stake_value)
-				return layer_exception(stringify::text("minimum stake requirement not met (%s %s)", protocol::now().policy.attestation.min_stake_value.to_string().c_str(), protocol::now().policy.token.c_str()));
+			else if (!stake.is_nan() && stake < kernel::params().policy.attestation.min_stake_value)
+				return layer_exception(stringify::text("minimum stake requirement not met (%s %s)", kernel::params().policy.attestation.min_stake_value.to_string().c_str(), kernel::params().policy.token.c_str()));
 
 			if (min_fee.is_nan() || min_fee.is_negative())
 				return layer_exception("invalid min fee");
@@ -1047,7 +1035,7 @@ namespace tangent
 			auto* prev = (validator_attestation*)prev_state;
 			if (prev != nullptr && !prev->stake.is_nan() && stake.is_nan())
 			{
-				auto time_lock = time_lock_blocks(prev_state, protocol::now().policy.attestation.confirmation_time);
+				auto time_lock = time_lock_blocks(prev_state, kernel::params().policy.attestation.confirmation_time);
 				if (time_lock > 0)
 					return layer_exception("stake is time locked for the next " + to_string(time_lock) + " blocks");
 			}
@@ -1062,8 +1050,7 @@ namespace tangent
 		}
 		bool validator_attestation::load_column(format::ro_stream& stream)
 		{
-			string owner_assembly;
-			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_bytes(owner_assembly, owner.blob, sizeof(owner)))
+			if (!stream.read_optimized_view(stream.read_type(), owner.blob, sizeof(owner)))
 				return false;
 
 			return true;
@@ -1179,8 +1166,7 @@ namespace tangent
 		}
 		bool validator_attestation_reward::load_column(format::ro_stream& stream)
 		{
-			string owner_assembly;
-			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_bytes(owner_assembly, owner.blob, sizeof(owner)))
+			if (!stream.read_optimized_view(stream.read_type(), owner.blob, sizeof(owner)))
 				return false;
 
 			return true;
@@ -1300,9 +1286,9 @@ namespace tangent
 
 				if (security_level % 2 == 0)
 					return layer_exception("security level value must be odd");
-				else if (security_level > (uint8_t)protocol::now().policy.participation.max_per_account)
+				else if (security_level > (uint8_t)kernel::params().policy.participation.max_per_account)
 					return layer_exception("security level too high");
-				else if (security_level < (uint8_t)protocol::now().policy.participation.min_per_account)
+				else if (security_level < (uint8_t)kernel::params().policy.participation.min_per_account)
 					return layer_exception("security level too low");
 			}
 
@@ -1350,8 +1336,7 @@ namespace tangent
 		}
 		bool bridge_instance::load_data(format::ro_stream& stream)
 		{
-			string owner_assembly;
-			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_bytes(owner_assembly, ref.owner.blob, sizeof(ref.owner)))
+			if (!stream.read_optimized_view(stream.read_type(), ref.owner.blob, sizeof(ref.owner)))
 				return false;
 
 			if (!stream.read_decimal(stream.read_type(), &fee_rate))
@@ -1703,8 +1688,7 @@ namespace tangent
 			if (!stream.read_integer(stream.read_type(), &ref.asset))
 				return false;
 
-			string owner_assembly;
-			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_bytes(owner_assembly, ref.owner.blob, sizeof(ref.owner)))
+			if (!stream.read_optimized_view(stream.read_type(), ref.owner.blob, sizeof(ref.owner)))
 				return false;
 
 			return true;
@@ -1744,9 +1728,8 @@ namespace tangent
 			group.clear();
 			for (uint8_t i = 0; i < group_size; i++)
 			{
-				string group_assembly;
 				algorithm::pubkeyhash_t group_hash;
-				if (!stream.read_string(stream.read_type(), &group_assembly) || !algorithm::encoding::decode_bytes(group_assembly, group_hash.blob, sizeof(group_hash)))
+				if (!stream.read_optimized_view(stream.read_type(), group_hash.blob, sizeof(group_hash)))
 					return false;
 
 				group.insert(group_hash);
@@ -2012,6 +1995,9 @@ namespace tangent
 					return layer_exception("invalid address");
 			}
 
+			if (prev && !prev->active && active)
+				return layer_exception("witness address resurrection not permitted");
+
 			return expectation::met;
 		}
 		bool witness_account::store_column(format::wo_stream* stream) const
@@ -2022,8 +2008,7 @@ namespace tangent
 		}
 		bool witness_account::load_column(format::ro_stream& stream)
 		{
-			string owner_assembly;
-			if (!stream.read_string(stream.read_type(), &owner_assembly) || !algorithm::encoding::decode_bytes(owner_assembly, ref.owner.blob, sizeof(ref.owner)))
+			if (!stream.read_optimized_view(stream.read_type(), ref.owner.blob, sizeof(ref.owner)))
 				return false;
 
 			return true;

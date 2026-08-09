@@ -9,6 +9,10 @@ namespace tangent
 {
 	namespace ledger
 	{
+		static bool may_use_as_witness_address(const std::string_view& hash)
+		{
+			return hash.size() >= 2 && !std::all_of(hash.begin() + 1, hash.end(), [](char c) { return c == '\0'; });
+		}
 		static storages::position_condition to_position_condition(const filter_comparator comparator)
 		{
 			return (storages::position_condition)comparator;
@@ -345,7 +349,7 @@ namespace tangent
 			if (!generation_time || generation_time > evaluation_time)
 				return layer_exception("invalid time");
 
-			if (priority > protocol::now().policy.production.max_per_block)
+			if (priority > kernel::params().policy.production.max_per_block)
 				return layer_exception("invalid priority");
 
 			auto target_difficulty = number <= 1 || parent_block ? algorithm::wesolowski::scale(get_proof_slot_target(parent_block), get_proof_difficulty_multiplier()) : difficulty;
@@ -366,7 +370,7 @@ namespace tangent
 			if (!parent_block && number > 1)
 				return expectation::met;
 
-			if (parent_block && parent_block->evaluation_time > generation_time + protocol::now().policy.pow.adjustment_time)
+			if (parent_block && parent_block->evaluation_time > generation_time + kernel::params().policy.pow.adjustment_time)
 				return layer_exception("block is too far into the past");
 
 			if (number > 1 && parent_block && parent_block->number != number - 1)
@@ -501,7 +505,7 @@ namespace tangent
 		bool block_header::solve(const algorithm::pubkeyhash_t& public_key_hash)
 		{
 			proof = algorithm::wesolowski::evaluate(number, difficulty, as_solution(public_key_hash).data);
-			evaluation_time = protocol::now().time.now();
+			evaluation_time = kernel::params().time.now();
 			return !proof.empty();
 		}
 		bool block_header::verify(const algorithm::pubkey_t& public_key) const
@@ -524,7 +528,7 @@ namespace tangent
 		{
 			parent_hash = (parent_block ? parent_block->as_hash() : uint256_t(0));
 			number = (parent_block ? parent_block->number : 0) + 1;
-			generation_time = protocol::now().time.now();
+			generation_time = kernel::params().time.now();
 		}
 		void block_header::set_witness_requirement(const algorithm::asset_id& asset, uint64_t block_number)
 		{
@@ -535,7 +539,7 @@ namespace tangent
 		bool block_header::network_congestion() const
 		{
 			uint256_t slot_gas_limit_band = get_slot_gas_limit() / 1'000'000;
-			return slot_gas_use / slot_gas_limit_band > protocol::now().policy.production.min_network_congestion;
+			return slot_gas_use / slot_gas_limit_band > kernel::params().policy.production.min_network_congestion;
 		}
 		uint64_t block_header::get_witness_requirement(const algorithm::asset_id& asset) const
 		{
@@ -597,7 +601,7 @@ namespace tangent
 		uint64_t block_header::get_proof_slot_target(const block_header* parent_block) const
 		{
 			auto prev_duration = parent_block ? parent_block->get_slot_proof_duration_average() : 0;
-			auto prev_target = parent_block ? parent_block->difficulty : protocol::now().policy.pow.difficulty;
+			auto prev_target = parent_block ? parent_block->difficulty : kernel::params().policy.pow.difficulty;
 			if (parent_block && parent_block->priority > 0)
 				prev_target = algorithm::wesolowski::scale(prev_target, 1.0 / parent_block->get_proof_difficulty_multiplier());
 
@@ -632,7 +636,7 @@ namespace tangent
 			pow_data->set("mdifficulty", format::variable(get_proof_difficulty_multiplier()));
 			pow_data->set("kdifficulty", algorithm::encoding::serialize_uint256(algorithm::wesolowski::kdifficulty(difficulty)));
 			pow_data->set("difficulty", format::variable(difficulty));
-			pow_data->set("security", format::variable(protocol::now().policy.pow.security));
+			pow_data->set("security", format::variable(kernel::params().policy.pow.security));
 			pow_data->set("size", format::variable(proof.size()));
 			auto* slot_data = data.set("slot", format::tree::map());
 			slot_data->set("duration_total", algorithm::encoding::serialize_uint256(slot_duration));
@@ -702,7 +706,7 @@ namespace tangent
 		}
 		uint256_t block_header::get_gas_limit()
 		{
-			static uint256_t limit = protocol::now().policy.block_gas_limit;
+			static uint256_t limit = kernel::params().policy.block_gas_limit;
 			return limit;
 		}
 		uint256_t block_header::get_slot_gas_limit()
@@ -712,11 +716,11 @@ namespace tangent
 		}
 		uint256_t block_header::get_gas_work(uint64_t block_number, uint64_t priority, uint64_t difficulty, const uint256_t& gas_use, const uint256_t& gas_limit)
 		{
-			auto& policy = protocol::now().policy;
+			auto& policy = kernel::params().policy;
 			uint256_t alignment = 16, work;
 			uint256_t committee = policy.production.max_per_block;
 			uint256_t multiplier = priority >= committee ? 0 : math64u::pow3(committee - priority);
-			if (protocol::now().on(fork_id::difficulty_gas_work, block_number))
+			if (kernel::params().on(fork_id::difficulty_gas_work, block_number))
 				work = (difficulty / policy.pow.difficulty) * multiplier * gas_use / get_gas_limit();
 			else
 				work = gas_limit > 0 ? (multiplier * gas_use) / gas_limit : uint256_t(0);
@@ -725,12 +729,12 @@ namespace tangent
 		}
 		bool block_header::is_genesis_epoch(uint64_t block_number)
 		{
-			uint64_t ending_block_number = protocol::now().policy.emission.genesis_epoch_length;
+			uint64_t ending_block_number = kernel::params().policy.emission.genesis_epoch_length;
 			return ending_block_number > 0 && block_number <= ending_block_number;
 		}
 		decimal block_header::get_coinbase_value(uint64_t block_number)
 		{
-			auto& emission = protocol::now().policy.emission;
+			auto& emission = kernel::params().policy.emission;
 			if (is_genesis_epoch(block_number))
 				return emission.genesis_coinbase_value;
 
@@ -791,8 +795,7 @@ namespace tangent
 			if (!stream.read_integer(stream.read_type(), &type) || type != as_type())
 				return false;
 
-			string signature_assembly;
-			if (!stream.read_string(stream.read_type(), &signature_assembly) || !algorithm::encoding::decode_bytes(signature_assembly, signature.blob, sizeof(signature)))
+			if (!stream.read_optimized_view(stream.read_type(), signature.blob, sizeof(signature)))
 				return false;
 
 			return load_header_payload(stream);
@@ -1153,7 +1156,7 @@ namespace tangent
 			size_t bytes = next->as_message().data.size();
 			return burn_gas(bytes * (size_t)gas_cost::read_byte);
 		}
-		expects_lr<void> executor_context::store(transition_state* next, bool paid)
+		expects_lr<void> executor_context::store(transition_state* next, bool paid, bool force_delete)
 		{
 			if (!next)
 				return layer_exception("invalid state");
@@ -1175,6 +1178,9 @@ namespace tangent
 				case state_level::uniform:
 				{
 					prev = chain.get_uniform(type, changelog, ((uniform_state*)next)->as_index(), get_validation_nonce()).or_else(storages::state_result()).value;
+					if (force_delete && !prev)
+						return expectation::met;
+
 					auto status = next->transition(*prev);
 					if (!status)
 						return status;
@@ -1183,6 +1189,9 @@ namespace tangent
 				case state_level::multiform:
 				{
 					prev = chain.get_multiform(type, changelog, ((multiform_state*)next)->as_column(), ((multiform_state*)next)->as_row(), get_validation_nonce()).or_else(storages::state_result()).value;
+					if (force_delete && !prev)
+						return expectation::met;
+
 					auto status = next->transition(*prev);
 					if (!status)
 						return status;
@@ -1196,7 +1205,7 @@ namespace tangent
 			if (!prev)
 				prev = states::resolver::from_type(type);
 
-			bool will_delete = states::resolver::will_delete(next, prev);
+			bool will_delete = force_delete || states::resolver::will_delete(next, prev);
 			if (will_delete)
 			{
 				next->checksum = 0;
@@ -1211,6 +1220,10 @@ namespace tangent
 
 			size_t size = next->as_message().data.size();
 			return burn_gas(size * (size_t)(will_delete ? gas_cost::erase_byte : gas_cost::write_byte));
+		}
+		expects_lr<void> executor_context::reset(transition_state* value, bool paid)
+		{
+			return store(value, paid, true);
 		}
 		expects_lr<void> executor_context::emit_witness(const algorithm::asset_id& asset, uint64_t block_number)
 		{
@@ -1227,6 +1240,9 @@ namespace tangent
 		{
 			if (paid)
 			{
+				if (!event)
+					return layer_exception("invalid event id");
+
 				format::wo_stream stream;
 				format::variables_util::serialize_merge_into(values, &stream);
 				stream.write_integer(event);
@@ -1242,6 +1258,9 @@ namespace tangent
 		{
 			if (paid)
 			{
+				if (!event)
+					return layer_exception("invalid event id");
+
 				format::wo_stream stream;
 				format::variables_util::serialize_merge_into(values, &stream);
 				stream.write_integer(event);
@@ -1300,8 +1319,8 @@ namespace tangent
 				return expectation::met;
 
 			bool pays_for_gas = transaction->gas_price.is_positive();
-			if (pays_for_gas && transaction->gas_price < protocol::now().policy.production.min_gas_price)
-				return layer_exception("gas price must be at least " + protocol::now().policy.production.min_gas_price.to_string());
+			if (pays_for_gas && transaction->gas_price < kernel::params().policy.production.min_gas_price)
+				return layer_exception("gas price must be at least " + kernel::params().policy.production.min_gas_price.to_string());
 
 			if (!transaction->commitment_priority(nullptr) && (options & (uint8_t)flags::congestion) && !pays_for_gas)
 				return layer_exception("must pay for gas - network congestion requirement");
@@ -2083,8 +2102,8 @@ namespace tangent
 				auto hash = chain->decode_address(address.second);
 				if (!hash)
 					return layer_exception(stringify::text("error applying \"%s\" address: %s", address.second.c_str(), hash.error().message().c_str()));
-				else if (hash->empty() || std::all_of(hash->begin(), hash->end(), [](char c) { return c == '\0'; }))
-					return layer_exception(stringify::text("error applying \"%s\" address: zero is reserved", address.second.c_str()));
+				else if (!may_use_as_witness_address(*hash))
+					return layer_exception(stringify::text("error applying \"%s\" address: invalid address", address.second.c_str()));
 
 				segments[*hash][address.first] = address.second;
 			}
@@ -2109,6 +2128,44 @@ namespace tangent
 					event.push_back(format::variable(address.second));
 
 				status = emit_event<states::witness_account>(std::move(event));
+				if (!status)
+					return status.error();
+			}
+			return new_state;
+		}
+		expects_lr<states::witness_account> executor_context::reset_witness_account(const algorithm::pubkeyhash_t& owner, const algorithm::asset_id& asset, const address_map& addresses)
+		{
+			if (addresses.empty())
+				return layer_exception("invalid operation");
+
+			auto* chain = superchain::bridge::get()->get_network(asset);
+			if (!chain)
+				return layer_exception("invalid operation");
+
+			btree_map<string, address_map> segments;
+			for (auto& address : addresses)
+			{
+				auto hash = chain->decode_address(address.second);
+				if (!hash)
+					return layer_exception(stringify::text("error applying \"%s\" address: %s", address.second.c_str(), hash.error().message().c_str()));
+				else if (!may_use_as_witness_address(*hash))
+					return layer_exception(stringify::text("error applying \"%s\" address: invalid address", address.second.c_str()));
+
+				segments[*hash][address.first] = address.second;
+			}
+
+			auto ref = states::bridge_ref();
+			ref.owner = owner;
+			ref.asset = asset;
+			ref.hash = 0;
+
+			states::witness_account new_state = states::witness_account(ref, { }, nullptr);
+			for (auto& segment : segments)
+			{
+				new_state = states::witness_account(ref, segment.second, block);
+				new_state.active = false;
+
+				auto status = reset(&new_state, true);
 				if (!status)
 					return status.error();
 			}
@@ -2705,7 +2762,7 @@ namespace tangent
 			if (!candidate || !candidate->transaction || !candidate->receipt.successful)
 				return layer_exception("block transaction not found");
 
-			auto& policy = protocol::now().policy;
+			auto& policy = kernel::params().policy;
 			if (block != nullptr && candidate->receipt.block_number <= block->number && block->number - candidate->receipt.block_number > policy.participation.referencing_time / policy.pow.time)
 				return layer_exception("block transaction not found");
 
@@ -2727,7 +2784,7 @@ namespace tangent
 			if (!block_number)
 				return block_number.error();
 
-			auto& policy = protocol::now().policy;
+			auto& policy = kernel::params().policy;
 			if (block != nullptr && *block_number <= block->number && block->number - *block_number > policy.participation.referencing_time / policy.pow.time)
 				return layer_exception("block not found");
 
@@ -2794,11 +2851,11 @@ namespace tangent
 			auto* reference = (transaction_message*)transaction;
 			auto initial_checksum = transaction->checksum;
 			auto initial_gas_limit = transaction->gas_limit;
-			auto revert_transaction = [&]()
+			auto destructor = uscope([&]()
 			{
 				reference->checksum = initial_checksum;
 				reference->gas_limit = initial_gas_limit;
-			};
+			});
 			reference->checksum = 0;
 			reference->gas_limit = block_header::get_gas_limit();
 
@@ -2811,17 +2868,13 @@ namespace tangent
 			auto executor = ledger::executor_context(&temp_changelog, &temp_solver, &temp_block, transaction);
 			auto execution = executor_context::execute_tx(&executor, owner, transaction, transaction->as_hash(), transaction_size, (uint8_t)flags::pedantic | (uint8_t)flags::evaluation);
 			if (!execution)
-			{
-				revert_transaction();
 				return execution.error();
-			}
 
 			executor.receipt.relative_gas_use += 64 * (uint64_t)gas_cost::write_byte;
 			auto gas = executor.receipt.relative_gas_use - (executor.receipt.relative_gas_use % 1000) + 1000;
 			executor.receipt.relative_gas_use = gas;
 			if (out_receipt != nullptr)
 				*out_receipt = std::move(executor.receipt);
-			revert_transaction();
 			return gas;
 		}
 		expects_lr<void> executor_context::validate_tx(const transaction_message* new_transaction, const uint256_t& new_transaction_hash, algorithm::pubkeyhash_t& owner)
@@ -2837,13 +2890,16 @@ namespace tangent
 		expects_lr<void> executor_context::execute_tx(executor_context* executor, const algorithm::pubkeyhash_t& owner, const transaction_message* new_transaction, const uint256_t& new_transaction_hash, size_t transaction_size, uint8_t options)
 		{
 			VI_ASSERT(executor && executor->solver && executor->block && new_transaction, "executor and transaction should be set");
+			if (owner.empty())
+				return layer_exception("invalid transaction signature");
+
 			executor->transaction = new_transaction;
 			executor->options = options;
 			executor->receipt.transaction_hash = new_transaction_hash;
 			executor->receipt.absolute_gas_use = executor->block->gas_use;
 			executor->receipt.relative_gas_use = 0;
 			executor->receipt.block_number = executor->block->number;
-			executor->receipt.block_time = protocol::now().time.now();
+			executor->receipt.block_time = kernel::params().time.now();
 			executor->receipt.from = owner;
 			executor->receipt.successful = false;
 			if (!(executor->options & (uint8_t)flags::preserve_events))
@@ -2938,8 +2994,8 @@ namespace tangent
 			{
 				auto* offchain = superchain::bridge::get();
 				auto* runner = get_runner_wallet();
-				uint64_t blocks_to_update = protocol::now().policy.attestation.confirmation_time / protocol::now().policy.pow.time;
-				uint64_t blocks_to_unlock = protocol::now().policy.pow.adjustment_time / protocol::now().policy.pow.time;
+				uint64_t blocks_to_update = kernel::params().policy.attestation.confirmation_time / kernel::params().policy.pow.time;
+				uint64_t blocks_to_unlock = kernel::params().policy.pow.adjustment_time / kernel::params().policy.pow.time;
 				dispatcher_result result;
 				while (runner != nullptr)
 				{
@@ -2994,7 +3050,7 @@ namespace tangent
 			VI_ASSERT(runner_wallet != nullptr, "runner wallet should be set");
 			uint8_t entropy_source_1[sizeof(asset)], entropy_source_2[sizeof(hash)];
 			auto entropy_source_3 = runner_wallet->secret_key.view();
-			auto& entropy_source_4 = protocol::now().policy.participation.root;
+			auto& entropy_source_4 = kernel::params().policy.participation.root;
 			auto entropy_source_0 = owner.view();
 			asset.encode(entropy_source_1);
 			hash.encode(entropy_source_2);
@@ -3009,7 +3065,7 @@ namespace tangent
 			entropy_source.write_string(algorithm::hashing::hash512((uint8_t*)entropy_source.data.data(), entropy_source.data.size()));
 
 			uint8_t entropy[64];
-			if (!algorithm::signing::derive_seed_from_password((uint8_t*)entropy_source.data.data(), entropy_source.data.size(), entropy, sizeof(entropy)))
+			if (!algorithm::signing::derive_seed_from_high_entropy_password((uint8_t*)entropy_source.data.data(), entropy_source.data.size(), entropy, sizeof(entropy)))
 				return layer_exception("secret entropy source generation failed");
 
 			auto keypair = algorithm::composition::derive_keypair(alg, entropy, sizeof(entropy));
@@ -3224,13 +3280,13 @@ namespace tangent
 			state.executor.options = tip && tip->network_congestion() ? (uint8_t)executor_context::flags::congestion : 0;
 			state.origin = state.origin == state_origin::block ? state_origin::chain_block : state_origin::chain;
 			if (state.executor.block != nullptr)
-				producers = state.executor.calculate_producers(protocol::now().policy.production.max_per_block).or_else(vector<states::validator_production>());
+				producers = state.executor.calculate_producers(kernel::params().policy.production.max_per_block).or_else(vector<states::validator_production>());
 			else
 				producers.clear();
 
 			if (producers.empty())
 			{
-				while (producers.size() < protocol::now().policy.production.max_per_block)
+				while (producers.size() < kernel::params().policy.production.max_per_block)
 				{
 					auto proposer = try_producer(producers.size());
 					if (!proposer)
@@ -3326,8 +3382,8 @@ namespace tangent
 
 			bool commitment = !!item.candidate->commitment_priority(nullptr);
 			if (!commitment && ((uint8_t)state.executor.options & (uint8_t)executor_context::flags::congestion))
-				return item.candidate->gas_price.is_positive() && item.candidate->gas_price < protocol::now().policy.production.min_gas_price ? include_decision::not_executable : include_decision::not_includable;
-			else if (commitment && state.commitments + 1 > protocol::now().policy.commitments_per_block)
+				return item.candidate->gas_price.is_positive() && item.candidate->gas_price < kernel::params().policy.production.min_gas_price ? include_decision::not_executable : include_decision::not_includable;
+			else if (commitment && state.commitments + 1 > kernel::params().policy.commitments_per_block)
 				return include_decision::not_includable;
 
 			auto map_nonce = nonces.find(algorithm::pubkeyhash_t(item.owner));
@@ -3339,7 +3395,7 @@ namespace tangent
 				auto nonce = (nonce_value ? nonce_value->nonce : 0);
 				if (item.candidate->nonce < nonce)
 					return include_decision::not_executable;
-				else if (item.candidate->nonce >= nonce + protocol::now().policy.account_nonce_step_limit)
+				else if (item.candidate->nonce >= nonce + kernel::params().policy.account_nonce_step_limit)
 					return include_decision::not_includable;
 			}
 			else if (item.candidate->nonce != map_nonce->second + 1)
@@ -3353,7 +3409,7 @@ namespace tangent
 			auto position = std::find_if(producers.begin(), producers.end(), [this](const states::validator_production& a) { return a.owner == state.public_key_hash; });
 			solution.block = ledger::block_body();
 			solution.block.set_parent_block(parent_block);
-			solution.block.priority = (uint64_t)(position == producers.end() ? protocol::now().policy.production.max_per_block : std::distance(producers.begin(), position));
+			solution.block.priority = (uint64_t)(position == producers.end() ? kernel::params().policy.production.max_per_block : std::distance(producers.begin(), position));
 			solution.block.difficulty = algorithm::wesolowski::scale(solution.block.get_proof_slot_target(parent_block), solution.block.get_proof_difficulty_multiplier());
 			solution.state.clear();
 			solution.effects.clear();
@@ -3511,7 +3567,7 @@ namespace tangent
 			for (auto& [transaction_hash, error] : transactions.errors)
 			{
 				hashes.insert(transaction_hash);
-				if (protocol::now().user.consensus.logging)
+				if (kernel::params().user.consensus.logging)
 					VI_WARN("transaction %s dropped: %s", algorithm::encoding::encode_0xhex256(transaction_hash).c_str(), error.what());
 			}
 
@@ -3552,7 +3608,7 @@ namespace tangent
 			if (!solver.apply_validator_state([&producer](size_t index) { return index > 0 ? nullptr : &producer; }, parent_block, cache))
 			{
 				solver.state.public_key_hash = producer.public_key_hash;
-				if (child_block.priority != protocol::now().policy.production.max_per_block)
+				if (child_block.priority != kernel::params().policy.production.max_per_block)
 					return layer_exception("invalid producer priority");
 			}
 
@@ -3571,7 +3627,7 @@ namespace tangent
 				childs[transaction.receipt.transaction_hash] = std::make_pair(&transaction, (const solver_context::queued_transaction*)&info);
 				commitments += transaction.transaction->commitment_priority(nullptr) ? 1 : 0;
 			}
-			if (commitments > protocol::now().policy.commitments_per_block)
+			if (commitments > kernel::params().policy.commitments_per_block)
 				return layer_exception("too many commitment transactions");
 
 			auto evaluation = solver.evaluate_block_inline();
@@ -3631,7 +3687,7 @@ namespace tangent
 				return validity;
 
 			auto position = std::find_if(solver.producers.begin(), solver.producers.end(), [&solver](const states::validator_production& a) { return a.owner == solver.state.public_key_hash; });
-			uint64_t priority = (uint64_t)(position == solver.producers.end() ? protocol::now().policy.production.max_per_block : std::distance(solver.producers.begin(), position));
+			uint64_t priority = (uint64_t)(position == solver.producers.end() ? kernel::params().policy.production.max_per_block : std::distance(solver.producers.begin(), position));
 			solver.state.executor.block = (block_body*)&child_block;
 			solver.state.validator_active = solver.state.executor.get_validator_production(solver.state.public_key_hash).or_else(states::validator_production(algorithm::pubkeyhash_t(), nullptr)).is_active();
 			if (priority != child_block.priority)

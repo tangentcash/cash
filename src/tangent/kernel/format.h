@@ -43,12 +43,14 @@ namespace tangent
 		{
 			string data;
 			uint256_t checksum;
+			bool zeroing;
 
 			wo_stream();
 			explicit wo_stream(const std::string_view& new_data);
 			explicit wo_stream(string&& new_data);
 			wo_stream(const wo_stream&) = default;
 			wo_stream(wo_stream&&) noexcept = default;
+			~wo_stream();
 			wo_stream& operator= (const wo_stream&) = default;
 			wo_stream& operator= (wo_stream&&) noexcept = default;
 			wo_stream& clear();
@@ -85,6 +87,8 @@ namespace tangent
 			viewable read_type();
 			bool read_type(viewable* value);
 			bool read_string(viewable type, string* value);
+			bool read_view(viewable type, uint8_t* value, size_t value_size);
+			bool read_optimized_view(viewable type, uint8_t* value, size_t value_size, bool strict = true);
 			bool read_decimal(viewable type, decimal* value);
 			bool read_decimal_or_integer(format::viewable type, decimal* value);
 			bool read_integer(viewable type, uint8_t* value);

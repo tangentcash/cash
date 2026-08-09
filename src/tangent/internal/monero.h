@@ -111,9 +111,9 @@ int xmr_size_varint(uint64_t num);
 int xmr_write_varint(uint8_t* buff, size_t buff_size, uint64_t num);
 int xmr_read_varint(uint8_t* buff, size_t buff_size, uint64_t* val);
 
-void xmr_gen_range_sig(xmr_range_sig_t* sig, ge25519* C, bignum256modm mask,
+int xmr_gen_range_sig(xmr_range_sig_t* sig, ge25519* C, bignum256modm mask,
                        xmr_amount amount, bignum256modm* last_mask);
-void xmr_gen_range_sig_ex(xmr_range_sig_t* sig, ge25519* C, bignum256modm mask,
+int xmr_gen_range_sig_ex(xmr_range_sig_t* sig, ge25519* C, bignum256modm mask,
                           xmr_amount amount, bignum256modm* last_mask,
                           bignum256modm ai[64], bignum256modm alpha[64]);
 
@@ -121,7 +121,7 @@ void xmr_gen_range_sig_ex(xmr_range_sig_t* sig, ge25519* C, bignum256modm mask,
 void ge25519_set_xmr_h(ge25519* r);
 
 /* random scalar value */
-void xmr_random_scalar(bignum256modm m);
+int xmr_random_scalar(bignum256modm m);
 
 /* cn_fast_hash */
 void xmr_fast_hash(uint8_t* hash, const void* data, size_t length);

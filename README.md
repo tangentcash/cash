@@ -36,7 +36,7 @@ Nodes download and validate data from seeder nodes, gradually forming a list of 
 - **Participant**: Holds a private key share, allowing it to create deposit addresses on other blockchains and sign transactions for withdrawals. Participants are randomly selected into bridges to ensure unpredictability and fairness.
 
 ### Security
-The asset bridging process employs an N-of-N signature scheme and utilizes [Multi-Party Computation (MPC)](https://tangent.cash/docs/blockchain/bridges/02-mpc/) capabilities to build aggregated signatures or public keys which involves coordinating an array of participants of an asset bridge, ensuring robust security.
+The asset bridging process employs an N-of-N signature scheme and utilizes [Multi-Party Computation (MPC)](https://tangent.cash/docs/blockchain/08-composition/) capabilities to build aggregated signatures or public keys which involves coordinating an array of participants of an asset bridge, ensuring robust security.
 
 ### Bridging
 Users can deposit native cryptocurrency using any bridging node of their choice. Each bridge has its own flat fees for withdrawals. Users request a deposit address* from a bridge and send assets to that address. To withdraw assets, users select a bridge (which can be different from the one used for depositing) and send a withdrawal transaction. The assets will then be sent to the user's selected address. Bridge coordinator is chosen randomly for each operation as well as bridge participants but they are chosen randomly for each account only.
@@ -62,7 +62,7 @@ Proceed to [this link](https://tangent.cash/docs/node/01-install) to view essent
 * [openssl (so)](https://github.com/openssl/openssl)
 * [secp256k1 (so)](https://github.com/bitcoin-core/secp256k1)
 * [sqlite (so)](https://github.com/sqlite/sqlite)
-* [vitex (submodule)](https://github.com/romanpunia/vitex)
+* [vitex (submodule)](https://github.com/etherealcardinal/vitex)
 * [zlib (so)](https://github.com/madler/zlib)
 
 ## License

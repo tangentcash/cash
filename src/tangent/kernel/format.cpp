@@ -1,6 +1,10 @@
 #include "format.h"
 #include "algorithm.h"
 #include <rapidjson/document.h>
+extern "C"
+{
+#include "../internal/memzero.h"
+}
 
 namespace tangent
 {
@@ -95,7 +99,7 @@ namespace tangent
 					break;
 			}
 		}
-		static bool convert_from_message(format::ro_stream& from, tree& to)
+		static bool convert_from_message(format::ro_stream& from, tree& to, uint32_t depth_left)
 		{
 			if (!from.read_string(from.read_type(), &to.key))
 				return false;
@@ -160,11 +164,14 @@ namespace tangent
 					uint32_t childs_size;
 					if (!from.read_integer(from.read_type(), &childs_size))
 						return false;
+					else if (!depth_left)
+						return false;
 
+					uint32_t child_depth_left = depth_left - 1;
 					for (uint32_t i = 0; i < childs_size; i++)
 					{
 						tree child;
-						if (!convert_from_message(from, child))
+						if (!convert_from_message(from, child, child_depth_left))
 							return false;
 
 						to.childs().push_back(std::move(child));
@@ -459,14 +466,19 @@ namespace tangent
 			}
 		}
 
-		wo_stream::wo_stream() : checksum(0)
+		wo_stream::wo_stream() : checksum(0), zeroing(false)
 		{
 		}
-		wo_stream::wo_stream(const std::string_view& new_data) : data(new_data), checksum(0)
+		wo_stream::wo_stream(const std::string_view& new_data) : data(new_data), checksum(0), zeroing(false)
 		{
 		}
-		wo_stream::wo_stream(string&& new_data) : data(std::move(new_data)), checksum(0)
+		wo_stream::wo_stream(string&& new_data) : data(std::move(new_data)), checksum(0), zeroing(false)
 		{
+		}
+		wo_stream::~wo_stream()
+		{
+			if (zeroing)
+				memzero(data.data(), data.size());
 		}
 		wo_stream& wo_stream::clear()
 		{
@@ -492,7 +504,7 @@ namespace tangent
 				if (source.size() > util::get_max_string_size())
 				{
 					uint8_t type = (uint8_t)util::get_string_type(source, true);
-					uint32_t size = std::min<uint32_t>(protocol::now().message.max_message_size, (uint32_t)source.size());
+					uint32_t size = (uint32_t)source.size();
 					write(&type, sizeof(uint8_t));
 					write_integer(size);
 					write(source.data(), size);
@@ -507,7 +519,7 @@ namespace tangent
 			}
 			else if (value.size() > util::get_max_string_size())
 			{
-				uint32_t size = std::min<uint32_t>(protocol::now().message.max_message_size, (uint32_t)value.size());
+				uint32_t size = (uint32_t)value.size();
 				uint8_t type = (uint8_t)util::get_string_type(value, false);
 				write(&type, sizeof(uint8_t));
 				write_integer(size);
@@ -689,7 +701,7 @@ namespace tangent
 				return false;
 
 			viewable subtype; uint32_t size = 0;
-			if (!read_type(&subtype) || !read_integer(subtype, &size) || size > protocol::now().message.max_message_size)
+			if (!read_type(&subtype) || !read_integer(subtype, &size) || size > kernel::params().message.max_message_size)
 				return false;
 
 			vector<char> buffer;
@@ -708,6 +720,31 @@ namespace tangent
 				default:
 					return false;
 			}
+		}
+		bool ro_stream::read_view(viewable type, uint8_t* value, size_t value_size)
+		{
+			return read_optimized_view(type, value, value_size, false);
+		}
+		bool ro_stream::read_optimized_view(viewable type, uint8_t* value, size_t value_size, bool strict)
+		{
+			VI_ASSERT(value != nullptr, "value should be set");
+			string intermediate;
+			if (!read_string(type, &intermediate))
+				return false;
+			else if (intermediate.size() > value_size)
+				return false;
+			else if (intermediate.size() < value_size)
+				memzero(value, value_size);
+
+			memcpy(value, intermediate.data(), intermediate.size());
+			if (!strict)
+				return true;
+
+			size_t size = value_size;
+			auto* ptr = value + size;
+			while (size > 0 && !*(--ptr))
+				--size;
+			return size == intermediate.size();
 		}
 		bool ro_stream::read_decimal(viewable type, decimal* value)
 		{
@@ -1726,7 +1763,7 @@ namespace tangent
 		option<tree> tree::from_message(format::ro_stream& stream)
 		{
 			tree result;
-			if (!convert_from_message(stream, result))
+			if (!convert_from_message(stream, result, kernel::params().message.max_message_depth))
 				return optional::none;
 
 			return option<tree>(std::move(result));
@@ -1826,7 +1863,7 @@ namespace tangent
 		string util::decompress_stream(const std::string_view& data)
 		{
 			auto raw = util::is_hex_encoding(data) ? util::decode_0xhex(data) : string(data);
-			auto status = codec::decompress(raw);
+			auto status = codec::decompress(raw, kernel::params().message.max_message_size);
 			if (status)
 				raw = std::move(*status);
 			return raw;
@@ -2048,7 +2085,7 @@ namespace tangent
 			if (data.size() > std::numeric_limits<uint16_t>::max())
 				return false;
 
-			auto& message = protocol::now().message;
+			auto& message = kernel::params().message;
 			if (merging)
 				result->write_integer(data.size());
 

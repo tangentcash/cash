@@ -203,8 +203,7 @@ int eth_hex_to_bytes(uint8_t** dest, const char* hex, int len)
 
 int ethc_rand(uint8_t* bytes, size_t len)
 {
-    random_buffer(bytes, len);
-    return 1;
+    return random_u8a(bytes, len) == 0 ? 1 : -1;
 }
 
 int ethc_strncasecmp(const char* s1, const char* s2, size_t len)

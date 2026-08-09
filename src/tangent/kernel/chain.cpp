@@ -179,34 +179,34 @@ namespace tangent
 	{
 		umutex<std::mutex> unique(mutex);
 		if (target_path.empty())
-			resolve(protocol::now().user.network, protocol::now().user.storage.path);
+			resolve(kernel::params().user.network, kernel::params().user.storage.path);
 
 		string address = stringify::text("%s%.*sdb", target_path.c_str(), (int)location.size(), location.data());
 		auto it = blobs.find(address);
 		if (it != blobs.end() && it->second)
 			return it->second;
 
-		auto config = blob_storage_configuration(protocol::now().user.storage.optimization, protocol::now().user.storage.blob_cache_size);
+		auto config = blob_storage_configuration(kernel::params().user.storage.optimization, kernel::params().user.storage.blob_cache_size);
 		auto path = std::string(address.begin(), address.end());
 		std::unique_ptr<rocksdb::DB> result;
 		auto status = rocksdb::DB::Open(config, path, &result);
 		if (!status.ok())
 		{
-			if (protocol::now().user.storage.logging)
+			if (kernel::params().user.storage.logging)
 				VI_ERR("wal append error: %s (location: %s)", status.ToString().c_str(), address.c_str());
 
 			return nullptr;
 		}
 
-		if (protocol::now().user.storage.logging)
+		if (kernel::params().user.storage.logging)
 			VI_DEBUG("wal append on %s (handle: 0x%" PRIXPTR ")", address.c_str(), (uintptr_t)result.get());
 
 		auto threads = os::hw::get_quantity_info().physical;
 		auto options = result->GetOptions();
-		if (protocol::now().user.storage.compaction_threads_ratio > 0.0)
-			options.env->SetBackgroundThreads((int)std::max(std::ceil(threads * protocol::now().user.storage.compaction_threads_ratio), 1.0), rocksdb::Env::Priority::LOW);
-		if (protocol::now().user.storage.flush_threads_ratio > 0.0)
-			options.env->SetBackgroundThreads((int)std::max(std::ceil(threads * protocol::now().user.storage.flush_threads_ratio), 1.0), rocksdb::Env::Priority::HIGH);
+		if (kernel::params().user.storage.compaction_threads_ratio > 0.0)
+			options.env->SetBackgroundThreads((int)std::max(std::ceil(threads * kernel::params().user.storage.compaction_threads_ratio), 1.0), rocksdb::Env::Priority::LOW);
+		if (kernel::params().user.storage.flush_threads_ratio > 0.0)
+			options.env->SetBackgroundThreads((int)std::max(std::ceil(threads * kernel::params().user.storage.flush_threads_ratio), 1.0), rocksdb::Env::Priority::HIGH);
 
 		blobs[address] = result.get();
 		return result.release();
@@ -215,15 +215,17 @@ namespace tangent
 	{
 		umutex<std::mutex> unique(mutex);
 		if (target_path.empty())
-			resolve(protocol::now().user.network, protocol::now().user.storage.path);
+			resolve(kernel::params().user.network, kernel::params().user.storage.path);
 
 		std::string_view prefix = "file:///";
 		std::string_view postfix = ".db";
+		size_t path_length = prefix.size() + target_path.size() + location.size();
 		char buffer[3072] = { 0 };
+		VI_PANIC(path_length + postfix.size() <= sizeof(buffer), "database path is too long");
 		memcpy(buffer, prefix.data(), prefix.size());
 		memcpy(buffer + prefix.size(), target_path.data(), target_path.size());
 		memcpy(buffer + prefix.size() + target_path.size(), location.data(), location.size());
-		memcpy(buffer + prefix.size() + target_path.size() + location.size(), postfix.data(), postfix.size());
+		memcpy(buffer + path_length, postfix.data(), postfix.size());
 
 		std::string_view address = std::string_view(buffer, strnlen(buffer, sizeof(buffer)));
 		uref<sqlite::connection> result;
@@ -239,19 +241,19 @@ namespace tangent
 		auto status = result->connect(address);
 		if (!status)
 		{
-			if (protocol::now().user.storage.logging)
+			if (kernel::params().user.storage.logging)
 				VI_ERR("wal append error: %s (location: %.*s)", status.error().what(), (int)address.size(), address.data());
 
 			return result;
 		}
 
-		if (!result->query(index_storage_configuration(protocol::now().user.storage.optimization, protocol::now().user.storage.index_page_size, protocol::now().user.storage.index_cache_size)))
+		if (!result->query(index_storage_configuration(kernel::params().user.storage.optimization, kernel::params().user.storage.index_page_size, kernel::params().user.storage.index_cache_size)))
 			return result;
 
 		if (initializer)
 			initializer(*result);
 
-		if (protocol::now().user.storage.logging)
+		if (kernel::params().user.storage.logging)
 			VI_DEBUG("wal append on %s (handle: 0x%" PRIXPTR ")", address.c_str(), (uintptr_t)*result);
 
 		return result;
@@ -292,7 +294,7 @@ namespace tangent
 			options.wait = true;
 
 			auto status = handle.second->Flush(options);
-			if (protocol::now().user.storage.logging)
+			if (kernel::params().user.storage.logging)
 			{
 				if (status.ok())
 					VI_INFO("blob storage checkpoint on %s", handle.first.c_str());
@@ -308,7 +310,7 @@ namespace tangent
 
 			auto& handle = queue.second.front();
 			auto states = handle->wal_checkpoint(sqlite::checkpoint_mode::truncate);
-			if (protocol::now().user.storage.logging)
+			if (kernel::params().user.storage.logging)
 			{
 				for (auto& state : states)
 					VI_INFO("index storage checkpoint on %s (db: %s, fc: %i, fs: %i, stat: %i)", queue.first.c_str(), state.database.empty() ? "all" : state.database.c_str(), state.frames_count, state.frames_size, state.status);
@@ -368,13 +370,15 @@ namespace tangent
 		{
 			string password;
 			auto* terminal = console::get();
+			terminal->write("keystate password requires high initial entropy");
 			terminal->fwrite("%s keystate password: ", maybe_data.empty() ? "new" : "attach");
 			terminal->echo_off([&]() { password = terminal->read(1024); });
 			terminal->write("verify keystate password: ");
 			terminal->echo_off([&]() { VI_PANIC(!password.empty() && terminal->read(1024) == password, "password verification failed"); });
 
 			uint8_t encryption_key[32] = { 0 }, encryption_salt[16] = { 0 };
-			VI_PANIC(algorithm::signing::derive_seed_from_password((uint8_t*)password.data(), password.size(), encryption_key, sizeof(encryption_key)), "encryption key derivation failed");
+			bool seed_acquired = algorithm::signing::derive_seed_from_high_entropy_password((uint8_t*)password.data(), password.size(), encryption_key, sizeof(encryption_key));
+			VI_PANIC(seed_acquired, "encryption key derivation failed");
 			crypto::fill_random_bytes(encryption_salt, sizeof(encryption_salt)).expect("encryption salt generation failed");
 
 			auto encryption_key_view = secret_box::view(std::string_view((char*)encryption_key, sizeof(encryption_key)));
@@ -406,13 +410,15 @@ namespace tangent
 			}
 
 			uint8_t encryption_key[32] = { 0 };
-			VI_PANIC(algorithm::signing::derive_seed_from_password((uint8_t*)password->data(), password->size(), encryption_key, sizeof(encryption_key)), "decryption key derivation failed");
+			bool seed_acquired = algorithm::signing::derive_seed_from_high_entropy_password((uint8_t*)password->data(), password->size(), encryption_key, sizeof(encryption_key));
+			VI_PANIC(seed_acquired, "decryption key derivation failed");
 
 			auto encryption_key_view = secret_box::view(std::string_view((char*)encryption_key, sizeof(encryption_key)));
 			auto encryption_salt_view = secret_box::view(data.substr(data.size() - 48, 16));
 			auto entropy = crypto::decrypt(ciphers::aes_256_cbc(), data.substr(0, data.size() - 48), encryption_key_view, encryption_salt_view).expect("keystate decryption failed");
+			bool checksum_match = *crypto::hash(digests::sha256(), entropy) == data.substr(data.size() - 32);
 
-			VI_PANIC(*crypto::hash(digests::sha256(), entropy) == data.substr(data.size() - 32), "keystate checksum validation failed");
+			VI_PANIC(checksum_match, "keystate checksum validation failed");
 			entropy.append(data.substr(data.size() - 32));
 			calculate(entropy);
 		}
@@ -478,7 +484,7 @@ namespace tangent
 		for (auto& item : offsets)
 			time_offsets.push_back(std::make_pair(std::string_view(item.first), item.second));
 
-		auto& message = protocol::now().message;
+		auto& message = kernel::params().message;
 		std::sort(time_offsets.begin(), time_offsets.end(), [](const time_source& a, const time_source& b)
 		{
 			return a.second < b.second;
@@ -512,7 +518,7 @@ namespace tangent
 		return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 	}
 
-	void protocol::logger::output(const std::string_view& message)
+	void kernel::log_state::output(const std::string_view& message)
 	{
 		if (!resource || message.empty())
 			return;
@@ -523,20 +529,21 @@ namespace tangent
 		if (message.back() != '\r' && message.back() != '\n')
 			resource->write((uint8_t*)"\n", 1);
 
-		if (!protocol::bound() || archive_time - repack_time < (int64_t)protocol::now().user.logs.archive_repack_interval / 1000)
+		auto* params = kernel::pparams();
+		if (!params || archive_time - repack_time < (int64_t)params->user.logs.archive_repack_interval / 1000)
 			return;
 
 		auto state = os::file::get_properties(resource->virtual_name());
 		size_t current_size = state ? state->size : 0;
 		repack_time = archive_time;
-		if (current_size <= protocol::now().user.logs.archive_size)
+		if (current_size <= params->user.logs.archive_size)
 			return;
 
 		string archive_path = string(resource->virtual_name());
-		resource = os::file::open_archive(archive_path, protocol::now().user.logs.archive_size).or_else(nullptr);
+		resource = os::file::open_archive(archive_path, params->user.logs.archive_size).or_else(nullptr);
 	}
 
-	protocol::protocol(const inline_args& environment)
+	kernel::kernel(const inline_args& environment)
 	{
 		if (!environment.params.empty())
 			path = environment.params.back();
@@ -679,6 +686,10 @@ namespace tangent
 			if (value != nullptr && value->value.is_integer())
 				user.discovery.port = value->value.as_uint16();
 
+			value = config->child("discovery.proxy");
+			if (value != nullptr && value->value.is_boolean())
+				user.discovery.proxy = value->value.as_boolean();
+
 			value = config->child("discovery.server");
 			if (value != nullptr && value->value.is_boolean())
 				user.discovery.server = value->value.as_boolean();
@@ -715,7 +726,7 @@ namespace tangent
 			if (value != nullptr && value->value.is_integer())
 				user.rpc.port = value->value.as_uint16();
 
-			value = config->child("rpc.useranme");
+			value = config->child("rpc.username");
 			if (value != nullptr && value->value.is_string())
 				user.rpc.username = value->value.as_blob();
 
@@ -726,6 +737,10 @@ namespace tangent
 			value = config->child("rpc.sandbox");
 			if (value != nullptr && value->value.is_boolean())
 				user.rpc.sandbox = value->value.as_boolean();
+
+			value = config->child("rpc.proxy");
+			if (value != nullptr && value->value.is_boolean())
+				user.rpc.proxy = value->value.as_boolean();
 
 			value = config->child("rpc.server");
 			if (value != nullptr && value->value.is_boolean())
@@ -879,7 +894,7 @@ namespace tangent
 			stringify::eval_envs(log_path, os::path::get_directory(log_path), vitex::network::utils::get_host_ip_addresses());
 			os::directory::patch(os::path::get_directory(log_path));
 			if (!log_path.empty())
-				logs.info.resource = os::file::open_archive(log_path, user.logs.archive_size).or_else(nullptr);
+				info_log.resource = os::file::open_archive(log_path, user.logs.archive_size).or_else(nullptr);
 		}
 
 		if (!user.logs.error_path.empty())
@@ -889,7 +904,7 @@ namespace tangent
 			stringify::eval_envs(log_path, os::path::get_directory(log_path), vitex::network::utils::get_host_ip_addresses());
 			os::directory::patch(os::path::get_directory(log_path));
 			if (!log_path.empty())
-				logs.error.resource = os::file::open_archive(log_path, user.logs.archive_size).or_else(nullptr);
+				error_log.resource = os::file::open_archive(log_path, user.logs.archive_size).or_else(nullptr);
 		}
 
 		if (!user.logs.query_path.empty())
@@ -900,23 +915,23 @@ namespace tangent
 			os::directory::patch(os::path::get_directory(log_path));
 			if (!log_path.empty())
 			{
-				logs.query.resource = os::file::open_archive(log_path, user.logs.archive_size).or_else(nullptr);
-				if (logs.query.resource)
-					sqlite::driver::get()->set_query_log([this](const std::string_view& data) { logs.query.output(data); });
+				query_log.resource = os::file::open_archive(log_path, user.logs.archive_size).or_else(nullptr);
+				if (query_log.resource)
+					sqlite::driver::get()->set_query_log([this](const std::string_view& data) { query_log.output(data); });
 			}
 		}
 
-		if (logs.info.resource || logs.error.resource)
+		if (info_log.resource || error_log.resource)
 		{
 			error_handling::set_callback([this](error_handling::details& data)
 			{
 				if (data.type.level == log_level::error || data.type.level == log_level::warning || data.type.fatal)
 				{
-					if (logs.error.resource)
-						logs.error.output(error_handling::get_message_text(data));
+					if (error_log.resource)
+						error_log.output(error_handling::get_message_text(data));
 				}
-				else if (logs.info.resource)
-					logs.info.output(error_handling::get_message_text(data));
+				else if (info_log.resource)
+					info_log.output(error_handling::get_message_text(data));
 			});
 		}
 
@@ -958,6 +973,7 @@ namespace tangent
 				policy.pow.tx.difficulty = 1;
 				policy.attestation.confirmation_time = 2;
 				policy.attestation.min_stake_value = decimal::zero();
+				policy.attestation.min_per_transaction = 0;
 				policy.participation.locking_time = 2;
 				policy.participation.min_stake_value = decimal::zero();
 				policy.production.min_network_congestion = 2000000;
@@ -1001,46 +1017,48 @@ namespace tangent
 
 		uplinks::link_instance();
 		algorithm::signing::initialize();
+		algorithm::composition::initialize_cache();
 	}
-	protocol::~protocol()
+	kernel::~kernel()
 	{
 		database.checkpoint();
 		superchain::bridge::cleanup_instance();
 		script::factory::cleanup_instance();
 		format::tree_pool::cleanup_instance();
+		algorithm::composition::deinitialize_cache();
 		algorithm::signing::deinitialize();
 		error_handling::set_callback(nullptr);
 		if (instance == this)
 			instance = nullptr;
 	}
-	bool protocol::is(network_type type) const
+	bool kernel::is(network_type type) const
 	{
 		return user.network == type;
 	}
-	bool protocol::on(fork_id fork, uint64_t block_number) const
+	bool kernel::on(fork_id fork, uint64_t block_number) const
 	{
 		if (user.network != network_type::mainnet)
 			return true;
 
 		return block_number >= (uint64_t)fork;
 	}
-	bool protocol::custom() const
+	bool kernel::custom() const
 	{
 		return !path.empty();
 	}
-	bool protocol::bound()
-	{
-		return instance != nullptr;
-	}
-	protocol& protocol::change()
+	const kernel& kernel::params()
 	{
 		VI_ASSERT(instance != nullptr, "chain parameters are not set!");
 		return *instance;
 	}
-	const protocol& protocol::now()
+	const kernel* kernel::pparams()
+	{
+		return instance;
+	}
+	kernel& kernel::mparams()
 	{
 		VI_ASSERT(instance != nullptr, "chain parameters are not set!");
 		return *instance;
 	}
-	protocol* protocol::instance = nullptr;
+	kernel* kernel::instance = nullptr;
 }

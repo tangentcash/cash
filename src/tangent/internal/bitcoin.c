@@ -1496,7 +1496,8 @@ btc_bool btc_privkey_gen(btc_key* privkey)
 
     do
     {
-        random_buffer(privkey->privkey, BTC_ECKEY_PKEY_LENGTH);
+        if (random_u8a(privkey->privkey, BTC_ECKEY_PKEY_LENGTH) != 0)
+            return false;
     } while (btc_ecc_verify_privatekey(privkey->privkey) == 0);
     return true;
 }
@@ -1504,12 +1505,11 @@ btc_bool btc_privkey_gen(btc_key* privkey)
 btc_bool btc_privkey_verify_pubkey(btc_key* privkey, btc_pubkey* pubkey)
 {
     uint256 rnddata, hash;
-    random_buffer(rnddata, BTC_HASH_LENGTH);
+    if (random_u8a(rnddata, BTC_HASH_LENGTH) != 0)
+        return false;
+
+    unsigned char sig[74]; size_t siglen = 74;
     btc_hash(rnddata, BTC_HASH_LENGTH, hash);
-
-    unsigned char sig[74];
-    size_t siglen = 74;
-
     if (!btc_key_sign_hash(privkey, hash, sig, &siglen))
         return false;
 

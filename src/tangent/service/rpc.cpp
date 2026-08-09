@@ -212,7 +212,7 @@ namespace tangent
 		}
 		static void form_response(http::connection* base, format::tree& request, option<format::tree>& responses, server_response&& response)
 		{
-			if (protocol::now().user.rpc.logging)
+			if (kernel::params().user.rpc.logging)
 			{
 				auto* params = request.child("params");
 				string method = request.child_var("method").as_blob();
@@ -285,12 +285,12 @@ namespace tangent
 		}
 		void server_node::startup()
 		{
-			if (!protocol::now().user.rpc.server)
+			if (!kernel::params().user.rpc.server)
 				return;
 
-			auth_token = protocol::now().user.rpc.username.empty() ? string() : codec::base64_encode(protocol::now().user.rpc.username + ":" + protocol::now().user.rpc.password);
+			auth_token = kernel::params().user.rpc.username.empty() ? string() : codec::base64_encode(kernel::params().user.rpc.username + ":" + kernel::params().user.rpc.password);
 			http::map_router* router = new http::map_router();
-			router->listen(protocol::now().user.rpc.address, to_string(protocol::now().user.rpc.port)).expect("listener binding error");
+			router->listen(kernel::params().user.rpc.address, to_string(kernel::params().user.rpc.port)).expect("listener binding error");
 			router->post("/", std::bind(&server_node::http_request, this, std::placeholders::_1));
 			router->web_socket_receive("/", std::bind(&server_node::ws_receive, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
 			router->web_socket_disconnect("/", std::bind(&server_node::ws_disconnect, this, std::placeholders::_1));
@@ -302,7 +302,7 @@ namespace tangent
 			router->base->web_socket_timeout = 0;
 			router->base->auth.type = "Basic";
 			router->base->auth.realm = "p2p.tangent.cash";
-			router->base->proxy_ip_address = "X-Real-IP";
+			router->base->proxy_ip_address = kernel::params().user.rpc.proxy ? "X-Real-IP" : string();
 			router->temporary_directory.clear();
 
 			node->configure(router).expect("configuration error");
@@ -313,8 +313,8 @@ namespace tangent
 				consensus_service->events.accept_transaction = std::bind(&server_node::dispatch_accept_transaction, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3);
 			}
 
-			if (protocol::now().user.consensus.logging)
-				VI_INFO("OK rpc node listen (location: %s:%i)", protocol::now().user.rpc.address.c_str(), (int)protocol::now().user.rpc.port);
+			if (kernel::params().user.consensus.logging)
+				VI_INFO("OK rpc node listen (location: %s:%i)", kernel::params().user.rpc.address.c_str(), (int)kernel::params().user.rpc.port);
 
 			bind(0, "websocket", "subscribe", 1, 3, "string addresses, bool? blocks, bool? transactions", "uint64", "subscribe to streams of incoming blocks and transactions optionally include blocks and transactions relevant to comma separated address list", std::bind(&server_node::web_socket_subscribe, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0, "websocket", "unsubscribe", 0, 0, "", "void", "unsubscribe from all streams", std::bind(&server_node::web_socket_unsubscribe, this, std::placeholders::_1, std::placeholders::_2));
@@ -440,7 +440,7 @@ namespace tangent
 			if (!is_active())
 				return;
 
-			if (protocol::now().user.consensus.logging)
+			if (kernel::params().user.consensus.logging)
 				VI_INFO("OK rpc node shutdown");
 
 			node->unlisten(false);
@@ -606,7 +606,7 @@ namespace tangent
 				goto next_request;
 			}
 
-			if (protocol::now().user.rpc.sandbox && context->second.access_types & (uint32_t)access_type::a)
+			if (kernel::params().user.rpc.sandbox && context->second.access_types & (uint32_t)access_type::a)
 			{
 				form_response(base, *request, responses, server_response().error(error_codes::bad_method, "access to admin level functionality requires trusted environment"));
 				goto next_request;
@@ -615,13 +615,13 @@ namespace tangent
 			auto* params = request->child("params");
 			if (!params || !params->is_list())
 			{
-				form_response(base, *request, responses, server_response().error(error_codes::bad_method, "params is not an array"));
+				form_response(base, *request, responses, server_response().error(error_codes::bad_params, "params is not an array"));
 				goto next_request;
 			}
 
 			if (params->childs().size() < context->second.min_params || params->childs().size() > context->second.max_params)
 			{
-				form_response(base, *request, responses, server_response().error(error_codes::bad_method, "params is not an array[" + to_string(context->second.min_params) + ".." + to_string(context->second.min_params) + "]"));
+				form_response(base, *request, responses, server_response().error(error_codes::bad_params, "params is not an array[" + to_string(context->second.min_params) + ".." + to_string(context->second.max_params) + "]"));
 				goto next_request;
 			}
 
@@ -766,7 +766,7 @@ namespace tangent
 		}
 		service_control::service_node server_node::get_entrypoint()
 		{
-			if (!protocol::now().user.rpc.server)
+			if (!kernel::params().user.rpc.server)
 				return service_control::service_node();
 
 			service_control::service_node entrypoint;
@@ -909,7 +909,7 @@ namespace tangent
 		server_response server_node::blockstate_get_blocks(http::connection*, format::variables&& args)
 		{
 			uint64_t count = args[1].as_uint64();
-			if (!count || count > protocol::now().message.pages_per_query)
+			if (!count || count > kernel::params().message.pages_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			uint64_t number = args[0].as_uint64();
@@ -998,13 +998,13 @@ namespace tangent
 			{
 				while (true)
 				{
-					auto list = chain.get_block_transactions_by_number(block_header->number, transactions->childs().size(), protocol::now().message.items_per_query);
+					auto list = chain.get_block_transactions_by_number(block_header->number, transactions->childs().size(), kernel::params().message.items_per_query);
 					if (!list)
 						return server_response().error(error_codes::not_found, "block not found");
 
 					for (auto& item : *list)
 						transactions->push(unrolling == 2 ? item.transaction->as_tree() : item.as_tree());
-					if (list->size() < protocol::now().message.items_per_query)
+					if (list->size() < kernel::params().message.items_per_query)
 						break;
 				}
 			}
@@ -1045,13 +1045,13 @@ namespace tangent
 			{
 				while (true)
 				{
-					auto list = chain.get_block_transactions_by_number(block_header->number, transactions->childs().size(), protocol::now().message.items_per_query);
+					auto list = chain.get_block_transactions_by_number(block_header->number, transactions->childs().size(), kernel::params().message.items_per_query);
 					if (!list)
 						return server_response().error(error_codes::not_found, "block not found");
 
 					for (auto& item : *list)
 						transactions->push(unrolling == 2 ? item.transaction->as_tree() : item.as_tree());
-					if (list->size() < protocol::now().message.items_per_query)
+					if (list->size() < kernel::params().message.items_per_query)
 						break;
 				}
 			}
@@ -1174,13 +1174,13 @@ namespace tangent
 			{
 				while (true)
 				{
-					auto list = chain.get_block_transactions_by_number(*block_number, data.childs().size(), protocol::now().message.items_per_query);
+					auto list = chain.get_block_transactions_by_number(*block_number, data.childs().size(), kernel::params().message.items_per_query);
 					if (!list)
 						return server_response().error(error_codes::not_found, "block not found");
 
 					for (auto& item : *list)
 						data.push(unrolling == 1 ? item.transaction->as_tree() : item.as_tree());
-					if (list->size() < protocol::now().message.items_per_query)
+					if (list->size() < kernel::params().message.items_per_query)
 						break;
 				}
 			}
@@ -1191,7 +1191,7 @@ namespace tangent
 				auto executor = ledger::executor_context(nullptr);
 				while (true)
 				{
-					auto list = chain.get_block_transactions_by_number(*block_number, data.childs().size(), protocol::now().message.items_per_query);
+					auto list = chain.get_block_transactions_by_number(*block_number, data.childs().size(), kernel::params().message.items_per_query);
 					if (!list)
 						return server_response().error(error_codes::not_found, "block not found");
 
@@ -1214,7 +1214,7 @@ namespace tangent
 						parties.clear();
 						aliases.clear();
 					}
-					if (list->size() < protocol::now().message.items_per_query)
+					if (list->size() < kernel::params().message.items_per_query)
 						break;
 				}
 			}
@@ -1239,13 +1239,13 @@ namespace tangent
 			{
 				while (true)
 				{
-					auto list = chain.get_block_transactions_by_number(block_number, data.childs().size(), protocol::now().message.items_per_query);
+					auto list = chain.get_block_transactions_by_number(block_number, data.childs().size(), kernel::params().message.items_per_query);
 					if (!list)
 						return server_response().error(error_codes::not_found, "block not found");
 
 					for (auto& item : *list)
 						data.push(unrolling == 1 ? item.transaction->as_tree() : item.as_tree());
-					if (list->size() < protocol::now().message.items_per_query)
+					if (list->size() < kernel::params().message.items_per_query)
 						break;
 				}
 			}
@@ -1256,7 +1256,7 @@ namespace tangent
 				auto executor = ledger::executor_context(nullptr);
 				while (true)
 				{
-					auto list = chain.get_block_transactions_by_number(block_number, data.childs().size(), protocol::now().message.items_per_query);
+					auto list = chain.get_block_transactions_by_number(block_number, data.childs().size(), kernel::params().message.items_per_query);
 					if (!list)
 						return server_response().error(error_codes::not_found, "block not found");
 
@@ -1279,7 +1279,7 @@ namespace tangent
 						parties.clear();
 						aliases.clear();
 					}
-					if (list->size() < protocol::now().message.items_per_query)
+					if (list->size() < kernel::params().message.items_per_query)
 						break;
 				}
 			}
@@ -1288,7 +1288,7 @@ namespace tangent
 		server_response server_node::txnstate_get_pending_transactions(http::connection*, format::variables&& args)
 		{
 			uint64_t offset = args[0].as_uint64(), count = args[1].as_uint64();
-			if (!count || count > protocol::now().message.pages_per_query)
+			if (!count || count > kernel::params().message.pages_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			uint8_t unrolling = args.size() > 2 ? args[2].as_uint8() : 0;
@@ -1318,7 +1318,7 @@ namespace tangent
 		server_response server_node::txnstate_get_finalized_transactions(http::connection* base, format::variables&& args)
 		{
 			uint64_t offset = args[0].as_uint64(), count = args[1].as_uint64();
-			if (!count || count > protocol::now().message.pages_per_query)
+			if (!count || count > kernel::params().message.pages_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			uint8_t unrolling = args.size() > 2 ? args[2].as_uint8() : 0;
@@ -1352,7 +1352,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "owner address not valid");
 
 			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
-			if (!count || count > protocol::now().message.pages_per_query)
+			if (!count || count > kernel::params().message.pages_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			uint8_t direction = args.size() > 3 ? args[3].as_uint8() : 1;
@@ -1479,7 +1479,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, execution.error().message());
 
 			temp_solver.state.executor.receipt.successful = !!execution;
-			temp_solver.state.executor.receipt.block_time = protocol::now().time.now();
+			temp_solver.state.executor.receipt.block_time = kernel::params().time.now();
 			if (!temp_solver.state.executor.receipt.successful)
 				temp_solver.state.executor.emit_event(0, { format::variable(execution.what()) }, false);
 
@@ -1635,7 +1635,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "location not valid: " + location.error().message());
 
 			uint64_t offset = args[2].as_uint64(), count = args[3].as_uint64();
-			if (!count || count > protocol::now().message.pages_per_query)
+			if (!count || count > kernel::params().message.pages_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto chain = storages::chainstate();
@@ -1655,7 +1655,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "location not valid: " + location.error().message());
 
 			uint64_t offset = args[5].as_uint64(), count = args[6].as_uint64();
-			if (!count || count > protocol::now().message.pages_per_query)
+			if (!count || count > kernel::params().message.pages_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto filter = storages::result_filter::from(args[2].as_string(), args[3].as_uint256(), args[4].as_decimal().to_int8());
@@ -1676,7 +1676,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "location not valid: " + location.error().message());
 
 			uint64_t offset = args[2].as_uint64(), count = args[3].as_uint64();
-			if (!count || count > protocol::now().message.pages_per_query)
+			if (!count || count > kernel::params().message.pages_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto chain = storages::chainstate();
@@ -1696,7 +1696,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "location not valid: " + location.error().message());
 
 			uint64_t offset = args[5].as_uint64(), count = args[6].as_uint64();
-			if (!count || count > protocol::now().message.pages_per_query)
+			if (!count || count > kernel::params().message.pages_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto filter = storages::result_filter::from(args[2].as_string(), args[3].as_uint256(), args[4].as_decimal().to_int8());
@@ -1812,7 +1812,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "account address not valid");
 
 			uint64_t offset = args[2].as_uint64(), count = args[3].as_uint64();
-			if (!count || count > protocol::now().message.pages_per_query)
+			if (!count || count > kernel::params().message.pages_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto chain = storages::chainstate();
@@ -1843,7 +1843,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "account address not valid");
 
 			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
-			if (!count || count > protocol::now().message.pages_per_query)
+			if (!count || count > kernel::params().message.pages_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto chain = storages::chainstate();
@@ -1899,7 +1899,7 @@ namespace tangent
 		{
 			uint256_t commitment = args[0].as_uint256();
 			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
-			if (!count || count > protocol::now().message.pages_per_query)
+			if (!count || count > kernel::params().message.pages_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto filter = commitment > 0 ? storages::result_filter::greater_equal(commitment, -1) : storages::result_filter::equal(commitment, -1);
@@ -1931,7 +1931,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "account address not valid");
 
 			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
-			if (!count || count > protocol::now().message.pages_per_query)
+			if (!count || count > kernel::params().message.pages_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto chain = storages::chainstate();
@@ -1990,7 +1990,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "account address not valid");
 
 			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
-			if (!count || count > protocol::now().message.pages_per_query)
+			if (!count || count > kernel::params().message.pages_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto chain = storages::chainstate();
@@ -2007,7 +2007,7 @@ namespace tangent
 		{
 			uint256_t commitment = args[0].as_uint256();
 			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
-			if (!count || count > protocol::now().message.pages_per_query)
+			if (!count || count > kernel::params().message.pages_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto filter = commitment > 0 ? storages::result_filter::greater_equal(commitment, -1) : storages::result_filter::equal(commitment, -1);
@@ -2039,7 +2039,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "account address not valid");
 
 			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
-			if (!count || count > protocol::now().message.pages_per_query)
+			if (!count || count > kernel::params().message.pages_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto chain = storages::chainstate();
@@ -2075,7 +2075,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "account address not valid");
 
 			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
-			if (!count || count > protocol::now().message.pages_per_query)
+			if (!count || count > kernel::params().message.pages_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto chain = storages::chainstate();
@@ -2141,7 +2141,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "account address not valid");
 
 			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
-			if (!count || count > protocol::now().message.pages_per_query)
+			if (!count || count > kernel::params().message.pages_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto chain = storages::chainstate();
@@ -2213,7 +2213,7 @@ namespace tangent
 			auto asset = algorithm::asset::id_of_handle(args[0].as_string());
 			uint256_t commitment = args[1].as_uint256();
 			uint64_t offset = args[2].as_uint64(), count = args[3].as_uint64();
-			if (!count || count > protocol::now().message.pages_per_query)
+			if (!count || count > kernel::params().message.pages_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto filter = commitment > 0 ? storages::result_filter::greater_equal(commitment, -1) : storages::result_filter::equal(commitment, -1);
@@ -2245,7 +2245,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "account address not valid");
 
 			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
-			if (!count || count > protocol::now().message.pages_per_query)
+			if (!count || count > kernel::params().message.pages_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto chain = storages::chainstate();
@@ -2268,7 +2268,7 @@ namespace tangent
 		server_response server_node::chainstate_get_bridge_instances(http::connection*, format::variables&& args)
 		{
 			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
-			if (!count || count > protocol::now().message.pages_per_query)
+			if (!count || count > kernel::params().message.pages_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto chain = storages::chainstate();
@@ -2286,7 +2286,7 @@ namespace tangent
 		{
 			auto asset = algorithm::asset::id_of_handle(args[0].as_string());
 			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
-			if (!count || count > protocol::now().message.pages_per_query)
+			if (!count || count > kernel::params().message.pages_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto filter = storages::result_filter::greater_equal(0, -1);
@@ -2304,7 +2304,7 @@ namespace tangent
 		{
 			auto asset = algorithm::asset::id_of_handle(args[0].as_string());
 			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
-			if (!count || count > protocol::now().message.pages_per_query)
+			if (!count || count > kernel::params().message.pages_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto filter = storages::result_filter::greater(0, -1);
@@ -2389,7 +2389,7 @@ namespace tangent
 		{
 			auto asset = algorithm::asset::id_of_handle(args[0].as_string());
 			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
-			if (!count || count > protocol::now().message.pages_per_query)
+			if (!count || count > kernel::params().message.pages_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto filter = storages::result_filter::greater_equal(0, -1);
@@ -2483,7 +2483,7 @@ namespace tangent
 		server_response server_node::chainstate_get_bridge_balances(http::connection*, format::variables&& args)
 		{
 			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
-			if (!count || count > protocol::now().message.pages_per_query)
+			if (!count || count > kernel::params().message.pages_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto chain = storages::chainstate();
@@ -2500,7 +2500,7 @@ namespace tangent
 		{
 			auto asset = algorithm::asset::id_of_handle(args[0].as_string());
 			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
-			if (!count || count > protocol::now().message.pages_per_query)
+			if (!count || count > kernel::params().message.pages_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto filter = storages::result_filter::greater_equal(0, -1);
@@ -2529,7 +2529,7 @@ namespace tangent
 		server_response server_node::chainstate_get_bridge_accounts(http::connection*, format::variables&& args)
 		{
 			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
-			if (!count || count > protocol::now().message.pages_per_query)
+			if (!count || count > kernel::params().message.pages_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto filter = storages::result_filter::greater_equal(0, -1);
@@ -2589,7 +2589,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "account address not valid");
 
 			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
-			if (!count || count > protocol::now().message.pages_per_query)
+			if (!count || count > kernel::params().message.pages_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto chain = storages::chainstate();
@@ -2620,7 +2620,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "address purpose not valid");
 
 			uint64_t offset = args[2].as_uint64(), count = args[3].as_uint64();
-			if (!count || count > protocol::now().message.pages_per_query)
+			if (!count || count > kernel::params().message.pages_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			auto chain = storages::chainstate();
@@ -2684,7 +2684,7 @@ namespace tangent
 
 			auto result = format::tree::map();
 			result.set("validator", validator->first.as_tree());
-			result.set("wallet", validator->second.as_public_tree());
+			result.set("wallet", validator->second.as_tree());
 			return server_response().success(std::move(result));
 		}
 		server_response server_node::mempoolstate_get_closest_node_counter(http::connection*, format::variables&&)
@@ -2709,13 +2709,13 @@ namespace tangent
 
 			auto result = format::tree::map();
 			result.set("validator", validator->first.as_tree());
-			result.set("wallet", validator->second.as_public_tree());
+			result.set("wallet", validator->second.as_tree());
 			return server_response().success(std::move(result));
 		}
 		server_response server_node::mempoolstate_get_addresses(http::connection*, format::variables&& args)
 		{
 			uint64_t offset = args[0].as_uint64(), count = args[1].as_uint64();
-			if (!count || count > protocol::now().message.items_per_query)
+			if (!count || count > kernel::params().message.items_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			uint32_t services = 0;
@@ -2905,7 +2905,7 @@ namespace tangent
 		{
 			uint8_t flags = args[0].as_boolean() ? (uint8_t)storages::transaction_queue::commitment : 0;
 			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
-			if (!count || count > protocol::now().message.pages_per_query)
+			if (!count || count > kernel::params().message.pages_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			uint8_t unrolling = args.size() > 3 ? args[3].as_uint8() : 0;
@@ -2934,7 +2934,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "owner address not valid");
 
 			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
-			if (!count || count > protocol::now().message.pages_per_query)
+			if (!count || count > kernel::params().message.pages_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
 			uint8_t direction = args.size() > 3 ? args[3].as_uint8() : 1;
@@ -3094,7 +3094,7 @@ namespace tangent
 			auto* descriptor = target->as_descriptor();
 			auto result = format::tree::map();
 			result.set("validator", descriptor ? descriptor->first.as_tree() : format::variable());
-			result.set("wallet", descriptor ? descriptor->second.as_public_tree() : format::variable());
+			result.set("wallet", descriptor ? descriptor->second.as_tree() : format::variable());
 			result.set("network", target->as_tree());
 			return server_response().success(std::move(result));
 		}
@@ -3207,7 +3207,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_request, "invalid password");
 
 			uint8_t encryption_key[32] = { 0 };
-			if (!algorithm::signing::derive_seed_from_password((uint8_t*)password.data(), password.size(), encryption_key, sizeof(encryption_key)))
+			if (!algorithm::signing::derive_seed_from_high_entropy_password((uint8_t*)password.data(), password.size(), encryption_key, sizeof(encryption_key)))
 				return server_response().error(error_codes::bad_request, "failed to derive an encryption key");
 
 			auto mempool = storages::mempoolstate();
@@ -3234,7 +3234,7 @@ namespace tangent
 
 			auto password = args[1].as_string();
 			uint8_t decryption_key[32] = { 0 };
-			if (!algorithm::signing::derive_seed_from_password((uint8_t*)password.data(), password.size(), decryption_key, sizeof(decryption_key)))
+			if (!algorithm::signing::derive_seed_from_high_entropy_password((uint8_t*)password.data(), password.size(), decryption_key, sizeof(decryption_key)))
 				return server_response().error(error_codes::bad_request, "failed to derive a decryption key");
 
 			auto mempool = storages::mempoolstate();
@@ -3269,19 +3269,19 @@ namespace tangent
 			auto block_header = chain.get_latest_block_header();
 			umutex<std::recursive_mutex> unique(consensus_service->get_mutex());
 			auto data = format::tree::map();
-			if (protocol::now().user.consensus.server)
+			if (kernel::params().user.consensus.server)
 			{
 				auto* consensus = data.set("consensus", format::tree::map());
-				consensus->set("port", format::variable(protocol::now().user.consensus.port));
+				consensus->set("port", format::variable(kernel::params().user.consensus.port));
 			}
 
-			if (protocol::now().user.discovery.server)
+			if (kernel::params().user.discovery.server)
 			{
 				auto* discovery = data.set("discovery", format::tree::map());
-				discovery->set("port", format::variable(protocol::now().user.discovery.port));
+				discovery->set("port", format::variable(kernel::params().user.discovery.port));
 			}
 
-			if (protocol::now().user.superchain.listener)
+			if (kernel::params().user.superchain.listener)
 			{
 				auto* superchain = data.set("superchain", format::tree::map());
 				auto array = superchain->set("listeners", format::tree::list());
@@ -3289,23 +3289,23 @@ namespace tangent
 					array->push(algorithm::asset::serialize(asset));
 			}
 
-			if (protocol::now().user.rpc.server)
+			if (kernel::params().user.rpc.server)
 			{
 				auto* rpc = data.set("rpc", format::tree::map());
-				rpc->set("port", format::variable(protocol::now().user.rpc.port));
-				rpc->set("cursor_size", format::variable(protocol::now().message.items_per_query));
-				rpc->set("page_size", format::variable(protocol::now().message.pages_per_query));
-				rpc->set("sandbox", format::variable(protocol::now().user.rpc.sandbox));
-				rpc->set("restricted", format::variable(!protocol::now().user.rpc.username.empty()));
+				rpc->set("port", format::variable(kernel::params().user.rpc.port));
+				rpc->set("cursor_size", format::variable(kernel::params().message.items_per_query));
+				rpc->set("page_size", format::variable(kernel::params().message.pages_per_query));
+				rpc->set("sandbox", format::variable(kernel::params().user.rpc.sandbox));
+				rpc->set("restricted", format::variable(!kernel::params().user.rpc.username.empty()));
 			}
 
 			auto* tcp = data.set("tcp", format::tree::map());
-			tcp->set("timeout", format::variable(protocol::now().user.tcp.timeout));
+			tcp->set("timeout", format::variable(kernel::params().user.tcp.timeout));
 
 			auto* storage = data.set("storage", format::tree::map());
-			storage->set("checkpoint_size", format::variable(protocol::now().user.storage.checkpoint_size));
-			storage->set("transaction_to_account_index", format::variable(protocol::now().user.storage.transaction_to_account_index));
-			storage->set("transaction_to_alias_index", format::variable(protocol::now().user.storage.transaction_to_alias_index));
+			storage->set("checkpoint_size", format::variable(kernel::params().user.storage.checkpoint_size));
+			storage->set("transaction_to_account_index", format::variable(kernel::params().user.storage.transaction_to_account_index));
+			storage->set("transaction_to_alias_index", format::variable(kernel::params().user.storage.transaction_to_alias_index));
 
 			if (block_header)
 			{
@@ -3324,7 +3324,7 @@ namespace tangent
 				auto* descriptor = connection.second->as_descriptor();
 				auto node_data = format::tree::map();
 				node_data.set("validator", descriptor ? descriptor->first.as_tree() : format::variable());
-				node_data.set("wallet", descriptor ? descriptor->second.as_public_tree() : format::variable());
+				node_data.set("wallet", descriptor ? descriptor->second.as_tree() : format::variable());
 				node_data.set("network", connection.second->as_tree());
 				connections->push(std::move(node_data));
 			}
@@ -3339,7 +3339,7 @@ namespace tangent
 				item->set("progress", format::variable(decimal(consensus_service->get_sync_progress(block_header ? block_header->number : 0, *tip.second.state))));
 			}
 
-			switch (protocol::now().user.network)
+			switch (kernel::params().user.network)
 			{
 				case network_type::mainnet:
 					data.set("network", format::variable("mainnet"));

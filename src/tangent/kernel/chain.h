@@ -26,8 +26,8 @@ namespace tangent
 		ELEMENTS_BULK = 1 << 9,
 		ELEMENTS_MANY = 1 << 12,
 		ELEMENTS_HUGE = 1 << 17,
-		FORK_VERSION = 5,
-		PATCH_VERSION = 1
+		FORK_VERSION = 6,
+		PATCH_VERSION = 0
 	};
 
 	enum class fork_id
@@ -36,7 +36,8 @@ namespace tangent
 		key_bind_uniqueness = 840000,
 		difficulty_gas_work = 890000,
 		consensus_challenge = 920000,
-		base_to_root_modulo = 1001000
+		base_to_root_modulo = 1001000,
+		attesters_hardening = 1273450
 	};
 
 	enum class network_type
@@ -110,7 +111,7 @@ namespace tangent
 
 	class repository
 	{
-		friend class protocol;
+		friend class kernel;
 
 	private:
 		hash_map<string, single_queue<uref<sqlite::connection>>> indices;
@@ -154,23 +155,10 @@ namespace tangent
 		expects_lr<string> decrypt(const std::string_view& data) const;
 	};
 
-	class protocol
+	class kernel
 	{
-	private:
-		static protocol* instance;
-
 	public:
-		struct logger
-		{
-			std::recursive_mutex mutex;
-			uptr<stream> resource;
-			int64_t repack_time = 0;
-
-			void output(const std::string_view& message);
-		};
-
-	public:
-		struct user_dynamic_config
+		struct user_config
 		{
 			struct
 			{
@@ -193,6 +181,7 @@ namespace tangent
 			{
 				string address = "0.0.0.0";
 				uint16_t port = 18420;
+				bool proxy = false;
 				bool server = false;
 				bool logging = true;
 			} discovery;
@@ -212,6 +201,7 @@ namespace tangent
 				string username;
 				string password;
 				bool sandbox = true;
+				bool proxy = false;
 				bool server = false;
 				bool logging = true;
 			} rpc;
@@ -254,10 +244,11 @@ namespace tangent
 			string keystate;
 			bool encrypted = false;
 		} user;
-		struct protocol_messaging_config
+		struct messaging_config
 		{
 			uint64_t packet_magic = 0x73d308e9;
 			uint32_t max_message_size = 0xffffff;
+			uint32_t max_message_depth = 1024;
 			uint32_t max_body_size = 1024 * 1024 * 24;
 			uint32_t decimal_precision = 18;
 			uint32_t integer_precision = 78;
@@ -267,9 +258,9 @@ namespace tangent
 			uint64_t transactions_per_query = 32;
 			uint64_t items_per_query = 512;
 			uint64_t pages_per_query = 64;
-			uint64_t timestamp_delta = 300000;
+			uint64_t timestamp_delta = 60000;
 		} message;
-		struct protocol_account_config
+		struct account_config
 		{
 			string secret_key_prefix = "sec";
 			string public_key_prefix = "pub";
@@ -279,7 +270,7 @@ namespace tangent
 			uint8_t public_key_version = 0xE;
 			uint8_t address_version = 0x4;
 		} account;
-		struct protocol_policy_config
+		struct policy_config
 		{
 			struct
 			{
@@ -302,6 +293,7 @@ namespace tangent
 			struct
 			{
 				uint64_t confirmation_time = 172800000;
+				uint64_t min_per_transaction = 4;
 				uint64_t max_per_transaction = 32;
 				decimal min_stake_value = std::string_view("900");
 				decimal consensus_threshold = std::string_view("0.70");
@@ -342,12 +334,18 @@ namespace tangent
 		} policy;
 
 	private:
-		struct
+		struct log_state
 		{
-			logger info;
-			logger error;
-			logger query;
-		} logs;
+			std::recursive_mutex mutex;
+			uptr<stream> resource;
+			int64_t repack_time = 0;
+
+			void output(const std::string_view& message);
+		};
+		static kernel* instance;
+		log_state info_log;
+		log_state error_log;
+		log_state query_log;
 		string path;
 
 	public:
@@ -357,16 +355,14 @@ namespace tangent
 		timepoint time;
 
 	public:
-		protocol(const inline_args& environment);
-		virtual ~protocol();
+		kernel(const inline_args& environment);
+		virtual ~kernel();
 		bool is(network_type type) const;
 		bool on(fork_id fork, uint64_t block_number) const;
 		bool custom() const;
-
-	public:
-		static bool bound();
-		static protocol& change();
-		static const protocol& now();
+		static const kernel& params();
+		static const kernel* pparams();
+		static kernel& mparams();
 	};
 }
 #endif

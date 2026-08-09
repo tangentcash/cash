@@ -216,7 +216,7 @@ namespace tangent
 							log.transactions = format::tree::list();
 						}
 
-						if (protocol::now().user.superchain.logging)
+						if (kernel::params().user.superchain.logging)
 							VI_WARN("skipping solana block(s) at height %" PRIu64 ": %s", block_height, block_data.error().what());
 					}
 					else
@@ -721,9 +721,15 @@ namespace tangent
 
 				char encoded_private_key[128]; size_t encoded_private_key_size = sizeof(encoded_private_key);
 				if (!b58enc(encoded_private_key, &encoded_private_key_size, private_key, sizeof(private_key)))
+				{
+					sodium_memzero(private_key, sizeof(private_key));
 					return layer_exception("invalid private key");
+				}
 
-				return secret_box::secure(std::string_view((char*)encoded_private_key, encoded_private_key_size - 1));
+				auto output = secret_box::secure(std::string_view((char*)encoded_private_key, encoded_private_key_size - 1));
+				sodium_memzero(encoded_private_key, sizeof(encoded_private_key));
+				sodium_memzero(private_key, sizeof(private_key));
+				return output;
 			}
 			expects_lr<secret_box> solana::decode_secret_key(const secret_box& secret_key)
 			{
@@ -738,7 +744,9 @@ namespace tangent
 					algorithm::keypair_utils::convert_to_secret_key_ed25519(private_key);
 				}
 
-				return secret_box::secure(std::string_view((char*)private_key, sizeof(private_key)));
+				auto output = secret_box::secure(std::string_view((char*)private_key, sizeof(private_key)));
+				sodium_memzero(private_key, sizeof(private_key));
+				return output;
 			}
 			expects_lr<string> solana::encode_public_key(const std::string_view& public_key)
 			{
@@ -763,6 +771,18 @@ namespace tangent
 			expects_lr<string> solana::decode_address(const std::string_view& address)
 			{
 				return decode_public_key(address);
+			}
+			expects_lr<string> solana::encode_signature(const std::string_view& signature)
+			{
+				return codec::base64_encode(signature);
+			}
+			expects_lr<string> solana::decode_signature(const std::string_view& signature)
+			{
+				auto result = codec::base64_decode(signature);
+				if (result.size() != 64)
+					return layer_exception("invalid base64 signature");
+
+				return result;
 			}
 			expects_lr<string> solana::encode_transaction_id(const std::string_view& transaction_id)
 			{
@@ -1146,7 +1166,7 @@ namespace tangent
 			}
 			const sc_chainparams_* solana::get_chain()
 			{
-				switch (protocol::now().user.network)
+				switch (kernel::params().user.network)
 				{
 					case network_type::regtest:
 						return &sol_chainparams_regtest;

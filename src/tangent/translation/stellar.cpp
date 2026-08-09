@@ -756,7 +756,10 @@ namespace tangent
 				uint8_t private_key[64];
 				sha512_Raw(seed_key, seed_key_size, private_key);
 				algorithm::keypair_utils::convert_to_secret_key_ed25519(private_key);
-				return secret_box::secure(std::string_view((char*)private_key, 32));
+				auto output = secret_box::secure(std::string_view((char*)private_key, 32));;
+				sodium_memzero(private_key, sizeof(private_key));
+				sodium_memzero(seed_key, sizeof(seed_key));
+				return output;
 			}
 			expects_lr<string> stellar::encode_public_key(const std::string_view& public_key)
 			{
@@ -786,6 +789,18 @@ namespace tangent
 				auto result = decode_public_key(base_address);
 				if (result && !tag.empty())
 					result->append(tag);
+				return result;
+			}
+			expects_lr<string> stellar::encode_signature(const std::string_view& signature)
+			{
+				return codec::hex_encode(signature, true);
+			}
+			expects_lr<string> stellar::decode_signature(const std::string_view& signature)
+			{
+				auto result = codec::hex_decode(signature);
+				if (result.size() != 64)
+					return layer_exception("invalid hex signature");
+
 				return result;
 			}
 			expects_lr<string> stellar::encode_transaction_id(const std::string_view& transaction_id)
@@ -821,7 +836,7 @@ namespace tangent
 			}
 			string stellar::get_network_passphrase()
 			{
-				switch (protocol::now().user.network)
+				switch (kernel::params().user.network)
 				{
 					case network_type::regtest:
 					case network_type::testnet:
@@ -878,7 +893,7 @@ namespace tangent
 					return false;
 
 				uint16_t given_checksum = 0;
-				uint16_t checksum = calculate_checksum(&key[0], key.size() - 2);
+				uint16_t checksum = os::hw::to_endianness(os::hw::endian::little, calculate_checksum(&key[0], key.size() - 2));
 				memcpy(&given_checksum, &key[key.size() - 2], sizeof(uint8_t) * 2);
 				if (given_checksum != checksum)
 					return false;
@@ -904,7 +919,7 @@ namespace tangent
 			}
 			stellar::chain_info& stellar::get_params()
 			{
-				switch (protocol::now().user.network)
+				switch (kernel::params().user.network)
 				{
 					case network_type::regtest:
 						return config.regtest;
@@ -919,7 +934,7 @@ namespace tangent
 			}
 			const sc_chainparams_* stellar::get_chain()
 			{
-				switch (protocol::now().user.network)
+				switch (kernel::params().user.network)
 				{
 					case network_type::regtest:
 						return &xlm_chainparams_regtest;

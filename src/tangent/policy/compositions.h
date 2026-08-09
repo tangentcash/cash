@@ -19,7 +19,6 @@ namespace tangent
 			ed25519_scalar_t cumulative_s;
 			vector<uint256_t> indices;
 			vector<uint8_t> message;
-			uint16_t participants = 0;
 			uint16_t z_steps = 0;
 			uint16_t r_steps = 0;
 			uint16_t s_steps = 0;
@@ -34,7 +33,7 @@ namespace tangent
 			expects_lr<void> derive_secret_key(const uint8_t* seed, size_t seed_size, algorithm::composition::cseckey_t* output) const override;
 			expects_lr<void> derive_public_key(algorithm::composition::cpubkey_t* output) const override;
 			expects_lr<void> derive_signature(algorithm::composition::chashsig_t* output) const override;
-			expects_lr<void> verify_signature(const uint8_t* message, size_t message_size, const algorithm::composition::chashsig_t& signature, const algorithm::composition::cpubkey_t& public_key) const override;
+			expects_lr<void> verify_signature(const uint8_t* message, size_t message_size, const algorithm::composition::chashsig_t& signature, const algorithm::composition::cpubkey_t& public_key, uint8_t flags = 0) const override;
 			algorithm::composition::type alg_type() const override;
 			algorithm::composition::phase next_phase() const override;
 			uint32_t steps_left() const override;
@@ -150,7 +149,7 @@ namespace tangent
 			expects_lr<void> derive_secret_key(const uint8_t* seed, size_t seed_size, algorithm::composition::cseckey_t* output) const override;
 			expects_lr<void> derive_public_key(algorithm::composition::cpubkey_t* output) const override;
 			expects_lr<void> derive_signature(algorithm::composition::chashsig_t* output) const override;
-			expects_lr<void> verify_signature(const uint8_t* message, size_t message_size, const algorithm::composition::chashsig_t& signature, const algorithm::composition::cpubkey_t& public_key) const override;
+			expects_lr<void> verify_signature(const uint8_t* message, size_t message_size, const algorithm::composition::chashsig_t& signature, const algorithm::composition::cpubkey_t& public_key, uint8_t flags = 0) const override;
 			algorithm::composition::type alg_type() const override;
 			algorithm::composition::phase next_phase() const override;
 			uint32_t steps_left() const override;
@@ -177,18 +176,30 @@ namespace tangent
 
 		struct secp256k1_compositor final : algorithm::composition::compositor
 		{
+			struct factor_state
+			{
+				algorithm::paillier_scalar_t public_key;
+				algorithm::paillier_scalar_t cumulative_x;
+				algorithm::paillier_scalar_t cumulative_x_d;
+				algorithm::paillier_scalar_t cumulative_y;
+				algorithm::paillier_scalar_t cumulative_y_d;
+				uint256_t k_index = 0;
+			};
+			struct beta_state
+			{
+				size_t index = 0;
+				bool sanity_check = false;
+			};
+
 			secp256k1_point_t cumulative_key;
 			secp256k1_point_t cumulative_r;
 			secp256k1_scalar_t cumulative_s;
-			algorithm::paillier_scalar_t cumulative_i;
-			algorithm::paillier_scalar_t encryption_key;
-			vector<uint256_t> indices;
+			vector<factor_state> factors;
 			uint8_t message_hash[32] = { 0 };
-			uint16_t additions = 0;
-			uint16_t multiplications = 0;
 			uint16_t z_steps = 0;
 			uint16_t r_steps = 0;
-			uint16_t i_steps = 0;
+			uint16_t p_steps = 0;
+			uint16_t d_steps = 0;
 			uint16_t s_steps = 0;
 			uint16_t p_bits = 0;
 
@@ -202,8 +213,8 @@ namespace tangent
 			expects_lr<void> derive_secret_key(const uint8_t* seed, size_t seed_size, algorithm::composition::cseckey_t* output) const override;
 			expects_lr<void> derive_public_key(algorithm::composition::cpubkey_t* output) const override;
 			expects_lr<void> derive_signature(algorithm::composition::chashsig_t* output) const override;
-			expects_lr<void> verify_signature(const uint8_t* message, size_t message_size, const algorithm::composition::chashsig_t& signature, const algorithm::composition::cpubkey_t& public_key) const override;
-			expects_lr<void> verify_signature_set_recovery_id(const uint8_t* message, size_t message_size, algorithm::composition::chashsig_t& signature, const algorithm::composition::cpubkey_t& public_key) const;
+			expects_lr<void> verify_signature(const uint8_t* message, size_t message_size, const algorithm::composition::chashsig_t& signature, const algorithm::composition::cpubkey_t& public_key, uint8_t flags = 0) const override;
+			expects_lr<void> verify_signature_set_recovery_id(const uint8_t* message, size_t message_size, algorithm::composition::chashsig_t& signature, const algorithm::composition::cpubkey_t& public_key, uint8_t flags) const;
 			algorithm::composition::type alg_type() const override;
 			algorithm::composition::phase next_phase() const override;
 			uint32_t steps_left() const override;
@@ -220,7 +231,6 @@ namespace tangent
 			secp256k1_scalar_t cumulative_s;
 			vector<uint256_t> indices;
 			uint8_t message_hash[32] = { 0 };
-			uint16_t participants = 0;
 			uint16_t z_steps = 0;
 			uint16_t r_steps = 0;
 			uint16_t s_steps = 0;
@@ -235,7 +245,7 @@ namespace tangent
 			expects_lr<void> derive_secret_key(const uint8_t* seed, size_t seed_size, algorithm::composition::cseckey_t* output) const override;
 			expects_lr<void> derive_public_key(algorithm::composition::cpubkey_t* output) const override;
 			expects_lr<void> derive_signature(algorithm::composition::chashsig_t* output) const override;
-			expects_lr<void> verify_signature(const uint8_t* message, size_t message_size, const algorithm::composition::chashsig_t& signature, const algorithm::composition::cpubkey_t& public_key) const override;
+			expects_lr<void> verify_signature(const uint8_t* message, size_t message_size, const algorithm::composition::chashsig_t& signature, const algorithm::composition::cpubkey_t& public_key, uint8_t flags = 0) const override;
 			algorithm::composition::type alg_type() const override;
 			algorithm::composition::phase next_phase() const override;
 			uint32_t steps_left() const override;

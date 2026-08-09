@@ -221,7 +221,7 @@ namespace tangent
 					info.ref_block_bytes = ref_block_bytes.substr(ref_block_bytes.size() - 4);
 					info.ref_block_hash = ref_block_hash.substr(16, 16);
 					info.timestamp = block_data->child_var("block_header.raw_data.timestamp").as_uint64();
-					info.expiration = protocol::now().time.now_cpu() + 7200 * 1000;
+					info.expiration = kernel::params().time.now_cpu() + 7200 * 1000;
 					coreturn expects_rt<tron::trx_tx_block_header_info>(std::move(info));
 				});
 			}
@@ -464,7 +464,7 @@ namespace tangent
 			}
 			expects_promise_rt<void> tron::broadcast_transaction(const finalized_transaction& finalized)
 			{
-				auto native_data = codec::decompress(codec::hex_decode(finalized.calldata));
+				auto native_data = codec::decompress(codec::hex_decode(finalized.calldata), kernel::params().message.max_message_size);
 				if (!native_data)
 					return expects_rt<void>(remote_exception(std::move(native_data.error().message())));
 
@@ -556,7 +556,7 @@ namespace tangent
 					auto eth_like_to_address = decode_non_eth_address_pf(to.address);
 					auto eth_to_address = decode_non_eth_address_pf(to.address, false);
 					auto eth_value = from_eth(to.value, divisibility);
-					auto fee_limit = from_eth(std::max(fee_value, max_fee), netdata.divisibility);
+					auto fee_limit = from_eth(fee_value, netdata.divisibility);
 					auto transaction = tx_serialize(*block_header, eth_contract_address, eth_like_from_address, eth_like_to_address, eth_to_address, eth_value, fee_limit);
 					prepared_transaction result;
 					if (contract_address)
@@ -601,10 +601,7 @@ namespace tangent
 
 				uint8_t raw_signature[65];
 				memcpy(raw_signature, input.signature.data(), std::min(input.signature.size(), sizeof(raw_signature)));
-				if (raw_signature[64] > 0)
-					raw_signature[64] = 0x1c;
-				else
-					raw_signature[64] = 0x1b;
+				raw_signature[64] = (raw_signature[64] > 0 ? 0x1c : 0x1b);
 
 				auto* signature_object = transaction.transaction_data.set("signature", format::tree::list());
 				signature_object->push(format::variable(codec::hex_encode(std::string_view((char*)raw_signature, sizeof(raw_signature)))));
@@ -659,7 +656,7 @@ namespace tangent
 			}
 			const sc_chainparams_* tron::get_chain()
 			{
-				switch (protocol::now().user.network)
+				switch (kernel::params().user.network)
 				{
 					case network_type::regtest:
 						return &trx_chainparams_regtest;

@@ -152,8 +152,9 @@ namespace tangent
 			bool load_payload(format::ro_stream& stream) override;
 			expects_lr<void> validate_with(const algorithm::asset_id& asset) const;
 			expects_lr<void> validate() const;
-			uint256_t as_attestation_hash() const;
 			format::tree as_tree() const override;
+			uint256_t as_proof_hash(const algorithm::asset_id& asset, uint64_t block_number = (uint64_t)fork_id::attesters_hardening, bool renew = false) const;
+			uint256_t as_attestation_hash() const;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
@@ -280,7 +281,9 @@ namespace tangent
 			secret_box encoded_secret_key;
 			string encoded_public_key;
 
+			~computed_wallet();
 			format::tree as_tree() const;
+			format::tree as_secret_tree() const;
 		};
 
 		struct network_options
@@ -310,6 +313,7 @@ namespace tangent
 			{
 				uint64_t rps_retry_after_timestamp = 0;
 				uint64_t error_retry_after_timestamp = 0;
+				uint64_t total_requests = 0;
 			} state;
 			string connection_url;
 			btree_map<string, string> headers;
@@ -375,6 +379,8 @@ namespace tangent
 			virtual expects_lr<string> decode_public_key(const std::string_view& public_key) = 0;
 			virtual expects_lr<string> encode_address(const std::string_view& public_key_hash) = 0;
 			virtual expects_lr<string> decode_address(const std::string_view& address) = 0;
+			virtual expects_lr<string> encode_signature(const std::string_view& signature) = 0;
+			virtual expects_lr<string> decode_signature(const std::string_view& signature) = 0;
 			virtual expects_lr<string> encode_transaction_id(const std::string_view& transaction_id) = 0;
 			virtual expects_lr<string> decode_transaction_id(const std::string_view& transaction_id) = 0;
 			virtual expects_lr<algorithm::composition::cpubkey_t> to_composite_public_key(const std::string_view& public_key);

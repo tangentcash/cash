@@ -216,7 +216,7 @@ namespace tangent
 			expects_promise_rt<coin_utxo> monero::get_transaction_output(const std::string_view& transaction_id, uint64_t index)
 			{
 				auto result = get_utxo(transaction_id, index);
-				if (result)
+				if (!result)
 					return expects_promise_rt<coin_utxo>(remote_exception(std::move(result.error().message())));
 
 				return expects_promise_rt<coin_utxo>(std::move(*result));
@@ -873,7 +873,9 @@ namespace tangent
 					auto data = secret_key.expose<KEY_LIMIT>();
 					string private_spend_view_key = codec::hex_encode(data.view.substr(0, 32));
 					private_spend_view_key.append(1, ':').append(codec::hex_encode(data.view.substr(32)));
-					return secret_box::secure(private_spend_view_key);
+					auto output = secret_box::secure(private_spend_view_key);
+					sodium_memzero(private_spend_view_key.data(), private_spend_view_key.size());
+					return output;
 				}
 				else if (secret_key.size() == 32)
 				{
@@ -883,14 +885,21 @@ namespace tangent
 
 					uint8_t public_spend_key[32];
 					if (crypto_scalarmult_ed25519_base_noclamp(public_spend_key, private_spend_key) != 0)
+					{
+						sodium_memzero(private_spend_key, sizeof(private_spend_key));
 						return layer_exception("not a valid private spend-view key");
+					}
 
 					uint8_t private_view_key[32];
 					cryptonote::derive_known_private_view_key(public_spend_key, private_view_key);
+					sodium_memzero(private_spend_key, sizeof(private_spend_key));
 
 					string private_spend_view_key = codec::hex_encode(std::string_view((char*)private_spend_key, sizeof(private_spend_key)));
 					private_spend_view_key.append(1, ':').append(codec::hex_encode(std::string_view((char*)private_view_key, sizeof(private_view_key))));
-					return secret_box::secure(private_spend_view_key);
+					auto output = secret_box::secure(private_spend_view_key);
+					sodium_memzero(private_view_key, sizeof(private_view_key));
+					sodium_memzero(private_spend_view_key.data(), private_spend_view_key.size());
+					return output;
 				}
 
 				return layer_exception("private key is not a pair of private spend key and private view key");
@@ -951,7 +960,7 @@ namespace tangent
 				size_t split = public_key.find(':');
 				auto raw_spend_key = codec::hex_decode(public_key.substr(0, split));
 				if (raw_spend_key.size() != 32)
-					return layer_exception("not a valid hex public spend-view keypair");
+					return layer_exception("not a valid hex public spend-view keypair (expected format: public-spend-key:public-view-key)");
 
 				memcpy(public_spend_key, raw_spend_key.data(), sizeof(public_spend_key));
 				auto raw_view_key = codec::hex_decode(public_key.substr(split + 1));
@@ -989,6 +998,30 @@ namespace tangent
 
 				buffer[64] = (uint8_t)type;
 				return string((char*)buffer, 65);
+			}
+			expects_lr<string> monero::encode_signature(const std::string_view& signature)
+			{
+				if (signature.size() != 64)
+					return layer_exception("invalid signature");
+
+				char buffer[256]; size_t buffer_size = sizeof(buffer);
+				if (!xmr_base58_encode(buffer, &buffer_size, signature.data(), signature.size()))
+					return layer_exception("invalid signature");
+
+				string result = "SigV2";
+				result.append(buffer, buffer_size);
+				return result;
+			}
+			expects_lr<string> monero::decode_signature(const std::string_view& signature)
+			{
+				if (!stringify::starts_with(signature, "SigV2"))
+					return layer_exception("invalid sigv2+base58 signature");
+
+				uint8_t buffer[128]; size_t buffer_size = sizeof(buffer); auto small_signature = signature.substr(5);
+				if (!xmr_base58_decode(small_signature.data(), small_signature.size(), buffer, &buffer_size) || buffer_size != 64)
+					return layer_exception("invalid sigv2+base58 signature");
+
+				return string((char*)buffer, buffer_size);
 			}
 			expects_lr<string> monero::encode_transaction_id(const std::string_view& transaction_id)
 			{
@@ -1028,7 +1061,7 @@ namespace tangent
 			}
 			monero::address_prefix monero::get_address_prefix() const
 			{
-				switch (protocol::now().user.network)
+				switch (kernel::params().user.network)
 				{
 					case network_type::regtest:
 					case network_type::mainnet:

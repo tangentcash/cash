@@ -111,7 +111,6 @@ namespace tangent
 		class wesolowski
 		{
 		public:
-			friend struct mpz;
 			typedef string digest;
 
 		public:
@@ -168,13 +167,12 @@ namespace tangent
 			static bool verify_secret_key(const seckey_t& secret_key);
 			static bool verify_public_key(const pubkey_t& public_key);
 			static bool verify_address(const std::string_view& address);
-			static bool verify_encrypted_message(const std::string_view& ciphertext);
 			static void derive_secret_key_from_mnemonic(const std::string_view& mnemonic, seckey_t& secret_key);
 			static void derive_secret_key_from_parent(const seckey_t& secret_key, const uint256_t& entropy, seckey_t& child_secret_key);
 			static void derive_secret_key(const uint256_t& entropy, seckey_t& secret_key);
 			static bool derive_public_key(const seckey_t& secret_key, pubkey_t& public_key);
 			static void derive_public_key_hash(const pubkey_t& public_key, pubkeyhash_t& public_key_hash);
-			static bool derive_seed_from_password(const uint8_t* input, size_t input_size, uint8_t* output, size_t output_size);
+			static bool derive_seed_from_high_entropy_password(const uint8_t* input, size_t input_size, uint8_t* output, size_t output_size);
 			static bool split_secret_into_shares(const uint8_t* message_in, size_t message_in_size, uint8_t threshold, uint8_t count, btree_set<share_t>& shares);
 			static bool combine_shares_into_secret(const btree_set<share_t>& shares, uint8_t* message_out, size_t message_out_size);
 			static uint8_t recovery_threshold(size_t shares);
@@ -201,7 +199,6 @@ namespace tangent
 		class encoding
 		{
 		public:
-			static bool decode_bytes(const std::string_view& value, uint8_t* data, size_t data_size);
 			static string encode_0xhex256(const uint256_t& data);
 			static uint256_t decode_0xhex256(const std::string_view& data);
 			static string encode_0xhex128(const uint128_t& data);
@@ -238,11 +235,11 @@ namespace tangent
 			template <typename t>
 			inline static decimal fixed(const t& value)
 			{
-				return decimal(value).truncate(protocol::now().message.decimal_precision);
+				return decimal(value).truncate(kernel::params().message.decimal_precision);
 			}
 			inline static decimal&& fixed(decimal&& value)
 			{
-				return std::move(value.truncate(protocol::now().message.decimal_precision));
+				return std::move(value.truncate(kernel::params().message.decimal_precision));
 			}
 			inline static uint256_t fixed256(const decimal& value)
 			{
@@ -251,8 +248,8 @@ namespace tangent
 
 				auto numeric = value.to_string();
 				size_t index = numeric.find('.');
-				size_t size = protocol::now().message.decimal_precision;
-				size_t max_size = size + protocol::now().message.integer_precision;
+				size_t size = kernel::params().message.decimal_precision;
+				size_t max_size = size + kernel::params().message.integer_precision;
 				if (index != std::string::npos)
 				{
 					size_t delta = numeric.size() - index - 1;
@@ -272,6 +269,7 @@ namespace tangent
 			}
 			inline static uint32_t fastmod256r32(const uint256_t& value, uint64_t order)
 			{
+				VI_ASSERT(order <= 4611686018427387904llu, "order must not exceed 2^62");
 				uint64_t w0 = value.low().low();
 				uint64_t w1 = value.low().high();
 				uint64_t w2 = value.high().low();
@@ -283,7 +281,7 @@ namespace tangent
 			inline static decimal range(const t& value)
 			{
 				uint256_t divisibility = 1;
-				uint256_t decimals = std::min<uint256_t>(value, protocol::now().message.decimal_precision);
+				uint256_t decimals = std::min<uint256_t>(value, kernel::params().message.decimal_precision);
 				for (uint256_t i = 0; i < decimals; i++)
 					divisibility *= 10;
 				return fixed(divisibility.to_string());
@@ -292,7 +290,7 @@ namespace tangent
 			inline static decimal divide(const a& a_value, const b& b_value)
 			{
 				auto result = a_value / fixed<b>(b_value);
-				return result.truncate(protocol::now().message.decimal_precision);
+				return result.truncate(kernel::params().message.decimal_precision);
 			}
 			inline static decimal ceil(const decimal& value)
 			{
@@ -369,11 +367,9 @@ namespace tangent
 		public:
 			enum class phase : uint8_t
 			{
-				any_input_after_reset,
-				any_input,
-				chosen_input_after_reset,
-				chosen_input,
-				finalized
+				consume_after_reset,
+				consume,
+				finalize
 			};
 
 			enum class type : uint8_t
@@ -383,6 +379,13 @@ namespace tangent
 				ed25519_clsag,
 				secp256k1,
 				secp256k1_schnorr
+			};
+
+			enum class verify : uint8_t
+			{
+				user_message = (1 << 0),
+				auth_message = (1 << 1),
+				tx_message = (1 << 2)
 			};
 
 			struct shared_message
@@ -405,7 +408,7 @@ namespace tangent
 				virtual expects_lr<void> derive_secret_key(const uint8_t* seed, size_t seed_size, cseckey_t* output) const = 0;
 				virtual expects_lr<void> derive_public_key(cpubkey_t* output) const = 0;
 				virtual expects_lr<void> derive_signature(chashsig_t* output) const = 0;
-				virtual expects_lr<void> verify_signature(const uint8_t* message, size_t message_size, const chashsig_t& signature, const cpubkey_t& public_key) const = 0;
+				virtual expects_lr<void> verify_signature(const uint8_t* message, size_t message_size, const chashsig_t& signature, const cpubkey_t& public_key, uint8_t flags = 0) const = 0;
 				virtual type alg_type() const = 0;
 				virtual phase next_phase() const = 0;
 				virtual uint32_t steps_left() const = 0;
@@ -418,9 +421,19 @@ namespace tangent
 			{
 				cseckey_t secret_key;
 				cpubkey_t public_key;
+
+				~keypair();
 			};
 
+		private:
+			static hash_map<string, string>* derivation_cache;
+			static std::mutex* derivation_mutex;
+
 		public:
+			static void initialize_cache();
+			static void deinitialize_cache();
+			static void push_derivation_cache(string&& key, string&& value);
+			static option<string> pull_derivation_cache(const std::string_view& key);
 			static expects_lr<keypair> derive_keypair(type alg, const uint8_t* seed, size_t seed_size);
 			static expects_lr<cpubkey_t> derive_public_key(type alg, const cseckey_t& secret_key);
 			static expects_lr<uptr<compositor>> make_compositor(type alg);

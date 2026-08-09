@@ -13,28 +13,28 @@ namespace tangent
 		}
 		void server_node::startup()
 		{
-			if (!protocol::now().user.discovery.server)
+			if (!kernel::params().user.discovery.server)
 				return;
 
 			http::map_router* router = new http::map_router();
-			router->listen(protocol::now().user.discovery.address, to_string(protocol::now().user.discovery.port)).expect("listener binding error");
+			router->listen(kernel::params().user.discovery.address, to_string(kernel::params().user.discovery.port)).expect("listener binding error");
 			router->get("/", std::bind(&server_node::dispatch, this, std::placeholders::_1));
 			router->base->callbacks.headers = std::bind(&server_node::headers, this, std::placeholders::_1, std::placeholders::_2);
 			router->base->callbacks.options = std::bind(&server_node::options, this, std::placeholders::_1);
-			router->base->proxy_ip_address = "X-Real-IP";
+			router->base->proxy_ip_address = kernel::params().user.discovery.proxy ? "X-Real-IP" : string();
 			router->temporary_directory.clear();
 			node->configure(router).expect("configuration error");
 			node->listen().expect("listen queue error");
 
-			if (protocol::now().user.discovery.logging)
-				VI_INFO("OK discovery node listen (location: %s:%i)", protocol::now().user.discovery.address.c_str(), (int)protocol::now().user.discovery.port);
+			if (kernel::params().user.discovery.logging)
+				VI_INFO("OK discovery node listen (location: %s:%i)", kernel::params().user.discovery.address.c_str(), (int)kernel::params().user.discovery.port);
 		}
 		void server_node::shutdown()
 		{
 			if (!is_active())
 				return;
 
-			if (protocol::now().user.discovery.logging)
+			if (kernel::params().user.discovery.logging)
 				VI_INFO("OK discovery node shutdown");
 
 			node->unlisten(false);
@@ -98,13 +98,13 @@ namespace tangent
 			auto* participation_argument = query.get("participation");
 			auto* attestation_argument = query.get("attestation");
 			auto* count_argument = query.get("count");
-			uint64_t count = count_argument && count_argument->value.is(var_type::integer) ? count_argument->value.get_integer() : protocol::now().message.items_per_query;
-			if (!count || count > protocol::now().message.items_per_query)
+			uint64_t count = count_argument && count_argument->value.is(var_type::integer) ? count_argument->value.get_integer() : kernel::params().message.items_per_query;
+			if (!count || count > kernel::params().message.items_per_query)
 			{
-				if (protocol::now().user.discovery.logging)
+				if (kernel::params().user.discovery.logging)
 					VI_WARN("peer %s discovery failed: bad arguments (time: %" PRId64 " ms, args: %s)", base->get_peer_ip_address().or_else("[bad_address]").c_str(), date_time().milliseconds() - base->info.start, base->request.query.empty() ? "none" : base->request.query.c_str());
 
-				return base->abort(400, "Bad page size. count must not exceed %" PRIu64 " elements.", protocol::now().message.items_per_query);
+				return base->abort(400, "Bad page size. count must not exceed %" PRIu64 " elements.", kernel::params().message.items_per_query);
 			}
 
 			uint32_t services = 0;
@@ -135,7 +135,7 @@ namespace tangent
 
 			auto mempool = storages::mempoolstate();
 			auto nodes = mempool.get_sample_nodes_with(count, services, port).or_else(vector<storages::node_location_pair>());
-			if (protocol::now().user.discovery.logging)
+			if (kernel::params().user.discovery.logging)
 				VI_INFO("peer %s discovery: %i nodes returned (time: %" PRId64 " ms, args: %s, services: %i)", base->get_peer_ip_address().or_else("[bad_address]").c_str(), (int)nodes.size(), date_time().milliseconds() - base->info.start, base->request.query.empty() ? "none" : base->request.query.c_str(), (int)services);
 
 			format::tree data;
@@ -149,15 +149,15 @@ namespace tangent
 				switch (port)
 				{
 					case storages::node_ports::consensus:
-						if (protocol::now().user.consensus.server)
+						if (kernel::params().user.consensus.server)
 							data.push(format::variable("tcp://selfhost:" + to_string(local_node.first.ports.consensus)));
 						break;
 					case storages::node_ports::discovery:
-						if (protocol::now().user.discovery.server)
+						if (kernel::params().user.discovery.server)
 							data.push(format::variable("tcp://selfhost:" + to_string(local_node.first.ports.discovery)));
 						break;
 					case storages::node_ports::rpc:
-						if (protocol::now().user.rpc.server)
+						if (kernel::params().user.rpc.server && kernel::params().user.rpc.username.empty())
 							data.push(format::variable("tcp://selfhost:" + to_string(local_node.first.ports.rpc)));
 						break;
 					default:
@@ -171,7 +171,7 @@ namespace tangent
 		}
 		service_control::service_node server_node::get_entrypoint()
 		{
-			if (!protocol::now().user.discovery.server)
+			if (!kernel::params().user.discovery.server)
 				return service_control::service_node();
 
 			service_control::service_node entrypoint;

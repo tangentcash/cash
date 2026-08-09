@@ -943,16 +943,19 @@ namespace tangent
 				uint8_t result[64] = { 0 }; int result_size = (int)sizeof(result);
 				utils_hex_to_bin(data.view.data() + offset, result, (int)data.view.size() - (int)offset, &result_size);
 				if (result_size != BTC_ECKEY_PKEY_LENGTH)
+				{
+					btc_mem_zero(result, sizeof(result));
 					return layer_exception("invalid private key");
+				}
 
-				return secret_box::secure(std::string_view((char*)result, (size_t)result_size));
+				auto output = secret_box::secure(std::string_view((char*)result, (size_t)result_size));
+				btc_mem_zero(result, sizeof(result));
+				return output;
 			}
 			expects_lr<string> ethereum::encode_public_key(const std::string_view& public_key)
 			{
 				if (public_key.size() == BTC_ECKEY_UNCOMPRESSED_LENGTH)
 					return format::util::encode_0xhex(public_key.substr(1));
-				else if (public_key.size() == BTC_ECKEY_UNCOMPRESSED_LENGTH - 1)
-					return format::util::encode_0xhex(public_key);
 				else if (public_key.size() == BTC_ECKEY_UNCOMPRESSED_LENGTH - 1)
 					return format::util::encode_0xhex(public_key);
 				else if (public_key.size() != BTC_ECKEY_COMPRESSED_LENGTH)
@@ -989,6 +992,18 @@ namespace tangent
 					return layer_exception("invalid address");
 
 				return data;
+			}
+			expects_lr<string> ethereum::encode_signature(const std::string_view& signature)
+			{
+				return codec::hex_encode(signature);
+			}
+			expects_lr<string> ethereum::decode_signature(const std::string_view& signature)
+			{
+				auto result = codec::hex_decode(signature);
+				if (result.size() != 65)
+					return layer_exception("invalid hex signature");
+
+				return result;
 			}
 			expects_lr<string> ethereum::encode_transaction_id(const std::string_view& transaction_id)
 			{
@@ -1064,7 +1079,7 @@ namespace tangent
 			}
 			const sc_chainparams_* ethereum::get_chain()
 			{
-				switch (protocol::now().user.network)
+				switch (kernel::params().user.network)
 				{
 					case network_type::regtest:
 						return &eth_chainparams_regtest;

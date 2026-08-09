@@ -19,90 +19,62 @@ extern "C"
 #include "../internal/memzero.h"
 #include "../internal/shamir.h"
 }
+#define COMPOSITION_CACHE_KEYS 256
 
 namespace tangent
 {
 	namespace algorithm
 	{
-		struct mpz
+		static void mpz_free(void* data, size_t size)
 		{
-			static void free(void* data, size_t size)
-			{
-				typedef void (*gmp_free_t)(void*, size_t);
-				static gmp_free_t gmp_free = nullptr;
-				if (!gmp_free)
-					mp_get_memory_functions(nullptr, nullptr, &gmp_free);
-				gmp_free(data, size);
-			}
-			static void import0(const uint8_t* data, size_t size, mpz_t value)
-			{
-				mpz_import(value, size, 1, 1, 1, 0, data);
-			}
-			static void import256(const uint256_t& data, mpz_t value)
-			{
-				uint8_t buffer[32];
-				data.encode(buffer);
-				mpz_import(value, sizeof(buffer), 1, 1, 1, 0, buffer);
-			}
-			static string export0(const mpz_t value)
-			{
-				size_t size = 0;
-				char* data = (char*)mpz_export(nullptr, &size, 1, 1, 1, 0, value);
-				string buffer = string(data, size);
-				free(data, size);
-				return buffer;
-			}
-			static uint256_t export256(const mpz_t value)
-			{
-				size_t size = 0;
-				char* data = (char*)mpz_export(nullptr, &size, 1, 1, 1, 0, value);
-				uint8_t buffer[32] = { 0 };
-				memcpy((char*)buffer + (sizeof(buffer) - size), data, size);
-				free(data, size);
+			typedef void (*gmp_free_t)(void*, size_t);
+			static gmp_free_t gmp_free = nullptr;
+			if (!gmp_free)
+				mp_get_memory_functions(nullptr, nullptr, &gmp_free);
+			gmp_free(data, size);
+		}
+		static void mpz_import0(const uint8_t* data, size_t size, mpz_t value)
+		{
+			mpz_import(value, size, 1, 1, 1, 0, data);
+		}
+		static string mpz_export0(const mpz_t value)
+		{
+			size_t size = 0;
+			char* data = (char*)mpz_export(nullptr, &size, 1, 1, 1, 0, value);
+			string buffer = string(data, size);
+			mpz_free(data, size);
+			return buffer;
+		}
+		static bool wvdf_import(mpz_t p, mpz_t l, const std::string_view& input)
+		{
+			string input_p, input_y;
+			format::ro_stream stream = format::ro_stream(input);
+			if (!stream.read_string(stream.read_type(), &input_p))
+				return false;
 
-				uint256_t v;
-				v.decode(buffer);
-				return v;
-			}
-			static void export256(const mpz_t value, uint8_t buffer[32])
-			{
-				size_t size = 0;
-				char* data = (char*)mpz_export(nullptr, &size, 1, 1, 1, 0, value);
-				memzero(buffer, sizeof(uint256_t));
-				memcpy((char*)buffer + (sizeof(uint256_t) - size), data, size);
-				free(data, size);
-			}
-			static bool wesolowski_deserialize(mpz_t p, mpz_t l, const std::string_view& input)
-			{
-				string input_p, input_y;
-				format::ro_stream stream = format::ro_stream(input);
-				if (!stream.read_string(stream.read_type(), &input_p))
-					return false;
+			if (!stream.read_string(stream.read_type(), &input_y))
+				return false;
 
-				if (!stream.read_string(stream.read_type(), &input_y))
-					return false;
-
-				mpz_init(p);
-				mpz_init(l);
-				mpz::import0((uint8_t*)input_p.data(), input_p.size(), p);
-				mpz::import0((uint8_t*)input_y.data(), input_y.size(), l);
-				return true;
-			}
-			static void wesolowski_order(mpz_t order, uint64_t block_number)
+			mpz_init(p);
+			mpz_init(l);
+			mpz_import0((uint8_t*)input_p.data(), input_p.size(), p);
+			mpz_import0((uint8_t*)input_y.data(), input_y.size(), l);
+			return true;
+		}
+		static void wvdf_order(mpz_t order, uint64_t block_number)
+		{
+			auto& params = kernel::mparams();
+			if (!params.on(fork_id::base_to_root_modulo, block_number))
 			{
-				auto& params = protocol::change();
-				if (!params.on(fork_id::base_to_root_modulo, block_number))
-				{
-					uint8_t base[256] = { 0x9f, 0xdf, 0x38, 0xe0, 0xee, 0x4b, 0x0, 0x59, 0xdd, 0xa2, 0x23, 0x28, 0x89, 0x3c, 0x5c, 0x15, 0x2b, 0xb6, 0xba, 0xe4, 0x66, 0xa7, 0xe7, 0x70, 0xb5, 0x12, 0x52, 0x26, 0x5c, 0xf3, 0x20, 0xd, 0x90, 0x38, 0xc8, 0xdc, 0x1a, 0x23, 0xa8, 0x8a, 0xa9, 0x8c, 0x3a, 0xc9, 0x36, 0x81, 0x73, 0x5f, 0x7, 0xa, 0x59, 0xad, 0x46, 0xaa, 0xcd, 0xd3, 0xea, 0xf, 0xf9, 0xae, 0x38, 0xdf, 0x2, 0x1, 0x7e, 0x59, 0x4b, 0xf5, 0x42, 0x55, 0x1d, 0x1, 0xc7, 0x35, 0x48, 0x3e, 0x33, 0x5f, 0x51, 0xfd, 0x14, 0xca, 0xad, 0x17, 0x60, 0x33, 0x47, 0x27, 0xc5, 0xe7, 0x26, 0xe7, 0xcb, 0x25, 0x76, 0x56, 0x5c, 0x46, 0x8b, 0x26, 0x73, 0xb5, 0x1f, 0x44, 0x4f, 0x88, 0x37, 0xa2, 0xa0, 0xfc, 0xf8, 0xba, 0x78, 0xd, 0x56, 0xe, 0x9b, 0xf7, 0x26, 0xd1, 0x85, 0x63, 0x35, 0x47, 0xbc, 0xa5, 0xbb, 0x78, 0x6a, 0x69, 0x6b, 0xf1, 0x41, 0x30, 0x70, 0x9, 0x99, 0xae, 0x2b, 0x59, 0x93, 0x6c, 0x51, 0xb8, 0xf3, 0xa4, 0x5e, 0x25, 0x94, 0x38, 0x40, 0x0, 0xc8, 0x64, 0xd0, 0x68, 0x1a, 0x5, 0x5a, 0xba, 0xa5, 0x92, 0x75, 0xab, 0xb, 0xe4, 0xc9, 0xa5, 0xe1, 0x61, 0x69, 0x52, 0x90, 0xda, 0x9f, 0x20, 0x14, 0x75, 0x60, 0x60, 0x1b, 0xe8, 0x12, 0x54, 0x88, 0x95, 0x40, 0x95, 0x7, 0x6e, 0x7e, 0x79, 0x85, 0x6a, 0xf1, 0x16, 0xf, 0xaf, 0x2a, 0x66, 0xba, 0x16, 0xcd, 0x82, 0x86, 0xc9, 0x2e, 0x8e, 0xaa, 0x5c, 0xed, 0x3c, 0x18, 0xf6, 0xd0, 0xa5, 0x3c, 0xdc, 0xcf, 0x71, 0x49, 0x6, 0x2d, 0x89, 0x77, 0x32, 0xcf, 0x2f, 0x9a, 0x9c, 0x65, 0x20, 0x75, 0x59, 0x83, 0xe7, 0x4e, 0xe, 0xe9, 0x30, 0xee, 0x66, 0xbe, 0x14, 0x95, 0xb6, 0xdb, 0xf, 0x25, 0x16, 0xe0, 0x30, 0xa7, 0x21, 0x75, 0xf };
-					return mpz::import0(base, sizeof(base), order);
-				}
-				return mpz::import0(params.policy.pow.root, sizeof(params.policy.pow.root), order);
+				uint8_t base[256] = { 0x9f, 0xdf, 0x38, 0xe0, 0xee, 0x4b, 0x0, 0x59, 0xdd, 0xa2, 0x23, 0x28, 0x89, 0x3c, 0x5c, 0x15, 0x2b, 0xb6, 0xba, 0xe4, 0x66, 0xa7, 0xe7, 0x70, 0xb5, 0x12, 0x52, 0x26, 0x5c, 0xf3, 0x20, 0xd, 0x90, 0x38, 0xc8, 0xdc, 0x1a, 0x23, 0xa8, 0x8a, 0xa9, 0x8c, 0x3a, 0xc9, 0x36, 0x81, 0x73, 0x5f, 0x7, 0xa, 0x59, 0xad, 0x46, 0xaa, 0xcd, 0xd3, 0xea, 0xf, 0xf9, 0xae, 0x38, 0xdf, 0x2, 0x1, 0x7e, 0x59, 0x4b, 0xf5, 0x42, 0x55, 0x1d, 0x1, 0xc7, 0x35, 0x48, 0x3e, 0x33, 0x5f, 0x51, 0xfd, 0x14, 0xca, 0xad, 0x17, 0x60, 0x33, 0x47, 0x27, 0xc5, 0xe7, 0x26, 0xe7, 0xcb, 0x25, 0x76, 0x56, 0x5c, 0x46, 0x8b, 0x26, 0x73, 0xb5, 0x1f, 0x44, 0x4f, 0x88, 0x37, 0xa2, 0xa0, 0xfc, 0xf8, 0xba, 0x78, 0xd, 0x56, 0xe, 0x9b, 0xf7, 0x26, 0xd1, 0x85, 0x63, 0x35, 0x47, 0xbc, 0xa5, 0xbb, 0x78, 0x6a, 0x69, 0x6b, 0xf1, 0x41, 0x30, 0x70, 0x9, 0x99, 0xae, 0x2b, 0x59, 0x93, 0x6c, 0x51, 0xb8, 0xf3, 0xa4, 0x5e, 0x25, 0x94, 0x38, 0x40, 0x0, 0xc8, 0x64, 0xd0, 0x68, 0x1a, 0x5, 0x5a, 0xba, 0xa5, 0x92, 0x75, 0xab, 0xb, 0xe4, 0xc9, 0xa5, 0xe1, 0x61, 0x69, 0x52, 0x90, 0xda, 0x9f, 0x20, 0x14, 0x75, 0x60, 0x60, 0x1b, 0xe8, 0x12, 0x54, 0x88, 0x95, 0x40, 0x95, 0x7, 0x6e, 0x7e, 0x79, 0x85, 0x6a, 0xf1, 0x16, 0xf, 0xaf, 0x2a, 0x66, 0xba, 0x16, 0xcd, 0x82, 0x86, 0xc9, 0x2e, 0x8e, 0xaa, 0x5c, 0xed, 0x3c, 0x18, 0xf6, 0xd0, 0xa5, 0x3c, 0xdc, 0xcf, 0x71, 0x49, 0x6, 0x2d, 0x89, 0x77, 0x32, 0xcf, 0x2f, 0x9a, 0x9c, 0x65, 0x20, 0x75, 0x59, 0x83, 0xe7, 0x4e, 0xe, 0xe9, 0x30, 0xee, 0x66, 0xbe, 0x14, 0x95, 0xb6, 0xdb, 0xf, 0x25, 0x16, 0xe0, 0x30, 0xa7, 0x21, 0x75, 0xf };
+				return mpz_import0(base, sizeof(base), order);
 			}
-		};
+			return mpz_import0(params.policy.pow.root, sizeof(params.policy.pow.root), order);
+		}
 
 		uint64_t pow256::solve(const uint256_t& block_hash, const pubkeyhash_t& account, uint64_t account_nonce)
 		{
-			auto& tx = protocol::change().policy.pow.tx;
+			auto& tx = kernel::mparams().policy.pow.tx;
 			size_t offset = sizeof(block_hash) + sizeof(account_nonce) + sizeof(account.blob);
 			uint64_t encoded_account_nonce = os::hw::to_endianness(os::hw::endian::big, account_nonce);
 			uint8_t challenge[sizeof(block_hash) + sizeof(account_nonce) + sizeof(account.blob) + 20 * sizeof(uint8_t)], hash[64];
@@ -127,7 +99,7 @@ namespace tangent
 			if (!solution)
 				return false;
 
-			auto& tx = protocol::now().policy.pow.tx;
+			auto& tx = kernel::params().policy.pow.tx;
 			size_t offset = sizeof(block_hash) + sizeof(account_nonce) + sizeof(account.blob);
 			uint64_t encoded_account_nonce = os::hw::to_endianness(os::hw::endian::big, account_nonce);
 			uint64_t encoded_solution = os::hw::to_endianness(os::hw::endian::big, solution);
@@ -146,7 +118,7 @@ namespace tangent
 		}
 		uint256_t pow256::target()
 		{
-			return uint256_t(2 << uint256_t(256 - protocol::now().policy.pow.tx.difficulty)) - uint256_t(1);
+			return uint256_t(2 << uint256_t(256 - kernel::params().policy.pow.tx.difficulty)) - uint256_t(1);
 		}
 
 		uint256_t wesolowski::distribution::derive()
@@ -163,7 +135,7 @@ namespace tangent
 
 		uint64_t wesolowski::adjust(uint64_t prev_difficulty, uint64_t prev_time, uint64_t target_block_number)
 		{
-			uint64_t default_difficulty = protocol::now().policy.pow.difficulty;
+			uint64_t default_difficulty = kernel::params().policy.pow.difficulty;
 			if (target_block_number <= 1)
 				return default_difficulty;
 
@@ -174,7 +146,7 @@ namespace tangent
 			}
 
 			auto next_difficulty = prev_difficulty;
-			auto& policy = protocol::now().policy;
+			auto& policy = kernel::params().policy;
 			prev_time = std::max(policy.pow.time / 4, std::min(policy.pow.time * 4, prev_time));
 			if (policy.pow.time >= prev_time)
 			{
@@ -202,9 +174,9 @@ namespace tangent
 		{
 			uint64_t new_difficulty = difficulty;
 			if (multiplier > 1)
-				new_difficulty = std::max((decimal(new_difficulty) * multiplier).to_uint64(), std::max(new_difficulty, protocol::now().policy.pow.difficulty));
+				new_difficulty = std::max((decimal(new_difficulty) * multiplier).to_uint64(), std::max(new_difficulty, kernel::params().policy.pow.difficulty));
 			else if (multiplier < 1)
-				new_difficulty = std::max((decimal(new_difficulty) * multiplier).to_uint64(), protocol::now().policy.pow.difficulty);
+				new_difficulty = std::max((decimal(new_difficulty) * multiplier).to_uint64(), kernel::params().policy.pow.difficulty);
 			return new_difficulty;
 		}
 		string wesolowski::evaluate(uint64_t block_number, uint64_t difficulty, const std::string_view& message)
@@ -222,13 +194,13 @@ namespace tangent
 			mpz_t x, n, n1;
 			mpz_init(x);
 			mpz_init(n);
-			mpz::wesolowski_order(n, block_number);
+			wvdf_order(n, block_number);
 			mpz_init_set(n1, n);
 			mpz_sub_ui(n1, n1, 1);
 
 			uint8_t hash[64];
 			hashing::hash512((uint8_t*)message.data(), message.size(), hash);
-			mpz::import0(hash, sizeof(hash), x);
+			mpz_import0(hash, sizeof(hash), x);
 			bool valid_challenge = mpz_cmp_ui(x, 1) > 0 && mpz_cmp(x, n1) < 0;
 			mpz_clear(n1);
 			if (!valid_challenge)
@@ -248,9 +220,9 @@ namespace tangent
 				mpz_powm(l, x, l, n);
 				mpz_add(l, x, l);
 
-				string lm = mpz::export0(l);
+				string lm = mpz_export0(l);
 				hashing::hash512((uint8_t*)lm.data(), lm.size(), hash);
-				mpz::import0(hash, sizeof(hash), l);
+				mpz_import0(hash, sizeof(hash), l);
 				mpz_nextprime(l, l);
 				mpz_fdiv_q(p, p, l);
 				mpz_powm(p, x, p, n);
@@ -258,8 +230,8 @@ namespace tangent
 				if (proof_out != nullptr)
 				{
 					format::wo_stream stream;
-					stream.write_string(mpz::export0(p));
-					stream.write_string(mpz::export0(l));
+					stream.write_string(mpz_export0(p));
+					stream.write_string(mpz_export0(l));
 					proof_out->assign(std::move(stream.data));
 					success = true;
 				}
@@ -269,7 +241,7 @@ namespace tangent
 			else
 			{
 				mpz_t p, l;
-				if (mpz::wesolowski_deserialize(p, l, proof_in))
+				if (wvdf_import(p, l, proof_in))
 				{
 					mpz_t r;
 					mpz_init_set_ui(r, 2);
@@ -289,9 +261,9 @@ namespace tangent
 					mpz_clear(t);
 					mpz_clear(p);
 
-					string lm = mpz::export0(l_evaluated);
+					string lm = mpz_export0(l_evaluated);
 					hashing::hash512((uint8_t*)lm.data(), lm.size(), hash);
-					mpz::import0(hash, sizeof(hash), l_evaluated);
+					mpz_import0(hash, sizeof(hash), l_evaluated);
 					mpz_nextprime(l_evaluated, l_evaluated);
 
 					success = (mpz_cmp(l_evaluated, l) == 0);
@@ -308,8 +280,8 @@ namespace tangent
 		{
 			int result = 0;
 			mpz_t p1_p, p1_l, p2_p, p2_l;
-			bool p1_valid = mpz::wesolowski_deserialize(p1_p, p1_l, proof1);
-			bool p2_valid = mpz::wesolowski_deserialize(p2_p, p2_l, proof2);
+			bool p1_valid = wvdf_import(p1_p, p1_l, proof1);
+			bool p2_valid = wvdf_import(p2_p, p2_l, proof2);
 			if (p1_valid && p2_valid)
 			{
 				int compare_y = mpz_cmp(p1_l, p2_l);
@@ -341,7 +313,7 @@ namespace tangent
 		}
 		uint64_t wesolowski::adjustment_interval()
 		{
-			auto& policy = protocol::now().policy;
+			auto& policy = kernel::params().policy;
 			return policy.pow.adjustment_time / policy.pow.time;
 		}
 		uint64_t wesolowski::adjustment_block_number(uint64_t block_number)
@@ -353,11 +325,11 @@ namespace tangent
 			if (block_number == 0)
 				return 1;
 
-			bool outside_priority = block_number >= protocol::now().policy.production.max_per_block;
+			bool outside_priority = block_number >= kernel::params().policy.production.max_per_block;
 			if (outside_priority)
-				return protocol::now().policy.pow.bump_outside_priority;
+				return kernel::params().policy.pow.bump_outside_priority;
 
-			auto scale = decimal(protocol::now().policy.pow.bump_per_priority);
+			auto scale = decimal(kernel::params().policy.pow.bump_per_priority);
 			auto result = scale;
 			while (block_number--)
 				result *= scale;
@@ -366,17 +338,17 @@ namespace tangent
 		format::tree wesolowski::serialize(uint64_t difficulty, const std::string_view& signature, const decimal& scaling)
 		{
 			mpz_t p, l;
-			if (!mpz::wesolowski_deserialize(p, l, signature))
+			if (!wvdf_import(p, l, signature))
 				return format::tree();
 
 			auto data = format::tree::map();
-			data.set("p", format::variable(format::util::encode_0xhex(mpz::export0(p))));
-			data.set("l", format::variable(format::util::encode_0xhex(mpz::export0(l))));
+			data.set("p", format::variable(format::util::encode_0xhex(mpz_export0(p))));
+			data.set("l", format::variable(format::util::encode_0xhex(mpz_export0(l))));
 			if (scaling.is_positive())
 				data.set("scaling", format::variable(scaling));
 			data.set("kdifficulty", algorithm::encoding::serialize_uint256(kdifficulty(difficulty)));
 			data.set("difficulty", format::variable(difficulty));
-			data.set("security", format::variable(protocol::now().policy.pow.security));
+			data.set("security", format::variable(kernel::params().policy.pow.security));
 			data.set("size", format::variable(signature.size()));
 			mpz_clear(p);
 			mpz_clear(l);
@@ -384,7 +356,7 @@ namespace tangent
 		}
 		uint128_t wesolowski::kdifficulty(uint64_t difficulty)
 		{
-			auto& policy = protocol::now().policy;
+			auto& policy = kernel::params().policy;
 			uint128_t x = uint128_t(policy.pow.security / 8);
 			uint128_t y = uint128_t(difficulty);
 			return x * x * y;
@@ -475,7 +447,7 @@ namespace tangent
 		uint256_t signing::message_hash(const std::string_view& signable_message)
 		{
 			format::wo_stream message;
-			message.write_typeless(protocol::now().account.message_magic);
+			message.write_typeless(kernel::params().account.message_magic);
 			message.write_typeless(signable_message.data(), signable_message.size());
 			return message.hash();
 		}
@@ -528,12 +500,17 @@ namespace tangent
 			size_t signature_size = sizeof(hashsig_t);
 			size_t recovery_offset = signature_size - sizeof(recovery_id);
 			memcpy(&recovery_id, signature.blob + recovery_offset, sizeof(recovery_id));
-			if (recovery_id > 4)
+			if (recovery_id >= 4)
 				return false;
 
 			secp256k1_context* context = get_context();
 			secp256k1_ecdsa_recoverable_signature recoverable_signature;
 			if (!secp256k1_ecdsa_recoverable_signature_parse_compact(context, &recoverable_signature, signature.blob, recovery_id))
+				return false;
+
+			secp256k1_ecdsa_signature normalized_signature, compact_signature;
+			memcpy(compact_signature.data, recoverable_signature.data, sizeof(compact_signature));
+			if (secp256k1_ecdsa_signature_normalize(context, &normalized_signature, &compact_signature) != 0)
 				return false;
 
 			uint8_t data[32];
@@ -584,9 +561,11 @@ namespace tangent
 			if (secp256k1_ec_pubkey_parse(context, &derived_public_key, public_key.blob, sizeof(pubkey_t)) != 1)
 				return false;
 
-			uint8_t data[32];
 			secp256k1_ecdsa_signature normalized_signature;
-			secp256k1_ecdsa_signature_normalize(context, &normalized_signature, &compact_signature);
+			if (secp256k1_ecdsa_signature_normalize(context, &normalized_signature, &compact_signature) != 0)
+				return false;
+
+			uint8_t data[32];
 			hash.encode(data);
 			return secp256k1_ecdsa_verify(context, &normalized_signature, data, &derived_public_key) == 1;
 		}
@@ -601,7 +580,7 @@ namespace tangent
 			}
 
 			n++;
-			if (n != 12 && n != 15 && n != 18 && n != 21 && n != 24)
+			if (n != 12 && n != 18 && n != 24)
 				return false;
 
 			char current_word[10] = { 0 };
@@ -616,7 +595,10 @@ namespace tangent
 				while (i < mnemonic.size() && mnemonic[i] != ' ')
 				{
 					if (j >= sizeof(current_word) - 1)
+					{
+						memzero(result, sizeof(result));
 						return false;
+					}
 
 					current_word[j] = mnemonic[i];
 					i++;
@@ -631,16 +613,17 @@ namespace tangent
 				for (;;)
 				{
 					if (!mnemonic_words[k])
+					{
+						memzero(result, sizeof(result));
 						return false;
+					}
 
 					if (strcmp(current_word, mnemonic_words[k]) == 0)
 					{ 
 						for (ki = 0; ki < 11; ki++)
 						{
 							if (k & (1 << (10 - ki)))
-							{
 								result[bi / 8] |= 1 << (7 - (bi % 8));
-							}
 							bi++;
 						}
 						break;
@@ -649,12 +632,20 @@ namespace tangent
 				}
 			}
 
-			if (bi != n * 11)
+			if (bi != n * 11 || (n != 12 && n != 18 && n != 24))
+			{
+				memzero(result, sizeof(result));
 				return false;
+			}
 
-			memzero(result, sizeof(result));
-			if (n != 12 && n != 18 && n != 24 && n != 15 && n != 21)
-				return false;
+			uint8_t checksum = result[n * 4 / 3];
+			sha256_Raw(result, n * 4 / 3, result);
+			if (n == 12)
+				return (result[0] & 0xF0) == (checksum & 0xF0);
+			else if (n == 18)
+				return (result[0] & 0xFC) == (checksum & 0xFC);
+			else if (n == 24)
+				return result[0] == checksum;
 
 			return true;
 		}
@@ -673,16 +664,6 @@ namespace tangent
 		{
 			pubkeyhash_t public_key_hash;
 			return decode_address(address, public_key_hash);
-		}
-		bool signing::verify_encrypted_message(const std::string_view& ciphertext)
-		{
-			uint8_t nonce[32] = { 0 }, salt[12] = { 0 }, tag[16] = { 0 };
-			format::wo_stream message;
-			message.write_string(pubkey_t().view());
-			message.write_string(std::string((char*)nonce, sizeof(nonce)));
-			message.write_string(std::string((char*)salt, sizeof(salt)));
-			message.write_string(std::string((char*)tag, sizeof(tag)));
-			return ciphertext.size() > message.data.size();
 		}
 		void signing::derive_secret_key_from_mnemonic(const std::string_view& mnemonic, seckey_t& secret_key)
 		{
@@ -706,13 +687,11 @@ namespace tangent
 		void signing::derive_secret_key(const uint256_t& entropy, seckey_t& secret_key)
 		{
 			auto hash = entropy;
-			while (true)
+			hash.encode(secret_key.blob);
+			while (!verify_secret_key(secret_key))
 			{
-				uint8_t seed[32];
-				hash = hashing::hash256i(seed, sizeof(seed));
-				entropy.encode(secret_key.blob);
-				if (verify_secret_key(secret_key))
-					break;
+				hash = hashing::hash256i(secret_key.blob, sizeof(secret_key.blob));
+				hash.encode(secret_key.blob);
 			}
 		}
 		bool signing::derive_public_key(const seckey_t& secret_key, pubkey_t& public_key)
@@ -730,7 +709,7 @@ namespace tangent
 		{
 			hashing::hash160(public_key.blob, sizeof(pubkey_t), public_key_hash.blob);
 		}
-		bool signing::derive_seed_from_password(const uint8_t* input, size_t input_size, uint8_t* output, size_t output_size)
+		bool signing::derive_seed_from_high_entropy_password(const uint8_t* input, size_t input_size, uint8_t* output, size_t output_size)
 		{
 			const uint8_t salt[crypto_pwhash_SALTBYTES + 1] = "ecf64bb58acc059f";
 			const uint32_t operations = 3, memory = 1 << 20;
@@ -747,7 +726,8 @@ namespace tangent
 			memcpy(wrapped_message, message_in, message_in_size);
 
 			std::array<sss_Share, 64> sss_shares;
-			sss_create_shares(sss_shares.data(), wrapped_message, count, threshold);
+			if (sss_create_shares(sss_shares.data(), wrapped_message, count, threshold) != 0)
+				return false;
 
 			shares.clear();
 			for (size_t i = 0; i < count; i++)
@@ -835,8 +815,14 @@ namespace tangent
 			if (secp256k1_ec_pubkey_parse(context, &recipient_public_key, public_key.blob, sizeof(public_key.blob)) != 1)
 				return optional::none;
 
+			uint8_t nonce_secret_key_seed[40], salt_entropy_seed[40];
+			memcpy(nonce_secret_key_seed, "PKDOMAIN", 8);
+			memcpy(salt_entropy_seed, "SNDOMAIN", 8);
+			entropy.encode(nonce_secret_key_seed + 8);
+			entropy.encode(salt_entropy_seed + 8);
+
 			seckey_t nonce_secret_key;
-			derive_secret_key(entropy, nonce_secret_key);
+			derive_secret_key(hashing::hash256i(nonce_secret_key_seed, sizeof(nonce_secret_key_seed)), nonce_secret_key);
 
 			pubkey_t nonce_public_key;
 			if (!derive_public_key(nonce_secret_key, nonce_public_key))
@@ -846,52 +832,64 @@ namespace tangent
 			if (secp256k1_ecdh(context, shared_entropy, &recipient_public_key, nonce_secret_key.blob, secp256k1_ecdh_hash_function_default, nullptr) != 1)
 				return optional::none;
 
-			uint8_t entropy_seed[32];
-			entropy.encode(entropy_seed);
-
-			uint8_t salt_data[32], salt_nonce[32], salt_message[32], salt_entropy[32];
-			algorithm::hashing::hash256((uint8_t*)plaintext.data(), plaintext.size(), salt_message);
-			algorithm::hashing::hash256(entropy_seed, sizeof(entropy_seed), salt_entropy);
-			secp256k1_nonce_function_rfc6979(salt_nonce, salt_message, nonce_secret_key.blob, nullptr, salt_entropy, 0);
-			secp256k1_nonce_function_rfc6979(salt_data, salt_nonce, nonce_secret_key.blob, nullptr, salt_entropy, 1);
+			uint8_t salt[32], nonce[32], salt_message[32], salt_entropy[32];
+			hashing::hash256((uint8_t*)plaintext.data(), plaintext.size(), salt_message);
+			hashing::hash256(salt_entropy_seed, sizeof(salt_entropy_seed), salt_entropy);
+			secp256k1_nonce_function_rfc6979(nonce, salt_message, nonce_secret_key.blob, nullptr, salt_entropy, 0);
+			secp256k1_nonce_function_rfc6979(salt, nonce, nonce_secret_key.blob, nullptr, salt_entropy, 1);
 
 			uint8_t shared_secret_key[32];
-			if (crypto_kdf_hkdf_sha256_extract(shared_secret_key, shared_entropy, sizeof(shared_entropy), salt_nonce, sizeof(salt_nonce)) < 0)
+			if (crypto_kdf_hkdf_sha256_extract(shared_secret_key, shared_entropy, sizeof(shared_entropy), nonce, sizeof(nonce)) < 0)
 				return optional::none;
 
-			auto key = secret_box::insecure(std::string_view((char*)shared_secret_key, sizeof(shared_secret_key)));
-			auto salt = secret_box::insecure(std::string_view((char*)salt_data, 12));
-			auto result = crypto::encrypt(ciphers::aes_256_gcm(), plaintext, key, salt);
+			auto key_boxed = secret_box::insecure(std::string_view((char*)shared_secret_key, sizeof(shared_secret_key)));
+			auto salt_boxed = secret_box::insecure(std::string_view((char*)salt, 12));
+			auto result = crypto::encrypt(ciphers::aes_256_gcm(), plaintext, key_boxed, salt_boxed);
 			if (!result)
 				return optional::none;
 
 			format::wo_stream message;
-			message.write_string(nonce_public_key.view());
-			message.write_string(std::string_view((char*)salt_nonce, sizeof(salt_nonce)));
-			message.write_string(salt.expose<sizeof(salt_data)>().view);
 			message.write_string(*result);
-			return option<string>(std::move(message.data));
-		}
-		option<string> signing::private_decrypt(const seckey_t& secret_key, const std::string_view& ciphertext)
-		{
-			if (!verify_encrypted_message(ciphertext))
+			message.write_string(std::string_view((char*)nonce, sizeof(nonce)));
+			message.write_string(salt_boxed.expose<sizeof(salt)>().view);
+
+			hashsig_t signature;
+			if (!sign(message.hash(), nonce_secret_key, signature))
 				return optional::none;
 
-			pubkey_t input_public_key;
-			string input_nonce, input_salt, input_ciphertext;
-			format::ro_stream message = format::ro_stream(ciphertext);
-			if (!message.read_string(message.read_type(), &input_nonce) || !encoding::decode_bytes(input_nonce, input_public_key.blob, sizeof(input_public_key.blob)))
+			message.write_string(signature.optimized_view());
+			return option<string>(std::move(message.data));
+		}
+		option<string> signing::private_decrypt(const seckey_t& secret_key, const std::string_view& packed_ciphertext)
+		{
+			string ciphertext;
+			format::ro_stream message = format::ro_stream(packed_ciphertext);
+			if (!message.read_string(message.read_type(), &ciphertext))
 				return optional::none;
-			else if (!message.read_string(message.read_type(), &input_nonce))
+			
+			string nonce;
+			if (!message.read_string(message.read_type(), &nonce))
 				return optional::none;
-			else if (!message.read_string(message.read_type(), &input_salt))
+
+			string salt;
+			if (!message.read_string(message.read_type(), &salt))
 				return optional::none;
-			else if (!message.read_string(message.read_type(), &input_ciphertext))
+
+			hashsig_t signature;
+			if (!message.read_optimized_view(message.read_type(), signature.blob, sizeof(signature.blob)))
+				return optional::none;
+
+			pubkey_t nonce_public_key;
+			format::wo_stream unsigned_message;
+			unsigned_message.write_string(ciphertext);
+			unsigned_message.write_string(nonce);
+			unsigned_message.write_string(salt);
+			if (!recover(unsigned_message.hash(), nonce_public_key, signature))
 				return optional::none;
 
 			secp256k1_pubkey sender_public_key;
 			secp256k1_context* context = get_context();
-			if (secp256k1_ec_pubkey_parse(context, &sender_public_key, input_public_key.blob, sizeof(input_public_key.blob)) != 1)
+			if (secp256k1_ec_pubkey_parse(context, &sender_public_key, nonce_public_key.blob, sizeof(nonce_public_key.blob)) != 1)
 				return optional::none;
 
 			uint8_t shared_entropy[32];
@@ -899,11 +897,11 @@ namespace tangent
 				return optional::none;
 
 			uint8_t shared_secret_key[32];
-			crypto_kdf_hkdf_sha256_extract(shared_secret_key, shared_entropy, sizeof(shared_entropy), (uint8_t*)input_nonce.data(), input_nonce.size());
+			crypto_kdf_hkdf_sha256_extract(shared_secret_key, shared_entropy, sizeof(shared_entropy), (uint8_t*)nonce.data(), nonce.size());
 
-			auto key = secret_box::insecure(std::string_view((char*)shared_secret_key, sizeof(shared_secret_key)));
-			auto salt = secret_box::insecure(input_salt);
-			auto result = crypto::decrypt(ciphers::aes_256_gcm(), input_ciphertext, key, salt);
+			auto key_boxed = secret_box::insecure(std::string_view((char*)shared_secret_key, sizeof(shared_secret_key)));
+			auto salt_boxed = secret_box::insecure(salt);
+			auto result = crypto::decrypt(ciphers::aes_256_gcm(), ciphertext, key_boxed, salt_boxed);
 			if (!result)
 				return optional::none;
 
@@ -911,7 +909,7 @@ namespace tangent
 		}
 		bool signing::decode_secret_key(const std::string_view& value, seckey_t& secret_key)
 		{
-			auto& account = protocol::now().account;
+			auto& account = kernel::params().account;
 			uint8_t decoded[40];
 			size_t decoded_size = sizeof(decoded);
 			int version = 0;
@@ -928,7 +926,7 @@ namespace tangent
 		}
 		bool signing::encode_secret_key(const seckey_t& secret_key, string& value)
 		{
-			auto& account = protocol::now().account;
+			auto& account = kernel::params().account;
 			char encoded[128];
 			if (segwit::encode(encoded, account.secret_key_prefix.c_str(), (int)account.secret_key_version, secret_key.blob, sizeof(seckey_t)) != 1)
 				return false;
@@ -940,7 +938,7 @@ namespace tangent
 		}
 		bool signing::decode_public_key(const std::string_view& value, pubkey_t& public_key)
 		{
-			auto& account = protocol::now().account;
+			auto& account = kernel::params().account;
 			uint8_t decoded[40];
 			size_t decoded_size = sizeof(decoded);
 			int version = 0;
@@ -957,7 +955,7 @@ namespace tangent
 		}
 		bool signing::encode_public_key(const pubkey_t& public_key, string& value)
 		{
-			auto& account = protocol::now().account;
+			auto& account = kernel::params().account;
 			char encoded[128];
 			if (segwit::encode(encoded, account.public_key_prefix.c_str(), (int)account.public_key_version, public_key.blob, sizeof(pubkey_t)) != 1)
 				return false;
@@ -970,7 +968,7 @@ namespace tangent
 		bool signing::decode_address(const std::string_view& address, pubkeyhash_t& public_key_hash)
 		{
 			VI_ASSERT(stringify::is_cstring(address), "public key hash, derivation hash and address should be set");
-			auto& account = protocol::now().account;
+			auto& account = kernel::params().account;
 			uint8_t decoded[60];
 			size_t decoded_size = sizeof(decoded);
 			int version = 0;
@@ -988,7 +986,7 @@ namespace tangent
 		bool signing::encode_address(const pubkeyhash_t& public_key_hash, string& address)
 		{
 			char encoded[128];
-			auto& account = protocol::now().account;
+			auto& account = kernel::params().account;
 			if (segwit::encode(encoded, account.address_prefix.c_str(), (int)account.address_version, public_key_hash.blob, sizeof(pubkeyhash_t)) != 1)
 				return false;
 
@@ -1044,17 +1042,6 @@ namespace tangent
 		}
 		secp256k1_context* signing::shared_context = nullptr;
 
-		bool encoding::decode_bytes(const std::string_view& value, uint8_t* data, size_t data_size)
-		{
-			VI_ASSERT(data != nullptr, "data should be set");
-			if (value.size() < data_size)
-				memzero(data, data_size);
-			else if (value.size() > data_size)
-				return false;
-
-			memcpy(data, value.data(), value.size());
-			return true;
-		}
 		string encoding::encode_0xhex256(const uint256_t& value)
 		{
 			uint8_t data[32];
@@ -1106,7 +1093,7 @@ namespace tangent
 		}
 		expects_lr<string> encoding::unpack_program(const std::string_view& packed_code)
 		{
-			auto unpacked_code = codec::decompress(packed_code);
+			auto unpacked_code = codec::decompress(packed_code, kernel::params().message.max_message_size);
 			if (!unpacked_code)
 				return layer_exception(std::move(unpacked_code.error().message()));
 
@@ -1217,7 +1204,7 @@ namespace tangent
 		}
 		asset_id asset::id_of_handle(const std::string_view& handle)
 		{
-			std::string_view base = stringify::starts_with(handle, protocol::now().policy.token) ? handle.substr(protocol::now().policy.token.size()) : handle;
+			std::string_view base = stringify::starts_with(handle, kernel::params().policy.token) ? handle.substr(kernel::params().policy.token.size()) : handle;
 			uint8_t data[32] = { 0 };
 			size_t size = std::min<size_t>(sizeof(data), base.size());
 			memcpy((char*)data + (sizeof(data) - size), base.data(), size);
@@ -1229,7 +1216,7 @@ namespace tangent
 		asset_id asset::id_of(const std::string_view& blockchain, const std::string_view& token, const std::string_view& contract_address)
 		{
 			uint8_t data[32] = { 0 };
-			string handle = handle_of(blockchain == protocol::now().policy.token ? std::string_view() : blockchain, token, contract_address);
+			string handle = handle_of(blockchain == kernel::params().policy.token ? std::string_view() : blockchain, token, contract_address);
 			size_t size = std::min<size_t>(sizeof(data), handle.size());
 			memcpy((char*)data + (sizeof(data) - size), handle.data(), size);
 
@@ -1243,7 +1230,7 @@ namespace tangent
 		}
 		string asset::handle_of(const std::string_view& blockchain, const std::string_view& token, const std::string_view& contract_address)
 		{
-			string handle = string(blockchain.substr(0, blockchain == protocol::now().policy.token ? 0 : 8));
+			string handle = string(blockchain.substr(0, blockchain == kernel::params().policy.token ? 0 : 8));
 			if (!token.empty() || !contract_address.empty())
 			{
 				auto symbol = string(token);
@@ -1261,7 +1248,7 @@ namespace tangent
 		string asset::handle_of(const asset_id& value)
 		{
 			if (value == native())
-				return protocol::now().policy.token;
+				return kernel::params().policy.token;
 
 			uint8_t data[33];
 			value.encode(data);
@@ -1273,15 +1260,15 @@ namespace tangent
 			char* ptr = (char*)data + offset;
 			auto handle = string(ptr, strnlen(ptr, (sizeof(data) - 1) - offset));
 			if (handle.empty())
-				handle.assign(protocol::now().policy.token);
+				handle.assign(kernel::params().policy.token);
 			else if (handle.front() == ':')
-				handle.insert(0, protocol::now().policy.token);
+				handle.insert(0, kernel::params().policy.token);
 			return handle;
 		}
 		string asset::blockchain_of(const asset_id& value)
 		{
 			if (value == native())
-				return protocol::now().policy.token;
+				return kernel::params().policy.token;
 
 			string handle = handle_of(value);
 			std::string_view view = std::string_view(handle);
@@ -1331,7 +1318,7 @@ namespace tangent
 			if (stringify::is_empty_or_whitespace(blockchain))
 				return false;
 
-			bool onchain = auxiliary_only ? false : blockchain == protocol::now().policy.token;
+			bool onchain = auxiliary_only ? false : blockchain == kernel::params().policy.token;
 			auto* chain = onchain ? nullptr : superchain::bridge::get()->get_network(value);
 			if (!onchain && !chain)
 				return false;
@@ -1365,6 +1352,46 @@ namespace tangent
 			return data;
 		}
 
+		composition::keypair::~keypair()
+		{
+			std::fill(secret_key.begin(), secret_key.end(), 0);
+			std::fill(public_key.begin(), public_key.end(), 0);
+		}
+
+		void composition::initialize_cache()
+		{
+			derivation_cache = memory::init<hash_map<string, string>>();
+			derivation_mutex = memory::init<std::mutex>();
+		}
+		void composition::deinitialize_cache()
+		{
+			memory::deinit(derivation_cache);
+			memory::deinit(derivation_mutex);
+		}
+		void composition::push_derivation_cache(string&& key, string&& value)
+		{
+			if (!derivation_cache || !derivation_mutex)
+				return;
+
+			umutex<std::mutex> unique(*derivation_mutex);
+			if (derivation_cache->size() + 1 > COMPOSITION_CACHE_KEYS)
+				derivation_cache->clear();
+			derivation_cache->insert(std::make_pair(std::move(key), std::move(value)));
+		}
+		option<string> composition::pull_derivation_cache(const std::string_view& key)
+		{
+			if (!derivation_cache || !derivation_mutex)
+				return optional::none;
+
+			umutex<std::mutex> unique(*derivation_mutex);
+			auto it = derivation_cache->find(key);
+			if (it == derivation_cache->end())
+				return optional::none;
+
+			auto result = std::move(it->second);
+			derivation_cache->erase(it);
+			return option<string>(std::move(result));
+		}
 		expects_lr<composition::keypair> composition::derive_keypair(type alg, const uint8_t* seed, size_t seed_size)
 		{
 			VI_ASSERT(seed != nullptr, "seed should be set");
@@ -1480,6 +1507,8 @@ namespace tangent
 
 			return expects_lr<uptr<composition::compositor>>(std::move(state_ptr));
 		}
+		hash_map<string, string>* composition::derivation_cache;
+		std::mutex* composition::derivation_mutex;
 
 		void keypair_utils::convert_to_secret_key_ed25519(uint8_t secret_key[32])
 		{

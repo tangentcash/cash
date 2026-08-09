@@ -88,6 +88,8 @@ namespace tangent
 				virtual expects_lr<string> decode_public_key(const std::string_view& public_key) override;
 				virtual expects_lr<string> encode_address(const std::string_view& public_key_hash) override;
 				virtual expects_lr<string> decode_address(const std::string_view& address) override;
+				virtual expects_lr<string> encode_signature(const std::string_view& signature) override;
+				virtual expects_lr<string> decode_signature(const std::string_view& signature) override;
 				virtual expects_lr<string> encode_transaction_id(const std::string_view& transaction_id) override;
 				virtual expects_lr<string> decode_transaction_id(const std::string_view& transaction_id) override;
 				virtual expects_lr<address_map> to_addresses(const std::string_view& public_key) override;

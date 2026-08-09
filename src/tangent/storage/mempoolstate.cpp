@@ -136,7 +136,7 @@ namespace tangent
 
 			schema_list map;
 			map.push_back(var::set::binary(address_to_message(node_address)));
-			map.push_back(var::set::integer(protocol::now().time.now_cpu() + protocol::now().user.tcp.timeout));
+			map.push_back(var::set::integer(kernel::params().time.now_cpu() + kernel::params().user.tcp.timeout));
 
 			auto cursor = get_peer_storage().emplace_query(__func__, cooldown ? "INSERT INTO cooldowns (address, expiration, attempt) VALUES (?, ?, 0) ON CONFLICT DO UPDATE SET expiration = EXCLUDED.expiration, attempt = attempt + 1 RETURNING attempt" : "DELETE FROM cooldowns WHERE address = ?", &map);
 			if (!cursor || cursor->error())
@@ -212,7 +212,7 @@ namespace tangent
 			if (!wallet.store(&wallet_message))
 				return expects_lr<void>(layer_exception("wallet serialization error"));
 
-			auto encrypted_wallet_message = protocol::now().box.encrypt(wallet_message.data);
+			auto encrypted_wallet_message = kernel::params().box.encrypt(wallet_message.data);
 			if (!encrypted_wallet_message)
 				return encrypted_wallet_message.error();
 
@@ -253,7 +253,7 @@ namespace tangent
 			if (!node.load(node_message))
 				return expects_lr<void>(layer_exception("node deserialization error"));
 
-			node.availability.timestamp = protocol::now().time.now();
+			node.availability.timestamp = kernel::params().time.now();
 			if (call_latency > 0)
 				node.availability.latency = call_latency;
 			if (call_result != 0)
@@ -322,7 +322,7 @@ namespace tangent
 			vector<node_pair> results;
 			for (auto row : cursor->first())
 			{
-				auto decrypted_message = protocol::now().box.decrypt(row["wallet_message"].get().get_blob());
+				auto decrypted_message = kernel::params().box.decrypt(row["wallet_message"].get().get_blob());
 				if (decrypted_message)
 				{
 					ledger::node node;
@@ -348,7 +348,7 @@ namespace tangent
 			if (!cursor || cursor->error_or_empty())
 				return expects_lr<node_pair>(layer_exception(ledger::storage_util::error_of(cursor)));
 
-			auto decrypted_message = protocol::now().box.decrypt((*cursor)["wallet_message"].get().get_blob());
+			auto decrypted_message = kernel::params().box.decrypt((*cursor)["wallet_message"].get().get_blob());
 			if (!decrypted_message)
 				return decrypted_message.error();
 
@@ -382,7 +382,7 @@ namespace tangent
 			if (!cursor || cursor->error_or_empty())
 				return expects_lr<node_pair>(layer_exception(ledger::storage_util::error_of(cursor)));
 
-			auto decrypted_message = protocol::now().box.decrypt((*cursor)["wallet_message"].get().get_blob());
+			auto decrypted_message = kernel::params().box.decrypt((*cursor)["wallet_message"].get().get_blob());
 			if (!decrypted_message)
 				return decrypted_message.error();
 
@@ -408,7 +408,7 @@ namespace tangent
 			if (!cursor || cursor->error_or_empty())
 				return expects_lr<node_pair>(layer_exception(ledger::storage_util::error_of(cursor)));
 
-			auto decrypted_message = protocol::now().box.decrypt((*cursor)["wallet_message"].get().get_blob());
+			auto decrypted_message = kernel::params().box.decrypt((*cursor)["wallet_message"].get().get_blob());
 			if (!decrypted_message)
 				return decrypted_message.error();
 
@@ -434,7 +434,7 @@ namespace tangent
 			if (!cursor || cursor->error_or_empty())
 				return expects_lr<node_pair>(layer_exception(ledger::storage_util::error_of(cursor)));
 
-			auto decrypted_message = protocol::now().box.decrypt((*cursor)["wallet_message"].get().get_blob());
+			auto decrypted_message = kernel::params().box.decrypt((*cursor)["wallet_message"].get().get_blob());
 			if (!decrypted_message)
 				return decrypted_message.error();
 
@@ -515,7 +515,7 @@ namespace tangent
 		expects_lr<socket_address> mempoolstate::sample_connectable_unknown_node()
 		{
 			schema_list map;
-			map.push_back(var::set::integer(protocol::now().time.now_cpu()));
+			map.push_back(var::set::integer(kernel::params().time.now_cpu()));
 
 			auto& storage = get_peer_storage();
 			auto cursor = storage.emplace_query(__func__, "SELECT addresses.address FROM addresses LEFT JOIN cooldowns ON cooldowns.address = addresses.address WHERE reserved = FALSE AND expiration IS NULL OR expiration < ? ORDER BY random() LIMIT 1", &map);
@@ -539,7 +539,7 @@ namespace tangent
 		expects_lr<size_t> mempoolstate::get_connectable_unknown_nodes_count()
 		{
 			schema_list map;
-			map.push_back(var::set::integer(protocol::now().time.now_cpu()));
+			map.push_back(var::set::integer(kernel::params().time.now_cpu()));
 
 			auto cursor = get_peer_storage().emplace_query(__func__, "SELECT COUNT(1) AS counter FROM addresses LEFT JOIN cooldowns ON cooldowns.address = addresses.address WHERE reserved = FALSE AND expiration IS NULL OR expiration < ?", &map);
 			if (!cursor || cursor->error_or_empty())
@@ -559,7 +559,7 @@ namespace tangent
 		{
 			schema_list map;
 			map.push_back(var::set::binary(address_to_message(address)));
-			map.push_back(var::set::integer(protocol::now().time.now_cpu()));
+			map.push_back(var::set::integer(kernel::params().time.now_cpu()));
 
 			auto cursor = get_peer_storage().emplace_query(__func__, "SELECT TRUE AS cooldown FROM cooldowns WHERE address = ? AND expiration >= ? LIMIT 1", &map);
 			if (!cursor || cursor->error())
@@ -607,14 +607,14 @@ namespace tangent
 			uint8_t asset_hash[32], hash[32], commitment[32];
 			asset.encode(asset_hash);
 			value.as_attestation_hash().encode(hash);
-			value.as_hash().encode(commitment);
+			value.as_proof_hash(asset).encode(commitment);
 
 			schema_list map;
 			map.push_back(var::set::binary(hash, sizeof(hash)));
 			map.push_back(var::set::binary(commitment, sizeof(commitment)));
 			map.push_back(var::set::binary(asset_hash, sizeof(asset_hash)));
 			map.push_back(var::set::binary(message.data));
-			map.push_back(var::set::integer(protocol::now().time.now_cpu() + ATTESTATION_EXPIRATION));
+			map.push_back(var::set::integer(kernel::params().time.now_cpu() + ATTESTATION_EXPIRATION));
 			map.push_back(var::set::binary(hash, sizeof(hash)));
 			map.push_back(var::set::binary(commitment, sizeof(commitment)));
 			map.push_back(var::set::binary(signature.view()));
@@ -705,7 +705,7 @@ namespace tangent
 		}
 		expects_lr<size_t> mempoolstate::expire_attestations()
 		{
-			auto timestamp = protocol::now().time.now_cpu();
+			auto timestamp = kernel::params().time.now_cpu();
 			schema_list map;
 			map.push_back(var::set::integer(timestamp));
 
@@ -759,14 +759,14 @@ namespace tangent
 
 			schema_list map;
 			map.push_back(var::set::binary(hash, sizeof(hash)));
-			map.push_back(var::set::integer(protocol::now().time.now_cpu() + TRANSACTION_EXPIRATION + OBSERVATION_EXPIRATION));
+			map.push_back(var::set::integer(kernel::params().time.now_cpu() + TRANSACTION_EXPIRATION + OBSERVATION_EXPIRATION));
 			map.push_back(var::set::binary(hash, sizeof(hash)));
 			map.push_back(commitment_hash > 0 ? var::set::binary(other_hash, sizeof(other_hash)) : var::set::null());
 			map.push_back(var::set::binary(owner.view()));
 			map.push_back(var::set::binary(asset, sizeof(asset)));
 			map.push_back(var::set::integer(value.nonce));
 			map.push_back(var::set::integer(quality.to_int64()));
-			map.push_back(var::set::integer(protocol::now().time.now_cpu() + TRANSACTION_EXPIRATION));
+			map.push_back(var::set::integer(kernel::params().time.now_cpu() + TRANSACTION_EXPIRATION));
 			map.push_back(var::set::string(value.gas_price.to_string()));
 			map.push_back(var::set::binary(message.data));
 			map.push_back(var::set::binary(owner.view()));
@@ -787,7 +787,7 @@ namespace tangent
 
 			schema_list map;
 			map.push_back(var::set::binary(hash, sizeof(hash)));
-			map.push_back(var::set::integer(protocol::now().time.now_cpu() + TRANSACTION_EXPIRATION + OBSERVATION_EXPIRATION));
+			map.push_back(var::set::integer(kernel::params().time.now_cpu() + TRANSACTION_EXPIRATION + OBSERVATION_EXPIRATION));
 
 			auto cursor = get_peer_storage().emplace_query(__func__, "INSERT OR REPLACE INTO observations (hash, time) VALUES (?, ?)", &map);
 			if (!cursor || cursor->error())
@@ -859,7 +859,7 @@ namespace tangent
 		}
 		expects_lr<size_t> mempoolstate::expire_transactions(const std::function<uint64_t(const algorithm::pubkeyhash_t&)>& nonce_callback)
 		{
-			auto timestamp = protocol::now().time.now_cpu();
+			auto timestamp = kernel::params().time.now_cpu();
 			schema_list map;
 			map.push_back(var::set::integer(timestamp));
 			map.push_back(var::set::integer(timestamp));
@@ -911,7 +911,7 @@ namespace tangent
 			if (!entropy.store(&entropy_message))
 				return expects_lr<void>(layer_exception("entropy serialization error"));
 
-			auto encrypted_entropy_message = protocol::now().box.encrypt(entropy_message.data);
+			auto encrypted_entropy_message = kernel::params().box.encrypt(entropy_message.data);
 			if (!encrypted_entropy_message)
 				return encrypted_entropy_message.error();
 
@@ -950,13 +950,15 @@ namespace tangent
 			else if (cursor->empty())
 				return layer_exception("failed to find secret key with used ref");
 
-			auto decrypted_entropy_message = protocol::now().box.decrypt((*cursor)["entropy_message"].get().get_blob());
+			auto decrypted_entropy_message = kernel::params().box.decrypt((*cursor)["entropy_message"].get().get_blob());
 			if (!decrypted_entropy_message)
 				return decrypted_entropy_message.error();
 
 			ledger::distribution_key entropy;
 			format::ro_stream entropy_message = format::ro_stream(*decrypted_entropy_message);
-			if (!entropy.load(entropy_message))
+			bool success = entropy.load(entropy_message);
+			std::fill(decrypted_entropy_message->begin(), decrypted_entropy_message->end(), 0);
+			if (!success)
 				return expects_lr<ledger::distribution_key>(layer_exception("secret entropy deserialization error"));
 
 			return expects_lr<ledger::distribution_key>(std::move(entropy));
@@ -973,13 +975,15 @@ namespace tangent
 			else if (cursor->empty())
 				return layer_exception("entropy not found");
 
-			auto decrypted_entropy_message = protocol::now().box.decrypt((*cursor)["entropy_message"].get().get_blob());
+			auto decrypted_entropy_message = kernel::params().box.decrypt((*cursor)["entropy_message"].get().get_blob());
 			if (!decrypted_entropy_message)
 				return decrypted_entropy_message.error();
 
 			ledger::distribution_key entropy;
 			format::ro_stream entropy_message = format::ro_stream(*decrypted_entropy_message);
-			if (!entropy.load(entropy_message))
+			bool success = entropy.load(entropy_message);
+			std::fill(decrypted_entropy_message->begin(), decrypted_entropy_message->end(), 0);
+			if (!success)
 				return expects_lr<ledger::distribution_key>(layer_exception("entropy deserialization error"));
 
 			return expects_lr<ledger::distribution_key>(std::move(entropy));

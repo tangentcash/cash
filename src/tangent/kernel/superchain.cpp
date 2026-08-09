@@ -754,6 +754,16 @@ namespace tangent
 
 			return expectation::met;
 		}
+		uint256_t computed_transaction::as_proof_hash(const algorithm::asset_id& asset, uint64_t block_number, bool renew) const
+		{
+			if (!kernel::params().on(fork_id::attesters_hardening, block_number))
+				return as_hash(renew);
+
+			format::wo_stream message = as_message();
+			message.write_integer(asset);
+			message.write_integer(as_hash(renew));
+			return message.hash();
+		}
 		uint256_t computed_transaction::as_attestation_hash() const
 		{
 			return algorithm::hashing::hash256i(transaction_id);
@@ -1300,7 +1310,30 @@ namespace tangent
 			return result;
 		}
 
+		computed_wallet::~computed_wallet()
+		{
+			std::fill(seed.begin(), seed.end(), 0);
+			std::fill(secret_key.begin(), secret_key.end(), 0);
+			std::fill(public_key.begin(), public_key.end(), 0);
+			std::fill(encoded_public_key.begin(), encoded_public_key.end(), 0);
+		}
 		format::tree computed_wallet::as_tree() const
+		{
+			auto data = format::tree::map();
+			data.set("public_key", format::variable(format::util::encode_0xhex(std::string_view((char*)public_key.data(), public_key.size()))));
+			data.set("encoded_public_key", format::variable(encoded_public_key));
+			auto* addresses_data = data.set("addresses", format::tree::list());
+			for (auto encoded_address : encoded_addresses)
+			{
+				auto intemediate = addresses.find(encoded_address.first);
+				auto* address = addresses_data->push(format::tree::map());
+				address->set("version", format::variable(encoded_address.first));
+				address->set("address", intemediate != addresses.end() ? format::variable(format::util::encode_0xhex(intemediate->second)) : format::variable());
+				address->set("encoded_address", format::variable(encoded_address.second));
+			}
+			return data;
+		}
+		format::tree computed_wallet::as_secret_tree() const
 		{
 			auto data = format::tree::map();
 			data.set("seed", format::variable(format::util::encode_0xhex(std::string_view((char*)seed.data(), seed.size()))));
@@ -1756,7 +1789,7 @@ namespace tangent
 			for (auto& chain : chains)
 				chain.second(chain.first);
 
-			auto& config = protocol::now().user.superchain.options;
+			auto& config = kernel::params().user.superchain.options;
 			if (!config || !config->is_map())
 				return;
 
@@ -1792,9 +1825,9 @@ namespace tangent
 							size_t headers_size = headers.size();
 							auto url = child.child_var("url").as_blob();
 							auto rps = child.child_var("rps").as_double();
-							if (add_network_connection(asset, url, std::move(headers), rps) && protocol::now().user.superchain.logging)
+							if (add_network_connection(asset, url, std::move(headers), rps) && kernel::params().user.superchain.logging)
 								VI_INFO("%s server add \"%s\" endpoint (rps: %.2f, headers: %i)", algorithm::asset::name_of(asset).c_str(), url.c_str(), rps, (int)headers_size);
-							else if (protocol::now().user.superchain.logging)
+							else if (kernel::params().user.superchain.logging)
 								VI_ERR("failed to add %s server \"%s\" with %i headers", algorithm::asset::name_of(asset).c_str(), url.c_str(), (int)headers_size);
 						}
 					}
@@ -1836,14 +1869,14 @@ namespace tangent
 				{
 					auto* sub_setup = multi_setup.push(setup);
 					sub_setup->set("params", request);
-					sub_setup->set("id", format::variable(string(category) + to_string(multi_setup.childs().size())));
+					sub_setup->set("id", format::variable(++connection.state.total_requests));
 				}
 				setup = std::move(multi_setup);
 			}
 			else
 			{
 				setup.set("params", multi && args.fields ? args.fields->front() : args);
-				setup.set("id", format::variable(category));
+				setup.set("id", format::variable(++connection.state.total_requests));
 			}
 
 			string body = setup.as_json();
@@ -1929,7 +1962,7 @@ namespace tangent
 					return expects_rt<format::tree>(std::move(*data));
 			}
 
-			if (protocol::now().time.now_cpu() < connection.state.error_retry_after_timestamp)
+			if (kernel::params().time.now_cpu() < connection.state.error_retry_after_timestamp)
 				return expects_rt<format::tree>(remote_exception::retry_after(connection.state.error_retry_after_timestamp));
 			else
 				message = string(body);
@@ -1939,13 +1972,13 @@ namespace tangent
 			{
 				if (connection.rps > 0.0 && cache != cache_policy::no_cache_no_throttling)
 				{
-					while (protocol::now().time.now_cpu() < connection.state.rps_retry_after_timestamp && (!network_active || network_active()))
+					while (kernel::params().time.now_cpu() < connection.state.rps_retry_after_timestamp && (!network_active || network_active()))
 					{
 						promise<void> awaiter;
 						schedule::get()->set_timeout(200, [awaiter]() mutable { awaiter.set(); });
 						coawait(std::move(awaiter));
 					}
-					connection.state.rps_retry_after_timestamp = protocol::now().time.now_cpu() + (uint64_t)(1000000.0 / connection.rps) / 1000;
+					connection.state.rps_retry_after_timestamp = kernel::params().time.now_cpu() + (uint64_t)(1000000.0 / connection.rps) / 1000;
 				}
 
 				if (!network_fetch || (network_active && !network_active()))
@@ -1953,8 +1986,8 @@ namespace tangent
 
 				http::fetch_frame setup;
 				setup.max_size = 64 * 1024 * 1024;
-				setup.verify_peers = (uint32_t)protocol::now().user.tcp.tls_trusted_peers;
-				setup.timeout = protocol::now().user.tcp.timeout;
+				setup.verify_peers = (uint32_t)kernel::params().user.tcp.tls_trusted_peers;
+				setup.timeout = kernel::params().user.tcp.timeout;
 				setup.set_header("User-Agent", random_user_agent());
 				if (!message.empty())
 				{
@@ -1967,7 +2000,7 @@ namespace tangent
 
 				auto response = coawait(network_fetch(asset, target_url, method_ref, setup));
 				if (!response || response->status_code == 408 || response->status_code == 429 || response->status_code == 502 || response->status_code == 503 || response->status_code == 504)
-					coreturn expects_rt<format::tree>(remote_exception::retry_after(protocol::now().time.now_cpu() + protocol::now().user.superchain.polling_frequency, response ? string(http::utils::status_message(response->status_code)) + string(" error") : std::move(response.error().message())));
+					coreturn expects_rt<format::tree>(remote_exception::retry_after(kernel::params().time.now_cpu() + kernel::params().user.superchain.polling_frequency, response ? string(http::utils::status_message(response->status_code)) + string(" error") : std::move(response.error().message())));
 
 				format::tree result;
 				auto content_type = response->get_header("Content-Type");
@@ -2028,7 +2061,7 @@ namespace tangent
 			if (!instance)
 				return expects_rt<vector<transaction_logs>>(remote_exception("chain not found"));
 
-			uint64_t time = protocol::now().time.now_cpu();
+			uint64_t time = kernel::params().time.now_cpu();
 			auto* implementation = *instance->translation;
 			auto* options = &instance->options;
 			if (network_active && !network_active())
@@ -2080,7 +2113,7 @@ namespace tangent
 							coreturn expects_rt<vector<transaction_logs>>(result.error());
 						}
 
-						options->state.retry_after_time = protocol::now().time.now_cpu() + protocol::now().user.superchain.polling_frequency;
+						options->state.retry_after_time = kernel::params().time.now_cpu() + kernel::params().user.superchain.polling_frequency;
 						coreturn expects_rt<vector<transaction_logs>>(remote_exception::retry_after(options->state.retry_after_time));
 					}
 					else if (result)
@@ -2239,7 +2272,7 @@ namespace tangent
 					return expects_rt<void>(remote_exception(std::move(status.error().message())));
 			}
 
-			if (protocol::now().user.superchain.logging)
+			if (kernel::params().user.superchain.logging)
 				VI_INFO("%s broadcast transaction: %s (ref: %s)", algorithm::asset::blockchain_of(asset).c_str(), finalized.as_tree().as_json().c_str(), algorithm::encoding::encode_0xhex256(external_id).c_str());
 
 			return implementation->broadcast_transaction(finalized);
@@ -2270,7 +2303,7 @@ namespace tangent
 				return expects_rt<prepared_transaction>(remote_exception(std::move(normalized_from_link.error().message())));
 
 			auto normalized_max_fee = normalize_value(implementation, max_fee);
-			if (protocol::now().user.superchain.logging)
+			if (kernel::params().user.superchain.logging)
 			{
 				VI_INFO(
 					"%s build transaction: %s (fee: %s %s)\n"
@@ -2287,7 +2320,7 @@ namespace tangent
 
 			return implementation->prepare_transaction(*normalized_from_link, normalized_to, normalized_max_fee).then<expects_rt<prepared_transaction>>([blockchain = std::move(blockchain)](expects_rt<prepared_transaction>&& result) mutable -> expects_rt<prepared_transaction>
 			{
-				if (protocol::now().user.superchain.logging)
+				if (kernel::params().user.superchain.logging)
 					VI_INFO("%s built transaction: %s", blockchain.c_str(), result ? result->as_tree().as_json().c_str() : result.error().what());
 
 				return result;

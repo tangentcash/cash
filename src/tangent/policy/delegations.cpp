@@ -1,5 +1,6 @@
 #include "delegations.h"
 #include "transactions.h"
+#include "compositions.h"
 #define method_bind(h, t, f) while ((h) == method_hash<t, f>(#f)) return method_ptr<t, f>()
 #define method_call(p, t, f) (yield_to_delegate((p), method_hash<t, f>(#f)))
 
@@ -24,13 +25,78 @@ namespace tangent
 			int64_t incomplete_encrypted_shares = (int64_t)group_size;
 			for (auto& [localized_participant, localized_encrypted_shares] : encrypted_shares)
 			{
-				if (localized_participant != runner->public_key)
-				{
-					for (auto& [participant, encrypted_share] : localized_encrypted_shares)
-						incomplete_encrypted_shares -= participant == runner->public_key_hash ? 1 : 0;
-				}
+				if (localized_participant == runner->public_key)
+					continue;
+
+				auto it = localized_encrypted_shares.find(runner->public_key_hash);
+				if (it != localized_encrypted_shares.end())
+					--incomplete_encrypted_shares;
 			}
 			return incomplete_encrypted_shares > 0;
+		}
+		static expects_lr<string> public_encrypt_share(const uint256_t& transaction_hash, const ledger::wallet& from, const algorithm::pubkey_t& to_public_key, const std::string_view& share, algorithm::pubkeyhash_t* to_account_out)
+		{
+			algorithm::pubkeyhash_t to_account;
+			algorithm::signing::derive_public_key_hash(to_public_key, to_account);
+			format::wo_stream tweak_message;
+			tweak_message.write_string(from.public_key_hash.view());
+			tweak_message.write_string(to_account.view());
+			tweak_message.write_integer(transaction_hash);
+			if (to_account_out != nullptr)
+				*to_account_out = to_account;
+
+			algorithm::seckey_t tweak;
+			algorithm::pubkey_t tweaked_public_key = to_public_key;
+			algorithm::signing::derive_secret_key(tweak_message.hash(), tweak);
+			if (!algorithm::signing::scalar_add_public_key(tweaked_public_key, tweak))
+				return layer_exception("invalid tweaked public key");
+
+			auto result = algorithm::signing::public_encrypt(tweaked_public_key, share, algorithm::hashing::hash256i(*crypto::random_bytes(64)));
+			if (!result)
+				return layer_exception("plaintext share encryption failed");
+
+			algorithm::hashsig_t signature;
+			if (!algorithm::signing::sign(algorithm::hashing::hash256i(*result), from.secret_key, signature))
+				return layer_exception("ciphertext share signing failed");
+
+			format::wo_stream signed_message;
+			signed_message.write_string(*result);
+			signed_message.write_string(signature.optimized_view());
+			return expects_lr<string>(std::move(signed_message.data));
+		}
+		static expects_lr<string> private_decrypt_share(const uint256_t& transaction_hash, const ledger::wallet& to, const std::string_view& ciphertext_message, algorithm::pubkeyhash_t* from_account_out)
+		{
+			string ciphertext_share;
+			format::ro_stream signed_message = format::ro_stream(ciphertext_message);
+			if (!signed_message.read_string(signed_message.read_type(), &ciphertext_share))
+				return layer_exception("ciphertext share verification failed");
+
+			algorithm::hashsig_t signature;
+			if (!signed_message.read_optimized_view(signed_message.read_type(), signature.blob, sizeof(signature.blob)))
+				return layer_exception("ciphertext share verification failed");
+
+			algorithm::pubkeyhash_t from_account;
+			if (!algorithm::signing::recover_hash(algorithm::hashing::hash256i(ciphertext_share), from_account, signature))
+				return layer_exception("ciphertext share verification failed");
+
+			format::wo_stream tweak_message;
+			tweak_message.write_string(from_account.view());
+			tweak_message.write_string(to.public_key_hash.view());
+			tweak_message.write_integer(transaction_hash);
+			if (from_account_out != nullptr)
+				*from_account_out = from_account;
+
+			algorithm::seckey_t tweak;
+			algorithm::seckey_t tweaked_secret_key = to.secret_key;
+			algorithm::signing::derive_secret_key(tweak_message.hash(), tweak);
+			if (!algorithm::signing::scalar_add_secret_key(tweaked_secret_key, tweak))
+				return layer_exception("invalid tweaked secret key");
+
+			auto decrypted_share = algorithm::signing::private_decrypt(tweaked_secret_key, ciphertext_share);
+			if (!decrypted_share || decrypted_share->size() > sizeof(algorithm::share_t))
+				return layer_exception("plaintext share decryption failed");
+
+			return expects_lr<string>(std::move(*decrypted_share));
 		}
 
 		bind_delegation::bind_delegation(ledger::delegation_adapter* new_adapter, const ledger::executor_context* new_executor, const algorithm::pubkeyhash_t& new_runner) : ledger::delegation_contract(new_adapter, new_executor, new_runner)
@@ -77,39 +143,32 @@ namespace tangent
 				{
 				postpone:
 					compositor.destroy();
-					coreturn ++attempt >= protocol::now().user.consensus.coordination_attempts ? remote_exception("failed after multiple attempts") : remote_exception::retry_later();
+					coreturn ++attempt >= kernel::params().user.consensus.coordination_attempts ? remote_exception("failed after multiple attempts") : remote_exception::retry_later();
 				}
 
 				for (auto& participant : group)
 					encrypted_shares[adapter->get_public_key(participant)] = btree_map<algorithm::pubkeyhash_t, string>();
 				
 				bool reset = false;
-				auto chosen_it = group.begin();
-				std::advance(chosen_it, (size_t)(algorithm::hashing::hash256i(message_hash, sizeof(message_hash)) % uint256_t(group.size())));
-				auto chosen_participant = *chosen_it;
 				while (compositor->steps_left() > 0)
 				{
 					auto phase = compositor->next_phase();
-					if (!reset && (phase == algorithm::composition::phase::any_input_after_reset || phase == algorithm::composition::phase::chosen_input_after_reset))
+					if (!reset && phase == algorithm::composition::phase::consume_after_reset)
 					{
 						delegates = group;
 						reset = true;
 					}
-
-					bool uniform_input = phase == algorithm::composition::phase::any_input_after_reset || phase == algorithm::composition::phase::any_input;
-					bool chosen_input = phase == algorithm::composition::phase::chosen_input_after_reset || phase == algorithm::composition::phase::chosen_input;
-					auto it = (uniform_input ? delegates->begin() : (chosen_input ? delegates->find(chosen_participant) : delegates->end()));
-					it = (!chosen_input && delegates->size() > 1 && it != delegates->end() && it->equals(chosen_participant) ? ++it : it);
-					if (it == delegates->end())
+					else if (phase == algorithm::composition::phase::finalize || delegates->empty())
 						break;
 
-					auto result = coawait(method_call(*it, bind_delegation, &bind_delegation::aggregate_public_key));
+					auto participant = *delegates->begin();
+					auto result = coawait(method_call(participant, bind_delegation, &bind_delegation::aggregate_public_key));
 					if (!result && (result.error().is_retry() || result.error().is_shutdown()))
 						goto postpone;
 					else if (!result)
 						coreturn result.error();
 
-					delegates->erase(it);
+					delegates->erase(participant);
 					reset = false;
 				}
 
@@ -123,7 +182,9 @@ namespace tangent
 				if (!status)
 					coreturn remote_exception(std::move(status.error().message()));
 
-				delegates = group;
+				auto chosen_it = group.begin(); delegates = group;
+				std::advance(chosen_it, (size_t)(algorithm::hashing::hash256i(message_hash, sizeof(message_hash)) % uint256_t(group.size())));
+				auto chosen_participant = *chosen_it;
 				while (!delegates->empty())
 				{
 					auto& participant = *delegates->begin();
@@ -171,7 +232,7 @@ namespace tangent
 		{
 			auto* prev = (bind_delegation*)parent;
 			auto* route = (transactions::route*)executor->transaction;
-			if (attempt >= protocol::now().user.consensus.coordination_attempts)
+			if (attempt >= kernel::params().user.consensus.coordination_attempts)
 				return layer_exception("invalid attempt counter");
 
 			if (!compositor)
@@ -262,7 +323,7 @@ namespace tangent
 				return layer_exception(std::move(derivation.error().message()));
 
 			auto group = route->get_participants(executor->receipt);
-			if (group.size() < protocol::now().policy.participation.min_per_account)
+			if (group.size() < kernel::params().policy.participation.min_per_account)
 				return layer_exception("group is too small");
 
 			size_t group_size = group.size();
@@ -293,18 +354,11 @@ namespace tangent
 				else if (encrypted_share->first == runner->public_key && ++encrypted_share == encrypted_shares.end())
 					return layer_exception("not enough encrypted shares");
 
-				algorithm::seckey_t tweak;
-				algorithm::signing::derive_secret_key(executor->receipt.transaction_hash, tweak);
-				algorithm::pubkey_t tweaked_public_key = encrypted_share->first;
-				if (!algorithm::signing::scalar_add_public_key(tweaked_public_key, tweak))
-					return layer_exception("invalid tweaked public key");
-
-				auto result = algorithm::signing::public_encrypt(tweaked_public_key, share.view(), algorithm::hashing::hash256i(*crypto::random_bytes(64)));
-				if (!result)
-					return layer_exception("group share encryption failed");
-
 				algorithm::pubkeyhash_t participant;
-				algorithm::signing::derive_public_key_hash(encrypted_share->first, participant);
+				auto result = public_encrypt_share(executor->receipt.transaction_hash, *runner, encrypted_share->first, share.view(), &participant);
+				if (!result)
+					return result.error();
+				
 				encrypted_share->second[runner->public_key_hash] = std::move(*result);
 				finalized_shares[participant].sent = share;
 				++encrypted_share;
@@ -330,18 +384,16 @@ namespace tangent
 			if (!secret)
 				return layer_exception(std::move(secret.error().message()));
 
-			for (auto& [participant, encrypted_share] : localized_encrypted_shares->second)
+			for (auto& [target_participant, encrypted_share] : localized_encrypted_shares->second)
 			{
-				algorithm::seckey_t tweak, tweaked_secret_key = runner->secret_key;
-				algorithm::signing::derive_secret_key(executor->receipt.transaction_hash, tweak);
-				if (!algorithm::signing::scalar_add_secret_key(tweaked_secret_key, tweak))
-					return layer_exception("invalid tweaked secret key");
+				algorithm::pubkeyhash_t from_participant;
+				auto result = private_decrypt_share(executor->receipt.transaction_hash, *runner, encrypted_share, &from_participant);
+				if (!result)
+					return result.error();
+				else if (from_participant != target_participant)
+					return layer_exception("share from invalid participant");
 
-				auto decrypted_share = algorithm::signing::private_decrypt(tweaked_secret_key, encrypted_share);
-				if (!decrypted_share || decrypted_share->size() > sizeof(algorithm::share_t))
-					return layer_exception("group share decryption failed");
-
-				secret->shares[participant].recv = algorithm::share_t(*decrypted_share);
+				secret->shares[target_participant].recv = algorithm::share_t(*result);
 			}
 
 			for (auto& [participant, share] : secret->shares)
@@ -432,8 +484,7 @@ namespace tangent
 			if (!stream.read_integer(stream.read_type(), &attempt))
 				return false;
 
-			string intermediate;
-			if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, key_commitment.blob, sizeof(key_commitment)))
+			if (!stream.read_optimized_view(stream.read_type(), key_commitment.blob, sizeof(key_commitment)))
 				return false;
 
 			uint8_t key_contributions_size;
@@ -441,12 +492,13 @@ namespace tangent
 				return false;
 
 			key_contributions.clear();
-			for (uint16_t i = 0; i < key_contributions_size; i++)
+			for (uint8_t i = 0; i < key_contributions_size; i++)
 			{
 				algorithm::pubkeyhash_t participant;
-				if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, participant.blob, sizeof(participant)))
+				if (!stream.read_optimized_view(stream.read_type(), participant.blob, sizeof(participant)))
 					return false;
 
+				string intermediate;
 				if (!stream.read_string(stream.read_type(), &intermediate) || intermediate.empty())
 					return false;
 
@@ -460,10 +512,10 @@ namespace tangent
 				return false;
 
 			encrypted_shares.clear();
-			for (uint16_t i = 0; i < shares_size; i++)
+			for (uint8_t i = 0; i < shares_size; i++)
 			{
 				algorithm::pubkey_t public_key;
-				if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, public_key.blob, sizeof(public_key)))
+				if (!stream.read_optimized_view(stream.read_type(), public_key.blob, sizeof(public_key)))
 					return false;
 
 				uint8_t values_size;
@@ -474,7 +526,7 @@ namespace tangent
 				for (uint16_t j = 0; j < values_size; j++)
 				{
 					algorithm::pubkeyhash_t participant;
-					if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, participant.blob, sizeof(participant)))
+					if (!stream.read_optimized_view(stream.read_type(), participant.blob, sizeof(participant)))
 						return false;
 
 					string encrypted_share;
@@ -573,7 +625,7 @@ namespace tangent
 					postpone:
 						context = migration_context();
 						context.attempt = attempt;
-						coreturn ++context.attempt >= protocol::now().user.consensus.coordination_attempts ? remote_exception("failed after multiple attempts") : remote_exception::retry_later();
+						coreturn ++context.attempt >= kernel::params().user.consensus.coordination_attempts ? remote_exception("failed after multiple attempts") : remote_exception::retry_later();
 					}
 
 					uint8_t message_hash[32];
@@ -616,34 +668,28 @@ namespace tangent
 						coreturn result.error();
 
 					bool reset = false;
-					auto chosen_it = group.begin();
-					std::advance(chosen_it, (size_t)(algorithm::hashing::hash256i(message_hash, sizeof(message_hash)) % uint256_t(group.size())));
 					context.encrypted_recovery_shares.clear();
 					while (context.compositor->steps_left() > 0)
 					{
 						auto phase = context.compositor->next_phase();
-						if (!reset && (phase == algorithm::composition::phase::any_input_after_reset || phase == algorithm::composition::phase::chosen_input_after_reset))
+						if (!reset && phase == algorithm::composition::phase::consume_after_reset)
 						{
 							delegates = group;
 							reset = true;
 						}
-
-						bool uniform_input = phase == algorithm::composition::phase::any_input_after_reset || phase == algorithm::composition::phase::any_input;
-						bool chosen_input = phase == algorithm::composition::phase::chosen_input_after_reset || phase == algorithm::composition::phase::chosen_input;
-						auto it = (uniform_input ? delegates->begin() : (chosen_input ? delegates->find(*chosen_it) : delegates->end()));
-						it = (!chosen_input && delegates->size() > 1 && it != delegates->end() && it->equals(*chosen_it) ? ++it : it);
-						if (it == delegates->end())
+						else if (phase == algorithm::composition::phase::finalize || delegates->empty())
 							break;
 
-						auto result = coawait(method_call(*it, rebind_delegation, &rebind_delegation::aggregate_tweaked_public_key));
+						auto participant = *delegates->begin();
+						auto result = coawait(method_call(participant, rebind_delegation, &rebind_delegation::aggregate_tweaked_public_key));
 						if (!result && (result.error().is_retry() || result.error().is_shutdown()))
 							goto postpone;
-						else if (!result && *it == retweaking_participant && result.what().find(retweak_phrase()) != string::npos)
+						else if (!result && participant == retweaking_participant && result.what().find(retweak_phrase()) != string::npos)
 							goto retweak;
 						else if (!result)
 							coreturn result.error();
 
-						delegates->erase(it);
+						delegates->erase(participant);
 						reset = false;
 					}
 
@@ -714,7 +760,7 @@ namespace tangent
 		{
 			auto* prev = (rebind_delegation*)parent;
 			auto* setup = (transactions::setup*)executor->transaction;
-			if (context.attempt >= protocol::now().user.consensus.coordination_attempts)
+			if (context.attempt >= kernel::params().user.consensus.coordination_attempts)
 				return layer_exception("invalid attempt counter");
 
 			if (!context.compositor)
@@ -868,15 +914,9 @@ namespace tangent
 			auto it = secret->shares.find(migration.old_participant);
 			if (it != secret->shares.end())
 			{
-				algorithm::seckey_t tweak;
-				algorithm::signing::derive_secret_key(executor->receipt.transaction_hash, tweak);
-				algorithm::pubkey_t tweaked_public_key = context.new_participant_key;
-				if (!algorithm::signing::scalar_add_public_key(tweaked_public_key, tweak))
-					return layer_exception("invalid tweaked public key");
-
-				auto result = algorithm::signing::public_encrypt(tweaked_public_key, it->second.recv.view(), algorithm::hashing::hash256i(*crypto::random_bytes(64)));
+				auto result = public_encrypt_share(executor->receipt.transaction_hash, *runner, context.new_participant_key, it->second.recv.view(), nullptr);
 				if (!result)
-					return layer_exception("group share encryption failed");
+					return result.error();
 
 				context.encrypted_recovery_shares[runner->public_key_hash] = std::move(*result);
 			}
@@ -889,19 +929,17 @@ namespace tangent
 			if (context.accumulator_key.empty() || context.encrypted_accumulator.empty())
 				return layer_exception("invalid group paillier key/tweak");
 
-			algorithm::seckey_t tweak, tweaked_secret_key = runner->secret_key;
-			algorithm::signing::derive_secret_key(executor->receipt.transaction_hash, tweak);
-			if (!algorithm::signing::scalar_add_secret_key(tweaked_secret_key, tweak))
-				return layer_exception("invalid tweaked secret key");
-
 			btree_set<algorithm::share_t> shares;
-			for (auto& [participant, encrypted_share] : context.encrypted_recovery_shares)
+			for (auto& [target_participant, encrypted_share] : context.encrypted_recovery_shares)
 			{
-				auto decrypted_share = algorithm::signing::private_decrypt(tweaked_secret_key, encrypted_share);
-				if (!decrypted_share || decrypted_share->empty() || decrypted_share->size() > sizeof(algorithm::share_t))
-					return layer_exception("share decryption failed");
+				algorithm::pubkeyhash_t from_participant;
+				auto result = private_decrypt_share(executor->receipt.transaction_hash, *runner, encrypted_share, &from_participant);
+				if (!result)
+					return result.error();
+				else if (from_participant != target_participant)
+					return layer_exception("share from invalid participant");
 
-				shares.insert(algorithm::share_t(*decrypted_share));
+				shares.insert(algorithm::share_t(*result));
 			}
 
 			auto migrations = setup->get_migration_refs(executor, executor->receipt);
@@ -1014,7 +1052,7 @@ namespace tangent
 				return layer_exception(std::move(derivation.error().message()));
 
 			migration.account.group.insert(new_participant);
-			if (migration.account.group.size() < protocol::now().policy.participation.min_per_account)
+			if (migration.account.group.size() < kernel::params().policy.participation.min_per_account)
 				return layer_exception("group is too small");
 
 			size_t group_size = migration.account.group.size();
@@ -1043,18 +1081,11 @@ namespace tangent
 				else if (encrypted_share->first == runner->public_key && ++encrypted_share == context.encrypted_shares.end())
 					return layer_exception("not enough encrypted shares");
 
-				algorithm::seckey_t tweak;
-				algorithm::signing::derive_secret_key(executor->receipt.transaction_hash, tweak);
-				algorithm::pubkey_t tweaked_public_key = encrypted_share->first;
-				if (!algorithm::signing::scalar_add_public_key(tweaked_public_key, tweak))
-					return layer_exception("invalid tweaked public key");
-
-				auto result = algorithm::signing::public_encrypt(tweaked_public_key, share.view(), algorithm::hashing::hash256i(*crypto::random_bytes(64)));
-				if (!result)
-					return layer_exception("group share encryption failed");
-
 				algorithm::pubkeyhash_t participant;
-				algorithm::signing::derive_public_key_hash(encrypted_share->first, participant);
+				auto result = public_encrypt_share(executor->receipt.transaction_hash, *runner, encrypted_share->first, share.view(), &participant);
+				if (!result)
+					return result.error();
+
 				encrypted_share->second[runner->public_key_hash] = std::move(*result);
 				finalized_shares[participant].sent = share;
 				++encrypted_share;
@@ -1087,18 +1118,16 @@ namespace tangent
 			if (!secret)
 				return layer_exception(std::move(secret.error().message()));
 
-			for (auto& [participant, encrypted_share] : localized_encrypted_shares->second)
+			for (auto& [target_participant, encrypted_share] : localized_encrypted_shares->second)
 			{
-				algorithm::seckey_t tweak, tweaked_secret_key = runner->secret_key;
-				algorithm::signing::derive_secret_key(executor->receipt.transaction_hash, tweak);
-				if (!algorithm::signing::scalar_add_secret_key(tweaked_secret_key, tweak))
-					return layer_exception("invalid tweaked secret key");
+				algorithm::pubkeyhash_t from_participant;
+				auto result = private_decrypt_share(executor->receipt.transaction_hash, *runner, encrypted_share, &from_participant);
+				if (!result)
+					return result.error();
+				else if (from_participant != target_participant)
+					return layer_exception("share from invalid participant");
 
-				auto decrypted_share = algorithm::signing::private_decrypt(tweaked_secret_key, encrypted_share);
-				if (!decrypted_share || decrypted_share->size() > sizeof(algorithm::share_t))
-					return layer_exception("group share decryption failed");
-
-				secret->shares[participant].recv = algorithm::share_t(*decrypted_share);
+				secret->shares[target_participant].recv = algorithm::share_t(*result);
 			}
 
 			for (auto& [participant, share] : secret->shares)
@@ -1201,13 +1230,13 @@ namespace tangent
 			if (!stream.read_integer(stream.read_type(), &context.attempt))
 				return false;
 
+			if (!stream.read_optimized_view(stream.read_type(), context.key_commitment.blob, sizeof(context.key_commitment)))
+				return false;
+
+			if (!stream.read_optimized_view(stream.read_type(), context.new_participant_key.blob, sizeof(context.new_participant_key)))
+				return false;
+
 			string intermediate;
-			if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, context.key_commitment.blob, sizeof(context.key_commitment)))
-				return false;
-
-			if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, context.new_participant_key.blob, sizeof(context.new_participant_key)))
-				return false;
-
 			if (!stream.read_string(stream.read_type(), &intermediate))
 				return false;
 
@@ -1239,7 +1268,7 @@ namespace tangent
 			for (uint16_t i = 0; i < key_contributions_size; i++)
 			{
 				algorithm::pubkeyhash_t participant;
-				if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, participant.blob, sizeof(participant)))
+				if (!stream.read_optimized_view(stream.read_type(), participant.blob, sizeof(participant)))
 					return false;
 
 				if (!stream.read_string(stream.read_type(), &intermediate) || intermediate.empty())
@@ -1258,7 +1287,7 @@ namespace tangent
 			for (uint16_t i = 0; i < shares_size; i++)
 			{
 				algorithm::pubkey_t public_key;
-				if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, public_key.blob, sizeof(public_key)))
+				if (!stream.read_optimized_view(stream.read_type(), public_key.blob, sizeof(public_key)))
 					return false;
 
 				uint8_t values_size;
@@ -1269,7 +1298,7 @@ namespace tangent
 				for (uint16_t j = 0; j < values_size; j++)
 				{
 					algorithm::pubkeyhash_t participant;
-					if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, participant.blob, sizeof(participant)))
+					if (!stream.read_optimized_view(stream.read_type(), participant.blob, sizeof(participant)))
 						return false;
 
 					string encrypted_share;
@@ -1288,7 +1317,7 @@ namespace tangent
 			for (uint16_t i = 0; i < encrypted_recovery_shares_size; i++)
 			{
 				algorithm::pubkeyhash_t participant;
-				if (!stream.read_string(stream.read_type(), &intermediate) || !algorithm::encoding::decode_bytes(intermediate, participant.blob, sizeof(participant)))
+				if (!stream.read_optimized_view(stream.read_type(), participant.blob, sizeof(participant)))
 					return false;
 
 				if (!stream.read_string(stream.read_type(), &intermediate) || intermediate.empty())
@@ -1307,8 +1336,7 @@ namespace tangent
 			for (uint16_t i = 0; i < proofs_size; i++)
 			{
 				migration_proof proof;
-				string correction_commitment_assembly;
-				if (!stream.read_string(stream.read_type(), &correction_commitment_assembly) || !algorithm::encoding::decode_bytes(correction_commitment_assembly, proof.correction_commitment.blob, sizeof(proof.correction_commitment)))
+				if (!stream.read_optimized_view(stream.read_type(), proof.correction_commitment.blob, sizeof(proof.correction_commitment)))
 					return false;
 
 				string correction_key_assembly;
@@ -1365,9 +1393,9 @@ namespace tangent
 		}
 		size_t rebind_delegation::tweaking_key_size()
 		{
-			return std::max<size_t>(sizeof(uint256_t) * 8 + protocol::now().policy.participation.max_per_account + 1, 3072);
+			return std::max<size_t>(sizeof(uint256_t) * 8 + kernel::params().policy.participation.max_per_account + 1, 3072);
 		}
-		void rebind_delegation::tweaking_seed(const algorithm::seckey_t& secret_key, const uint256_t& transaction_hash, uint8_t message[96])
+		void rebind_delegation::tweaking_seed(const algorithm::seckey_t& secret_key, const uint256_t& transaction_hash, uint8_t message[64])
 		{
 			memcpy(message + 00, secret_key.blob, sizeof(secret_key.blob));
 			transaction_hash.encode(message + 32);
@@ -1448,9 +1476,6 @@ namespace tangent
 					if (!delegates)
 						coreturn delegates.error().is_retry() || delegates.error().is_shutdown() ? expects_rt<void>(std::move(delegates.error())) : cancel(algorithm::pubkeyhash_t(), std::move(delegates.error()));
 
-					auto& seed_message = shared ? shared->message : input->message;
-					auto chosen = account->group.begin();
-					std::advance(chosen, (size_t)(algorithm::hashing::hash256i(seed_message.data(), seed_message.size()) % uint256_t(account->group.size())));
 					if (!compositor)
 					{
 						auto maybe_compositor = algorithm::composition::make_signature_compositor(input->alg, input->public_key, input->message.data(), input->message.size(), shared.address(), (uint16_t)account->group.size());
@@ -1461,28 +1486,23 @@ namespace tangent
 					}
 
 					bool reset = false;
-					while (true)
+					while (compositor->steps_left() > 0)
 					{
 						auto phase = compositor->next_phase();
-						if (!reset && (phase == algorithm::composition::phase::any_input_after_reset || phase == algorithm::composition::phase::chosen_input_after_reset))
+						if (!reset && phase == algorithm::composition::phase::consume_after_reset)
 						{
 							delegates = account->group;
 							reset = true;
 						}
-
-						bool uniform_input = phase == algorithm::composition::phase::any_input_after_reset || phase == algorithm::composition::phase::any_input;
-						bool chosen_input = phase == algorithm::composition::phase::chosen_input_after_reset || phase == algorithm::composition::phase::chosen_input;
-						auto it = (uniform_input ? delegates->begin() : (chosen_input ? delegates->find(*chosen) : delegates->end()));
-						it = (!chosen_input && delegates->size() > 1 && it != delegates->end() && it->equals(*chosen) ? ++it : it);
-						if (it == delegates->end())
+						else if (phase == algorithm::composition::phase::finalize || delegates->empty())
 							break;
 
-						auto participant = *it;
+						auto participant = *delegates->begin();
 						auto subresult = coawait(method_call(participant, broadcast_delegation, &broadcast_delegation::aggregate_signature));
 						if (!subresult && (subresult.error().is_retry() || subresult.error().is_shutdown()))
 						{
 							compositor.destroy();
-							coreturn ++attempt >= protocol::now().user.consensus.coordination_attempts ? cancel(participant, remote_exception("failed after multiple attempts")) : expects_rt<void>(remote_exception::retry_later());
+							coreturn ++attempt >= kernel::params().user.consensus.coordination_attempts ? cancel(participant, remote_exception("failed after multiple attempts")) : expects_rt<void>(remote_exception::retry_later());
 						}
 						else if (!subresult)
 							coreturn cancel(participant, std::move(subresult.error()));
@@ -1513,11 +1533,25 @@ namespace tangent
 				if (!finalization)
 					coreturn cancel(algorithm::pubkeyhash_t(), remote_exception(std::move(finalization.error().message())));
 
+				shared = finalization->prepared.as_shared_message();
+				for (auto& input : finalization->prepared.inputs)
+				{
+					auto maybe_compositor = algorithm::composition::make_compositor(input.alg);
+					if (!maybe_compositor)
+						coreturn cancel(algorithm::pubkeyhash_t(), remote_exception(std::move(maybe_compositor.error().message())));
+
+					auto& compositor_ptr = *maybe_compositor;
+					auto& input_message = shared ? shared->message : input.message;
+					auto verification = compositor_ptr->verify_signature(input_message.data(), input_message.size(), input.signature, input.public_key, (uint8_t)algorithm::composition::verify::tx_message);
+					if (!verification)
+						coreturn cancel(algorithm::pubkeyhash_t(), remote_exception(std::move(verification.error().message())));
+				}
+
 				result = coawait(broadcast_transaction(algorithm::asset::base_id_of(withdraw->asset), executor->receipt.transaction_hash, superchain::finalized_transaction(*finalization), this));
 				if (!result && (result.error().is_retry() || result.error().is_shutdown()))
 				{
 					compositor.destroy();
-					coreturn ++attempt >= protocol::now().user.consensus.coordination_attempts ? cancel(algorithm::pubkeyhash_t(), remote_exception("failed after multiple attempts")) : expects_rt<void>(remote_exception::retry_later());
+					coreturn ++attempt >= kernel::params().user.consensus.coordination_attempts ? cancel(algorithm::pubkeyhash_t(), remote_exception("failed after multiple attempts")) : expects_rt<void>(remote_exception::retry_later());
 				}
 				else if (!result)
 					coreturn cancel(algorithm::pubkeyhash_t(), std::move(result.error()));
@@ -1533,7 +1567,7 @@ namespace tangent
 		{
 			auto* prev = (broadcast_delegation*)parent;
 			auto* withdraw = (transactions::withdraw*)executor->transaction;
-			if (attempt >= protocol::now().user.consensus.coordination_attempts)
+			if (attempt >= kernel::params().user.consensus.coordination_attempts)
 				return layer_exception("invalid attempt counter");
 
 			if (!message || message->as_status() == superchain::prepared_transaction::status::invalid)
@@ -1585,7 +1619,7 @@ namespace tangent
 				return layer_exception(std::move(accumulation.error().message()));
 
 			auto* offchain = superchain::bridge::get();
-			bool may_mockup = protocol::now().is(network_type::regtest);
+			bool may_mockup = kernel::params().is(network_type::regtest);
 			if (may_mockup && !offchain->has_network(withdraw->asset, true))
 			{
 				for (auto& output : message->outputs)
@@ -1681,7 +1715,7 @@ namespace tangent
 		expects_promise_rt<superchain::prepared_transaction> broadcast_delegation::prepare_transaction(const algorithm::asset_id& asset, const superchain::wallet_link& from_link, const superchain::value_transfer& to, const decimal& max_fee)
 		{
 			auto* offchain = superchain::bridge::get();
-			bool may_mockup = protocol::now().is(network_type::regtest);
+			bool may_mockup = kernel::params().is(network_type::regtest);
 			if (!may_mockup || offchain->has_network(asset, true))
 				return offchain->prepare_transaction(asset, from_link, to, max_fee);
 
@@ -1714,14 +1748,20 @@ namespace tangent
 			message.hash().encode(message_hash);
 
 			superchain::prepared_transaction regtest_prepared;
-			regtest_prepared.requires_account_input(chain->composition, std::move(*from), *public_key, message_hash, sizeof(message_hash), std::move(transfers));
+			if (chain->composition == algorithm::composition::type::ed25519_clsag)
+			{
+				public_key->resize(65);
+				regtest_prepared.requires_account_input(chain->composition, std::move(*from), *public_key, message_hash, sizeof(message_hash), std::move(transfers));
+			}
+			else
+				regtest_prepared.requires_account_input(chain->composition, std::move(*from), *public_key, message_hash, sizeof(message_hash), std::move(transfers));
 			regtest_prepared.requires_account_output(to.address, { { to.asset, to.value } });
 			return expects_promise_rt<superchain::prepared_transaction>(std::move(regtest_prepared));
 		}
 		expects_lr<superchain::finalized_transaction> broadcast_delegation::finalize_transaction(const algorithm::asset_id& asset, superchain::prepared_transaction&& prepared)
 		{
 			auto* offchain = superchain::bridge::get();
-			bool may_mockup = protocol::now().is(network_type::regtest);
+			bool may_mockup = kernel::params().is(network_type::regtest);
 			if (!may_mockup || offchain->has_network(asset, true))
 				return offchain->finalize_transaction(asset, std::move(prepared));
 
@@ -1734,7 +1774,7 @@ namespace tangent
 		expects_promise_rt<void> broadcast_delegation::broadcast_transaction(const algorithm::asset_id& asset, const uint256_t& external_id, superchain::finalized_transaction&& finalized, ledger::delegation_contract* contract)
 		{
 			auto* offchain = superchain::bridge::get();
-			bool may_mockup = protocol::now().is(network_type::regtest);
+			bool may_mockup = kernel::params().is(network_type::regtest);
 			if (!may_mockup || offchain->has_network(asset, true))
 			{
 				auto preserved = memory::init<superchain::finalized_transaction>(std::move(finalized));

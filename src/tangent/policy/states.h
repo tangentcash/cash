@@ -315,7 +315,7 @@ namespace tangent
 			uint256_t transaction_hash = 0;
 			uint64_t transaction_nonce = 0;
 			uint64_t account_nonce = 0;
-			uint8_t security_level = (uint8_t)protocol::now().policy.participation.min_per_account;
+			uint8_t security_level = (uint8_t)kernel::params().policy.participation.min_per_account;
 
 			bridge_instance(const bridge_ref& new_ref, uint64_t new_block_number);
 			bridge_instance(const bridge_ref& new_ref, const ledger::block_header* new_block_header);

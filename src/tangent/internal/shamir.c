@@ -279,7 +279,7 @@ gf256_inv(uint32_t r[8], uint32_t x[8])
  * that the array `out` has enough space to hold at least `n` sss_Keyshare
  * structs.
  */
-void
+int
 sss_create_keyshares(sss_Keyshare* out,
 					 const uint8_t key[32],
 					 uint8_t n,
@@ -297,7 +297,8 @@ sss_create_keyshares(sss_Keyshare* out,
 	bitslice(poly0, key);
 
 	/* Generate the other terms of the polynomial */
-	random_buffer((void*)poly, sizeof(poly));
+	if (random_u8a((void*)poly, sizeof(poly)) != 0)
+		return -1;
 
 	for (share_idx = 0; share_idx < n; share_idx++)
 	{
@@ -319,6 +320,7 @@ sss_create_keyshares(sss_Keyshare* out,
 		}
 		unbitslice(&out[share_idx][1], y);
 	}
+	return 0;
 }
 
 
@@ -406,7 +408,7 @@ static const sss_Keyshare* get_keyshare_const(const sss_Share* share)
 /*
  * Create `n` shares with theshold `k` and write them to `out`
  */
-void sss_create_shares(sss_Share* out, const unsigned char* data,
+int sss_create_shares(sss_Share* out, const unsigned char* data,
 					   uint8_t n, uint8_t k)
 {
 	assert(k <= MAX_K);
@@ -419,7 +421,8 @@ void sss_create_shares(sss_Share* out, const unsigned char* data,
 	size_t idx;
 
 	/* Generate a random encryption key */
-	random_buffer(key, sizeof(key));
+	if (random_u8a(key, sizeof(key)) != 0)
+		return -1;
 
 	/* AEAD encrypt the data with the key */
 	memcpy(&m[crypto_secretbox_ZEROBYTES], data, sss_MLEN);
@@ -427,7 +430,8 @@ void sss_create_shares(sss_Share* out, const unsigned char* data,
 	assert(tmp == 0); /* should always happen */
 
 	/* Generate KeyShares */
-	sss_create_keyshares(keyshares, key, n, k);
+	if (sss_create_keyshares(keyshares, key, n, k) != 0)
+		return -1;
 
 	/* Build regular shares */
 	for (idx = 0; idx < n; idx++)
@@ -437,6 +441,7 @@ void sss_create_shares(sss_Share* out, const unsigned char* data,
 		memcpy(get_ciphertext((sss_Share*)&out[idx]),
 			   &c[crypto_secretbox_BOXZEROBYTES], sss_CLEN);
 	}
+	return 0;
 }
 
 

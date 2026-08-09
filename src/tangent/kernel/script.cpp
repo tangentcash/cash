@@ -1044,9 +1044,10 @@ namespace tangent
 		}
 		void string_repr::push_front(char c)
 		{
-			char* buffer = data();
 			uint32_t buffer_size = size();
 			resize_buffer(buffer_size + 1);
+
+			char* buffer = data();
 			memmove(buffer + 1, buffer, buffer_size);
 			buffer[0] = c;
 		}
@@ -1260,7 +1261,9 @@ namespace tangent
 		}
 		void string_repr::resize_buffer(uint32_t required_size)
 		{
-			require_buffer_capacity(buffer_capacity_of(required_size));
+			if (!require_buffer_capacity(buffer_capacity_of(required_size)))
+				return;
+
 			if (heap_buffer)
 			{
 				heap.size = required_size;
@@ -1272,36 +1275,33 @@ namespace tangent
 				stack.data[stack.size] = '\0';
 			}
 		}
-		void string_repr::require_buffer_capacity(uint32_t required_capacity)
+		bool string_repr::require_buffer_capacity(uint32_t required_capacity)
 		{
 			if (!required_capacity)
 				required_capacity = buffer_capacity_of(required_capacity);
 
 			if (capacity() >= required_capacity)
-				return;
+				return true;
 
-			if (heap_buffer)
+			char* temp = program::request_gas_memory<char>(required_capacity + 1);
+			if (!temp)
+				return false;
+
+			heap.capacity = required_capacity;
+			memset(temp, 0, heap.capacity + 1);
+			if (!heap_buffer)
 			{
-				heap.capacity = required_capacity;
-				char* copy = program::request_gas_memory<char>(heap.capacity + 1);
-				memset(copy, 0, heap.capacity + 1);
-				memcpy(copy, heap.data, heap.size);
-				memory::deallocate(heap.data);
-				heap.data = copy;
+				memcpy(temp, stack.data, stack.size);
+				heap.size = stack.size;
+				heap_buffer = true;
 			}
 			else
 			{
-				uint32_t size = stack.size;
-				char copy[stack_capacity];
-				memcpy(copy, stack.data, stack_capacity);
-
-				heap.size = size;
-				heap.capacity = required_capacity;
-				heap.data = program::request_gas_memory<char>(heap.capacity + 1);
-				memset(heap.data, 0, heap.capacity + 1);
-				memcpy(heap.data, copy, stack_capacity);
-				heap_buffer = true;
+				memcpy(temp, heap.data, heap.size);
+				memory::deallocate(heap.data);
 			}
+			heap.data = temp;
+			return true;
 		}
 		uint128_t string_repr::from_string_uint128(int base) const
 		{
@@ -1416,7 +1416,7 @@ namespace tangent
 			if (!vm)
 				return true;
 
-			auto& message = protocol::now().message;
+			auto& message = kernel::params().message;
 			if (require_decimal_precision || base.decimal_size() > message.decimal_precision)
 				base.truncate(message.decimal_precision);
 
@@ -1542,7 +1542,7 @@ namespace tangent
 		}
 		uint32_t real320_repr::target_bits()
 		{
-			auto& message = protocol::now().message;
+			auto& message = kernel::params().message;
 			return estimate_bits(message.integer_precision + message.decimal_precision);
 		}
 
@@ -2206,12 +2206,8 @@ namespace tangent
 		}
 		bool abi_repr::ruint160(address_repr& value)
 		{
-			string_repr result;
-			if (!rstr(result))
-				return false;
-
 			algorithm::pubkeyhash_t blob;
-			if (!algorithm::encoding::decode_bytes(result.view(), blob.blob, sizeof(blob)))
+			if (!input.read_view(input.read_type(), blob.blob, sizeof(blob)))
 				return false;
 
 			value = address_repr(blob);
@@ -2276,7 +2272,13 @@ namespace tangent
 			else if (!(input_type_id & (uint32_t)type_id::handle_t))
 			{
 				if (input_value != nullptr)
-					memcpy(buffer, input_value, vm->get_size_of_primitive_type(input_type_id).or_else(0));
+				{
+					size_t input_value_size = vm->get_size_of_primitive_type(input_type_id).or_else(0);
+					if (input_value_size > sizeof(buffer))
+						return false;
+
+					memcpy(buffer, input_value, input_value_size);
+				}
 				else
 					memset(buffer, 0, sizeof(buffer));
 				value = buffer;
@@ -3566,7 +3568,7 @@ namespace tangent
 		{
 			uint64_t left = std::min(block_number_a, block_number_b);
 			uint64_t right = std::max(block_number_a, block_number_b);
-			return (right - left) * protocol::now().policy.pow.time;
+			return (right - left) * kernel::params().policy.pow.time;
 		}
 		uint64_t contract::block_priority()
 		{
@@ -3647,7 +3649,7 @@ namespace tangent
 			if (!p || token.empty())
 				return algorithm::asset::native();
 
-			return algorithm::asset::id_of(protocol::now().policy.token, token.view(), algorithm::signing::encode_address(p->callable()));
+			return algorithm::asset::id_of(kernel::params().policy.token, token.view(), algorithm::signing::encode_address(p->callable()));
 		}
 		uint256_t contract::coin_id_of(const string_repr& blockchain, const string_repr& token, const string_repr& contract_address)
 		{
@@ -3684,14 +3686,14 @@ namespace tangent
 			}
 
 			uint32_t integer_size = value.integer_size();
-			if (integer_size > 60 || integer_size > protocol::now().message.integer_precision || value.decimal_size() > protocol::now().message.decimal_precision)
+			if (integer_size > 60 || integer_size > kernel::params().message.integer_precision || value.decimal_size() > kernel::params().message.decimal_precision)
 			{
 				contract::throw_ptr(exception_repr(exception_repr::category::argument(), string_repr(value.to_string() + " as uint256 - fixed point overflow")));
 				return 0;
 			}
 
 			auto copy = value;
-			copy *= algorithm::arithmetic::integer_pow<uint64_t>(10, protocol::now().message.decimal_precision);
+			copy *= algorithm::arithmetic::integer_pow<uint64_t>(10, kernel::params().message.decimal_precision);
 
 			auto result = uint256_t::max();
 			if (copy < result.to_decimal())
@@ -3700,9 +3702,9 @@ namespace tangent
 		}
 		decimal contract::alg_from_r256(const uint256_t& value)
 		{
-			auto precision = protocol::now().message.decimal_precision;
+			auto precision = kernel::params().message.decimal_precision;
 			auto result = value.to_decimal().truncate(precision);
-			result /= algorithm::arithmetic::integer_pow<uint64_t>(10, protocol::now().message.decimal_precision);
+			result /= algorithm::arithmetic::integer_pow<uint64_t>(10, kernel::params().message.decimal_precision);
 			return result;
 		}
 		string_repr contract::alg_from_u256(const uint256_t& value)
@@ -3900,8 +3902,8 @@ namespace tangent
 					}
 					else if (name == SCRIPT_TYPE_REAL320)
 					{
-						size_t decimal_size = protocol::now().message.decimal_precision;
-						size_t integer_size = protocol::now().message.integer_precision;
+						size_t decimal_size = kernel::params().message.decimal_precision;
+						size_t integer_size = kernel::params().message.integer_precision;
 						string result;
 						result.reserve(integer_size + decimal_size + 2);
 						result.append(1, '-');
@@ -3968,8 +3970,8 @@ namespace tangent
 					}
 					else if (name == SCRIPT_TYPE_REAL320)
 					{
-						size_t decimal_size = protocol::now().message.decimal_precision;
-						size_t integer_size = protocol::now().message.integer_precision;
+						size_t decimal_size = kernel::params().message.decimal_precision;
+						size_t integer_size = kernel::params().message.integer_precision;
 						string result;
 						result.reserve(integer_size + decimal_size + 1);
 						if (integer_size > 0)
@@ -5699,7 +5701,7 @@ namespace tangent
 			vm->set_library_property(library_features::promise_no_constructor, 1);
 			vm->set_library_property(library_features::promise_no_callbacks, 1);
 			vm->set_library_property(library_features::ctypes_no_pointer_cast, 1);
-			vm->set_library_property(library_features::decimal_target_precision, (size_t)protocol::now().message.decimal_precision);
+			vm->set_library_property(library_features::decimal_target_precision, (size_t)kernel::params().message.decimal_precision);
 			vm->set_property(features::allow_unsafe_references, 0);
 			vm->set_property(features::optimize_bytecode, 1);
 			vm->set_property(features::copy_script_sections, 1);
@@ -5743,10 +5745,10 @@ namespace tangent
 			vm->set_string_factory_functions(this, to_string_constant, from_string_constant, free_string_constant);
 			vm->set_full_stack_tracing(false);
 			vm->set_ts_imports(false);
-			vm->set_cache(!protocol::now().user.storage.module_cache_path.empty());
+			vm->set_cache(!kernel::params().user.storage.module_cache_path.empty());
 			vm->set_cache_callback([](byte_code_info* info)
 			{
-				auto path = stringify::text("%s%c%s.o", protocol::now().user.storage.module_cache_path.c_str(), VI_SPLITTER, info->name.c_str());
+				auto path = stringify::text("%s%c%s.o", kernel::params().user.storage.module_cache_path.c_str(), VI_SPLITTER, info->name.c_str());
 				if (info->valid)
 					return !!os::file::write(path, info->data.data(), info->data.size());
 
@@ -6244,6 +6246,8 @@ namespace tangent
 
 				return layer_exception("illegal call to function: null function");
 			}
+			else if (mutability == ccall::const_call && !payable.empty())
+				return layer_exception("illegal payment to constant function");
 
 			auto binders = dispatch_arguments(&mutability, entrypoint, &args);
 			if (!binders)
@@ -6267,6 +6271,15 @@ namespace tangent
 			subcontext->set_user_data(this, SCRIPT_TAG_IMMUTABLE_PROGRAM);
 			subcontext->set_line_callback(std::bind(&program::dispatch_coroutine, this, std::placeholders::_1));
 			subcontext->set_exception_callback(std::bind(&program::dispatch_exception, this, std::placeholders::_1));
+			auto destructor = uscope([&]()
+			{
+				context->set_user_data(prev_mutable_program, SCRIPT_TAG_MUTABLE_PROGRAM);
+				context->set_user_data(prev_immutable_program, SCRIPT_TAG_IMMUTABLE_PROGRAM);
+				context->is_nested(&depth_out);
+				vm->return_context(top_call ? context : subcontext);
+				if (!top_call && depth_in < depth_out)
+					context->pop_state();
+			});
 			auto preparation = factory::get()->reset_module(subcontext, module);
 			auto execution = expects_vm<vitex::scripting::execution>(vitex::scripting::execution::error);
 			auto resolution = expects_lr<void>(layer_exception());
@@ -6294,12 +6307,6 @@ namespace tangent
 			}
 
 			auto exception = context->get_state() == execution::aborted ? exception_repr(exception_repr::category::execution(), "ran out of gas") : contract::get_exception_at(context, top_call ? 0 : (depth_in + 1));
-			context->set_user_data(prev_mutable_program, SCRIPT_TAG_MUTABLE_PROGRAM);
-			context->set_user_data(prev_immutable_program, SCRIPT_TAG_IMMUTABLE_PROGRAM);
-			context->is_nested(&depth_out);
-			vm->return_context(top_call ? context : subcontext);
-			if (!top_call && depth_in < depth_out)
-				context->pop_state();
 			if (execution && *execution == execution::finished && preparation && exception.empty())
 				return resolution;
 
@@ -6338,12 +6345,21 @@ namespace tangent
 			subexecutor.receipt.absolute_gas_use = executor->block->gas_use;
 			subexecutor.receipt.block_number = executor->block->number;
 			subexecutor.receipt.from = callable();
-
-			auto prev_cache = std::move(cache);
-			auto* prev_executor = executor;
-			auto prev_module = module;
-			auto subexecution = transaction.subexecute(&subexecutor, [&](const transactions::call::payable_array& payable_ptr, void* module_ptr)
+			return transaction.subexecute(&subexecutor, [&](const transactions::call::payable_array& payable_ptr, void* module_ptr)
 			{
+				auto prev_cache = std::move(cache);
+				auto* prev_executor = executor;
+				auto prev_module = module;
+				auto destructor = uscope([&]()
+				{
+					cache = std::move(prev_cache);
+					module = prev_module;
+					executor = prev_executor;
+					executor->receipt.events.insert(executor->receipt.events.end(), subexecutor.receipt.events.begin(), subexecutor.receipt.events.end());
+					executor->receipt.relative_gas_use += subexecutor.receipt.relative_gas_use;
+					if (mutability != ccall::const_call && non_reentrant)
+						reentrancy_guards.erase(target);
+				});
 				executor = &subexecutor;
 				cache = cache_storage();
 				module = library((asIScriptModule*)module_ptr);
@@ -6362,14 +6378,6 @@ namespace tangent
 					return expectation::met;
 				});
 			});
-			cache = std::move(prev_cache);
-			module = prev_module;
-			executor = prev_executor;
-			executor->receipt.events.insert(executor->receipt.events.end(), subexecutor.receipt.events.begin(), subexecutor.receipt.events.end());
-			executor->receipt.relative_gas_use += subexecutor.receipt.relative_gas_use;
-			if (mutability != ccall::const_call && non_reentrant)
-				reentrancy_guards.erase(target);
-			return subexecution;
 		}
 		expects_lr<vector<std::function<void(immediate_context*)>>> program::dispatch_arguments(ccall* mutability, const function& entrypoint, const format::variables* args) const
 		{
