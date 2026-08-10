@@ -4,6 +4,7 @@
 #include "../policy/delegations.h"
 #include "../storage/mempoolstate.h"
 #include "../storage/chainstate.h"
+#define LOAD_RESERVE_LIMIT 6144
 
 namespace tangent
 {
@@ -844,7 +845,7 @@ namespace tangent
 				return false;
 
 			transactions.clear();
-			transactions.reserve(transactions_size);
+			transactions.reserve(std::min<size_t>(transactions_size, LOAD_RESERVE_LIMIT));
 			for (size_t i = 0; i < transactions_size; i++)
 			{
 				block_transaction value;
@@ -1001,11 +1002,14 @@ namespace tangent
 			if (!stream.read_integer(stream.read_type(), &transactions_size))
 				return false;
 
-			transaction_tree.nodes.resize(transactions_size);
+			transaction_tree.nodes.reserve(std::min<size_t>(transactions_size, LOAD_RESERVE_LIMIT));
 			for (size_t i = 0; i < transactions_size; i++)
 			{
-				if (!stream.read_integer(stream.read_type(), &transaction_tree.nodes[i]))
+				uint256_t value;
+				if (!stream.read_integer(stream.read_type(), &value))
 					return false;
+
+				transaction_tree.nodes.push_back(value);
 			}
 
 			transaction_tree = algorithm::merkle_tree::from(std::move(transaction_tree.nodes));
@@ -1016,11 +1020,14 @@ namespace tangent
 			if (!stream.read_integer(stream.read_type(), &receipts_size))
 				return false;
 
-			receipt_tree.nodes.resize(receipts_size);
+			receipt_tree.nodes.reserve(std::min<size_t>(receipts_size, LOAD_RESERVE_LIMIT));
 			for (size_t i = 0; i < receipts_size; i++)
 			{
-				if (!stream.read_integer(stream.read_type(), &receipt_tree.nodes[i]))
+				uint256_t value;
+				if (!stream.read_integer(stream.read_type(), &value))
 					return false;
+
+				receipt_tree.nodes.push_back(value);
 			}
 
 			receipt_tree = algorithm::merkle_tree::from(std::move(receipt_tree.nodes));
@@ -1031,11 +1038,14 @@ namespace tangent
 			if (!stream.read_integer(stream.read_type(), &states_size))
 				return false;
 
-			state_tree.nodes.resize(states_size);
+			state_tree.nodes.reserve(std::min<size_t>(states_size, LOAD_RESERVE_LIMIT));
 			for (size_t i = 0; i < states_size; i++)
 			{
-				if (!stream.read_integer(stream.read_type(), &state_tree.nodes[i]))
+				uint256_t value;
+				if (!stream.read_integer(stream.read_type(), &value))
 					return false;
+
+				state_tree.nodes.push_back(value);
 			}
 
 			state_tree = algorithm::merkle_tree::from(std::move(state_tree.nodes));

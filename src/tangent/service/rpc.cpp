@@ -288,7 +288,9 @@ namespace tangent
 			if (!kernel::params().user.rpc.server)
 				return;
 
-			auth_token = kernel::params().user.rpc.username.empty() ? string() : codec::base64_encode(kernel::params().user.rpc.username + ":" + kernel::params().user.rpc.password);
+			auth_token = kernel::params().user.rpc.username.empty() || kernel::params().user.rpc.password.empty() ? string() : codec::base64_encode(kernel::params().user.rpc.username + ":" + kernel::params().user.rpc.password);
+			VI_PANIC(kernel::params().is(network_type::regtest) || kernel::params().user.rpc.sandbox || !auth_token.empty(), "must set username and password for non-sandboxed rpc for mainnet/testnet configurations");
+
 			http::map_router* router = new http::map_router();
 			router->listen(kernel::params().user.rpc.address, to_string(kernel::params().user.rpc.port)).expect("listener binding error");
 			router->post("/", std::bind(&server_node::http_request, this, std::placeholders::_1));
@@ -793,6 +795,9 @@ namespace tangent
 				listener.addresses.insert(algorithm::pubkeyhash_t(owner));
 				++address_index;
 			}
+
+			if ((auth_token.empty() || base->request.user.token != auth_token) && listener.addresses.size() > kernel::params().message.pages_per_query)
+				return server_response().error(error_codes::bad_params, "listening to too many addresses without credentials");
 
 			umutex<std::mutex> unique(mutex);
 			listeners[base] = std::move(listener);
@@ -3203,8 +3208,8 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "participant address not valid");
 
 			auto password = args[1].as_string();
-			if (password.size() < 6)
-				return server_response().error(error_codes::bad_request, "invalid password");
+			if (password.size() < 24)
+				return server_response().error(error_codes::bad_request, "password must be at 24 characters long");
 
 			uint8_t encryption_key[32] = { 0 };
 			if (!algorithm::signing::derive_seed_from_high_entropy_password((uint8_t*)password.data(), password.size(), encryption_key, sizeof(encryption_key)))

@@ -98,6 +98,8 @@ namespace tangent
 
 		struct string_repr
 		{
+			static constexpr uint8_t FLAG_HEAP_BUFFER = (1 << 0);
+			static constexpr uint8_t FLAG_UNMETERED_ALLOCATION = (1 << 1);
 			static constexpr uint32_t npos = std::numeric_limits<uint32_t>::max();
 			static constexpr uint32_t stack_capacity = 66;
 
@@ -115,11 +117,12 @@ namespace tangent
 					uint32_t capacity;
 				} heap;
 			};
-			bool heap_buffer;
+			uint8_t flags;
 
 			string_repr();
 			string_repr(const string_repr& other);
 			string_repr(const std::string_view& other);
+			string_repr(const std::string_view& other, bool constant_string);
 			string_repr(string_repr&& other);
 			string_repr& operator=(const string_repr& other);
 			string_repr& operator=(const std::string_view& other);
@@ -141,6 +144,8 @@ namespace tangent
 			const char* at(uint32_t index) const;
 			const char* front() const;
 			const char* back() const;
+			bool allocated() const;
+			bool unmetered() const;
 			bool empty() const;
 			uint32_t size() const;
 			uint32_t capacity() const;

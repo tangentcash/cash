@@ -1422,11 +1422,11 @@ namespace tangent
 			bitcoin::address_format bitcoin::parse_address(const std::string_view& address, uint8_t* data_out, size_t* data_size_out)
 			{
 				auto* chain = get_chain();
-				if (address.empty())
+				if (address.empty() || address.size() > 192)
 					return address_format::unknown;
 
 				auto address_data = string(address);
-				uint8_t data[256]; size_t data_size = sizeof(data);
+				uint8_t data[384]; size_t data_size = sizeof(data);
 				if (chain->bech32_cashaddr[0] != '\0')
 				{
 					address_format type; size_t prefix_size;

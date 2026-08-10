@@ -875,6 +875,12 @@ namespace tangent
 			memset((void*)this, 0, sizeof(*this));
 			copy_buffer(other.data(), (uint32_t)other.size());
 		}
+		string_repr::string_repr(const std::string_view& other, bool constant_string)
+		{
+			memset((void*)this, 0, sizeof(*this));
+			flags = constant_string ? FLAG_UNMETERED_ALLOCATION : 0;
+			copy_buffer(other.data(), (uint32_t)other.size());
+		}
 		string_repr::string_repr(string_repr&& other)
 		{
 			memset((void*)this, 0, sizeof(*this));
@@ -903,7 +909,7 @@ namespace tangent
 		}
 		string_repr::~string_repr()
 		{
-			if (heap_buffer)
+			if (allocated())
 				memory::deallocate(heap.data);
 		}
 		string_repr& string_repr::operator+=(const string_repr& other)
@@ -1026,17 +1032,25 @@ namespace tangent
 
 			return data() + (size() - 1);
 		}
+		bool string_repr::allocated() const
+		{
+			return (flags & FLAG_HEAP_BUFFER) > 0;
+		}
+		bool string_repr::unmetered() const
+		{
+			return (flags & FLAG_UNMETERED_ALLOCATION) > 0;
+		}
 		bool string_repr::empty() const
 		{
 			return size() == 0;
 		}
 		uint32_t string_repr::size() const
 		{
-			return heap_buffer ? heap.size : stack.size;
+			return allocated() ? heap.size : stack.size;
 		}
 		uint32_t string_repr::capacity() const
 		{
-			return heap_buffer ? heap.capacity : stack_capacity;
+			return allocated() ? heap.capacity : stack_capacity;
 		}
 		void string_repr::clear()
 		{
@@ -1242,11 +1256,11 @@ namespace tangent
 		}
 		char* string_repr::data()
 		{
-			return heap_buffer ? heap.data : stack.data;
+			return allocated() ? heap.data : stack.data;
 		}
 		const char* string_repr::data() const
 		{
-			return heap_buffer ? heap.data : stack.data;
+			return allocated() ? heap.data : stack.data;
 		}
 		void string_repr::copy_buffer(const char* buffer, uint32_t buffer_size)
 		{
@@ -1264,7 +1278,7 @@ namespace tangent
 			if (!require_buffer_capacity(buffer_capacity_of(required_size)))
 				return;
 
-			if (heap_buffer)
+			if (allocated())
 			{
 				heap.size = required_size;
 				heap.data[heap.size] = '\0';
@@ -1283,17 +1297,17 @@ namespace tangent
 			if (capacity() >= required_capacity)
 				return true;
 
-			char* temp = program::request_gas_memory<char>(required_capacity + 1);
+			char* temp = unmetered() ? memory::allocate<char>(required_capacity + 1) : program::request_gas_memory<char>(required_capacity + 1);
 			if (!temp)
 				return false;
 
 			heap.capacity = required_capacity;
 			memset(temp, 0, heap.capacity + 1);
-			if (!heap_buffer)
+			if (!allocated())
 			{
 				memcpy(temp, stack.data, stack.size);
 				heap.size = stack.size;
-				heap_buffer = true;
+				flags |= FLAG_HEAP_BUFFER;
 			}
 			else
 			{
@@ -6176,7 +6190,7 @@ namespace tangent
 		{
 			auto* container = (factory*)context;
 			auto& strings = *(string_repr_cache_type*)container->strings;
-			auto copy = string_repr(std::string_view(buffer, buffer_size));
+			auto copy = string_repr(std::string_view(buffer, buffer_size), true);
 			virtual_machine::global_shared_lock();
 			auto it = strings.find(copy);
 			if (it != strings.end())
