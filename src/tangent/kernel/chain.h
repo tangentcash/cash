@@ -330,7 +330,7 @@ namespace tangent
 			uint64_t account_nonce_step_limit = 1048576;
 			uint64_t block_gas_limit = 40'000'000;
 			uint64_t commitments_per_block = 20;
-			uint64_t zero_gas_prize_size_limit = 512;
+			uint64_t zero_gas_price_size_limit = 512;
 		} policy;
 
 	private:

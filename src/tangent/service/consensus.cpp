@@ -1056,7 +1056,7 @@ namespace tangent
 			if (!candidate_tx->recover_hash(owner))
 			{
 				if (kernel::params().user.consensus.logging)
-					VI_WARN("transaction %s %.*s validation failed: invalid signature", uint256_to_label(candidate_hash).c_str(), (int)purpose.size(), purpose.data());
+					VI_WARN("transaction %s %.*s validation rejection: invalid signature", uint256_to_label(candidate_hash).c_str(), (int)purpose.size(), purpose.data());
 				return layer_exception("signature key recovery failed");
 			}
 
@@ -1071,17 +1071,18 @@ namespace tangent
 			if (candidate_tx->nonce < nonce)
 			{
 				if (kernel::params().user.consensus.logging)
-					VI_WARN("transaction %s %.*s validation failed: invalid nonce (expired)", uint256_to_label(candidate_hash).c_str(), (int)purpose.size(), purpose.data());
+					VI_WARN("transaction %s %.*s validation rejection: invalid nonce (expired)", uint256_to_label(candidate_hash).c_str(), (int)purpose.size(), purpose.data());
 				return layer_exception("nonce is too old");
 			}
 
 			uint256_t commitment_hash = 0;
-			if (!candidate_tx->commitment_priority(&commitment_hash) && !candidate_tx->gas_price.is_positive())
+			bool commitment = candidate_tx->commitment_priority(&commitment_hash) > 0 || commitment_hash > 0;
+			if (!commitment && !candidate_tx->gas_price.is_positive())
 			{
-				if (candidate_message.data.size() > kernel::params().policy.zero_gas_prize_size_limit)
+				if (candidate_message.data.size() > kernel::params().policy.zero_gas_price_size_limit)
 				{
 					if (kernel::params().user.consensus.logging)
-						VI_WARN("transaction %s %.*s validation failed: must pay for gas (anti-spam, large transaction)", uint256_to_label(candidate_hash).c_str(), (int)purpose.size(), purpose.data());
+						VI_WARN("transaction %s %.*s validation rejection: must pay for gas (anti-spam, large transaction)", uint256_to_label(candidate_hash).c_str(), (int)purpose.size(), purpose.data());
 					return layer_exception("must pay for gas (anti-spam, large transaction)");
 				}
 
@@ -1089,20 +1090,20 @@ namespace tangent
 				if (tip && tip->network_congestion())
 				{
 					if (kernel::params().user.consensus.logging)
-						VI_WARN("transaction %s %.*s validation failed: must pay for gas (anti-spam, network congestion)", uint256_to_label(candidate_hash).c_str(), (int)purpose.size(), purpose.data());
+						VI_WARN("transaction %s %.*s validation rejection: must pay for gas (anti-spam, network congestion)", uint256_to_label(candidate_hash).c_str(), (int)purpose.size(), purpose.data());
 					return layer_exception("must pay for gas (anti-spam, network congestion)");
 				}
 			}
 
 			bool bypass_cooldown = false;
-			if (commitment_hash > 0)
+			if (commitment)
 			{
 				auto simulation = ledger::executor_context::calculate_tx_gas(*candidate_tx);
 				if (!simulation)
 				{
 					mempool.add_transaction_observation(candidate_hash);
 					if (kernel::params().user.consensus.logging)
-						VI_WARN("transaction %s %.*s simulation failed: %s", uint256_to_label(candidate_hash).c_str(), (int)purpose.size(), purpose.data(), simulation.error().what());
+						VI_WARN("transaction %s %.*s simulation rejection: %s", uint256_to_label(candidate_hash).c_str(), (int)purpose.size(), purpose.data(), simulation.error().what());
 					return simulation.error();
 				}
 				bypass_cooldown = true;
@@ -1114,7 +1115,7 @@ namespace tangent
 				if (!validation)
 				{
 					if (kernel::params().user.consensus.logging)
-						VI_WARN("transaction %s %.*s validation failed: %s", uint256_to_label(candidate_hash).c_str(), (int)purpose.size(), purpose.data(), validation.error().what());
+						VI_WARN("transaction %s %.*s validation rejection: %s", uint256_to_label(candidate_hash).c_str(), (int)purpose.size(), purpose.data(), validation.error().what());
 					return validation.error();
 				}
 			}
@@ -1822,13 +1823,8 @@ namespace tangent
 						}
 					}
 
-					if (kernel::params().user.consensus.logging)
-					{
-						if (results != std::numeric_limits<size_t>::max())
-							VI_INFO("bootstrap node %s %sresults found (addresses: %" PRIu64 ")", bootstrap_url.c_str(), results > 0 ? "" : "no ", (uint64_t)results);
-						else
-							VI_WARN("bootstrap node %s no results found: bad bootstrap node", bootstrap_url.c_str());
-					}
+					if (kernel::params().user.consensus.logging && results != std::numeric_limits<size_t>::max())
+						VI_INFO("bootstrap node %s %sresults found (addresses: %" PRIu64 ")", bootstrap_url.c_str(), results > 0 ? "" : "no ", (uint64_t)results);
 				}
 
 				auto late_test = find_node_from_mempool();
@@ -2807,7 +2803,7 @@ namespace tangent
 					if (!result)
 					{
 						if (kernel::params().user.superchain.logging && !listener->options.state.retry_after_time && !result.error().is_retry())
-							VI_WARN("%s block pulling halt: %s", blockchain.c_str(), result.error().what());
+							VI_WARN("%s block rejection: %s", blockchain.c_str(), result.error().what());
 
 						if (!is_active())
 							coreturn_void;
@@ -2910,21 +2906,53 @@ namespace tangent
 				if (is_syncing())
 					return;
 
-				auto chain = storages::chainstate();
 				auto mempool = storages::mempoolstate();
+				auto hashset = hash_set<uint256_t>();
+				size_t offset = 0, deletions = 0;
+				while (true)
+				{
+					auto queue = mempool.get_best_transactions_from_queue((uint8_t)storages::transaction_queue::commitment, offset, ELEMENTS_BULK);
+					if (!queue || queue->empty())
+						break;
+
+					for (auto& candidate_tx : *queue)
+					{
+						auto candidate_hash = candidate_tx->as_hash();
+						auto simulation = ledger::executor_context::calculate_tx_gas(*candidate_tx);
+						if (!simulation)
+						{
+							hashset.insert(candidate_hash);
+							if (kernel::params().user.consensus.logging)
+							{
+								auto purpose = candidate_tx->as_typename();
+								VI_WARN("transaction %s %.*s vacuum reason: %s", uint256_to_label(candidate_hash).c_str(), (int)purpose.size(), purpose.data(), simulation.error().what());
+							}
+						}
+					}
+
+					offset += queue->size();
+					if (queue->size() != ELEMENTS_BULK)
+						break;
+				}
+
+				if (!hashset.empty())
+				{
+					mempool.remove_transactions_by_hash(hashset).report("mempool tx vacuum failure");
+					deletions += hashset.size();
+				}
+
+				auto chain = storages::chainstate();
 				auto expirations = mempool.expire_transactions([&](const algorithm::pubkeyhash_t& target) -> uint64_t
 				{
 					auto state = chain.get_uniform(states::account_nonce::as_instance_type(), nullptr, states::account_nonce::as_instance_index(target), 0);
 					auto* value = (states::account_nonce*)(state ? state->ptr() : nullptr);
-					return value ? value->nonce : 0; 
+					return value ? value->nonce : 0;
 				});
-				if (expirations.or_else(1) > 0 && kernel::params().user.consensus.logging)
-				{
-					if (expirations)
-						VI_INFO("mempool transaction vacuum: OK (transactions: %i)", (int)*expirations);
-					else
-						VI_ERR("mempool transaction vacuum failed: ", expirations.what().c_str());
-				}
+
+				deletions += expirations.or_else(0);
+				expirations.report("mempool tx vacuum failure");
+				if (deletions > 0 && kernel::params().user.consensus.logging)
+					VI_INFO("mempool transaction vacuum: OK (transactions: %i)", (int)deletions);
 			});
 		}
 		bool server_node::run_mempool_sync()
@@ -3332,7 +3360,7 @@ namespace tangent
 			control_sys.interval_if_none(TASK_TOPOLOGY_OPTIMIZATION "_runner", 180000, std::bind(&server_node::run_topology_optimization, this));
 			control_sys.interval_if_none(TASK_BLOCK_DISPATCH_RETRIAL "_runner", 120000, std::bind(&server_node::run_block_dispatcher, this));
 			control_sys.interval_if_none(TASK_ATTESTATION_RESOLUTION "_runner", 300000, std::bind(&server_node::run_attestation_resolution, this));
-			control_sys.interval_if_none(TASK_MEMPOOL_VACUUM "_runner", 180000, std::bind(&server_node::run_mempool_vacuum, this));
+			control_sys.interval_if_none(TASK_MEMPOOL_VACUUM "_runner", 240000, std::bind(&server_node::run_mempool_vacuum, this));
 			control_sys.interval_if_none(TASK_MEMPOOL_SYNC "_runner", 240000, std::bind(&server_node::run_mempool_sync, this));
 			run_topology_optimization();
 			run_mempool_vacuum();
