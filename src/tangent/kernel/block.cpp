@@ -946,7 +946,14 @@ namespace tangent
 		}
 		uint256_t block_body::as_hash(bool renew) const
 		{
-			return as_header().as_hash(renew);
+			if (!renew && checksum != 0)
+				return checksum;
+
+			format::wo_stream message;
+			message.write_integer(as_type());
+			message.write_string(signature.optimized_view());
+			((block_body*)this)->checksum = block_header::store_payload(&message) ? message.hash() : uint256_t(0);
+			return checksum;
 		}
 
 		option<algorithm::merkle_tree::branch_path> block_proof::find_transaction(const uint256_t& hash)
@@ -1458,7 +1465,7 @@ namespace tangent
 			auto random = get_random((uint8_t)seed_byte::attester);
 			auto nonce = get_validation_nonce();
 			auto chain = storages::chainstate();
-			auto filter = storages::result_filter::greater_equal(fee_threshold.is_zero_or_nan() ? uint256_t(1) : states::validator_attestation::to_rank(fee_threshold), -1);
+			auto filter = storages::result_filter::greater(0, -1);
 			auto pool = chain.get_multiforms_count_by_row_filter(states::validator_attestation::as_instance_type(), changelog, states::validator_attestation::as_instance_row(asset), filter, nonce).or_else(0);
 			if (pool < target_size)
 				return layer_exception("committee threshold not met");
@@ -1499,6 +1506,9 @@ namespace tangent
 						return status.error();
 
 					exclusion.insert(std::move(hash));
+					if (target.min_fee > fee_threshold)
+						continue;
+
 					committee.push_back(std::move(target));
 					if (committee.size() >= target_size)
 						break;
@@ -1699,7 +1709,8 @@ namespace tangent
 					if (stake.is_nan())
 						return layer_exception("invalid stake");
 
-					if (new_state.stake.is_nan())
+					bool prev_inactivity = new_state.stake.is_nan();
+					if (prev_inactivity)
 						new_state.stake = decimal::zero();
 
 					auto stake_value = stake;
@@ -1707,6 +1718,9 @@ namespace tangent
 						stake_value = std::max(stake_value, -new_state.stake);
 
 					new_state.stake += stake_value;
+					if (type != staker::lock && new_state.stake.is_zero() && prev_inactivity)
+						new_state.stake = decimal::nan();
+
 					auto transfer = apply_transfer(algorithm::asset::native(), owner, type == staker::reward_or_penalty ? stake_value : decimal::zero(), stake_value);
 					if (!transfer)
 						return transfer.error();
@@ -1783,7 +1797,8 @@ namespace tangent
 					if (stake.is_nan())
 						return layer_exception("invalid stake");
 
-					if (new_state.stake.is_nan())
+					bool prev_inactivity = new_state.stake.is_nan();
+					if (prev_inactivity)
 						new_state.stake = decimal::zero();
 
 					auto stake_value = stake;
@@ -1791,6 +1806,9 @@ namespace tangent
 						stake_value = std::max(stake_value, -new_state.stake);
 
 					new_state.stake += stake_value;
+					if (type != staker::lock && new_state.stake.is_zero() && prev_inactivity)
+						new_state.stake = decimal::nan();
+
 					auto transfer = apply_transfer(algorithm::asset::native(), owner, type == staker::reward_or_penalty ? stake_value : decimal::zero(), stake_value);
 					if (!transfer)
 						return transfer.error();
@@ -1878,7 +1896,8 @@ namespace tangent
 					if (stake.is_nan())
 						return layer_exception("invalid stake");
 
-					if (new_state.stake.is_nan())
+					bool prev_inactivity = new_state.stake.is_nan();
+					if (prev_inactivity)
 						new_state.stake = decimal::zero();
 
 					auto stake_value = stake;
@@ -1886,6 +1905,9 @@ namespace tangent
 						stake_value = std::max(stake_value, -new_state.stake);
 
 					new_state.stake += stake_value;
+					if (type != staker::lock && new_state.stake.is_zero() && prev_inactivity)
+						new_state.stake = decimal::nan();
+
 					auto transfer = apply_transfer(algorithm::asset::native(), owner, type == staker::reward_or_penalty ? stake_value : decimal::zero(), stake_value);
 					if (!transfer)
 						return transfer.error();
@@ -2851,7 +2873,7 @@ namespace tangent
 
 			return transaction->gas_price * get_gas_use().to_decimal();
 		}
-		expects_lr<uint256_t> executor_context::calculate_tx_gas(const transaction_message* transaction, transaction_receipt* out_receipt)
+		expects_lr<uint256_t> executor_context::calculate_tx_gas(const transaction_message* transaction, const uint256_t& gas_limit, transaction_receipt* out_receipt)
 		{
 			VI_ASSERT(transaction != nullptr, "transaction should be set");
 			algorithm::pubkeyhash_t owner;
@@ -2867,7 +2889,7 @@ namespace tangent
 				reference->gas_limit = initial_gas_limit;
 			});
 			reference->checksum = 0;
-			reference->gas_limit = block_header::get_gas_limit();
+			reference->gas_limit = gas_limit;
 
 			ledger::block_body temp_block;
 			solver_context temp_solver;
@@ -3332,32 +3354,35 @@ namespace tangent
 		}
 		size_t solver_context::try_include_transactions(vector<uptr<transaction_message>>&& candidates, hash_set<uint256_t>* hashes)
 		{
+			return try_include_unwrapped_transactions(std::move(candidates), false, hashes);
+		}
+		size_t solver_context::try_include_unwrapped_transactions(vector<uptr<transaction_message>>&& candidates, bool requires_sorting, hash_set<uint256_t>* hashes)
+		{
 			if (candidates.empty())
 				return 0;
 
-			vector<queued_transaction> subqueue;
-			subqueue.reserve(candidates.size());
-			transactions.pending.reserve(transactions.pending.size() + candidates.size());
-			for (auto& candidate : candidates)
-			{
-				auto& info = subqueue.emplace_back();
-				info.candidate = std::move(candidate);
-			}
-			precompute_transaction_list(subqueue);
+			vector<queued_transaction> precomputed;
+			precomputed.resize(candidates.size());
+			for (size_t i = 0; i < candidates.size(); i++)
+				precomputed[i].candidate = std::move(candidates[i]);
+			precompute_transaction_list(precomputed);
+			if (requires_sorting && precomputed.size() > 1)
+				std::stable_sort(precomputed.begin(), precomputed.end(), [](const queued_transaction& a, const queued_transaction& b) { return a.owner == b.owner && a.candidate->nonce < b.candidate->nonce; });
+			return try_include_precomputed_transactions(std::move(precomputed), hashes);
+		}
+		size_t solver_context::try_include_precomputed_transactions(vector<queued_transaction>&& candidates, hash_set<uint256_t>* hashes)
+		{
+			if (candidates.empty())
+				return 0;
 
 			auto prev_pending_size = transactions.pending.size();
 			auto gas_limit = block_header::get_gas_limit();
-			for (auto& item : subqueue)
+			transactions.pending.reserve(transactions.pending.size() + candidates.size());
+			for (auto& item : candidates)
 			{
-				if (hashes != nullptr)
-				{
-					if (hashes->find(item.hash) != hashes->end())
-						continue;
-
+				auto decision = hashes && hashes->find(item.hash) != hashes->end() ? include_decision::not_includable : decide_on_inclusion(item);
+				if (hashes != nullptr && decision != include_decision::not_includable)
 					hashes->insert(item.hash);
-				}
-
-				auto decision = decide_on_inclusion(item);
 				if (decision == include_decision::include_in_block)
 				{
 					auto& nonce = nonces[algorithm::pubkeyhash_t(item.owner)];
@@ -3372,7 +3397,7 @@ namespace tangent
 			}
 			if (state.gas_usage >= gas_limit - gas_limit / 100)
 				state.gas_usage = gas_limit;
-			return prev_pending_size - transactions.pending.size();
+			return transactions.pending.size() - prev_pending_size;
 		}
 		solver_context::queued_transaction& solver_context::force_include_transaction(uptr<transaction_message>&& candidate)
 		{
@@ -3664,10 +3689,8 @@ namespace tangent
 			result.block.evaluation_time = child_block.evaluation_time;
 			result.block.signature = child_block.signature;
 			result.block.recalculate(parent_block, &result.state);
-
-			block_header input = child_block, output = result.block;
-			if (input.as_message().data != output.as_message().data)
-				return layer_exception("block data mismatch");
+			if (child_block.as_hash() != result.block.as_hash())
+				return layer_exception("state verification failed");
 
 			auto verification = solver.verify_block(result, producer.public_key_hash, verify_pow);
 			if (!verification)
@@ -3824,10 +3847,6 @@ namespace tangent
 				item.size = item.candidate->as_message().data.size();
 				item.candidate->recover_hash(item.owner);
 			}));
-		}
-		void solver_context::sort_transaction_list(vector<uptr<transaction_message>>& candidates)
-		{
-			VI_SORT(candidates.begin(), candidates.end(), [](const uptr<transaction_message>& a, const uptr<transaction_message>& b) { return a->nonce < b->nonce; });
 		}
 		bool solver_context::requires_reorganization(const block_evaluation& solution, tip_cache* cache)
 		{

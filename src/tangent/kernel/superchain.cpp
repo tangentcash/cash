@@ -760,7 +760,7 @@ namespace tangent
 				return as_hash(renew);
 
 			format::wo_stream message = as_message();
-			message.write_integer(asset);
+			message.write_integer(algorithm::asset::base_id_of(asset));
 			message.write_integer(as_hash(renew));
 			return message.hash();
 		}
@@ -1673,7 +1673,7 @@ namespace tangent
 		{
 			return bridge::get()->get_utxo(native_asset, transaction_id, index, unspent_only);
 		}
-		expects_lr<void> utxo_translation_unit::update_utxo(const computed_transaction& computed)
+		expects_lr<void> utxo_translation_unit::update_utxo(const computed_transaction& computed, const finalized_transaction* finalized)
 		{
 			for (auto& [hash, output] : computed.inputs)
 			{
@@ -2842,7 +2842,7 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<void> bridge::update_utxo_tree(const algorithm::asset_id& asset, const computed_transaction& computed)
+		expects_lr<void> bridge::update_utxo_tree(const algorithm::asset_id& asset, const computed_transaction& computed, const finalized_transaction* finalized)
 		{
 			auto* implementation = get_network(asset);
 			if (!implementation)
@@ -2852,7 +2852,7 @@ namespace tangent
 			if (!utxo_implementation)
 				return expectation::met;
 
-			return utxo_implementation->update_utxo(computed);
+			return utxo_implementation->update_utxo(computed, finalized);
 		}
 		expects_lr<coin_utxo> bridge::get_utxo(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint64_t index, bool unspent_only)
 		{

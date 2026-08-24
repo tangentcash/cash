@@ -69,12 +69,19 @@ namespace tangent
 				return to_duration(seconds / SEC_PER_MIN, "minute");
 			return to_duration(seconds, "second");
 		}
-		static option<socket_address> text_address_to_socket_address(const std::string_view& value)
+		static option<socket_address> text_address_to_socket_address(const std::string_view& value, bool allow_private_network)
 		{
 			auto ip_address = value.substr(0, value.find(':'));
 			auto ip_port = ip_address.size() + 1 <= value.size() ? value.substr(ip_address.size() + 1) : std::string_view();
 			auto address = socket_address(ip_address, from_string<uint16_t>(ip_port).or_else(0));
-			return address.is_valid() ? option<socket_address>(std::move(address)) : option<socket_address>(optional::none);
+			if (!address.is_valid())
+				return option<socket_address>(optional::none);
+			
+			allow_private_network = allow_private_network || kernel::params().is(network_type::regtest);
+			if (!allow_private_network && (storages::routing_util::is_address_reserved(address) || storages::routing_util::is_address_private(address)))
+				return option<socket_address>(optional::none);
+
+			return option<socket_address>(std::move(address));
 		}
 		static option<string> socket_address_to_text_address(const socket_address& value)
 		{
@@ -1157,16 +1164,20 @@ namespace tangent
 
 			uint256_t best_commitment_hash = 0;
 			btree_map<uint256_t, btree_set<algorithm::pubkeyhash_t>> attesters;
-			if (!transactions::attestate::verify_proof_commitment(&executor, batch->asset, batch->commitments, best_commitment_hash, attesters))
+			if (!transactions::attestate::evaluate_proof_commitments(&executor, batch->asset, batch->commitments, best_commitment_hash, attesters))
 				return remote_exception::retry_later();
 
-			auto it = batch->proofs.find(best_commitment_hash);
-			if (it == batch->proofs.end())
+			auto proof = batch->proofs.find(best_commitment_hash);
+			if (proof == batch->proofs.end())
+				return remote_exception::retry_later();
+
+			auto signatures = batch->commitments.find(best_commitment_hash);
+			if (signatures == batch->commitments.end())
 				return remote_exception::retry_later();
 
 			auto* transaction = memory::init<transactions::attestate>();
 			transaction->asset = algorithm::asset::base_id_of(batch->asset);
-			transaction->set_computed_proof(std::move(it->second), std::move(batch->commitments));
+			transaction->set_computed_proof(best_commitment_hash, std::move(proof->second), std::move(signatures->second));
 			if (accept_local_transaction(&runner_descriptor->second, transaction))
 				mempool.remove_attestation(attestation_hash);
 			return expectation::met;
@@ -1328,7 +1339,7 @@ namespace tangent
 			if (signature.empty())
 				return remote_exception("invalid signature");
 
-			auto address = text_address_to_socket_address(event.args[1].as_string());
+			auto address = text_address_to_socket_address(event.args[1].as_string(),  false);
 			if (!address)
 				return remote_exception("invalid address");
 
@@ -1380,7 +1391,7 @@ namespace tangent
 			if (public_key.empty())
 				return remote_exception("invalid public key");
 
-			auto address = event.args.size() > 1 ? text_address_to_socket_address(event.args[1].as_string()) : option<socket_address>(optional::none);
+			auto address = event.args.size() > 1 ? text_address_to_socket_address(event.args[1].as_string(), false) : option<socket_address>(optional::none);
 			if (address)
 				storages::mempoolstate().apply_unknown_node(*address, from ? from->private_network() : true);
 
@@ -1439,7 +1450,9 @@ namespace tangent
 				peer_node.address = socket_address(from->peer_address(), peer_node.address.get_ip_port().or_else(kernel::params().user.consensus.port));
 
 			algorithm::signing::derive_public_key_hash(peer_wallet.public_key, peer_wallet.public_key_hash);
-			if (!peer_node.is_valid() || peer_wallet.public_key_hash.empty() || find_descriptor(peer_wallet.public_key_hash) || find_by_account(peer_wallet.public_key_hash))
+			bool identity_check = !peer_node.is_valid() || peer_wallet.public_key_hash.empty();
+			bool uniqueness_check = identity_check || find_descriptor(peer_wallet.public_key_hash) || find_by_account(peer_wallet.public_key_hash);
+			if (identity_check || uniqueness_check)
 			{
 				auto prev = mempool.get_node(peer_descriptor.first.address);
 				if (prev)
@@ -1447,7 +1460,7 @@ namespace tangent
 					if (!find_descriptor(prev->second.public_key_hash))
 						mempool.clear_node(peer_descriptor.first.address);
 				}
-				return remote_exception("node is not acceptable");
+				return remote_exception(!identity_check && uniqueness_check ? "node identity is not unique" : "node identity is not accepted");
 			}
 
 			auto prev_descriptor = mempool.get_node(peer_node.address);
@@ -1482,8 +1495,8 @@ namespace tangent
 				return status.error();
 
 			auto mempool = storages::mempoolstate();
-			auto address = text_address_to_socket_address(event.args[0].as_string());
-			if (address && !storages::routing_util::is_address_reserved(*address) && !storages::routing_util::is_address_private(*address))
+			auto address = text_address_to_socket_address(event.args[0].as_string(), false);
+			if (address)
 			{
 				for (auto& [account, descriptor] : descriptors)
 				{
@@ -1497,7 +1510,7 @@ namespace tangent
 			bool private_network = from->private_network();
 			for (size_t i = 3; i < event.args.size(); i++)
 			{
-				address = text_address_to_socket_address(event.args[i].as_string());
+				address = text_address_to_socket_address(event.args[i].as_string(), false);
 				new_nodes += address && !connected_to_ip_address(*address) && mempool.apply_unknown_node(*address, private_network) ? 1 : 0;
 			}
 
@@ -1817,7 +1830,13 @@ namespace tangent
 							for (auto& address : addresses->childs())
 							{
 								auto endpoint = system_endpoint(address.value.as_blob(), bootstrap_url);
-								if (endpoint.is_valid() && !connected_to_ip_address(endpoint.address) && mempool.apply_unknown_node(endpoint.address, false))
+								if (!endpoint.is_valid())
+									continue;
+								
+								if (!kernel::params().is(network_type::regtest) && (storages::routing_util::is_address_reserved(endpoint.address) || storages::routing_util::is_address_private(endpoint.address)))
+									continue;
+								
+								if (!connected_to_ip_address(endpoint.address) && mempool.apply_unknown_node(endpoint.address, false))
 									++results;
 							}
 						}
@@ -2465,19 +2484,19 @@ namespace tangent
 			notify_all_except(std::move(from), descriptors::announce_neighbor(), format::variables(message.args));
 			announce_neighbor(nullptr, message);
 		}
-		void server_node::bind_event(const callable::descriptor& descriptor, event_callback&& on_event_callback, bool uses_inventory)
+		void server_node::bind_event(const callable::descriptor& descriptor, event_callback&& on_event_callback, bool guarded)
 		{
 			auto& callable = callables[descriptor.id];
 			callable.name = descriptor.name;
 			callable.event = std::move(on_event_callback);
-			callable.inventory = uses_inventory;
+			callable.guarded = guarded;
 		}
-		void server_node::bind_query(const callable::descriptor& descriptor, query_callback&& on_query_callback)
+		void server_node::bind_query(const callable::descriptor& descriptor, query_callback&& on_query_callback, bool guarded)
 		{
 			auto& callable = callables[descriptor.id];
 			callable.name = descriptor.name;
 			callable.query = std::move(on_query_callback);
-			callable.inventory = false;
+			callable.guarded = guarded;
 		}
 		void server_node::pull_messages(uref<relay>&& from)
 		{
@@ -2553,7 +2572,7 @@ namespace tangent
 								goto abort;
 
 							auto it = callables.find(message.descriptor);
-							if (it == callables.end() || !it->second.event)
+							if (it == callables.end() || !it->second.event || (it->second.guarded && !from->as_descriptor()))
 								goto abort;
 
 							uint256_t hash = message.as_inventory_hash();
@@ -2572,7 +2591,7 @@ namespace tangent
 						case exchange::side::query:
 						{
 							auto it = callables.find(message.descriptor);
-							if (it == callables.end() || !it->second.query || !message.session)
+							if (it == callables.end() || !it->second.query || !message.session || (it->second.guarded && !from->as_descriptor()))
 								goto abort;
 
 							auto result = it->second.query(this, uref(from), message);
@@ -2588,7 +2607,7 @@ namespace tangent
 						case exchange::side::forward:
 						{
 							auto it = callables.find(message.descriptor);
-							if (it == callables.end() || !it->second.query || !message.session)
+							if (it == callables.end() || !it->second.query || !message.session || (it->second.guarded && !from->as_descriptor()))
 								goto abort;
 
 							auto account = message.args.empty() ? algorithm::pubkeyhash_t() : algorithm::pubkeyhash_t(message.args[0].as_string());
@@ -3343,12 +3362,12 @@ namespace tangent
 				}
 			}
 
-			bind_event(descriptors::broadcast_block_hash(), std::bind(&server_node::broadcast_block_hash, this, std::placeholders::_2, std::placeholders::_3), true);
-			bind_event(descriptors::broadcast_transaction_hash(), std::bind(&server_node::broadcast_transaction_hash, this, std::placeholders::_2, std::placeholders::_3), true);
-			bind_event(descriptors::broadcast_attestation(), std::bind(&server_node::broadcast_attestation, this, std::placeholders::_2, std::placeholders::_3), true);
-			bind_event(descriptors::broadcast_intermediary(), std::bind(&server_node::broadcast_intermediary, this, std::placeholders::_2, std::placeholders::_3), true);
+			bind_event(descriptors::broadcast_block_hash(), std::bind(&server_node::broadcast_block_hash, this, std::placeholders::_2, std::placeholders::_3));
+			bind_event(descriptors::broadcast_transaction_hash(), std::bind(&server_node::broadcast_transaction_hash, this, std::placeholders::_2, std::placeholders::_3));
+			bind_event(descriptors::broadcast_attestation(), std::bind(&server_node::broadcast_attestation, this, std::placeholders::_2, std::placeholders::_3));
+			bind_event(descriptors::broadcast_intermediary(), std::bind(&server_node::broadcast_intermediary, this, std::placeholders::_2, std::placeholders::_3));
 			bind_event(descriptors::announce_neighbor(), std::bind(&server_node::announce_neighbor, this, std::placeholders::_2, std::placeholders::_3));
-			bind_query(descriptors::perform_handshake(), std::bind(&server_node::perform_handshake, this, std::placeholders::_2, std::placeholders::_3, false));
+			bind_query(descriptors::perform_handshake(), std::bind(&server_node::perform_handshake, this, std::placeholders::_2, std::placeholders::_3, false), false);
 			bind_query(descriptors::perform_discovery(), std::bind(&server_node::perform_discovery, this, std::placeholders::_2, std::placeholders::_3, false));
 			bind_query(descriptors::fetch_headers(), std::bind(&server_node::fetch_headers, this, std::placeholders::_2, std::placeholders::_3));
 			bind_query(descriptors::fetch_block(), std::bind(&server_node::fetch_block, this, std::placeholders::_2, std::placeholders::_3));

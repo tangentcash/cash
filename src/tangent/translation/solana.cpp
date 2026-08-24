@@ -595,12 +595,11 @@ namespace tangent
 					if (!contract_address && !algorithm::asset::token_of(to.asset).empty())
 						coreturn expects_rt<prepared_transaction>(remote_exception("failed to find a token contract address"));
 
-					auto native_balance = coawait(get_balance(from_link.address));
-					if (!native_balance)
-						coreturn expects_rt<prepared_transaction>(std::move(native_balance.error()));
-
 					option<token_account> from_token = optional::none;
 					option<token_account> to_token = optional::none;
+					uint64_t fee_constant = contract_address ? 15000 : 5000;
+					uint64_t token_constant = 2039280;
+					uint64_t rent_constant = 890880;
 					if (contract_address)
 					{
 						auto from_token_balance = coawait(get_token_balance(*contract_address, from_link.address));
@@ -613,16 +612,20 @@ namespace tangent
 						from_token = std::move(*from_token_balance);
 						if (to_token_balance)
 							to_token = std::move(*to_token_balance);
+						if (!to_token)
+							fee_constant += token_constant;
 					}
+					else if (to.value < from_baseline_value(rent_constant))
+						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("rent cost not met (sending less than %s %s)", from_baseline_value(rent_constant).to_string().c_str(), algorithm::asset::name_of(native_asset).c_str())));
 
-					uint64_t fee_constant = contract_address ? 15000 : 5000;
-					if (contract_address && !to_token)
-						fee_constant += 2039280;
-
-					auto fee = computed_fee::flat_fee(fee_constant / netdata.divisibility);
+					auto fee = computed_fee::flat_fee(from_baseline_value(fee_constant));
 					decimal fee_value = fee.get_max_fee();
 					if (fee_value > max_fee)
 						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
+
+					auto native_balance = coawait(get_balance(from_link.address));
+					if (!native_balance)
+						coreturn expects_rt<prepared_transaction>(std::move(native_balance.error()));
 
 					auto total_value = contract_address ? fee_value : (to.value + fee_value);
 					if (*native_balance < total_value || total_value.is_negative())

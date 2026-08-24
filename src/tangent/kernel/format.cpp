@@ -769,6 +769,9 @@ namespace tangent
 
 			string numeric = "-";
 			append_uint256_base_10(numeric, left);
+			if (numeric.size() > kernel::params().message.integer_precision + 1)
+				return false;
+
 			if (type == viewable::decimal_neg2 || type == viewable::decimal_pos2)
 			{
 				uint256_t right;
@@ -779,12 +782,15 @@ namespace tangent
 				size_t offset = numeric.size();
 				append_uint256_base_10(numeric, right);
 				std::reverse(numeric.begin() + offset, numeric.end());
+				if (numeric.size() - offset > kernel::params().message.decimal_precision)
+					return false;
 			}
 
 			if (type != viewable::decimal_neg1 && type != viewable::decimal_neg2)
 				*value = decimal(std::string_view(numeric).substr(1));
 			else
 				*value = decimal(numeric);
+
 			return true;
 		}
 		bool ro_stream::read_decimal_or_integer(format::viewable type, decimal* value)

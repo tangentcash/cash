@@ -9,6 +9,7 @@
 #define TEST_BLOCK(x, y, z) tester::new_block_from_generator(data, users, x, #x, y, z, tester::block_type::normal)
 #define TEST_BLOCK_FALLBACK(x, y, z) tester::new_block_from_generator(data, users, x, #x, y, z, tester::block_type::fallback)
 #define TEST_BLOCK_FAULTY(x, y, z) tester::new_block_from_generator(data, users, x, #x, y, z, tester::block_type::faulty)
+#define TEST_BLOCK_FAULTY_UNATTESTED(x, y, z) tester::new_block_from_generator(data, users, x, #x, y, z, tester::block_type::faulty_unattested)
 
 using namespace tangent;
 
@@ -59,7 +60,8 @@ struct tester
 	{
 		normal,
 		fallback,
-		faulty
+		faulty,
+		faulty_unattested
 	};
 
 	template <typename t, typename... args>
@@ -89,7 +91,7 @@ struct tester
 		auto block = new_block_from_list(results, users, std::move(transactions), type);
 		auto hash = algorithm::encoding::encode_0xhex256(block.state_root);
 		if (results != nullptr)
-			console::get()->fwrite_line("TEST_BLOCK%s(%s, \"%s\", %" PRIu64 ");", type == block_type::fallback ? "_FALLBACK" : (type == block_type::faulty ? "_FAULTY" : ""), test_case_call.data(), hash.c_str(), block.number);
+			console::get()->fwrite_line("TEST_BLOCK%s(%s, \"%s\", %" PRIu64 ");", type == block_type::fallback ? "_FALLBACK" : (type == block_type::faulty ? "_FAULTY" : (type == block_type::faulty_unattested ? "_FAULTY_UNATTESTED" : "")), test_case_call.data(), hash.c_str(), block.number);
 
 		VI_PANIC(state_root_hash.empty() || state_root_hash == hash, "block state root deviation");
 		VI_PANIC(!block_number || block_number == block.number, "block number deviation");
@@ -104,22 +106,25 @@ struct tester
 	static ledger::block_body new_block_from_list(format::tree* results, vector<account_ref>& users, vector<uptr<ledger::transaction_message>>&& transactions, block_type type)
 	{
 		ledger::solver_context solver;
-		for (size_t i = 0; i < transactions.size(); i++)
+		if (type != block_type::faulty_unattested)
 		{
-			auto& transaction = transactions[i];
-			if (transaction->as_type() != transactions::attestate::as_instance_type())
-				continue;
-
-			auto* attestation = (transactions::attestate*)*transaction;
-			for (auto& user : users)
+			for (size_t i = 0; i < transactions.size(); i++)
 			{
-				auto validator = solver.state.executor.get_validator_attestation(attestation->asset, user.wallet.public_key_hash);
-				if (validator && validator->is_active())
-					VI_PANIC(attestation->add_commitment(user.wallet.secret_key), "attestation failed");
-			}
+				auto& transaction = transactions[i];
+				if (transaction->as_type() != transactions::attestate::as_instance_type())
+					continue;
 
-			auto& submitter = users.front();
-			attestation->sign(submitter.wallet.secret_key, submitter.nonce++, decimal::zero()).expect("pre-validation failed");
+				auto* attestation = (transactions::attestate*)*transaction;
+				for (auto& user : users)
+				{
+					auto validator = solver.state.executor.get_validator_attestation(attestation->asset, user.wallet.public_key_hash);
+					if (validator && validator->is_active())
+						VI_PANIC(attestation->add_commitment(user.wallet.secret_key), "attestation failed");
+				}
+
+				auto& submitter = users.front();
+				attestation->sign(submitter.wallet.secret_key, submitter.nonce++, decimal::zero()).expect("pre-validation failed");
+			}
 		}
 
 		uint64_t priority = solver.apply_validator_state([&](size_t index) { return index < users.size() ? &users[index].wallet : nullptr; }).or_else(std::numeric_limits<uint64_t>::max());
@@ -131,9 +136,7 @@ struct tester
 			solver.state.public_key_hash = fallback_wallet.public_key_hash;
 		}
 		VI_PANIC(type == block_type::fallback || priority == 0, "block proposal not allowed");
-		ledger::solver_context::sort_transaction_list(transactions);
-		if (!solver.try_include_transactions(std::move(transactions)))
-			VI_PANIC(false, "empty block not allowed");
+		VI_PANIC(transactions.size() == solver.try_include_unwrapped_transactions(std::move(transactions), true), "some transactions were excluded");
 
 		auto proposal = solver.evaluate_block_inline().expect("block evaluation failed");
 		solver.solve_block_inline(proposal).expect("block solution failed");
@@ -143,7 +146,12 @@ struct tester
 		transactions = vector<uptr<ledger::transaction_message>>();
 		solver.checkpoint_block(proposal).expect("block checkpoint failed");
 		if (results != nullptr)
-			results->push(proposal.as_tree());
+		{
+			auto* blocks_data = results->child("blocks");
+			if (!blocks_data)
+				blocks_data = results->set("blocks", format::tree::list());
+			blocks_data->push(proposal.as_tree());
+		}
 
 		vector<ledger::wallet> validators;
 		validators.reserve(users.size());
@@ -167,8 +175,40 @@ struct tester
 			}
 		}
 
+		for (auto& [transaction_hash, error] : solver.transactions.errors)
+		{
+			VI_PANIC(type == block_type::faulty || type == block_type::faulty_unattested, "%s", error.what());
+			if (results != nullptr)
+			{
+				auto* errors_data = results->child("errors");
+				if (!errors_data)
+					errors_data = results->set("errors", format::tree::list());
+
+				format::tree error_data;
+				error_data.push(algorithm::encoding::serialize_uint256(transaction_hash));
+				error_data.push(format::variable(proposal.block.number));
+				error_data.push(format::variable("execution"));
+				error_data.push(format::variable(error.what()));
+				errors_data->push(std::move(error_data));
+			}
+		}
 		for (auto& [transaction_hash, error] : execution.errors)
-			VI_PANIC(type == block_type::faulty, "%s", error.what());
+		{
+			VI_PANIC(type == block_type::faulty || type == block_type::faulty_unattested, "%s", error.what());
+			if (results != nullptr)
+			{
+				auto* errors_data = results->child("errors");
+				if (!errors_data)
+					errors_data = results->set("errors", format::tree::list());
+
+				format::tree error_data;
+				error_data.push(algorithm::encoding::serialize_uint256(transaction_hash));
+				error_data.push(format::variable(proposal.block.number));
+				error_data.push(format::variable("delegation"));
+				error_data.push(format::variable(error.what()));
+				errors_data->push(std::move(error_data));
+			}
+		}
 
 		if (!transactions.empty())
 			new_block_from_list(results, users, std::move(transactions), type);
@@ -2086,7 +2126,7 @@ struct tests
 						{
 							auto* transaction = memory::init<transactions::attestate>();
 							transaction->asset = native_asset;
-							transaction->set_computed_proof(std::move(receipt), { });
+							transaction->set_computed_proof(receipt.as_proof_hash(native_asset), std::move(receipt), { });
 							transactions.push_back(transaction);
 						}
 
@@ -2612,7 +2652,7 @@ int main(int argc, char* argv[])
 			{ "blockchain / verification", &tests::blockchain_verification },
 			{ "blockchain / bridge coverage", std::bind(&tests::blockchain_bridge_coverage, (vector<account_ref>*)nullptr) },
 			{ "blockchain / verification", &tests::blockchain_verification },
-			//{ "blockchain / partial coverage", std::bind(&tests::blockchain_partial_coverage, (vector<account_ref>*)nullptr) },
+			{ "blockchain / partial coverage", std::bind(&tests::blockchain_partial_coverage, (vector<account_ref>*)nullptr) },
 			{ "blockchain / verification", &tests::blockchain_verification },
 			{ "blockchain / gas estimation", &tests::blockchain_gas_estimation }
 		};

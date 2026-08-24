@@ -703,8 +703,6 @@ namespace tangent
 
 			if (stake.is_negative())
 				return layer_exception("invalid stake");
-			else if (!stake.is_nan() && stake < kernel::params().policy.participation.min_stake_value)
-				return layer_exception(stringify::text("minimum stake requirement not met (%s %s)", kernel::params().policy.participation.min_stake_value.to_string().c_str(), kernel::params().policy.token.c_str()));
 
 			auto* prev = (validator_participation*)prev_state;
 			if (prev != nullptr && !prev->stake.is_nan() && stake.is_nan())
@@ -752,7 +750,7 @@ namespace tangent
 		}
 		bool validator_participation::is_active() const
 		{
-			return !stake.is_nan();
+			return !stake.is_nan() && stake >= kernel::params().policy.participation.min_stake_value;
 		}
 		format::tree validator_participation::as_tree() const
 		{
@@ -1024,13 +1022,11 @@ namespace tangent
 			if (!algorithm::asset::is_aux(asset, true))
 				return layer_exception("invalid asset");
 
-			if (stake.is_negative())
-				return layer_exception("invalid stake");
-			else if (!stake.is_nan() && stake < kernel::params().policy.attestation.min_stake_value)
-				return layer_exception(stringify::text("minimum stake requirement not met (%s %s)", kernel::params().policy.attestation.min_stake_value.to_string().c_str(), kernel::params().policy.token.c_str()));
-
 			if (min_fee.is_nan() || min_fee.is_negative())
 				return layer_exception("invalid min fee");
+
+			if (stake.is_negative())
+				return layer_exception("invalid stake");
 
 			auto* prev = (validator_attestation*)prev_state;
 			if (prev != nullptr && !prev->stake.is_nan() && stake.is_nan())
@@ -1087,7 +1083,7 @@ namespace tangent
 		}
 		bool validator_attestation::is_active() const
 		{
-			return !stake.is_nan();
+			return !stake.is_nan() && stake >= kernel::params().policy.attestation.min_stake_value;
 		}
 		format::tree validator_attestation::as_tree() const
 		{
@@ -1111,7 +1107,7 @@ namespace tangent
 			if (!is_active())
 				return 0;
 
-			return to_rank(min_fee);
+			return validator_production::to_rank(stake);
 		}
 		uint32_t validator_attestation::as_instance_type()
 		{
@@ -1133,10 +1129,6 @@ namespace tangent
 			format::wo_stream message;
 			validator_attestation(algorithm::pubkeyhash_t(), asset, nullptr).store_row(&message);
 			return message.data;
-		}
-		uint256_t validator_attestation::to_rank(const decimal& threshold)
-		{
-			return std::max<uint256_t>(uint256_t(1), uint256_t::max() - algorithm::arithmetic::fixed256(threshold));
 		}
 
 		validator_attestation_reward::validator_attestation_reward(const algorithm::pubkeyhash_t& new_owner, const algorithm::asset_id& new_asset, uint64_t new_block_number) : multiform_state(new_block_number), owner(new_owner), asset(new_asset)

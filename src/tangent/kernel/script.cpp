@@ -1250,6 +1250,9 @@ namespace tangent
 			array_repr* array = array_repr::construct(array_type);
 			auto values = stringify::split(view(), delimiter.view());
 			array->resize((uint32_t)values.size());
+			if (array->size() != (uint32_t)values.size())
+				return nullptr;
+
 			for (size_t i = 0; i < values.size(); i++)
 				((string_repr*)array->at((uint32_t)i))->assign(std::string_view(values[i]));
 			return array;
@@ -1986,6 +1989,9 @@ namespace tangent
 		void address_repr::pay_all(const payable_repr& payable)
 		{
 			auto* p = program::fetch_mutable_or_throw();
+			if (!p)
+				return;
+
 			for (auto& [paying_asset, paying_value] : payable.payments)
 			{
 				auto payment = p->executor->apply_payment(paying_asset, p->callable(), hash, paying_value);
@@ -2133,24 +2139,24 @@ namespace tangent
 		void batch_payout_repr::pay()
 		{
 			auto* p = program::fetch_mutable_or_throw();
-			if (p != nullptr)
-			{
-				for (auto& [account, payments] : payouts)
-				{
-					for (auto& [asset, value] : payments)
-					{
-						if (value.is_negative())
-							return contract::throw_ptr(exception_repr(exception_repr::category::argument(), stringify::text("trying to pay negative value to %s", algorithm::signing::encode_address(account).c_str())));
-						else if (!value.is_positive())
-							continue;
+			if (!p)
+				return;
 
-						auto payment = p->executor->apply_payment(asset, p->callable(), account, value);
-						if (!payment)
-							return contract::throw_ptr(exception_repr(exception_repr::category::execution(), stringify::text("payout to %s failed: %s", algorithm::signing::encode_address(account).c_str(), payment.error().message().c_str())));
-					}
+			for (auto& [account, payments] : payouts)
+			{
+				for (auto& [asset, value] : payments)
+				{
+					if (value.is_negative())
+						return contract::throw_ptr(exception_repr(exception_repr::category::argument(), stringify::text("trying to pay negative value to %s", algorithm::signing::encode_address(account).c_str())));
+					else if (!value.is_positive())
+						continue;
+
+					auto payment = p->executor->apply_payment(asset, p->callable(), account, value);
+					if (!payment)
+						return contract::throw_ptr(exception_repr(exception_repr::category::execution(), stringify::text("payout to %s failed: %s", algorithm::signing::encode_address(account).c_str(), payment.error().message().c_str())));
 				}
-				payouts.clear();
 			}
+			payouts.clear();
 		}
 
 		abi_repr::abi_repr(const string_repr& data) : output(data.view())
@@ -4959,6 +4965,9 @@ namespace tangent
 						auto* array = (array_repr*)value;
 						array->clear();
 						array->resize(size);
+						if (array->size() != size)
+							return layer_exception("array requires too much slots");
+
 						for (uint32_t i = 0; i < size; i++)
 						{
 							auto status = load(stream, array->at(i), sub_type_id, false);
@@ -5133,6 +5142,9 @@ namespace tangent
 						auto* array = (array_repr*)value;
 						array->clear();
 						array->resize(size);
+						if (array->size() != size)
+							return layer_exception("array requires too much slots");
+
 						for (uint32_t i = 0; i < size; i++)
 						{
 							auto status = load(stream.childs()[i], array->at(i), sub_type_id, false);

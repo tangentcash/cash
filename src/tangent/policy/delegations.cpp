@@ -1,6 +1,5 @@
 #include "delegations.h"
 #include "transactions.h"
-#include "compositions.h"
 #define method_bind(h, t, f) while ((h) == method_hash<t, f>(#f)) return method_ptr<t, f>()
 #define method_call(p, t, f) (yield_to_delegate((p), method_hash<t, f>(#f)))
 
@@ -230,14 +229,18 @@ namespace tangent
 		}
 		expects_lr<void> bind_delegation::validate_transition(ledger::delegation_contract* parent, const ledger::wallet& yielding_delegator) const
 		{
-			auto* prev = (bind_delegation*)parent;
 			auto* route = (transactions::route*)executor->transaction;
-			if (attempt >= kernel::params().user.consensus.coordination_attempts)
+			if (!route)
+				return layer_exception("invalid initiator transaction");
+			else if (attempt >= kernel::params().user.consensus.coordination_attempts)
 				return layer_exception("invalid attempt counter");
+			else if (executor->get_witness_event(executor->receipt.transaction_hash))
+				return layer_exception("delegation is finalized");
 
 			if (!compositor)
 				return layer_exception("invalid compositor");
 
+			auto* prev = (bind_delegation*)parent;
 			if (prev != nullptr)
 			{
 				if (prev->attempt != attempt)
@@ -758,10 +761,17 @@ namespace tangent
 		}
 		expects_lr<void> rebind_delegation::validate_transition(ledger::delegation_contract* parent, const ledger::wallet& yielding_delegator) const
 		{
-			auto* prev = (rebind_delegation*)parent;
 			auto* setup = (transactions::setup*)executor->transaction;
-			if (context.attempt >= kernel::params().user.consensus.coordination_attempts)
+			if (!setup)
+				return layer_exception("invalid initiator transaction");
+			else if (context.attempt >= kernel::params().user.consensus.coordination_attempts)
 				return layer_exception("invalid attempt counter");
+
+			auto new_participant = setup->get_new_participant(executor->receipt);
+			if (new_participant.empty())
+				return layer_exception("delegation is not expected");
+			else if (executor->get_witness_event(executor->receipt.transaction_hash))
+				return layer_exception("delegation is finalized");
 
 			if (!context.compositor)
 				return layer_exception("invalid compositor");
@@ -783,6 +793,7 @@ namespace tangent
 					return layer_exception("invalid proof");
 			}
 
+			auto* prev = (rebind_delegation*)parent;
 			if (!prev)
 			{
 				if (yielding_delegator.public_key_hash != executor->receipt.from)
@@ -1565,16 +1576,24 @@ namespace tangent
 		}
 		expects_lr<void> broadcast_delegation::validate_transition(ledger::delegation_contract* parent, const ledger::wallet& yielding_delegator) const
 		{
-			auto* prev = (broadcast_delegation*)parent;
 			auto* withdraw = (transactions::withdraw*)executor->transaction;
-			if (attempt >= kernel::params().user.consensus.coordination_attempts)
+			if (!withdraw)
+				return layer_exception("invalid initiator transaction");
+			else if (attempt >= kernel::params().user.consensus.coordination_attempts)
 				return layer_exception("invalid attempt counter");
+			else if (executor->get_witness_event(executor->receipt.transaction_hash))
+				return layer_exception("delegation is finalized");
+
+			auto front = executor->get_bridge_queue(withdraw->asset, withdraw->bridge_hash, 1);
+			if (front && front->transaction_hash != executor->receipt.transaction_hash)
+				return layer_exception("delegation is not expected");
 
 			if (!message || message->as_status() == superchain::prepared_transaction::status::invalid)
 				return layer_exception("invalid message");
 			else if (!compositor)
 				return layer_exception("invalid compositor");
 
+			auto* prev = (broadcast_delegation*)parent;
 			if (prev != nullptr)
 			{
 				if (prev->attempt != attempt)
@@ -1790,11 +1809,13 @@ namespace tangent
 
 			if (contract != nullptr && (finalized.prepared.outputs.size() != 1 || finalized.prepared.outputs.front().link.address != mockup_target_attestate_absent()))
 			{
+				auto computed = finalized.as_computed();
+				computed.reverted = finalized.prepared.outputs.front().link.address == mockup_target_attestate_error();
+
 				auto* transaction = memory::init<transactions::attestate>();
 				transaction->asset = asset;
 				transaction->set_gas(decimal::zero(), 0);
-				transaction->set_computed_proof(finalized.as_computed(), { });
-				transaction->proof.reverted = finalized.prepared.outputs.front().link.address == mockup_target_attestate_error();
+				transaction->set_computed_proof(computed.as_proof_hash(asset), std::move(computed), { });
 				contract->emit_transaction(transaction);
 			}
 			return expects_promise_rt<void>(expectation::met);

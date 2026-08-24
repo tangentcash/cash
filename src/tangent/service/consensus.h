@@ -55,7 +55,7 @@ namespace tangent
 			event_callback event;
 			query_callback query;
 			std::string_view name;
-			bool inventory;
+			bool guarded;
 		};
 
 		struct exchange : ledger::uniform_serializer
@@ -317,8 +317,8 @@ namespace tangent
 			expects_lr<void> notify(uref<relay>&& state, const callable::descriptor& descriptor, format::variables&& args);
 			size_t notify_all(const callable::descriptor& descriptor, format::variables&& args);
 			size_t notify_all_except(uref<relay>&& exception, const callable::descriptor& descriptor, format::variables&& args);
-			void bind_event(const callable::descriptor& descriptor, event_callback&& on_event_callback, bool inventory = false);
-			void bind_query(const callable::descriptor& descriptor, query_callback&& on_query_callback);
+			void bind_event(const callable::descriptor& descriptor, event_callback&& on_event_callback, bool guarded = true);
+			void bind_query(const callable::descriptor& descriptor, query_callback&& on_query_callback, bool guarded = true);
 			bool try_acquire_checkpointer();
 			void release_checkpointer();
 			bool run_superchain_sync(const algorithm::asset_id& asset);

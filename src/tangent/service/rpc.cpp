@@ -3,6 +3,7 @@
 #include "../kernel/script.h"
 #include "../policy/transactions.h"
 #include "../policy/delegations.h"
+#include "../policy/compositions.h"
 #include "../storage/mempoolstate.h"
 #include "../storage/chainstate.h"
 
@@ -427,9 +428,6 @@ namespace tangent
 			bind(access_type::w | access_type::a, "mempoolstate", "simulatebridge", 4, 4, "string asset, string bridge_hash, string to_address, decimal to_value", "superchain_transaction", "build an off-chain attestation transaction payload using off-chain node", std::bind(&server_node::mempoolstate_simulate_bridge, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "mempoolstate", "addnode", 1, 1, "string uri_address", "void", "add node ip address to trial addresses", std::bind(&server_node::mempoolstate_add_node, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "mempoolstate", "clearnode", 1, 1, "string uri_address", "void", "remove associated node info by ip address", std::bind(&server_node::mempoolstate_clear_node, this, std::placeholders::_1, std::placeholders::_2));
-			bind(access_type::w | access_type::a, "validatorstate", "importentropies", 2, 1024, "string participant_address, string password, string... messages", "void", "import a set of encrypted entropy messages", std::bind(&server_node::validatorstate_import_entropies, this, std::placeholders::_1, std::placeholders::_2));
-			bind(access_type::r | access_type::a, "validatorstate", "exportentropies", 2, 2, "string participant_address, string password", "void", "export a set of encrypted entropy messages", std::bind(&server_node::validatorstate_export_entropies, this, std::placeholders::_1, std::placeholders::_2));
-			bind(access_type::r | access_type::a, "validatorstate", "setwallet", 2, 2, "string type = 'mnemonic' | 'seed' | 'key', string entropy", "wallet", "set validator wallet from mnemonic phrase, seed value or secret key", std::bind(&server_node::validatorstate_set_wallet, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::r | access_type::a, "validatorstate", "getwallet", 0, 0, "", "wallet", "get validator wallet", std::bind(&server_node::validatorstate_get_wallet, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::r | access_type::a, "validatorstate", "verify", 2, 3, "uint64 number, uint64 count, bool? validate", "uint256[]", "verify chain and possibly re-execute each block", std::bind(&server_node::validatorstate_verify, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "validatorstate", "revert", 1, 1, "uint64 number", "{ new_tip_block_number: uint64, old_tip_block_number: uint64, block_delta: int64, transaction_delta: int64, state_delta: int64, is_fork: bool }", "revert chainstate to block number and possibly send removed transactions to mempool", std::bind(&server_node::validatorstate_revert, this, std::placeholders::_1, std::placeholders::_2));
@@ -608,7 +606,7 @@ namespace tangent
 				goto next_request;
 			}
 
-			if (kernel::params().user.rpc.sandbox && context->second.access_types & (uint32_t)access_type::a)
+			if (kernel::params().user.rpc.sandbox && (context->second.access_types & (uint32_t)access_type::a))
 			{
 				form_response(base, *request, responses, server_response().error(error_codes::bad_method, "access to admin level functionality requires trusted environment"));
 				goto next_request;
@@ -1456,7 +1454,7 @@ namespace tangent
 			auto temp_transaction = transactions::call();
 			temp_transaction.asset = algorithm::asset::id_of_handle(args[0].as_string());
 			temp_transaction.call_to(to, args[3].as_string(), std::move(function_args), false);
-			temp_transaction.set_gas(decimal::zero(), ledger::block_body::get_gas_limit());
+			temp_transaction.set_gas(decimal::zero(), ledger::block_body::get_gas_limit() / 8);
 
 			auto temp_receipt = ledger::transaction_receipt();
 			temp_receipt.from = from;
@@ -2794,7 +2792,7 @@ namespace tangent
 				return server_response().error(error_codes::bad_params, "invalid message");
 
 			auto receipt = ledger::transaction_receipt();
-			auto gas_limit = ledger::executor_context::calculate_tx_gas(*candidate_tx, &receipt);
+			auto gas_limit = ledger::executor_context::calculate_tx_gas(*candidate_tx, ledger::block_header::get_gas_limit() / 2, &receipt);
 			if (!gas_limit)
 				return server_response().error(error_codes::bad_params, gas_limit.error().message());
 
@@ -2848,6 +2846,7 @@ namespace tangent
 			if (!prepared)
 				return server_response().error(error_codes::bad_request, prepared.error().message());
 
+			size_t index = 0;
 			for (auto& input : prepared->inputs)
 			{
 				switch (input.alg)
@@ -2855,10 +2854,29 @@ namespace tangent
 					case algorithm::composition::type::secp256k1:
 						input.signature.resize(65, 0xCC);
 						break;
+					case algorithm::composition::type::ed25519_clsag:
+					{
+						auto shared = prepared->as_shared_message();
+						if (!shared)
+							break;
+
+						compositions::ed25519_clsag_compositor::clsag_message tx;
+						format::ro_stream message = format::ro_stream(std::string_view((char*)shared->message.data(), shared->message.size()));
+						if (!tx.load(message) || index >= tx.vin.size())
+							break;
+
+						auto& vin = tx.vin[index];
+						input.signature.resize(128 + 32 * vin.keys.size(), 0xCC);
+						memcpy(input.signature.data(), vin.key_image, sizeof(vin.key_image));
+						break;
+					}
+					case algorithm::composition::type::secp256k1_schnorr:
+					case algorithm::composition::type::ed25519:
 					default:
 						input.signature.resize(64, 0xCC);
 						break;
 				}
+				++index;
 			}
 
 			auto finalized = delegations::broadcast_delegation::finalize_transaction(algorithm::asset::base_id_of(asset), std::move(*prepared));
@@ -3170,100 +3188,6 @@ namespace tangent
 
 			auto& [validator, wallet] = *consensus_service->runner_descriptor;
 			return server_response().success(wallet.as_tree());
-		}
-		server_response server_node::validatorstate_set_wallet(http::connection*, format::variables&& args)
-		{
-			if (!consensus_service)
-				return server_response().error(error_codes::bad_request, "validator node disabled");
-
-			auto wallet = ledger::wallet();
-			auto type = args[0].as_string();
-			auto entropy = args[1].as_string();
-			if (type == "key")
-			{
-				algorithm::seckey_t secret_key;
-				if (!algorithm::signing::decode_secret_key(entropy, secret_key))
-					return server_response().error(error_codes::bad_request, "invalid secret key");
-			}
-			else if (type == "mnemonic")
-			{
-				if (!algorithm::signing::verify_mnemonic(entropy))
-					return server_response().error(error_codes::bad_request, "invalid mnemonic");
-
-				wallet = ledger::wallet::from_mnemonic(entropy);
-			}
-			else if (type == "seed")
-				wallet = ledger::wallet::from_seed(format::util::decode_0xhex(entropy));
-
-			auto result = consensus_service->accept_local_accounts({ wallet });
-			if (!result)
-				return server_response().error(error_codes::bad_request, result.error().message());
-
-			return server_response().success(wallet.as_tree());
-		}
-		server_response server_node::validatorstate_export_entropies(http::connection* base, format::variables&& args)
-		{
-			algorithm::pubkeyhash_t participant;
-			if (!algorithm::signing::decode_address(args[0].as_string(), participant))
-				return server_response().error(error_codes::bad_params, "participant address not valid");
-
-			auto password = args[1].as_string();
-			if (password.size() < 24)
-				return server_response().error(error_codes::bad_request, "password must be at 24 characters long");
-
-			uint8_t encryption_key[32] = { 0 };
-			if (!algorithm::signing::derive_seed_from_high_entropy_password((uint8_t*)password.data(), password.size(), encryption_key, sizeof(encryption_key)))
-				return server_response().error(error_codes::bad_request, "failed to derive an encryption key");
-
-			auto mempool = storages::mempoolstate();
-			auto results = format::tree::list();
-			while (true)
-			{
-				auto entropy = mempool.get_key(participant, results.childs().size());
-				if (!entropy)
-					break;
-
-				auto salt = *crypto::random_bytes(16);
-				auto message = entropy->as_message();
-				auto encrypted_message = *crypto::encrypt(ciphers::aes_256_cbc(), message.data, secret_box::view(std::string_view((char*)encryption_key, sizeof(encryption_key))), secret_box::view(salt));
-				encrypted_message.insert(encrypted_message.begin(), salt.begin(), salt.end());
-				results.push(format::variable(encrypted_message));
-			}
-			return server_response().success(std::move(results));
-		}
-		server_response server_node::validatorstate_import_entropies(http::connection* base, format::variables&& args)
-		{
-			algorithm::pubkeyhash_t participant;
-			if (!algorithm::signing::decode_address(args[0].as_string(), participant))
-				return server_response().error(error_codes::bad_params, "participant address not valid");
-
-			auto password = args[1].as_string();
-			uint8_t decryption_key[32] = { 0 };
-			if (!algorithm::signing::derive_seed_from_high_entropy_password((uint8_t*)password.data(), password.size(), decryption_key, sizeof(decryption_key)))
-				return server_response().error(error_codes::bad_request, "failed to derive a decryption key");
-
-			auto mempool = storages::mempoolstate();
-			for (size_t i = 2; i < args.size(); i++)
-			{
-				auto salt_and_encrypted_message = format::util::decode_0xhex(args[i].as_string());
-				if (salt_and_encrypted_message.size() <= 16)
-					return server_response().error(error_codes::bad_request, "invalid encrypted entropy");
-
-				auto salt = std::string_view(salt_and_encrypted_message).substr(0, 16);
-				auto encrypted_message = std::string_view(salt_and_encrypted_message).substr(salt.size());
-				auto decrypted_message = crypto::decrypt(ciphers::aes_256_cbc(), encrypted_message, secret_box::view(std::string_view((char*)decryption_key, sizeof(decryption_key))), secret_box::view(salt));
-				if (!decrypted_message)
-					return server_response().error(error_codes::bad_request, "failed to decrypt message " + to_string(i - 1));
-
-				auto message = format::ro_stream(*decrypted_message);
-				auto entropy = ledger::distribution_key();
-				if (!entropy.load(message))
-					return server_response().error(error_codes::bad_request, "failed to load message " + to_string(i - 1));
-
-				if (!mempool.apply_key(participant, entropy))
-					return server_response().error(error_codes::bad_request, "failed to save message " + to_string(i - 1));
-			}
-			return server_response().success(format::variable());
 		}
 		server_response server_node::validatorstate_status(http::connection*, format::variables&&)
 		{

@@ -850,21 +850,44 @@ namespace tangent
 				if (!validation)
 					return validation.error();
 
-				auto* offchain = superchain::bridge::get();
 				for (size_t i = 0; i < tx.vin.size(); i++)
 				{
 					auto& utxo = result.prepared.inputs[i];
 					if (utxo.utxo.transaction_id.empty())
 						return layer_exception("invalid input utxo");
-
-					auto& vin = tx.vin[i];
-					auto message = format::wo_stream();
-					message.write_string(utxo.utxo.transaction_id);
-					message.write_integer(utxo.utxo.index);
-					offchain->store_cache(native_asset, cache_policy::lifetime_cache, string("K").append(codec::base64_encode(std::string_view((char*)vin.key_image, sizeof(vin.key_image)))), format::variable(message.data));
 				}
-				offchain->store_cache(native_asset, cache_policy::lifetime_cache, string("T").append(result.hashdata), format::variable(result.prepared.outputs.front().link.address));
+
 				return expects_lr<finalized_transaction>(std::move(result));
+			}
+			expects_lr<void> monero::update_utxo(const computed_transaction& computed, const finalized_transaction* finalized)
+			{
+				if (finalized)
+				{
+					auto shared = finalized->prepared.as_shared_message();
+					if (shared)
+					{
+						unsigned_transaction tx;
+						format::ro_stream message = format::ro_stream(std::string_view((char*)shared->message.data(), shared->message.size()));
+						if (tx.load(message))
+						{
+							auto* offchain = superchain::bridge::get();
+							for (size_t i = 0; i < tx.vin.size(); i++)
+							{
+								auto& utxo = finalized->prepared.inputs[i];
+								if (!utxo.utxo.transaction_id.empty())
+								{
+									auto& vin = tx.vin[i];
+									auto message = format::wo_stream();
+									message.write_string(utxo.utxo.transaction_id);
+									message.write_integer(utxo.utxo.index);
+									offchain->store_cache(native_asset, cache_policy::lifetime_cache, string("K").append(codec::base64_encode(std::string_view((char*)vin.key_image, sizeof(vin.key_image)))), format::variable(message.data));
+								}
+							}
+							offchain->store_cache(native_asset, cache_policy::lifetime_cache, string("T").append(finalized->hashdata), format::variable(finalized->prepared.outputs.front().link.address));
+						}
+					}
+				}
+				return utxo_translation_unit::update_utxo(computed, finalized);
 			}
 			expects_lr<secret_box> monero::encode_secret_key(const secret_box& secret_key)
 			{

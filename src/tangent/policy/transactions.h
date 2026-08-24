@@ -328,10 +328,8 @@ namespace tangent
 		{
 			struct internal_transfer
 			{
-				decimal input_supply = decimal::zero();
-				decimal input_reserve = decimal::zero();
-				decimal output_supply = decimal::zero();
-				decimal output_reserve = decimal::zero();
+				decimal supply = decimal::zero();
+				decimal reserve = decimal::zero();
 			};
 
 			btree_map<uint256_t, btree_set<algorithm::hashsig_t>> commitments;
@@ -344,15 +342,15 @@ namespace tangent
 			bool recover_many(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const override;
 			bool recover_aliases(btree_set<uint256_t>& aliases) const override;
 			uint64_t commitment_priority(uint256_t* event_hash) const override;
-			void set_finalized_proof(uint64_t block_id, const std::string_view& transaction_id, const vector<superchain::value_transfer>& inputs, const vector<superchain::value_transfer>& outputs);
-			void set_computed_proof(superchain::computed_transaction&& new_proof, btree_map<uint256_t, btree_set<algorithm::hashsig_t>>&& new_commitments);
+			void set_finalized_proof(uint64_t block_id, const std::string_view& transaction_id, const vector<superchain::value_transfer>& inputs, const vector<superchain::value_transfer>& outputs, bool reset_signatures = true);
+			void set_computed_proof(const uint256_t& new_commitment_hash, superchain::computed_transaction&& new_proof, btree_set<algorithm::hashsig_t>&& new_signatures);
 			bool add_commitment(const algorithm::seckey_t& secret_key);
 			format::tree as_tree() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
-			static expects_lr<void> verify_proof_commitment(ledger::executor_context* executor, const algorithm::asset_id& asset, const btree_map<uint256_t, btree_set<algorithm::hashsig_t>>& commitments, uint256_t& best_commitment_hash, btree_map<uint256_t, btree_set<algorithm::pubkeyhash_t>>& attesters, uint64_t block_number = (uint64_t)fork_id::attesters_hardening);
+			static expects_lr<void> evaluate_proof_commitments(ledger::executor_context* executor, const algorithm::asset_id& asset, const btree_map<uint256_t, btree_set<algorithm::hashsig_t>>& commitments, uint256_t& best_commitment_hash, btree_map<uint256_t, btree_set<algorithm::pubkeyhash_t>>& attesters, uint64_t block_number = (uint64_t)fork_id::attesters_hardening);
 			static void optimize_proofs_and_commitments(const ledger::executor_context* executor, const algorithm::asset_id& asset, btree_map<uint256_t, superchain::computed_transaction>& proofs, btree_map<uint256_t, btree_set<algorithm::hashsig_t>>& commitments, vector<string>* errors = nullptr);
 			static bool commit_to_proof(const algorithm::asset_id& asset, const superchain::computed_transaction& new_proof, const algorithm::seckey_t& secret_key, uint256_t& commitment_hash, algorithm::hashsig_t& commitment_signature);
 		};

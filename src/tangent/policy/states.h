@@ -280,7 +280,6 @@ namespace tangent
 			static std::string_view as_instance_typename();
 			static string as_instance_column(const algorithm::pubkeyhash_t& owner);
 			static string as_instance_row(const algorithm::asset_id& asset);
-			static uint256_t to_rank(const decimal& threshold);
 		};
 
 		struct validator_attestation_reward final : ledger::multiform_state

@@ -168,7 +168,7 @@ namespace tangent
 				uint32_t max_inbound_connections = 64;
 				uint32_t max_outbound_connections = 8;
 				uint64_t inventory_timeout = 300000;
-				uint32_t inventory_size = 65536;
+				uint32_t inventory_size = 32768;
 				uint64_t aggregation_attempts = 6;
 				uint64_t aggregation_cooldown = 2000;
 				uint8_t coordination_attempts = 15;
@@ -179,7 +179,7 @@ namespace tangent
 			} consensus;
 			struct
 			{
-				string address = "0.0.0.0";
+				string address = "127.0.0.1";
 				uint16_t port = 18420;
 				bool proxy = false;
 				bool server = false;
@@ -196,7 +196,7 @@ namespace tangent
 			} superchain;
 			struct
 			{
-				string address = "0.0.0.0";
+				string address = "127.0.0.1";
 				uint16_t port = 18419;
 				string username;
 				string password;
@@ -296,6 +296,7 @@ namespace tangent
 				uint64_t min_per_transaction = 4;
 				uint64_t max_per_transaction = 32;
 				decimal min_stake_value = std::string_view("900");
+				decimal stake_penalty_threshold = std::string_view("0.1");
 				decimal consensus_threshold = std::string_view("0.70");
 				decimal fee_rate = std::string_view("0.10");
 			} attestation;
@@ -308,6 +309,7 @@ namespace tangent
 				uint64_t max_per_account = 23;
 				decimal min_stake_value = std::string_view("2700");
 				decimal stake_threshold = std::string_view("0.20");
+				decimal stake_penalty_threshold = std::string_view("0.15");
 				decimal fee_rate = std::string_view("0.60");
 			} participation;
 			struct

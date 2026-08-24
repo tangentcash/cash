@@ -1028,7 +1028,7 @@ namespace tangent
 				auto collision = executor->get_witness_account_tagged(asset, routing_address, 0);
 				if (collision)
 				{
-					if (!has_ownership_challenge)
+					if (!has_ownership_challenge || !collision->is_routing_account())
 						return layer_exception("routing account address " + routing_address + " taken");
 
 					auto* chain = superchain::bridge::get()->get_network(asset);
@@ -2597,6 +2597,25 @@ namespace tangent
 					if (!account)
 						return account.error();
 
+					bool forced_migration = false;
+					for (auto& [broadcast_hash, participant] : parent_transaction->migrations)
+						forced_migration = forced_migration || participant == migration.old_participant;
+
+					if (forced_migration)
+					{
+						auto prev_participation = executor->get_validator_participation(migration.old_participant);
+						if (prev_participation)
+						{
+							auto penalty = kernel::params().policy.participation.stake_penalty_threshold * prev_participation->stake;
+							if (!penalty.is_nan() && penalty.is_positive())
+							{
+								auto next_participation = executor->apply_validator_participation(migration.old_participant, ledger::executor_context::staker::reward_or_penalty, -penalty);
+								if (!next_participation)
+									return next_participation.error();
+							}
+						}
+					}
+
 					auto old_ref = executor->apply_validator_participation_ref(migration.old_participant, account->ref, false);
 					if (!old_ref)
 						return old_ref.error();
@@ -2927,10 +2946,10 @@ namespace tangent
 				if (!attestation)
 					return attestation.error();
 
-				auto proof_base = proof->as_computed();
+				auto proof_computed = proof->as_computed();
 				auto proof_asset = algorithm::asset::base_id_of(parent_transaction->asset);
 				auto actual_value = decimal::zero();
-				for (auto& [hash, output] : proof_base.outputs)
+				for (auto& [hash, output] : proof_computed.outputs)
 				{
 					if (output.link.address != parent_transaction->address)
 						continue;
@@ -2955,9 +2974,10 @@ namespace tangent
 						return compensation_transfer.error();
 				}
 
-				executor->defer_side_effect([proof_asset, proof_base = std::move(proof_base)]() mutable
+				auto proof_copy = *proof;
+				executor->defer_side_effect([proof_asset, proof_computed = std::move(proof_computed), proof_copy = std::move(proof_copy)]() mutable
 				{
-					superchain::bridge::get()->update_utxo_tree(proof_asset, proof_base).report("failed to update the pending off-chain utxo set");
+					superchain::bridge::get()->update_utxo_tree(proof_asset, proof_computed, &proof_copy).report("failed to update the pending off-chain utxo set");
 				});
 			}
 			else
@@ -3434,9 +3454,13 @@ namespace tangent
 			if (!validation)
 				return validation.error();
 
-			auto* chain = superchain::bridge::get()->get_network_params(asset);
-			if (!chain)
+			auto* params = superchain::bridge::get()->get_network_params(asset);
+			if (!params)
 				return layer_exception("invalid chain");
+
+			auto* chain = superchain::bridge::get()->get_network(asset);
+			if (!chain)
+				return layer_exception("invalid operation");
 
 			auto witness = executor->get_witness_transaction(asset, proof.transaction_id);
 			if (witness)
@@ -3444,167 +3468,81 @@ namespace tangent
 
 			uint256_t best_commitment_hash = 0;
 			btree_map<uint256_t, btree_set<algorithm::pubkeyhash_t>> attesters;
-			auto verification = verify_proof_commitment(executor, asset, commitments, best_commitment_hash, attesters, executor->receipt.block_number);
-			if (!verification)
-				return verification;
-			else if (best_commitment_hash != proof.as_proof_hash(asset, executor->receipt.block_number))
-				return layer_exception("provided proof is not the chosen one");
+			auto evaluation = evaluate_proof_commitments(executor, asset, commitments, best_commitment_hash, attesters, executor->receipt.block_number);
+			if (!evaluation)
+				return evaluation;
 
+			auto& succeeding_attesters = attesters[best_commitment_hash];
+			if (succeeding_attesters.empty() || !best_commitment_hash || best_commitment_hash != proof.as_proof_hash(asset, executor->receipt.block_number))
+				return layer_exception("proof commitment verification failed");
+
+			uint256_t bridge_hash = 0;
 			decimal network_fee = decimal::zero();
-			uint256_t withdrawer_hash = 0;
 			algorithm::pubkeyhash_t depositor_account;
+			bool signers_hardening = kernel::params().on(fork_id::key_bind_commitment, executor->receipt.block_number);
 			for (auto& [hash, input] : proof.inputs)
 			{
 				auto baseline = states::witness_account(states::bridge_ref(), { }, nullptr);
-				auto source = depositor_account.empty() || !withdrawer_hash ? executor->get_witness_account_tagged(asset, input.link.address, 0).or_else(baseline) : baseline;
-				depositor_account = depositor_account.empty() && source.is_routing_account() && chain->routing == superchain::routing_policy::account ? source.ref.owner : depositor_account;
-				withdrawer_hash = !withdrawer_hash && source.is_bridge_account() ? source.ref.hash : withdrawer_hash;
+				auto source = depositor_account.empty() || !bridge_hash ? executor->get_witness_account_tagged(asset, input.link.address, 0).or_else(baseline) : baseline;
+				depositor_account = depositor_account.empty() && source.is_routing_account() && params->routing == superchain::routing_policy::account ? source.ref.owner : depositor_account;
+				bridge_hash = !bridge_hash && source.is_bridge_account() && (!signers_hardening || std::find_if(proof.signers.begin(), proof.signers.end(), [&](const string& x)
+				{
+					auto a = chain->decode_address(x);
+					return a && std::find_if(source.addresses.begin(), source.addresses.end(), [&](const address_map::value_type& y)
+					{
+						auto b = chain->decode_address(y.second);
+						return b && *b == *a;
+					}) != source.addresses.end();
+				}) != proof.signers.end()) ? source.ref.hash : bridge_hash;
 				network_fee += input.value;
 			}
-			for (auto& [hash, output] : proof.outputs)
-				network_fee -= output.value;
-			if (network_fee.is_negative())
-				network_fee = decimal::zero();
 
-			auto base_asset = algorithm::asset::base_id_of(asset);
-			auto& succeeding_attesters = attesters[best_commitment_hash];
 			btree_map<uint256_t, btree_map<algorithm::asset_id, decimal>> balances;
 			btree_map<algorithm::pubkeyhash_t, btree_map<algorithm::asset_id, internal_transfer>> transfers;
-			btree_map<algorithm::asset_id, decimal> penalties;
+			btree_map<algorithm::asset_id, decimal> imbalances;
 			btree_set<algorithm::pubkeyhash_t> participants;
-			if (withdrawer_hash > 0)
+			for (auto it = bridge_hash > 0 ? proof.inputs.begin() : proof.inputs.end(); it != proof.inputs.end(); it++)
 			{
-				for (auto& [hash, input] : proof.inputs)
+				auto& [hash, input] = *it;
+				auto source = executor->get_witness_account_tagged(asset, input.link.address, 0);
+				if (source && source->is_bridge_account())
 				{
-					auto source = executor->get_witness_account_tagged(asset, input.link.address, 0);
-					if (source && source->is_bridge_account())
-					{
-						auto& supplies = balances[source->ref.hash];
-						auto bridge_account = executor->get_bridge_account(source->ref.owner, source->ref.asset, source->ref.hash);
-						if (bridge_account)
-							participants.insert(bridge_account->group.begin(), bridge_account->group.end());
-
-						if (input.value.is_positive())
-						{
-							auto token_asset = input.get_asset(asset);
-							auto& supply = supplies[token_asset];
-							auto& penalty = penalties[token_asset];
-							supply = supply.is_nan() ? -input.value : (supply - input.value);
-							penalty = penalty.is_nan() ? input.value : (penalty + input.value);
-						}
-
-						for (auto& [token_hash, token] : input.tokens)
-						{
-							auto token_asset = token.get_asset(asset);
-							auto& supply = supplies[token_asset];
-							auto& penalty = penalties[token_asset];
-							supply = supply.is_nan() ? -token.value : (supply - token.value);
-							penalty = penalty.is_nan() ? token.value : (penalty + token.value);
-						}
-					}
-					else
-					{
-						if (input.value.is_positive())
-						{
-							auto& penalty = penalties[input.get_asset(asset)];
-							penalty = penalty.is_nan() ? input.value : (penalty + input.value);
-						}
-
-						for (auto& [token_hash, token] : input.tokens)
-						{
-							if (token.value.is_positive())
-							{
-								auto& penalty = penalties[token.get_asset(asset)];
-								penalty = penalty.is_nan() ? token.value : (penalty + token.value);
-							}
-						}
-					}
-				}
-
-				for (auto& [hash, output] : proof.outputs)
-				{
-					auto source = executor->get_witness_account_tagged(asset, output.link.address, 0);
-					if (source && source->is_bridge_account())
-					{
-						auto& supplies = balances[source->ref.hash];
-						auto bridge_account = executor->get_bridge_account(source->ref.owner, source->ref.asset, source->ref.hash);
-						if (bridge_account)
-							participants.insert(bridge_account->group.begin(), bridge_account->group.end());
-
-						if (output.value.is_positive())
-						{
-							auto token_asset = output.get_asset(asset);
-							auto& supply = supplies[token_asset];
-							auto& penalty = penalties[token_asset];
-							supply = supply.is_nan() ? output.value : (supply + output.value);
-							penalty = penalty.is_nan() ? -output.value : (penalty - output.value);
-						}
-
-						for (auto& [token_hash, token] : output.tokens)
-						{
-							if (!token.value.is_positive())
-								continue;
-
-							auto token_asset = token.get_asset(asset);
-							auto& supply = supplies[token_asset];
-							auto& penalty = penalties[token_asset];
-							supply = supply.is_nan() ? token.value : (supply + token.value);
-							penalty = penalty.is_nan() ? -token.value : (penalty - token.value);
-						}
-					}
-					else if (source && source->is_routing_account())
-					{
-						auto& deltas = transfers[source->ref.owner];
-						if (output.value.is_positive())
-						{
-							auto token_asset = output.get_asset(asset);
-							auto& transfer = deltas[token_asset];
-							auto& penalty = penalties[token_asset];
-							transfer.output_supply += output.value;
-							transfer.output_reserve += output.value;
-							penalty = penalty.is_nan() ? -output.value : (penalty - output.value);
-						}
-
-						for (auto& [token_hash, token] : output.tokens)
-						{
-							if (!token.value.is_positive())
-								continue;
-
-							auto token_asset = token.get_asset(asset);
-							auto& transfer = deltas[token_asset];
-							auto& penalty = penalties[token_asset];
-							transfer.output_supply += token.value;
-							transfer.output_reserve += token.value;
-							penalty = penalty.is_nan() ? -token.value : (penalty - token.value);
-						}
-					}
-				}
-
-				auto it = penalties.find(base_asset);
-				if (it != penalties.end())
-					it->second = std::max<decimal>(it->second - network_fee, decimal::zero());
-
-				auto bridge = executor->get_bridge_instance(algorithm::asset::base_id_of(asset), withdrawer_hash);
-				if (bridge)
-				{
-					auto reward = bridge->fee_rate * (1 - kernel::params().policy.attestation.fee_rate);
-					auto applicable = std::max<decimal>(reward - network_fee, decimal::zero());
-					if (it == penalties.end())
-						penalties[base_asset] = -applicable;
-					else
-						it->second -= applicable;
-				}
-			}
-			else
-			{
-				for (auto& [hash, output] : proof.outputs)
-				{
-					auto source = executor->get_witness_account(asset, output.link.address, 0);
-					if (!source || !source->is_bridge_account())
+					auto& supplies = balances[source->ref.hash];
+					auto bridge_account = executor->get_bridge_account(source->ref.owner, source->ref.asset, source->ref.hash);
+					if (!bridge_account)
 						continue;
 
+					bridge_hash = source->ref.hash;
+					participants.insert(bridge_account->group.begin(), bridge_account->group.end());
+					if (input.value.is_positive())
+					{
+						auto token_asset = input.get_asset(asset);
+						auto& supply = supplies[token_asset];
+						auto& imbalance = imbalances[token_asset];
+						supply = supply.is_nan() ? -input.value : (supply - input.value);
+						imbalance = imbalance.is_nan() ? input.value : (imbalance + input.value);
+					}
+
+					for (auto& [token_hash, token] : input.tokens)
+					{
+						auto token_asset = token.get_asset(asset);
+						auto& supply = supplies[token_asset];
+						auto& imbalance = imbalances[token_asset];
+						supply = supply.is_nan() ? -token.value : (supply - token.value);
+						imbalance = imbalance.is_nan() ? token.value : (imbalance + token.value);
+					}
+				}
+				else if (source && source->is_routing_account() && params->routing == superchain::routing_policy::account && depositor_account.empty())
+					depositor_account = source->ref.owner;
+			}
+
+			for (auto& [hash, output] : proof.outputs)
+			{
+				auto source = bridge_hash > 0 ? executor->get_witness_account_tagged(asset, output.link.address, 0) : executor->get_witness_account(asset, output.link.address, 0);
+				if (source && source->is_bridge_account())
+				{
 					auto& supplies = balances[source->ref.hash];
-					auto& changes = transfers[depositor_account.empty() ? source->ref.owner : depositor_account];
+					auto& transfer = transfers[depositor_account.empty() ? source->ref.owner : depositor_account];
 					auto bridge_account = executor->get_bridge_account(source->ref.owner, source->ref.asset, source->ref.hash);
 					if (bridge_account)
 						participants.insert(bridge_account->group.begin(), bridge_account->group.end());
@@ -3613,30 +3551,76 @@ namespace tangent
 					{
 						auto token_asset = output.get_asset(asset);
 						auto& supply = supplies[token_asset];
-						auto& transfer = changes[token_asset];
 						supply = supply.is_nan() ? output.value : (supply + output.value);
-						transfer.input_supply += output.value;
+						if (bridge_hash > 0)
+						{
+							auto& imbalance = imbalances[token_asset];
+							imbalance = imbalance.is_nan() ? -output.value : (imbalance - output.value);
+						}
+						else
+							transfer[token_asset].supply += output.value;
 					}
 
 					for (auto& [token_hash, token] : output.tokens)
 					{
-						if (token.value.is_positive())
+						if (!token.value.is_positive())
+							continue;
+
+						auto token_asset = token.get_asset(asset);
+						auto& supply = supplies[token_asset];
+						supply = supply.is_nan() ? token.value : (supply + token.value);
+						if (bridge_hash > 0)
 						{
-							auto token_asset = token.get_asset(asset);
-							auto& supply = supplies[token_asset];
-							auto& transfer = changes[token_asset];
-							supply = supply.is_nan() ? token.value : (supply + token.value);
-							transfer.input_supply += token.value;
+							auto& imbalance = imbalances[token_asset];
+							imbalance = imbalance.is_nan() ? -token.value : (imbalance - token.value);
 						}
+						else
+							transfer[token_asset].supply += token.value;
 					}
 				}
+				else if (source && source->is_routing_account() && bridge_hash > 0)
+				{
+					auto& subtransfers = transfers[source->ref.owner];
+					if (output.value.is_positive())
+					{
+						auto token_asset = output.get_asset(asset);
+						auto& transfer = subtransfers[token_asset];
+						auto& imbalance = imbalances[token_asset];
+						transfer.supply -= output.value;
+						transfer.reserve -= output.value;
+						imbalance = imbalance.is_nan() ? -output.value : (imbalance - output.value);
+					}
+
+					for (auto& [token_hash, token] : output.tokens)
+					{
+						if (!token.value.is_positive())
+							continue;
+
+						auto token_asset = token.get_asset(asset);
+						auto& transfer = subtransfers[token_asset];
+						auto& imbalance = imbalances[token_asset];
+						transfer.supply -= token.value;
+						transfer.reserve -= token.value;
+						imbalance = imbalance.is_nan() ? -token.value : (imbalance - token.value);
+					}
+				}
+				network_fee = std::max(network_fee - output.value, decimal::zero());
 			}
 
-			auto failing_attesters = btree_set<algorithm::pubkeyhash_t>();
-			for (auto& [commitment_hash, group] : attesters)
+			auto base_asset = algorithm::asset::base_id_of(asset);
+			auto bridge_reward = decimal::zero();
+			bool bridge_exists = false;
+			if (bridge_hash > 0)
 			{
-				if (commitment_hash != best_commitment_hash)
-					failing_attesters.insert(group.begin(), group.end());
+				auto bridge = executor->get_bridge_instance(base_asset, bridge_hash);
+				auto& imbalance = imbalances[base_asset];
+				imbalance = imbalance.is_nan() ? decimal::zero() : std::max<decimal>(imbalance - network_fee, decimal::zero());
+				if (bridge)
+				{
+					bridge_reward = std::max<decimal>(bridge->fee_rate * (1 - kernel::params().policy.attestation.fee_rate) - network_fee, decimal::zero());
+					imbalance = imbalance.is_nan() ? -bridge_reward : (imbalance - bridge_reward);
+					bridge_exists = true;
+				}
 			}
 
 			if (!proof.reverted)
@@ -3645,33 +3629,31 @@ namespace tangent
 				{
 					for (auto& [transfer_asset, transfer] : changes)
 					{
-						auto supply_delta = transfer.input_supply - transfer.output_supply;
-						auto reserve_delta = transfer.input_reserve - transfer.output_reserve;
-						if (supply_delta.is_negative() || reserve_delta.is_negative())
+						if (transfer.supply.is_negative() || transfer.reserve.is_negative())
 						{
 							auto balance = executor->get_account_balance(transfer_asset, transfer_account).or_else(states::account_balance(algorithm::pubkeyhash_t(), 0, nullptr));
-							auto supply_penalty = decimal::zero();
-							auto reserve_penalty = decimal::zero();
-							if (balance.supply < -supply_delta)
+							auto supply_imbalance = decimal::zero();
+							auto reserve_imbalance = decimal::zero();
+							if (balance.supply < -transfer.supply)
 							{
-								supply_penalty = -supply_delta - balance.supply;
-								supply_delta = -balance.supply;
+								supply_imbalance = -transfer.supply - balance.supply;
+								transfer.supply = -balance.supply;
 							}
-							if (balance.reserve < -reserve_delta)
+							if (balance.reserve < -transfer.reserve)
 							{
-								reserve_penalty = -reserve_delta - balance.reserve;
-								reserve_delta = -balance.reserve;
+								reserve_imbalance = -transfer.reserve - balance.reserve;
+								transfer.reserve = -balance.reserve;
 							}
-							if (supply_penalty.is_positive() || reserve_penalty.is_positive())
+							if (supply_imbalance.is_positive() || reserve_imbalance.is_positive())
 							{
-								auto& penalty = penalties[transfer_asset];
-								penalty = penalty.is_nan() ? std::max(supply_penalty, reserve_penalty) : (penalty - std::max(supply_penalty, reserve_penalty));
+								auto& imbalance = imbalances[transfer_asset];
+								imbalance = imbalance.is_nan() ? std::max(supply_imbalance, reserve_imbalance) : (imbalance - std::max(supply_imbalance, reserve_imbalance));
 							}
 						}
 
-						if (!supply_delta.is_zero() || !reserve_delta.is_zero())
+						if (!transfer.supply.is_zero() || !transfer.reserve.is_zero())
 						{
-							auto delta_transfer = executor->apply_transfer(transfer_asset, transfer_account, supply_delta, reserve_delta);
+							auto delta_transfer = executor->apply_transfer(transfer_asset, transfer_account, transfer.supply, transfer.reserve);
 							if (!delta_transfer)
 								return delta_transfer.error();
 						}
@@ -3694,77 +3676,91 @@ namespace tangent
 					}
 				}
 
-				for (auto& [penalty_asset, penalty_value] : penalties)
+				auto failing_participants = btree_set<algorithm::pubkeyhash_t>();
+				auto failing_attesters = btree_set<algorithm::pubkeyhash_t>();
+				auto participation_cut = kernel::params().policy.participation.fee_rate;
+				auto attestation_cut = 1 - participation_cut;
+				for (auto& [imbalance_asset, imbalance_value] : imbalances)
 				{
-					if (penalty_value.is_zero_or_nan())
+					if (imbalance_value.is_zero_or_nan() || (!signers_hardening && imbalance_value.is_positive()))
 						continue;
 
-					auto participation_cut = kernel::params().policy.participation.fee_rate;
-					auto attestation_cut = 1 - participation_cut;
-					if (!failing_attesters.empty() && penalty_value.is_negative())
-					{
-						auto individual_penalty = algorithm::arithmetic::divide(penalty_value * attestation_cut, failing_attesters.size());
-						for (auto& failing_attester : failing_attesters)
-						{
-							auto prev_attestation = executor->get_validator_attestation_reward(penalty_asset, failing_attester);
-							if (!prev_attestation)
-								continue;
-
-							auto next_attestation = executor->apply_validator_attestation_reward(penalty_asset, failing_attester, individual_penalty);
-							if (!next_attestation)
-								return next_attestation.error();
-
-							penalty_value -= std::max(decimal::zero(), prev_attestation->reward - next_attestation->reward);
-						}
-					}
-
-					auto individual_reward_or_penalty = algorithm::arithmetic::divide(-penalty_value * attestation_cut, succeeding_attesters.size());
+					auto individual_reward_or_penalty = algorithm::arithmetic::divide(-imbalance_value * attestation_cut, succeeding_attesters.size());
 					for (auto& succeeding_attester : succeeding_attesters)
 					{
-						auto attestation = executor->apply_validator_attestation_reward(penalty_asset, succeeding_attester, individual_reward_or_penalty);
+						auto attestation = executor->apply_validator_attestation_reward(imbalance_asset, succeeding_attester, individual_reward_or_penalty);
 						if (!attestation)
 							return attestation.error();
 					}
+					if (signers_hardening && individual_reward_or_penalty.is_negative())
+						failing_attesters.insert(succeeding_attesters.begin(), succeeding_attesters.end());
 
-					individual_reward_or_penalty = algorithm::arithmetic::divide(-penalty_value * participation_cut, participants.size());
+					individual_reward_or_penalty = algorithm::arithmetic::divide(-imbalance_value * participation_cut, participants.size());
 					for (auto& participant : participants)
 					{
-						auto participation = executor->apply_validator_participation_reward(penalty_asset, participant, individual_reward_or_penalty);
+						auto participation = executor->apply_validator_participation_reward(imbalance_asset, participant, individual_reward_or_penalty);
 						if (!participation)
 							return participation.error();
 					}
+					if (signers_hardening && individual_reward_or_penalty.is_negative())
+						failing_participants.insert(participants.begin(), participants.end());
+				}
+
+				for (auto& failing_attester : failing_attesters)
+				{
+					auto prev_attestation = executor->get_validator_attestation(asset, failing_attester);
+					if (prev_attestation)
+					{
+						auto penalty = kernel::params().policy.attestation.stake_penalty_threshold * prev_attestation->stake;
+						if (!penalty.is_nan() && penalty.is_positive())
+						{
+							auto next_attestation = executor->apply_validator_attestation(asset, failing_attester, ledger::executor_context::staker::reward_or_penalty, -penalty, prev_attestation->min_fee);
+							if (!next_attestation)
+								return next_attestation.error();
+						}
+					}
+				}
+
+				for (auto& failing_participant : failing_participants)
+				{
+					auto prev_participation = executor->get_validator_participation(failing_participant);
+					if (prev_participation)
+					{
+						auto penalty = kernel::params().policy.participation.stake_penalty_threshold * prev_participation->stake;
+						if (!penalty.is_nan() && penalty.is_positive())
+						{
+							auto next_participation = executor->apply_validator_participation(failing_participant, ledger::executor_context::staker::reward_or_penalty, -penalty);
+							if (!next_participation)
+								return next_participation.error();
+						}
+					}
 				}
 			}
-			else if (withdrawer_hash > 0)
+			else if (bridge_hash > 0)
 			{
-				auto bridge = executor->get_bridge_instance(base_asset, withdrawer_hash);
 				for (auto& [transfer_account, changes] : transfers)
 				{
 					for (auto& [transfer_asset, transfer] : changes)
 					{
-						if (transfer.input_reserve >= transfer.output_reserve)
+						if (!transfer.reserve.is_negative())
 							continue;
 
 						auto balance = executor->get_account_balance(transfer_asset, transfer_account).or_else(states::account_balance(algorithm::pubkeyhash_t(), 0, nullptr));
-						auto delta_transfer = executor->apply_transfer(transfer_asset, transfer_account, decimal::zero(), std::max(transfer.input_reserve - transfer.output_reserve, -balance.reserve));
+						auto delta_transfer = executor->apply_transfer(transfer_asset, transfer_account, decimal::zero(), std::max(transfer.reserve, -balance.reserve));
 						if (!delta_transfer)
 							return delta_transfer.error();
-						else if (!bridge)
-							break;
 
-						auto reward = bridge->fee_rate * (1 - kernel::params().policy.attestation.fee_rate);
-						auto applicable = std::max<decimal>(reward - network_fee, decimal::zero());
-						delta_transfer = executor->apply_transfer(base_asset, transfer_account, applicable, decimal::zero());
+						delta_transfer = executor->apply_transfer(base_asset, transfer_account, bridge_reward, decimal::zero());
 						if (!delta_transfer)
 							return delta_transfer.error();
 						break;
 					}
 				}
 
-				if (bridge && network_fee.is_positive())
+				if (bridge_exists && network_fee.is_positive())
 				{
-					auto balance = executor->get_bridge_balance(base_asset, withdrawer_hash);
-					auto status = executor->apply_bridge_balance(base_asset, withdrawer_hash, -std::min(network_fee, balance ? balance->supply : decimal::zero()));
+					auto balance = executor->get_bridge_balance(base_asset, bridge_hash);
+					auto status = executor->apply_bridge_balance(base_asset, bridge_hash, -std::min(network_fee, balance ? balance->supply : decimal::zero()));
 					if (!status)
 						return status.error();
 				}
@@ -3774,15 +3770,14 @@ namespace tangent
 			if (!finalization)
 				return finalization.error();
 
-			auto proof_asset = asset; auto proof_base = proof;
-			executor->defer_side_effect([proof_asset, proof_base = std::move(proof_base)]() mutable
+			auto asset_copy = asset; auto proof_copy = proof;
+			executor->defer_side_effect([asset_copy, proof_copy = std::move(proof_copy)]() mutable
 			{
-				if (proof_base.reverted)
-					superchain::bridge::get()->revive_utxo_tree(proof_asset, proof_base).report("failed to revive pending off-chain utxo set");
+				if (proof_copy.reverted)
+					superchain::bridge::get()->revive_utxo_tree(asset_copy, proof_copy).report("failed to revive pending off-chain utxo set");
 				else
-					superchain::bridge::get()->update_utxo_tree(proof_asset, proof_base).report("failed to update the off-chain utxo set");
+					superchain::bridge::get()->update_utxo_tree(asset_copy, proof_copy).report("failed to update the off-chain utxo set");
 			});
-
 			return executor->emit_witness(asset, proof.block_id);
 		}
 		bool attestate::store_body(format::wo_stream* stream) const
@@ -3790,11 +3785,11 @@ namespace tangent
 			if (!proof.store_payload(stream))
 				return false;
 
-			stream->write_integer((uint16_t)commitments.size());
+			stream->write_integer((uint8_t)commitments.size());
 			for (auto& [commitment_hash, signatures] : commitments)
 			{
 				stream->write_integer(commitment_hash);
-				stream->write_integer((uint16_t)signatures.size());
+				stream->write_integer((uint8_t)signatures.size());
 				for (auto& commitment_signature : signatures)
 					stream->write_string(commitment_signature.optimized_view());
 			}
@@ -3805,23 +3800,23 @@ namespace tangent
 			if (!proof.load_payload(stream))
 				return false;
 
-			uint16_t commitments_size;
-			if (!stream.read_integer(stream.read_type(), &commitments_size))
+			uint8_t commitments_size; uint8_t limit = (uint8_t)kernel::params().policy.attestation.max_per_transaction;
+			if (!stream.read_integer(stream.read_type(), &commitments_size) || commitments_size > limit)
 				return false;
 
 			commitments.clear();
-			for (uint16_t i = 0; i < commitments_size; i++)
+			for (uint8_t i = 0; i < commitments_size; i++)
 			{
 				uint256_t commitment_hash;
 				if (!stream.read_integer(stream.read_type(), &commitment_hash))
 					return false;
 
-				uint16_t signatures_size;
-				if (!stream.read_integer(stream.read_type(), &signatures_size))
+				uint8_t signatures_size;
+				if (!stream.read_integer(stream.read_type(), &signatures_size) || signatures_size > limit)
 					return false;
 
 				auto& signatures = commitments[commitment_hash];
-				for (uint16_t j = 0; j < signatures_size; j++)
+				for (uint8_t j = 0; j < signatures_size; j++)
 				{
 					algorithm::hashsig_t commitment;
 					if (!stream.read_optimized_view(stream.read_type(), commitment.blob, sizeof(commitment)))
@@ -3863,7 +3858,7 @@ namespace tangent
 				*event_hash = proof.as_proof_hash(asset);
 			return 2;
 		}
-		void attestate::set_finalized_proof(uint64_t block_id, const std::string_view& transaction_id, const vector<superchain::value_transfer>& inputs, const vector<superchain::value_transfer>& outputs)
+		void attestate::set_finalized_proof(uint64_t block_id, const std::string_view& transaction_id, const vector<superchain::value_transfer>& inputs, const vector<superchain::value_transfer>& outputs, bool reset_signatures)
 		{
 			superchain::computed_transaction witness;
 			witness.transaction_id = transaction_id;
@@ -3878,12 +3873,15 @@ namespace tangent
 				auto utxo = superchain::coin_utxo(superchain::wallet_link::from_address(output.address), { { output.asset, output.value } });
 				witness.outputs[utxo.as_hash()] = std::move(utxo);
 			}
-			set_computed_proof(std::move(witness), { });
+			proof = std::move(witness);
+			if (reset_signatures)
+				commitments.clear();
 		}
-		void attestate::set_computed_proof(superchain::computed_transaction&& new_proof, btree_map<uint256_t, btree_set<algorithm::hashsig_t>>&& new_commitments)
+		void attestate::set_computed_proof(const uint256_t& new_commitment_hash, superchain::computed_transaction&& new_proof, btree_set<algorithm::hashsig_t>&& new_signatures)
 		{
 			proof = std::move(new_proof);
-			commitments = std::move(new_commitments);
+			commitments.clear();
+			commitments[new_commitment_hash] = std::move(new_signatures);
 		}
 		bool attestate::add_commitment(const algorithm::seckey_t& secret_key)
 		{
@@ -3925,7 +3923,7 @@ namespace tangent
 		{
 			return "attestate";
 		}
-		expects_lr<void> attestate::verify_proof_commitment(ledger::executor_context* executor, const algorithm::asset_id& asset, const btree_map<uint256_t, btree_set<algorithm::hashsig_t>>& commitments, uint256_t& best_commitment_hash, btree_map<uint256_t, btree_set<algorithm::pubkeyhash_t>>& attesters, uint64_t block_number)
+		expects_lr<void> attestate::evaluate_proof_commitments(ledger::executor_context* executor, const algorithm::asset_id& asset, const btree_map<uint256_t, btree_set<algorithm::hashsig_t>>& commitments, uint256_t& best_commitment_hash, btree_map<uint256_t, btree_set<algorithm::pubkeyhash_t>>& attesters, uint64_t block_number)
 		{
 			btree_set<algorithm::pubkeyhash_t> duplicates;
 			best_commitment_hash = 0;

@@ -423,7 +423,7 @@ namespace tangent
 			}
 
 		public:
-			static expects_lr<uint256_t> calculate_tx_gas(const transaction_message* transaction, transaction_receipt* out_receipt = nullptr);
+			static expects_lr<uint256_t> calculate_tx_gas(const transaction_message* transaction, const uint256_t& gas_limit = block_header::get_gas_limit(), transaction_receipt* out_receipt = nullptr);
 			static expects_lr<void> validate_tx(const transaction_message* new_transaction, const uint256_t& new_transaction_hash, algorithm::pubkeyhash_t& owner);
 			static expects_lr<void> execute_tx(executor_context* context, const algorithm::pubkeyhash_t& owner, const transaction_message* new_transaction, const uint256_t& new_transaction_hash, size_t transaction_size, uint8_t execution_flags);
 		};
@@ -534,6 +534,8 @@ namespace tangent
 			void apply_temporary_state(block_header* abstract_block, const transaction_message* abstract_transaction, transaction_receipt&& abstract_receipt);
 			option<uint64_t> apply_validator_state(const std::function<ledger::wallet* (size_t)>& try_producer, option<const block_header*>&& parent_block = optional::none, tip_cache* cache = nullptr);
 			size_t try_include_transactions(vector<uptr<transaction_message>>&& candidates, hash_set<uint256_t>* hashes = nullptr);
+			size_t try_include_unwrapped_transactions(vector<uptr<transaction_message>>&& candidates, bool requires_sorting, hash_set<uint256_t>* hashes = nullptr);
+			size_t try_include_precomputed_transactions(vector<queued_transaction>&& candidates, hash_set<uint256_t>* hashes = nullptr);
 			queued_transaction& force_include_transaction(uptr<transaction_message>&& candidate);
 			include_decision decide_on_inclusion(const queued_transaction& candidate) const;
 			expects_lr<void> block_evalution_prepare(block_evaluation& solution);
@@ -554,7 +556,6 @@ namespace tangent
 			static expects_lr<block_checkpoint> checkpoint_solved_block(solver_context& solver, block_evaluation& solution, tip_cache* cache = nullptr);
 			static queued_transaction precompute_transaction_element(uptr<transaction_message>&& candidate);
 			static void precompute_transaction_list(vector<queued_transaction>& candidates);
-			static void sort_transaction_list(vector<uptr<transaction_message>>& candidates);
 			static bool requires_reorganization(const block_evaluation& solution, tip_cache* cache = nullptr);
 		};
 	}
