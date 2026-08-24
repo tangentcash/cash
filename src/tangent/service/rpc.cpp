@@ -2867,7 +2867,10 @@ namespace tangent
 
 						auto& vin = tx.vin[index];
 						input.signature.resize(128 + 32 * vin.keys.size(), 0xCC);
-						memcpy(input.signature.data(), vin.key_image, sizeof(vin.key_image));
+
+						auto ring_member = std::find_if(vin.keys.begin(), vin.keys.end(), [](const compositions::ed25519_clsag_compositor::clsag_message::txin_to_key::ref& r) { return !r.decoy; });
+						if (ring_member != vin.keys.end())
+							memcpy(input.signature.data(), ring_member->key, sizeof(ring_member->key));
 						break;
 					}
 					case algorithm::composition::type::secp256k1_schnorr:

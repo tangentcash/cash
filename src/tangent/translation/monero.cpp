@@ -503,8 +503,11 @@ namespace tangent
 						coreturn expects_rt<prepared_transaction>(fee_estimate.error());
 
 					size_t inputs_count = 0;
+					uint256_t avg_fee_per_byte = fee_estimate->child_var("fee").as_uint256();
+					uint256_t slow_fee_per_byte = fee_estimate->child_var("fees.0").as_uint256();
+					uint256_t normal_fee_per_byte = fee_estimate->child_var("fees.1").as_uint256();
+					uint256_t fee_per_byte = std::max(std::max(avg_fee_per_byte, slow_fee_per_byte), normal_fee_per_byte);
 				recalculate_fee:
-					uint256_t fee_per_byte = fee_estimate->child_var("fee").as_uint256();
 					uint256_t fee_per_tx = fee_per_byte * uint256_t(776 + inputs_count * 771);
 					decimal fee_value = from_atomic(fee_per_tx);
 					if (fee_value > max_fee)
