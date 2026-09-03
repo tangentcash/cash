@@ -64,6 +64,8 @@ typedef struct
 	mpz_t n; 			/**< modulus n */
 } paillier_pubkey;
 
+PE_CPP_IMPORT void paillier_sha3_512n(const unsigned char* seed, size_t seed_len, unsigned char* out, size_t out_len);
+
 /** Memory allocation for public key
  *
  * @ingroup Paillier
@@ -122,6 +124,12 @@ PE_CPP_IMPORT void paillier_keypair_derive(
  */
 PE_CPP_IMPORT int paillier_encrypt(
 	mpz_t ciphertext,
+	mpz_t plaintext,
+	paillier_pubkey* pub);
+
+PE_CPP_IMPORT int paillier_encrypt_r(
+	mpz_t ciphertext,
+	mpz_t r,
 	mpz_t plaintext,
 	paillier_pubkey* pub);
 

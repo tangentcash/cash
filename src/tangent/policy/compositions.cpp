@@ -1,5 +1,5 @@
 #include "compositions.h"
-#include "../internal/paillier.h"
+#include "../internal/zk_paillier.h"
 extern "C"
 {
 #include <secp256k1.h>
@@ -17,8 +17,17 @@ namespace tangent
 {
 	namespace compositions
 	{
+		struct secp256k1_cache_t
+		{
+			hash_map<string, paillier_seckey> keys;
+			zk_paillier_setup zk;
+			std::mutex mutex;
+		};
+
 		typedef void(*gmp_free_t)(void*, size_t);
 		static gmp_free_t gmp_free = nullptr;
+		static secp256k1_cache_t* secp256k1_cache = nullptr;
+
 		inline bool mpz_import_buffer(const uint8_t* data, size_t size, mpz_t value, bool le = false)
 		{
 			if (!size || size > 4096)
@@ -38,11 +47,14 @@ namespace tangent
 			gmp_free(data, size);
 			return buffer;
 		}
-		inline curve_point from_compressed_point_secp256k1(const algorithm::storage_type<uint8_t, 33>& value)
+		inline option<curve_point> from_compressed_point_secp256k1(const algorithm::storage_type<uint8_t, 33>& value)
 		{
 			curve_point result;
 			bn_read_be(value.blob + 1, &result.x);
 			uncompress_coords(&secp256k1, value.blob[0], &result.x, &result.y);
+			if (ecdsa_validate_pubkey(&secp256k1, &result) != 1)
+				return optional::none;
+
 			return result;
 		}
 		inline algorithm::storage_type<uint8_t, 33> to_compressed_point_secp256k1(const curve_point& value)
@@ -63,6 +75,61 @@ namespace tangent
 			bn_write_be(&value, result.blob);
 			return result;
 		}
+		static void zk_paillier_store_key_proof(const zk_paillier_key_proof* paillier_key_proof, algorithm::paillier_scalar_t* proof)
+		{
+			VI_ASSERT(paillier_key_proof != nullptr, "key proof should be set");
+			VI_ASSERT(proof != nullptr, "proof should be set");
+			format::wo_stream message;
+			for (size_t i = 0; i < ZK_PAILLIER_M2; i++)
+				message.write_string(mpz_export_buffer(paillier_key_proof->sigma[i]));
+			proof->resize(message.data.size());
+			memcpy(proof->data(), message.data.data(), message.data.size());
+		}
+		static expects_lr<void> zk_paillier_load_key_proof(const algorithm::paillier_scalar_t& proof, zk_paillier_key_proof* paillier_key_proof)
+		{
+			string buffer;
+			format::ro_stream message = format::ro_stream(std::string_view((char*)proof.data(), proof.size()));
+			for (size_t i = 0; i < ZK_PAILLIER_M2; i++)
+			{
+				if (!message.read_string(message.read_type(), &buffer) || !mpz_import_buffer((uint8_t*)buffer.data(), buffer.size(), paillier_key_proof->sigma[i]))
+					return layer_exception("invalid sigma(i)");
+			}
+			return expectation::met;
+		}
+		static void zk_paillier_store_range_proof(const zk_paillier_range_proof* paillier_range_proof, algorithm::paillier_scalar_t* proof)
+		{
+			VI_ASSERT(paillier_range_proof != nullptr, "range proof should be set");
+			VI_ASSERT(proof != nullptr, "proof should be set");
+			format::wo_stream message;
+			message.write_string(mpz_export_buffer(paillier_range_proof->z));
+			message.write_string(mpz_export_buffer(paillier_range_proof->e));
+			message.write_string(mpz_export_buffer(paillier_range_proof->s));
+			message.write_string(mpz_export_buffer(paillier_range_proof->s1));
+			message.write_string(mpz_export_buffer(paillier_range_proof->s2));
+			proof->resize(message.data.size());
+			memcpy(proof->data(), message.data.data(), message.data.size());
+		}
+		static expects_lr<void> zk_paillier_load_range_proof(const algorithm::paillier_scalar_t& proof, zk_paillier_range_proof* paillier_range_proof)
+		{
+			string buffer;
+			format::ro_stream message = format::ro_stream(std::string_view((char*)proof.data(), proof.size()));
+			if (!message.read_string(message.read_type(), &buffer) || !mpz_import_buffer((uint8_t*)buffer.data(), buffer.size(), paillier_range_proof->z))
+				return layer_exception("invalid z");
+
+			if (!message.read_string(message.read_type(), &buffer) || !mpz_import_buffer((uint8_t*)buffer.data(), buffer.size(), paillier_range_proof->e))
+				return layer_exception("invalid e");
+
+			if (!message.read_string(message.read_type(), &buffer) || !mpz_import_buffer((uint8_t*)buffer.data(), buffer.size(), paillier_range_proof->s))
+				return layer_exception("invalid s");
+
+			if (!message.read_string(message.read_type(), &buffer) || !mpz_import_buffer((uint8_t*)buffer.data(), buffer.size(), paillier_range_proof->s1))
+				return layer_exception("invalid s1");
+
+			if (!message.read_string(message.read_type(), &buffer) || !mpz_import_buffer((uint8_t*)buffer.data(), buffer.size(), paillier_range_proof->s2))
+				return layer_exception("invalid s2");
+
+			return expectation::met;
+		}
 		static void paillier_store_public_key(const paillier_pubkey* paillier_public_key, algorithm::paillier_scalar_t* key)
 		{
 			VI_ASSERT(paillier_public_key != nullptr, "public key should be set");
@@ -74,7 +141,7 @@ namespace tangent
 		static expects_lr<void> paillier_load_public_key(const algorithm::paillier_scalar_t& key, paillier_pubkey* paillier_public_key, size_t expected_bit_size)
 		{
 			if (!mpz_import_buffer((uint8_t*)key.data(), key.size(), paillier_public_key->n))
-				return layer_exception("Invalid or dangerously large public key buffer");
+				return layer_exception("invalid or dangerously large public key buffer");
 
 			auto size = mpz_sizeinbase(paillier_public_key->n, 2);
 			if (mpz_sizeinbase(paillier_public_key->n, 2) < expected_bit_size)
@@ -393,6 +460,25 @@ namespace tangent
 				input_output->assign(input->begin(), input->end());
 
 			return expectation::met;
+		}
+		static void secp256k1_cache_clear(secp256k1_cache_t*& cache)
+		{
+			zk_paillier_setup_clear(&cache->zk);
+			memory::deinit(cache);
+		}
+		static secp256k1_cache_t* get_secp256k1_cache()
+		{
+			if (!secp256k1_cache)
+			{
+				secp256k1_cache_t* cache = memory::init<secp256k1_cache_t>();
+				zk_paillier_setup_init(&cache->zk);
+				zk_paillier_setup_secp256k1(&cache->zk);
+				if (secp256k1_cache)
+					secp256k1_cache_clear(cache);
+				else
+					secp256k1_cache = cache;
+			}
+			return secp256k1_cache;
 		}
 		static std::string_view to_optimized_uint256(const uint8_t blob[32])
 		{
@@ -2204,7 +2290,9 @@ namespace tangent
 			cumulative_r = secp256k1_point_t();
 			cumulative_s = secp256k1_scalar_t();
 			z_steps = 0; r_steps = p_steps = d_steps = s_steps = new_participants;
-			p_bits = 2048;
+			n_bits = 2048;
+			m1_bits = 768;
+			m2_bits = 896;
 			return expectation::met;
 		}
 		expects_lr<void> secp256k1_compositor::aggregate(const algorithm::composition::cseckey_t& secret_key)
@@ -2212,72 +2300,66 @@ namespace tangent
 			if (secret_key.size() != sizeof(secp256k1_scalar_t))
 				return layer_exception("invalid secret key size");
 
-			auto use_paillier_keypair = [&](paillier_pubkey* public_key, paillier_seckey* private_key, const bignum256* k, const bignum256* g)
+			auto build_p = [&](paillier_pubkey* public_key, paillier_seckey* private_key)
 			{
-				uint8_t seed[96];
-				bn_write_be(k, seed + 00);
-				bn_write_be(g, seed + 32);
-				memcpy(seed + 64, secret_key.data(), 32);
-				auto cache = algorithm::composition::pull_derivation_cache(std::string_view((char*)seed, sizeof(seed)));
-				if (cache)
+				uint8_t ask[32] = { 0 }, nonce[32] = { 0 }, index_nonce[32] = { 0 };
+				format::wo_stream seed; uint256_t index = 0;
+				seed.write_string("PAILLIER_KEY_PAIR_HEADER_PAYLOAD");
+				seed.write_string(std::string_view((char*)message_hash, sizeof(message_hash)));
+				seed.write_string(std::string_view((char*)secret_key.data(), secret_key.size()));
+				seed.write_integer(seed.hash());
+				seed.hash(true).encode(ask);
+				while (secp256k1_nonce_function_rfc6979(nonce, message_hash, ask, nullptr, index_nonce, 0) != 1)
+					(++index).encode(index_nonce);
+
+				uint8_t scalar[64];
+				sha3_512((uint8_t*)seed.data.data(), seed.data.size(), scalar);
+				secp256k1_cache_t* cache = get_secp256k1_cache();
+				umutex<std::mutex> unique(cache->mutex);
+				auto paillier_seckey_copy = [](const paillier_seckey* src, paillier_seckey* dest)
 				{
-					string intermediate; uint64_t len;
-					format::ro_stream message = format::ro_stream(*cache);
-					if (!message.read_integer(message.read_type(), &len))
-						goto paillier_keygen;
+					dest->len = src->len;
+					mpz_set(dest->lambda, src->lambda);
+					mpz_set(dest->mu, src->mu);
+					mpz_set(dest->p2, src->p2);
+					mpz_set(dest->q2, src->q2);
+					mpz_set(dest->p2invq2, src->p2invq2);
+					mpz_set(dest->ninv, src->ninv);
+					mpz_set(dest->n, src->n);
+				};
+				auto it = cache->keys.find(std::string_view((char*)scalar, sizeof(scalar)));
+				if (it == cache->keys.end())
+				{
+					unique.unlock();
+					paillier_keypair_derive(public_key, private_key, n_bits, scalar, sizeof(scalar));
+					unique.lock();
 
-					private_key->len = (mp_bitcnt_t)len;
-					if (!message.read_string(message.read_type(), &intermediate) || !mpz_import_buffer((uint8_t*)intermediate.data(), intermediate.size(), private_key->lambda))
-						goto paillier_keygen;
-
-					if (!message.read_string(message.read_type(), &intermediate) || !mpz_import_buffer((uint8_t*)intermediate.data(), intermediate.size(), private_key->mu))
-						goto paillier_keygen;
-
-					if (!message.read_string(message.read_type(), &intermediate) || !mpz_import_buffer((uint8_t*)intermediate.data(), intermediate.size(), private_key->p2))
-						goto paillier_keygen;
-
-					if (!message.read_string(message.read_type(), &intermediate) || !mpz_import_buffer((uint8_t*)intermediate.data(), intermediate.size(), private_key->q2))
-						goto paillier_keygen;
-
-					if (!message.read_string(message.read_type(), &intermediate) || !mpz_import_buffer((uint8_t*)intermediate.data(), intermediate.size(), private_key->p2invq2))
-						goto paillier_keygen;
-
-					if (!message.read_string(message.read_type(), &intermediate) || !mpz_import_buffer((uint8_t*)intermediate.data(), intermediate.size(), private_key->ninv))
-						goto paillier_keygen;
-
-					if (!message.read_string(message.read_type(), &intermediate) || !mpz_import_buffer((uint8_t*)intermediate.data(), intermediate.size(), private_key->n))
-						goto paillier_keygen;
-
-					mpz_set(public_key->n, private_key->n);
+					paillier_seckey& cache_key = cache->keys[string((char*)scalar, sizeof(scalar))];
+					paillier_seckey_init(&cache_key);
+					paillier_seckey_copy(private_key, &cache_key);
 				}
 				else
 				{
-				paillier_keygen:
-					format::wo_stream message;
-					paillier_keypair_derive(public_key, private_key, p_bits, seed, sizeof(seed));
-					message.write_integer((uint64_t)private_key->len);
-					message.write_string(mpz_export_buffer(private_key->lambda));
-					message.write_string(mpz_export_buffer(private_key->mu));
-					message.write_string(mpz_export_buffer(private_key->p2));
-					message.write_string(mpz_export_buffer(private_key->q2));
-					message.write_string(mpz_export_buffer(private_key->p2invq2));
-					message.write_string(mpz_export_buffer(private_key->ninv));
-					message.write_string(mpz_export_buffer(private_key->n));
-					algorithm::composition::push_derivation_cache(string((char*)seed, sizeof(seed)), std::move(message.data));
+					paillier_seckey_copy(&it->second, private_key);
+					paillier_seckey_clear(&it->second);
+					cache->keys.erase(it);
 				}
+				mpz_set(public_key->n, private_key->n);
 			};
-			auto use_local_n = [&](const std::string_view& domain, uint256_t& index, bignum256* output)
+			auto build_k = [&](uint256_t& index, bignum256* output)
 			{
-				format::wo_stream seed;
-				seed.write_string(domain);
+				uint8_t ask[32] = { 0 }, nonce[32] = { 0 }, index_nonce[32] = { 0 };
+				format::wo_stream seed, counter;
+				seed.write_string("K_NONCE_CHALLENGE_HEADER_PAYLOAD");
+				seed.write_string(std::string_view((char*)message_hash, sizeof(message_hash)));
 				seed.write_string(std::string_view((char*)secret_key.data(), secret_key.size()));
-
-				uint8_t ask[32] = { 0 }, nonce[32] = { 0 };
-				seed.hash().encode(ask);
+				seed.write_integer(seed.hash());
+				seed.hash(true).encode(ask);
 				while (true)
 				{
-					uint8_t index_nonce[32] = { 0 };
-					index.encode(index_nonce);
+					counter.data = seed.data;
+					counter.write_integer(index);
+					counter.hash(true).encode(index_nonce);
 					if (secp256k1_nonce_function_rfc6979(nonce, message_hash, ask, nullptr, index_nonce, 0) == 1)
 					{
 						bignum256 inverse, negate;
@@ -2295,7 +2377,32 @@ namespace tangent
 					++index;
 				}
 			};
-			auto use_local_s = [&](bignum256* s) -> bool
+			auto build_m = [&](const std::string_view& domain, size_t m_bits, mpz_t output)
+			{
+				string mask = string(m_bits / 8, '\0'); uint256_t index = 0;
+				uint8_t ask[32] = { 0 }, nonce[32] = { 0 }, index_nonce[32] = { 0 };
+				format::wo_stream seed, counter;
+				seed.write_string(domain);
+				seed.write_string(std::string_view((char*)message_hash, sizeof(message_hash)));
+				seed.write_string(std::string_view((char*)secret_key.data(), secret_key.size()));
+				seed.write_integer(seed.hash());
+				seed.hash(true).encode(ask);
+				while (true)
+				{
+					counter.data = seed.data;
+					counter.write_integer(index);
+					counter.hash(true).encode(index_nonce);
+					if (secp256k1_nonce_function_rfc6979(nonce, message_hash, ask, nullptr, index_nonce, 0) == 1)
+					{
+						paillier_sha3_512n(nonce, sizeof(nonce), (uint8_t*)mask.data(), mask.size());
+						mpz_import(output, mask.size(), 1, 1, 1, 0, mask.data());
+						if (mpz_odd_p(output) != 0 && m_bits == (size_t)mpz_sizeinbase(output, 2))
+							break;
+					}
+					++index;
+				}
+			};
+			auto build_s = [&](bignum256* s) -> bool
 			{
 				bignum256 n = { 0 };
 				bn_read_uint32((uint32_t)factors.size(), &n);
@@ -2307,9 +2414,12 @@ namespace tangent
 				if (bn_is_zero(&z))
 					return false;
 
-				curve_point r = from_compressed_point_secp256k1(cumulative_r);
+				auto r = from_compressed_point_secp256k1(cumulative_r);
+				if (!r)
+					return false;
+
 				bn_read_be(secret_key.data(), s);
-				bn_multiply(&r.x, s, &secp256k1.order);
+				bn_multiply(&r->x, s, &secp256k1.order);
 				bn_addmod(s, &z, &secp256k1.order);
 				return true;
 			};
@@ -2354,7 +2464,7 @@ namespace tangent
 				bignum256 k = { 0 };
 				auto& factor = factors[r_steps - 1];
 			retry_k_nonce:
-				use_local_n("KNONCE", factor.k_index, &k);
+				build_k(factor.k_index, &k);
 
 				curve_point r;
 				memset(&r, 0, sizeof(r));
@@ -2365,8 +2475,11 @@ namespace tangent
 				}
 				else if (!cumulative_r.empty())
 				{
-					curve_point prev_r = from_compressed_point_secp256k1(cumulative_r);
-					point_add(&secp256k1, &prev_r, &r);
+					auto prev_r = from_compressed_point_secp256k1(cumulative_r);
+					if (!prev_r)
+						return layer_exception("invalid r point");
+
+					point_add(&secp256k1, prev_r.address(), &r);
 				}
 
 				bn_mod(&r.x, &secp256k1.order);
@@ -2384,71 +2497,91 @@ namespace tangent
 				if (p_steps > factors.size())
 					return layer_exception("invalid compositor state");
 
-				uint256_t g_index = 0;
-				bignum256 g = { 0 }, k = { 0 };
-				auto& factor = factors[p_steps - 1];
-				use_local_n("GMASK", g_index, &g);
-				use_local_n("KNONCE", factor.k_index, &k);
-
 				bignum256 s = { 0 };
-				if (!use_local_s(&s))
+				if (!build_s(&s))
 					return layer_exception("invalid message scalar");
 
+				secp256k1_cache_t* cache = get_secp256k1_cache();
 				paillier_seckey paillier_secret_key;
 				paillier_pubkey paillier_public_key;
+				zk_paillier_key_proof paillier_key_proof;
+				zk_paillier_range_proof ciphertext_k_proof;
+				zk_paillier_range_proof ciphertext_s_proof;
 				paillier_seckey_init(&paillier_secret_key);
 				paillier_pubkey_init(&paillier_public_key);
-				use_paillier_keypair(&paillier_public_key, &paillier_secret_key, &k, &g);
-				paillier_store_public_key(&paillier_public_key, &factor.public_key);
+				zk_paillier_key_proof_init(&paillier_key_proof);
+				zk_paillier_range_proof_init(&ciphertext_k_proof);
+				zk_paillier_range_proof_init(&ciphertext_s_proof);
+				build_p(&paillier_public_key, &paillier_secret_key);
 
-				uint8_t k_buffer[32] = { 0 }, s_buffer[32] = { 0 };
+				bignum256 k = { 0 };
+				uint8_t k_buffer[32] = { 0 };
+				uint8_t s_buffer[32] = { 0 };
+				auto& factor = factors[p_steps - 1];
+				build_k(factor.k_index, &k);
 				bn_write_be(&k, k_buffer);
 				bn_write_be(&s, s_buffer);
 
-				mpz_t plaintext_k, ciphertext_k;
-				mpz_t plaintext_s, ciphertext_s;
+				mpz_t plaintext_k, ciphertext_k, ciphertext_k_r;
+				mpz_t plaintext_s, ciphertext_s, ciphertext_s_r;
 				mpz_init(plaintext_k);
 				mpz_init(ciphertext_k);
+				mpz_init(ciphertext_k_r);
 				mpz_init(plaintext_s);
 				mpz_init(ciphertext_s);
-				bool k_import = mpz_import_buffer(k_buffer, sizeof(k_buffer), plaintext_k);
-				bool s_import = mpz_import_buffer(s_buffer, sizeof(s_buffer), plaintext_s);
-				bool k_encrypt = paillier_encrypt(ciphertext_k, plaintext_k, &paillier_public_key) == 0;
-				bool s_encrypt = paillier_encrypt(ciphertext_s, plaintext_s, &paillier_public_key) == 0;
+				mpz_init(ciphertext_s_r);
+				bool k_encrypt = false, k_proven = false, s_encrypt = false, s_proven = false, key_proven = false;
+				parallel::wait_all(parallel::enqueue_all(
+				{
+					[&]() { k_encrypt = mpz_import_buffer(k_buffer, sizeof(k_buffer), plaintext_k) && paillier_encrypt_r(ciphertext_k, ciphertext_k_r, plaintext_k, &paillier_public_key) == 0; },
+					[&]() { s_encrypt = mpz_import_buffer(s_buffer, sizeof(s_buffer), plaintext_s) && paillier_encrypt_r(ciphertext_s, ciphertext_s_r, plaintext_s, &paillier_public_key) == 0; }
+				}));
+				parallel::wait_all(parallel::enqueue_all(
+				{
+					[&]() { key_proven = zk_paillier_prove_key(&paillier_key_proof, &paillier_secret_key) == 0; },
+					[&]() { k_proven = k_encrypt && zk_paillier_prove_range(&ciphertext_k_proof, plaintext_k, ciphertext_k, ciphertext_k_r, &paillier_secret_key, &cache->zk) == 0; },
+					[&]() { s_proven = s_encrypt && zk_paillier_prove_range(&ciphertext_s_proof, plaintext_s, ciphertext_s, ciphertext_s_r, &paillier_secret_key, &cache->zk) == 0; }
+				}));
 				auto k_export = mpz_export_buffer(ciphertext_k);
 				auto s_export = mpz_export_buffer(ciphertext_s);
+				algorithm::paillier_scalar_t public_key_export, public_key_proof_export;
+				algorithm::paillier_scalar_t encrypted_k_proof_export, encrypted_s_proof_export;
+				paillier_store_public_key(&paillier_public_key, &public_key_export);
+				zk_paillier_store_key_proof(&paillier_key_proof, &public_key_proof_export);
+				zk_paillier_store_range_proof(&ciphertext_k_proof, &encrypted_k_proof_export);
+				zk_paillier_store_range_proof(&ciphertext_s_proof, &encrypted_s_proof_export);
+				zk_paillier_key_proof_clear(&paillier_key_proof);
+				zk_paillier_range_proof_clear(&ciphertext_k_proof);
+				zk_paillier_range_proof_clear(&ciphertext_s_proof);
 				paillier_pubkey_clear(&paillier_public_key);
 				paillier_seckey_clear(&paillier_secret_key);
 				mpz_clear(plaintext_k);
 				mpz_clear(ciphertext_k);
+				mpz_clear(ciphertext_k_r);
 				mpz_clear(plaintext_s);
 				mpz_clear(ciphertext_s);
-				if (!k_import || !s_import || !k_encrypt || !s_encrypt || k_export.empty() || s_export.empty())
-					return layer_exception("x/y encrypted keygen failed");
+				mpz_clear(ciphertext_s_r);
+				if (!key_proven || !k_proven || !s_proven || !k_encrypt || !s_encrypt || k_export.empty() || s_export.empty() || public_key_export.empty() || public_key_proof_export.empty() || encrypted_k_proof_export.empty() || encrypted_s_proof_export.empty())
+					return layer_exception("k/s encrypted keygen failed");
 
-				factor.cumulative_x.resize(k_export.size());
-				factor.cumulative_y.resize(s_export.size());
-				memcpy(factor.cumulative_x.data(), k_export.data(), k_export.size());
-				memcpy(factor.cumulative_y.data(), s_export.data(), s_export.size());
+				factor.setup.public_key = std::move(public_key_export);
+				factor.setup.public_key_proof = std::move(public_key_proof_export);
+				factor.setup.encrypted_k_proof = std::move(encrypted_k_proof_export);
+				factor.setup.encrypted_s_proof = std::move(encrypted_s_proof_export);
+				factor.setup.encrypted_k.resize(k_export.size());
+				factor.setup.encrypted_s.resize(s_export.size());
+				memcpy(factor.setup.encrypted_k.data(), k_export.data(), k_export.size());
+				memcpy(factor.setup.encrypted_s.data(), s_export.data(), s_export.size());
 				--p_steps;
 			}
 			else if (d_steps > 0)
 			{
 				if (d_steps > factors.size())
 					return layer_exception("invalid compositor state");
-				
-				uint8_t g_buffer[32] = { 0 };
-				bignum256 g = { 0 }; uint256_t g_index = 0;
-				use_local_n("GMASK", g_index, &g);
-				bn_write_be(&g, g_buffer);
 
-				mpz_t g_i;
-				mpz_init(g_i);
-				if (!mpz_import_buffer(g_buffer, sizeof(g_buffer), g_i))
-				{
-					mpz_clear(g_i);
-					return layer_exception("invalid gamma factor");
-				}
+				mpz_t g_mask;
+				mpz_init(g_mask);
+				build_m("G_BLINDING_MASK", m1_bits, g_mask);
 
 				auto i = d_steps - 1;
 				auto& factor = factors[i];
@@ -2460,85 +2593,105 @@ namespace tangent
 						betas.emplace_back().index = j;
 				}
 
-				parallel::wail_all(parallel::for_each(betas.begin(), betas.end(), 1, [&](beta_state& state)
+				auto* cache = get_secp256k1_cache();
+				parallel::wait_all(parallel::for_each(betas.begin(), betas.end(), 1, [&](beta_state& state)
 				{
 					size_t j = state.index;
 					auto& jfactor = factors[j];
-					format::wo_stream x_b_domain, y_b_domain;
-					x_b_domain.write_integer((uint16_t)j);
-					x_b_domain.write_string("XBFACTOR");
-					y_b_domain.write_integer((uint16_t)j);
-					y_b_domain.write_string("YBFACTOR");
-
-					uint256_t x_b_index = 0, y_b_index = 0;
-					uint8_t x_b_buffer[32] = { 0 }, y_b_buffer[32] = { 0 };
-					bignum256 x_b = { 0 }, y_b = { 0 };
-					use_local_n(x_b_domain.data, x_b_index, &x_b);
-					use_local_n(y_b_domain.data, y_b_index, &y_b);
-					bn_cnegate(1, &x_b, &secp256k1.order);
-					bn_cnegate(1, &y_b, &secp256k1.order);
-					bn_mod(&x_b, &secp256k1.order);
-					bn_mod(&y_b, &secp256k1.order);
-					bn_write_be(&x_b, x_b_buffer);
-					bn_write_be(&y_b, y_b_buffer);
-
 					paillier_pubkey paillier_public_key;
 					paillier_pubkey_init(&paillier_public_key);
-					mpz_t x_d_j, x_b_j;
-					mpz_t y_d_j, y_b_j;
-					mpz_init(x_d_j);
-					mpz_init(x_b_j);
-					mpz_init(y_d_j);
-					mpz_init(y_b_j);
-
-					auto key_import = paillier_load_public_key(jfactor.public_key, &paillier_public_key, p_bits);
-					bool x_d_j_import = mpz_import_buffer(jfactor.cumulative_x.data(), jfactor.cumulative_x.size(), x_d_j);
-					bool x_b_j_import = mpz_import_buffer(x_b_buffer, sizeof(x_b_buffer), x_b_j);
-					bool y_d_j_import = mpz_import_buffer(jfactor.cumulative_y.data(), jfactor.cumulative_y.size(), y_d_j);
-					bool y_b_j_import = mpz_import_buffer(y_b_buffer, sizeof(y_b_buffer), y_b_j);
-					if (key_import && x_d_j_import && x_b_j_import && y_d_j_import && y_b_j_import)
+					auto key_import = paillier_load_public_key(jfactor.setup.public_key, &paillier_public_key, n_bits);
+					if (key_import)
 					{
-						paillier_homomorphic_mulc(x_d_j, x_d_j, g_i, &paillier_public_key);
-						paillier_homomorphic_mulc(y_d_j, y_d_j, g_i, &paillier_public_key);
-						bool x_d_j_add = paillier_homomorphic_addc(x_d_j, x_d_j, x_b_j, &paillier_public_key) == 0;
-						bool y_d_j_add = paillier_homomorphic_addc(y_d_j, y_d_j, y_b_j, &paillier_public_key) == 0;
-						if (x_d_j_add && !jfactor.cumulative_x_d.empty())
+						mpz_t x_d_j, y_d_j;
+						mpz_init(x_d_j);
+						mpz_init(y_d_j);
+						bool x_d_j_import = mpz_import_buffer(jfactor.setup.encrypted_k.data(), jfactor.setup.encrypted_k.size(), x_d_j);
+						bool y_d_j_import = mpz_import_buffer(jfactor.setup.encrypted_s.data(), jfactor.setup.encrypted_s.size(), y_d_j);
+						if (x_d_j_import && y_d_j_import)
 						{
-							x_d_j_add = x_d_j_add && mpz_import_buffer(jfactor.cumulative_x_d.data(), jfactor.cumulative_x_d.size(), x_b_j);
-							paillier_homomorphic_add(x_d_j, x_d_j, x_b_j, &paillier_public_key);
-						}
-						if (y_d_j_add && !jfactor.cumulative_y_d.empty())
-						{
-							y_d_j_add = y_d_j_add && mpz_import_buffer(jfactor.cumulative_y_d.data(), jfactor.cumulative_y_d.size(), y_b_j);
-							paillier_homomorphic_add(y_d_j, y_d_j, y_b_j, &paillier_public_key);
-						}
+							zk_paillier_key_proof key_proof;
+							zk_paillier_range_proof k_range_proof, s_range_proof;
+							zk_paillier_key_proof_init(&key_proof);
+							zk_paillier_range_proof_init(&k_range_proof);
+							zk_paillier_range_proof_init(&s_range_proof);
+							bool key_proven = zk_paillier_load_key_proof(jfactor.setup.public_key_proof, &key_proof) && zk_paillier_verify_key(&key_proof, &paillier_public_key, &cache->zk) == 1;
+							bool k_range_proven = zk_paillier_load_range_proof(jfactor.setup.encrypted_k_proof, &k_range_proof) && zk_paillier_verify_range(&k_range_proof, x_d_j, &paillier_public_key, &cache->zk) == 1;
+							bool s_range_proven = zk_paillier_load_range_proof(jfactor.setup.encrypted_s_proof, &s_range_proof) && zk_paillier_verify_range(&s_range_proof, y_d_j, &paillier_public_key, &cache->zk) == 1;
+							zk_paillier_range_proof_clear(&s_range_proof);
+							zk_paillier_range_proof_clear(&k_range_proof);
+							zk_paillier_key_proof_clear(&key_proof);
+							if (key_proven && k_range_proven && s_range_proven)
+							{
+								format::wo_stream x_b_domain, y_b_domain;
+								x_b_domain.write_integer((uint16_t)j);
+								x_b_domain.write_string("X_BLINDING_MASK");
+								y_b_domain.write_integer((uint16_t)j);
+								y_b_domain.write_string("Y_BLINDING_MASK");
 
-						auto x_d_j_export = mpz_export_buffer(x_d_j), y_d_j_export = mpz_export_buffer(y_d_j);
-						if (x_d_j_add && y_d_j_add && !x_d_j_export.empty() && !y_d_j_export.empty())
-						{
-							jfactor.cumulative_x_d.resize(x_d_j_export.size());
-							jfactor.cumulative_y_d.resize(y_d_j_export.size());
-							memcpy(jfactor.cumulative_x_d.data(), x_d_j_export.data(), x_d_j_export.size());
-							memcpy(jfactor.cumulative_y_d.data(), y_d_j_export.data(), y_d_j_export.size());
-							state.sanity_check = true;
+								mpz_t x_b_j, y_b_j;
+								mpz_init(x_b_j);
+								mpz_init(y_b_j);
+								build_m(x_b_domain.data, m2_bits, x_b_j);
+								build_m(y_b_domain.data, m2_bits, y_b_j);
+								mpz_sub(x_b_j, paillier_public_key.n, x_b_j);
+								mpz_sub(y_b_j, paillier_public_key.n, y_b_j);
+								if (x_d_j_import && y_d_j_import)
+								{
+									paillier_homomorphic_mulc(x_d_j, x_d_j, g_mask, &paillier_public_key);
+									paillier_homomorphic_mulc(y_d_j, y_d_j, g_mask, &paillier_public_key);
+									bool x_d_j_add = paillier_homomorphic_addc(x_d_j, x_d_j, x_b_j, &paillier_public_key) == 0;
+									bool y_d_j_add = paillier_homomorphic_addc(y_d_j, y_d_j, y_b_j, &paillier_public_key) == 0;
+									if (x_d_j_add && !jfactor.aggregate.encrypted_x_d.empty())
+									{
+										x_d_j_add = x_d_j_add && mpz_import_buffer(jfactor.aggregate.encrypted_x_d.data(), jfactor.aggregate.encrypted_x_d.size(), x_b_j);
+										paillier_homomorphic_add(x_d_j, x_d_j, x_b_j, &paillier_public_key);
+									}
+									if (y_d_j_add && !jfactor.aggregate.encrypted_y_d.empty())
+									{
+										y_d_j_add = y_d_j_add && mpz_import_buffer(jfactor.aggregate.encrypted_y_d.data(), jfactor.aggregate.encrypted_y_d.size(), y_b_j);
+										paillier_homomorphic_add(y_d_j, y_d_j, y_b_j, &paillier_public_key);
+									}
+
+									auto x_d_j_export = mpz_export_buffer(x_d_j), y_d_j_export = mpz_export_buffer(y_d_j);
+									if (x_d_j_add && y_d_j_add && !x_d_j_export.empty() && !y_d_j_export.empty())
+									{
+										jfactor.aggregate.encrypted_x_d.resize(x_d_j_export.size());
+										jfactor.aggregate.encrypted_y_d.resize(y_d_j_export.size());
+										memcpy(jfactor.aggregate.encrypted_x_d.data(), x_d_j_export.data(), x_d_j_export.size());
+										memcpy(jfactor.aggregate.encrypted_y_d.data(), y_d_j_export.data(), y_d_j_export.size());
+										state.sanity_check = true;
+									}
+								}
+								mpz_clear(x_b_j);
+								mpz_clear(y_b_j);
+							}
 						}
+						mpz_clear(x_d_j);
+						mpz_clear(y_d_j);
 					}
-
 					paillier_pubkey_clear(&paillier_public_key);
-					mpz_clear(x_d_j);
-					mpz_clear(x_b_j);
-					mpz_clear(y_d_j);
-					mpz_clear(y_b_j);
 				}));
 
-				mpz_clear(g_i);
+				mpz_clear(g_mask);
 				for (auto& state : betas)
 				{
 					if (!state.sanity_check)
-						return layer_exception("invalid x/y scalars, beta factors and/or paillier modulus");
+						return layer_exception("invalid k/s scalars and/or range proofs, beta factors and/or paillier modulus, paillier key proof");
 				}
 
-				--d_steps;
+				if (!--d_steps)
+				{
+					for (auto& jfactor : factors)
+					{
+						jfactor.setup.public_key.clear();
+						jfactor.setup.public_key_proof.clear();
+						jfactor.setup.encrypted_k.clear();
+						jfactor.setup.encrypted_k_proof.clear();
+						jfactor.setup.encrypted_s.clear();
+						jfactor.setup.encrypted_s_proof.clear();
+					}
+				}
 			}
 			else if (s_steps > 0)
 			{
@@ -2547,16 +2700,12 @@ namespace tangent
 
 				auto i = s_steps - 1;
 				auto& factor = factors[i];
-				uint256_t g_index = 0;
-				bignum256 g = { 0 }, k = { 0 };
-				use_local_n("GMASK", g_index, &g);
-				use_local_n("KNONCE", factor.k_index, &k);
-
-				uint8_t order_buffer[32] = { 0 }, x_d_buffer[32] = { 0 }, y_d_buffer[32] = { 0 };
-				bn_write_be(&secp256k1.order, order_buffer);
-
 				bignum256 s = { 0 };
-				if (!use_local_s(&s))
+				uint8_t x_d_buffer[32] = { 0 };
+				uint8_t y_d_buffer[32] = { 0 };
+				uint8_t order_buffer[32] = { 0 };
+				bn_write_be(&secp256k1.order, order_buffer);
+				if (!build_s(&s))
 					return layer_exception("invalid message scalar");
 
 				mpz_t order;
@@ -2571,10 +2720,10 @@ namespace tangent
 				paillier_pubkey paillier_public_key;
 				paillier_seckey_init(&paillier_secret_key);
 				paillier_pubkey_init(&paillier_public_key);
-				use_paillier_keypair(&paillier_public_key, &paillier_secret_key, &k, &g);
+				build_p(&paillier_public_key, &paillier_secret_key);
 				bool order_import = mpz_import_buffer(order_buffer, sizeof(order_buffer), order);
-				bool x_d_import = mpz_import_buffer(factor.cumulative_x_d.data(), factor.cumulative_x_d.size(), x_d_ciphertext);
-				bool y_d_import = mpz_import_buffer(factor.cumulative_y_d.data(), factor.cumulative_y_d.size(), y_d_ciphertext);
+				bool x_d_import = mpz_import_buffer(factor.aggregate.encrypted_x_d.data(), factor.aggregate.encrypted_x_d.size(), x_d_ciphertext);
+				bool y_d_import = mpz_import_buffer(factor.aggregate.encrypted_y_d.data(), factor.aggregate.encrypted_y_d.size(), y_d_ciphertext);
 				paillier_decrypt(x_d_plaintext, x_d_ciphertext, &paillier_secret_key);
 				paillier_decrypt(y_d_plaintext, y_d_ciphertext, &paillier_secret_key);
 				paillier_pubkey_clear(&paillier_public_key);
@@ -2591,15 +2740,18 @@ namespace tangent
 				mpz_clear(y_d_ciphertext);
 				mpz_clear(x_d_plaintext);
 				mpz_clear(y_d_plaintext);
-				mpz_clear(order);
 				if (!order_import || !x_d_import || !y_d_import || x_d_export.empty() || y_d_export.empty())
+				{
+					mpz_clear(order);
 					return layer_exception("x/y derivation failed");
+				}
 
-				bignum256 x_d = { 0 }, y_d = { 0 };
-				bn_read_be(x_d_buffer, &x_d);
-				bn_read_be(y_d_buffer, &y_d);
-
-				bignum256 x_b_sum = { 0 }, y_b_sum = { 0 };
+				mpz_t x_b, x_b_sum;
+				mpz_t y_b, y_b_sum;
+				mpz_init(x_b);
+				mpz_init(x_b_sum);
+				mpz_init(y_b);
+				mpz_init(y_b_sum);
 				for (size_t j = 0; j < factors.size(); j++)
 				{
 					if (i == j && factors.size() > 1)
@@ -2607,46 +2759,85 @@ namespace tangent
 
 					format::wo_stream x_b_domain, y_b_domain;
 					x_b_domain.write_integer((uint16_t)j);
-					x_b_domain.write_string("XBFACTOR");
+					x_b_domain.write_string("X_BLINDING_MASK");
 					y_b_domain.write_integer((uint16_t)j);
-					y_b_domain.write_string("YBFACTOR");
-
-					uint256_t x_b_index = 0, y_b_index = 0;
-					bignum256 x_b = { 0 }, y_b = { 0 };
-					use_local_n(x_b_domain.data, x_b_index, &x_b);
-					use_local_n(y_b_domain.data, y_b_index, &y_b);
-					bn_addmod(&x_b_sum, &x_b, &secp256k1.order);
-					bn_addmod(&y_b_sum, &y_b, &secp256k1.order);
+					y_b_domain.write_string("Y_BLINDING_MASK");
+					build_m(x_b_domain.data, m2_bits, x_b);
+					build_m(y_b_domain.data, m2_bits, y_b);
+					mpz_add(x_b_sum, x_b_sum, x_b);
+					mpz_add(y_b_sum, y_b_sum, y_b);
 				}
+				mpz_mod(x_b_sum, x_b_sum, order);
+				mpz_mod(y_b_sum, y_b_sum, order);
+				mpz_clear(x_b);
+				mpz_clear(y_b);
+
+				uint8_t x_b_s_buffer[32] = { 0 };
+				uint8_t y_b_s_buffer[32] = { 0 };
+				auto x_b_sum_export = mpz_export_buffer(x_b_sum);
+				auto y_b_sum_export = mpz_export_buffer(y_b_sum);
+				auto x_b_sum_size = std::min(sizeof(x_b_s_buffer), x_b_sum_export.size());
+				auto y_b_sum_size = std::min(sizeof(y_b_s_buffer), y_b_sum_export.size());
+				memcpy(x_b_s_buffer + (sizeof(x_b_s_buffer) - x_b_sum_size), x_b_sum_export.data(), x_b_sum_size);
+				memcpy(y_b_s_buffer + (sizeof(y_b_s_buffer) - y_b_sum_size), y_b_sum_export.data(), y_b_sum_size);
+				mpz_clear(x_b_sum);
+				mpz_clear(y_b_sum);
+				if (x_b_sum_export.empty() || y_b_sum_export.empty())
+				{
+					mpz_clear(order);
+					return layer_exception("x/y derivation failed");
+				}		
+
+				bignum256 x_d = { 0 }, y_d = { 0 };
+				bignum256 x_b_s = { 0 }, y_b_s = { 0 };
+				bn_read_be(x_d_buffer, &x_d);
+				bn_read_be(y_d_buffer, &y_d);
+				bn_read_be(x_b_s_buffer, &x_b_s);
+				bn_read_be(y_b_s_buffer, &y_b_s);
+
+				mpz_t g_mask;
+				mpz_init(g_mask);
+				build_m("G_BLINDING_MASK", m1_bits, g_mask);
+				mpz_mod(g_mask, g_mask, order);
+				mpz_clear(order);
+
+				uint8_t g_buffer[32] = { 0 };
+				auto g_export = mpz_export_buffer(g_mask);
+				auto g_size = std::min(sizeof(g_buffer), g_export.size());
+				memcpy(g_buffer + (sizeof(g_buffer) - g_size), g_export.data(), g_size);
+				mpz_clear(g_mask);
+				if (g_export.empty())
+					return layer_exception("g derivation failed");
+
+				bignum256 g = { 0 }, k = { 0 };
+				bn_read_be(g_buffer, &g);
+				build_k(factor.k_index, &k);
 
 				bignum256 kgxdxb = k, sgydyb = s;
 				bn_multiply(&g, &kgxdxb, &secp256k1.order);
-				bn_addmod(&kgxdxb, &x_b_sum, &secp256k1.order);
+				bn_addmod(&kgxdxb, &x_b_s, &secp256k1.order);
 				bn_addmod(&kgxdxb, &x_d, &secp256k1.order);
 				bn_multiply(&g, &sgydyb, &secp256k1.order);
-				bn_addmod(&sgydyb, &y_b_sum, &secp256k1.order);
+				bn_addmod(&sgydyb, &y_b_s, &secp256k1.order);
 				bn_addmod(&sgydyb, &y_d, &secp256k1.order);
 				if (bn_is_zero(&kgxdxb) || bn_is_zero(&sgydyb))
 					return layer_exception("invalid x/y subcoefficients");
 
-				factor.public_key.clear();
-				factor.cumulative_x_d.clear();
-				factor.cumulative_y_d.clear();
-				factor.cumulative_x.resize(sizeof(x_d_buffer));
-				factor.cumulative_y.resize(sizeof(y_d_buffer));
-				bn_write_be(&kgxdxb, factor.cumulative_x.data());
-				bn_write_be(&sgydyb, factor.cumulative_y.data());
+				factor.aggregate.encrypted_x_d.resize(sizeof(x_d_buffer));
+				factor.aggregate.encrypted_y_d.resize(sizeof(y_d_buffer));
+				bn_write_be(&kgxdxb, factor.aggregate.encrypted_x_d.data());
+				bn_write_be(&sgydyb, factor.aggregate.encrypted_y_d.data());
 				if (!--s_steps)
 				{
 					bignum256 x = { 0 }, y = { 0 };
 					for (auto& jfactor : factors)
 					{
-						if (jfactor.cumulative_x.size() != sizeof(x_d_buffer) || jfactor.cumulative_y.size() != sizeof(y_d_buffer))
+						if (jfactor.aggregate.encrypted_x_d.size() != sizeof(x_d_buffer) || jfactor.aggregate.encrypted_y_d.size() != sizeof(y_d_buffer))
 							return layer_exception("invalid x/y subcoefficients");
 
 						bignum256 x_i = { 0 }, y_i = { 0 };
-						bn_read_be(jfactor.cumulative_x.data(), &x_i);
-						bn_read_be(jfactor.cumulative_y.data(), &y_i);
+						bn_read_be(jfactor.aggregate.encrypted_x_d.data(), &x_i);
+						bn_read_be(jfactor.aggregate.encrypted_y_d.data(), &y_i);
 						bn_addmod(&x, &x_i, &secp256k1.order);
 						bn_addmod(&y, &y_i, &secp256k1.order);
 					}
@@ -2717,9 +2908,12 @@ namespace tangent
 				return status;
 
 			auto r = from_compressed_point_secp256k1(cumulative_r);
+			if (!r)
+				return layer_exception("invalid r point");
+
 			auto s = from_scalar_secp256k1(cumulative_s);
 			uint8_t signature_buffer[64];
-			bn_write_be(&r.x, signature_buffer);
+			bn_write_be(&r->x, signature_buffer);
 			bn_write_be(&s, signature_buffer + 32);
 			output->resize(65);
 
@@ -2861,7 +3055,9 @@ namespace tangent
 			stream->write_integer(p_steps);
 			stream->write_integer(d_steps);
 			stream->write_integer(s_steps);
-			stream->write_integer(p_bits);
+			stream->write_integer(n_bits);
+			stream->write_integer(m1_bits);
+			stream->write_integer(m2_bits);
 			stream->write_string(cumulative_key.optimized_view());
 			stream->write_string(cumulative_r.optimized_view());
 			stream->write_string(cumulative_s.optimized_view());
@@ -2870,11 +3066,14 @@ namespace tangent
 			for (auto& factor : factors)
 			{
 				stream->write_integer(factor.k_index);
-				stream->write_string(std::string_view((char*)factor.public_key.data(), factor.public_key.size()));
-				stream->write_string(std::string_view((char*)factor.cumulative_x.data(), factor.cumulative_x.size()));
-				stream->write_string(std::string_view((char*)factor.cumulative_x_d.data(), factor.cumulative_x_d.size()));
-				stream->write_string(std::string_view((char*)factor.cumulative_y.data(), factor.cumulative_y.size()));
-				stream->write_string(std::string_view((char*)factor.cumulative_y_d.data(), factor.cumulative_y_d.size()));
+				stream->write_string(std::string_view((char*)factor.setup.public_key.data(), factor.setup.public_key.size()));
+				stream->write_string(std::string_view((char*)factor.setup.public_key_proof.data(), factor.setup.public_key_proof.size()));
+				stream->write_string(std::string_view((char*)factor.setup.encrypted_k.data(), factor.setup.encrypted_k.size()));
+				stream->write_string(std::string_view((char*)factor.setup.encrypted_k_proof.data(), factor.setup.encrypted_k_proof.size()));
+				stream->write_string(std::string_view((char*)factor.setup.encrypted_s.data(), factor.setup.encrypted_s.size()));
+				stream->write_string(std::string_view((char*)factor.setup.encrypted_s_proof.data(), factor.setup.encrypted_s_proof.size()));
+				stream->write_string(std::string_view((char*)factor.aggregate.encrypted_x_d.data(), factor.aggregate.encrypted_x_d.size()));
+				stream->write_string(std::string_view((char*)factor.aggregate.encrypted_y_d.data(), factor.aggregate.encrypted_y_d.size()));
 			}
 			return true;
 		}
@@ -2895,7 +3094,13 @@ namespace tangent
 			if (!stream.read_integer(stream.read_type(), &s_steps))
 				return false;
 
-			if (!stream.read_integer(stream.read_type(), &p_bits))
+			if (!stream.read_integer(stream.read_type(), &n_bits))
+				return false;
+
+			if (!stream.read_integer(stream.read_type(), &m1_bits))
+				return false;
+
+			if (!stream.read_integer(stream.read_type(), &m2_bits))
 				return false;
 
 			if (!stream.read_optimized_view(stream.read_type(), cumulative_key.blob, sizeof(cumulative_key)))
@@ -2925,28 +3130,43 @@ namespace tangent
 				if (!stream.read_string(stream.read_type(), &intermediate))
 					return false;
 
-				factor.public_key.resize(intermediate.size());
-				memcpy(factor.public_key.data(), intermediate.data(), intermediate.size());
+				factor.setup.public_key.resize(intermediate.size());
+				memcpy(factor.setup.public_key.data(), intermediate.data(), intermediate.size());
 				if (!stream.read_string(stream.read_type(), &intermediate))
 					return false;
 
-				factor.cumulative_x.resize(intermediate.size());
-				memcpy(factor.cumulative_x.data(), intermediate.data(), intermediate.size());
+				factor.setup.public_key_proof.resize(intermediate.size());
+				memcpy(factor.setup.public_key_proof.data(), intermediate.data(), intermediate.size());
 				if (!stream.read_string(stream.read_type(), &intermediate))
 					return false;
 
-				factor.cumulative_x_d.resize(intermediate.size());
-				memcpy(factor.cumulative_x_d.data(), intermediate.data(), intermediate.size());
+				factor.setup.encrypted_k.resize(intermediate.size());
+				memcpy(factor.setup.encrypted_k.data(), intermediate.data(), intermediate.size());
 				if (!stream.read_string(stream.read_type(), &intermediate))
 					return false;
 
-				factor.cumulative_y.resize(intermediate.size());
-				memcpy(factor.cumulative_y.data(), intermediate.data(), intermediate.size());
+				factor.setup.encrypted_k_proof.resize(intermediate.size());
+				memcpy(factor.setup.encrypted_k_proof.data(), intermediate.data(), intermediate.size());
 				if (!stream.read_string(stream.read_type(), &intermediate))
 					return false;
 
-				factor.cumulative_y_d.resize(intermediate.size());
-				memcpy(factor.cumulative_y_d.data(), intermediate.data(), intermediate.size());
+				factor.setup.encrypted_s.resize(intermediate.size());
+				memcpy(factor.setup.encrypted_s.data(), intermediate.data(), intermediate.size());
+				if (!stream.read_string(stream.read_type(), &intermediate))
+					return false;
+
+				factor.setup.encrypted_s_proof.resize(intermediate.size());
+				memcpy(factor.setup.encrypted_s_proof.data(), intermediate.data(), intermediate.size());
+				if (!stream.read_string(stream.read_type(), &intermediate))
+					return false;
+
+				factor.aggregate.encrypted_x_d.resize(intermediate.size());
+				memcpy(factor.aggregate.encrypted_x_d.data(), intermediate.data(), intermediate.size());
+				if (!stream.read_string(stream.read_type(), &intermediate))
+					return false;
+
+				factor.aggregate.encrypted_y_d.resize(intermediate.size());
+				memcpy(factor.aggregate.encrypted_y_d.data(), intermediate.data(), intermediate.size());
 			}
 
 			return true;
@@ -2954,7 +3174,7 @@ namespace tangent
 		bool secp256k1_compositor::may_transition_to(const compositor& next_ptr) const
 		{
 			auto* next = (const secp256k1_compositor*)&next_ptr;
-			if (factors.size() != next->factors.size() || p_bits != next->p_bits || memcmp(message_hash, next->message_hash, sizeof(message_hash)) != 0)
+			if (factors.size() != next->factors.size() || n_bits != next->n_bits || m1_bits != next->m1_bits || m2_bits != next->m2_bits || memcmp(message_hash, next->message_hash, sizeof(message_hash)) != 0)
 				return false;
 
 			if ((z_steps == next->z_steps) != cumulative_key.equals(next->cumulative_key))
@@ -2963,30 +3183,121 @@ namespace tangent
 			if ((r_steps == next->r_steps) != cumulative_r.equals(next->cumulative_r))
 				return false;
 
+			bool x_d_const = false, y_d_const = false;
 			for (size_t i = 0; i < factors.size(); i++)
 			{
 				auto& prev_factor = factors[i];
-				auto& next_factor = factors[i];
-				if (prev_factor.public_key != next_factor.public_key && !prev_factor.public_key.empty() && !next_factor.public_key.empty())
-					return false;
-
-				if (prev_factor.cumulative_x != next_factor.cumulative_x && !prev_factor.cumulative_x.empty() && !next_factor.cumulative_x.empty())
-					return false;
-
-				if (prev_factor.cumulative_x_d != next_factor.cumulative_x_d && !prev_factor.cumulative_x_d.empty() && !next_factor.cumulative_x_d.empty())
-					return false;
-
-				if (prev_factor.cumulative_y != next_factor.cumulative_y && !prev_factor.cumulative_y.empty() && !next_factor.cumulative_y.empty())
-					return false;
-
-				if (prev_factor.cumulative_y_d != next_factor.cumulative_y_d && !prev_factor.cumulative_y_d.empty() && !next_factor.cumulative_y_d.empty())
-					return false;
-
+				auto& next_factor = next->factors[i];
 				if (prev_factor.k_index != next_factor.k_index && prev_factor.k_index > 0)
 					return false;
+
+				if (z_steps > 0 || r_steps > 0 || !d_steps)
+				{
+					if (!prev_factor.setup.public_key.empty() || !next_factor.setup.public_key.empty())
+						return false;
+
+					if (!prev_factor.setup.public_key_proof.empty() || !next_factor.setup.public_key_proof.empty())
+						return false;
+
+					if (!prev_factor.setup.encrypted_k.empty() || !next_factor.setup.encrypted_k.empty())
+						return false;
+
+					if (!prev_factor.setup.encrypted_k_proof.empty() || !next_factor.setup.encrypted_k_proof.empty())
+						return false;
+
+					if (!prev_factor.setup.encrypted_s.empty() || !next_factor.setup.encrypted_s.empty())
+						return false;
+
+					if (!prev_factor.setup.encrypted_s_proof.empty() || !next_factor.setup.encrypted_s_proof.empty())
+						return false;
+
+					if (d_steps > 0)
+					{
+						if (!prev_factor.aggregate.encrypted_x_d.empty() || !next_factor.aggregate.encrypted_x_d.empty())
+							return false;
+
+						if (!prev_factor.aggregate.encrypted_y_d.empty() || !next_factor.aggregate.encrypted_y_d.empty())
+							return false;
+					}
+					else
+					{
+						if (prev_factor.aggregate.encrypted_x_d.empty() || next_factor.aggregate.encrypted_x_d.empty())
+							return false;
+
+						if (prev_factor.aggregate.encrypted_y_d.empty() || next_factor.aggregate.encrypted_y_d.empty())
+							return false;
+					}
+				}
+				else if (p_steps > 0)
+				{
+					if (!prev_factor.setup.public_key.empty() && prev_factor.setup.public_key != next_factor.setup.public_key)
+						return false;
+
+					if (!prev_factor.setup.public_key_proof.empty() && prev_factor.setup.public_key_proof != next_factor.setup.public_key_proof)
+						return false;
+
+					if (!prev_factor.setup.encrypted_k.empty() && prev_factor.setup.encrypted_k != next_factor.setup.encrypted_k)
+						return false;
+
+					if (!prev_factor.setup.encrypted_k_proof.empty() && prev_factor.setup.encrypted_k_proof != next_factor.setup.encrypted_k_proof)
+						return false;
+
+					if (!prev_factor.setup.encrypted_s.empty() && prev_factor.setup.encrypted_s != next_factor.setup.encrypted_s)
+						return false;
+
+					if (!prev_factor.setup.encrypted_s_proof.empty() && prev_factor.setup.encrypted_s_proof != next_factor.setup.encrypted_s_proof)
+						return false;
+
+					if (!prev_factor.aggregate.encrypted_x_d.empty() || !next_factor.aggregate.encrypted_x_d.empty())
+						return false;
+
+					if (!prev_factor.aggregate.encrypted_y_d.empty() || !next_factor.aggregate.encrypted_y_d.empty())
+						return false;
+				}
+				else if (d_steps > 0)
+				{
+					if (next->d_steps > 0 ? prev_factor.setup.public_key != next_factor.setup.public_key : (!next_factor.setup.public_key.empty()))
+						return false;
+
+					if (next->d_steps > 0 ? prev_factor.setup.public_key_proof != next_factor.setup.public_key_proof : (!next_factor.setup.public_key_proof.empty()))
+						return false;
+
+					if (next->d_steps > 0 ? prev_factor.setup.encrypted_k != next_factor.setup.encrypted_k : (!next_factor.setup.encrypted_k.empty()))
+						return false;
+
+					if (next->d_steps > 0 ? prev_factor.setup.encrypted_k_proof != next_factor.setup.encrypted_k_proof : (!next_factor.setup.encrypted_k_proof.empty()))
+						return false;
+
+					if (next->d_steps > 0 ? prev_factor.setup.encrypted_s != next_factor.setup.encrypted_s : (!next_factor.setup.encrypted_s.empty()))
+						return false;
+
+					if (next->d_steps > 0 ? prev_factor.setup.encrypted_s_proof != next_factor.setup.encrypted_s_proof : (!next_factor.setup.encrypted_s_proof.empty()))
+						return false;
+
+					if (prev_factor.aggregate.encrypted_x_d == next_factor.aggregate.encrypted_x_d)
+					{
+						if (x_d_const)
+							return false;
+						else
+							x_d_const = true;
+					}
+
+					if (prev_factor.aggregate.encrypted_y_d == next_factor.aggregate.encrypted_y_d)
+					{
+						if (y_d_const)
+							return false;
+						else
+							y_d_const = true;
+					}
+				}
 			}
 
 			return steps_left() >= next->steps_left();
+		}
+		void secp256k1_compositor::deinitialize_cache()
+		{
+			if (secp256k1_cache != nullptr)
+				secp256k1_cache_clear(secp256k1_cache);
 		}
 
 		expects_lr<void> secp256k1_schnorr_compositor::setup_public_key(const uint8_t* new_message, size_t new_message_size, uint16_t new_participants)
@@ -3113,8 +3424,11 @@ namespace tangent
 
 				if (!cumulative_r.empty())
 				{
-					curve_point prev_r = from_compressed_point_secp256k1(cumulative_r);
-					point_add(&secp256k1, &prev_r, &r);
+					auto prev_r = from_compressed_point_secp256k1(cumulative_r);
+					if (!prev_r)
+						return layer_exception("invalid r point");
+
+					point_add(&secp256k1, prev_r.address(), &r);
 					if (point_is_infinity(&r) || bn_is_zero(&r.x) || bn_is_odd(&r.y))
 						goto retry_nonce;
 				}
@@ -3136,8 +3450,8 @@ namespace tangent
 					return layer_exception("bad message");
 
 				bignum256 e;
-				curve_point r = from_compressed_point_secp256k1(cumulative_r);
-				if (!use_challenge(&e, r, message_hash, cumulative_key))
+				auto r = from_compressed_point_secp256k1(cumulative_r);
+				if (!r || !use_challenge(&e, *r, message_hash, cumulative_key))
 					return layer_exception("invalid public r");
 
 				bignum256 k;
@@ -3225,8 +3539,11 @@ namespace tangent
 
 			output->resize(64);
 			auto r = from_compressed_point_secp256k1(cumulative_r);
+			if (!r)
+				return layer_exception("invalid r point");
+
 			auto s = from_scalar_secp256k1(cumulative_s);
-			bn_write_be(&r.x, output->data());
+			bn_write_be(&r->x, output->data());
 			bn_write_be(&s, output->data() + 32);
 			return verify_signature(message_hash, sizeof(message_hash), *output, public_key);
 		}

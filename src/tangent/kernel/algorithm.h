@@ -317,7 +317,7 @@ namespace tangent
 				}
 
 				t x = t(1) << (sizeof(t) * 8 - 1 - count) / 2;
-				while (true)
+				while (x)
 				{
 					t x_new = (x + n / x) / 2;
 					if (x_new >= x)
@@ -425,15 +425,8 @@ namespace tangent
 				~keypair();
 			};
 
-		private:
-			static hash_map<string, string>* derivation_cache;
-			static std::mutex* derivation_mutex;
-
 		public:
-			static void initialize_cache();
-			static void deinitialize_cache();
-			static void push_derivation_cache(string&& key, string&& value);
-			static option<string> pull_derivation_cache(const std::string_view& key);
+			static void deinitialize();
 			static expects_lr<keypair> derive_keypair(type alg, const uint8_t* seed, size_t seed_size);
 			static expects_lr<cpubkey_t> derive_public_key(type alg, const cseckey_t& secret_key);
 			static expects_lr<uptr<compositor>> make_compositor(type alg);

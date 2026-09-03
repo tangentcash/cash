@@ -310,13 +310,14 @@ namespace tangent
 		struct anticast final : ledger::transaction_message
 		{
 			uint256_t broadcast_hash = 0;
+			uint256_t attestate_hash = 0;
 
 			expects_lr<void> validate(uint64_t block_number) const override;
 			expects_lr<void> execute(ledger::executor_context* executor) const override;
 			bool store_body(format::wo_stream* stream) const override;
 			bool load_body(format::ro_stream& stream) override;
 			bool recover_many(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const override;
-			void set_protest(const uint256_t& new_broadcast_hash);
+			void set_reconcile(const uint256_t& new_broadcast_hash, const uint256_t& new_attestate_hash);
 			format::tree as_tree() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;

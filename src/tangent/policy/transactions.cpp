@@ -3303,72 +3303,145 @@ namespace tangent
 			if (!origin)
 				return layer_exception("origin transaction not found");
 
-			if (executor->receipt.from != origin->receipt.from)
-				return layer_exception("origin transaction not valid");
-
 			auto* origin_transaction = (withdraw*)*origin->transaction;
-			auto witness = executor->get_witness_transaction(origin_transaction->asset, parent_transaction->proof->hashdata);
-			if (witness)
-				return layer_exception("broadcast is considered final either by attestation or older protest");
-
-			auto time_lock = kernel::params().policy.attestation.confirmation_time / kernel::params().policy.pow.time;
-			auto time_delta = parent->receipt.block_number < executor->receipt.block_number ? executor->receipt.block_number - parent->receipt.block_number : 0;
-			if (time_delta <= time_lock)
-				return layer_exception("broadcast time lock active - retry after block number " + to_string(parent->receipt.block_number + time_lock));
-
 			auto base_asset = algorithm::asset::base_id_of(origin_transaction->asset);
-			auto finalization = executor->apply_witness_transaction(base_asset, parent_transaction->proof->hashdata);
-			if (!finalization)
-				return finalization.error();
-
-			auto token_transfer = executor->apply_transfer(origin_transaction->asset, origin->receipt.from, decimal::zero(), -origin_transaction->value);
-			if (!token_transfer)
-				return token_transfer.error();
-
-			auto attester = origin_transaction->get_attester(origin->receipt);
-			auto bridge = executor->get_bridge_instance(base_asset, origin_transaction->bridge_hash);
-			if (!bridge)
-				return bridge.error();
-
-			auto queue = executor->apply_bridge_queue(base_asset, origin_transaction->bridge_hash, origin->receipt.transaction_hash, false);
-			if (!queue)
-				return queue.error();
-
-			auto proof_base = parent_transaction->proof->as_computed();
-			auto proof_asset = algorithm::asset::base_id_of(origin_transaction->asset);
-			executor->defer_side_effect([proof_asset, proof_base = std::move(proof_base)]() mutable
+			auto witness = executor->get_witness_transaction(base_asset, parent_transaction->proof->hashdata);
+			if (witness)
 			{
-				superchain::bridge::get()->revive_utxo_tree(proof_asset, proof_base).report("failed to revive pending off-chain utxo set");
-			});
+				if (!attestate_hash)
+					return layer_exception("broadcast is considered final either by attestation or older anticast");
 
-			auto prev_attestation = executor->get_validator_attestation_reward(base_asset, attester);
-			if (!prev_attestation)
-				return expectation::met;
+				auto confirmation = executor->get_block_transaction<attestate>(attestate_hash, true);
+				if (!confirmation)
+					return layer_exception("confirmation transaction not found");
 
-			auto reward_unspent = bridge->fee_rate;
-			auto reward_spent = reward_unspent * kernel::params().policy.attestation.fee_rate;
-			reward_unspent -= reward_spent;
+				auto* confirmation_transaction = (attestate*)*confirmation->transaction;
+				if (confirmation_transaction->proof.transaction_id != parent_transaction->proof->hashdata || algorithm::asset::base_id_of(confirmation_transaction->asset) != algorithm::asset::base_id_of(origin_transaction->asset))
+					return layer_exception("confirmation transaction not valid");
 
-			auto next_attestation = executor->apply_validator_attestation_reward(base_asset, attester, -reward_spent);
-			if (!next_attestation)
-				return next_attestation.error();
+				auto reconcile_id = parent_transaction->proof->hashdata + ":r";
+				witness = executor->get_witness_transaction(base_asset, reconcile_id);
+				if (witness)
+					return layer_exception("reconcile act is considered final by older anticast");
 
-			reward_spent = std::max(decimal::zero(), prev_attestation->reward - next_attestation->reward);
-			token_transfer = executor->apply_transfer(base_asset, origin->receipt.from, reward_unspent + reward_spent, decimal::zero());
-			if (!token_transfer)
-				return token_transfer.error();
+				decimal delta_value = decimal::zero(), delta_mirror_value = decimal::zero();
+				for (auto& input : parent_transaction->proof->prepared.inputs)
+				{
+					delta_value += input.utxo.get_asset(base_asset) == origin_transaction->asset ? input.utxo.value : decimal::zero();
+					for (auto& [hash, token] : input.utxo.tokens)
+						delta_value += token.get_asset(base_asset) == origin_transaction->asset ? token.value : decimal::zero();
+				}
+				for (auto& [hash, output] : confirmation_transaction->proof.outputs)
+				{
+					delta_value -= output.get_asset(base_asset) == origin_transaction->asset ? output.value : decimal::zero();
+					for (auto& [token_hash, token] : output.tokens)
+						delta_value -= token.get_asset(base_asset) == origin_transaction->asset ? token.value : decimal::zero();
+				}
+				for (auto& [hash, input] : confirmation_transaction->proof.inputs)
+				{
+					delta_mirror_value -= input.get_asset(base_asset) == origin_transaction->asset ? input.value : decimal::zero();
+					for (auto& [token_hash, token] : input.tokens)
+						delta_mirror_value -= token.get_asset(base_asset) == origin_transaction->asset ? token.value : decimal::zero();
+				}
+				for (auto& output : parent_transaction->proof->prepared.outputs)
+				{
+					delta_mirror_value += output.get_asset(base_asset) == origin_transaction->asset ? output.value : decimal::zero();
+					for (auto& [token_hash, token] : output.tokens)
+						delta_mirror_value += token.get_asset(base_asset) == origin_transaction->asset ? token.value : decimal::zero();
+				}
+
+				if (!delta_value.is_positive() || !delta_mirror_value.is_positive() || delta_value != delta_mirror_value)
+					return layer_exception("asset over-reservation not detected");
+
+				auto balance = executor->get_account_balance(origin_transaction->asset, origin->receipt.from);
+				if (!balance || balance->supply < delta_value || balance->reserve < delta_value)
+					return layer_exception("over-reserved asset balance not found");
+
+				auto finalization = executor->apply_witness_transaction(base_asset, reconcile_id);
+				if (!finalization)
+					return finalization.error();
+
+				auto reconcile_transfer = executor->apply_transfer(origin_transaction->asset, origin->receipt.from, decimal::zero(), -delta_value);
+				if (!reconcile_transfer)
+					return reconcile_transfer.error();
+			}
+			else
+			{
+				if (attestate_hash > 0)
+					return layer_exception("attestate transaction hash not expected");
+
+				auto time_lock = kernel::params().policy.attestation.confirmation_time / kernel::params().policy.pow.time;
+				auto time_delta = parent->receipt.block_number < executor->receipt.block_number ? executor->receipt.block_number - parent->receipt.block_number : 0;
+				if (time_delta <= time_lock)
+					return layer_exception("broadcast time lock active - retry after block number " + to_string(parent->receipt.block_number + time_lock));
+
+				auto finalization = executor->apply_witness_transaction(base_asset, parent_transaction->proof->hashdata);
+				if (!finalization)
+					return finalization.error();
+
+				auto token_transfer = executor->apply_transfer(origin_transaction->asset, origin->receipt.from, decimal::zero(), -origin_transaction->value);
+				if (!token_transfer)
+					return token_transfer.error();
+
+				auto attester = origin_transaction->get_attester(origin->receipt);
+				auto bridge = executor->get_bridge_instance(base_asset, origin_transaction->bridge_hash);
+				if (!bridge)
+					return bridge.error();
+
+				auto queue = executor->apply_bridge_queue(base_asset, origin_transaction->bridge_hash, origin->receipt.transaction_hash, false);
+				if (!queue)
+					return queue.error();
+
+				auto proof_base = parent_transaction->proof->as_computed();
+				auto proof_asset = algorithm::asset::base_id_of(origin_transaction->asset);
+				executor->defer_side_effect([proof_asset, proof_base = std::move(proof_base)]() mutable
+				{
+					superchain::bridge::get()->revive_utxo_tree(proof_asset, proof_base).report("failed to revive pending off-chain utxo set");
+				});
+
+				auto prev_attestation = executor->get_validator_attestation_reward(base_asset, attester);
+				if (!prev_attestation)
+					return expectation::met;
+
+				auto reward_unspent = bridge->fee_rate;
+				auto reward_spent = reward_unspent * kernel::params().policy.attestation.fee_rate;
+				reward_unspent -= reward_spent;
+
+				auto next_attestation = executor->apply_validator_attestation_reward(base_asset, attester, -reward_spent);
+				if (!next_attestation)
+					return next_attestation.error();
+
+				reward_spent = std::max(decimal::zero(), prev_attestation->reward - next_attestation->reward);
+				token_transfer = executor->apply_transfer(base_asset, origin->receipt.from, reward_unspent + reward_spent, decimal::zero());
+				if (!token_transfer)
+					return token_transfer.error();
+			}
 
 			return expectation::met;
 		}
 		bool anticast::store_body(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
+			if (attestate_hash > 0)
+			{
+				stream->write_boolean(true);
+				stream->write_integer(attestate_hash);
+			}
 			stream->write_integer(broadcast_hash);
 			return true;
 		}
 		bool anticast::load_body(format::ro_stream& stream)
 		{
-			if (!stream.read_integer(stream.read_type(), &broadcast_hash))
+			auto type = stream.read_type();
+			if (type == format::viewable::true_type)
+			{
+				if (!stream.read_integer(stream.read_type(), &attestate_hash))
+					return false;
+
+				type = stream.read_type();
+			}
+
+			if (!stream.read_integer(type, &broadcast_hash))
 				return false;
 
 			return true;
@@ -3382,14 +3455,16 @@ namespace tangent
 			parties.insert(algorithm::pubkeyhash_t(parent->receipt.from));
 			return true;
 		}
-		void anticast::set_protest(const uint256_t& new_broadcast_hash)
+		void anticast::set_reconcile(const uint256_t& new_broadcast_hash, const uint256_t& new_attestate_hash)
 		{
 			broadcast_hash = new_broadcast_hash;
+			attestate_hash = new_attestate_hash;
 		}
 		format::tree anticast::as_tree() const
 		{
 			format::tree data = ledger::transaction_message::as_tree();
 			data.set("broadcast_hash", format::variable(algorithm::encoding::encode_0xhex256(broadcast_hash)));
+			data.set("attestate_hash", format::variable(algorithm::encoding::encode_0xhex256(attestate_hash)));
 			return data;
 		}
 		uint32_t anticast::as_type() const
@@ -3478,7 +3553,7 @@ namespace tangent
 
 			uint256_t bridge_hash = 0;
 			decimal network_fee = decimal::zero();
-			algorithm::pubkeyhash_t depositor_account;
+			algorithm::pubkeyhash_t depositor_account = proof.memo;
 			bool signers_hardening = kernel::params().on(fork_id::key_bind_commitment, executor->receipt.block_number);
 			for (auto& [hash, input] : proof.inputs)
 			{

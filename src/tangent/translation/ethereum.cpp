@@ -288,6 +288,32 @@ namespace tangent
 				eth_abi_free(&evm);
 				return raw_data;
 			}
+			ethereum::binary_data_t ethereum::sc_call::coin_transfer_v0(const algorithm::pubkeyhash_t& receiver)
+			{
+				auto eth_like_address = format::util::encode_0xhex(receiver.view());
+				string raw_data;
+				struct eth_abi evm;
+				eth_abi_init(&evm, ETH_ABI_ENCODE);
+				eth_abi_address336(&evm, &eth_like_address);
+				eth_abi_to_bytes(&evm, &raw_data);
+				eth_abi_free(&evm);
+				return raw_data;
+			}
+			ethereum::binary_data_t ethereum::sc_call::token_transfer_v0(const string& address, const uint256_t& value, const algorithm::pubkeyhash_t& receiver)
+			{
+				auto eth_like_address = format::util::encode_0xhex(receiver.view());
+				string raw_data;
+				struct eth_abi evm;
+				eth_abi_init(&evm, ETH_ABI_ENCODE);
+				eth_abi_call_begin(&evm, sc_function::transfer());
+				eth_abi_address336(&evm, &address);
+				eth_abi_uint256(&evm, &value);
+				eth_abi_call_end(&evm);
+				eth_abi_address336(&evm, &eth_like_address);
+				eth_abi_to_bytes(&evm, &raw_data);
+				eth_abi_free(&evm);
+				return raw_data;
+			}
 
 			const char* ethereum::nd_call::get_block_by_number()
 			{
@@ -346,6 +372,112 @@ namespace tangent
 				netdata.sync_latency = 64;
 				netdata.divisibility = algorithm::arithmetic::fixed("1000000000000000000");
 				netdata.transaction_expires = false;
+			}
+			expects_promise_rt<uint64_t> ethereum::get_linked_block_height(uint64_t seen_block_height)
+			{
+				auto unseen_block_height = get_unseen_slot(seen_block_height);
+				if (unseen_block_height)
+					return expects_promise_rt<uint64_t>(*unseen_block_height);
+
+				std::string_view blockbook_ptr = "blockbook";
+				std::string_view blockscout_ptr = "blockscout";
+				bool blockbook = has_connection(blockbook_ptr);
+				bool blockscout = has_connection(blockscout_ptr);
+				if (!blockbook && !blockscout)
+					return expects_promise_rt<uint64_t>(remote_exception(stringify::text("connection (peer) with type \"%.*s\" or \"%.*s\" is required for EVM block linker", (int)blockbook_ptr.size(), blockbook_ptr.data(), (int)blockscout_ptr.size(), blockscout_ptr.data())));
+
+				return coasync<expects_rt<uint64_t>>([this, seen_block_height, blockbook, blockscout, blockbook_ptr, blockscout_ptr]() -> expects_promise_rt<uint64_t>
+				{
+					size_t offset = 0;
+					while (true)
+					{
+						auto links = find_linked_addresses(offset, ELEMENTS_MANY);
+						if (!links)
+							break;
+
+						for (auto& link : *links)
+						{
+							if (!link.second.address.empty())
+								linker.accounts.insert(link.second.address);
+						}
+
+						offset += links->size();
+						if (links->size() != ELEMENTS_MANY)
+							break;
+					}
+
+					if (blockbook)
+					{
+						for (auto& account : linker.accounts)
+						{
+							auto path = stringify::text("/api/v2/address/%s?details=txslight", account.c_str());
+							if (seen_block_height > 0)
+								path.append("&from=").append(to_string(seen_block_height));
+
+							auto result = coawait(execute_http("GET", path, std::string_view(), std::string_view(), cache_policy::no_cache, blockbook_ptr));
+							auto* subresult = result ? result->child("transactions") : nullptr;
+							if (!subresult || subresult->childs().empty())
+								continue;
+
+							auto& transactions = subresult->childs();
+							for (size_t i = 0; i < transactions.size(); i++)
+							{
+								auto& transaction = transactions[i];
+								uint64_t block_height = transaction.child_var("blockHeight").as_uint64();
+								if (block_height <= seen_block_height)
+									break;
+
+								linker.blocks[block_height].insert(account);
+							}
+						}
+					}
+					else if (blockscout)
+					{
+						auto chain_id = coawait(get_chain_id());
+						if (!chain_id)
+							coreturn expects_rt<uint64_t>(std::move(chain_id.error()));
+
+						uint64_t chain_id_value = (uint64_t)*chain_id;
+						for (auto& account : linker.accounts)
+						{
+							uint64_t index = 0;
+						lookback:
+							auto path = stringify::text("%" PRIu64 "/api/v2/addresses/%s/transactions?items_count=5", chain_id_value, account.c_str());
+							if (index > 0)
+								path.append("&index=").append(to_string(index));
+
+							auto result = coawait(execute_http("GET", path, std::string_view(), std::string_view(), cache_policy::no_cache, blockscout_ptr));
+							auto* subresult = result ? result->child("items") : nullptr;
+							if (!subresult || subresult->childs().empty())
+								continue;
+
+							auto& transactions = subresult->childs(); bool eof = false;
+							for (size_t i = 0; i < transactions.size(); i++)
+							{
+								auto& transaction = transactions[i];
+								uint64_t block_height = transaction.child_var("block_number").as_uint64();
+								eof = (block_height <= seen_block_height);
+								if (eof)
+									break;
+
+								linker.blocks[block_height].insert(account);
+							}
+
+							uint64_t next_index = result->child_var("next_page_params.index").as_uint64();
+							if (!eof && next_index > 0 && next_index != index)
+							{
+								index = next_index;
+								goto lookback;
+							}
+						}
+					}
+
+					auto unseen_block_height = get_unseen_slot(seen_block_height);
+					if (unseen_block_height)
+						coreturn* unseen_block_height;
+
+					coreturn remote_exception::retry_later();
+				});
 			}
 			expects_promise_rt<format::tree> ethereum::get_transaction_receipt(const std::string_view& transaction_id, bool cached)
 			{
@@ -654,6 +786,7 @@ namespace tangent
 						result.add_output(std::move(output));
 					}
 
+					result.memo = decode_memo(data);
 					coreturn expects_rt<computed_transaction>(std::move(result));
 				});
 			}
@@ -1065,6 +1198,12 @@ namespace tangent
 				address_map result = { { (uint8_t)1, encode_eth_address(encode_0xhex_checksum(public_key_hash, sizeof(public_key_hash))) } };
 				return expects_lr<address_map>(std::move(result));
 			}
+			option<uint64_t> ethereum::get_unseen_slot(uint64_t target_block_height)
+			{
+				while (!linker.blocks.empty() && linker.blocks.begin()->first <= target_block_height)
+					linker.blocks.erase(linker.blocks.begin());
+				return linker.blocks.empty() ? option<uint64_t>(optional::none) : option<uint64_t>(linker.blocks.begin()->first);
+			}
 			const ethereum::chainparams& ethereum::get_chainparams() const
 			{
 				return netdata;
@@ -1091,6 +1230,23 @@ namespace tangent
 						VI_PANIC(false, "invalid network type");
 						return nullptr;
 				}
+			}
+			algorithm::pubkeyhash_t ethereum::decode_memo(const std::string_view& calldata)
+			{
+				size_t pads = calldata.size() / 64;
+				if (pads != 1 && pads != 3)
+					return algorithm::pubkeyhash_t();
+
+				auto raw = format::util::decode_0xhex(calldata.substr(calldata.size() - 64));
+				if (raw.size() != 32)
+					return algorithm::pubkeyhash_t();
+
+				uint8_t checksum[32];
+				algorithm::hashing::hash256((uint8_t*)raw.data() + 12, 20, checksum);
+				if (memcmp(raw.data(), checksum + 20, 12) != 0)
+					return algorithm::pubkeyhash_t();
+
+				return algorithm::pubkeyhash_t(std::string_view(raw).substr(12));
 			}
 			string ethereum::encode_0xhex(const std::string_view& data)
 			{
@@ -1229,6 +1385,10 @@ namespace tangent
 			}
 
 			zksync::zksync(const algorithm::asset_id& new_asset) noexcept : ethereum(new_asset)
+			{
+			}
+
+			robinhood::robinhood(const algorithm::asset_id& new_asset) noexcept : ethereum(new_asset)
 			{
 			}
 		}

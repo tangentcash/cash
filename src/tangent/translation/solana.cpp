@@ -148,26 +148,26 @@ namespace tangent
 						map.push(std::move(options));
 
 						auto result = coawait(execute_rpc(nd_call::get_signatures_for_address(), std::move(map), cache_policy::no_cache));
-						if (result && !result->childs().empty())
-						{
-							auto& transactions = result->childs(); bool eof = false;
-							for (size_t i = 0; i < transactions.size(); i++)
-							{
-								auto& transaction = transactions[i];
-								uint64_t slot = transaction.child_var("slot").as_uint64();
-								eof = (slot <= seen_block_height);
-								if (eof)
-									break;
+						if (!result || result->childs().empty())
+							continue;
 
-								auto& slots = linker.slots[slot];
-								watcher.must_pull_accounts = watcher.can_pull_accounts && (slots.find(account) == slots.end());
-								slots.insert(account);
-								if (i == result->childs().size() - 1)
-									before_signature = transaction.child_var("signature").as_blob();
-							}
-							if (!eof && !before_signature.empty())
-								goto lookback;
+						auto& transactions = result->childs(); bool eof = false;
+						for (size_t i = 0; i < transactions.size(); i++)
+						{
+							auto& transaction = transactions[i];
+							uint64_t slot = transaction.child_var("slot").as_uint64();
+							eof = (slot <= seen_block_height);
+							if (eof)
+								break;
+
+							auto& slots = linker.slots[slot];
+							watcher.must_pull_accounts = watcher.can_pull_accounts && (slots.find(account) == slots.end());
+							slots.insert(account);
+							if (i == result->childs().size() - 1)
+								before_signature = transaction.child_var("signature").as_blob();
 						}
+						if (!eof && !before_signature.empty())
+							goto lookback;
 					}
 
 					auto unseen_block_height = get_unseen_slot(seen_block_height);
@@ -315,9 +315,26 @@ namespace tangent
 						auto* info = instruction.child("parsed.info");
 						auto type = instruction.child_var("parsed.type").as_blob();
 						if (!info || type.empty())
-							continue;
-
-						if (type == "transfer" || type == "transferWithSeed")
+						{
+							if (tx.memo.empty())
+							{
+								auto program = instruction.child_var("program").as_blob();
+								auto program_id = instruction.child_var("programId").as_blob();
+								auto memo = format::util::decode_0xhex(instruction.child_var("parsed").as_blob());
+								if (memo.size() == 64 && program == "spl-memo" && (program_id == "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr" || program_id == "Memo4c2pN8afCj432Lb7RMVKi9PbQnnW7ewFFaV3oAH"))
+								{
+									auto raw = format::util::decode_0xhex(memo);
+									if (raw.size() == 32)
+									{
+										uint8_t checksum[32];
+										algorithm::hashing::hash256((uint8_t*)raw.data() + 12, 20, checksum);
+										if (memcmp(raw.data(), checksum + 20, 12) == 0)
+											tx.memo = algorithm::pubkeyhash_t(std::string_view(raw).substr(12));
+									}
+								}
+							}
+						}
+						else if (type == "transfer" || type == "transferWithSeed")
 						{
 							auto from = info->child_var("source").as_blob();
 							auto to = info->child_var("destination").as_blob();
@@ -646,6 +663,11 @@ namespace tangent
 					transaction.value = (to.value * (from_token ? from_token->divisibility : netdata.divisibility)).to_uint64();
 					transaction.decimals = (uint8_t)((from_token ? from_token->divisibility : netdata.divisibility).to_string().size() - 1);
 
+					auto to_value = to.value;
+					to_value.truncate(transaction.decimals);
+					if (!contract_address)
+						total_value = to_value + fee_value;
+
 					vector<uint8_t> message_buffer = tx_message_serialize(&transaction);
 					if (message_buffer.empty())
 						coreturn expects_rt<prepared_transaction>(remote_exception("tx serialization error (one or more addresses is invalid)"));
@@ -657,10 +679,10 @@ namespace tangent
 					auto public_key = algorithm::composition::to_cstorage<algorithm::composition::cpubkey_t>(*signing_public_key);
 					prepared_transaction result;
 					if (contract_address)
-						result.requires_account_input(algorithm::composition::type::ed25519, wallet_link(from_link), public_key, message_buffer.data(), message_buffer.size(), { { to.asset, to.value }, { native_asset, fee_value } });
+						result.requires_account_input(algorithm::composition::type::ed25519, wallet_link(from_link), public_key, message_buffer.data(), message_buffer.size(), { { to.asset, to_value }, { native_asset, fee_value } });
 					else
 						result.requires_account_input(algorithm::composition::type::ed25519, wallet_link(from_link), public_key, message_buffer.data(), message_buffer.size(), { { native_asset, total_value } });
-					result.requires_account_output(to.address, { { to.asset, to.value } });
+					result.requires_account_output(to.address, { { to.asset, to_value } });
 					result.requires_abi(format::variable(from_token ? from_token->divisibility : netdata.divisibility));
 					result.requires_abi(format::variable(from_token ? from_token->mint : string()));
 					result.requires_abi(format::variable(transaction.token_program_address));
@@ -675,8 +697,14 @@ namespace tangent
 				if (prepared.abi.size() != 6)
 					return layer_exception("invalid prepared abi");
 
+				if (prepared.inputs.size() != 1 || prepared.outputs.size() != 1)
+					return layer_exception("invalid in/out size");
+
 				auto& input = prepared.inputs.front();
 				auto& output = prepared.outputs.front();
+				if (input.utxo.tokens.size() != output.tokens.size() || input.utxo.tokens.size() > 1)
+					return layer_exception("invalid in/out tokens size");
+
 				auto divisibility = prepared.abi[0].as_decimal();
 				sol_transaction transaction;
 				transaction.mint_address = prepared.abi[1].as_blob();
@@ -703,6 +731,19 @@ namespace tangent
 				transaction_data.resize(transaction_data_size);
 				if (!b58enc(transaction_data.data(), &transaction_data_size, &transaction_buffer[0], transaction_buffer.size()))
 					return layer_exception("tx serialization error");
+
+				auto native_decimals = (uint8_t)(netdata.divisibility.to_string().size() - 1);
+				input.utxo.value.truncate(native_decimals);
+				output.value.truncate(native_decimals);
+				if (!input.utxo.tokens.empty())
+				{
+					auto input_token = input.utxo.tokens.begin();
+					auto output_token = output.tokens.begin();
+					input_token->second.value.truncate(transaction.decimals);
+					output_token->second.value.truncate(transaction.decimals);
+					if (input_token->second.value != output_token->second.value)
+						return layer_exception("invalid in/out value");
+				}
 
 				transaction_data.resize(transaction_data_size - 1);
 				auto result = finalized_transaction(std::move(prepared), std::move(transaction_data), string((char*)transaction_id, transaction_id_size - 1));

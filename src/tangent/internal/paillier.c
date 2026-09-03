@@ -37,7 +37,7 @@ typedef struct
 	mpz_t modulus; /**< modulus of exponentiation */
 } exp_args;
 
-void sha3_512n(const unsigned char* seed, size_t seed_len, unsigned char* out, size_t out_len)
+void paillier_sha3_512n(const unsigned char* seed, size_t seed_len, unsigned char* out, size_t out_len)
 {
 	unsigned char state[64];
 	unsigned char block[64];
@@ -101,7 +101,7 @@ void mpz_derive_prime(mpz_t prime, mp_bitcnt_t len, uint8_t preseed[64])
 	do
 	{
 		sha3_512(preseed, 64, preseed);
-		sha3_512n(preseed, 64, seed, seed_size);
+		paillier_sha3_512n(preseed, 64, seed, seed_size);
 		sha3_512(seed, seed_size, preseed);
 		mpz_import(random_num, seed_size, 1, 1, 1, 0, seed);
 		mpz_setbit(random_num, len - 1);
@@ -387,6 +387,15 @@ retry:
  */
 int paillier_encrypt(mpz_t ciphertext, mpz_t plaintext, paillier_pubkey* pub)
 {
+	mpz_t r;
+	mpz_init(r);
+	int ok = paillier_encrypt_r(ciphertext, r, plaintext, pub);
+	mpz_clear(r);
+	return ok;
+}
+
+int paillier_encrypt_r(mpz_t ciphertext, mpz_t r_out, mpz_t plaintext, paillier_pubkey* pub)
+{
 	mpz_t n2, r;
 	mpz_init(n2);
 	mpz_init(r);
@@ -403,7 +412,6 @@ retry:
 	{
 		free(seed);
 		mpz_clear(n2);
-		mpz_clear(r);
 		return -1;
 	}
 
@@ -412,6 +420,7 @@ retry:
 	if (mpz_cmp_ui(r, 0) == 0)
 		goto retry;
 
+	mpz_set(r_out, r);
 	free(seed);
 
 	//compute r^n mod n2
@@ -425,7 +434,6 @@ retry:
 	mpz_mul(ciphertext, ciphertext, r);
 	mpz_mod(ciphertext, ciphertext, n2);
 	mpz_clear(n2);
-	mpz_clear(r);
 	return 0;
 }
 

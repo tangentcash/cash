@@ -863,9 +863,9 @@ namespace tangent
 			if (state != nullptr)
 			{
 				auto task_queue2 = parallel::for_each_sequential(state->begin(), state->end(), state->size(), ELEMENTS_FEW, [](const std::pair<const string, block_state::state_change>& item) { item.second.state->as_hash(); });
-				parallel::wail_all(std::move(task_queue2));
+				parallel::wait_all(std::move(task_queue2));
 			}
-			parallel::wail_all(std::move(task_queue1));
+			parallel::wait_all(std::move(task_queue1));
 
 			vector<uint256_t> transaction_tree;
 			transaction_tree.reserve(transactions.size() + 1);
@@ -3838,7 +3838,7 @@ namespace tangent
 		}
 		void solver_context::precompute_transaction_list(vector<queued_transaction>& candidates)
 		{
-			parallel::wail_all(parallel::for_each(candidates.begin(), candidates.end(), ELEMENTS_FEW, [](queued_transaction& item)
+			parallel::wait_all(parallel::for_each(candidates.begin(), candidates.end(), ELEMENTS_FEW, [](queued_transaction& item)
 			{
 				item.hash = item.candidate->as_hash();
 				if (!item.owner.empty())

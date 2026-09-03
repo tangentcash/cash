@@ -1548,7 +1548,7 @@ namespace tangent
 			format::variables result;
 			result.resize(headers->size() + 1);
 			result[0] = format::variable(branch_number + headers->size() - 1);
-			parallel::wail_all(parallel::for_loop(result.size() - 1, ELEMENTS_BULK, [&](size_t i)
+			parallel::wait_all(parallel::for_loop(result.size() - 1, ELEMENTS_BULK, [&](size_t i)
 			{
 				result[i + 1] = format::variable(headers->at(i).as_message().data);
 			}));
@@ -1602,7 +1602,7 @@ namespace tangent
 
 			format::variables result;
 			result.resize(blocks->size());
-			parallel::wail_all(parallel::for_loop(result.size(), ELEMENTS_BULK, [&](size_t i)
+			parallel::wait_all(parallel::for_loop(result.size(), ELEMENTS_BULK, [&](size_t i)
 			{
 				result[i] = format::variable(blocks->at(i).as_message().data);
 			}));
@@ -1744,6 +1744,8 @@ namespace tangent
 					if (descriptor.first.services.has_attestation && transactions::attestate::commit_to_proof(asset, receipt, descriptor.second.secret_key, commitment_hash, commitment_signature))
 						signatures.insert(commitment_signature);
 				}
+				if (signatures.empty())
+					continue;
 
 				auto finalization = accept_committed_attestation(asset, receipt, signatures);
 				if (finalization)
@@ -3289,7 +3291,7 @@ namespace tangent
 					for (auto& [asset, block_height] : witnesses)
 					{
 						auto earlist_block_height = offchain->get_earliest_scanned_block_height(asset);
-						if (!earlist_block_height || *earlist_block_height > block_height)
+						if (!earlist_block_height)
 							offchain->scan_from_block_height(asset, block_height);
 					}
 					witnesses.clear();

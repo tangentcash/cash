@@ -97,6 +97,7 @@ namespace tangent
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
 			static string mockup_target_broadcast_error();
+			static string mockup_target_broadcast_underflow();
 			static string mockup_target_attestate_error();
 			static string mockup_target_attestate_absent();
 			static expects_promise_rt<superchain::prepared_transaction> prepare_transaction(const algorithm::asset_id& asset, const superchain::wallet_link& from_link, const superchain::value_transfer& to, const decimal& max_fee);

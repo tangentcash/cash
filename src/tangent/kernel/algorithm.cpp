@@ -52,7 +52,7 @@ namespace tangent
 			if (!stream.read_string(stream.read_type(), &input_p) || (size_limit > 0 && input_p.size() > size_limit))
 				return false;
 
-			if (!stream.read_string(stream.read_type(), &input_y) || (size_limit > 0 && input_p.size() > size_limit))
+			if (!stream.read_string(stream.read_type(), &input_y) || (size_limit > 0 && input_y.size() > size_limit))
 				return false;
 
 			mpz_init(p);
@@ -1363,39 +1363,9 @@ namespace tangent
 			std::fill(public_key.begin(), public_key.end(), 0);
 		}
 
-		void composition::initialize_cache()
+		void composition::deinitialize()
 		{
-			derivation_cache = memory::init<hash_map<string, string>>();
-			derivation_mutex = memory::init<std::mutex>();
-		}
-		void composition::deinitialize_cache()
-		{
-			memory::deinit(derivation_cache);
-			memory::deinit(derivation_mutex);
-		}
-		void composition::push_derivation_cache(string&& key, string&& value)
-		{
-			if (!derivation_cache || !derivation_mutex)
-				return;
-
-			umutex<std::mutex> unique(*derivation_mutex);
-			if (derivation_cache->size() + 1 > COMPOSITION_CACHE_KEYS)
-				derivation_cache->clear();
-			derivation_cache->insert(std::make_pair(std::move(key), std::move(value)));
-		}
-		option<string> composition::pull_derivation_cache(const std::string_view& key)
-		{
-			if (!derivation_cache || !derivation_mutex)
-				return optional::none;
-
-			umutex<std::mutex> unique(*derivation_mutex);
-			auto it = derivation_cache->find(key);
-			if (it == derivation_cache->end())
-				return optional::none;
-
-			auto result = std::move(it->second);
-			derivation_cache->erase(it);
-			return option<string>(std::move(result));
+			compositions::secp256k1_compositor::deinitialize_cache();
 		}
 		expects_lr<composition::keypair> composition::derive_keypair(type alg, const uint8_t* seed, size_t seed_size)
 		{
@@ -1512,8 +1482,6 @@ namespace tangent
 
 			return expects_lr<uptr<composition::compositor>>(std::move(state_ptr));
 		}
-		hash_map<string, string>* composition::derivation_cache;
-		std::mutex* composition::derivation_mutex;
 
 		void keypair_utils::convert_to_secret_key_ed25519(uint8_t secret_key[32])
 		{

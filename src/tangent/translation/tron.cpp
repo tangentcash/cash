@@ -419,6 +419,7 @@ namespace tangent
 						result.add_output(std::move(output));
 					}
 
+					result.memo = decode_memo(data);
 					coreturn expects_rt<computed_transaction>(std::move(result));
 				});
 			}

@@ -1723,13 +1723,17 @@ namespace tangent
 		{
 			return "0xbad0000000000000000000000000000000000001";
 		}
-		string broadcast_delegation::mockup_target_attestate_error()
+		string broadcast_delegation::mockup_target_broadcast_underflow()
 		{
 			return "0xbad0000000000000000000000000000000000002";
 		}
-		string broadcast_delegation::mockup_target_attestate_absent()
+		string broadcast_delegation::mockup_target_attestate_error()
 		{
 			return "0xbad0000000000000000000000000000000000003";
+		}
+		string broadcast_delegation::mockup_target_attestate_absent()
+		{
+			return "0xbad0000000000000000000000000000000000004";
 		}
 		expects_promise_rt<superchain::prepared_transaction> broadcast_delegation::prepare_transaction(const algorithm::asset_id& asset, const superchain::wallet_link& from_link, const superchain::value_transfer& to, const decimal& max_fee)
 		{
@@ -1811,6 +1815,19 @@ namespace tangent
 			{
 				auto computed = finalized.as_computed();
 				computed.reverted = finalized.prepared.outputs.front().link.address == mockup_target_attestate_error();
+				if (!computed.reverted && finalized.prepared.outputs.front().link.address == mockup_target_broadcast_underflow())
+				{
+					for (auto& [hash, input] : computed.inputs)
+					{
+						for (auto& token : input.tokens)
+							token.second.value.truncate(2);
+					}
+					for (auto& [hash, output] : computed.outputs)
+					{
+						for (auto& token : output.tokens)
+							token.second.value.truncate(2);
+					}
+				}
 
 				auto* transaction = memory::init<transactions::attestate>();
 				transaction->asset = asset;

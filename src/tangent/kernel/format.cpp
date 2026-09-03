@@ -1,6 +1,6 @@
 #include "format.h"
 #include "algorithm.h"
-#include <rapidjson/document.h>
+#include <rapidjson/reader.h>
 extern "C"
 {
 #include "../internal/memzero.h"
@@ -10,6 +10,140 @@ namespace tangent
 {
 	namespace format
 	{
+		struct json_tree_handler : public rapidjson::BaseReaderHandler<rapidjson::UTF8<>, json_tree_handler>
+		{
+			tree root;
+			string key;
+			vector<tree*> stack;
+
+			tree* Top()
+			{
+				return stack.empty() ? &root : stack.back();
+			}
+			bool StartObject()
+			{
+				auto* item = Top();
+				if (item->is_flat())
+				{
+					item->key = key;
+					item->type = structure::map;
+					stack.emplace_back(item);
+					key.clear();
+				}
+				else if (item->is_map())
+				{
+					stack.emplace_back(Top()->set(key, tree::map()));
+					key.clear();
+				}
+				else if (item->is_list())
+					stack.emplace_back(Top()->push(tree::map()));
+				return stack.size() < 1024;
+			}
+			bool EndObject(rapidjson::SizeType size)
+			{
+				if (stack.empty() || stack.back()->childs().size() != (size_t)size)
+					return false;
+				
+				stack.pop_back();
+				return true;
+			}
+			bool StartArray()
+			{
+				auto* item = Top();
+				if (item->is_flat())
+				{
+					item->key = key;
+					item->type = structure::list;
+					stack.emplace_back(item);
+					key.clear();
+				}
+				else if (item->is_map())
+				{
+					stack.emplace_back(Top()->set(key, tree::list()));
+					key.clear();
+				}
+				else if (item->is_list())
+					stack.emplace_back(Top()->push(tree::list()));
+				return stack.size() < 1024;
+			}
+			bool EndArray(rapidjson::SizeType size)
+			{
+				return EndObject(size);
+			}
+			bool Key(const char* buffer, rapidjson::SizeType buffer_size, bool copy)
+			{
+				key.assign(buffer, (size_t)buffer_size);
+				return true;
+			}
+			bool Value(variable&& value)
+			{
+				auto* item = Top();
+				if (item->is_flat())
+				{
+					item->key = key;
+					item->value = std::move(value);
+					key.clear();
+				}
+				else if (item->is_map())
+				{
+					item->set(key, std::move(value));
+					key.clear();
+				}
+				else if (item->is_list())
+					item->push(std::move(value));
+				return true;
+			}
+			bool Null()
+			{
+				return Value(variable());
+			}
+			bool Bool(bool value)
+			{
+				return Value(variable(value));
+			}
+			bool Int(int value)
+			{
+				return Int64((int64_t)value);
+			}
+			bool Uint(unsigned value)
+			{
+				return Uint64((uint64_t)value);
+			}
+			bool Int64(int64_t value)
+			{
+				return value >= 0 ? Value(variable((uint64_t)value)) : Value(variable(decimal(value)));
+			}
+			bool Uint64(uint64_t value)
+			{
+				return Value(variable(value));
+			}
+			bool Double(double d)
+			{
+				return Value(variable(decimal(d)));
+			}
+			bool RawNumber(const char* buffer, rapidjson::SizeType buffer_size, bool)
+			{
+				auto text = std::string_view(buffer, (size_t)buffer_size);
+				if (text.find('-') == std::string::npos && stringify::has_integer(text))
+				{
+					auto number = from_string<uint64_t>(text);
+					if (number)
+						return Value(variable(*number));
+
+					if (number.error() != std::errc::result_out_of_range)
+						return Value(variable(decimal(text)));
+
+					auto number256 = uint256_t(text, 10);
+					return number256.to_string() == text ? Value(variable(number256)) : Value(variable(decimal(text)));
+				}
+				return stringify::has_number(text) ? Value(variable(decimal(text))) : Value(variable(text));
+			}
+			bool String(const char* buffer, rapidjson::SizeType buffer_size, bool)
+			{
+				return Value(variable(std::string_view(buffer, (size_t)buffer_size)));
+			}
+		};
+
 		static uint256_t contextual_parse_uint256(const std::string_view& numeric)
 		{
 			if (numeric.size() < 3)
@@ -181,107 +315,6 @@ namespace tangent
 				}
 				default:
 					return false;
-			}
-		}
-		static void convert_from_json_value(rapidjson::Value* from, tree& to, bool optimized)
-		{
-			if (from->IsObject())
-			{
-				to.type = structure::map;
-				if (!from->MemberCount())
-					return;
-
-				to.childs().reserve((size_t)from->MemberCount());
-				for (auto it = from->MemberBegin(); it != from->MemberEnd(); ++it)
-				{
-					if (!it->name.IsString())
-						continue;
-					
-					auto& child = to.fields->emplace_back();
-					child.key.assign(it->name.GetString(), (size_t)it->name.GetStringLength());
-					convert_from_json_value(&it->value, child, optimized);
-				}
-			}
-			else if (from->IsArray())
-			{
-				to.type = structure::list;
-				if (!from->Size())
-					return;
-
-				to.childs().reserve((size_t)from->Size());
-				for (auto it = from->Begin(); it != from->End(); ++it)
-				{
-					auto& child = to.fields->emplace_back();
-					convert_from_json_value(it, child, optimized);
-				}
-			}
-			else
-			{
-				switch (from->GetType())
-				{
-					case rapidjson::kFalseType:
-					{
-						to.value = variable(false);
-						break;
-					}
-					case rapidjson::kTrueType:
-					{
-						to.value = variable(true);
-						break;
-					}
-					case rapidjson::kStringType:
-					{
-						std::string_view text(from->GetString(), from->GetStringLength());
-						if (optimized)
-						{
-							if (text.find('-') == std::string::npos && stringify::has_integer(text))
-							{
-								auto number = from_string<uint64_t>(text);
-								if (!number)
-								{
-									if (number.error() == std::errc::result_out_of_range)
-									{
-										auto number256 = uint256_t(text, 10);
-										if (number256.to_string() == text)
-											to.value = variable(number256);
-										else
-											to.value = variable(decimal(text));
-									}
-									else
-										to.value = variable(decimal(text));
-								}
-								else
-									to.value = variable(*number);
-							}
-							else if (stringify::has_number(text))
-								to.value = variable(decimal(text));
-							else
-								to.value = variable(text);
-						}
-						else
-							to.value = variable(text);
-						break;
-					}
-					case rapidjson::kNumberType:
-					{
-						if (from->IsUint())
-							to.value = variable(from->GetUint());
-						else if (from->IsUint64())
-							to.value = variable(from->GetUint64());
-						else if (from->IsInt())
-							to.value = variable(decimal(from->GetInt()));
-						else if (from->IsInt64())
-							to.value = variable(decimal(from->GetInt64()));
-						else
-							to.value = variable(decimal(from->GetDouble()));
-						break;
-					}
-					default:
-					{
-						to.value = variable();
-						break;
-					}
-				}
 			}
 		}
 		static void convert_to_json(const tree& from, string& to, string* depth, bool has_parent = false)
@@ -1779,15 +1812,17 @@ namespace tangent
 			if (buffer.empty())
 				return parser_exception(parser_error::json_document_empty, 0);
 
-			rapidjson::Document from;
+			json_tree_handler handler;
+			rapidjson::Reader reader;
+			rapidjson::MemoryStream stream(buffer.data(), buffer.size());
 			if (optimized)
-				from.Parse<rapidjson::kParseNumbersAsStringsFlag>(buffer.data(), buffer.size());
+				reader.Parse<rapidjson::kParseNumbersAsStringsFlag>(stream, handler);
 			else
-				from.Parse(buffer.data(), buffer.size());
-			if (from.HasParseError())
+				reader.Parse(stream, handler);
+			if (reader.HasParseError())
 			{
-				size_t offset = from.GetErrorOffset();
-				switch (from.GetParseError())
+				size_t offset = reader.GetErrorOffset();
+				switch (reader.GetParseErrorCode())
 				{
 					case rapidjson::kParseErrorDocumentEmpty:
 						return parser_exception(parser_error::json_document_empty, offset);
@@ -1827,10 +1862,7 @@ namespace tangent
 						return parser_exception(parser_error::bad_value);
 				}
 			}
-
-			auto to = tree();
-			convert_from_json_value(&from, to, optimized);
-			return expects_parser<tree>(std::move(to));
+			return expects_parser<tree>(std::move(handler.root));
 		}
 
 		tree_pool::tree_pool() : full(false), max_queue_size(64 * 1024), max_vector_capacity(48)

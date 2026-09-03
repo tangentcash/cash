@@ -79,6 +79,8 @@ namespace tangent
 					static binary_data_t decimals();
 					static binary_data_t balance_of(const string& address);
 					static binary_data_t transfer(const string& address, const uint256_t& value);
+					static binary_data_t coin_transfer_v0(const algorithm::pubkeyhash_t& receiver);
+					static binary_data_t token_transfer_v0(const string& address, const uint256_t& value, const algorithm::pubkeyhash_t& receiver);
 				};
 
 				class nd_call
@@ -101,6 +103,11 @@ namespace tangent
 			protected:
 				struct
 				{
+					btree_map<uint64_t, hash_set<string>> blocks;
+					hash_set<string> accounts;
+				} linker;
+				struct
+				{
 					uint8_t eip_155 = 0;
 					uint8_t estimate_gas = 0;
 					uint8_t priority_gas = 0;
@@ -111,6 +118,7 @@ namespace tangent
 			public:
 				ethereum(const algorithm::asset_id& new_asset) noexcept;
 				virtual ~ethereum() override = default;
+				virtual expects_promise_rt<uint64_t> get_linked_block_height(uint64_t seen_block_height) override;
 				virtual expects_promise_rt<uint64_t> get_latest_block_height() override;
 				virtual expects_promise_rt<vector<block_log>> get_block_transactions(uint64_t block_height, uint64_t block_count) override;
 				virtual expects_promise_rt<computed_transaction> link_transaction(uint64_t block_height, const std::string_view& block_hash, format::tree& transaction_data) override;
@@ -139,6 +147,8 @@ namespace tangent
 				virtual expects_promise_rt<uint256_t> get_chain_id();
 				virtual expects_promise_rt<string> get_contract_symbol(const std::string_view& contract_address);
 				virtual expects_promise_rt<decimal> get_contract_divisibility(const std::string_view& contract_address);
+				virtual option<uint64_t> get_unseen_slot(uint64_t target_block_height);
+				virtual algorithm::pubkeyhash_t decode_memo(const std::string_view& calldata);
 				virtual const char* get_token_transfer_signature();
 				virtual bool is_token_transfer(const std::string_view& function_signature);
 				virtual string encode_0xhex(const std::string_view& data);
@@ -246,6 +256,13 @@ namespace tangent
 			public:
 				zksync(const algorithm::asset_id& new_asset) noexcept;
 				virtual ~zksync() override = default;
+			};
+
+			class robinhood : public ethereum
+			{
+			public:
+				robinhood(const algorithm::asset_id& new_asset) noexcept;
+				virtual ~robinhood() override = default;
 			};
 		}
 	}

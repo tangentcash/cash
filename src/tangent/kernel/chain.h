@@ -27,7 +27,7 @@ namespace tangent
 		ELEMENTS_MANY = 1 << 12,
 		ELEMENTS_HUGE = 1 << 17,
 		FORK_VERSION = 6,
-		PATCH_VERSION = 0
+		PATCH_VERSION = 1
 	};
 
 	enum class fork_id
@@ -188,7 +188,7 @@ namespace tangent
 			struct
 			{
 				uptr<format::tree> options;
-				uint64_t polling_frequency = 60000;
+				uint64_t polling_frequency = 120000;
 				uint32_t cache1_size = 4096;
 				uint32_t cache2_size = 16384;
 				bool listener = false;

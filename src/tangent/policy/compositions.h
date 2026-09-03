@@ -157,7 +157,6 @@ namespace tangent
 			bool load(format::ro_stream& stream) override;
 			bool may_transition_to(const compositor& next) const override;
 			static bool generate_derivation_key(const uint8_t transaction_public_key[32], const uint8_t private_view_key[32], uint8_t derivation_key[32]);
-			static bool generate_derivation_key_out(const uint8_t transaction_private_key[32], const uint8_t public_view_key[32], uint8_t derivation_key[32]);
 			static void derive_private_key(const uint8_t derivation_scalar[32], const uint8_t private_spend_key[32], uint8_t private_key[32]);
 			static bool derive_public_key(const uint8_t derivation_scalar[32], const uint8_t public_spend_key[32], uint8_t public_key[32]);
 			static void derivation_to_scalar(const uint8_t derivation_key[32], uint64_t derivation_index, uint8_t derivation_scalar[32]);
@@ -178,11 +177,20 @@ namespace tangent
 		{
 			struct factor_state
 			{
-				algorithm::paillier_scalar_t public_key;
-				algorithm::paillier_scalar_t cumulative_x;
-				algorithm::paillier_scalar_t cumulative_x_d;
-				algorithm::paillier_scalar_t cumulative_y;
-				algorithm::paillier_scalar_t cumulative_y_d;
+				struct
+				{
+					algorithm::paillier_scalar_t public_key;
+					algorithm::paillier_scalar_t public_key_proof;
+					algorithm::paillier_scalar_t encrypted_k;
+					algorithm::paillier_scalar_t encrypted_k_proof;
+					algorithm::paillier_scalar_t encrypted_s;
+					algorithm::paillier_scalar_t encrypted_s_proof;
+				} setup;
+				struct
+				{
+					algorithm::paillier_scalar_t encrypted_x_d;
+					algorithm::paillier_scalar_t encrypted_y_d;
+				} aggregate;
 				uint256_t k_index = 0;
 			};
 			struct beta_state
@@ -201,7 +209,9 @@ namespace tangent
 			uint16_t p_steps = 0;
 			uint16_t d_steps = 0;
 			uint16_t s_steps = 0;
-			uint16_t p_bits = 0;
+			uint16_t n_bits = 0;
+			uint16_t m1_bits = 0;
+			uint16_t m2_bits = 0;
 
 			expects_lr<void> setup_public_key(const uint8_t* message, size_t message_size, uint16_t participants) override;
 			expects_lr<void> setup_signature(const algorithm::composition::cpubkey_t& public_key, const uint8_t* message, size_t message_size, const algorithm::composition::shared_message* shared, uint16_t participants) override;
@@ -221,6 +231,7 @@ namespace tangent
 			bool store(format::wo_stream* stream) const override;
 			bool load(format::ro_stream& stream) override;
 			bool may_transition_to(const compositor& next) const override;
+			static void deinitialize_cache();
 		};
 
 		struct secp256k1_schnorr_compositor final : algorithm::composition::compositor

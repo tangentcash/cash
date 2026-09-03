@@ -40,7 +40,7 @@ namespace tangent
 		sqlite::expects_db<void> storage_util::multi_tx_commit(const std::string_view& operation, multi_storage_index_ptr&& ptr)
 		{
 			std::atomic<bool> successful = true;
-			parallel::wail_all(parallel::for_each_sequential(ptr.begin(), ptr.end(), ptr.size(), DB_BATCH, [&](storage_index_ptr* connection)
+			parallel::wait_all(parallel::for_each_sequential(ptr.begin(), ptr.end(), ptr.size(), DB_BATCH, [&](storage_index_ptr* connection)
 			{
 				auto result = connection->tx_commit(operation);
 				if (!result)
@@ -63,7 +63,7 @@ namespace tangent
 		sqlite::expects_db<void> storage_util::multi_tx_rollback(const std::string_view& operation, multi_storage_index_ptr&& ptr)
 		{
 			std::atomic<bool> successful = true;
-			parallel::wail_all(parallel::for_each_sequential(ptr.begin(), ptr.end(), ptr.size(), DB_BATCH, [&](storage_index_ptr* connection)
+			parallel::wait_all(parallel::for_each_sequential(ptr.begin(), ptr.end(), ptr.size(), DB_BATCH, [&](storage_index_ptr* connection)
 			{
 				auto result = connection->tx_rollback(operation);
 				if (!result)

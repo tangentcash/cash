@@ -4513,6 +4513,11 @@ namespace Cardano
 		}
 
 		char hrp[16];
+		if (pos_separator >= sizeof(hrp))
+		{
+			return false;
+		}
+
 		std::strncpy(hrp, bech32_code, pos_separator);
 		hrp[pos_separator] = '\0';
 
@@ -4523,8 +4528,12 @@ namespace Cardano
 
 		uint16_t c_bit_len = bech32_code_lenght - (pos_separator + 1);
 		uint8_t c_bit[2048];
-		sodium_memzero(c_bit, c_bit_len);
+		if (c_bit_len > sizeof(c_bit))
+		{
+			return false;
+		}
 
+		sodium_memzero(c_bit, c_bit_len);
 		for (uint16_t i = 0; i < c_bit_len; i++)
 		{
 			c_bit[i] = B32Chars_decode[static_cast<uint8_t>(bech32_code[(pos_separator + 1) + i])];
@@ -4558,6 +4567,11 @@ namespace Cardano
 		}
 
 		char hrp[16];
+		if (pos_separator >= sizeof(hrp))
+		{
+			return false;
+		}
+
 		std::strncpy(hrp, bech32_code, pos_separator);
 		hrp[pos_separator] = '\0';
 
@@ -4568,8 +4582,12 @@ namespace Cardano
 
 		uint16_t c_bit_len = bech32_code_lenght - (pos_separator + 1);
 		uint8_t c_bit[2048];
-		sodium_memzero(c_bit, c_bit_len);
+		if (c_bit_len > sizeof(c_bit))
+		{
+			return false;
+		}
 
+		sodium_memzero(c_bit, c_bit_len);
 		for (uint16_t i = 0; i < c_bit_len; i++)
 		{
 			c_bit[i] = B32Chars_decode[static_cast<uint8_t>(bech32_code[(pos_separator + 1) + i])];

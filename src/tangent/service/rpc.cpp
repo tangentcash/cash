@@ -420,9 +420,10 @@ namespace tangent
 			bind(0 | access_type::r, "mempoolstate", "getnextaccountnonce", 1, 1, "string owner_address", "uint64", "get account nonce for next transaction by owner", std::bind(&server_node::mempoolstate_get_next_account_nonce, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getmempooltransactions", 3, 4, "bool commitment, uint64 offset, uint64 count, uint8? unrolling", "uint256[] | txn[]", "get mempool transactions", std::bind(&server_node::mempoolstate_get_transactions, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getmempooltransactionsbyowner", 3, 5, "const string address, uint64 offset, uint64 count, uint8? direction = 1, uint8? unrolling", "uint256[] | txn[]", "get mempool transactions by signing address", std::bind(&server_node::mempoolstate_get_transactions_by_owner, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "validatorstate", "getnode", 1, 1, "string uri_address", "validator", "get a node by ip address", std::bind(&server_node::validatorstate_get_node, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "validatorstate", "getblockchains", 0, 0, "", "superchain::asset_info[]", "get supported blockchains", std::bind(&server_node::validatorstate_get_blockchains, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "validatorstate", "status", 0, 0, "", "validator::status", "get validator status", std::bind(&server_node::validatorstate_status, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "validatorstate", "status", 0, 0, "", "validator::status", "get validator status", std::bind(&server_node::validatorstate_pruned_status, this, std::placeholders::_1, std::placeholders::_2));
+			bind(access_type::r | access_type::a, "validatorstate", "getnode", 1, 1, "string uri_address", "validator", "get a node by ip address", std::bind(&server_node::validatorstate_get_node, this, std::placeholders::_1, std::placeholders::_2));
+			bind(access_type::r | access_type::a, "validatorstate", "fullstatus", 0, 0, "", "validator::status", "get full validator status", std::bind(&server_node::validatorstate_full_status, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::r, "mempoolstate", "submittransaction", 1, 1, "string message_hash", "uint256", "try to accept and relay a mempool transaction from raw data and possibly validate over latest chainstate", std::bind(&server_node::mempoolstate_submit_transaction, this, std::placeholders::_1, std::placeholders::_2, nullptr));
 			bind(access_type::w | access_type::a, "mempoolstate", "rejecttransaction", 1, 1, "uint256 hash", "void", "remove mempool transaction by hash", std::bind(&server_node::mempoolstate_reject_transaction, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "mempoolstate", "simulatebridge", 4, 4, "string asset, string bridge_hash, string to_address, decimal to_value", "superchain_transaction", "build an off-chain attestation transaction payload using off-chain node", std::bind(&server_node::mempoolstate_simulate_bridge, this, std::placeholders::_1, std::placeholders::_2));
@@ -3192,7 +3193,15 @@ namespace tangent
 			auto& [validator, wallet] = *consensus_service->runner_descriptor;
 			return server_response().success(wallet.as_tree());
 		}
-		server_response server_node::validatorstate_status(http::connection*, format::variables&&)
+		server_response server_node::validatorstate_pruned_status(http::connection* base, format::variables&& args)
+		{
+			return validatorstate_status(base, std::move(args), true);
+		}
+		server_response server_node::validatorstate_full_status(http::connection* base, format::variables&& args)
+		{
+			return validatorstate_status(base, std::move(args), false);
+		}
+		server_response server_node::validatorstate_status(http::connection*, format::variables&&, bool pruned)
 		{
 			if (!consensus_service)
 				return server_response().error(error_codes::bad_request, "validator node disabled");
@@ -3213,7 +3222,7 @@ namespace tangent
 				discovery->set("port", format::variable(kernel::params().user.discovery.port));
 			}
 
-			if (kernel::params().user.superchain.listener)
+			if (!pruned && kernel::params().user.superchain.listener)
 			{
 				auto* superchain = data.set("superchain", format::tree::map());
 				auto array = superchain->set("listeners", format::tree::list());
@@ -3250,15 +3259,18 @@ namespace tangent
 			else
 				data.set("tip", format::variable());
 
-			auto* connections = data.set("connections", format::tree::list());
-			for (auto& connection : consensus_service->get_nodes())
+			if (!pruned)
 			{
-				auto* descriptor = connection.second->as_descriptor();
-				auto node_data = format::tree::map();
-				node_data.set("validator", descriptor ? descriptor->first.as_tree() : format::variable());
-				node_data.set("wallet", descriptor ? descriptor->second.as_tree() : format::variable());
-				node_data.set("network", connection.second->as_tree());
-				connections->push(std::move(node_data));
+				auto* connections = data.set("connections", format::tree::list());
+				for (auto& connection : consensus_service->get_nodes())
+				{
+					auto* descriptor = connection.second->as_descriptor();
+					auto node_data = format::tree::map();
+					node_data.set("validator", descriptor ? descriptor->first.as_tree() : format::variable());
+					node_data.set("wallet", descriptor ? descriptor->second.as_tree() : format::variable());
+					node_data.set("network", connection.second->as_tree());
+					connections->push(std::move(node_data));
+				}
 			}
 
 			auto* tips = data.set("tips", format::tree::list());

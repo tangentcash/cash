@@ -175,7 +175,7 @@ namespace tangent
 				netdata.composition = algorithm::composition::type::ed25519;
 				netdata.routing = routing_policy::memo;
 				netdata.tokenization = token_policy::none;
-				netdata.sync_latency = 0;
+				netdata.sync_latency = 6;
 				netdata.divisibility = algorithm::arithmetic::fixed(1000000);
 				netdata.transaction_expires = true;
 			}

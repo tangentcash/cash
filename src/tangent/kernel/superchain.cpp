@@ -577,6 +577,11 @@ namespace tangent
 				stream->write_boolean(true);
 			stream->write_integer(block_id);
 			stream->write_string(transaction_id);
+			if (!memo.empty())
+			{
+				stream->write_boolean(true);
+				stream->write_string(memo.optimized_view());
+			}
 			stream->write_integer((uint32_t)inputs.size());
 			for (auto& [hash, item] : inputs)
 			{
@@ -611,8 +616,17 @@ namespace tangent
 			if (!stream.read_string(stream.read_type(), &transaction_id))
 				return false;
 
+			type = stream.read_type(); memo.clear();
+			if (type == format::viewable::true_type)
+			{
+				if (!stream.read_optimized_view(stream.read_type(), memo.blob, sizeof(memo.blob)))
+					return false;
+
+				type = stream.read_type();
+			}
+
 			uint32_t inputs_size;
-			if (!stream.read_integer(stream.read_type(), &inputs_size))
+			if (!stream.read_integer(type, &inputs_size))
 				return false;
 
 			inputs.clear();
@@ -773,6 +787,7 @@ namespace tangent
 			format::tree data;
 			data.set("transaction_id", format::variable(transaction_id));
 			data.set("block_id", algorithm::encoding::serialize_uint256(block_id));
+			data.set("memo", algorithm::signing::serialize_address(memo));
 			data.set("success", format::variable(!reverted));
 			auto* input_data = data.set("inputs", format::tree::list());
 			for (auto& [hash, input] : inputs)
@@ -1228,6 +1243,8 @@ namespace tangent
 					for (auto& [token_hash, token] : output.tokens)
 						transfer_logs += stringify::text("    with %s %s\n", token.value.to_string().c_str(), algorithm::asset::name_of(token.get_asset(asset)).c_str());
 				}
+				if (!tx.memo.empty())
+					transfer_logs += stringify::text("  memo to %s\n", algorithm::signing::encode_address(tx.memo).c_str());
 				for (auto& signer : tx.signers)
 					transfer_logs += stringify::text("  signed by %s\n", signer.c_str());
 				if (transfer_logs.back() == '\n')
@@ -1424,17 +1441,21 @@ namespace tangent
 		translation_unit::~translation_unit() noexcept
 		{
 		}
-		expects_promise_rt<format::tree> translation_unit::execute_rpc(const std::string_view& method, format::tree&& args, cache_policy cache, const std::string_view& path)
+		expects_promise_rt<format::tree> translation_unit::execute_rpc(const std::string_view& method, format::tree&& args, cache_policy cache, const std::string_view& path, const std::string_view& scope)
 		{
-			string ref_method = string(method), ref_path = string(path);
-			return coasync<expects_rt<format::tree>>([this, cache, args = std::move(args), ref_method = std::move(ref_method), ref_path = std::move(ref_path)]() mutable -> expects_promise_rt<format::tree>
+			string ref_method = string(method), ref_path = string(path), ref_scope = string(scope);
+			return coasync<expects_rt<format::tree>>([this, cache, args = std::move(args), ref_method = std::move(ref_method), ref_path = std::move(ref_path), ref_scope = std::move(ref_scope)]() mutable -> expects_promise_rt<format::tree>
 			{
 				auto* instance = bridge::get()->get_network_instance(native_asset);
+				auto connections = instance->connections.find(ref_scope);
+				if (connections == instance->connections.end() || connections->second.empty())
+					coreturn expects_rt<format::tree>(remote_exception("connection not available"));
+
 				auto exception = remote_exception::retry_later();
 				auto reporter = bridge::error_reporter();
-				for (size_t i = 0; instance != nullptr && i < instance->connections.size(); i++)
+				for (size_t i = 0; instance != nullptr && i < connections->second.size(); i++)
 				{
-					auto& connection = instance->connections[(++round_robin_index) % instance->connections.size()];
+					auto& connection = connections->second[(++round_robin_index) % connections->second.size()];
 					auto result = coawait(bridge::get()->execute_rpc(native_asset, connection, reporter, ref_method, args, cache, ref_path, false));
 					if (result || !result.error().is_retry())
 						coreturn result;
@@ -1444,17 +1465,21 @@ namespace tangent
 				coreturn expects_rt<format::tree>(std::move(exception));
 			});
 		}
-		expects_promise_rt<format::tree> translation_unit::execute_rpc_multi(const std::string_view& method, format::tree&& args, cache_policy cache, const std::string_view& path)
+		expects_promise_rt<format::tree> translation_unit::execute_rpc_multi(const std::string_view& method, format::tree&& args, cache_policy cache, const std::string_view& path, const std::string_view& scope)
 		{
-			string ref_method = string(method), ref_path = string(path);
-			return coasync<expects_rt<format::tree>>([this, cache, args = std::move(args), ref_method = std::move(ref_method), ref_path = std::move(ref_path)]() mutable -> expects_promise_rt<format::tree>
+			string ref_method = string(method), ref_path = string(path), ref_scope = string(scope);
+			return coasync<expects_rt<format::tree>>([this, cache, args = std::move(args), ref_method = std::move(ref_method), ref_path = std::move(ref_path), ref_scope = std::move(ref_scope)]() mutable -> expects_promise_rt<format::tree>
 			{
 				auto* instance = bridge::get()->get_network_instance(native_asset);
+				auto connections = instance->connections.find(ref_scope);
+				if (connections == instance->connections.end() || connections->second.empty())
+					coreturn expects_rt<format::tree>(remote_exception("connection not available"));
+
 				auto exception = remote_exception::retry_later();
 				auto reporter = bridge::error_reporter();
-				for (size_t i = 0; instance != nullptr && i < instance->connections.size(); i++)
+				for (size_t i = 0; instance != nullptr && i < connections->second.size(); i++)
 				{
-					auto& connection = instance->connections[(++round_robin_index) % instance->connections.size()];
+					auto& connection = connections->second[(++round_robin_index) % connections->second.size()];
 					auto result = coawait(bridge::get()->execute_rpc(native_asset, connection, reporter, ref_method, args, cache, ref_path, true));
 					if (result || !result.error().is_retry())
 						coreturn result;
@@ -1464,17 +1489,21 @@ namespace tangent
 				coreturn expects_rt<format::tree>(std::move(exception));
 			});
 		}
-		expects_promise_rt<format::tree> translation_unit::execute_rest(const std::string_view& method, const std::string_view& path, format::tree&& args, cache_policy cache)
+		expects_promise_rt<format::tree> translation_unit::execute_rest(const std::string_view& method, const std::string_view& path, format::tree&& args, cache_policy cache, const std::string_view& scope)
 		{
-			string ref_method = string(method), ref_path = string(path);
-			return coasync<expects_rt<format::tree>>([this, cache, args = std::move(args), ref_method = std::move(ref_method), ref_path = std::move(ref_path)]() mutable -> expects_promise_rt<format::tree>
+			string ref_method = string(method), ref_path = string(path), ref_scope = string(scope);
+			return coasync<expects_rt<format::tree>>([this, cache, args = std::move(args), ref_method = std::move(ref_method), ref_path = std::move(ref_path), ref_scope = std::move(ref_scope)]() mutable -> expects_promise_rt<format::tree>
 			{
 				auto* instance = bridge::get()->get_network_instance(native_asset);
+				auto connections = instance->connections.find(ref_scope);
+				if (connections == instance->connections.end() || connections->second.empty())
+					coreturn expects_rt<format::tree>(remote_exception("connection not available"));
+
 				auto exception = remote_exception::retry_later();
 				auto reporter = bridge::error_reporter();
-				for (size_t i = 0; instance != nullptr && i < instance->connections.size(); i++)
+				for (size_t i = 0; instance != nullptr && i < connections->second.size(); i++)
 				{
-					auto& connection = instance->connections[(++round_robin_index) % instance->connections.size()];
+					auto& connection = connections->second[(++round_robin_index) % connections->second.size()];
 					auto result = coawait(bridge::get()->execute_rest(native_asset, connection, reporter, ref_method, ref_path, args, cache));
 					if (result || !result.error().is_retry())
 						coreturn result;
@@ -1484,17 +1513,21 @@ namespace tangent
 				coreturn expects_rt<format::tree>(std::move(exception));
 			});
 		}
-		expects_promise_rt<format::tree> translation_unit::execute_http(const std::string_view& method, const std::string_view& path, const std::string_view& type, const std::string_view& body, cache_policy cache)
+		expects_promise_rt<format::tree> translation_unit::execute_http(const std::string_view& method, const std::string_view& path, const std::string_view& type, const std::string_view& body, cache_policy cache, const std::string_view& scope)
 		{
-			string ref_method = string(method), ref_path = string(path), ref_type = string(type), ref_body = string(body);
-			return coasync<expects_rt<format::tree>>([this, cache, ref_method = std::move(ref_method), ref_path = std::move(ref_path), ref_type = std::move(ref_type), ref_body = std::move(ref_body)]() mutable -> expects_promise_rt<format::tree>
+			string ref_method = string(method), ref_path = string(path), ref_type = string(type), ref_body = string(body), ref_scope = string(scope);
+			return coasync<expects_rt<format::tree>>([this, cache, ref_method = std::move(ref_method), ref_path = std::move(ref_path), ref_type = std::move(ref_type), ref_body = std::move(ref_body), ref_scope = std::move(ref_scope)]() mutable -> expects_promise_rt<format::tree>
 			{
 				auto* instance = bridge::get()->get_network_instance(native_asset);
+				auto connections = instance->connections.find(ref_scope);
+				if (connections == instance->connections.end() || connections->second.empty())
+					coreturn expects_rt<format::tree>(remote_exception("connection not available"));
+
 				auto exception = remote_exception::retry_later();
 				auto reporter = bridge::error_reporter();
-				for (size_t i = 0; instance != nullptr && i < instance->connections.size(); i++)
+				for (size_t i = 0; instance != nullptr && i < connections->second.size(); i++)
 				{
-					auto& connection = instance->connections[(++round_robin_index) % instance->connections.size()];
+					auto& connection = connections->second[(++round_robin_index) % connections->second.size()];
 					auto result = coawait(bridge::get()->execute_http(native_asset, connection, reporter, ref_method, ref_path, ref_type, ref_body, cache));
 					if (result || !result.error().is_retry())
 						coreturn result;
@@ -1581,6 +1614,15 @@ namespace tangent
 				return decimal::zero();
 
 			return value.to_decimal() / get_chainparams().divisibility;
+		}
+		bool translation_unit::has_connection(const std::string_view& scope) const
+		{
+			auto* instance = bridge::get()->get_network_instance(native_asset);
+			if (!instance)
+				return false;
+
+			auto connections = instance->connections.find(scope);
+			return connections != instance->connections.end() && !connections->second.empty();
 		}
 
 		utxo_translation_unit::balance_query::balance_query(const decimal& new_min_native_value, const hash_map<algorithm::asset_id, decimal>& new_min_token_values) : min_token_values(new_min_token_values), min_native_value(new_min_native_value)
@@ -1824,9 +1866,10 @@ namespace tangent
 
 							size_t headers_size = headers.size();
 							auto url = child.child_var("url").as_blob();
+							auto type = child.child_var("type").as_blob();
 							auto rps = child.child_var("rps").as_double();
-							if (add_network_connection(asset, url, std::move(headers), rps) && kernel::params().user.superchain.logging)
-								VI_INFO("%s server add \"%s\" endpoint (rps: %.2f, headers: %i)", algorithm::asset::name_of(asset).c_str(), url.c_str(), rps, (int)headers_size);
+							if (add_network_connection(asset, url, type, std::move(headers), rps) && kernel::params().user.superchain.logging)
+								VI_INFO("%s server add \"%s\" endpoint (rps: %.2f, headers: %i, kind: %s)", algorithm::asset::name_of(asset).c_str(), url.c_str(), rps, (int)headers_size, type.empty() ? "std" : type.c_str());
 							else if (kernel::params().user.superchain.logging)
 								VI_ERR("failed to add %s server \"%s\" with %i headers", algorithm::asset::name_of(asset).c_str(), url.c_str(), (int)headers_size);
 						}
@@ -1946,7 +1989,7 @@ namespace tangent
 			if (reporter.type.empty())
 				reporter.type = "http";
 
-			string target_url = join_url_path(connection.connection_url, path);
+			string target_url = join_url_path(connection.url, path);
 			if (reporter.method.empty())
 				reporter.method = location(target_url).path.substr(1);
 
@@ -2105,8 +2148,11 @@ namespace tangent
 				if (options->blocks_linker)
 				{
 					auto result = coawait(implementation->get_linked_block_height(options->state.index_block_height > 0 ? options->state.index_block_height - 1 : options->state.index_block_height));
-					if (!result && result.error().is_retry())
+					if (!result)
 					{
+						if (!result.error().is_retry() && !result.error().is_shutdown())
+							coreturn expects_rt<vector<transaction_logs>>(result.error());
+
 						if (result.error().is_retry_after())
 						{
 							options->state.retry_after_time = result.error().retry_after_timestamp();
@@ -2116,7 +2162,7 @@ namespace tangent
 						options->state.retry_after_time = kernel::params().time.now_cpu() + kernel::params().user.superchain.polling_frequency;
 						coreturn expects_rt<vector<transaction_logs>>(remote_exception::retry_after(options->state.retry_after_time));
 					}
-					else if (result)
+					else
 						options->set_checkpoint_from_block(*result);
 					linked_block_height = result.or_else(0);
 				}
@@ -2954,6 +3000,7 @@ namespace tangent
 				{ "OP", chain<translations::optimism>(this) },
 				{ "S", chain<translations::sonic>(this) },
 				{ "ZK", chain<translations::zksync>(this) },
+				{ "HOOD", chain<translations::robinhood>(this) },
 #endif
 			};
 			return registrations;
@@ -2983,23 +3030,24 @@ namespace tangent
 
 			return nullptr;
 		}
-		connection_instance* bridge::add_network_connection(const algorithm::asset_id& asset, const std::string_view& url, btree_map<string, string>&& headers, double rps)
+		connection_instance* bridge::add_network_connection(const algorithm::asset_id& asset, const std::string_view& url, const std::string_view& type, btree_map<string, string>&& headers, double rps)
 		{
 			auto it = networks.find(algorithm::asset::blockchain_of(asset));
 			VI_PANIC(it != networks.end(), "must add a network before adding a connection");
-			it->second.connections.emplace_back();
-			auto& next = it->second.connections.back();
-			next.connection_url = url;
+			auto& connections = it->second.connections[string(type)];
+			auto& next = connections.emplace_back();
+			next.url = url;
+			next.type = type;
 			next.headers = std::move(headers);
 			next.rps = rps;
 
-			stringify::trim(next.connection_url);
+			stringify::trim(next.url);
 			for (auto& [key, value] : next.headers)
 				stringify::trim(value);
 
-			VI_PANIC(next.connection_url.size() > 1, "url must not be empty");
-			if (next.connection_url.back() == '/')
-				next.connection_url.pop_back();
+			VI_PANIC(next.url.size() > 1, "url must not be empty");
+			if (next.url.back() == '/')
+				next.url.pop_back();
 
 			return &next;
 		}

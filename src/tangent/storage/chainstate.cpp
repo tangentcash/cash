@@ -374,12 +374,12 @@ namespace tangent
 			}
 
 			auto& blob_storage = get_blob_storage();
-			parallel::wail_all(parallel::for_each_sequential(block_response.begin(), block_response.end(), block_response.size(), ELEMENTS_FEW, [&](sqlite::row row)
+			parallel::wait_all(parallel::for_each_sequential(block_response.begin(), block_response.end(), block_response.size(), ELEMENTS_FEW, [&](sqlite::row row)
 			{
 				auto block_hash = row["block_hash"].get();
 				blob_storage.store(__func__, get_block_label(block_hash.get_binary()), std::string_view());
 			}));
-			parallel::wail_all(parallel::for_each_sequential(transaction_response.begin(), transaction_response.end(), transaction_response.size(), ELEMENTS_FEW, [&](sqlite::row row)
+			parallel::wait_all(parallel::for_each_sequential(transaction_response.begin(), transaction_response.end(), transaction_response.size(), ELEMENTS_FEW, [&](sqlite::row row)
 			{
 				auto transaction_hash = row["transaction_hash"].get();
 				blob_storage.store(__func__, get_block_transaction_label(transaction_hash.get_binary()), std::string_view());
@@ -410,7 +410,7 @@ namespace tangent
 						return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 					auto response = cursor->first();
-					parallel::wail_all(parallel::for_each_sequential(response.begin(), response.end(), response.size(), ELEMENTS_FEW, [&](sqlite::row row)
+					parallel::wait_all(parallel::for_each_sequential(response.begin(), response.end(), response.size(), ELEMENTS_FEW, [&](sqlite::row row)
 					{
 						string index = row["index_hash"].get().get_blob();
 						uint64_t number = row["block_number"].get().get_integer();
@@ -456,7 +456,7 @@ namespace tangent
 						return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 					auto response = cursor->first();
-					parallel::wail_all(parallel::for_each_sequential(response.begin(), response.end(), response.size(), ELEMENTS_FEW, [&](sqlite::row next)
+					parallel::wait_all(parallel::for_each_sequential(response.begin(), response.end(), response.size(), ELEMENTS_FEW, [&](sqlite::row next)
 					{
 						string column = next["column_hash"].get().get_blob();
 						string row = next["row_hash"].get().get_blob();
@@ -793,7 +793,7 @@ namespace tangent
 					queue.emplace_back(std::move(task));
 			}
 
-			parallel::wail_all(std::move(queue));
+			parallel::wait_all(std::move(queue));
 			bool must_write_transaction_data = !reorganization;
 			for (auto& [type, writer] : uniform_writers)
 			{
@@ -1106,7 +1106,7 @@ namespace tangent
 						return expects_lr<bool>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 					auto response = cursor->first();
-					parallel::wail_all(parallel::for_each_sequential(response.begin(), response.end(), response.size(), ELEMENTS_FEW, [&](sqlite::row row)
+					parallel::wait_all(parallel::for_each_sequential(response.begin(), response.end(), response.size(), ELEMENTS_FEW, [&](sqlite::row row)
 					{
 						string index = row["index_hash"].get().get_blob();
 						uint64_t number = row["block_number"].get().get_integer();
@@ -1149,7 +1149,7 @@ namespace tangent
 						return expects_lr<bool>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 					auto response = cursor->first();
-					parallel::wail_all(parallel::for_each_sequential(response.begin(), response.end(), response.size(), ELEMENTS_FEW, [&](sqlite::row next)
+					parallel::wait_all(parallel::for_each_sequential(response.begin(), response.end(), response.size(), ELEMENTS_FEW, [&](sqlite::row next)
 					{
 						string column = next["column_hash"].get().get_blob();
 						string row = next["row_hash"].get().get_blob();
@@ -1222,7 +1222,7 @@ namespace tangent
 			if (result.empty())
 				return expectation::met;
 
-			parallel::wail_all(parallel::for_loop(result.size(), ELEMENTS_FEW, [&](size_t i)
+			parallel::wait_all(parallel::for_loop(result.size(), ELEMENTS_FEW, [&](size_t i)
 			{
 				auto transaction_hash = response[i]["transaction_hash"].get();
 				auto transaction_blob = blob_storage.load(__func__, get_block_transaction_label(transaction_hash.get_binary())).or_else(string());
@@ -1414,7 +1414,7 @@ namespace tangent
 				auto& response = cursor->first();
 				size_t size = response.size(), stride = gas_prices.size();
 				gas_prices.resize(gas_prices.size() + size);
-				parallel::wail_all(parallel::for_loop(size, ELEMENTS_FEW, [&](size_t i)
+				parallel::wait_all(parallel::for_loop(size, ELEMENTS_FEW, [&](size_t i)
 				{
 					auto& price = gas_prices[stride + i];
 					auto transaction_hash = response[i]["transaction_hash"].get();
@@ -1611,7 +1611,7 @@ namespace tangent
 			size_t stride = proof.transaction_tree.nodes.size();
 			proof.transaction_tree.nodes.resize(stride + size);
 			proof.receipt_tree.nodes.resize(stride + size);
-			parallel::wail_all(parallel::for_loop(size, ELEMENTS_FEW, [&](size_t i)
+			parallel::wait_all(parallel::for_loop(size, ELEMENTS_FEW, [&](size_t i)
 			{
 				auto transaction_hash = response[i]["transaction_hash"].get();
 				auto transaction_blob = transaction_hash.size() == sizeof(uint256_t) ? blob_storage.load(__func__, get_block_transaction_label(transaction_hash.get_binary())).or_else(string()) : string();
@@ -1639,7 +1639,7 @@ namespace tangent
 				auto substride = proof.state_tree.nodes.size();
 				auto count = subresponse.size();
 				proof.state_tree.nodes.resize(substride + count);
-				parallel::wail_all(parallel::for_loop(count, ELEMENTS_FEW, [&](size_t i)
+				parallel::wait_all(parallel::for_loop(count, ELEMENTS_FEW, [&](size_t i)
 				{
 					auto index = subresponse[i]["index_hash"].get().get_blob();
 					auto blob = blob_storage.load(__func__, get_uniform_label(type, index, block_number)).or_else(string());
@@ -1658,7 +1658,7 @@ namespace tangent
 				auto substride = proof.state_tree.nodes.size();
 				auto count = subresponse.size();
 				proof.state_tree.nodes.resize(substride + count);
-				parallel::wail_all(parallel::for_loop(count, ELEMENTS_FEW, [&](size_t i)
+				parallel::wait_all(parallel::for_loop(count, ELEMENTS_FEW, [&](size_t i)
 				{
 					auto column = subresponse[i]["column_hash"].get().get_blob();
 					auto row = subresponse[i]["row_hash"].get().get_blob();
@@ -1732,7 +1732,7 @@ namespace tangent
 				auto stride = result.size();
 				auto count = subresponse.size();
 				result.resize(stride + count);
-				parallel::wail_all(parallel::for_loop(count, ELEMENTS_FEW, [&](size_t i)
+				parallel::wait_all(parallel::for_loop(count, ELEMENTS_FEW, [&](size_t i)
 				{
 					auto index = subresponse[i]["index_hash"].get().get_blob();
 					auto blob = blob_storage.load(__func__, get_uniform_label(type, index, block_number)).or_else(string());
@@ -1751,7 +1751,7 @@ namespace tangent
 				auto stride = result.size();
 				auto count = subresponse.size();
 				result.resize(stride + count);
-				parallel::wail_all(parallel::for_loop(count, ELEMENTS_FEW, [&](size_t i)
+				parallel::wait_all(parallel::for_loop(count, ELEMENTS_FEW, [&](size_t i)
 				{
 					auto column = subresponse[i]["column_hash"].get().get_blob();
 					auto row = subresponse[i]["row_hash"].get().get_blob();
@@ -1817,7 +1817,7 @@ namespace tangent
 			auto& response = cursor->first();
 			vector<ledger::block_body> result;
 			result.resize(response.size());
-			parallel::wail_all(parallel::for_loop(result.size(), ELEMENTS_FEW, [&](size_t i)
+			parallel::wait_all(parallel::for_loop(result.size(), ELEMENTS_FEW, [&](size_t i)
 			{
 				auto block_hash = response[i]["block_hash"].get();
 				auto block_blob = blob_storage.load(__func__, get_block_label(block_hash.get_binary())).or_else(string());
@@ -1880,7 +1880,7 @@ namespace tangent
 			auto& response = cursor->first();
 			vector<ledger::block_header> result;
 			result.resize(response.size());
-			parallel::wail_all(parallel::for_loop(result.size(), ELEMENTS_FEW, [&](size_t i)
+			parallel::wait_all(parallel::for_loop(result.size(), ELEMENTS_FEW, [&](size_t i)
 			{
 				auto block_hash = response[i]["block_hash"].get();
 				auto block_blob = blob_storage.load(__func__, get_block_label(block_hash.get_binary())).or_else(string());
@@ -1960,7 +1960,7 @@ namespace tangent
 			values.resize(size);
 
 			auto& blob_storage = get_blob_storage();
-			parallel::wail_all(parallel::for_loop(size, ELEMENTS_FEW, [&](size_t i)
+			parallel::wait_all(parallel::for_loop(size, ELEMENTS_FEW, [&](size_t i)
 			{
 				auto transaction_hash = response[i]["transaction_hash"].get();
 				auto transaction_blob = blob_storage.load(__func__, get_block_transaction_label(transaction_hash.get_binary())).or_else(string());
@@ -1990,7 +1990,7 @@ namespace tangent
 			values.resize(size);
 
 			auto& blob_storage = get_blob_storage();
-			parallel::wail_all(parallel::for_loop(size, ELEMENTS_FEW, [&](size_t i)
+			parallel::wait_all(parallel::for_loop(size, ELEMENTS_FEW, [&](size_t i)
 			{
 				auto transaction_hash = response[i]["transaction_hash"].get();
 				auto transaction_blob = blob_storage.load(__func__, get_block_transaction_label(transaction_hash.get_binary())).or_else(string());
@@ -2039,7 +2039,7 @@ namespace tangent
 			values.resize(size);
 
 			auto& blob_storage = get_blob_storage();
-			parallel::wail_all(parallel::for_loop(size, ELEMENTS_FEW, [&](size_t i)
+			parallel::wait_all(parallel::for_loop(size, ELEMENTS_FEW, [&](size_t i)
 			{
 				auto transaction_hash = response[i]["transaction_hash"].get();
 				auto transaction_blob = blob_storage.load(__func__, get_block_transaction_label(transaction_hash.get_binary())).or_else(string());
@@ -2069,7 +2069,7 @@ namespace tangent
 			values.resize(size);
 
 			auto& blob_storage = get_blob_storage();
-			parallel::wail_all(parallel::for_loop(size, ELEMENTS_FEW, [&](size_t i)
+			parallel::wait_all(parallel::for_loop(size, ELEMENTS_FEW, [&](size_t i)
 			{
 				auto transaction_hash = response[i]["transaction_hash"].get();
 				auto transaction_blob = blob_storage.load(__func__, get_block_transaction_label(transaction_hash.get_binary())).or_else(string());
@@ -2307,7 +2307,7 @@ namespace tangent
 			auto& response = cursor->first();
 			vector<state_result> values;
 			values.resize(response.size());
-			parallel::wail_all(parallel::for_loop(values.size(), ELEMENTS_FEW, [&](size_t i)
+			parallel::wait_all(parallel::for_loop(values.size(), ELEMENTS_FEW, [&](size_t i)
 			{
 				auto next = response[i];
 				auto row = next["row_hash"].get().get_blob();
@@ -2395,7 +2395,7 @@ namespace tangent
 			auto& response = cursor->first();
 			vector<state_result> values;
 			values.resize(response.size());
-			parallel::wail_all(parallel::for_loop(values.size(), ELEMENTS_FEW, [&](size_t i)
+			parallel::wait_all(parallel::for_loop(values.size(), ELEMENTS_FEW, [&](size_t i)
 			{
 				auto next = response[i];
 				auto row = next["row_hash"].get().get_blob();
@@ -2478,7 +2478,7 @@ namespace tangent
 			auto& response = cursor->first();
 			vector<state_result> values;
 			values.resize(response.size());
-			parallel::wail_all(parallel::for_loop(values.size(), ELEMENTS_FEW, [&](size_t i)
+			parallel::wait_all(parallel::for_loop(values.size(), ELEMENTS_FEW, [&](size_t i)
 			{
 				auto next = response[i];
 				auto column = next["column_hash"].get().get_blob();
@@ -2566,7 +2566,7 @@ namespace tangent
 			auto& response = cursor->first();
 			vector<state_result> values;
 			values.resize(response.size());
-			parallel::wail_all(parallel::for_loop(values.size(), ELEMENTS_FEW, [&](size_t i)
+			parallel::wait_all(parallel::for_loop(values.size(), ELEMENTS_FEW, [&](size_t i)
 			{
 				auto next = response[i];
 				auto column = next["column_hash"].get().get_blob();

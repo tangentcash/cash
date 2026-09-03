@@ -220,7 +220,9 @@ namespace tangent
 			server_response validatorstate_get_node(http::connection* base, format::variables&& args);
 			server_response validatorstate_get_blockchains(http::connection* base, format::variables&& args);
 			server_response validatorstate_get_wallet(http::connection* base, format::variables&& args);
-			server_response validatorstate_status(http::connection* base, format::variables&& args);
+			server_response validatorstate_pruned_status(http::connection* base, format::variables&& args);
+			server_response validatorstate_full_status(http::connection* base, format::variables&& args);
+			server_response validatorstate_status(http::connection* base, format::variables&& args, bool pruned);
 			server_response validatorstate_submit_block(http::connection* base, format::variables&& args);
 		};
 	}

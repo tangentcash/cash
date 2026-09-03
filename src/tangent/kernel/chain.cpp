@@ -1017,7 +1017,6 @@ namespace tangent
 
 		uplinks::link_instance();
 		algorithm::signing::initialize();
-		algorithm::composition::initialize_cache();
 	}
 	kernel::~kernel()
 	{
@@ -1025,7 +1024,7 @@ namespace tangent
 		superchain::bridge::cleanup_instance();
 		script::factory::cleanup_instance();
 		format::tree_pool::cleanup_instance();
-		algorithm::composition::deinitialize_cache();
+		algorithm::composition::deinitialize();
 		algorithm::signing::deinitialize();
 		error_handling::set_callback(nullptr);
 		if (instance == this)

@@ -140,6 +140,7 @@ namespace tangent
 			btree_map<uint256_t, coin_utxo> inputs;
 			btree_map<uint256_t, coin_utxo> outputs;
 			btree_set<string> signers;
+			algorithm::pubkeyhash_t memo;
 			string transaction_id;
 			uint64_t block_id = 0;
 			bool reverted = false;
@@ -315,14 +316,15 @@ namespace tangent
 				uint64_t error_retry_after_timestamp = 0;
 				uint64_t total_requests = 0;
 			} state;
-			string connection_url;
 			btree_map<string, string> headers;
+			string url;
+			string type;
 			double rps = 0.0;
 		};
 
 		struct network_instance
 		{
-			vector<connection_instance> connections;
+			hash_map<string, vector<connection_instance>> connections;
 			uptr<translation_unit> translation;
 			network_options options;
 			algorithm::asset_id asset;
@@ -361,10 +363,10 @@ namespace tangent
 		public:
 			translation_unit(const algorithm::asset_id& new_asset) noexcept;
 			virtual ~translation_unit() noexcept;
-			virtual expects_promise_rt<format::tree> execute_rpc(const std::string_view& method, format::tree&& args, cache_policy cache, const std::string_view& path = std::string_view());
-			virtual expects_promise_rt<format::tree> execute_rpc_multi(const std::string_view& method, format::tree&& args, cache_policy cache, const std::string_view& path = std::string_view());
-			virtual expects_promise_rt<format::tree> execute_rest(const std::string_view& method, const std::string_view& path, format::tree&& args, cache_policy cache);
-			virtual expects_promise_rt<format::tree> execute_http(const std::string_view& method, const std::string_view& path, const std::string_view& type, const std::string_view& body, cache_policy cache);
+			virtual expects_promise_rt<format::tree> execute_rpc(const std::string_view& method, format::tree&& args, cache_policy cache, const std::string_view& path = std::string_view(), const std::string_view& scope = std::string_view());
+			virtual expects_promise_rt<format::tree> execute_rpc_multi(const std::string_view& method, format::tree&& args, cache_policy cache, const std::string_view& path = std::string_view(), const std::string_view& scope = std::string_view());
+			virtual expects_promise_rt<format::tree> execute_rest(const std::string_view& method, const std::string_view& path, format::tree&& args, cache_policy cache, const std::string_view& scope = std::string_view());
+			virtual expects_promise_rt<format::tree> execute_http(const std::string_view& method, const std::string_view& path, const std::string_view& type, const std::string_view& body, cache_policy cache, const std::string_view& scope = std::string_view());
 			virtual expects_promise_rt<uint64_t> get_linked_block_height(uint64_t seen_block_height);
 			virtual expects_promise_rt<uint64_t> get_latest_block_height() = 0;
 			virtual expects_promise_rt<vector<block_log>> get_block_transactions(uint64_t block_height, uint64_t block_count) = 0;
@@ -392,6 +394,7 @@ namespace tangent
 			virtual uint256_t to_baseline_value(const decimal& value) const;
 			virtual decimal from_baseline_value(const uint256_t& value) const;
 			virtual const chainparams& get_chainparams() const = 0;
+			virtual bool has_connection(const std::string_view& scope) const;
 		};
 
 		class utxo_translation_unit : public translation_unit
@@ -500,7 +503,7 @@ namespace tangent
 			translation_unit* get_network(const algorithm::asset_id& asset);
 			network_instance* get_network_instance(const algorithm::asset_id& asset);
 			const translation_unit::chainparams* get_network_params(const algorithm::asset_id& asset);
-			connection_instance* add_network_connection(const algorithm::asset_id& asset, const std::string_view& url, btree_map<string, string>&& headers, double rps);
+			connection_instance* add_network_connection(const algorithm::asset_id& asset, const std::string_view& url, const std::string_view& type, btree_map<string, string>&& headers, double rps);
 			void remove_network(const algorithm::asset_id& asset);
 			bool has_network(const algorithm::asset_id& asset, bool and_connections = false);
 
