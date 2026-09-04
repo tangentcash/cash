@@ -15,6 +15,7 @@ namespace tangent
 			tree root;
 			string key;
 			vector<tree*> stack;
+			bool optimized = false;
 
 			tree* Top()
 			{
@@ -117,9 +118,9 @@ namespace tangent
 			{
 				return Value(variable(value));
 			}
-			bool Double(double d)
+			bool Double(double value)
 			{
-				return Value(variable(decimal(d)));
+				return Value(variable(decimal(value)));
 			}
 			bool RawNumber(const char* buffer, rapidjson::SizeType buffer_size, bool)
 			{
@@ -138,8 +139,11 @@ namespace tangent
 				}
 				return stringify::has_number(text) ? Value(variable(decimal(text))) : Value(variable(text));
 			}
-			bool String(const char* buffer, rapidjson::SizeType buffer_size, bool)
+			bool String(const char* buffer, rapidjson::SizeType buffer_size, bool copy)
 			{
+				if (optimized)
+					return RawNumber(buffer, buffer_size, copy);
+
 				return Value(variable(std::string_view(buffer, (size_t)buffer_size)));
 			}
 		};
@@ -1815,6 +1819,7 @@ namespace tangent
 			json_tree_handler handler;
 			rapidjson::Reader reader;
 			rapidjson::MemoryStream stream(buffer.data(), buffer.size());
+			handler.optimized = optimized;
 			if (optimized)
 				reader.Parse<rapidjson::kParseNumbersAsStringsFlag>(stream, handler);
 			else
