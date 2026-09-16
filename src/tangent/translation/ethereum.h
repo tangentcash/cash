@@ -244,13 +244,6 @@ namespace tangent
 				virtual ~optimism() override = default;
 			};
 
-			class sonic : public ethereum
-			{
-			public:
-				sonic(const algorithm::asset_id& new_asset) noexcept;
-				virtual ~sonic() override = default;
-			};
-
 			class zksync : public ethereum
 			{
 			public:

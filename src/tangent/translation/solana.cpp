@@ -188,7 +188,7 @@ namespace tangent
 			{
 				format::tree config = format::tree::map();
 				config.set("encoding", format::variable("json"));
-				config.set("maxSupportedTransactionVersion", format::variable((uint8_t)0));
+				config.set("maxSupportedTransactionVersion", format::variable((uint8_t)1));
 				config.set("transactionDetails", format::variable("accounts"));
 				config.set("rewards", format::variable(false));
 
@@ -320,17 +320,13 @@ namespace tangent
 							{
 								auto program = instruction.child_var("program").as_blob();
 								auto program_id = instruction.child_var("programId").as_blob();
-								auto memo = format::util::decode_0xhex(instruction.child_var("parsed").as_blob());
-								if (memo.size() == 64 && program == "spl-memo" && (program_id == "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr" || program_id == "Memo4c2pN8afCj432Lb7RMVKi9PbQnnW7ewFFaV3oAH"))
+								auto memo = codec::base64_decode(instruction.child_var("parsed").as_blob());
+								if (memo.size() == 32 && program == "spl-memo" && (program_id == "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr" || program_id == "Memo4c2pN8afCj432Lb7RMVKi9PbQnnW7ewFFaV3oAH"))
 								{
-									auto raw = format::util::decode_0xhex(memo);
-									if (raw.size() == 32)
-									{
-										uint8_t checksum[32];
-										algorithm::hashing::hash256((uint8_t*)raw.data() + 12, 20, checksum);
-										if (memcmp(raw.data(), checksum + 20, 12) == 0)
-											tx.memo = algorithm::pubkeyhash_t(std::string_view(raw).substr(12));
-									}
+									uint8_t checksum[32];
+									algorithm::hashing::hash256((uint8_t*)memo.data() + 12, 20, checksum);
+									if (memcmp(memo.data(), checksum + 20, 12) == 0)
+										tx.memo = algorithm::pubkeyhash_t(std::string_view(memo).substr(12));
 								}
 							}
 						}
@@ -1031,7 +1027,7 @@ namespace tangent
 			{
 				format::tree config = format::tree::map();
 				config.set("encoding", format::variable("jsonParsed"));
-				config.set("maxSupportedTransactionVersion", format::variable((uint8_t)0));
+				config.set("maxSupportedTransactionVersion", format::variable((uint8_t)1));
 
 				format::tree map;
 				map.push(format::variable(signature));

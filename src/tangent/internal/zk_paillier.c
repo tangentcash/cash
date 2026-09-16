@@ -21,6 +21,15 @@
  /* hashing helpers (mpz <-> minimal big-endian bytes, matching Python)       */
  /* ------------------------------------------------------------------------- */
 
+static void mpz_free(void* data, size_t size)
+{
+	typedef void (*gmp_free_t)(void*, size_t);
+	static gmp_free_t gmp_free = NULL;
+	if (!gmp_free)
+		mp_get_memory_functions(NULL, NULL, &gmp_free);
+	gmp_free(data, size);
+}
+
 static void zk_hash_update_mpz(SHA256_CTX* ctx, const mpz_t v)
 {
 	size_t count = 0;
@@ -34,7 +43,7 @@ static void zk_hash_update_mpz(SHA256_CTX* ctx, const mpz_t v)
 	}
 	buf = (unsigned char*)mpz_export(NULL, &count, 1, 1, 1, 0, v);
 	sha256_Update(ctx, buf, count);
-	free(buf);
+	mpz_free(buf, count);
 }
 
 /* digest = SHA256(n || n+1 || c || z || u || w || Ntilde || h1 || h2 || Q3) */

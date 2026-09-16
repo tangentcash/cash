@@ -2117,10 +2117,7 @@ namespace tangent
 				format::tree tip_now, tip_min, tip_max;
 				auto to_delayed_block_height = [&](uint64_t block_height, bool zero_as_min)
 				{
-					auto latency = implementation->get_chainparams().sync_latency;
-					if (latency > 0)
-						--latency;
-
+					auto latency = std::max<uint64_t>(kernel::params().is(network_type::regtest) ? 1 : implementation->get_chainparams().sync_latency, 1) - 1;
 					return block_height > latency ? block_height - latency : (zero_as_min ? 0 : 1);
 				};
 				{
@@ -2987,20 +2984,19 @@ namespace tangent
 				{ "DGB", chain<translations::digibyte>(this) },
 				{ "XEC", chain<translations::ecash>(this) },
 				{ "ZEC", chain<translations::zcash>(this) },
-				{ "ARB", chain<translations::arbitrum>(this) },
+				{ "arbETH", chain<translations::arbitrum>(this) },
 				{ "AVAX", chain<translations::avalanche>(this) },
-				{ "BASE", chain<translations::base>(this) },
-				{ "BLAST", chain<translations::blast>(this) },
+				{ "baseETH", chain<translations::base>(this) },
+				{ "blastETH", chain<translations::blast>(this) },
 				{ "BNB", chain<translations::bnb>(this) },
 				{ "CELO", chain<translations::celo>(this) },
 				{ "ETC", chain<translations::ethereum_classic>(this) },
-				{ "GNO", chain<translations::gnosis>(this) },
-				{ "LINEA", chain<translations::linea>(this) },
-				{ "MATIC", chain<translations::polygon>(this) },
-				{ "OP", chain<translations::optimism>(this) },
-				{ "S", chain<translations::sonic>(this) },
-				{ "ZK", chain<translations::zksync>(this) },
-				{ "HOOD", chain<translations::robinhood>(this) },
+				{ "XDAI", chain<translations::gnosis>(this) },
+				{ "lineaETH", chain<translations::linea>(this) },
+				{ "POL", chain<translations::polygon>(this) },
+				{ "opETH", chain<translations::optimism>(this) },
+				{ "zkETH", chain<translations::zksync>(this) },
+				{ "rbhETH", chain<translations::robinhood>(this) },
 #endif
 			};
 			return registrations;

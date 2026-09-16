@@ -1233,7 +1233,7 @@ namespace tangent
 			}
 			algorithm::pubkeyhash_t ethereum::decode_memo(const std::string_view& calldata)
 			{
-				size_t pads = calldata.size() / 64;
+				size_t pads = (stringify::starts_with(calldata, "0x") ? calldata.size() - 2 : calldata.size()) / 64;
 				if (pads != 1 && pads != 3)
 					return algorithm::pubkeyhash_t();
 
@@ -1377,10 +1377,6 @@ namespace tangent
 			}
 
 			optimism::optimism(const algorithm::asset_id& new_asset) noexcept : ethereum(new_asset)
-			{
-			}
-
-			sonic::sonic(const algorithm::asset_id& new_asset) noexcept : ethereum(new_asset)
 			{
 			}
 

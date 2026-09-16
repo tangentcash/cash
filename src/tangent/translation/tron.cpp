@@ -4,7 +4,6 @@ extern "C"
 #include "../internal/bitcoin.h"
 #include "../internal/secp256k1.h"
 }
-#include <secp256k1_recovery.h>
 
 namespace tangent
 {
@@ -419,7 +418,11 @@ namespace tangent
 						result.add_output(std::move(output));
 					}
 
-					result.memo = decode_memo(data);
+					auto* calldata = details->child("raw_data.data");
+					if (calldata != nullptr && calldata->value.is_string())
+						result.memo = decode_memo(calldata->value.as_string());
+					if (result.memo.empty())
+						result.memo = decode_memo(data);
 					coreturn expects_rt<computed_transaction>(std::move(result));
 				});
 			}

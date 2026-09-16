@@ -6,29 +6,37 @@
 #include "tangent/translation/bitcoin.h"
 #include "tangent/internal/sha3.h"
 #include <vitex/vitex.h>
-#define TEST_BLOCK(x, y, z) tester::new_block_from_generator(data, users, x, #x, y, z, tester::block_type::normal)
-#define TEST_BLOCK_FALLBACK(x, y, z) tester::new_block_from_generator(data, users, x, #x, y, z, tester::block_type::fallback)
-#define TEST_BLOCK_FAULTY(x, y, z) tester::new_block_from_generator(data, users, x, #x, y, z, tester::block_type::faulty)
-#define TEST_BLOCK_FAULTY_UNATTESTED(x, y, z) tester::new_block_from_generator(data, users, x, #x, y, z, tester::block_type::faulty_unattested)
+#define TEST_BLOCK(x, y, z) new_block_from_generator(data, users, x, #x, y, z, block_type::normal)
+#define TEST_BLOCK_FALLBACK(x, y, z) new_block_from_generator(data, users, x, #x, y, z, block_type::fallback)
+#define TEST_BLOCK_FAULTY(x, y, z) new_block_from_generator(data, users, x, #x, y, z, block_type::faulty)
+#define TEST_BLOCK_FAULTY_UNATTESTED(x, y, z) new_block_from_generator(data, users, x, #x, y, z, block_type::faulty_unattested)
 
 using namespace tangent;
 
-struct account_ref
+enum class block_type
+{
+	normal,
+	fallback,
+	faulty,
+	faulty_unattested
+};
+
+struct block_account
 {
 	ledger::wallet wallet;
 	std::atomic<uint64_t> nonce;
 
-	account_ref() = default;
-	account_ref(const ledger::wallet& new_wallet, uint64_t new_nonce) : wallet(new_wallet), nonce(new_nonce)
+	block_account() = default;
+	block_account(const ledger::wallet& new_wallet, uint64_t new_nonce) : wallet(new_wallet), nonce(new_nonce)
 	{
 	}
-	account_ref(account_ref&& other) noexcept : wallet(std::move(other.wallet)), nonce(other.nonce.load())
+	block_account(block_account&& other) noexcept : wallet(std::move(other.wallet)), nonce(other.nonce.load())
 	{
 	};
-	account_ref(const account_ref& other) : wallet(other.wallet), nonce(other.nonce.load())
+	block_account(const block_account& other) : wallet(other.wallet), nonce(other.nonce.load())
 	{
 	}
-	account_ref& operator= (account_ref&& other) noexcept
+	block_account& operator= (block_account&& other) noexcept
 	{
 		if (&other == this)
 			return *this;
@@ -37,7 +45,7 @@ struct account_ref
 		nonce = other.nonce.load();
 		return *this;
 	}
-	account_ref& operator= (const account_ref& other)
+	block_account& operator= (const block_account& other)
 	{
 		if (&other == this)
 			return *this;
@@ -48,190 +56,15 @@ struct account_ref
 	}
 };
 
-struct participant_ref
+struct block_mpc
 {
 	algorithm::composition::keypair keypair;
 	algorithm::storage_type<uint8_t, 64> seed;
 };
 
-struct tester
+struct block_generator
 {
-	enum class block_type
-	{
-		normal,
-		fallback,
-		faulty,
-		faulty_unattested
-	};
-
-	template <typename t, typename... args>
-	static void new_serialization_comparison(format::tree& data, args... arguments)
-	{
-		t instance = t(arguments...); format::wo_stream message;
-		VI_PANIC(instance.store(&message), "failed to store a message");
-
-		t instance_copy = t(arguments...);
-		auto reader = message.ro();
-		VI_PANIC(instance_copy.load(reader), "failed to load a message");
-
-		format::wo_stream message_copy;
-		VI_PANIC(instance_copy.store(&message_copy), "failed to store a message");
-		VI_PANIC(message_copy.data == message.data, "serialization inconsistency found");
-
-		data.set(t::as_instance_typename(), format::variable(algorithm::encoding::encode_0xhex256(message.hash())));
-	}
-	static ledger::block_body new_block_from_generator(format::tree* results, vector<account_ref>& users, std::function<void(vector<uptr<ledger::transaction_message>>&, vector<account_ref>&)>&& test_case, const std::string_view& test_case_call, const std::string_view& state_root_hash, uint64_t block_number, block_type type)
-	{
-		for (auto& user : users)
-			user.nonce = user.wallet.get_latest_nonce().or_else(0);
-
-		vector<uptr<ledger::transaction_message>> transactions;
-		test_case(transactions, users);
-
-		auto block = new_block_from_list(results, users, std::move(transactions), type);
-		auto hash = algorithm::encoding::encode_0xhex256(block.state_root);
-		if (results != nullptr)
-			console::get()->fwrite_line("TEST_BLOCK%s(%s, \"%s\", %" PRIu64 ");", type == block_type::fallback ? "_FALLBACK" : (type == block_type::faulty ? "_FAULTY" : (type == block_type::faulty_unattested ? "_FAULTY_UNATTESTED" : "")), test_case_call.data(), hash.c_str(), block.number);
-
-		VI_PANIC(state_root_hash.empty() || state_root_hash == hash, "block state root deviation");
-		VI_PANIC(!block_number || block_number == block.number, "block number deviation");
-		return block;
-	}
-	static ledger::block_body new_block_from_one(format::tree* results, vector<account_ref>& users, uptr<ledger::transaction_message>&& transaction, block_type type)
-	{
-		auto transactions = vector<uptr<ledger::transaction_message>>();
-		transactions.push_back(std::move(transaction));
-		return new_block_from_list(results, users, std::move(transactions), type);
-	}
-	static ledger::block_body new_block_from_list(format::tree* results, vector<account_ref>& users, vector<uptr<ledger::transaction_message>>&& transactions, block_type type)
-	{
-		ledger::solver_context solver;
-		if (type != block_type::faulty_unattested)
-		{
-			for (size_t i = 0; i < transactions.size(); i++)
-			{
-				auto& transaction = transactions[i];
-				if (transaction->as_type() != transactions::attestate::as_instance_type())
-					continue;
-
-				auto* attestation = (transactions::attestate*)*transaction;
-				for (auto& user : users)
-				{
-					auto validator = solver.state.executor.get_validator_attestation(attestation->asset, user.wallet.public_key_hash);
-					if (validator && validator->is_active())
-						VI_PANIC(attestation->add_commitment(user.wallet.secret_key), "attestation failed");
-				}
-
-				auto& submitter = users.front();
-				attestation->sign(submitter.wallet.secret_key, submitter.nonce++, decimal::zero()).expect("pre-validation failed");
-			}
-		}
-
-		uint64_t priority = solver.apply_validator_state([&](size_t index) { return index < users.size() ? &users[index].wallet : nullptr; }).or_else(std::numeric_limits<uint64_t>::max());
-		if (type == block_type::fallback)
-		{
-			VI_PANIC(users.size() >= 2, "must have another user");
-			auto& fallback_wallet = users[1].wallet;
-			solver.state.secret_key = fallback_wallet.secret_key;
-			solver.state.public_key_hash = fallback_wallet.public_key_hash;
-		}
-		VI_PANIC(type == block_type::fallback || priority == 0, "block proposal not allowed");
-		VI_PANIC(transactions.size() == solver.try_include_unwrapped_transactions(std::move(transactions), true), "some transactions were excluded");
-
-		auto proposal = solver.evaluate_block_inline().expect("block evaluation failed");
-		solver.solve_block_inline(proposal).expect("block solution failed");
-		if (results != nullptr)
-			solver.verify_block(proposal).expect("block verification failed");
-
-		transactions = vector<uptr<ledger::transaction_message>>();
-		solver.checkpoint_block(proposal).expect("block checkpoint failed");
-		if (results != nullptr)
-		{
-			auto* blocks_data = results->child("blocks");
-			if (!blocks_data)
-				blocks_data = results->set("blocks", format::tree::list());
-			blocks_data->push(proposal.as_tree());
-		}
-
-		vector<ledger::wallet> validators;
-		validators.reserve(users.size());
-		for (auto& [user, user_nonce] : users)
-			validators.push_back(user);
-
-		auto adapter = consensus::local_delegation_adapter(validators);
-		auto execution = adapter.execute_dispatcher_on(proposal.block.number).get();
-		for (auto& [runner_wallet, transaction] : adapter.emissions)
-		{
-			for (auto& [user, user_nonce] : users)
-			{
-				bool attestation = transaction->as_type() == transactions::attestate::as_instance_type();
-				if (attestation || user.public_key_hash == runner_wallet->public_key_hash)
-				{
-					if (!attestation)
-						transaction->sign(user.secret_key, user_nonce++, decimal::zero()).expect("pre-validation failed");
-					transactions.push_back(std::move(transaction));
-					break;
-				}
-			}
-		}
-
-		for (auto& [transaction_hash, error] : solver.transactions.errors)
-		{
-			VI_PANIC(type == block_type::faulty || type == block_type::faulty_unattested, "%s", error.what());
-			if (results != nullptr)
-			{
-				auto* errors_data = results->child("errors");
-				if (!errors_data)
-					errors_data = results->set("errors", format::tree::list());
-
-				format::tree error_data;
-				error_data.push(algorithm::encoding::serialize_uint256(transaction_hash));
-				error_data.push(format::variable(proposal.block.number));
-				error_data.push(format::variable("execution"));
-				error_data.push(format::variable(error.what()));
-				errors_data->push(std::move(error_data));
-			}
-		}
-		for (auto& [transaction_hash, error] : execution.errors)
-		{
-			VI_PANIC(type == block_type::faulty || type == block_type::faulty_unattested, "%s", error.what());
-			if (results != nullptr)
-			{
-				auto* errors_data = results->child("errors");
-				if (!errors_data)
-					errors_data = results->set("errors", format::tree::list());
-
-				format::tree error_data;
-				error_data.push(algorithm::encoding::serialize_uint256(transaction_hash));
-				error_data.push(format::variable(proposal.block.number));
-				error_data.push(format::variable("delegation"));
-				error_data.push(format::variable(error.what()));
-				errors_data->push(std::move(error_data));
-			}
-		}
-
-		if (!transactions.empty())
-			new_block_from_list(results, users, std::move(transactions), type);
-
-		return proposal.block;
-	}
-	template <typename f>
-	static void use_clean_state(f&& callback)
-	{
-		auto& params = kernel::mparams();
-		auto path = params.database.location();
-		params.database.reset();
-		if (os::directory::is_exists(path))
-			os::directory::remove(path).expect("busy file");
-
-		auto chain = storages::chainstate();
-		callback();
-	}
-};
-
-struct generators
-{
-	static void transfer_stage_1(vector<uptr<ledger::transaction_message>>& transactions, vector<account_ref>& users)
+	static void transfer_stage_1(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users)
 	{
 		auto& [user1, user1_nonce] = users[0];
 		auto& [user2, user2_nonce] = users[1];
@@ -262,7 +95,7 @@ struct generators
 		transfer_bitcoin->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(transfer_bitcoin);
 	}
-	static void transfer_stage_2(vector<uptr<ledger::transaction_message>>& transactions, vector<account_ref>& users)
+	static void transfer_stage_2(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users)
 	{
 		auto& [user1, user1_nonce] = users[0];
 		auto& [user2, user2_nonce] = users[1];
@@ -283,7 +116,7 @@ struct generators
 		transfer_ripple->sign(user_test.secret_key, 0, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(transfer_ripple);
 	}
-	static void transfer_custom(vector<uptr<ledger::transaction_message>>& transactions, vector<account_ref>& users, size_t user_id, const algorithm::asset_id& asset, const std::string_view& address, const decimal& value)
+	static void transfer_custom(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users, size_t user_id, const algorithm::asset_id& asset, const std::string_view& address, const decimal& value)
 	{
 		auto& [user1, user1_nonce] = users[user_id];
 		algorithm::pubkeyhash_t public_key_hash;
@@ -295,7 +128,7 @@ struct generators
 		transfer_asset->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(transfer_asset);
 	}
-	static void rollup_stage_1(vector<uptr<ledger::transaction_message>>& transactions, vector<account_ref>& users)
+	static void rollup_stage_1(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users)
 	{
 		auto& [user1, user1_nonce] = users[0];
 		auto& [user2, user2_nonce] = users[1];
@@ -350,7 +183,7 @@ struct generators
 		multi_asset_rollup->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(multi_asset_rollup);
 	}
-	static void deploy_stage_1(vector<uptr<ledger::transaction_message>>& transactions, vector<account_ref>& users, vector<algorithm::pubkeyhash_t>* contracts)
+	static void deploy_stage_1(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users, vector<algorithm::pubkeyhash_t>* contracts)
 	{
 		auto& [user1, user1_nonce] = users[0];
 		string token_program = *algorithm::encoding::unpack_program(codec::base64_decode("eNq1VduO2jAQfQaJfxjxUCXa3ahq37JQ9U+QSSbIqmOnjgNF1f57fU1swqWrbnkiM8PMmXPOhIqRvgclfiDf9UpIcsDV8vdquSB1LVGnauyYOKN8jWKV4EqSSsUxUlVi4DbUK0n5AThpMXrsz+1eMBOQSNjXL5+hH7qOnXXkbbVcLasIie7O+wZlCqWRoo1HKhF3OxI2YGh2JPKsh26Sxb657q+2QNDa7KHBDZXKunZQ359dABzgT5R7zPO4WS1EPRoTJnVLeYh7XCZuoeVuGYk/Byoxs7GiEz1V9IhZ/gxryhgeCAPRoSSKCg4vniNoB91xjxDq17lZPdkOOJ52YcHF+FAEAWEL6ldZGhKzPC0JevoSJS4LvLg6b1dMk4YMnQlyTwnHnk5N0tuEKY6wgv4wcShLbKnKxoyFoIfp0MC0Bo5EJ7BVL5gkFS+SQ4kHWsTGmtHzTqFs2Q2dklaw2cKeMMIr3InGL2fG6s7OYR6FjcETrEu4NpDyfmgaWlHUwviGbpz5YbEfJM+cDhKbIjh5ZFFLUVh279SMFgtUAx7R3bj9UnjiwmG6oBKGSzEF3Nrb8UIXk9q2IBbVQkoEfXBHE/zRpLGSN9SavnOhQD9oMArr9Ucrf+NCLUEe98XNuHt/iti6djN/q4x3uHN0Is8Fa3fUmtU+9M09ga0v3yPw/7i/CLvlW/d0LHv6T3oCDLxG2TBxgmytzzC5zcsG9k5hA7NCt5HJ5v/miJcPckT6kossccUqMytMnR6/X657IPxbR2/Aztrg2gvc+200hNIzQ7CIOlSCcvO3pcHMIOV+cMo75Y0Ig9P2sQpvfwAdDwqG"));
@@ -368,7 +201,7 @@ struct generators
 		transactions.push_back(deploy2);
 		contracts->push_back(deploy2->get_account());
 	}
-	static void deploy_stage_2(vector<uptr<ledger::transaction_message>>& transactions, vector<account_ref>& users, vector<algorithm::pubkeyhash_t>* contracts)
+	static void deploy_stage_2(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users, vector<algorithm::pubkeyhash_t>* contracts)
 	{
 		auto executor = ledger::executor_context(nullptr);
 		auto& [user2, user2_nonce] = users[1];
@@ -392,7 +225,7 @@ struct generators
 		transactions.push_back(deploy3);
 		contracts->push_back(deploy3->get_account());
 	}
-	static void call_stage_1(vector<uptr<ledger::transaction_message>>& transactions, vector<account_ref>& users, vector<algorithm::pubkeyhash_t>* contracts)
+	static void call_stage_1(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users, vector<algorithm::pubkeyhash_t>* contracts)
 	{
 		auto& [user1, user1_nonce] = users[0];
 		auto& [user2, user2_nonce] = users[1];
@@ -433,7 +266,7 @@ struct generators
 		call7->sign(user2.secret_key, user2_nonce++);
 		transactions.push_back(call7);
 	}
-	static void setup_stage_0(vector<uptr<ledger::transaction_message>>& transactions, vector<account_ref>& users)
+	static void setup_stage_0(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users)
 	{
 		auto& [user1, user1_nonce] = users[0];
 		auto* setup_user1 = memory::init<transactions::setup>();
@@ -457,7 +290,7 @@ struct generators
 			transactions.push_back(setup_user_n);
 		}
 	}
-	static void setup_stage_1(vector<uptr<ledger::transaction_message>>& transactions, vector<account_ref>& users)
+	static void setup_stage_1(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users)
 	{
 		auto& [user1, user1_nonce] = users[0];
 		auto& [user2, user2_nonce] = users[1];
@@ -491,7 +324,7 @@ struct generators
 			transactions.push_back(setup_user_n);
 		}
 	}
-	static void setup_stage_2(vector<uptr<ledger::transaction_message>>& transactions, vector<account_ref>& users)
+	static void setup_stage_2(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users)
 	{
 		auto& [user1, user1_nonce] = users[0];
 		auto* setup_user1 = memory::init<transactions::setup>();
@@ -499,10 +332,14 @@ struct generators
 		setup_user1->allocate_participation_stake(decimal::zero());
 		setup_user1->allocate_attestation_stake(algorithm::asset::id_of("BTC"), decimal::zero(), 0);
 		setup_user1->allocate_attestation_stake(algorithm::asset::id_of("ETH"), decimal::zero(), 0);
+		setup_user1->allocate_attestation_stake(algorithm::asset::id_of("SOL"), decimal::zero(), 0);
+		setup_user1->allocate_attestation_stake(algorithm::asset::id_of("TRX"), decimal::zero(), 0);
 		setup_user1->allocate_attestation_stake(algorithm::asset::id_of("XLM"), decimal::zero(), 0);
 		setup_user1->allocate_attestation_stake(algorithm::asset::id_of("XMR"), decimal::zero(), 0);
 		setup_user1->allocate_bridge(algorithm::asset::id_of("BTC"), (uint8_t)kernel::params().policy.participation.min_per_account, 0.000025);
 		setup_user1->allocate_bridge(algorithm::asset::id_of("ETH"), (uint8_t)kernel::params().policy.participation.min_per_account, 0.0005);
+		setup_user1->allocate_bridge(algorithm::asset::id_of("SOL"), (uint8_t)kernel::params().policy.participation.min_per_account, 0.05);
+		setup_user1->allocate_bridge(algorithm::asset::id_of("TRX"), (uint8_t)kernel::params().policy.participation.min_per_account, 15);
 		setup_user1->allocate_bridge(algorithm::asset::id_of("XLM"), (uint8_t)kernel::params().policy.participation.min_per_account, 0.0001);
 		setup_user1->allocate_bridge(algorithm::asset::id_of("XMR"), (uint8_t)kernel::params().policy.participation.min_per_account, 0.005);
 		setup_user1->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
@@ -517,7 +354,7 @@ struct generators
 			transactions.push_back(setup_user_n);
 		}
 	}
-	static void setup_custom(vector<uptr<ledger::transaction_message>>& transactions, vector<account_ref>& users, size_t user_id, int8_t tx_attestation, int8_t mpc_participation)
+	static void setup_custom(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users, size_t user_id, int8_t tx_attestation, int8_t mpc_participation)
 	{
 		auto& [user1, user1_nonce] = users[user_id];
 		auto* setup_user1 = memory::init<transactions::setup>();
@@ -546,7 +383,7 @@ struct generators
 		setup_user1->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(setup_user1);
 	}
-	static void route_stage_0(vector<uptr<ledger::transaction_message>>& transactions, vector<account_ref>& users)
+	static void route_stage_0(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users)
 	{
 		auto& [user1, user1_nonce] = users[0];
 		auto executor = ledger::executor_context(nullptr);
@@ -574,7 +411,7 @@ struct generators
 		route_tron->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(route_tron);
 	}
-	static void route_stage_1(vector<uptr<ledger::transaction_message>>& transactions, vector<account_ref>& users)
+	static void route_stage_1(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users)
 	{
 		auto& [user1, user1_nonce] = users[0];
 		auto& [user2, user2_nonce] = users[1];
@@ -611,7 +448,7 @@ struct generators
 		route_monero->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(route_monero);
 	}
-	static void route_stage_2(vector<uptr<ledger::transaction_message>>& transactions, vector<account_ref>& users)
+	static void route_stage_2(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users)
 	{
 		auto& [user1, user1_nonce] = users[0];
 		auto& [user2, user2_nonce] = users[1];
@@ -646,7 +483,7 @@ struct generators
 		VI_PANIC(route_ethereum_transfer->sign(user1.secret_key, user1_nonce++), "tx sign failed");
 		transactions.push_back(route_ethereum_transfer);
 	}
-	static void route_stage_3(vector<uptr<ledger::transaction_message>>& transactions, vector<account_ref>& users)
+	static void route_stage_3(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users)
 	{
 		auto& [user2, user2_nonce] = users[1];
 		auto executor = ledger::executor_context(nullptr);
@@ -674,7 +511,7 @@ struct generators
 		route_bitcoin->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(route_bitcoin);
 	}
-	static void route_stage_4(vector<uptr<ledger::transaction_message>>& transactions, vector<account_ref>& users)
+	static void route_stage_4(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users)
 	{
 		auto& [user1, user1_nonce] = users[0];
 		auto executor = ledger::executor_context(nullptr);
@@ -684,6 +521,20 @@ struct generators
 		route_ethereum->solve_pow_challenge(user1.public_key_hash, user1_nonce, 0);
 		route_ethereum->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(route_ethereum);
+
+		auto* route_tron = memory::init<transactions::route>();
+		route_tron->set_asset("TRX");
+		route_tron->set_bridge_hash(executor.get_bridge_instances(route_tron->asset, 0, 1)->front().ref.hash);
+		route_tron->solve_pow_challenge(user1.public_key_hash, user1_nonce, 0);
+		route_tron->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
+		transactions.push_back(route_tron);
+
+		auto* route_solana = memory::init<transactions::route>();
+		route_solana->set_asset("SOL");
+		route_solana->set_bridge_hash(executor.get_bridge_instances(route_solana->asset, 0, 1)->front().ref.hash);
+		route_solana->solve_pow_challenge(user1.public_key_hash, user1_nonce, 0);
+		route_solana->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
+		transactions.push_back(route_solana);
 
 		auto* route_ripple = memory::init<transactions::route>();
 		route_ripple->set_asset("XLM");
@@ -706,7 +557,7 @@ struct generators
 		route_monero->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(route_monero);
 	}
-	static void attestate_stage_0(vector<uptr<ledger::transaction_message>>& transactions, vector<account_ref>& users)
+	static void attestate_stage_0(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users)
 	{
 		auto& [user1, user1_nonce] = users[0];
 		auto executor = ledger::executor_context(nullptr);
@@ -753,7 +604,7 @@ struct generators
 			{ superchain::value_transfer(token_asset, address_tron->addresses.begin()->second, 400000) });
 		transactions.push_back(attestate_tron);
 	}
-	static void attestate_stage_1(vector<uptr<ledger::transaction_message>>& transactions, vector<account_ref>& users)
+	static void attestate_stage_1(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users)
 	{
 		auto& [user1, user1_nonce] = users[0];
 		auto& [user2, user2_nonce] = users[1];
@@ -813,7 +664,7 @@ struct generators
 			{ superchain::value_transfer(attestate_monero->asset, address_monero->addresses.begin()->second, 10.0) });
 		transactions.push_back(attestate_monero);
 	}
-	static void migrate_stage_1(vector<uptr<ledger::transaction_message>>& transactions, vector<account_ref>& users)
+	static void migrate_stage_1(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users)
 	{
 		auto& [user1, user1_nonce] = users[0];
 		auto& [user2, user2_nonce] = users[1];
@@ -825,13 +676,13 @@ struct generators
 		withdrawal_ethereum_token->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(withdrawal_ethereum_token);
 	}
-	static void migrate_stage_2(vector<uptr<ledger::transaction_message>>& transactions, vector<account_ref>& users)
+	static void migrate_stage_2(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users)
 	{
 		size_t users_starting_count = users.size();
 		size_t users_ending_count = users_starting_count + kernel::params().policy.participation.max_per_account;
 		for (size_t i = users_starting_count; i < users_ending_count; i++)
 		{
-			users.push_back(account_ref(ledger::wallet::from_seed(stringify::text("00000%i", (int)i)), 0));
+			users.push_back(block_account(ledger::wallet::from_seed(stringify::text("00000%i", (int)i)), 0));
 			auto& [user_n, user_n_nonce] = users[i];
 			auto* setup_user_n = memory::init<transactions::setup>();
 			setup_user_n->allocate_participation_stake(decimal::zero());
@@ -839,7 +690,7 @@ struct generators
 			transactions.push_back(setup_user_n);
 		}
 	}
-	static void migrate_stage_3(vector<uptr<ledger::transaction_message>>& transactions, vector<account_ref>& users)
+	static void migrate_stage_3(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users)
 	{
 		auto& [user2, user2_nonce] = users[1];
 		auto* setup_user2 = memory::init<transactions::setup>();
@@ -847,7 +698,7 @@ struct generators
 		setup_user2->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(setup_user2);
 	}
-	static void migrate_stage_4(vector<uptr<ledger::transaction_message>>& transactions, vector<account_ref>& users)
+	static void migrate_stage_4(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users)
 	{
 		auto chain = storages::chainstate();
 		auto block_number = chain.get_latest_block_number().expect("must have parent block") - 3;
@@ -879,7 +730,7 @@ struct generators
 		setup_user2->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(setup_user2);
 	}
-	static void withdraw_stage_1(vector<uptr<ledger::transaction_message>>& transactions, vector<account_ref>& users)
+	static void withdraw_stage_1(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users)
 	{
 		auto& [user1, user1_nonce] = users[0];
 		auto& [user2, user2_nonce] = users[1];
@@ -891,7 +742,7 @@ struct generators
 		withdrawal_ethereum_token->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(withdrawal_ethereum_token);
 	}
-	static void withdraw_stage_2(vector<uptr<ledger::transaction_message>>& transactions, vector<account_ref>& users)
+	static void withdraw_stage_2(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users)
 	{
 		auto& [user1, user1_nonce] = users[0];
 		auto& [user2, user2_nonce] = users[1];
@@ -903,7 +754,7 @@ struct generators
 		withdrawal_ethereum_token->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(withdrawal_ethereum_token);
 	}
-	static void withdraw_stage_3(vector<uptr<ledger::transaction_message>>& transactions, vector<account_ref>& users)
+	static void withdraw_stage_3(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users)
 	{
 		auto& [user1, user1_nonce] = users[0];
 		auto& [user2, user2_nonce] = users[1];
@@ -915,7 +766,7 @@ struct generators
 		withdrawal_ethereum_token->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(withdrawal_ethereum_token);
 	}
-	static void withdraw_stage_4(vector<uptr<ledger::transaction_message>>& transactions, vector<account_ref>& users)
+	static void withdraw_stage_4(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users)
 	{
 		auto& [user1, user1_nonce] = users[0];
 		auto& [user2, user2_nonce] = users[1];
@@ -925,7 +776,7 @@ struct generators
 		transfer_ripple->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(transfer_ripple);
 	}
-	static void withdraw_stage_5(vector<uptr<ledger::transaction_message>>& transactions, vector<account_ref>& users)
+	static void withdraw_stage_5(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users)
 	{
 		auto& [user1, user1_nonce] = users[0];
 		auto& [user2, user2_nonce] = users[1];
@@ -935,7 +786,7 @@ struct generators
 		transfer_ripple->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(transfer_ripple);
 	}
-	static void withdraw_stage_6(vector<uptr<ledger::transaction_message>>& transactions, vector<account_ref>& users)
+	static void withdraw_stage_6(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users)
 	{
 		auto chain = storages::chainstate();
 		auto block_number = chain.get_latest_block_number().expect("must have parent block") - 2;
@@ -955,7 +806,7 @@ struct generators
 		anticast_ethereum_token->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(anticast_ethereum_token);
 	}
-	static void withdraw_stage_7(vector<uptr<ledger::transaction_message>>& transactions, vector<account_ref>& users)
+	static void withdraw_stage_7(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users)
 	{
 		auto chain = storages::chainstate();
 		auto block_number = chain.get_latest_block_number().expect("must have parent block") - 5;
@@ -979,7 +830,7 @@ struct generators
 		anticast_ethereum_token->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(anticast_ethereum_token);
 	}
-	static void withdraw_stage_8(vector<uptr<ledger::transaction_message>>& transactions, vector<account_ref>& users)
+	static void withdraw_stage_8(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users)
 	{
 		auto& [user1, user1_nonce] = users[0];
 		auto& [user2, user2_nonce] = users[1];
@@ -991,7 +842,7 @@ struct generators
 		withdrawal_ethereum_token->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(withdrawal_ethereum_token);
 	}
-	static void withdraw_stage_9(vector<uptr<ledger::transaction_message>>& transactions, vector<account_ref>& users)
+	static void withdraw_stage_9(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users)
 	{
 		auto& [user1, user1_nonce] = users[0];
 		auto& [user2, user2_nonce] = users[1];
@@ -1028,7 +879,7 @@ struct generators
 		withdrawal_monero->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(withdrawal_monero);
 	}
-	static void withdraw_stage_10(vector<uptr<ledger::transaction_message>>& transactions, vector<account_ref>& users)
+	static void withdraw_stage_10(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users)
 	{
 		auto& [user1, user1_nonce] = users[0];
 		auto& [user2, user2_nonce] = users[1];
@@ -1057,7 +908,7 @@ struct generators
 		withdrawal_bitcoin->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(withdrawal_bitcoin);
 	}
-	static void production_stage_1(vector<uptr<ledger::transaction_message>>& transactions, vector<account_ref>& users)
+	static void production_stage_1(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users)
 	{
 		auto& [user2, user2_nonce] = users[1];
 		auto* setup_user2 = memory::init<transactions::setup>();
@@ -1065,7 +916,7 @@ struct generators
 		setup_user2->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(setup_user2);
 	}
-	static void production_stage_2(vector<uptr<ledger::transaction_message>>& transactions, vector<account_ref>& users)
+	static void production_stage_2(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users)
 	{
 		auto& [user1, user1_nonce] = users[0];
 		auto& [user2, user2_nonce] = users[1];
@@ -1081,1293 +932,1454 @@ struct generators
 	}
 };
 
-struct tests
+/* blockchain testing interface */
+template <typename t, typename... args>
+static void new_serialization_comparison(format::tree& data, args... arguments)
 {
-	/* 256bit integer serialization */
-	static void generic_integer_serialization()
+	t instance = t(arguments...); format::wo_stream message;
+	VI_PANIC(instance.store(&message), "failed to store a message");
+
+	t instance_copy = t(arguments...);
+	auto reader = message.ro();
+	VI_PANIC(instance_copy.load(reader), "failed to load a message");
+
+	format::wo_stream message_copy;
+	VI_PANIC(instance_copy.store(&message_copy), "failed to store a message");
+	VI_PANIC(message_copy.data == message.data, "serialization inconsistency found");
+
+	data.set(t::as_instance_typename(), format::variable(algorithm::encoding::encode_0xhex256(message.hash())));
+}
+template <typename f>
+static void new_chain_state(f&& callback)
+{
+	auto& params = kernel::mparams();
+	auto path = params.database.location();
+	params.database.reset();
+	if (os::directory::is_exists(path))
+		os::directory::remove(path).expect("busy file");
+
+	auto chain = storages::chainstate();
+	callback();
+}
+static ledger::block_body new_block_from_list(format::tree* results, vector<block_account>& users, vector<uptr<ledger::transaction_message>>&& transactions, block_type type)
+{
+	ledger::solver_context solver;
+	if (type != block_type::faulty_unattested)
 	{
-		auto* term = console::get();
+		for (size_t i = 0; i < transactions.size(); i++)
+		{
+			auto& transaction = transactions[i];
+			if (transaction->as_type() != transactions::attestate::as_instance_type())
+				continue;
+
+			auto* attestation = (transactions::attestate*)*transaction;
+			for (auto& user : users)
+			{
+				auto validator = solver.state.executor.get_validator_attestation(attestation->asset, user.wallet.public_key_hash);
+				if (validator && validator->is_active())
+					VI_PANIC(attestation->add_commitment(user.wallet.secret_key), "attestation failed");
+			}
+
+			auto& submitter = users.front();
+			attestation->sign(submitter.wallet.secret_key, submitter.nonce++, decimal::zero()).expect("pre-validation failed");
+		}
+	}
+
+	uint64_t priority = solver.apply_validator_state([&](size_t index) { return index < users.size() ? &users[index].wallet : nullptr; }).or_else(std::numeric_limits<uint64_t>::max());
+	if (type == block_type::fallback)
+	{
+		VI_PANIC(users.size() >= 2, "must have another user");
+		auto& fallback_wallet = users[1].wallet;
+		solver.state.secret_key = fallback_wallet.secret_key;
+		solver.state.public_key_hash = fallback_wallet.public_key_hash;
+	}
+	VI_PANIC(type == block_type::fallback || priority == 0, "block proposal not allowed");
+	VI_PANIC(transactions.size() == solver.try_include_unwrapped_transactions(std::move(transactions), true), "some transactions were excluded");
+
+	auto proposal = solver.evaluate_block_inline().expect("block evaluation failed");
+	solver.solve_block_inline(proposal).expect("block solution failed");
+	if (results != nullptr)
+		solver.verify_block(proposal).expect("block verification failed");
+
+	transactions = vector<uptr<ledger::transaction_message>>();
+	solver.checkpoint_block(proposal).expect("block checkpoint failed");
+	if (results != nullptr)
+	{
+		auto* blocks_data = results->child("blocks");
+		if (!blocks_data)
+			blocks_data = results->set("blocks", format::tree::list());
+		blocks_data->push(proposal.as_tree());
+	}
+
+	vector<ledger::wallet> validators;
+	validators.reserve(users.size());
+	for (auto& [user, user_nonce] : users)
+		validators.push_back(user);
+
+	auto adapter = consensus::local_delegation_adapter(validators);
+	auto execution = adapter.execute_dispatcher_on(proposal.block.number).get();
+	for (auto& [runner_wallet, transaction] : adapter.emissions)
+	{
+		for (auto& [user, user_nonce] : users)
+		{
+			bool attestation = transaction->as_type() == transactions::attestate::as_instance_type();
+			if (attestation || user.public_key_hash == runner_wallet->public_key_hash)
+			{
+				if (!attestation)
+					transaction->sign(user.secret_key, user_nonce++, decimal::zero()).expect("pre-validation failed");
+				transactions.push_back(std::move(transaction));
+				break;
+			}
+		}
+	}
+
+	for (auto& [transaction_hash, error] : solver.transactions.errors)
+	{
+		VI_PANIC(type == block_type::faulty || type == block_type::faulty_unattested, "%s", error.what());
+		if (results != nullptr)
+		{
+			auto* errors_data = results->child("errors");
+			if (!errors_data)
+				errors_data = results->set("errors", format::tree::list());
+
+			format::tree error_data;
+			error_data.push(algorithm::encoding::serialize_uint256(transaction_hash));
+			error_data.push(format::variable(proposal.block.number));
+			error_data.push(format::variable("execution"));
+			error_data.push(format::variable(error.what()));
+			errors_data->push(std::move(error_data));
+		}
+	}
+	for (auto& [transaction_hash, error] : execution.errors)
+	{
+		VI_PANIC(type == block_type::faulty || type == block_type::faulty_unattested, "%s", error.what());
+		if (results != nullptr)
+		{
+			auto* errors_data = results->child("errors");
+			if (!errors_data)
+				errors_data = results->set("errors", format::tree::list());
+
+			format::tree error_data;
+			error_data.push(algorithm::encoding::serialize_uint256(transaction_hash));
+			error_data.push(format::variable(proposal.block.number));
+			error_data.push(format::variable("delegation"));
+			error_data.push(format::variable(error.what()));
+			errors_data->push(std::move(error_data));
+		}
+	}
+
+	if (!transactions.empty())
+		new_block_from_list(results, users, std::move(transactions), type);
+
+	return proposal.block;
+}
+static ledger::block_body new_block_from_generator(format::tree* results, vector<block_account>& users, std::function<void(vector<uptr<ledger::transaction_message>>&, vector<block_account>&)>&& test_case, const std::string_view& test_case_call, const std::string_view& state_root_hash, uint64_t block_number, block_type type)
+{
+	for (auto& user : users)
+		user.nonce = user.wallet.get_latest_nonce().or_else(0);
+
+	vector<uptr<ledger::transaction_message>> transactions;
+	test_case(transactions, users);
+
+	auto block = new_block_from_list(results, users, std::move(transactions), type);
+	auto hash = algorithm::encoding::encode_0xhex256(block.state_root);
+	if (results != nullptr)
+		console::get()->fwrite_line("TEST_BLOCK%s(%s, \"%s\", %" PRIu64 ");", type == block_type::fallback ? "_FALLBACK" : (type == block_type::faulty ? "_FAULTY" : (type == block_type::faulty_unattested ? "_FAULTY_UNATTESTED" : "")), test_case_call.data(), hash.c_str(), block.number);
+
+	VI_PANIC(state_root_hash.empty() || state_root_hash == hash, "block state root deviation");
+	VI_PANIC(!block_number || block_number == block.number, "block number deviation");
+	return block;
+}
+/* 256bit integer serialization */
+static void test_generic_integer_serialization()
+{
+	auto* term = console::get();
+	term->capture_time();
+
+	size_t samples = 1024 * 4;
+	for (size_t i = 0; i < samples; i++)
+	{
+		uint256_t value = algorithm::hashing::hash256i(*crypto::random_bytes(32));
+
+		uint8_t data1[32] = { 0 }; uint256_t value1 = 0;
+		value.encode(data1);
+		value1.decode(data1);
+		VI_PANIC(value == value1, "uint256 serialization failed");
+	}
+
+	double time = term->get_captured_time();
+	term->fwrite_line("uint256 serialization time: %.2f ms (cps: %.2f)", time, 1000.0 * (double)samples / time);
+}
+/* 256bit => decimal conversion */
+static void test_generic_integer_conversion()
+{
+	auto* term = console::get();
+	size_t samples = 100; double time = 0;
+	for (size_t i = 0; i < samples; i++)
+	{
+		uint256_t number;
+		number.decode((uint8_t*)crypto::random_bytes(32)->data());
+
 		term->capture_time();
-
-		size_t samples = 1024 * 4;
-		for (size_t i = 0; i < samples; i++)
-		{
-			uint256_t value = algorithm::hashing::hash256i(*crypto::random_bytes(32));
-
-			uint8_t data1[32] = { 0 }; uint256_t value1 = 0;
-			value.encode(data1);
-			value1.decode(data1);
-			VI_PANIC(value == value1, "uint256 serialization failed");
-		}
-
-		double time = term->get_captured_time();
-		term->fwrite_line("uint256 serialization time: %.2f ms (cps: %.2f)", time, 1000.0 * (double)samples / time);
+		decimal test = number.to_decimal();
+		time += term->get_captured_time();
 	}
-	/* 256bit => decimal conversion */
-	static void generic_integer_conversion()
+
+	term->fwrite_line("uint256 to 256bit decimal conversion time: %.2f ms (cps: %.2f)", time, 1000.0 * (double)samples / time); time = 0;
+	for (size_t i = 0; i < samples * 5; i++)
 	{
-		auto* term = console::get();
-		size_t samples = 100; double time = 0;
-		for (size_t i = 0; i < samples; i++)
-		{
-			uint256_t number;
-			number.decode((uint8_t*)crypto::random_bytes(32)->data());
-
-			term->capture_time();
-			decimal test = number.to_decimal();
-			time += term->get_captured_time();
-		}
-
-		term->fwrite_line("uint256 to 256bit decimal conversion time: %.2f ms (cps: %.2f)", time, 1000.0 * (double)samples / time); time = 0;
-		for (size_t i = 0; i < samples * 5; i++)
-		{
-			uint256_t number = math64u::random(0, std::numeric_limits<uint64_t>::max());
-			term->capture_time();
-			decimal test = number.to_decimal();
-			time += term->get_captured_time();
-		}
-
-		term->fwrite_line("uint256 to 64bit decimal conversion time: %.2f ms (cps: %.2f)", time, 1000.0 * (double)samples / time); time = 0;
-		for (size_t i = 0; i < samples * 5; i++)
-		{
-			uint256_t number = math32u::random(0, std::numeric_limits<uint32_t>::max());
-			term->capture_time();
-			decimal test = number.to_decimal();
-			time += term->get_captured_time();
-		}
-
-		term->fwrite_line("uint256 to 32bit decimal conversion time: %.2f ms (cps: %.2f)", time, 1000.0 * (double)samples / time); time = 0;
-		for (size_t i = 0; i < samples * 10; i++)
-		{
-			uint256_t number = math32u::random(0, std::numeric_limits<uint16_t>::max());
-			term->capture_time();
-			decimal test = number.to_decimal();
-			time += term->get_captured_time();
-		}
-
-		term->fwrite_line("uint256 to 16bit decimal conversion time: %.2f ms (cps: %.2f)", time, 1000.0 * (double)samples / time); time = 0;
+		uint256_t number = math64u::random(0, std::numeric_limits<uint64_t>::max());
+		term->capture_time();
+		decimal test = number.to_decimal();
+		time += term->get_captured_time();
 	}
-	/* 256bit => decimal conversion */
-	static void generic_message_serialization()
+
+	term->fwrite_line("uint256 to 64bit decimal conversion time: %.2f ms (cps: %.2f)", time, 1000.0 * (double)samples / time); time = 0;
+	for (size_t i = 0; i < samples * 5; i++)
 	{
-		format::tree data = format::tree::map();
-		algorithm::pubkeyhash_t owner;
-		algorithm::hashing::hash160((uint8_t*)"publickeyhash", 13, owner.blob);
-		uint256_t asset = algorithm::asset::id_of("BTC");
-		uint64_t block_number = 1;
-
-		tester::new_serialization_comparison<superchain::wallet_link>(data);
-		tester::new_serialization_comparison<superchain::coin_utxo>(data);
-		tester::new_serialization_comparison<superchain::computed_transaction>(data);
-		tester::new_serialization_comparison<superchain::prepared_transaction>(data);
-		tester::new_serialization_comparison<superchain::finalized_transaction>(data);
-		tester::new_serialization_comparison<ledger::transaction_receipt>(data);
-		tester::new_serialization_comparison<ledger::wallet>(data);
-		tester::new_serialization_comparison<ledger::node>(data);
-		tester::new_serialization_comparison<ledger::block_transaction>(data);
-		tester::new_serialization_comparison<ledger::block_header>(data);
-		tester::new_serialization_comparison<ledger::block_body>(data);
-		tester::new_serialization_comparison<ledger::block_proof>(data);
-		tester::new_serialization_comparison<states::account_nonce>(data, owner, block_number++);
-		tester::new_serialization_comparison<states::account_program>(data, owner, block_number++);
-		tester::new_serialization_comparison<states::account_uniform>(data, owner, std::string_view(), block_number++);
-		tester::new_serialization_comparison<states::account_multiform>(data, owner, std::string_view(), std::string_view(), block_number++);
-		tester::new_serialization_comparison<states::account_balance>(data, owner, asset, block_number++);
-		tester::new_serialization_comparison<states::validator_production>(data, owner, block_number++);
-		tester::new_serialization_comparison<states::validator_production_reward>(data, owner, asset, block_number++);
-		tester::new_serialization_comparison<states::validator_participation>(data, owner, block_number++);
-		tester::new_serialization_comparison<states::validator_participation_reward>(data, owner, asset, block_number++);
-		tester::new_serialization_comparison<states::validator_participation_ref>(data, owner, states::bridge_ref(), block_number++);
-		tester::new_serialization_comparison<states::validator_attestation>(data, owner, asset, block_number++);
-		tester::new_serialization_comparison<states::validator_attestation_reward>(data, owner, asset, block_number++);
-		tester::new_serialization_comparison<states::bridge_instance>(data, states::bridge_ref(), block_number++);
-		tester::new_serialization_comparison<states::bridge_balance>(data, asset, 0, block_number++);
-		tester::new_serialization_comparison<states::bridge_account>(data, states::bridge_ref(), block_number++);
-		tester::new_serialization_comparison<states::witness_program>(data, std::string_view(), block_number++);
-		tester::new_serialization_comparison<states::witness_event>(data, asset, block_number++);
-		tester::new_serialization_comparison<states::witness_account>(data, states::bridge_ref(), address_map(), block_number++);
-		tester::new_serialization_comparison<states::witness_transaction>(data, asset, std::string_view(), block_number++);
-		tester::new_serialization_comparison<transactions::transfer>(data);
-		tester::new_serialization_comparison<transactions::deploy>(data);
-		tester::new_serialization_comparison<transactions::call>(data);
-		tester::new_serialization_comparison<transactions::rollup>(data);
-		tester::new_serialization_comparison<transactions::route>(data);
-		tester::new_serialization_comparison<transactions::bind>(data);
-		tester::new_serialization_comparison<transactions::imbind>(data);
-		tester::new_serialization_comparison<transactions::setup>(data);
-		tester::new_serialization_comparison<transactions::rebind>(data);
-		tester::new_serialization_comparison<transactions::withdraw>(data);
-		tester::new_serialization_comparison<transactions::broadcast>(data);
-		tester::new_serialization_comparison<transactions::attestate>(data);
-
-		auto* term = console::get();
-		term->write_line(data.as_json(true));
+		uint256_t number = math32u::random(0, std::numeric_limits<uint32_t>::max());
+		term->capture_time();
+		decimal test = number.to_decimal();
+		time += term->get_captured_time();
 	}
-	/* prove and verify one light proof of work based on 256bit hash function */
-	static void cryptography_pow256()
+
+	term->fwrite_line("uint256 to 32bit decimal conversion time: %.2f ms (cps: %.2f)", time, 1000.0 * (double)samples / time); time = 0;
+	for (size_t i = 0; i < samples * 10; i++)
 	{
-		auto* term = console::get();
-		uint256_t block_hash = algorithm::hashing::hash256i("pow challenge");
-		uint64_t account_nonce = (block_hash / 2) % 8;
-		auto wallet = ledger::wallet::from_seed(block_hash.to_string());
+		uint256_t number = math32u::random(0, std::numeric_limits<uint16_t>::max());
+		term->capture_time();
+		decimal test = number.to_decimal();
+		time += term->get_captured_time();
+	}
+
+	term->fwrite_line("uint256 to 16bit decimal conversion time: %.2f ms (cps: %.2f)", time, 1000.0 * (double)samples / time); time = 0;
+}
+/* 256bit => decimal conversion */
+static void test_generic_message_serialization()
+{
+	format::tree data = format::tree::map();
+	algorithm::pubkeyhash_t owner;
+	algorithm::hashing::hash160((uint8_t*)"publickeyhash", 13, owner.blob);
+	uint256_t asset = algorithm::asset::id_of("BTC");
+	uint64_t block_number = 1;
+
+	new_serialization_comparison<superchain::wallet_link>(data);
+	new_serialization_comparison<superchain::coin_utxo>(data);
+	new_serialization_comparison<superchain::computed_transaction>(data);
+	new_serialization_comparison<superchain::prepared_transaction>(data);
+	new_serialization_comparison<superchain::finalized_transaction>(data);
+	new_serialization_comparison<ledger::transaction_receipt>(data);
+	new_serialization_comparison<ledger::wallet>(data);
+	new_serialization_comparison<ledger::node>(data);
+	new_serialization_comparison<ledger::block_transaction>(data);
+	new_serialization_comparison<ledger::block_header>(data);
+	new_serialization_comparison<ledger::block_body>(data);
+	new_serialization_comparison<ledger::block_proof>(data);
+	new_serialization_comparison<states::account_nonce>(data, owner, block_number++);
+	new_serialization_comparison<states::account_program>(data, owner, block_number++);
+	new_serialization_comparison<states::account_uniform>(data, owner, std::string_view(), block_number++);
+	new_serialization_comparison<states::account_multiform>(data, owner, std::string_view(), std::string_view(), block_number++);
+	new_serialization_comparison<states::account_balance>(data, owner, asset, block_number++);
+	new_serialization_comparison<states::validator_production>(data, owner, block_number++);
+	new_serialization_comparison<states::validator_production_reward>(data, owner, asset, block_number++);
+	new_serialization_comparison<states::validator_participation>(data, owner, block_number++);
+	new_serialization_comparison<states::validator_participation_reward>(data, owner, asset, block_number++);
+	new_serialization_comparison<states::validator_participation_ref>(data, owner, states::bridge_ref(), block_number++);
+	new_serialization_comparison<states::validator_attestation>(data, owner, asset, block_number++);
+	new_serialization_comparison<states::validator_attestation_reward>(data, owner, asset, block_number++);
+	new_serialization_comparison<states::bridge_instance>(data, states::bridge_ref(), block_number++);
+	new_serialization_comparison<states::bridge_balance>(data, asset, 0, block_number++);
+	new_serialization_comparison<states::bridge_account>(data, states::bridge_ref(), block_number++);
+	new_serialization_comparison<states::witness_program>(data, std::string_view(), block_number++);
+	new_serialization_comparison<states::witness_event>(data, asset, block_number++);
+	new_serialization_comparison<states::witness_account>(data, states::bridge_ref(), address_map(), block_number++);
+	new_serialization_comparison<states::witness_transaction>(data, asset, std::string_view(), block_number++);
+	new_serialization_comparison<transactions::transfer>(data);
+	new_serialization_comparison<transactions::deploy>(data);
+	new_serialization_comparison<transactions::call>(data);
+	new_serialization_comparison<transactions::rollup>(data);
+	new_serialization_comparison<transactions::route>(data);
+	new_serialization_comparison<transactions::bind>(data);
+	new_serialization_comparison<transactions::imbind>(data);
+	new_serialization_comparison<transactions::setup>(data);
+	new_serialization_comparison<transactions::rebind>(data);
+	new_serialization_comparison<transactions::withdraw>(data);
+	new_serialization_comparison<transactions::broadcast>(data);
+	new_serialization_comparison<transactions::attestate>(data);
+
+	auto* term = console::get();
+	term->write_line(data.as_json(true));
+}
+/* prove and verify one light proof of work based on 256bit hash function */
+static void test_cryptography_pow256()
+{
+	auto* term = console::get();
+	uint256_t block_hash = algorithm::hashing::hash256i("pow challenge");
+	uint64_t account_nonce = (block_hash / 2) % 8;
+	auto wallet = ledger::wallet::from_seed(block_hash.to_string());
+	auto evaluation_time_point = date_time();
+	auto solution = algorithm::pow256::solve(block_hash, wallet.public_key_hash, account_nonce);
+	auto evaluation_time = evaluation_time_point.elapsed();
+	auto verification_time_point = date_time();
+	bool proven = algorithm::pow256::verify(block_hash, wallet.public_key_hash, account_nonce, solution);
+	auto verification_time = verification_time_point.elapsed();
+
+	auto target = format::tree::map();
+	target.set("account", algorithm::signing::serialize_address(wallet.public_key_hash));
+	target.set("account_nonce", algorithm::encoding::serialize_uint256(account_nonce));
+	target.set("block_hash", format::variable(algorithm::encoding::encode_0xhex256(block_hash)));
+	target.set("target_hash", format::variable(algorithm::encoding::encode_0xhex256(algorithm::pow256::target())));
+	target.set("solution_nonce", algorithm::encoding::serialize_uint256(solution));
+	target.set("solution_time", format::variable((uint64_t)evaluation_time.milliseconds()));
+	target.set("verification_time", format::variable((uint64_t)verification_time.milliseconds()));
+	target.set("sps", format::variable(decimal(1000.0 / (double)evaluation_time.milliseconds())));
+	term->write_line(target.as_json(true));
+	VI_PANIC(proven, "pow256 solution is not valid");
+}
+/* prove and verify multiple (nearly) linearly more complex wesolowski vdf signatures */
+static void test_cryptography_wesolowski()
+{
+	auto* term = console::get();
+	auto message = "Hello, world!";
+	auto data = format::tree::list();
+	auto prove_and_verify = [&](uint64_t difficulty)
+	{
 		auto evaluation_time_point = date_time();
-		auto solution = algorithm::pow256::solve(block_hash, wallet.public_key_hash, account_nonce);
+		auto proof = algorithm::wesolowski::evaluate(0, difficulty, message);
+
 		auto evaluation_time = evaluation_time_point.elapsed();
 		auto verification_time_point = date_time();
-		bool proven = algorithm::pow256::verify(block_hash, wallet.public_key_hash, account_nonce, solution);
+		bool proven = algorithm::wesolowski::verify(0, difficulty, message, proof);
+
+		auto message_copy = string(message);
+		message_copy.back() = '?';
+		bool not_forged = !algorithm::wesolowski::verify(0, difficulty, message_copy, proof);
+
 		auto verification_time = verification_time_point.elapsed();
+		auto* target = data.push(format::tree::map());
+		target->set("proof", algorithm::wesolowski::serialize(difficulty, proof));
+		target->set("evaluation_time", format::variable((uint64_t)evaluation_time.milliseconds()));
+		target->set("verification_time", format::variable((uint64_t)verification_time.milliseconds()));
+		if (!proven)
+			term->write_line(data.as_json(true));
+		VI_PANIC(proven, "wesolowki proof is not valid");
+		VI_PANIC(not_forged, "wesolowki proof is forged");
+	};
 
-		auto target = format::tree::map();
-		target.set("account", algorithm::signing::serialize_address(wallet.public_key_hash));
-		target.set("account_nonce", algorithm::encoding::serialize_uint256(account_nonce));
-		target.set("block_hash", format::variable(algorithm::encoding::encode_0xhex256(block_hash)));
-		target.set("target_hash", format::variable(algorithm::encoding::encode_0xhex256(algorithm::pow256::target())));
-		target.set("solution_nonce", algorithm::encoding::serialize_uint256(solution));
-		target.set("solution_time", format::variable((uint64_t)evaluation_time.milliseconds()));
-		target.set("verification_time", format::variable((uint64_t)verification_time.milliseconds()));
-		target.set("sps", format::variable(decimal(1000.0 / (double)evaluation_time.milliseconds())));
-		term->write_line(target.as_json(true));
-		VI_PANIC(proven, "pow256 solution is not valid");
-	}
-	/* prove and verify multiple (nearly) linearly more complex wesolowski vdf signatures */
-	static void cryptography_wesolowski()
+	uint64_t baseline = kernel::params().policy.pow.difficulty;
+	prove_and_verify(baseline);
+	for (uint64_t i = 3; i < 7; i++)
+		prove_and_verify(baseline * (2ll << i));
+	term->write_line(data.as_json(true));
+}
+/* cryptographic signatures */
+static void test_cryptography_signatures()
+{
+	auto* term = console::get();
+	string mnemonic = "chimney clerk liberty defense gesture risk disorder switch raven chapter document admit win swing forward please clerk vague online coil material tone sibling intact";
+	algorithm::seckey_t secret_key;
+	algorithm::pubkey_t public_key;
+	algorithm::pubkeyhash_t public_key_hash;
+	algorithm::signing::derive_secret_key_from_mnemonic(mnemonic, secret_key);
+	algorithm::signing::derive_public_key(secret_key, public_key);
+	algorithm::signing::derive_public_key_hash(public_key, public_key_hash);
+
+	string encoded_secret_key, encoded_public_key, encoded_public_key_hash;
+	algorithm::signing::encode_secret_key(secret_key, encoded_secret_key);
+	algorithm::signing::encode_public_key(public_key, encoded_public_key);
+	algorithm::signing::encode_address(public_key_hash, encoded_public_key_hash);
+
+	string message = "Hello, world!";
+	uint256_t message_hash = algorithm::hashing::hash256i(message);
+	string encoded_message_hash = algorithm::encoding::encode_0xhex256(message_hash);
+	algorithm::hashsig_t message_signature;
+	algorithm::pubkey_t recover_public_key;
+	algorithm::pubkeyhash_t recover_public_key_hash;
+	bool verifies = algorithm::signing::sign(message_hash, secret_key, message_signature) && algorithm::signing::verify(message_hash, public_key, message_signature);
+	bool recovers_public_key = algorithm::signing::recover(message_hash, recover_public_key, message_signature);
+	bool recovers_public_key_hash = algorithm::signing::recover_hash(message_hash, recover_public_key_hash, message_signature);
+	string encoded_message_signature = format::util::encode_0xhex(message_signature.view());
+	string encoded_recover_public_key, encoded_recover_public_key_hash;
+	algorithm::signing::encode_public_key(recover_public_key, encoded_recover_public_key);
+	algorithm::signing::encode_address(recover_public_key_hash, encoded_recover_public_key_hash);
+
+	auto info = format::tree::map();
+	info.set("mnemonic", format::variable(mnemonic));
+	info.set("secret_key", format::variable(encoded_secret_key));
+	info.set("public_key", format::variable(encoded_public_key));
+	info.set("address", format::variable(encoded_public_key_hash));
+	info.set("message", format::variable(message));
+	info.set("message_hash", format::variable(encoded_message_hash));
+	info.set("signature", format::variable(encoded_message_signature));
+	info.set("recover_public_key", format::variable(encoded_recover_public_key));
+	info.set("recover_address", format::variable(encoded_recover_public_key_hash));
+	term->write_line(info.as_json(true));
+
+	VI_PANIC(algorithm::signing::verify_mnemonic(mnemonic), "bad mnemonic phrase");
+	VI_PANIC(algorithm::signing::verify_secret_key(secret_key), "bad secret key");
+	VI_PANIC(algorithm::signing::verify_public_key(public_key), "bad public key");
+	VI_PANIC(algorithm::signing::verify_address(encoded_public_key_hash), "bad address");
+	VI_PANIC(verifies, "bad signature");
+	VI_PANIC(recovers_public_key && encoded_recover_public_key == encoded_public_key, "failed to recover public key from signature");
+	VI_PANIC(recovers_public_key_hash && encoded_recover_public_key_hash == encoded_public_key_hash, "failed to recover address from signature");
+}
+/* wallet cryptography */
+static void test_cryptography_wallet()
+{
+	auto* term = console::get();
+	auto wallet = ledger::wallet::from_seed();
+	term->write_line(wallet.as_tree().as_json(true));
+
+	VI_PANIC(algorithm::signing::verify_secret_key(wallet.secret_key), "bad secret key");
+	VI_PANIC(algorithm::signing::verify_public_key(wallet.public_key), "bad public key");
+	VI_PANIC(algorithm::signing::verify_address(wallet.get_address()), "bad address");
+}
+/* wallet encryption cryptography */
+static void test_cryptography_wallet_encryption()
+{
+	auto* term = console::get();
+	auto user1 = ledger::wallet::from_seed();
+	auto user2 = ledger::wallet::from_seed();
+	auto message_from_user1 = "Hello, alice!";
+	auto message_from_user2 = "Hello, bob!";
+	auto ciphertext1 = user1.seal_message(message_from_user1, user2.public_key, 123456).expect("failed to encrypt the message to user 2");
+	auto plaintext1 = user2.open_message(ciphertext1).expect("failed to decrypt the message from user 1");
+	auto ciphertext2 = user2.seal_message(message_from_user2, user1.public_key, 654321).expect("failed to encrypt the message to user 1");
+	auto plaintext2 = user1.open_message(ciphertext2).expect("failed to decrypt the message from user 2");
+
+	format::tree data = format::tree::map();
+	auto* user1_wallet_data = (format::tree*)data.set("user1_wallet", user1.as_tree());
+	auto* user1_wallet_message_data = user1_wallet_data->set("message", format::tree::map());
+	user1_wallet_message_data->set("ciphertext_to_user2_wallet", format::variable(format::util::encode_0xhex(ciphertext1)));
+	user1_wallet_message_data->set("plaintext_from_user2_wallet", format::variable(plaintext2));
+	auto* user2_wallet_data = (format::tree*)data.set("user2_wallet", user2.as_tree());
+	auto* user2_wallet_message_data = user2_wallet_data->set("message", format::tree::map());
+	user2_wallet_message_data->set("ciphertext_to_user2_wallet", format::variable(format::util::encode_0xhex(ciphertext2)));
+	user2_wallet_message_data->set("plaintext_from_user2_wallet", format::variable(plaintext1));
+	term->write_line(data.as_json(true));
+}
+/* transaction cryptography */
+static void test_cryptography_transaction()
+{
+	auto* term = console::get();
+	auto wallet = ledger::wallet::from_seed();
+	vector<uptr<ledger::transaction_message>> transactions;
+	vector<block_account> users =
 	{
-		auto* term = console::get();
-		auto message = "Hello, world!";
-		auto data = format::tree::list();
-		auto prove_and_verify = [&](uint64_t difficulty)
+		block_account(wallet, 1),
+		block_account(ledger::wallet::from_seed(), 1)
+	};
+
+	auto tx = transactions::transfer();
+	tx.gas_limit = ledger::block_body::get_gas_limit();
+	tx.set_to(users[1].wallet.public_key_hash, decimal("13.539899"));
+	VI_PANIC(tx.sign(users[0].wallet.secret_key, users[0].nonce++), "authentication failed");
+
+	auto tx_blob = tx.as_message().data;
+	auto tx_body = format::ro_stream(tx_blob);
+	auto tx_copy = uptr<ledger::transaction_message>(transactions::resolver::from_stream(tx_body));
+	auto tx_info = tx.as_tree();
+	algorithm::pubkeyhash_t recover_public_key_hash;
+	tx_info.set("raw_data", format::variable(format::util::encode_0xhex(tx_blob)));
+
+	auto stream = tx.as_message();
+	auto reader = stream.ro();
+	format::variables vars;
+	format::variables_util::deserialize_flat_from(reader, &vars);
+	tx_info.set("var_data", format::variables_util::serialize(vars));
+	tx_info.set("asset_id", algorithm::asset::serialize(algorithm::asset::id_of("ETH", "USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7")));
+	term->write_line(tx_info.as_json(true));
+
+	VI_PANIC(tx.recover_hash(recover_public_key_hash) && wallet.public_key_hash == recover_public_key_hash, "failed to recover the public key hash from signature");
+	VI_PANIC(tx.verify(wallet.public_key), "failed to verify the signature");
+	VI_PANIC(tx_copy && tx_copy->load(tx_body) && tx_copy->as_message().data == tx_blob, "failed to serialize/deserialize the transaction");
+}
+/* merkle tree cryptography */
+static void test_cryptography_merkle_tree()
+{
+	auto* term = console::get();
+	const size_t hashes = 16;
+	uint256_t prev = algorithm::hashing::hash256i(*crypto::random_bytes(16));
+	uint256_t next = algorithm::hashing::hash256i(*crypto::random_bytes(16));
+	vector<uint256_t> hashset;
+	hashset.reserve(hashes + 1);
+	hashset.push_back(prev);
+	for (size_t i = 0; i < hashes; i++)
+	{
+		uint8_t hash[32];
+		next.encode(hash);
+
+		hashset.push_back(next);
+		next = algorithm::hashing::hash256i(std::string_view((char*)hash, sizeof(hash)));
+	}
+
+	auto tree = algorithm::merkle_tree::from(std::move(hashset));
+	uint256_t target = tree.nodes[math64u::random(1, hashes + 1)];
+	term->fwrite_line("merkle tree (nodes = %i, target = %s):", (int)tree.nodes.size(), algorithm::encoding::encode_0xhex256(target).c_str());
+	for (size_t i = 0; i < tree.nodes.size(); i++)
+		term->write_line("  " + algorithm::encoding::encode_0xhex256(tree.nodes[i]));
+
+	auto path = tree.path(target);
+	auto proposed_root = path.root(target);
+	auto actual_root = tree.root();
+	path.branch.insert(path.branch.begin(), target);
+	path.branch.push_back(proposed_root);
+
+	term->fwrite_line("merkle tree path (index in tree = %i, nodes = %i):", (int)path.index, (int)path.branch.size());
+	for (size_t i = 0; i < path.branch.size(); i++)
+		term->write_line("  " + algorithm::encoding::encode_0xhex256(path.branch[i]));
+
+	term->fwrite_line("merkle tree (complexity = %i, nodes = %i, verification = %s):", (int)tree.size(), (int)tree.nodes.size(), proposed_root == actual_root ? "passed" : "failed");
+	for (size_t i = 0; i < tree.nodes.size(); i++)
+	{
+		auto it = std::find(path.branch.begin(), path.branch.end(), tree.nodes[i]);
+		if (it != path.branch.end())
 		{
-			auto evaluation_time_point = date_time();
-			auto proof = algorithm::wesolowski::evaluate(0, difficulty, message);
-
-			auto evaluation_time = evaluation_time_point.elapsed();
-			auto verification_time_point = date_time();
-			bool proven = algorithm::wesolowski::verify(0, difficulty, message, proof);
-
-			auto message_copy = string(message);
-			message_copy.back() = '?';
-			bool not_forged = !algorithm::wesolowski::verify(0, difficulty, message_copy, proof);
-
-			auto verification_time = verification_time_point.elapsed();
-			auto* target = data.push(format::tree::map());
-			target->set("proof", algorithm::wesolowski::serialize(difficulty, proof));
-			target->set("evaluation_time", format::variable((uint64_t)evaluation_time.milliseconds()));
-			target->set("verification_time", format::variable((uint64_t)verification_time.milliseconds()));
-			if (!proven)
-				term->write_line(data.as_json(true));
-			VI_PANIC(proven, "wesolowki proof is not valid");
-			VI_PANIC(not_forged, "wesolowki proof is forged");
-		};
-
-		uint64_t baseline = kernel::params().policy.pow.difficulty;
-		prove_and_verify(baseline);
-		for (uint64_t i = 3; i < 7; i++)
-			prove_and_verify(baseline * (2ll << i));
-		term->write_line(data.as_json(true));
+			size_t depth = it - path.branch.begin() + 1;
+			term->write_line("  " + string(depth, '>') + string(1 + path.branch.size() - depth, ' ') + algorithm::encoding::encode_0xhex256(tree.nodes[i]));
+		}
+		else
+			term->write_line("  " + string(1 + path.branch.size(), ' ') + algorithm::encoding::encode_0xhex256(tree.nodes[i]));
 	}
-	/* cryptographic signatures */
-	static void cryptography_signatures()
+	VI_PANIC(proposed_root == actual_root, "cryptographic error");
+}
+/* superchain wallets cryptography */
+static void test_cryptography_multichain_wallet()
+{
+	auto* term = console::get();
+	auto* offchain = superchain::bridge::get();
+	auto user = ledger::wallet::from_seed("0000000");
+	for (auto& asset : offchain->get_assets())
 	{
-		auto* term = console::get();
-		string mnemonic = "chimney clerk liberty defense gesture risk disorder switch raven chapter document admit win swing forward please clerk vague online coil material tone sibling intact";
-		algorithm::seckey_t secret_key;
-		algorithm::pubkey_t public_key;
-		algorithm::pubkeyhash_t public_key_hash;
-		algorithm::signing::derive_secret_key_from_mnemonic(mnemonic, secret_key);
-		algorithm::signing::derive_public_key(secret_key, public_key);
-		algorithm::signing::derive_public_key_hash(public_key, public_key_hash);
-
-		string encoded_secret_key, encoded_public_key, encoded_public_key_hash;
-		algorithm::signing::encode_secret_key(secret_key, encoded_secret_key);
-		algorithm::signing::encode_public_key(public_key, encoded_public_key);
-		algorithm::signing::encode_address(public_key_hash, encoded_public_key_hash);
-
-		string message = "Hello, world!";
-		uint256_t message_hash = algorithm::hashing::hash256i(message);
-		string encoded_message_hash = algorithm::encoding::encode_0xhex256(message_hash);
-		algorithm::hashsig_t message_signature;
-		algorithm::pubkey_t recover_public_key;
-		algorithm::pubkeyhash_t recover_public_key_hash;
-		bool verifies = algorithm::signing::sign(message_hash, secret_key, message_signature) && algorithm::signing::verify(message_hash, public_key, message_signature);
-		bool recovers_public_key = algorithm::signing::recover(message_hash, recover_public_key, message_signature);
-		bool recovers_public_key_hash = algorithm::signing::recover_hash(message_hash, recover_public_key_hash, message_signature);
-		string encoded_message_signature = format::util::encode_0xhex(message_signature.view());
-		string encoded_recover_public_key, encoded_recover_public_key_hash;
-		algorithm::signing::encode_public_key(recover_public_key, encoded_recover_public_key);
-		algorithm::signing::encode_address(recover_public_key_hash, encoded_recover_public_key_hash);
-
-		auto info = format::tree::map();
-		info.set("mnemonic", format::variable(mnemonic));
-		info.set("secret_key", format::variable(encoded_secret_key));
-		info.set("public_key", format::variable(encoded_public_key));
-		info.set("address", format::variable(encoded_public_key_hash));
-		info.set("message", format::variable(message));
-		info.set("message_hash", format::variable(encoded_message_hash));
-		info.set("signature", format::variable(encoded_message_signature));
-		info.set("recover_public_key", format::variable(encoded_recover_public_key));
-		info.set("recover_address", format::variable(encoded_recover_public_key_hash));
+		uint8_t seed[] = "123456";
+		auto wallet = *offchain->compute_wallet(asset, seed, sizeof(seed) - 1);
+		auto info = wallet.as_secret_tree();
+		info.set("asset", algorithm::asset::serialize(asset));
 		term->write_line(info.as_json(true));
-
-		VI_PANIC(algorithm::signing::verify_mnemonic(mnemonic), "bad mnemonic phrase");
-		VI_PANIC(algorithm::signing::verify_secret_key(secret_key), "bad secret key");
-		VI_PANIC(algorithm::signing::verify_public_key(public_key), "bad public key");
-		VI_PANIC(algorithm::signing::verify_address(encoded_public_key_hash), "bad address");
-		VI_PANIC(verifies, "bad signature");
-		VI_PANIC(recovers_public_key && encoded_recover_public_key == encoded_public_key, "failed to recover public key from signature");
-		VI_PANIC(recovers_public_key_hash && encoded_recover_public_key_hash == encoded_public_key_hash, "failed to recover address from signature");
 	}
-	/* wallet cryptography */
-	static void cryptography_wallet()
-	{
-		auto* term = console::get();
-		auto wallet = ledger::wallet::from_seed();
-		term->write_line(wallet.as_tree().as_json(true));
+}
+/* multi-party wallet keypair and signature generation */
+static void test_cryptography_multichain_mpc()
+{
+	auto* term = console::get();
+	vector<block_mpc> participants;
+	participants.resize(kernel::params().policy.participation.min_per_account);
 
-		VI_PANIC(algorithm::signing::verify_secret_key(wallet.secret_key), "bad secret key");
-		VI_PANIC(algorithm::signing::verify_public_key(wallet.public_key), "bad public key");
-		VI_PANIC(algorithm::signing::verify_address(wallet.get_address()), "bad address");
-	}
-	/* wallet encryption cryptography */
-	static void cryptography_wallet_encryption()
+	auto algorithms =
 	{
-		auto* term = console::get();
-		auto user1 = ledger::wallet::from_seed();
-		auto user2 = ledger::wallet::from_seed();
-		auto message_from_user1 = "Hello, alice!";
-		auto message_from_user2 = "Hello, bob!";
-		auto ciphertext1 = user1.seal_message(message_from_user1, user2.public_key, 123456).expect("failed to encrypt the message to user 2");
-		auto plaintext1 = user2.open_message(ciphertext1).expect("failed to decrypt the message from user 1");
-		auto ciphertext2 = user2.seal_message(message_from_user2, user1.public_key, 654321).expect("failed to encrypt the message to user 1");
-		auto plaintext2 = user1.open_message(ciphertext2).expect("failed to decrypt the message from user 2");
-
-		format::tree data = format::tree::map();
-		auto* user1_wallet_data = (format::tree*)data.set("user1_wallet", user1.as_tree());
-		auto* user1_wallet_message_data = user1_wallet_data->set("message", format::tree::map());
-		user1_wallet_message_data->set("ciphertext_to_user2_wallet", format::variable(format::util::encode_0xhex(ciphertext1)));
-		user1_wallet_message_data->set("plaintext_from_user2_wallet", format::variable(plaintext2));
-		auto* user2_wallet_data = (format::tree*)data.set("user2_wallet", user2.as_tree());
-		auto* user2_wallet_message_data = user2_wallet_data->set("message", format::tree::map());
-		user2_wallet_message_data->set("ciphertext_to_user2_wallet", format::variable(format::util::encode_0xhex(ciphertext2)));
-		user2_wallet_message_data->set("plaintext_from_user2_wallet", format::variable(plaintext1));
-		term->write_line(data.as_json(true));
-	}
-	/* transaction cryptography */
-	static void cryptography_transaction()
+		std::make_pair(algorithm::composition::type::ed25519, std::string_view("ed25519")),
+		std::make_pair(algorithm::composition::type::ed25519_clsag, std::string_view("ed25519_clsag")),
+		std::make_pair(algorithm::composition::type::secp256k1, std::string_view("secp256k1")),
+		std::make_pair(algorithm::composition::type::secp256k1_schnorr, std::string_view("secp256k1_schnorr"))
+	};
+	for (auto& [alg, alg_name] : algorithms)
 	{
-		auto* term = console::get();
-		auto wallet = ledger::wallet::from_seed();
-		vector<uptr<ledger::transaction_message>> transactions;
-		vector<account_ref> users =
+		auto mpc_data = format::tree::map();
+		for (size_t i = 0; i < participants.size(); i++)
 		{
-			account_ref(wallet, 1),
-			account_ref(ledger::wallet::from_seed(), 1)
-		};
+			auto& share = participants[i];
+			auto entropy = "seed" + to_string(i);
+			algorithm::hashing::hash512((uint8_t*)entropy.data(), entropy.size(), share.seed.blob);
+			share.keypair = algorithm::composition::derive_keypair(alg, share.seed.blob, share.seed.size()).expect("failed to derive a keypair share");
 
-		auto tx = transactions::transfer();
-		tx.gas_limit = ledger::block_body::get_gas_limit();
-		tx.set_to(users[1].wallet.public_key_hash, decimal("13.539899"));
-		VI_PANIC(tx.sign(users[0].wallet.secret_key, users[0].nonce++), "authentication failed");
-
-		auto tx_blob = tx.as_message().data;
-		auto tx_body = format::ro_stream(tx_blob);
-		auto tx_copy = uptr<ledger::transaction_message>(transactions::resolver::from_stream(tx_body));
-		auto tx_info = tx.as_tree();
-		algorithm::pubkeyhash_t recover_public_key_hash;
-		tx_info.set("raw_data", format::variable(format::util::encode_0xhex(tx_blob)));
-
-		auto stream = tx.as_message();
-		auto reader = stream.ro();
-		format::variables vars;
-		format::variables_util::deserialize_flat_from(reader, &vars);
-		tx_info.set("var_data", format::variables_util::serialize(vars));
-		tx_info.set("asset_id", algorithm::asset::serialize(algorithm::asset::id_of("ETH", "USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7")));
-		term->write_line(tx_info.as_json(true));
-
-		VI_PANIC(tx.recover_hash(recover_public_key_hash) && wallet.public_key_hash == recover_public_key_hash, "failed to recover the public key hash from signature");
-		VI_PANIC(tx.verify(wallet.public_key), "failed to verify the signature");
-		VI_PANIC(tx_copy && tx_copy->load(tx_body) && tx_copy->as_message().data == tx_blob, "failed to serialize/deserialize the transaction");
-	}
-	/* merkle tree cryptography */
-	static void cryptography_merkle_tree()
-	{
-		auto* term = console::get();
-		const size_t hashes = 16;
-		uint256_t prev = algorithm::hashing::hash256i(*crypto::random_bytes(16));
-		uint256_t next = algorithm::hashing::hash256i(*crypto::random_bytes(16));
-		vector<uint256_t> hashset;
-		hashset.reserve(hashes + 1);
-		hashset.push_back(prev);
-		for (size_t i = 0; i < hashes; i++)
-		{
-			uint8_t hash[32];
-			next.encode(hash);
-
-			hashset.push_back(next);
-			next = algorithm::hashing::hash256i(std::string_view((char*)hash, sizeof(hash)));
+			auto participant_data = mpc_data.set("participant" + to_string(i + 1), format::tree::map());
+			participant_data->set("seed", format::variable(format::util::encode_0xhex(share.seed.view())));
+			participant_data->set("secret_key", format::variable(format::util::encode_0xhex(std::string_view((char*)share.keypair.secret_key.data(), share.keypair.secret_key.size()))));
+			participant_data->set("public_key", format::variable(format::util::encode_0xhex(std::string_view((char*)share.keypair.public_key.data(), share.keypair.public_key.size()))));
 		}
 
-		auto tree = algorithm::merkle_tree::from(std::move(hashset));
-		uint256_t target = tree.nodes[math64u::random(1, hashes + 1)];
-		term->fwrite_line("merkle tree (nodes = %i, target = %s):", (int)tree.nodes.size(), algorithm::encoding::encode_0xhex256(target).c_str());
-		for (size_t i = 0; i < tree.nodes.size(); i++)
-			term->write_line("  " + algorithm::encoding::encode_0xhex256(tree.nodes[i]));
-
-		auto path = tree.path(target);
-		auto proposed_root = path.root(target);
-		auto actual_root = tree.root();
-		path.branch.insert(path.branch.begin(), target);
-		path.branch.push_back(proposed_root);
-
-		term->fwrite_line("merkle tree path (index in tree = %i, nodes = %i):", (int)path.index, (int)path.branch.size());
-		for (size_t i = 0; i < path.branch.size(); i++)
-			term->write_line("  " + algorithm::encoding::encode_0xhex256(path.branch[i]));
-
-		term->fwrite_line("merkle tree (complexity = %i, nodes = %i, verification = %s):", (int)tree.size(), (int)tree.nodes.size(), proposed_root == actual_root ? "passed" : "failed");
-		for (size_t i = 0; i < tree.nodes.size(); i++)
-		{
-			auto it = std::find(path.branch.begin(), path.branch.end(), tree.nodes[i]);
-			if (it != path.branch.end())
-			{
-				size_t depth = it - path.branch.begin() + 1;
-				term->write_line("  " + string(depth, '>') + string(1 + path.branch.size() - depth, ' ') + algorithm::encoding::encode_0xhex256(tree.nodes[i]));
-			}
-			else
-				term->write_line("  " + string(1 + path.branch.size(), ' ') + algorithm::encoding::encode_0xhex256(tree.nodes[i]));
-		}
-		VI_PANIC(proposed_root == actual_root, "cryptographic error");
-	}
-	/* superchain wallets cryptography */
-	static void cryptography_multichain_wallet()
-	{
-		auto* term = console::get();
-		auto* offchain = superchain::bridge::get();
-		auto user = ledger::wallet::from_seed("0000000");
-		for (auto& asset : offchain->get_assets())
-		{
-			uint8_t seed[] = "123456";
-			auto wallet = *offchain->compute_wallet(asset, seed, sizeof(seed) - 1);
-			auto info = wallet.as_secret_tree();
-			info.set("asset", algorithm::asset::serialize(asset));
-			term->write_line(info.as_json(true));
-		}
-	}
-	/* multi-party wallet keypair and signature generation */
-	static void cryptography_multichain_mpc()
-	{
-		auto* term = console::get();
-		vector<participant_ref> participants;
-		participants.resize(kernel::params().policy.participation.min_per_account);
-
-		auto algorithms =
-		{
-			std::make_pair(algorithm::composition::type::ed25519, std::string_view("ed25519")),
-			std::make_pair(algorithm::composition::type::ed25519_clsag, std::string_view("ed25519_clsag")),
-			std::make_pair(algorithm::composition::type::secp256k1, std::string_view("secp256k1")),
-			std::make_pair(algorithm::composition::type::secp256k1_schnorr, std::string_view("secp256k1_schnorr"))
-		};
-		for (auto& [alg, alg_name] : algorithms)
-		{
-			auto mpc_data = format::tree::map();
-			for (size_t i = 0; i < participants.size(); i++)
-			{
-				auto& share = participants[i];
-				auto entropy = "seed" + to_string(i);
-				algorithm::hashing::hash512((uint8_t*)entropy.data(), entropy.size(), share.seed.blob);
-				share.keypair = algorithm::composition::derive_keypair(alg, share.seed.blob, share.seed.size()).expect("failed to derive a keypair share");
-
-				auto participant_data = mpc_data.set("participant" + to_string(i + 1), format::tree::map());
-				participant_data->set("seed", format::variable(format::util::encode_0xhex(share.seed.view())));
-				participant_data->set("secret_key", format::variable(format::util::encode_0xhex(std::string_view((char*)share.keypair.secret_key.data(), share.keypair.secret_key.size()))));
-				participant_data->set("public_key", format::variable(format::util::encode_0xhex(std::string_view((char*)share.keypair.public_key.data(), share.keypair.public_key.size()))));
-			}
-
-			uint8_t message_hash[32];
-			std::string_view message = "Hello, World!";
-			algorithm::hashing::hash256((uint8_t*)message.data(), message.size(), message_hash);
-
-			uint64_t mpc_state_time = 0;
-			size_t mpc_steps = 0;
-			size_t mpc_state_bandwidth = 0;
-			auto mpc_phase_participants = vector<participant_ref>();
-			auto mpc_timeline = vector<string>();
-			auto mpc_state = algorithm::composition::make_public_key_compositor(alg, message_hash, sizeof(message_hash), (uint16_t)participants.size()).expect("failed to make the state");
-			while (true)
-			{
-				auto time = date_time();
-				auto next = mpc_phase_participants.begin();
-				switch (mpc_state->next_phase())
-				{
-					case algorithm::composition::phase::consume_after_reset:
-						mpc_phase_participants = participants;
-						next = mpc_phase_participants.begin();
-						if (!mpc_timeline.empty())
-							mpc_timeline.push_back(stringify::text("advance(%i)", (int)participants.size()));
-						[[fallthrough]];
-					case algorithm::composition::phase::consume:
-						mpc_timeline.push_back(stringify::text("aggregate(%.9s...)", format::util::encode_0xhex(std::string_view((char*)next->keypair.public_key.data(), next->keypair.public_key.size())).c_str()));
-						break;
-					case algorithm::composition::phase::finalize:
-						mpc_timeline.push_back(stringify::text("finalize(%i)", (int)participants.size()));
-						break;
-					default:
-						VI_PANIC(false, "invalid phase");
-						break;
-				}
-				if (next == mpc_phase_participants.end())
-					break;
-
-				format::wo_stream message;
-				VI_PANIC(mpc_state->store(&message), "failed to store the state");
-
-				auto reader = message.ro();
-				auto mpc_state_transition = algorithm::composition::make_compositor_from_stream(alg, reader).expect("failed to load the state");
-				mpc_state_transition->aggregate(next->keypair.secret_key).expect("failed to aggregate the state");
-				mpc_phase_participants.erase(next);
-
-				VI_PANIC(mpc_state->may_transition_to(**mpc_state_transition), "state machine transition rejected");
-				mpc_state = std::move(mpc_state_transition);
-
-				format::wo_stream updated_message;
-				VI_PANIC(mpc_state->store(&updated_message), "failed to store the state");
-				mpc_state_bandwidth += message.data.size() + updated_message.data.size();
-				mpc_state_time += date_time().nanoseconds() - time.nanoseconds();
-				++mpc_steps;
-			}
-
-			algorithm::composition::cpubkey_t mpc_public_key;
-			algorithm::composition::chashsig_t mpc_signature;
-			mpc_state->derive_public_key(&mpc_public_key).expect("failed to extract public key from state");
-			mpc_state->derive_signature(&mpc_signature).expect("failed to extract signature from state");
-
-			auto* aggregation_data = mpc_data.set("aggregation", format::tree::map());
-			auto* aggregation_timeline_data = aggregation_data->set("timeline", format::tree::list());
-			for (auto& item : mpc_timeline)
-				aggregation_timeline_data->push(format::variable(item));
-			aggregation_data->set("public_key", format::variable(format::util::encode_0xhex(std::string_view((char*)mpc_public_key.data(), mpc_public_key.size()))));
-			aggregation_data->set("signature", format::variable(format::util::encode_0xhex(std::string_view((char*)mpc_signature.data(), mpc_signature.size()))));
-			aggregation_data->set("network_bytes_required", format::variable(mpc_state_bandwidth));
-			aggregation_data->set("network_round_trips", format::variable(mpc_steps));
-			aggregation_data->set("step_time_ns", format::variable(mpc_steps > 0 ? mpc_state_time / mpc_steps : 0));
-			aggregation_data->set("total_time_ms", format::variable(mpc_state_time / 1'000'000));
-
-			mpc_data.set("message", format::variable(message));
-			mpc_data.set("message_hash", format::variable(format::util::encode_0xhex(std::string_view((char*)message_hash, sizeof(message_hash)))));
-			mpc_data.set("algorithm", format::variable(alg_name));
-			mpc_data.set("participants", format::variable(participants.size()));
-			term->write_line(mpc_data.as_json(true));
-		}
-	}
-	/* superchain transaction generation test */
-	static void cryptography_multichain_transaction()
-	{
-		auto* offchain = superchain::bridge::get();
-		auto* term = console::get();
-		auto seed = uint256_t(123456);
-		auto create_wallet = [&](const algorithm::asset_id& asset) -> superchain::computed_wallet
-		{
-			uint8_t seed_buffer[32];
-			seed.encode(seed_buffer);
-
-			auto wallet = *offchain->compute_wallet(asset, seed_buffer, sizeof(seed_buffer));
-			for (auto& encoded_address : wallet.encoded_addresses)
-				offchain->enable_link(asset, superchain::wallet_link(seed, wallet.encoded_public_key, encoded_address.second)).expect("link activation error");
-			return wallet;
-		};
-		auto validate_transaction = [&](const algorithm::asset_id& asset, const superchain::computed_wallet& wallet, superchain::prepared_transaction& prepared, const std::string_view& feature, const std::string_view& expected_calldata)
-		{
-		recompute:
-			auto shared = prepared.as_shared_message();
-			auto keygen = shared && shared->keys.empty();
-			for (auto& input : prepared.inputs)
-			{
-				auto state = algorithm::composition::make_signature_compositor(input.alg, input.public_key, input.message.data(), input.message.size(), shared.address(), 1).expect("state initialization error");
-				while (state->next_phase() != algorithm::composition::phase::finalize)
-					state->aggregate(wallet.secret_key).expect("signature aggregation error");
-				state->derive_signature(&input.signature);
-				if (shared)
-					shared->keys.push_back(input.signature);
-			}
-			if (keygen && !shared->keys.empty())
-			{
-				prepared.requires_shared_message(*shared);
-				goto recompute;
-			}
-
-			superchain::finalized_transaction finalized = offchain->finalize_transaction(asset, std::move(prepared)).expect("prepared transaction finalization error");
-			VI_PANIC(finalized.calldata == expected_calldata, "resulting calldata differs from expected calldata");
-			term->fwrite_line("%s (%.*s) = %s", algorithm::asset::handle_of(asset).c_str(), (int)feature.size(), feature.data(), finalized.calldata.c_str());
-		};
-		tester::use_clean_state([&]()
-		{
-			auto asset = algorithm::asset::id_of("BTC");
-			auto state = storages::superchainstate(asset);
-			auto* unit = (superchain::translations::bitcoin*)offchain->get_network(asset);
-			if (unit != nullptr)
-				unit->all_address_types = true;
-
-			auto wallet = create_wallet(asset);
-			auto input_p2pkh_hash = codec::hex_decode("0x57e30b41a6d984cdb763145f32ad9678a9b2bfd0267e12d5d0474e97f7d077d0");
-			superchain::coin_utxo input_p2pkh;
-			input_p2pkh.link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses[3]);
-			input_p2pkh.transaction_id = "382940bfc9a1fe1f09a3fb8e1fda1b25b90dc2019ff5973b1d9d616e15b29840";
-			input_p2pkh.index = 1;
-			input_p2pkh.value = 0.1;
-
-			auto input_p2sh_hash = codec::hex_decode("0xc4e23865424498b4d90c57dda4bea4718e1e6ed669cc00796afd864ac6de3606");
-			superchain::coin_utxo input_p2sh;
-			input_p2sh.link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses[2]);
-			input_p2sh.transaction_id = "3d7c1f8e03a73821517d2f0220fe3ecf82c2f55b94b724e5d5298c87070802a0";
-			input_p2sh.value = 0.1;
-
-			auto input_p2wpkh_hash_1 = codec::hex_decode("0xe79739ac82960be8bedb5175203bd65880b0c45c5c0286d54b5bc6eb4bac3898");
-			superchain::coin_utxo input_p2wpkh_1;
-			input_p2wpkh_1.link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses[6]);
-			input_p2wpkh_1.transaction_id = "5594c04289179bff0f434e5349fafbaa4d43da403b9dc7a637f5afe035b99729";
-			input_p2wpkh_1.value = 0.1;
-
-			auto input_p2tr_public_key = compositions::secp256k1_point_t(wallet.public_key);
-			auto input_p2tr_tweak = compositions::secp256k1_scalar_t(codec::hex_decode("0x04c32a8b5fae170a7a0d28332a663b96f43d24ed4c9db30dfdd9d9d053d3d3e6"));
-			auto input_p2tr_tweaked_public_key = compositions::secp256k1_schnorr_compositor::to_tweaked_public_key(input_p2tr_public_key, input_p2tr_tweak).expect("failed to tweak a public key");
-			auto input_p2tr_hash = codec::hex_decode("0x50cc324f902032625ba70fdfee889032a7ff4de1c7732dc3982b72c1ba2df8b5");
-			superchain::coin_utxo input_p2tr;
-			input_p2tr.link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses[4]);
-			input_p2tr.transaction_id = "988fcb7035c0f51688ddcfaf92ec8fdd0e9bda8b53aa3403bf096611147fb325";
-			input_p2tr.value = 0.1;
-
-			auto input_p2wpkh_hash_2 = codec::hex_decode("0x16a41f749d25f7ebae96aabd62207c2189ac3623b2ddee4560213a3563f81042");
-			superchain::coin_utxo input_p2wpkh_2;
-			input_p2wpkh_2.link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses[6]);
-			input_p2wpkh_2.transaction_id = "9b7a67a6a46f48f896c1de89d479d9d1f5b284809065671ff931c800e1041530";
-			input_p2wpkh_2.value = 0.1;
-
-			auto input_p2wsh_hash = codec::hex_decode("0x40cfd352d152929ada057d28c0e18f781a8b9ddb24df1b6381b0738c8f0ccbb9");
-			superchain::coin_utxo input_p2wsh;
-			input_p2wsh.link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses[5]);
-			input_p2wsh.transaction_id = "ccc7949d20241f04362c42e20125c83096a617b906e1d8123d1b8b08740c6025";
-			input_p2wsh.index = 1;
-			input_p2wsh.value = decimal("0.1001");
-
-			auto input_p2pk_hash = codec::hex_decode("0xe665fd68a288da956f73810db79647a59dbbd6dafb0891f97364a0dfff520b2e");
-			superchain::coin_utxo input_p2pk;
-			input_p2pk.link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses[1]);
-			input_p2pk.transaction_id = "f0b0d2386cd578677df2380361410008d260fc827282904e54bdcb9e1d8cf62f";
-			input_p2pk.index = 0;
-			input_p2pk.value = decimal("0.0999");
-
-			superchain::coin_utxo output_p2wpkh;
-			output_p2wpkh.link = superchain::wallet_link::from_address("bcrt1q9ls8q57rsktvxn6krgjktd6jyukfpenyvd2sa3");
-			output_p2wpkh.value = 0.65;
-
-			superchain::coin_utxo output_p2pkh;
-			output_p2pkh.link = input_p2pkh.link;
-			output_p2pkh.index = 1;
-			output_p2pkh.value = decimal("0.0499");
-
-			superchain::prepared_transaction prepared;
-			prepared.requires_input(algorithm::composition::type::secp256k1, wallet.public_key, (uint8_t*)input_p2pkh_hash.data(), input_p2pkh_hash.size(), std::move(input_p2pkh));
-			prepared.requires_input(algorithm::composition::type::secp256k1, wallet.public_key, (uint8_t*)input_p2sh_hash.data(), input_p2sh_hash.size(), std::move(input_p2sh));
-			prepared.requires_input(algorithm::composition::type::secp256k1, wallet.public_key, (uint8_t*)input_p2wpkh_hash_1.data(), input_p2wpkh_hash_1.size(), std::move(input_p2wpkh_1));
-			prepared.requires_input(algorithm::composition::type::secp256k1_schnorr, input_p2tr_tweaked_public_key, (uint8_t*)input_p2tr_hash.data(), input_p2tr_hash.size(), std::move(input_p2tr));
-			prepared.requires_input(algorithm::composition::type::secp256k1, wallet.public_key, (uint8_t*)input_p2wpkh_hash_2.data(), input_p2wpkh_hash_2.size(), std::move(input_p2wpkh_2));
-			prepared.requires_input(algorithm::composition::type::secp256k1, wallet.public_key, (uint8_t*)input_p2wsh_hash.data(), input_p2wsh_hash.size(), std::move(input_p2wsh));
-			prepared.requires_input(algorithm::composition::type::secp256k1, wallet.public_key, (uint8_t*)input_p2pk_hash.data(), input_p2pk_hash.size(), std::move(input_p2pk));
-			prepared.requires_output(std::move(output_p2wpkh));
-			prepared.requires_output(std::move(output_p2pkh));
-			validate_transaction(asset, wallet, prepared, "p2pk, p2pkh, p2sh, p2wpkh, p2wsh, p2tr", "010000000001074098b2156e619d1d3b97f59f01c20db9251bda1f8efba3091ffea1c9bf402938010000006a4730440220582962da5ccf911fb58fbdaf6be839dee0df80d80913856ca1e6d546e7218b1a022059b5e50a9f6aedf7bb1406e2d96a1e2b6d0ef6696d1ed93a1016243a4ce918f0012102986445ccfd323143f392b66b8cfc056df90ebdc110573e3395ee670d5043f23affffffffa0020807878c29d5e524b7945bf5c282cf3efe20022f7d512138a7038e1f7c3d000000001716001418e254169de2c06bbe881f971b312084bf7d7e1cffffffff2997b935e0aff537a6c79d3b40da434daafbfa49534e430fff9b178942c094550000000000ffffffff25b37f14116609bf0334aa538bda9b0edd8fec92afcfdd8816f5c03570cb8f980000000000ffffffff301504e100c831f91f6765908084b2f5d1d979d489dec196f8486fa4a6677a9b0000000000ffffffff25600c74088b1b3d12d8e106b917a69630c82501e2422c36041f24209d94c7cc0100000000ffffffff2ff68c1d9ecbbd544e90827282fc60d2080041610338f27d6778d56c38d2b0f00000000048473044022058be9097051d04682fd1ef537e60f502dfe4b126383863f55b3d825e549a747302206890820c3208bf7063a4be01e557d4be858bfde1d19cfba1e66437f363582ac501ffffffff0240d2df03000000001600142fe07053c38596c34f561a2565b752272c90e66430244c00000000001976a91418e254169de2c06bbe881f971b312084bf7d7e1c88ac000247304402203818ec3297bde7e38f18581c6a859f0048ac5c2b3259cb243cc7836aa4f2aa5a0220537c115f7f4237ff3c800736b1533339de6e44a813f070c73bed24e12d558da5012102986445ccfd323143f392b66b8cfc056df90ebdc110573e3395ee670d5043f23a0247304402203f3de61dad33cb655e530083ba5eee1d2b4380540fd2ba93f2a16fc61f84eb22022060b02b562961b47cdb09ed4d8cb72669232c020ff2ddb5844bca35686d4d4188012102986445ccfd323143f392b66b8cfc056df90ebdc110573e3395ee670d5043f23a014026371d3a2baaf32f56cc0e8bb0f940d243facb694ee877b34540100c5498a2ef6698effdc811e516e62ba20f187ebdc25e30208b787eac053875292088c09a560247304402205f3ea688faf4d069cc1fa1c9b1cb285b86dce2fbe52764a134c6dd57f7f85f070220028220e58aa3822f2c72034201d6bbd9c8591bb3f565d6c61f6f07a19071e9dc012102986445ccfd323143f392b66b8cfc056df90ebdc110573e3395ee670d5043f23a03483045022100db89247abf363be0c3ce5e32ea3e11d7063de5d90f89c46dd3aff4f53d5d652a022052b638d64ca8c6eaf809dfe236d3ad48975814d01ab2d48207b03448fda5c094012102986445ccfd323143f392b66b8cfc056df90ebdc110573e3395ee670d5043f23a1976a91418e254169de2c06bbe881f971b312084bf7d7e1c88ac0000000000");
-			if (unit != nullptr)
-				unit->all_address_types = false;
-		});
-		tester::use_clean_state([&]()
-		{
-			auto asset = algorithm::asset::id_of("BCH");
-			auto state = storages::superchainstate(asset);
-			auto wallet = create_wallet(asset);
-
-			auto input_p2pkh_hash = codec::hex_decode("0x06da9b13756115c79c0361a083d340c75ced09ddfec9a530601d73a0021ba6a5");
-			superchain::coin_utxo input_p2pkh;
-			input_p2pkh.link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses[1]);
-			input_p2pkh.transaction_id = "8d4157a810c52d392c871867fcb5e5375df7102857eea5d770781737c67e5ed4";
-			input_p2pkh.index = 0;
-			input_p2pkh.value = 0.1;
-
-			superchain::coin_utxo output_p2pkh;
-			output_p2pkh.link = superchain::wallet_link::from_address("bchreg:qzpz97kqvz9jj6tdr6wxdt7zyh7vtm8nwyy4ajnft4");
-			output_p2pkh.index = 0;
-			output_p2pkh.value = decimal("0.099");
-
-			superchain::prepared_transaction prepared;
-			prepared.requires_input(algorithm::composition::type::secp256k1, wallet.public_key, (uint8_t*)input_p2pkh_hash.data(), input_p2pkh_hash.size(), std::move(input_p2pkh));
-			prepared.requires_output(std::move(output_p2pkh));
-			validate_transaction(asset, wallet, prepared, "p2pkh", "0100000001d45e7ec637177870d7a5ee572810f75d37e5b5fc6718872c392dc510a857418d000000006a473044022056abe72a40132188716d6a565247a91405dcc0d65d507945f881564024350c39022014d1be1e48bcecefea071a759e7832abe7826591cfab3c75678c230351fd7571412102986445ccfd323143f392b66b8cfc056df90ebdc110573e3395ee670d5043f23affffffff01e00f9700000000001976a9148222fac0608b29696d1e9c66afc225fcc5ecf37188ac00000000");
-		});
-		tester::use_clean_state([&]()
-		{
-			auto asset = algorithm::asset::id_of("ETH");
-			auto state = storages::superchainstate(asset);
-			auto wallet = create_wallet(asset);
-
-			auto signable_link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses.begin()->second);
-			auto signable_message = codec::hex_decode("0x57d10c32396f3368c294f5987ff147ee4ffe3beae206678395b9531a188754fb");
-			superchain::prepared_transaction prepared;
-			prepared.requires_account_input(algorithm::composition::type::secp256k1, std::move(signable_link), wallet.public_key, (uint8_t*)signable_message.data(), signable_message.size(), { { asset, decimal("0.010021") } });
-			prepared.requires_account_output("0x92F9727Da59BE92F945a72F6eD9b5De8783e09D3", { { asset, 0.01 } });
-			prepared.requires_abi(format::variable(true));
-			prepared.requires_abi(format::variable(string()));
-			prepared.requires_abi(format::variable(decimal("1000000000000000000")));
-			prepared.requires_abi(format::variable((uint32_t)2));
-			prepared.requires_abi(format::variable((uint32_t)46860));
-			prepared.requires_abi(format::variable((uint32_t)0));
-			prepared.requires_abi(format::variable((uint32_t)1000000000));
-			prepared.requires_abi(format::variable((uint32_t)21000));
-			validate_transaction(asset, wallet, prepared, "eip155, transfer", "0xf86d02843b9aca008252089492f9727da59be92f945a72f6ed9b5de8783e09d3872386f26fc100008083016e3ca071df0f300c931e5455e9478bd83711d409966820934da12828485aa04c4eeb10a05fbf0794176f7cc0375f9d6151b860f40c9f7479891b55ada4a2550d5221382d");
-
-			auto token_asset = algorithm::asset::id_of("ETH", "TT", "0xDcbcBF00604Bad29E53C60ac1151866Fa0CC2920");
-			signable_link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses.begin()->second);
-			signable_message = codec::hex_decode("0x430483f3812b96bfe179cd21fb18580c5ba0919c1e25090d9fd740bb238d7bdf");
-			prepared = superchain::prepared_transaction();
-			prepared.requires_account_input(algorithm::composition::type::secp256k1, std::move(signable_link), wallet.public_key, (uint8_t*)signable_message.data(), signable_message.size(), { { asset, decimal("0.000050758") }, { token_asset, decimal("503") } });
-			prepared.requires_account_output("0xBA119F26A40145b463DFcae2590b68A057E81d3D", { { token_asset, decimal("503") } });
-			prepared.requires_abi(format::variable(true));
-			prepared.requires_abi(format::variable(string("0xDcbcBF00604Bad29E53C60ac1151866Fa0CC2920")));
-			prepared.requires_abi(format::variable(decimal("1000000000000000000")));
-			prepared.requires_abi(format::variable((uint32_t)1));
-			prepared.requires_abi(format::variable((uint32_t)46860));
-			prepared.requires_abi(format::variable((uint32_t)0));
-			prepared.requires_abi(format::variable((uint32_t)1000000000));
-			prepared.requires_abi(format::variable((uint32_t)50758));
-			validate_transaction(asset, wallet, prepared, "eip155, erc20 transfer", "0xf8ab01843b9aca0082c64694dcbcbf00604bad29e53c60ac1151866fa0cc292080b844a9059cbb000000000000000000000000ba119f26a40145b463dfcae2590b68a057e81d3d00000000000000000000000000000000000000000000001b4486fafde57c000083016e3ba0e79c085ddc6d48957067c8aa580d7db7055240118243b661ff2e42e2026fdfb7a06e57301656ea8b241a0a3603229740397c2fb227e350b47bc9a79b6c963f4dcf");
-
-			signable_link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses.begin()->second);
-			signable_message = codec::hex_decode("0xc91fa85db3a84bb26a64a81166f47113e8ea7eae1df6f8c19bd0504cb3fd39b9");
-			prepared = superchain::prepared_transaction();
-			prepared.requires_account_input(algorithm::composition::type::secp256k1, std::move(signable_link), wallet.public_key, (uint8_t*)signable_message.data(), signable_message.size(), { { asset, decimal("0.100021") } });
-			prepared.requires_account_output("0x92F9727Da59BE92F945a72F6eD9b5De8783e09D3", { { asset, 0.1 } });
-			prepared.requires_abi(format::variable(false));
-			prepared.requires_abi(format::variable(string()));
-			prepared.requires_abi(format::variable(decimal("1000000000000000000")));
-			prepared.requires_abi(format::variable((uint32_t)2));
-			prepared.requires_abi(format::variable((uint32_t)46860));
-			prepared.requires_abi(format::variable((uint32_t)1000));
-			prepared.requires_abi(format::variable((uint32_t)999999000));
-			prepared.requires_abi(format::variable((uint32_t)21000));
-			validate_transaction(asset, wallet, prepared, "eip1559, transfer", "0x02f87482b70c02843b9ac618843b9aca008252089492f9727da59be92f945a72f6ed9b5de8783e09d388016345785d8a000080c080a05c8b6da0d55615dd3aafdbfeba008cbaebb0a65a666c00ba012ad843129451b5a03d7113c7850f2a943bf55ff051e3a015bf5fa44487f58b1d1a9217534a970a2a");
-
-			signable_link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses.begin()->second);
-			signable_message = codec::hex_decode("0x248fffefd534b260b4950554563b956dc7838defa9c33f53865a72473558f665");
-			prepared = superchain::prepared_transaction();
-			prepared.requires_account_input(algorithm::composition::type::secp256k1, std::move(signable_link), wallet.public_key, (uint8_t*)signable_message.data(), signable_message.size(), { { asset, decimal("0.000050758") }, { token_asset, decimal("503") } });
-			prepared.requires_account_output("0xBA119F26A40145b463DFcae2590b68A057E81d3D", { { token_asset, decimal("503") } });
-			prepared.requires_abi(format::variable(false));
-			prepared.requires_abi(format::variable(string("0xDcbcBF00604Bad29E53C60ac1151866Fa0CC2920")));
-			prepared.requires_abi(format::variable(decimal("1000000000000000000")));
-			prepared.requires_abi(format::variable((uint32_t)2));
-			prepared.requires_abi(format::variable((uint32_t)46860));
-			prepared.requires_abi(format::variable((uint32_t)1000));
-			prepared.requires_abi(format::variable((uint32_t)999999000));
-			prepared.requires_abi(format::variable((uint32_t)50758));
-			validate_transaction(asset, wallet, prepared, "eip1559, erc20 transfer", "0x02f8b182b70c02843b9ac618843b9aca0082c64694dcbcbf00604bad29e53c60ac1151866fa0cc292080b844a9059cbb000000000000000000000000ba119f26a40145b463dfcae2590b68a057e81d3d00000000000000000000000000000000000000000000001b4486fafde57c0000c001a027ec5c85da8281ec7ccb345a2d0568a05449abe2ca06fc9895f72b7fd6d7b4fea07a3d5cbb080bd5cda709bc292eba557a28eb800278f18560129e5612f7481d9e");
-		});
-		tester::use_clean_state([&]()
-		{
-			auto asset = algorithm::asset::id_of("XRP");
-			auto state = storages::superchainstate(asset);
-			auto wallet = create_wallet(asset);
-
-			auto signable_link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses.begin()->second);
-			auto signable_message = codec::hex_decode("0x53545800120000220000000024006115562e00000000201b006117fb614000000002b709b068400000000000000c7321ed2a994a958414a9dac047fd32001847954f89f464433cb04266fde37d6aff15448114c7f083a28227b588c13becf3f353e06d2e4f2fee8314f667b0ca50cc7709a220b0561b85e53a48461fa8");
-			superchain::prepared_transaction prepared;
-			prepared.requires_account_input(algorithm::composition::type::ed25519, std::move(signable_link), wallet.public_key, (uint8_t*)signable_message.data(), signable_message.size(), { { asset, decimal("45.550012") } });
-			prepared.requires_account_output("rPT1Sjq2YGrBMTttX4GZHjKu9dyfzbpAYe", { { asset, decimal("45.55") } });
-			prepared.requires_abi(format::variable(string()));
-			prepared.requires_abi(format::variable((uint32_t)6362454));
-			prepared.requires_abi(format::variable((uint32_t)6363131));
-			prepared.requires_abi(format::variable((uint32_t)12));
-			validate_transaction(asset, wallet, prepared, "payment", "120000220000000024006115562E00000000201B006117FB614000000002B709B068400000000000000C7321ED2A994A958414A9DAC047FD32001847954F89F464433CB04266FDE37D6AFF15447440D358730D5280F136D566474B869A1A49F61C9F0C0B6DB51E77CB8E3CA8BD11964BCE5EA0DA4A4E927677455B6DF745F5C6DAA018B3E1CAE1AC98B31499F0B50B8114C7F083A28227B588C13BECF3F353E06D2E4F2FEE8314F667B0CA50CC7709A220B0561B85E53A48461FA8");
-		});
-		tester::use_clean_state([&]()
-		{
-			auto asset = algorithm::asset::id_of("XLM");
-			auto state = storages::superchainstate(asset);
-			auto wallet = create_wallet(asset);
-
-			auto signable_link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses.begin()->second);
-			auto signable_message = codec::hex_decode("0x1a6e7daa8fbd8aab869ebeafc8650d911a948d6e8166aec4fcec5490e359f81d");
-			superchain::prepared_transaction prepared;
-			prepared.requires_account_input(algorithm::composition::type::ed25519, std::move(signable_link), wallet.public_key, (uint8_t*)signable_message.data(), signable_message.size(), { { asset, decimal("2200.00001") } });
-			prepared.requires_account_output("GAIH3ULLFQ4DGSECF2AR555KZ4KNDGEKN4AFI4SU2M7B43MGK3QJZNSR", { { asset, decimal("2200") } });
-			prepared.requires_abi(format::variable((uint64_t)1561327986278402));
-			prepared.requires_abi(format::variable(false));
-			prepared.requires_abi(format::variable(true));
-			prepared.requires_abi(format::variable(string()));
-			prepared.requires_abi(format::variable(string()));
-			prepared.requires_abi(format::variable((uint8_t)0));
-			validate_transaction(asset, wallet, prepared, "payment", "AAAAACqZSpWEFKnawEf9MgAYR5VPifRkQzywQmb9431q/xVEAAAAZAAFjAUAAAACAAAAAAAAAAAAAAABAAAAAAAAAAEAAAAAEH3Rayw4M0iCLoEe96rPFNGYim8AVHJU0z4ebYZW4JwAAAAAAAAABR9NXAAAAAAAAAAAAWr/FUQAAABAHsqVejb7HruH0aV6UzYwvWywdrywphFRCPxe//qGobXsVcgX3LzBl4uARxrUFwYqDSRHahYetDvO79gcvUIhBQ==");
-
-			signable_link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses.begin()->second);
-			signable_message = codec::hex_decode("0xc23a0791a11ebefd653684792b4001e294440ce67979fb7a0dc2915ca4818e22");
-			prepared = superchain::prepared_transaction();
-			prepared.requires_account_input(algorithm::composition::type::ed25519, std::move(signable_link), wallet.public_key, (uint8_t*)signable_message.data(), signable_message.size(), { { asset, decimal("100.00001") } });
-			prepared.requires_account_output("GD4QDZNYKL4VH7QGVP47DZZBEUB5KR53SI2RACPDNTHCOSAQJTN3RW2Z", { { asset, decimal("100") } });
-			prepared.requires_abi(format::variable((uint64_t)1561327986278403));
-			prepared.requires_abi(format::variable(true));
-			prepared.requires_abi(format::variable(false));
-			prepared.requires_abi(format::variable(string()));
-			prepared.requires_abi(format::variable(string()));
-			prepared.requires_abi(format::variable((uint8_t)0));
-			validate_transaction(asset, wallet, prepared, "create_account", "AAAAACqZSpWEFKnawEf9MgAYR5VPifRkQzywQmb9431q/xVEAAAAZAAFjAUAAAADAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAA+QHluFL5U/4Gq/nx5yElA9VHu5I1EAnjbM4nSBBM27gAAAAAO5rKAAAAAAAAAAABav8VRAAAAEDwmgeOy3MUl/nyANi/pKs/m6EpmQa3fibonYTDwT3ZUt0Md36qD5xX9aNtqqaCyDyjNiTeXeyJKs8IPai0i+AG");
-		});
-		tester::use_clean_state([&]()
-		{
-			auto asset = algorithm::asset::id_of("SOL");
-			auto state = storages::superchainstate(asset);
-			auto wallet = create_wallet(asset);
-
-			auto signable_link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses.begin()->second);
-			auto signable_message = codec::hex_decode("0x80010001032a994a958414a9dac047fd32001847954f89f464433cb04266fde37d6aff15440963cbfdea28293c02cd965c46e7a6f26bc5f26da4fa00dda8c8ade49f96dcad0000000000000000000000000000000000000000000000000000000000000000b83691e4405ab95ed6264b5942eb150deb64c9d0688940be0f6548da25de783c01020200010c02000000807a77230100000000");
-			superchain::prepared_transaction prepared;
-			prepared.requires_account_input(algorithm::composition::type::ed25519, std::move(signable_link), wallet.public_key, (uint8_t*)signable_message.data(), signable_message.size(), { { asset, decimal("4.890005") } });
-			prepared.requires_account_output("devwuNsNYACyiEYxRNqMNseBpNnGfnd4ZwNHL7sphqv", { { asset, decimal("4.89") } });
-			prepared.requires_abi(format::variable((uint64_t)1000000000));
-			prepared.requires_abi(format::variable(string()));
-			prepared.requires_abi(format::variable(string()));
-			prepared.requires_abi(format::variable(string()));
-			prepared.requires_abi(format::variable(string()));
-			prepared.requires_abi(format::variable(string("DQ6H97iaf92qFZAWFSu57x74i47L4MJL5vjfun8pMrCj")));
-			validate_transaction(asset, wallet, prepared, "transfer", "2mXpPxxdMg1J2wZ7EdNGpvMXrZ4THjKD8zAfgAtC2TN1VCUQWNg81QjJmr9hgTL8bu9DNNcc8LXM1U2ycp9J79tgUsyTu9hikqjHLbohWoLhvw7WztUvENarynygknqvGBB1jnYnQWhTvrYjbyBwhd4WQuVUhhiokKyfw6vq9ZJgbToU8anhgYGGgtBjpL3pzpAJVUoFF8A55LwLcsWUh7wcuvUfX22bBpKYbhBE3G4TwCv9Fi9xHsRrm4qfVm9eFQXCaoBVUdKtLuAJW5cRvUmBvp3zBZnzWfF8ebUb");
-
-			auto token_asset = algorithm::asset::id_of("SOL", "9YaGkvrR1fjXSAm7LTcQYXZiZfub2EuWvVxBmRSHcwHZ", "9YaGkvrR1fjXSAm7LTcQYXZiZfub2EuWvVxBmRSHcwHZ");
-			signable_link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses.begin()->second);
-			signable_message = codec::hex_decode("0x80010001052a994a958414a9dac047fd32001847954f89f464433cb04266fde37d6aff1544437b32d02edb961d6ffba969407c441a127befb1fe6885fa40f3d9e1dd7f9306d36dc35d5d43cb85d730bbf57899cb2266076f149fdf00b5491b69d1ad764df37ef41ef3474ed6a625c960cb38e5e9025a9edd6f63997d6c4c28f761dc23b67006ddf6e1d765a193d9cbe146ceeb79ac1cb485ed5f5b37913a8cf5857eff00a95abee248b8b08441f683b2e58d6b7c62bfa977bb775f0ef37facee593d0b1269010404010302000a0c50a50500000000000200");
-			prepared = superchain::prepared_transaction();
-			prepared.requires_account_input(algorithm::composition::type::ed25519, std::move(signable_link), wallet.public_key, (uint8_t*)signable_message.data(), signable_message.size(), { { asset, decimal("0.000015") }, { token_asset, decimal("3700") } });
-			prepared.requires_account_output("4Bs1nFL71Yaq2HJ3pSk3WHdbhkWeqnrLYQZDhqjDfb53", { { token_asset, decimal("3700") } });
-			prepared.requires_abi(format::variable((uint64_t)100));
-			prepared.requires_abi(format::variable(string("9YaGkvrR1fjXSAm7LTcQYXZiZfub2EuWvVxBmRSHcwHZ")));
-			prepared.requires_abi(format::variable(string("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")));
-			prepared.requires_abi(format::variable(string("5YRGqmfQGcAii8szURA3ZztXfpre1ZnajJcS63GJi4yK")));
-			prepared.requires_abi(format::variable(string("FEL6m5CE2P3JTW1ceo48VerTUSWDte6eXzgrcmcftvyQ")));
-			prepared.requires_abi(format::variable(string("77EWfi8yvGJNRsC9BRHepMtBJ2RDEDAkZNWAT4YJNMYU")));
-			validate_transaction(asset, wallet, prepared, "spl transfer", "7qSoGmgq68eUNs8tJZ8dDtyfpUHE64RaxrhFeARBKJdhtW4SsRitHzdkkH4uepUxZ599Y3RBhSyzSeb7mmFnrhER53hSbcyReBAPkeMfTWKeg7FnQuqxhAjnAf6zMyAiwWLHDWfDHoV1ovbUQXrdexZhHVRomMUwHX81rQv6RwCkfGnB7dfpysFQ2PeYztphz2Z2uSaY3x44X9AAZWpUk7MMHQxUvUNA6ESFoQTYYSNj8Vr5qdjV89AXYF2BfqVs1Qj3ZuHSaQbZFaEtfdanhzt7qJBBrZ4zV9QsbBCXDyPg6JncvZTePP7drV4Uf9SWKssN6AF5zaq5AVSE1GguJ5zfQoY6JbUuZ1zzX8PNbccQVtpvmfSqWn4EntLxP3D");
-
-			signable_link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses.begin()->second);
-			signable_message = codec::hex_decode("0x80010002082a994a958414a9dac047fd32001847954f89f464433cb04266fde37d6aff1544437b32d02edb961d6ffba969407c441a127befb1fe6885fa40f3d9e1dd7f9306d36dc35d5d43cb85d730bbf57899cb2266076f149fdf00b5491b69d1ad764df37ef41ef3474ed6a625c960cb38e5e9025a9edd6f63997d6c4c28f761dc23b67006ddf6e1d765a193d9cbe146ceeb79ac1cb485ed5f5b37913a8cf5857eff00a92f5b6b548541c59c6580cdff889e30c53e19cb10241170ae041eaed436420aa200000000000000000000000000000000000000000000000000000000000000008c97258f4e2489f1bb3d1029148e0d830b5a1399daff1084048e7bd8dbe9f8595abee248b8b08441f683b2e58d6b7c62bfa977bb775f0ef37facee593d0b126902070600020503060401010404010302000a0c50a50500000000000200");
-			prepared = superchain::prepared_transaction();
-			prepared.requires_account_input(algorithm::composition::type::ed25519, std::move(signable_link), wallet.public_key, (uint8_t*)signable_message.data(), signable_message.size(), { { asset, decimal("0.000015") }, { token_asset, decimal("3700") } });
-			prepared.requires_account_output("4Bs1nFL71Yaq2HJ3pSk3WHdbhkWeqnrLYQZDhqjDfb53", { { token_asset, decimal("3700") } });
-			prepared.requires_abi(format::variable((uint64_t)100));
-			prepared.requires_abi(format::variable(string("9YaGkvrR1fjXSAm7LTcQYXZiZfub2EuWvVxBmRSHcwHZ")));
-			prepared.requires_abi(format::variable(string("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")));
-			prepared.requires_abi(format::variable(string("5YRGqmfQGcAii8szURA3ZztXfpre1ZnajJcS63GJi4yK")));
-			prepared.requires_abi(format::variable(string()));
-			prepared.requires_abi(format::variable(string("77EWfi8yvGJNRsC9BRHepMtBJ2RDEDAkZNWAT4YJNMYU")));
-			validate_transaction(asset, wallet, prepared, "spl create+transfer", "4ZaYUykgrB2uZiBGR9FzozSmoDp1xnao1QVaBNCEzDtL74e1wnnVNYYn5kJJsaVN3XnfjjkD5ivyHaDH3xTjA8FNyiALbsAf8ohPx2fHskdGh3PXWy6zQgA3W6QT25zg9LRtyyRjATL6AfyQ9uARw6P8sKPwY3c8cN3zuz3X8JqAjJyQZtNFJv4Sj1SWq2YFYVJYbbL5oNwEd7uKKC2FuG4TthH4A63NyuKSPwuVy1Xw4CBcfxDjn3PmVNjAawWF95dDdErtfwLPLbLxeu2BNjhuCHdedrZepJynoXfCxjKcB7mYPsWxCjUM36EY8kGnH4m2piuvumEhCLfX4bsDLkd4cVWs8f77TPNxwXpbPNnCNgd3i7yzAcyxPgArQ1gMVfE6vc3HaowmQsmf2hbywaQP29oZrMXCr7hPtV5mDBRhxkjqkt5jg6yc49F3QTDhQLnRLfGK1Gh3qgjPYnVwGtezBmdQZTabDw6BF1rDaNxfnXD2gQfEGPFWqJfESPvCeRCi59Yq2obWfKio");
-		});
-		tester::use_clean_state([&]()
-		{
-			auto asset = algorithm::asset::id_of("ADA");
-			auto state = storages::superchainstate(asset);
-			auto wallet = create_wallet(asset);
-
-			auto input_hash = codec::hex_decode("0x14b33fbdd10c0931057b2c66e56b08cf01523480769153e3433050c571dc23e6");
-			superchain::coin_utxo input;
-			input.link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses[1]);
-			input.transaction_id = "f887787271fa3538f574bb0a95f1178377dd70a98813657764241fdf4e0ca7b7";
-			input.index = 1;
-			input.value = decimal("9965.667678");
-
-			superchain::coin_utxo output_1;
-			output_1.link = superchain::wallet_link::from_address("addr_test1vqeux7xwusdju9dvsj8h7mca9aup2k439kfmwy773xxc2hcu7zy99");
-			output_1.index = 0;
-			output_1.value = decimal("2100");
-
-			superchain::coin_utxo output_2;
-			output_2.link = input.link;
-			output_2.index = 1;
-			output_2.value = decimal("7865.501517");
-
-			superchain::prepared_transaction prepared;
-			prepared.requires_input(algorithm::composition::type::ed25519, wallet.public_key, (uint8_t*)input_hash.data(), input_hash.size(), std::move(input));
-			prepared.requires_output(std::move(output_1));
-			prepared.requires_output(std::move(output_2));
-			prepared.requires_abi(format::variable((uint64_t)166161));
-			validate_transaction(asset, wallet, prepared, "p2pkh", "84a30081825820f887787271fa3538f574bb0a95f1178377dd70a98813657764241fdf4e0ca7b7010182a200581d6033c378cee41b2e15ac848f7f6f1d2f78155ab12d93b713de898d855f011a7d2b7500a200581d6042a00dfc0e9577dd74673d4b90b1e4a00e8a7fe0778dd134d268a95f011b00000001d4d2074d021a00028911a100818258202a994a958414a9dac047fd32001847954f89f464433cb04266fde37d6aff15445840e28a2e306c97c2c3871d64c5830ac0ae2a8e575a699130075c55b67ab3029a5c83712d9e86b71dce110141bf4c8039f388c0e79eccb10c2b4f0a9e3abe08ce0df5f6");
-
-			auto token_contract = "bd976e131cfc3956b806967b06530e48c20ed5498b46a5eb836b61c2";
-			auto token_symbol = "tMILKv2";
-			input_hash = codec::hex_decode("0x66bb498dd4f2840ef018b8392c58fd198f334474b5c9b96d7412b1b4cee39b0b");
-			input = superchain::coin_utxo();
-			input.link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses[1]);
-			input.transaction_id = "0f7cad6020aaf0c462cfb6cba2b5f4102910b7bf7101ed609eb887188b19ad6f";
-			input.index = 1;
-			input.value = decimal("9940.752346");
-			input.apply_token_value(token_contract, token_symbol, decimal("999995689"), 0);
-
-			output_1 = superchain::coin_utxo();
-			output_1.link = superchain::wallet_link::from_address("addr_test1vzpkkthr9azvuagxcf0m27qvzdad7n95jutgcdtglgmhdns998vsz");
-			output_1.index = 0;
-			output_1.value = decimal("1.655136");
-			output_1.apply_token_value(token_contract, token_symbol, decimal("65483"), 0);
-
-			output_2 = superchain::coin_utxo();
-			output_2.link = input.link;
-			output_2.index = 1;
-			output_2.value = decimal("9938.927089");
-			output_2.apply_token_value(token_contract, token_symbol, decimal("999930206"), 0);
-
-			prepared = superchain::prepared_transaction();
-			prepared.requires_input(algorithm::composition::type::ed25519, wallet.public_key, (uint8_t*)input_hash.data(), input_hash.size(), std::move(input));
-			prepared.requires_output(std::move(output_1));
-			prepared.requires_output(std::move(output_2));
-			prepared.requires_abi(format::variable((uint64_t)170121));
-			validate_transaction(asset, wallet, prepared, "p2pkh asset", "84a300818258200f7cad6020aaf0c462cfb6cba2b5f4102910b7bf7101ed609eb887188b19ad6f010182a200581d60836b2ee32f44ce7506c25fb5780c137adf4cb497168c3568fa3776ce01821a00194160a1581cbd976e131cfc3956b806967b06530e48c20ed5498b46a5eb836b61c2a147744d494c4b763219ffcba200581d6042a00dfc0e9577dd74673d4b90b1e4a00e8a7fe0778dd134d268a95f01821b000000025067fdf1a1581cbd976e131cfc3956b806967b06530e48c20ed5498b46a5eb836b61c2a147744d494c4b76321a3b99b95e021a00029889a100818258202a994a958414a9dac047fd32001847954f89f464433cb04266fde37d6aff154458404a594cc96cd2aec42c68556ca1c90b06da654230fae3247e14e50d6896598352a6bbe24a45fc825bcae90161c2cad02faf343fdc8354e89ae676b27c8f646304f5f6");
-		});
-		tester::use_clean_state([&]()
-		{
-			auto asset = algorithm::asset::id_of("TRX");
-			auto state = storages::superchainstate(asset);
-			auto wallet = create_wallet(asset);
-
-			auto signable_link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses.begin()->second);
-			auto signable_message = codec::hex_decode("0x6c30ab9d12ae48c5c6800533451ef201dcc807980ea18739301ac48c2ddef3ce");
-			superchain::prepared_transaction prepared;
-			prepared.requires_account_input(algorithm::composition::type::secp256k1, std::move(signable_link), wallet.public_key, (uint8_t*)signable_message.data(), signable_message.size(), { { asset, decimal("22.4") } });
-			prepared.requires_account_output("TXNE2M4GSw6tjVsGeux9nbVEhihGU6hBeV", { { asset, 14 } });
-			prepared.requires_abi(format::variable(string()));
-			prepared.requires_abi(format::variable("091a"));
-			prepared.requires_abi(format::variable("844ba957b61a108b"));
-			prepared.requires_abi(format::variable((uint64_t)1744587342000));
-			prepared.requires_abi(format::variable((uint64_t)1744587282000));
-			prepared.requires_abi(format::variable((uint32_t)1000000));
-			prepared.requires_abi(format::variable((uint64_t)150000000));
-			validate_transaction(asset, wallet, prepared, "transfer", "78da8d52cb6edc300cfc179d8394d45b7b6d2fbdf716040645518951ef7a617bf340907f2fddb441da5e2a1f240f5f33c4bc9887711deb24e6d0695ae5ca6c4f5fbf988389ec806a6968497ce6c0310304e77c40e916b0316748258310e6e48a0324d644db9a74c762aecc428f43a38d867b79d28e4060a120590b397b5fa98454231242ae1e2a64cc25b3386703e9b00c88367a20db924f25410c56628a5dbf143986888a95e414758a35db13241b7bf2fab7236c257845304a7231c690acdf71496fa84b1ead5399183cb26ae1a6f47a2b20ac3db860416ccd27a9d2428b35c612d0eed942354057a846254851e7480aa172c0960b57cdc612b3c79ca16a1ec4040d887378535800300339763e7dd89439bc189e4fdb42bc99c3cd8b39d34247d964d9230f345d647f6cf340ad2db2aebad6ff27a383e6c7932c7f14ffaf6e2da6e37c39292ff4f0f3bcaa599ecf325c96495bedcfebbb79be9b84cee37acdf3f1d37999b799e7e9fadb42a7b5cbf2f9b7b85fb55af76fe85617227da8d3ccdf87fabcc9ce74778ef918b8a7f55ef1bf9da439f2741e17dac6f9a45c93f741fde9ad12d699e351d68d8ee7f788cd6f912e324ce371dcf5057817b88e7727da2e8b32bd31a534d7833a98a97207a6e08290edd2fd7e63ecb5d4d6d521a164f56977d0240b39895e11704418b185e22b47d77bafb1e5581371176a62abcd5e907c702d6103c829550a04e8bb979e0bb2b97dfd01a74b1415");
-
-			auto token_asset = algorithm::asset::id_of("TRX", "GFC", "TUiyUe3uqtiT8cFkfhW6Q28Z99sY7o82Xr");
-			signable_link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses.begin()->second);
-			signable_message = codec::hex_decode("0xf070bae36536973c5ca2956768882d2b9144ec74cff4673ffc418b8d2b0da9b0");
-			prepared = superchain::prepared_transaction();
-			prepared.requires_account_input(algorithm::composition::type::secp256k1, std::move(signable_link), wallet.public_key, (uint8_t*)signable_message.data(), signable_message.size(), { { asset, decimal("14.0228") }, { token_asset, decimal("8") } });
-			prepared.requires_account_output("TXNE2M4GSw6tjVsGeux9nbVEhihGU6hBeV", { { token_asset, decimal("8") } });
-			prepared.requires_abi(format::variable("TUiyUe3uqtiT8cFkfhW6Q28Z99sY7o82Xr"));
-			prepared.requires_abi(format::variable("08ca"));
-			prepared.requires_abi(format::variable("9dd563feb883a59e"));
-			prepared.requires_abi(format::variable((uint64_t)1744587102000));
-			prepared.requires_abi(format::variable((uint64_t)1744587042000));
-			prepared.requires_abi(format::variable((uint64_t)1000000));
-			prepared.requires_abi(format::variable((uint64_t)150000000));
-			validate_transaction(asset, wallet, prepared, "trc20 transfer", "78dacd54cb6edc300cfc179d8394d48392f6da5e7a6e6f41b0a0246a63d41b2f6ce78520ff5eba498ab46881a0a7ca8021cd90144969f4686e876528a3985de7719133b3de7ffe6476a64384c2e22838cad1d550d9e64091524ab6d992d17ba9d1d7de3d45d77bf5984a52061ae702e6cccc7cb76fbcf2fe4aee35223058481a46ffb9b540ae4b49c971c8e2a1004be754c4391b9805101276b49c75c60ea38f3902052b9a43d72f52a540a898a6a7a853acd91e215aead1eb6a43aa95e015c96a1f2944abe534f5b2d1fb8d97b8b1482e7a540c1883c71a73aa2d23f79641aac6aa1933626b3e4a91161a15a21cd0feb06e257b6a6cd14af745b1e874911a710a5d7cea8e2c38b1d67bad26e45a0afc650897005dc31702b64c9abbc4104a0dd8923aeace982979f8e71119adfea141cb9d9efb9d01306993abf3f1cdb999dda3a9d3f53a735dcdeee2d19c78e6a3ac326fcc2d8f37b24d9e4dcdff529a1630dd5dcbbce7d66659164dedfd27aaceaf15ffeaffce33364f2aa08793ec6fe6511db7e9f9619a0ea3f06958ceeb74fc709aa775aad378fe751e0e0799bf1c795e3fbeb6f9c55f7dff4c5feaf148df9771aadff6e561952dbf4d55e62d71c5cb95e2bfab4c6de4fe34ccbc0ed3b5d9a9a67c4811559600baef709465e5e3e92703fe99e922fb71380e7a0b30bc345b135d86c335af37b3667b611a70076eb914bde895346ac55612164cfa7864e8aa5710cb20d8ad48cad9734dfaaa7417015d71561f19354bd4832d3e96e21d03259743df2e0eb566133524c9aa710ed515202ecc49850d366035974fdf012e2954e7");
-		});
-		tester::use_clean_state([&]()
-		{
-			auto asset = algorithm::asset::id_of("XMR");
-			auto state = storages::superchainstate(asset);
-			auto wallet = create_wallet(asset);
-
-			superchain::coin_utxo input;
-			input.link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses.begin()->second);
-			input.transaction_id = "102";
-			input.index = 0;
-			input.value = 0.01;
-			input.extra = codec::hex_decode("0xd8705e0f3e2decea48fae350b23010a948e871cc95c54834004313c10b3b9b0d8c9b7e994d98d6c3593ab23f30a732b559294a2e353b49250dc1fabd41c6dd066600000000000000");
-
-			superchain::coin_utxo output1;
-			output1.link = superchain::wallet_link::from_address("887gyyu7y4LbLDY6QUcrgDGYMRJN1FKL8QUTwuL7HxosENMymJJEj7bZqBjiFU46ExMdjCNh3yUWHSVzHvKfMAvrLkYdyNF");
-			output1.value = 0.005;
-			output1.index = 0;
-
-			superchain::coin_utxo output2;
-			output2.link = superchain::wallet_link(algorithm::encoding::decode_0xhex256("0x9ef466bbda9be2a13d50c46bbd53c75a70607a4a3b5c67959b50234fa04f190c"), "1b25d81c9eb85ee5dd471f1e47d9c967ce6587bbca71462b4fd47c38bf11cbae:30ddcfeaca93e2e159e81145179b1eb9b9a140afd17ae70772308fe6f78f1f8a", "42en54HJ9KbfSyPoMWQCHvJN3vyruyqLR8FBPNXowEMYW8sSwgSiTboehBxTjFwg5jY4mSmhWEYKY2FEh4TQnLm4GdiJDwp");
-			output2.value = decimal("0.0031436");
-			output2.index = 1;
-
-			superchain::prepared_transaction prepared;
-			prepared.requires_shared_input(algorithm::composition::type::ed25519_clsag, wallet.public_key, std::move(input));
-			prepared.requires_output(std::move(output1));
-			prepared.requires_output(std::move(output2));
-			prepared.requires_abi(format::variable(codec::hex_decode("0xf6b48b4d2827024154842aa515619e70ab80f994c0f6441f60d684f7f7295eb215d5404390090109204ac2c5fc1768ac64423f5d993c85e4d855d82bab37439ff0c35f157889e50fff8a0c95875bc009012a2a084a5ad95d60e80e94ef10eda34485957d89e2d10576578c704174bf0bc388635f0b4aff5c789d0c923a976af13744676be9be9f5c86ade43e1ebdcc6954f055e178924ad8705e0f3e2decea48fae350b23010a948e871cc95c54834004313c10b3b9b0d4a8c9b7e994d98d6c3593ab23f30a732b559294a2e353b49250dc1fabd41c6dd06096609104a88005845823323e59c04b968824a6f61a3e3a1376ac74a1e26e676c819c2221c4ae64e72cc71a686f2d917dc5142ca91d929579f3d541a275ad3562fb5cca65d90092c064ad8c2269ef81840b469346bbfae0cf087d3511b8e1fe04c96f455c63246b9bd5b4ab289be0e272fc64ccc3b811f1fdba3395a3701aceaf82dcdc4781ef85ff3a9960901064a22d56f16a2d52c7299c7c596ae5b46c2414b71eb5052b993606c9d6bbc4555104a50a3f64bab0f0136578d06613239b914f3746baba8855bd95b8a56f671b6dcee0901064ade5ef479f4a37f5eaa030085b3002568dea7ce6508d2231f2065217d810178e04af3b3c6e5b1b35d9a9f5f3960c21047597b9c1b97275e9a04ee978f349b926c8c0901064a240fa105f872148a3f8d050912c21887a9cba23bed329e1e162830e7c82ab64c4a5ddaa16b37503915e14f93dc8803fa97eb072221a0d1c8916ae143e69802ba540901064af7248e49ffdeb4114cbd66bf4152894172202a25aa5e730ef2870264873cb6de4aead60b7504850c7293e99f0f13823d0f0e99dd5f0dcce6f71a5f1990dd25e8ae0901064aaf97adee20cff9ade21fbadb7d8cde20ca0bb857d39f8e487850cab1e65b394c4a29b9cdf249ad0647966a57ba907ab7764a830cc2fb504bae0b6a2d0edc1278b70901064a30c2f7513b4e8f758893a9e596bf4f1732932cd45274fd88e6c4c7076169c5ce4ae3f54cb71ee97608d3b657b3046171dffc9dceb3dbe2756bc616d4aca2c27b190901064a34f87864785477cb61c3194e2c9efc24825292ef1eb4d7a870911d20ed725b8f4a67c8464266b9148b1a3cee91d3956279dea1cb800133fbfab9106e33ac0fef640901064a895cb8d3b4249ab81a34c3aa55bf4563e7a9a664852a574c7366de229ad3f5954ae97e47ad0ea542b03b440a83b5c297184b60efb0ae86f9df1912ee31494bc2180901064a2f55a12b45e17b9ed1ccf1ef284c0585698f98c3b1891c06b8879931537d4cd24a174aeb74d89d2ec4d2623c0fa3a95432da28e8349ef4569ed99dae6c3dc4033e0901064ae4b2f6b1de3ac321ea5f304194250cdfef117c670562722bf8d2cf12d7e78a2e4ab9e4dcb61022a867cef8d1c95416fd6f650bfa687c48007a7f3daf9c3a5271f10902064a0ae058453b59b109750ed7a2737d78e0b982954e430e91e4e9130b00f2e744dc4af88e75525d8173c1617a13f47f45821fb2e5504d8859c36443c6432b181d48230901064ae5498ca520a59274feb37c3eb4d30059e8a125357cde8293af31389d9e0b81054a429899f1eb62429298a89541015dfef5d71abc55ce6ffb1d78b6db27f5579eb30902064ae72852fa4b9a2d059db4b6dfcdbf328437f31bebe9863a3c11ed428ea7ac0a574a6bf94cf0b5fba40ad009245bf3c96566a0a0af066ba6a75e0dc9772121f7e3900901064af5e3349baef13b1f1f78cc7c289fb923083624c4dd578fdf5349b80f617152da4a0650c0f2f035e5adfa108e89cfa5bdaf12ec9f20363f21fbb61e34702980d6d7092a072a090209e04a3c6b2339986643f8f672dd0572e96ab222fa5c516c4d8a6ec78181b9ade8fbf732813b06999711cf894a6f1903a82a17584e3e00b3e8259b862f8f35cb1f154b3ecf525fe51681d92d024aa72305ffd093b31a6acf74220b6387317d9c8af7cbc173a3192c2c534d813e8f09374acf5e9b7588a4f29892504d610b76b486842bbbb8fda3d742895a6ba1a300d7d03208450850f3541e3b4aebbf5ab8bdf73ba1d2ecf05b5ffaf659539c3a5642413272216026ac078a31094ad6dff3e9c9cd7416e0b37cf96d83542f5c4a2f7424eff1e71943ee44f0436a2e6d012b948830acce33d11c7dcf007a8fc5df224d20d21e56955a0396b66d75ca9c490401f03f347195a60426a798852a83f5417c7ba55217af5f712beac7c10aafbb0f974ab06e6e157e8dbc9520fd47712d8ae1ca2f7f5af177373bd1fbbdfcf3aa64ac2a4a215451c3b11f0b2427c826f8ed1c26c7fba30dd59b60bbac3953bba48ae9db904acb55e9c0a6abab4901fec9acf97f667dc8f8ffb1f2dd88ae58115505bbc57ab54a4830feb384a9f3cbf806581be4c8ee03ec7d8bd48d6ab6dc13338976687834054a10df116c2193ecdd157c45bc0b16ebd7e680c8a5e2789c9b3df1e0f8705416064a1632759972af309f62e402dcade74c03cad093924528a0ab9366c5219d5f200809074a54aa2cf099a58e44155402d5adb6ac2c1a40eb04690bb3c5043b96e619ff7b1a4afafc024048c40bfe9ad8d0e4b9d3eaca5da9e9d8c44205748762425eb2d81b614a6e6f7573c4eba84282a5a7648646242243e21a002c40bd92c270707dc42c07d54a2b65ee2b0c8e1a56746b814dd15d54ba359e100a675969c1200de2c4f5d407594afdb6f89b9b5e9ef16f3a7b6ccce50ce50de37349cb191d03343385c67f1c4f584ac51543c6ff37df884a799ca87c0c3ecf4e24d92ce441220146f60f6fee265ce74a0697418195b983ae16392f6d6fa4fec54e4b2d6fb51a1b20eb7f19487314091909074ac9ff5c3cda9a19206184177785250ae368d821601248d98a8fa2281e1b6ee3d24a1e3079ab2d14e6984851d465d72c08f2f38d0417397860c32bfe9454d9b71d584a2e48384b1ae34da8ca2c23eaf4c845456d643c751b7b263bfbb82d17ad5d2cd04a8cbaffa7da8548841ff86d679e01dc08deadb6ae1581c28eeb495eca9a5793634ae433aed172ff8efb0b9f881e91eb8d491f2aeac2087685acaa245ca454ae5f544a23c488ecb21927ab1859218f3f1160d1d29e6ce192d3478ab535e60fafdf6b494a0323d2e7e27ff2495f642ababf73ae9b46838ea58ba14c8d3a3816948006056b4ae12d9ed05c2b5447f0928d333a2c433c35c0cf13fe7dea4d065b905be9b6400e0c806aa66e")));
-			validate_transaction(asset, wallet, prepared, "pay to subaddress, pay to standard address", "0200010200102c01010101010101010101020102012ac2c5fc1768ac64423f5d993c85e4d855d82bab37439ff0c35f157889e50fff8a0200033c6b2339986643f8f672dd0572e96ab222fa5c516c4d8a6ec78181b9ade8fbf7e00003cf5e9b7588a4f29892504d610b76b486842bbbb8fda3d742895a6ba1a300d7d03743012b948830acce33d11c7dcf007a8fc5df224d20d21e56955a0396b66d75ca9c490401f03f347195a60426a798852a83f5417c7ba55217af5f712beac7c10aafbb0f970680d599f506813b06999711cf8908450850f3541e3ba72305ffd093b31a6acf74220b6387317d9c8af7cbc173a3192c2c534d813e8fd6dff3e9c9cd7416e0b37cf96d83542f5c4a2f7424eff1e71943ee44f0436a2e01b06e6e157e8dbc9520fd47712d8ae1ca2f7f5af177373bd1fbbdfcf3aa64ac2a215451c3b11f0b2427c826f8ed1c26c7fba30dd59b60bbac3953bba48ae9db90cb55e9c0a6abab4901fec9acf97f667dc8f8ffb1f2dd88ae58115505bbc57ab54830feb384a9f3cbf806581be4c8ee03ec7d8bd48d6ab6dc133389766878340510df116c2193ecdd157c45bc0b16ebd7e680c8a5e2789c9b3df1e0f8705416061632759972af309f62e402dcade74c03cad093924528a0ab9366c5219d5f20080754aa2cf099a58e44155402d5adb6ac2c1a40eb04690bb3c5043b96e619ff7b1afafc024048c40bfe9ad8d0e4b9d3eaca5da9e9d8c44205748762425eb2d81b616e6f7573c4eba84282a5a7648646242243e21a002c40bd92c270707dc42c07d52b65ee2b0c8e1a56746b814dd15d54ba359e100a675969c1200de2c4f5d40759fdb6f89b9b5e9ef16f3a7b6ccce50ce50de37349cb191d03343385c67f1c4f58c51543c6ff37df884a799ca87c0c3ecf4e24d92ce441220146f60f6fee265ce70697418195b983ae16392f6d6fa4fec54e4b2d6fb51a1b20eb7f19487314091907c9ff5c3cda9a19206184177785250ae368d821601248d98a8fa2281e1b6ee3d21e3079ab2d14e6984851d465d72c08f2f38d0417397860c32bfe9454d9b71d582e48384b1ae34da8ca2c23eaf4c845456d643c751b7b263bfbb82d17ad5d2cd08cbaffa7da8548841ff86d679e01dc08deadb6ae1581c28eeb495eca9a579363e433aed172ff8efb0b9f881e91eb8d491f2aeac2087685acaa245ca454ae5f5423c488ecb21927ab1859218f3f1160d1d29e6ce192d3478ab535e60fafdf6b490323d2e7e27ff2495f642ababf73ae9b46838ea58ba14c8d3a3816948006056bc2f58cc9e2ee608adb53afdf0c16acd8a49751a8419c13c812816b31c6c65f04b79a027ac00d5d7d44d52546fb6fb86b8d8d8f15df4f15c4018dc4cbf186bb06720343927b01b79b6b86c30baa711b31f366d362e3033eec10dc39bcb15e1104906f3d10e3def6d8dfbe1ffb73de16dfae2f360eb7f86cb674784db54e1f5306cb01f559b7c086bb5b1a9adb0681ab6fc4b4fc0ab3168295001045cbff1c710d27efa6e9f8866a7053cc1c3f06e3c38c96d5a2c5a0905680940b1b0fd5edfa059a2f26fa10c3f01a6c269cefcdf479255983219f2cfa7b929db4c12df86da000859c9cbe8c279c821918587625fb92863b0714c9df557248654b9353f6e88d0181b3ff9ee21ba9fc338e0118554df29519c0e2d4f57ea6f5917acef424b29f036e16284cdd86b4ccbf1e9a8d873de603c589365a0d646efd727e22dffd9bcc0abd6651ab789bed41281f8ea5f7d870c01d579b267bc1bf39e557f1a1ea574c08e53f3ac20ec43206fcb17b8e7a49b45c79b0bb2bc5f0a11c3ae323f8b4c48d004d1e91bdd96c0f0d1f444691f8ea8886ef2dc1f454851dee412807b2b0b1f30e7f925f852e0faaba4f82941065e7dacb073ffe0695a6e58c5c41ba51c6fc6207800ff83ed5754c1ce08d18a0a30860ff89ba1c27a95a1d58e6d1b2d3ebc5e80fce7fb9d4b5138c877d6eadbeeaa57dcc32084a1b2dda80a129454bc5bd6ae40e3a6150a5960f354119766105bde58ed16e10ec81925aeff8211cc1881d27c405c27336a094df0aecb8b6acd65c601b87c54f12c6c070b7c45e52a32ea868f63eff5c789d0c923a976af13744676be9be9f5c86ade43e1ebdcc6954f055e17892");
-		});
-	}
-	/* blockchain containing all transaction types (zero balance accounts, valid regtest chain) */
-	static void blockchain_full_coverage(vector<account_ref>* userdata)
-	{
-		tester::use_clean_state([&]()
-		{
-			vector<account_ref> users; vector<algorithm::pubkeyhash_t> contracts;
-			for (size_t i = 0; i < kernel::params().policy.participation.min_per_account + 2; i++)
-				users.push_back(account_ref(ledger::wallet::from_seed(stringify::text("00000%i", (int)i)), 0));
-
-			format::tree results;
-			format::tree* data = userdata ? nullptr : &results;
-			TEST_BLOCK(&generators::setup_stage_1, "0x4ac925923511664a166d121086652707ef18e5e1ac22d289cb99e364dfc5194c", 1);
-			TEST_BLOCK(std::bind(&generators::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 1, 0), "0xfa43969e1e426980619035b91584e5561489f9604cd65ebdee2f043a122861d4", 2);
-			TEST_BLOCK(&generators::route_stage_1, "0x748fbe9bb5dae9141db46d250a89d1cc8da3b8cde90a20e1dae66e0eda22c231", 3);
-			TEST_BLOCK(&generators::route_stage_2, "0xc0d48c136ebba3380d754914ecc4dbc49ceb11bf8fa1d6f5661ba72e2d0d03dc", 5);
-			TEST_BLOCK(&generators::route_stage_3, "0xc242ad17206c8ef22eed10d7a7b5ea14ef28198466b0d7c8a3d26bc852298f53", 6);
-			TEST_BLOCK(&generators::attestate_stage_1, "0x5902099ccec56507de3cdbc4e4a687a500492b7d20ce6345cbc967d46647f3d9", 8);
-			TEST_BLOCK(&generators::transfer_stage_1, "0x65697a97c581d3d5117fb36f6d332b8c1dc2b79dc59e293ea07f1a7338e2b825", 9);
-			TEST_BLOCK(&generators::transfer_stage_2, "0xd189e0bb01d78642b8c8deda7382f95ae3293c092082a0b65e352b8f9e1a553b", 10);
-			TEST_BLOCK(std::bind(&generators::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), users[2].wallet.get_address(), 0.05), "0x4c837440c26ceb0a00993a6f0bea4c6aebeb0354472e80b4c53435230b0a5c90", 11);
-			TEST_BLOCK(std::bind(&generators::deploy_stage_1, std::placeholders::_1, std::placeholders::_2, &contracts), "0x50f547e6c1fe35de4e0dd95d281ae09b64d847ee72ac730d35c84d02ad4b818a", 12);
-			TEST_BLOCK(std::bind(&generators::deploy_stage_2, std::placeholders::_1, std::placeholders::_2, &contracts), "0x070eab2dd13e96698ad6e7ad8a3266db369f44b4d199d19014e91b981eb5537c", 13);
-			TEST_BLOCK(std::bind(&generators::call_stage_1, std::placeholders::_1, std::placeholders::_2, &contracts), "0x61bc6c7ad1bfb1f9e653a50e6705e04fc5eb54e8325c16cf33b07a6263f20727", 14);
-			TEST_BLOCK(&generators::rollup_stage_1, "0xc44e18bebe29346985a70633c19b0e17613200de0f1560e87d5c8234e73e864a", 15);
-			TEST_BLOCK(std::bind(&generators::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 0, 1), "0x00d1cf499f0a94d92d1dd88da2bb4654f546b4dff11ff0302c3d0db14d15ee71", 16);
-			TEST_BLOCK_FAULTY(&generators::migrate_stage_1, "0xc8578eb0d6de5b7e1984bc031f5b36dce6dc571e5feefc92523bc75929085cdf", 17);
-			TEST_BLOCK(&generators::migrate_stage_2, "0xac8d7d5409ac5f31617b94eeea7f8bb81d109839f4198b88f4813fcb127c7366", 19);
-			TEST_BLOCK(&generators::migrate_stage_3, "0x699b959c6ff18d07c840e0ddd9a17824e5d3b2f4e1c983c4cc81f1210f38b390", 20);
-			TEST_BLOCK(&generators::migrate_stage_4, "0x098e569eb306244e19159e2f2abbd9e526aa1224c0791c231465766c18a715fd", 22);
-			TEST_BLOCK(&generators::withdraw_stage_1, "0x9c8d92c1240c44bafac997f043dba774666d7ea4781e6b25cbc87ddc85155a48", 24);
-			TEST_BLOCK(&generators::withdraw_stage_2, "0xfd8f9740cefe997ed2d4975a6be5edda6ee1a8632076844cb0bbcba2420cddb6", 26);
-			TEST_BLOCK(&generators::withdraw_stage_3, "0x88fb2d2af8573b0d4dc2d2497178fd0106a7ec53ca6483f71c2590aaef1f221f", 28);
-			TEST_BLOCK(&generators::withdraw_stage_4, "0xdd2800bb3e252d565a9a9a392dbd1144d1de55f85b7ddcdfb711a621ad5e785e", 30);
-			TEST_BLOCK(&generators::withdraw_stage_5, "0xf62e71419984b700bf15da26ab552a125db3efc22be12f6160f8ffe746d47b5a", 31);
-			TEST_BLOCK(&generators::withdraw_stage_6, "0x75da8023808df2c91f1c10f977382464d7cd49827022bd4590deb22f80212824", 32);
-			TEST_BLOCK(&generators::withdraw_stage_7, "0x967cb9ec1d7484323105130b75a5b0ccc85140eaf93c28af39d734dd5b45a77a", 33);
-			TEST_BLOCK(&generators::withdraw_stage_8, "0xaa19cd5199a31f666c7464e9e7771601dcdea51aaa60d46a068c1bbc1b7cdbc1", 34);
-			TEST_BLOCK(&generators::withdraw_stage_9, "0xb2ffe1edc47946c983bdd461440134ac10a6211c253f8216a4fbe4c6423f78f5", 36);
-			TEST_BLOCK(&generators::withdraw_stage_10, "0xff27c1bdda08551173f71a351d48c50d8b3afbe3fdb2ec4be796596425f37719", 38);
-			TEST_BLOCK(std::bind(&generators::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 1, 0), "0x063f61d4f398404ecdfece2102c4bf63f615dee2a229af15b3211da0148be0ef", 40);
-			TEST_BLOCK_FALLBACK(&generators::production_stage_1, "0x7f71fbdd8037683dc33c94cb1dc0982e22bad64e1ca2863b1f5d13d9f5b38657", 41);
-			TEST_BLOCK(&generators::production_stage_2, "0xea398914b4309ee86c9d19dc76d444485c02b7dd7acc00dcc883d877c5926815", 42);
-			if (userdata != nullptr)
-				*userdata = std::move(users);
-			else
-				console::get()->write_line(data->as_json(true));
-		});
-	}
-	/* blockchain containing setup transactions for p2p testing (zero balance accounts, valid regtest chain) */
-	static void blockchain_bridge_coverage(vector<account_ref>* userdata)
-	{
-		tester::use_clean_state([&]()
-		{
-			vector<account_ref> users;
-			for (size_t i = 0; i < kernel::params().policy.participation.min_per_account + 2; i++)
-				users.push_back(account_ref(ledger::wallet::from_seed(stringify::text("00000%i", (int)i)), 0));
-
-			format::tree results;
-			format::tree* data = userdata ? nullptr : &results;
-			TEST_BLOCK(&generators::setup_stage_2, "0xff1f0d9b5aa59fe404d831f7bfa8ab1b2158897524e35a72a7a6becda934cef2", 1);
-			TEST_BLOCK(&generators::route_stage_4, "0x0f2165530d9dfd6de1d8bc0811c476b9b200fb836118e68913ce741d83fa52c6", 2);
-			if (userdata != nullptr)
-				*userdata = std::move(users);
-			else
-				console::get()->write_line(data->as_json(true));
-		});
-	}
-	/* blockchain containing some transaction types (non-zero balance accounts, valid regtest chain) */
-	static void blockchain_partial_coverage(vector<account_ref>* userdata)
-	{
-		tester::use_clean_state([&]()
-		{
-			vector<account_ref> users;
-			for (size_t i = 0; i < kernel::params().policy.participation.min_per_account + 1; i++)
-				users.push_back(account_ref(ledger::wallet::from_seed(stringify::text("00000%i", (int)i)), 0));
-
-			format::tree results;
-			format::tree* data = userdata ? nullptr : &results;
-			TEST_BLOCK(&generators::setup_stage_0, "0x723017f46bb8f47c72020a104fe4fa66086dae7fd9f79ce048e73bd5be5c877c", 1);
-			TEST_BLOCK(&generators::route_stage_0, "0xfdc09ff9e80bddb1876b496123b59168fd8091d897e674e804a4fc7ffcde2147", 2);
-			TEST_BLOCK(&generators::attestate_stage_0, "0xce89e424fe4bff581354b625e160f349a559517f1369b5465c1353562794a10b", 4);
-			TEST_BLOCK(std::bind(&generators::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), "tcrt1x00g22stp0qcprrxra7x2pz2au33armtfc50460", 5), "0xc0d0b42d1b90e908e5fed6066ce55a870b07a980cafa5231f354477d46a13412", 5);
-			TEST_BLOCK(std::bind(&generators::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("ETH", "tBTC", "0x18084fbA666a33d37592fA2633fD49a74DD93a88"), "tcrt1x00g22stp0qcprrxra7x2pz2au33armtfc50460", 5), "0x04382f1e432f42de8aac2cd0a693220dfc8508b6bdfa769e6f6811322babab15", 6);
-			TEST_BLOCK(std::bind(&generators::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("ETH", "USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7"), "tcrt1x00g22stp0qcprrxra7x2pz2au33armtfc50460", 300000), "0xf8bc3461137f4c4a30b508ce792cd902bb405ade806a2b87bc4933ca808f2759", 7);
-			TEST_BLOCK(std::bind(&generators::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("TRX", "USDT", "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"), "tcrt1x00g22stp0qcprrxra7x2pz2au33armtfc50460", 200000), "0xb8944eff5644dcf0b5d21a1730d087fd907e4ede4a20f0fa9a6f7e06be61002e", 8);
-			TEST_BLOCK(std::bind(&generators::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), "tcrt1xu0k7jd2hsv2x5h80tcslpk3n0kvzzw5kup6vng", 5), "0x90db7890f5be85562eb74aac69fc67c1ba2c080ef36b036341b9d96cc0b2ea28", 9);
-			TEST_BLOCK(std::bind(&generators::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("ETH", "tBTC", "0x18084fbA666a33d37592fA2633fD49a74DD93a88"), "tcrt1xu0k7jd2hsv2x5h80tcslpk3n0kvzzw5kup6vng", 5), "0x1268d07fcf91422029c5a4c555bfe34c28c7b4570e060138a16863f670765b04", 10);
-			TEST_BLOCK(std::bind(&generators::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("ETH", "USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7"), "tcrt1xu0k7jd2hsv2x5h80tcslpk3n0kvzzw5kup6vng", 300000), "0xe8671f7c9e24bfa6d594ee8ed5266ff321c890e3b93f3a15c34bd71ab68de29e", 11);
-			TEST_BLOCK(std::bind(&generators::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("TRX", "USDT", "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"), "tcrt1xu0k7jd2hsv2x5h80tcslpk3n0kvzzw5kup6vng", 200000), "0x840358604c0197da18fbff1b7ac91842f8d5f12ceae856ce7f5fb9493c02abf1", 12);
-			if (userdata != nullptr)
-				*userdata = std::move(users);
-			else
-				console::get()->write_line(data->as_json(true));
-		});
-	}
-	/* blockchain exclusively for testing bridges of specific networks (possibly non-zero balance accounts, valid regtest chain) */
-	static void blockchain_integration_coverage(const algorithm::asset_id& asset, const std::string_view& url, const std::string_view& deposit_account, const std::string_view& withdraw_account, const decimal& deposit_value, const decimal& bridge_fee, std::function<uint64_t()>&& new_block, std::function<void(const std::string_view&, const std::string_view&, const algorithm::asset_id&, const decimal&)>&& new_transaction)
-	{
-		tester::use_clean_state([&]()
-		{
-			vector<account_ref> producers;
-			for (size_t i = 0; i < kernel::params().policy.participation.max_per_account; i++)
-				producers.push_back(account_ref(ledger::wallet::from_seed(stringify::text("00000%i", (int)i)), 0));
-
-			auto native_asset = algorithm::asset::base_id_of(asset);
-			auto* term = console::get();
-			auto& [user1, user1_nonce] = producers[0];
-			auto& [user2, user2_nonce] = producers[1];
-			auto& [user3, user3_nonce] = producers[2];
-			auto* setup = memory::init<transactions::setup>();
-			setup->asset = native_asset;
-			setup->allocate_production_stake(decimal::zero());
-			setup->allocate_attestation_stake(native_asset, decimal::zero(), 0);
-			setup->allocate_bridge(native_asset, (uint8_t)kernel::params().policy.participation.min_per_account, bridge_fee);
-			setup->allocate_participation_stake(decimal::zero());
-			setup->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
-			tester::new_block_from_one(nullptr, producers, setup, tester::block_type::normal);
-
-			for (size_t i = 3; i < producers.size(); i++)
-			{
-				auto& [user, user_nonce] = producers[i];
-				setup = memory::init<transactions::setup>();
-				setup->asset = native_asset;
-				setup->allocate_attestation_stake(native_asset, decimal::zero(), 0);
-				setup->allocate_participation_stake(decimal::zero());
-				setup->sign(user.secret_key, user_nonce++, decimal::zero()).expect("pre-validation failed");
-				tester::new_block_from_one(nullptr, producers, setup, tester::block_type::normal);
-			}
-
-			auto executor = ledger::executor_context(nullptr);
-			auto bridge_instance = executor.get_bridge_instances(native_asset, 0, 1)->front();
-			auto* bridge_account = memory::init<transactions::route>();
-			bridge_account->asset = native_asset;
-			bridge_account->set_bridge_hash(bridge_instance.ref.hash);
-			bridge_account->solve_pow_challenge(user1.public_key_hash, user1_nonce, 0);
-			bridge_account->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
-			tester::new_block_from_one(nullptr, producers, bridge_account, tester::block_type::normal);
-
-			auto& config = kernel::mparams();
-			config.user.superchain.listener = true;
-
-			auto* offchain = superchain::bridge::get();
-			auto params = (superchain::translation_unit::chainparams*)offchain->get_network_params(native_asset);
-			kernel::mparams().user.superchain.polling_frequency = 3000;
-			offchain->add_network_connection(native_asset, url, std::string_view(), { }, 5.0);
-			offchain->network_active = []() -> bool { return schedule::get()->is_active(); };
-			offchain->network_fetch = [](const algorithm::asset_id&, const std::string_view& location, const std::string_view& method, const http::fetch_frame& options) -> expects_promise_system<http::response_frame>
-			{
-				return http::fetch(location, method, options);
-			};
-
-			auto receive_transaction = [&]()
-			{
-				bool awaiting_transaction = true;
-				while (awaiting_transaction)
-				{
-					uint64_t block_number = new_block();
-					term->fwrite_line("trying block %" PRIu64, block_number);
-					offchain->scan_from_block_height(native_asset, (block_number > 0 ? block_number - 1 : 0) + params->sync_latency);
-					auto result = coasync<expects_rt<vector<superchain::transaction_logs>>>([&]() -> expects_promise_rt<vector<superchain::transaction_logs>>
-					{
-						coreturn coawait(offchain->link_transactions(native_asset));
-					}).get();
-					if (!result)
-					{
-						term->fwrite_line("transaction(s) not found; retrying", block_number);
-						continue;
-					}
-
-					for (auto& logs : *result)
-					{
-						auto transactions = vector<uptr<ledger::transaction_message>>();
-						logs.report_logs(native_asset, offchain->get_network_instance(native_asset)->options, 0);
-						for (auto& receipt : logs.receipts)
-						{
-							auto* transaction = memory::init<transactions::attestate>();
-							transaction->asset = native_asset;
-							transaction->set_computed_proof(receipt.as_proof_hash(native_asset), std::move(receipt), { });
-							transactions.push_back(transaction);
-						}
-
-						if (!transactions.empty())
-						{
-							tester::new_block_from_list(nullptr, producers, std::move(transactions), tester::block_type::normal);
-							awaiting_transaction = false;
-						}
-					}
-				}
-				term->write_line("transaction(s) found; continuing");
-			};
-
-			bridge_account = memory::init<transactions::route>();
-			bridge_account->asset = native_asset;
-			bridge_account->set_routing_address(deposit_account);
-			bridge_account->set_bridge_hash(bridge_instance.ref.hash);
-			bridge_account->solve_pow_challenge(user3.public_key_hash, user3_nonce, 0);
-			bridge_account->sign(user3.secret_key, user3_nonce++, decimal::zero()).expect("pre-validation failed");
-			tester::new_block_from_one(nullptr, producers, bridge_account, tester::block_type::normal);
-
-			size_t deposits = 0;
-			auto accounts = *executor.get_witness_accounts_by_purpose(params->routing == superchain::routing_policy::account ? user1.public_key_hash : user3.public_key_hash, states::witness_account::account_type::bridge, 0, 128);
-			for (auto& account : accounts)
-			{
-				if (account.ref.hash == bridge_instance.ref.hash)
-				{
-					for (auto& [type, to_account] : account.addresses)
-					{
-						if (native_asset != asset)
-						{
-							new_transaction(deposit_account, to_account, native_asset, deposit_value);
-							receive_transaction();
-						}
-						new_transaction(deposit_account, to_account, asset, deposit_value);
-						receive_transaction();
-						++deposits;
-					}
-				}
-			}
-
-			VI_PANIC(deposits > 0, "deposit address generation failed");
-			auto expected_balance = deposit_value * deposits;
-			auto native_balance = executor.get_account_balance(native_asset, user3.public_key_hash).expect("native balance mismatch").get_balance();
-			VI_PANIC(native_asset == asset || native_balance >= expected_balance, "actual native balance is expected to be >=%s but is %s", expected_balance.to_string().c_str(), native_balance.to_string().c_str());
-
-			auto balance = executor.get_account_balance(asset, user3.public_key_hash).expect("balance mismatch").get_balance();
-			VI_PANIC(balance >= expected_balance, "actual balance is expected to be >=%s but is %s", expected_balance.to_string().c_str(), balance.to_string().c_str());
-
-			auto withdrawal_value = native_asset == asset ? balance - bridge_fee : balance;
-			term->write_line("outgoing transaction integration:");
-			term->fwrite_line(" - withdraw %s into %.*s", withdrawal_value.to_string().c_str(), (int)withdraw_account.size(), withdraw_account.data());
-
-			auto* withdraw = memory::init<transactions::withdraw>();
-			withdraw->asset = asset;
-			withdraw->set_routing_target(withdraw_account, withdrawal_value);
-			withdraw->set_bridge_hash(bridge_instance.ref.hash);
-			withdraw->sign(user3.secret_key, user3_nonce++, decimal::zero()).expect("pre-validation failed");
-			tester::new_block_from_one(nullptr, producers, withdraw, tester::block_type::normal);
-
-			auto chain = storages::chainstate();
-			auto confirmation_block = chain.get_latest_block();
-			VI_PANIC(confirmation_block && !confirmation_block->transactions.empty(), "blocks with withdrawal confirmation were not found");
-
-			auto& confirmation = confirmation_block->transactions.front();
-			VI_PANIC(confirmation.transaction->as_type() == transactions::broadcast::as_instance_type(), "no withdrawal confirmation");
-
-			auto* confirmation_event = confirmation.receipt.find_event<transactions::broadcast>();
-			auto* confirmation_transaction = (transactions::broadcast*)*confirmation.transaction;
-			VI_PANIC(confirmation_transaction->proof && !confirmation_event, "withdrawal confirmation failed: %s", confirmation_event ? (confirmation_event->args.empty() ? "unknown error" : confirmation_event->args.front().as_blob().c_str()) : confirmation_transaction->proof.what().c_str());
-			term->fwrite_line(" - block required for transaction %s", confirmation_transaction->proof->hashdata.c_str());
-			receive_transaction();
-
-			if (native_asset != asset)
-			{
-				auto target_balance = native_balance - bridge_fee;
-				auto actual_balance = executor.get_account_balance(native_asset, user3.public_key_hash).or_else(states::account_balance(user3.public_key_hash, asset, nullptr)).get_balance();
-				VI_PANIC(actual_balance >= target_balance, "actual balance is expected to be %s but is %s", target_balance.to_string().c_str(), actual_balance.to_string().c_str());
-			}
-
-			auto target_balance = native_asset == asset ? (balance - withdrawal_value - bridge_fee) : (balance - withdrawal_value);
-			auto actual_balance = executor.get_account_balance(asset, user3.public_key_hash).or_else(states::account_balance(user3.public_key_hash, asset, nullptr)).get_balance();
-			VI_PANIC(actual_balance >= target_balance, "actual balance is expected to be %s but is %s", target_balance.to_string().c_str(), actual_balance.to_string().c_str());
-		});
-	}
-	/* verify current blockchain */
-	static void blockchain_verification()
-	{
-		auto* term = console::get();
-		auto chain = storages::chainstate();
-		VI_PANIC(!chain.get_checkpoint_block_number().or_else(0), "blockchain cannot be validated without re-executing entire blockchain");
-		
-		uint64_t current_number = 1;
-		format::tree data = format::tree::list();
-		auto solver = ledger::solver_context();
-		auto parent_block = chain.get_block_header_by_number(current_number > 0 ? current_number - 1 : 0);
+		uint8_t message_hash[32];
+		std::string_view message = "Hello, World!";
+		algorithm::hashing::hash256((uint8_t*)message.data(), message.size(), message_hash);
+
+		uint64_t mpc_state_time = 0;
+		size_t mpc_steps = 0;
+		size_t mpc_state_bandwidth = 0;
+		auto mpc_phase_participants = vector<block_mpc>();
+		auto mpc_timeline = vector<string>();
+		auto mpc_state = algorithm::composition::make_public_key_compositor(alg, message_hash, sizeof(message_hash), (uint16_t)participants.size()).expect("failed to make the state");
 		while (true)
 		{
-			auto next = chain.get_block_by_number(current_number++);
-			if (!next)
+			auto time = date_time();
+			auto next = mpc_phase_participants.begin();
+			switch (mpc_state->next_phase())
+			{
+				case algorithm::composition::phase::consume_after_reset:
+					mpc_phase_participants = participants;
+					next = mpc_phase_participants.begin();
+					if (!mpc_timeline.empty())
+						mpc_timeline.push_back(stringify::text("advance(%i)", (int)participants.size()));
+					[[fallthrough]];
+				case algorithm::composition::phase::consume:
+					mpc_timeline.push_back(stringify::text("aggregate(%.9s...)", format::util::encode_0xhex(std::string_view((char*)next->keypair.public_key.data(), next->keypair.public_key.size())).c_str()));
+					break;
+				case algorithm::composition::phase::finalize:
+					mpc_timeline.push_back(stringify::text("finalize(%i)", (int)participants.size()));
+					break;
+				default:
+					VI_PANIC(false, "invalid phase");
+					break;
+			}
+			if (next == mpc_phase_participants.end())
 				break;
 
-			auto* result = data.push(format::tree::map());
-			result->set("block_number", algorithm::encoding::serialize_uint256(next->number));
-			result->set("block_hash", format::variable(algorithm::encoding::encode_0xhex256(next->as_hash())));
+			format::wo_stream message;
+			VI_PANIC(mpc_state->store(&message), "failed to store the state");
 
-			ledger::block_evaluation evaluation;
-			auto validation = ledger::solver_context::validate_solved_block(solver, parent_block.address(), *next, &evaluation);
-			if (!validation)
+			auto reader = message.ro();
+			auto mpc_state_transition = algorithm::composition::make_compositor_from_stream(alg, reader).expect("failed to load the state");
+			mpc_state_transition->aggregate(next->keypair.secret_key).expect("failed to aggregate the state");
+			mpc_phase_participants.erase(next);
+
+			VI_PANIC(mpc_state->may_transition_to(**mpc_state_transition), "state machine transition rejected");
+			mpc_state = std::move(mpc_state_transition);
+
+			format::wo_stream updated_message;
+			VI_PANIC(mpc_state->store(&updated_message), "failed to store the state");
+			mpc_state_bandwidth += message.data.size() + updated_message.data.size();
+			mpc_state_time += date_time().nanoseconds() - time.nanoseconds();
+			++mpc_steps;
+		}
+
+		algorithm::composition::cpubkey_t mpc_public_key;
+		algorithm::composition::chashsig_t mpc_signature;
+		mpc_state->derive_public_key(&mpc_public_key).expect("failed to extract public key from state");
+		mpc_state->derive_signature(&mpc_signature).expect("failed to extract signature from state");
+
+		auto* aggregation_data = mpc_data.set("aggregation", format::tree::map());
+		auto* aggregation_timeline_data = aggregation_data->set("timeline", format::tree::list());
+		for (auto& item : mpc_timeline)
+			aggregation_timeline_data->push(format::variable(item));
+		aggregation_data->set("public_key", format::variable(format::util::encode_0xhex(std::string_view((char*)mpc_public_key.data(), mpc_public_key.size()))));
+		aggregation_data->set("signature", format::variable(format::util::encode_0xhex(std::string_view((char*)mpc_signature.data(), mpc_signature.size()))));
+		aggregation_data->set("network_bytes_required", format::variable(mpc_state_bandwidth));
+		aggregation_data->set("network_round_trips", format::variable(mpc_steps));
+		aggregation_data->set("step_time_ns", format::variable(mpc_steps > 0 ? mpc_state_time / mpc_steps : 0));
+		aggregation_data->set("total_time_ms", format::variable(mpc_state_time / 1'000'000));
+
+		mpc_data.set("message", format::variable(message));
+		mpc_data.set("message_hash", format::variable(format::util::encode_0xhex(std::string_view((char*)message_hash, sizeof(message_hash)))));
+		mpc_data.set("algorithm", format::variable(alg_name));
+		mpc_data.set("participants", format::variable(participants.size()));
+		term->write_line(mpc_data.as_json(true));
+	}
+}
+/* superchain transaction generation test */
+static void test_cryptography_multichain_transaction()
+{
+	auto* offchain = superchain::bridge::get();
+	auto* term = console::get();
+	auto seed = uint256_t(123456);
+	auto create_wallet = [&](const algorithm::asset_id& asset) -> superchain::computed_wallet
+	{
+		uint8_t seed_buffer[32];
+		seed.encode(seed_buffer);
+
+		auto wallet = *offchain->compute_wallet(asset, seed_buffer, sizeof(seed_buffer));
+		for (auto& encoded_address : wallet.encoded_addresses)
+			offchain->enable_link(asset, superchain::wallet_link(seed, wallet.encoded_public_key, encoded_address.second)).expect("link activation error");
+		return wallet;
+	};
+	auto validate_transaction = [&](const algorithm::asset_id& asset, const superchain::computed_wallet& wallet, superchain::prepared_transaction& prepared, const std::string_view& feature, const std::string_view& expected_calldata)
+	{
+	recompute:
+		auto shared = prepared.as_shared_message();
+		auto keygen = shared && shared->keys.empty();
+		for (auto& input : prepared.inputs)
+		{
+			auto state = algorithm::composition::make_signature_compositor(input.alg, input.public_key, input.message.data(), input.message.size(), shared.address(), 1).expect("state initialization error");
+			while (state->next_phase() != algorithm::composition::phase::finalize)
+				state->aggregate(wallet.secret_key).expect("signature aggregation error");
+			state->derive_signature(&input.signature);
+			if (shared)
+				shared->keys.push_back(input.signature);
+		}
+		if (keygen && !shared->keys.empty())
+		{
+			prepared.requires_shared_message(*shared);
+			goto recompute;
+		}
+
+		superchain::finalized_transaction finalized = offchain->finalize_transaction(asset, std::move(prepared)).expect("prepared transaction finalization error");
+		VI_PANIC(finalized.calldata == expected_calldata, "resulting calldata differs from expected calldata");
+		term->fwrite_line("%s (%.*s) = %s", algorithm::asset::handle_of(asset).c_str(), (int)feature.size(), feature.data(), finalized.calldata.c_str());
+	};
+	new_chain_state([&]()
+	{
+		auto asset = algorithm::asset::id_of("BTC");
+		auto state = storages::superchainstate(asset);
+		auto* unit = (superchain::translations::bitcoin*)offchain->get_network(asset);
+		if (unit != nullptr)
+			unit->all_address_types = true;
+
+		auto wallet = create_wallet(asset);
+		auto input_p2pkh_hash = codec::hex_decode("0x57e30b41a6d984cdb763145f32ad9678a9b2bfd0267e12d5d0474e97f7d077d0");
+		superchain::coin_utxo input_p2pkh;
+		input_p2pkh.link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses[3]);
+		input_p2pkh.transaction_id = "382940bfc9a1fe1f09a3fb8e1fda1b25b90dc2019ff5973b1d9d616e15b29840";
+		input_p2pkh.index = 1;
+		input_p2pkh.value = 0.1;
+
+		auto input_p2sh_hash = codec::hex_decode("0xc4e23865424498b4d90c57dda4bea4718e1e6ed669cc00796afd864ac6de3606");
+		superchain::coin_utxo input_p2sh;
+		input_p2sh.link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses[2]);
+		input_p2sh.transaction_id = "3d7c1f8e03a73821517d2f0220fe3ecf82c2f55b94b724e5d5298c87070802a0";
+		input_p2sh.value = 0.1;
+
+		auto input_p2wpkh_hash_1 = codec::hex_decode("0xe79739ac82960be8bedb5175203bd65880b0c45c5c0286d54b5bc6eb4bac3898");
+		superchain::coin_utxo input_p2wpkh_1;
+		input_p2wpkh_1.link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses[6]);
+		input_p2wpkh_1.transaction_id = "5594c04289179bff0f434e5349fafbaa4d43da403b9dc7a637f5afe035b99729";
+		input_p2wpkh_1.value = 0.1;
+
+		auto input_p2tr_public_key = compositions::secp256k1_point_t(wallet.public_key);
+		auto input_p2tr_tweak = compositions::secp256k1_scalar_t(codec::hex_decode("0x04c32a8b5fae170a7a0d28332a663b96f43d24ed4c9db30dfdd9d9d053d3d3e6"));
+		auto input_p2tr_tweaked_public_key = compositions::secp256k1_schnorr_compositor::to_tweaked_public_key(input_p2tr_public_key, input_p2tr_tweak).expect("failed to tweak a public key");
+		auto input_p2tr_hash = codec::hex_decode("0x50cc324f902032625ba70fdfee889032a7ff4de1c7732dc3982b72c1ba2df8b5");
+		superchain::coin_utxo input_p2tr;
+		input_p2tr.link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses[4]);
+		input_p2tr.transaction_id = "988fcb7035c0f51688ddcfaf92ec8fdd0e9bda8b53aa3403bf096611147fb325";
+		input_p2tr.value = 0.1;
+
+		auto input_p2wpkh_hash_2 = codec::hex_decode("0x16a41f749d25f7ebae96aabd62207c2189ac3623b2ddee4560213a3563f81042");
+		superchain::coin_utxo input_p2wpkh_2;
+		input_p2wpkh_2.link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses[6]);
+		input_p2wpkh_2.transaction_id = "9b7a67a6a46f48f896c1de89d479d9d1f5b284809065671ff931c800e1041530";
+		input_p2wpkh_2.value = 0.1;
+
+		auto input_p2wsh_hash = codec::hex_decode("0x40cfd352d152929ada057d28c0e18f781a8b9ddb24df1b6381b0738c8f0ccbb9");
+		superchain::coin_utxo input_p2wsh;
+		input_p2wsh.link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses[5]);
+		input_p2wsh.transaction_id = "ccc7949d20241f04362c42e20125c83096a617b906e1d8123d1b8b08740c6025";
+		input_p2wsh.index = 1;
+		input_p2wsh.value = decimal("0.1001");
+
+		auto input_p2pk_hash = codec::hex_decode("0xe665fd68a288da956f73810db79647a59dbbd6dafb0891f97364a0dfff520b2e");
+		superchain::coin_utxo input_p2pk;
+		input_p2pk.link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses[1]);
+		input_p2pk.transaction_id = "f0b0d2386cd578677df2380361410008d260fc827282904e54bdcb9e1d8cf62f";
+		input_p2pk.index = 0;
+		input_p2pk.value = decimal("0.0999");
+
+		superchain::coin_utxo output_p2wpkh;
+		output_p2wpkh.link = superchain::wallet_link::from_address("bcrt1q9ls8q57rsktvxn6krgjktd6jyukfpenyvd2sa3");
+		output_p2wpkh.value = 0.65;
+
+		superchain::coin_utxo output_p2pkh;
+		output_p2pkh.link = input_p2pkh.link;
+		output_p2pkh.index = 1;
+		output_p2pkh.value = decimal("0.0499");
+
+		superchain::prepared_transaction prepared;
+		prepared.requires_input(algorithm::composition::type::secp256k1, wallet.public_key, (uint8_t*)input_p2pkh_hash.data(), input_p2pkh_hash.size(), std::move(input_p2pkh));
+		prepared.requires_input(algorithm::composition::type::secp256k1, wallet.public_key, (uint8_t*)input_p2sh_hash.data(), input_p2sh_hash.size(), std::move(input_p2sh));
+		prepared.requires_input(algorithm::composition::type::secp256k1, wallet.public_key, (uint8_t*)input_p2wpkh_hash_1.data(), input_p2wpkh_hash_1.size(), std::move(input_p2wpkh_1));
+		prepared.requires_input(algorithm::composition::type::secp256k1_schnorr, input_p2tr_tweaked_public_key, (uint8_t*)input_p2tr_hash.data(), input_p2tr_hash.size(), std::move(input_p2tr));
+		prepared.requires_input(algorithm::composition::type::secp256k1, wallet.public_key, (uint8_t*)input_p2wpkh_hash_2.data(), input_p2wpkh_hash_2.size(), std::move(input_p2wpkh_2));
+		prepared.requires_input(algorithm::composition::type::secp256k1, wallet.public_key, (uint8_t*)input_p2wsh_hash.data(), input_p2wsh_hash.size(), std::move(input_p2wsh));
+		prepared.requires_input(algorithm::composition::type::secp256k1, wallet.public_key, (uint8_t*)input_p2pk_hash.data(), input_p2pk_hash.size(), std::move(input_p2pk));
+		prepared.requires_output(std::move(output_p2wpkh));
+		prepared.requires_output(std::move(output_p2pkh));
+		validate_transaction(asset, wallet, prepared, "p2pk, p2pkh, p2sh, p2wpkh, p2wsh, p2tr", "010000000001074098b2156e619d1d3b97f59f01c20db9251bda1f8efba3091ffea1c9bf402938010000006a4730440220582962da5ccf911fb58fbdaf6be839dee0df80d80913856ca1e6d546e7218b1a022059b5e50a9f6aedf7bb1406e2d96a1e2b6d0ef6696d1ed93a1016243a4ce918f0012102986445ccfd323143f392b66b8cfc056df90ebdc110573e3395ee670d5043f23affffffffa0020807878c29d5e524b7945bf5c282cf3efe20022f7d512138a7038e1f7c3d000000001716001418e254169de2c06bbe881f971b312084bf7d7e1cffffffff2997b935e0aff537a6c79d3b40da434daafbfa49534e430fff9b178942c094550000000000ffffffff25b37f14116609bf0334aa538bda9b0edd8fec92afcfdd8816f5c03570cb8f980000000000ffffffff301504e100c831f91f6765908084b2f5d1d979d489dec196f8486fa4a6677a9b0000000000ffffffff25600c74088b1b3d12d8e106b917a69630c82501e2422c36041f24209d94c7cc0100000000ffffffff2ff68c1d9ecbbd544e90827282fc60d2080041610338f27d6778d56c38d2b0f00000000048473044022058be9097051d04682fd1ef537e60f502dfe4b126383863f55b3d825e549a747302206890820c3208bf7063a4be01e557d4be858bfde1d19cfba1e66437f363582ac501ffffffff0240d2df03000000001600142fe07053c38596c34f561a2565b752272c90e66430244c00000000001976a91418e254169de2c06bbe881f971b312084bf7d7e1c88ac000247304402203818ec3297bde7e38f18581c6a859f0048ac5c2b3259cb243cc7836aa4f2aa5a0220537c115f7f4237ff3c800736b1533339de6e44a813f070c73bed24e12d558da5012102986445ccfd323143f392b66b8cfc056df90ebdc110573e3395ee670d5043f23a0247304402203f3de61dad33cb655e530083ba5eee1d2b4380540fd2ba93f2a16fc61f84eb22022060b02b562961b47cdb09ed4d8cb72669232c020ff2ddb5844bca35686d4d4188012102986445ccfd323143f392b66b8cfc056df90ebdc110573e3395ee670d5043f23a014026371d3a2baaf32f56cc0e8bb0f940d243facb694ee877b34540100c5498a2ef6698effdc811e516e62ba20f187ebdc25e30208b787eac053875292088c09a560247304402205f3ea688faf4d069cc1fa1c9b1cb285b86dce2fbe52764a134c6dd57f7f85f070220028220e58aa3822f2c72034201d6bbd9c8591bb3f565d6c61f6f07a19071e9dc012102986445ccfd323143f392b66b8cfc056df90ebdc110573e3395ee670d5043f23a03483045022100db89247abf363be0c3ce5e32ea3e11d7063de5d90f89c46dd3aff4f53d5d652a022052b638d64ca8c6eaf809dfe236d3ad48975814d01ab2d48207b03448fda5c094012102986445ccfd323143f392b66b8cfc056df90ebdc110573e3395ee670d5043f23a1976a91418e254169de2c06bbe881f971b312084bf7d7e1c88ac0000000000");
+		if (unit != nullptr)
+			unit->all_address_types = false;
+	});
+	new_chain_state([&]()
+	{
+		auto asset = algorithm::asset::id_of("BCH");
+		auto state = storages::superchainstate(asset);
+		auto wallet = create_wallet(asset);
+
+		auto input_p2pkh_hash = codec::hex_decode("0x06da9b13756115c79c0361a083d340c75ced09ddfec9a530601d73a0021ba6a5");
+		superchain::coin_utxo input_p2pkh;
+		input_p2pkh.link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses[1]);
+		input_p2pkh.transaction_id = "8d4157a810c52d392c871867fcb5e5375df7102857eea5d770781737c67e5ed4";
+		input_p2pkh.index = 0;
+		input_p2pkh.value = 0.1;
+
+		superchain::coin_utxo output_p2pkh;
+		output_p2pkh.link = superchain::wallet_link::from_address("bchreg:qzpz97kqvz9jj6tdr6wxdt7zyh7vtm8nwyy4ajnft4");
+		output_p2pkh.index = 0;
+		output_p2pkh.value = decimal("0.099");
+
+		superchain::prepared_transaction prepared;
+		prepared.requires_input(algorithm::composition::type::secp256k1, wallet.public_key, (uint8_t*)input_p2pkh_hash.data(), input_p2pkh_hash.size(), std::move(input_p2pkh));
+		prepared.requires_output(std::move(output_p2pkh));
+		validate_transaction(asset, wallet, prepared, "p2pkh", "0100000001d45e7ec637177870d7a5ee572810f75d37e5b5fc6718872c392dc510a857418d000000006a473044022056abe72a40132188716d6a565247a91405dcc0d65d507945f881564024350c39022014d1be1e48bcecefea071a759e7832abe7826591cfab3c75678c230351fd7571412102986445ccfd323143f392b66b8cfc056df90ebdc110573e3395ee670d5043f23affffffff01e00f9700000000001976a9148222fac0608b29696d1e9c66afc225fcc5ecf37188ac00000000");
+	});
+	new_chain_state([&]()
+	{
+		auto asset = algorithm::asset::id_of("ETH");
+		auto state = storages::superchainstate(asset);
+		auto wallet = create_wallet(asset);
+
+		auto signable_link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses.begin()->second);
+		auto signable_message = codec::hex_decode("0x57d10c32396f3368c294f5987ff147ee4ffe3beae206678395b9531a188754fb");
+		superchain::prepared_transaction prepared;
+		prepared.requires_account_input(algorithm::composition::type::secp256k1, std::move(signable_link), wallet.public_key, (uint8_t*)signable_message.data(), signable_message.size(), { { asset, decimal("0.010021") } });
+		prepared.requires_account_output("0x92F9727Da59BE92F945a72F6eD9b5De8783e09D3", { { asset, 0.01 } });
+		prepared.requires_abi(format::variable(true));
+		prepared.requires_abi(format::variable(string()));
+		prepared.requires_abi(format::variable(decimal("1000000000000000000")));
+		prepared.requires_abi(format::variable((uint32_t)2));
+		prepared.requires_abi(format::variable((uint32_t)46860));
+		prepared.requires_abi(format::variable((uint32_t)0));
+		prepared.requires_abi(format::variable((uint32_t)1000000000));
+		prepared.requires_abi(format::variable((uint32_t)21000));
+		validate_transaction(asset, wallet, prepared, "eip155, transfer", "0xf86d02843b9aca008252089492f9727da59be92f945a72f6ed9b5de8783e09d3872386f26fc100008083016e3ca071df0f300c931e5455e9478bd83711d409966820934da12828485aa04c4eeb10a05fbf0794176f7cc0375f9d6151b860f40c9f7479891b55ada4a2550d5221382d");
+
+		auto token_asset = algorithm::asset::id_of("ETH", "TT", "0xDcbcBF00604Bad29E53C60ac1151866Fa0CC2920");
+		signable_link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses.begin()->second);
+		signable_message = codec::hex_decode("0x430483f3812b96bfe179cd21fb18580c5ba0919c1e25090d9fd740bb238d7bdf");
+		prepared = superchain::prepared_transaction();
+		prepared.requires_account_input(algorithm::composition::type::secp256k1, std::move(signable_link), wallet.public_key, (uint8_t*)signable_message.data(), signable_message.size(), { { asset, decimal("0.000050758") }, { token_asset, decimal("503") } });
+		prepared.requires_account_output("0xBA119F26A40145b463DFcae2590b68A057E81d3D", { { token_asset, decimal("503") } });
+		prepared.requires_abi(format::variable(true));
+		prepared.requires_abi(format::variable(string("0xDcbcBF00604Bad29E53C60ac1151866Fa0CC2920")));
+		prepared.requires_abi(format::variable(decimal("1000000000000000000")));
+		prepared.requires_abi(format::variable((uint32_t)1));
+		prepared.requires_abi(format::variable((uint32_t)46860));
+		prepared.requires_abi(format::variable((uint32_t)0));
+		prepared.requires_abi(format::variable((uint32_t)1000000000));
+		prepared.requires_abi(format::variable((uint32_t)50758));
+		validate_transaction(asset, wallet, prepared, "eip155, erc20 transfer", "0xf8ab01843b9aca0082c64694dcbcbf00604bad29e53c60ac1151866fa0cc292080b844a9059cbb000000000000000000000000ba119f26a40145b463dfcae2590b68a057e81d3d00000000000000000000000000000000000000000000001b4486fafde57c000083016e3ba0e79c085ddc6d48957067c8aa580d7db7055240118243b661ff2e42e2026fdfb7a06e57301656ea8b241a0a3603229740397c2fb227e350b47bc9a79b6c963f4dcf");
+
+		signable_link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses.begin()->second);
+		signable_message = codec::hex_decode("0xc91fa85db3a84bb26a64a81166f47113e8ea7eae1df6f8c19bd0504cb3fd39b9");
+		prepared = superchain::prepared_transaction();
+		prepared.requires_account_input(algorithm::composition::type::secp256k1, std::move(signable_link), wallet.public_key, (uint8_t*)signable_message.data(), signable_message.size(), { { asset, decimal("0.100021") } });
+		prepared.requires_account_output("0x92F9727Da59BE92F945a72F6eD9b5De8783e09D3", { { asset, 0.1 } });
+		prepared.requires_abi(format::variable(false));
+		prepared.requires_abi(format::variable(string()));
+		prepared.requires_abi(format::variable(decimal("1000000000000000000")));
+		prepared.requires_abi(format::variable((uint32_t)2));
+		prepared.requires_abi(format::variable((uint32_t)46860));
+		prepared.requires_abi(format::variable((uint32_t)1000));
+		prepared.requires_abi(format::variable((uint32_t)999999000));
+		prepared.requires_abi(format::variable((uint32_t)21000));
+		validate_transaction(asset, wallet, prepared, "eip1559, transfer", "0x02f87482b70c02843b9ac618843b9aca008252089492f9727da59be92f945a72f6ed9b5de8783e09d388016345785d8a000080c080a05c8b6da0d55615dd3aafdbfeba008cbaebb0a65a666c00ba012ad843129451b5a03d7113c7850f2a943bf55ff051e3a015bf5fa44487f58b1d1a9217534a970a2a");
+
+		signable_link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses.begin()->second);
+		signable_message = codec::hex_decode("0x248fffefd534b260b4950554563b956dc7838defa9c33f53865a72473558f665");
+		prepared = superchain::prepared_transaction();
+		prepared.requires_account_input(algorithm::composition::type::secp256k1, std::move(signable_link), wallet.public_key, (uint8_t*)signable_message.data(), signable_message.size(), { { asset, decimal("0.000050758") }, { token_asset, decimal("503") } });
+		prepared.requires_account_output("0xBA119F26A40145b463DFcae2590b68A057E81d3D", { { token_asset, decimal("503") } });
+		prepared.requires_abi(format::variable(false));
+		prepared.requires_abi(format::variable(string("0xDcbcBF00604Bad29E53C60ac1151866Fa0CC2920")));
+		prepared.requires_abi(format::variable(decimal("1000000000000000000")));
+		prepared.requires_abi(format::variable((uint32_t)2));
+		prepared.requires_abi(format::variable((uint32_t)46860));
+		prepared.requires_abi(format::variable((uint32_t)1000));
+		prepared.requires_abi(format::variable((uint32_t)999999000));
+		prepared.requires_abi(format::variable((uint32_t)50758));
+		validate_transaction(asset, wallet, prepared, "eip1559, erc20 transfer", "0x02f8b182b70c02843b9ac618843b9aca0082c64694dcbcbf00604bad29e53c60ac1151866fa0cc292080b844a9059cbb000000000000000000000000ba119f26a40145b463dfcae2590b68a057e81d3d00000000000000000000000000000000000000000000001b4486fafde57c0000c001a027ec5c85da8281ec7ccb345a2d0568a05449abe2ca06fc9895f72b7fd6d7b4fea07a3d5cbb080bd5cda709bc292eba557a28eb800278f18560129e5612f7481d9e");
+	});
+	new_chain_state([&]()
+	{
+		auto asset = algorithm::asset::id_of("XRP");
+		auto state = storages::superchainstate(asset);
+		auto wallet = create_wallet(asset);
+
+		auto signable_link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses.begin()->second);
+		auto signable_message = codec::hex_decode("0x53545800120000220000000024006115562e00000000201b006117fb614000000002b709b068400000000000000c7321ed2a994a958414a9dac047fd32001847954f89f464433cb04266fde37d6aff15448114c7f083a28227b588c13becf3f353e06d2e4f2fee8314f667b0ca50cc7709a220b0561b85e53a48461fa8");
+		superchain::prepared_transaction prepared;
+		prepared.requires_account_input(algorithm::composition::type::ed25519, std::move(signable_link), wallet.public_key, (uint8_t*)signable_message.data(), signable_message.size(), { { asset, decimal("45.550012") } });
+		prepared.requires_account_output("rPT1Sjq2YGrBMTttX4GZHjKu9dyfzbpAYe", { { asset, decimal("45.55") } });
+		prepared.requires_abi(format::variable(string()));
+		prepared.requires_abi(format::variable((uint32_t)6362454));
+		prepared.requires_abi(format::variable((uint32_t)6363131));
+		prepared.requires_abi(format::variable((uint32_t)12));
+		validate_transaction(asset, wallet, prepared, "payment", "120000220000000024006115562E00000000201B006117FB614000000002B709B068400000000000000C7321ED2A994A958414A9DAC047FD32001847954F89F464433CB04266FDE37D6AFF15447440D358730D5280F136D566474B869A1A49F61C9F0C0B6DB51E77CB8E3CA8BD11964BCE5EA0DA4A4E927677455B6DF745F5C6DAA018B3E1CAE1AC98B31499F0B50B8114C7F083A28227B588C13BECF3F353E06D2E4F2FEE8314F667B0CA50CC7709A220B0561B85E53A48461FA8");
+	});
+	new_chain_state([&]()
+	{
+		auto asset = algorithm::asset::id_of("XLM");
+		auto state = storages::superchainstate(asset);
+		auto wallet = create_wallet(asset);
+
+		auto signable_link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses.begin()->second);
+		auto signable_message = codec::hex_decode("0x1a6e7daa8fbd8aab869ebeafc8650d911a948d6e8166aec4fcec5490e359f81d");
+		superchain::prepared_transaction prepared;
+		prepared.requires_account_input(algorithm::composition::type::ed25519, std::move(signable_link), wallet.public_key, (uint8_t*)signable_message.data(), signable_message.size(), { { asset, decimal("2200.00001") } });
+		prepared.requires_account_output("GAIH3ULLFQ4DGSECF2AR555KZ4KNDGEKN4AFI4SU2M7B43MGK3QJZNSR", { { asset, decimal("2200") } });
+		prepared.requires_abi(format::variable((uint64_t)1561327986278402));
+		prepared.requires_abi(format::variable(false));
+		prepared.requires_abi(format::variable(true));
+		prepared.requires_abi(format::variable(string()));
+		prepared.requires_abi(format::variable(string()));
+		prepared.requires_abi(format::variable((uint8_t)0));
+		validate_transaction(asset, wallet, prepared, "payment", "AAAAACqZSpWEFKnawEf9MgAYR5VPifRkQzywQmb9431q/xVEAAAAZAAFjAUAAAACAAAAAAAAAAAAAAABAAAAAAAAAAEAAAAAEH3Rayw4M0iCLoEe96rPFNGYim8AVHJU0z4ebYZW4JwAAAAAAAAABR9NXAAAAAAAAAAAAWr/FUQAAABAHsqVejb7HruH0aV6UzYwvWywdrywphFRCPxe//qGobXsVcgX3LzBl4uARxrUFwYqDSRHahYetDvO79gcvUIhBQ==");
+
+		signable_link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses.begin()->second);
+		signable_message = codec::hex_decode("0xc23a0791a11ebefd653684792b4001e294440ce67979fb7a0dc2915ca4818e22");
+		prepared = superchain::prepared_transaction();
+		prepared.requires_account_input(algorithm::composition::type::ed25519, std::move(signable_link), wallet.public_key, (uint8_t*)signable_message.data(), signable_message.size(), { { asset, decimal("100.00001") } });
+		prepared.requires_account_output("GD4QDZNYKL4VH7QGVP47DZZBEUB5KR53SI2RACPDNTHCOSAQJTN3RW2Z", { { asset, decimal("100") } });
+		prepared.requires_abi(format::variable((uint64_t)1561327986278403));
+		prepared.requires_abi(format::variable(true));
+		prepared.requires_abi(format::variable(false));
+		prepared.requires_abi(format::variable(string()));
+		prepared.requires_abi(format::variable(string()));
+		prepared.requires_abi(format::variable((uint8_t)0));
+		validate_transaction(asset, wallet, prepared, "create_account", "AAAAACqZSpWEFKnawEf9MgAYR5VPifRkQzywQmb9431q/xVEAAAAZAAFjAUAAAADAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAA+QHluFL5U/4Gq/nx5yElA9VHu5I1EAnjbM4nSBBM27gAAAAAO5rKAAAAAAAAAAABav8VRAAAAEDwmgeOy3MUl/nyANi/pKs/m6EpmQa3fibonYTDwT3ZUt0Md36qD5xX9aNtqqaCyDyjNiTeXeyJKs8IPai0i+AG");
+	});
+	new_chain_state([&]()
+	{
+		auto asset = algorithm::asset::id_of("SOL");
+		auto state = storages::superchainstate(asset);
+		auto wallet = create_wallet(asset);
+
+		auto signable_link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses.begin()->second);
+		auto signable_message = codec::hex_decode("0x80010001032a994a958414a9dac047fd32001847954f89f464433cb04266fde37d6aff15440963cbfdea28293c02cd965c46e7a6f26bc5f26da4fa00dda8c8ade49f96dcad0000000000000000000000000000000000000000000000000000000000000000b83691e4405ab95ed6264b5942eb150deb64c9d0688940be0f6548da25de783c01020200010c02000000807a77230100000000");
+		superchain::prepared_transaction prepared;
+		prepared.requires_account_input(algorithm::composition::type::ed25519, std::move(signable_link), wallet.public_key, (uint8_t*)signable_message.data(), signable_message.size(), { { asset, decimal("4.890005") } });
+		prepared.requires_account_output("devwuNsNYACyiEYxRNqMNseBpNnGfnd4ZwNHL7sphqv", { { asset, decimal("4.89") } });
+		prepared.requires_abi(format::variable((uint64_t)1000000000));
+		prepared.requires_abi(format::variable(string()));
+		prepared.requires_abi(format::variable(string()));
+		prepared.requires_abi(format::variable(string()));
+		prepared.requires_abi(format::variable(string()));
+		prepared.requires_abi(format::variable(string("DQ6H97iaf92qFZAWFSu57x74i47L4MJL5vjfun8pMrCj")));
+		validate_transaction(asset, wallet, prepared, "transfer", "2mXpPxxdMg1J2wZ7EdNGpvMXrZ4THjKD8zAfgAtC2TN1VCUQWNg81QjJmr9hgTL8bu9DNNcc8LXM1U2ycp9J79tgUsyTu9hikqjHLbohWoLhvw7WztUvENarynygknqvGBB1jnYnQWhTvrYjbyBwhd4WQuVUhhiokKyfw6vq9ZJgbToU8anhgYGGgtBjpL3pzpAJVUoFF8A55LwLcsWUh7wcuvUfX22bBpKYbhBE3G4TwCv9Fi9xHsRrm4qfVm9eFQXCaoBVUdKtLuAJW5cRvUmBvp3zBZnzWfF8ebUb");
+
+		auto token_asset = algorithm::asset::id_of("SOL", "9YaGkvrR1fjXSAm7LTcQYXZiZfub2EuWvVxBmRSHcwHZ", "9YaGkvrR1fjXSAm7LTcQYXZiZfub2EuWvVxBmRSHcwHZ");
+		signable_link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses.begin()->second);
+		signable_message = codec::hex_decode("0x80010001052a994a958414a9dac047fd32001847954f89f464433cb04266fde37d6aff1544437b32d02edb961d6ffba969407c441a127befb1fe6885fa40f3d9e1dd7f9306d36dc35d5d43cb85d730bbf57899cb2266076f149fdf00b5491b69d1ad764df37ef41ef3474ed6a625c960cb38e5e9025a9edd6f63997d6c4c28f761dc23b67006ddf6e1d765a193d9cbe146ceeb79ac1cb485ed5f5b37913a8cf5857eff00a95abee248b8b08441f683b2e58d6b7c62bfa977bb775f0ef37facee593d0b1269010404010302000a0c50a50500000000000200");
+		prepared = superchain::prepared_transaction();
+		prepared.requires_account_input(algorithm::composition::type::ed25519, std::move(signable_link), wallet.public_key, (uint8_t*)signable_message.data(), signable_message.size(), { { asset, decimal("0.000015") }, { token_asset, decimal("3700") } });
+		prepared.requires_account_output("4Bs1nFL71Yaq2HJ3pSk3WHdbhkWeqnrLYQZDhqjDfb53", { { token_asset, decimal("3700") } });
+		prepared.requires_abi(format::variable((uint64_t)100));
+		prepared.requires_abi(format::variable(string("9YaGkvrR1fjXSAm7LTcQYXZiZfub2EuWvVxBmRSHcwHZ")));
+		prepared.requires_abi(format::variable(string("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")));
+		prepared.requires_abi(format::variable(string("5YRGqmfQGcAii8szURA3ZztXfpre1ZnajJcS63GJi4yK")));
+		prepared.requires_abi(format::variable(string("FEL6m5CE2P3JTW1ceo48VerTUSWDte6eXzgrcmcftvyQ")));
+		prepared.requires_abi(format::variable(string("77EWfi8yvGJNRsC9BRHepMtBJ2RDEDAkZNWAT4YJNMYU")));
+		validate_transaction(asset, wallet, prepared, "spl transfer", "7qSoGmgq68eUNs8tJZ8dDtyfpUHE64RaxrhFeARBKJdhtW4SsRitHzdkkH4uepUxZ599Y3RBhSyzSeb7mmFnrhER53hSbcyReBAPkeMfTWKeg7FnQuqxhAjnAf6zMyAiwWLHDWfDHoV1ovbUQXrdexZhHVRomMUwHX81rQv6RwCkfGnB7dfpysFQ2PeYztphz2Z2uSaY3x44X9AAZWpUk7MMHQxUvUNA6ESFoQTYYSNj8Vr5qdjV89AXYF2BfqVs1Qj3ZuHSaQbZFaEtfdanhzt7qJBBrZ4zV9QsbBCXDyPg6JncvZTePP7drV4Uf9SWKssN6AF5zaq5AVSE1GguJ5zfQoY6JbUuZ1zzX8PNbccQVtpvmfSqWn4EntLxP3D");
+
+		signable_link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses.begin()->second);
+		signable_message = codec::hex_decode("0x80010002082a994a958414a9dac047fd32001847954f89f464433cb04266fde37d6aff1544437b32d02edb961d6ffba969407c441a127befb1fe6885fa40f3d9e1dd7f9306d36dc35d5d43cb85d730bbf57899cb2266076f149fdf00b5491b69d1ad764df37ef41ef3474ed6a625c960cb38e5e9025a9edd6f63997d6c4c28f761dc23b67006ddf6e1d765a193d9cbe146ceeb79ac1cb485ed5f5b37913a8cf5857eff00a92f5b6b548541c59c6580cdff889e30c53e19cb10241170ae041eaed436420aa200000000000000000000000000000000000000000000000000000000000000008c97258f4e2489f1bb3d1029148e0d830b5a1399daff1084048e7bd8dbe9f8595abee248b8b08441f683b2e58d6b7c62bfa977bb775f0ef37facee593d0b126902070600020503060401010404010302000a0c50a50500000000000200");
+		prepared = superchain::prepared_transaction();
+		prepared.requires_account_input(algorithm::composition::type::ed25519, std::move(signable_link), wallet.public_key, (uint8_t*)signable_message.data(), signable_message.size(), { { asset, decimal("0.000015") }, { token_asset, decimal("3700") } });
+		prepared.requires_account_output("4Bs1nFL71Yaq2HJ3pSk3WHdbhkWeqnrLYQZDhqjDfb53", { { token_asset, decimal("3700") } });
+		prepared.requires_abi(format::variable((uint64_t)100));
+		prepared.requires_abi(format::variable(string("9YaGkvrR1fjXSAm7LTcQYXZiZfub2EuWvVxBmRSHcwHZ")));
+		prepared.requires_abi(format::variable(string("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")));
+		prepared.requires_abi(format::variable(string("5YRGqmfQGcAii8szURA3ZztXfpre1ZnajJcS63GJi4yK")));
+		prepared.requires_abi(format::variable(string()));
+		prepared.requires_abi(format::variable(string("77EWfi8yvGJNRsC9BRHepMtBJ2RDEDAkZNWAT4YJNMYU")));
+		validate_transaction(asset, wallet, prepared, "spl create+transfer", "4ZaYUykgrB2uZiBGR9FzozSmoDp1xnao1QVaBNCEzDtL74e1wnnVNYYn5kJJsaVN3XnfjjkD5ivyHaDH3xTjA8FNyiALbsAf8ohPx2fHskdGh3PXWy6zQgA3W6QT25zg9LRtyyRjATL6AfyQ9uARw6P8sKPwY3c8cN3zuz3X8JqAjJyQZtNFJv4Sj1SWq2YFYVJYbbL5oNwEd7uKKC2FuG4TthH4A63NyuKSPwuVy1Xw4CBcfxDjn3PmVNjAawWF95dDdErtfwLPLbLxeu2BNjhuCHdedrZepJynoXfCxjKcB7mYPsWxCjUM36EY8kGnH4m2piuvumEhCLfX4bsDLkd4cVWs8f77TPNxwXpbPNnCNgd3i7yzAcyxPgArQ1gMVfE6vc3HaowmQsmf2hbywaQP29oZrMXCr7hPtV5mDBRhxkjqkt5jg6yc49F3QTDhQLnRLfGK1Gh3qgjPYnVwGtezBmdQZTabDw6BF1rDaNxfnXD2gQfEGPFWqJfESPvCeRCi59Yq2obWfKio");
+	});
+	new_chain_state([&]()
+	{
+		auto asset = algorithm::asset::id_of("ADA");
+		auto state = storages::superchainstate(asset);
+		auto wallet = create_wallet(asset);
+
+		auto input_hash = codec::hex_decode("0x14b33fbdd10c0931057b2c66e56b08cf01523480769153e3433050c571dc23e6");
+		superchain::coin_utxo input;
+		input.link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses[1]);
+		input.transaction_id = "f887787271fa3538f574bb0a95f1178377dd70a98813657764241fdf4e0ca7b7";
+		input.index = 1;
+		input.value = decimal("9965.667678");
+
+		superchain::coin_utxo output_1;
+		output_1.link = superchain::wallet_link::from_address("addr_test1vqeux7xwusdju9dvsj8h7mca9aup2k439kfmwy773xxc2hcu7zy99");
+		output_1.index = 0;
+		output_1.value = decimal("2100");
+
+		superchain::coin_utxo output_2;
+		output_2.link = input.link;
+		output_2.index = 1;
+		output_2.value = decimal("7865.501517");
+
+		superchain::prepared_transaction prepared;
+		prepared.requires_input(algorithm::composition::type::ed25519, wallet.public_key, (uint8_t*)input_hash.data(), input_hash.size(), std::move(input));
+		prepared.requires_output(std::move(output_1));
+		prepared.requires_output(std::move(output_2));
+		prepared.requires_abi(format::variable((uint64_t)166161));
+		validate_transaction(asset, wallet, prepared, "p2pkh", "84a30081825820f887787271fa3538f574bb0a95f1178377dd70a98813657764241fdf4e0ca7b7010182a200581d6033c378cee41b2e15ac848f7f6f1d2f78155ab12d93b713de898d855f011a7d2b7500a200581d6042a00dfc0e9577dd74673d4b90b1e4a00e8a7fe0778dd134d268a95f011b00000001d4d2074d021a00028911a100818258202a994a958414a9dac047fd32001847954f89f464433cb04266fde37d6aff15445840e28a2e306c97c2c3871d64c5830ac0ae2a8e575a699130075c55b67ab3029a5c83712d9e86b71dce110141bf4c8039f388c0e79eccb10c2b4f0a9e3abe08ce0df5f6");
+
+		auto token_contract = "bd976e131cfc3956b806967b06530e48c20ed5498b46a5eb836b61c2";
+		auto token_symbol = "tMILKv2";
+		input_hash = codec::hex_decode("0x66bb498dd4f2840ef018b8392c58fd198f334474b5c9b96d7412b1b4cee39b0b");
+		input = superchain::coin_utxo();
+		input.link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses[1]);
+		input.transaction_id = "0f7cad6020aaf0c462cfb6cba2b5f4102910b7bf7101ed609eb887188b19ad6f";
+		input.index = 1;
+		input.value = decimal("9940.752346");
+		input.apply_token_value(token_contract, token_symbol, decimal("999995689"), 0);
+
+		output_1 = superchain::coin_utxo();
+		output_1.link = superchain::wallet_link::from_address("addr_test1vzpkkthr9azvuagxcf0m27qvzdad7n95jutgcdtglgmhdns998vsz");
+		output_1.index = 0;
+		output_1.value = decimal("1.655136");
+		output_1.apply_token_value(token_contract, token_symbol, decimal("65483"), 0);
+
+		output_2 = superchain::coin_utxo();
+		output_2.link = input.link;
+		output_2.index = 1;
+		output_2.value = decimal("9938.927089");
+		output_2.apply_token_value(token_contract, token_symbol, decimal("999930206"), 0);
+
+		prepared = superchain::prepared_transaction();
+		prepared.requires_input(algorithm::composition::type::ed25519, wallet.public_key, (uint8_t*)input_hash.data(), input_hash.size(), std::move(input));
+		prepared.requires_output(std::move(output_1));
+		prepared.requires_output(std::move(output_2));
+		prepared.requires_abi(format::variable((uint64_t)170121));
+		validate_transaction(asset, wallet, prepared, "p2pkh asset", "84a300818258200f7cad6020aaf0c462cfb6cba2b5f4102910b7bf7101ed609eb887188b19ad6f010182a200581d60836b2ee32f44ce7506c25fb5780c137adf4cb497168c3568fa3776ce01821a00194160a1581cbd976e131cfc3956b806967b06530e48c20ed5498b46a5eb836b61c2a147744d494c4b763219ffcba200581d6042a00dfc0e9577dd74673d4b90b1e4a00e8a7fe0778dd134d268a95f01821b000000025067fdf1a1581cbd976e131cfc3956b806967b06530e48c20ed5498b46a5eb836b61c2a147744d494c4b76321a3b99b95e021a00029889a100818258202a994a958414a9dac047fd32001847954f89f464433cb04266fde37d6aff154458404a594cc96cd2aec42c68556ca1c90b06da654230fae3247e14e50d6896598352a6bbe24a45fc825bcae90161c2cad02faf343fdc8354e89ae676b27c8f646304f5f6");
+	});
+	new_chain_state([&]()
+	{
+		auto asset = algorithm::asset::id_of("TRX");
+		auto state = storages::superchainstate(asset);
+		auto wallet = create_wallet(asset);
+
+		auto signable_link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses.begin()->second);
+		auto signable_message = codec::hex_decode("0x6c30ab9d12ae48c5c6800533451ef201dcc807980ea18739301ac48c2ddef3ce");
+		superchain::prepared_transaction prepared;
+		prepared.requires_account_input(algorithm::composition::type::secp256k1, std::move(signable_link), wallet.public_key, (uint8_t*)signable_message.data(), signable_message.size(), { { asset, decimal("22.4") } });
+		prepared.requires_account_output("TXNE2M4GSw6tjVsGeux9nbVEhihGU6hBeV", { { asset, 14 } });
+		prepared.requires_abi(format::variable(string()));
+		prepared.requires_abi(format::variable("091a"));
+		prepared.requires_abi(format::variable("844ba957b61a108b"));
+		prepared.requires_abi(format::variable((uint64_t)1744587342000));
+		prepared.requires_abi(format::variable((uint64_t)1744587282000));
+		prepared.requires_abi(format::variable((uint32_t)1000000));
+		prepared.requires_abi(format::variable((uint64_t)150000000));
+		validate_transaction(asset, wallet, prepared, "transfer", "78da8d52cb6edc300cfc179d8394d45b7b6d2fbdf716040645518951ef7a617bf340907f2fddb441da5e2a1f240f5f33c4bc9887711deb24e6d0695ae5ca6c4f5fbf988389ec806a6968497ce6c0310304e77c40e916b0316748258310e6e48a0324d644db9a74c762aecc428f43a38d867b79d28e4060a120590b397b5fa98454231242ae1e2a64cc25b3386703e9b00c88367a20db924f25410c56628a5dbf143986888a95e414758a35db13241b7bf2fab7236c257845304a7231c690acdf71496fa84b1ead5399183cb26ae1a6f47a2b20ac3db860416ccd27a9d2428b35c612d0eed942354057a846254851e7480aa172c0960b57cdc612b3c79ca16a1ec4040d887378535800300339763e7dd89439bc189e4fdb42bc99c3cd8b39d34247d964d9230f345d647f6cf340ad2db2aebad6ff27a383e6c7932c7f14ffaf6e2da6e37c39292ff4f0f3bcaa599ecf325c96495bedcfebbb79be9b84cee37acdf3f1d37999b799e7e9fadb42a7b5cbf2f9b7b85fb55af76fe85617227da8d3ccdf87fabcc9ce74778ef918b8a7f55ef1bf9da439f2741e17dac6f9a45c93f741fde9ad12d699e351d68d8ee7f788cd6f912e324ce371dcf5057817b88e7727da2e8b32bd31a534d7833a98a97207a6e08290edd2fd7e63ecb5d4d6d521a164f56977d0240b39895e11704418b185e22b47d77bafb1e5581371176a62abcd5e907c702d6103c829550a04e8bb979e0bb2b97dfd01a74b1415");
+
+		auto token_asset = algorithm::asset::id_of("TRX", "GFC", "TUiyUe3uqtiT8cFkfhW6Q28Z99sY7o82Xr");
+		signable_link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses.begin()->second);
+		signable_message = codec::hex_decode("0xf070bae36536973c5ca2956768882d2b9144ec74cff4673ffc418b8d2b0da9b0");
+		prepared = superchain::prepared_transaction();
+		prepared.requires_account_input(algorithm::composition::type::secp256k1, std::move(signable_link), wallet.public_key, (uint8_t*)signable_message.data(), signable_message.size(), { { asset, decimal("14.0228") }, { token_asset, decimal("8") } });
+		prepared.requires_account_output("TXNE2M4GSw6tjVsGeux9nbVEhihGU6hBeV", { { token_asset, decimal("8") } });
+		prepared.requires_abi(format::variable("TUiyUe3uqtiT8cFkfhW6Q28Z99sY7o82Xr"));
+		prepared.requires_abi(format::variable("08ca"));
+		prepared.requires_abi(format::variable("9dd563feb883a59e"));
+		prepared.requires_abi(format::variable((uint64_t)1744587102000));
+		prepared.requires_abi(format::variable((uint64_t)1744587042000));
+		prepared.requires_abi(format::variable((uint64_t)1000000));
+		prepared.requires_abi(format::variable((uint64_t)150000000));
+		validate_transaction(asset, wallet, prepared, "trc20 transfer", "78dacd54cb6edc300cfc179d8394d48392f6da5e7a6e6f41b0a0246a63d41b2f6ce78520ff5eba498ab46881a0a7ca8021cd90144969f4686e876528a3985de7719133b3de7ffe6476a64384c2e22838cad1d550d9e64091524ab6d992d17ba9d1d7de3d45d77bf5984a52061ae702e6cccc7cb76fbcf2fe4aee35223058481a46ffb9b540ae4b49c971c8e2a1004be754c4391b9805101276b49c75c60ea38f3902052b9a43d72f52a540a898a6a7a853acd91e215aead1eb6a43aa95e015c96a1f2944abe534f5b2d1fb8d97b8b1482e7a540c1883c71a73aa2d23f79641aac6aa1933626b3e4a91161a15a21cd0feb06e257b6a6cd14af745b1e874911a710a5d7cea8e2c38b1d67bad26e45a0afc650897005dc31702b64c9abbc4104a0dd8923aeace982979f8e71119adfea141cb9d9efb9d01306993abf3f1cdb999dda3a9d3f53a735dcdeee2d19c78e6a3ac326fcc2d8f37b24d9e4dcdff529a1630dd5dcbbce7d66659164dedfd27aaceaf15ffeaffce33364f2aa08793ec6fe6511db7e9f9619a0ea3f06958ceeb74fc709aa775aad378fe751e0e0799bf1c795e3fbeb6f9c55f7dff4c5feaf148df9771aadff6e561952dbf4d55e62d71c5cb95e2bfab4c6de4fe34ccbc0ed3b5d9a9a67c4811559600baef709465e5e3e92703fe99e922fb71380e7a0b30bc345b135d86c335af37b3667b611a70076eb914bde895346ac55612164cfa7864e8aa5710cb20d8ad48cad9734dfaaa7417015d71561f19354bd4832d3e96e21d03259743df2e0eb566133524c9aa710ed515202ecc49850d366035974fdf012e2954e7");
+	});
+	new_chain_state([&]()
+	{
+		auto asset = algorithm::asset::id_of("XMR");
+		auto state = storages::superchainstate(asset);
+		auto wallet = create_wallet(asset);
+
+		superchain::coin_utxo input;
+		input.link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses.begin()->second);
+		input.transaction_id = "102";
+		input.index = 0;
+		input.value = 0.01;
+		input.extra = codec::hex_decode("0xd8705e0f3e2decea48fae350b23010a948e871cc95c54834004313c10b3b9b0d8c9b7e994d98d6c3593ab23f30a732b559294a2e353b49250dc1fabd41c6dd066600000000000000");
+
+		superchain::coin_utxo output1;
+		output1.link = superchain::wallet_link::from_address("887gyyu7y4LbLDY6QUcrgDGYMRJN1FKL8QUTwuL7HxosENMymJJEj7bZqBjiFU46ExMdjCNh3yUWHSVzHvKfMAvrLkYdyNF");
+		output1.value = 0.005;
+		output1.index = 0;
+
+		superchain::coin_utxo output2;
+		output2.link = superchain::wallet_link(algorithm::encoding::decode_0xhex256("0x9ef466bbda9be2a13d50c46bbd53c75a70607a4a3b5c67959b50234fa04f190c"), "1b25d81c9eb85ee5dd471f1e47d9c967ce6587bbca71462b4fd47c38bf11cbae:30ddcfeaca93e2e159e81145179b1eb9b9a140afd17ae70772308fe6f78f1f8a", "42en54HJ9KbfSyPoMWQCHvJN3vyruyqLR8FBPNXowEMYW8sSwgSiTboehBxTjFwg5jY4mSmhWEYKY2FEh4TQnLm4GdiJDwp");
+		output2.value = decimal("0.0031436");
+		output2.index = 1;
+
+		superchain::prepared_transaction prepared;
+		prepared.requires_shared_input(algorithm::composition::type::ed25519_clsag, wallet.public_key, std::move(input));
+		prepared.requires_output(std::move(output1));
+		prepared.requires_output(std::move(output2));
+		prepared.requires_abi(format::variable(codec::hex_decode("0xf6b48b4d2827024154842aa515619e70ab80f994c0f6441f60d684f7f7295eb215d5404390090109204ac2c5fc1768ac64423f5d993c85e4d855d82bab37439ff0c35f157889e50fff8a0c95875bc009012a2a084a5ad95d60e80e94ef10eda34485957d89e2d10576578c704174bf0bc388635f0b4aff5c789d0c923a976af13744676be9be9f5c86ade43e1ebdcc6954f055e178924ad8705e0f3e2decea48fae350b23010a948e871cc95c54834004313c10b3b9b0d4a8c9b7e994d98d6c3593ab23f30a732b559294a2e353b49250dc1fabd41c6dd06096609104a88005845823323e59c04b968824a6f61a3e3a1376ac74a1e26e676c819c2221c4ae64e72cc71a686f2d917dc5142ca91d929579f3d541a275ad3562fb5cca65d90092c064ad8c2269ef81840b469346bbfae0cf087d3511b8e1fe04c96f455c63246b9bd5b4ab289be0e272fc64ccc3b811f1fdba3395a3701aceaf82dcdc4781ef85ff3a9960901064a22d56f16a2d52c7299c7c596ae5b46c2414b71eb5052b993606c9d6bbc4555104a50a3f64bab0f0136578d06613239b914f3746baba8855bd95b8a56f671b6dcee0901064ade5ef479f4a37f5eaa030085b3002568dea7ce6508d2231f2065217d810178e04af3b3c6e5b1b35d9a9f5f3960c21047597b9c1b97275e9a04ee978f349b926c8c0901064a240fa105f872148a3f8d050912c21887a9cba23bed329e1e162830e7c82ab64c4a5ddaa16b37503915e14f93dc8803fa97eb072221a0d1c8916ae143e69802ba540901064af7248e49ffdeb4114cbd66bf4152894172202a25aa5e730ef2870264873cb6de4aead60b7504850c7293e99f0f13823d0f0e99dd5f0dcce6f71a5f1990dd25e8ae0901064aaf97adee20cff9ade21fbadb7d8cde20ca0bb857d39f8e487850cab1e65b394c4a29b9cdf249ad0647966a57ba907ab7764a830cc2fb504bae0b6a2d0edc1278b70901064a30c2f7513b4e8f758893a9e596bf4f1732932cd45274fd88e6c4c7076169c5ce4ae3f54cb71ee97608d3b657b3046171dffc9dceb3dbe2756bc616d4aca2c27b190901064a34f87864785477cb61c3194e2c9efc24825292ef1eb4d7a870911d20ed725b8f4a67c8464266b9148b1a3cee91d3956279dea1cb800133fbfab9106e33ac0fef640901064a895cb8d3b4249ab81a34c3aa55bf4563e7a9a664852a574c7366de229ad3f5954ae97e47ad0ea542b03b440a83b5c297184b60efb0ae86f9df1912ee31494bc2180901064a2f55a12b45e17b9ed1ccf1ef284c0585698f98c3b1891c06b8879931537d4cd24a174aeb74d89d2ec4d2623c0fa3a95432da28e8349ef4569ed99dae6c3dc4033e0901064ae4b2f6b1de3ac321ea5f304194250cdfef117c670562722bf8d2cf12d7e78a2e4ab9e4dcb61022a867cef8d1c95416fd6f650bfa687c48007a7f3daf9c3a5271f10902064a0ae058453b59b109750ed7a2737d78e0b982954e430e91e4e9130b00f2e744dc4af88e75525d8173c1617a13f47f45821fb2e5504d8859c36443c6432b181d48230901064ae5498ca520a59274feb37c3eb4d30059e8a125357cde8293af31389d9e0b81054a429899f1eb62429298a89541015dfef5d71abc55ce6ffb1d78b6db27f5579eb30902064ae72852fa4b9a2d059db4b6dfcdbf328437f31bebe9863a3c11ed428ea7ac0a574a6bf94cf0b5fba40ad009245bf3c96566a0a0af066ba6a75e0dc9772121f7e3900901064af5e3349baef13b1f1f78cc7c289fb923083624c4dd578fdf5349b80f617152da4a0650c0f2f035e5adfa108e89cfa5bdaf12ec9f20363f21fbb61e34702980d6d7092a072a090209e04a3c6b2339986643f8f672dd0572e96ab222fa5c516c4d8a6ec78181b9ade8fbf732813b06999711cf894a6f1903a82a17584e3e00b3e8259b862f8f35cb1f154b3ecf525fe51681d92d024aa72305ffd093b31a6acf74220b6387317d9c8af7cbc173a3192c2c534d813e8f09374acf5e9b7588a4f29892504d610b76b486842bbbb8fda3d742895a6ba1a300d7d03208450850f3541e3b4aebbf5ab8bdf73ba1d2ecf05b5ffaf659539c3a5642413272216026ac078a31094ad6dff3e9c9cd7416e0b37cf96d83542f5c4a2f7424eff1e71943ee44f0436a2e6d012b948830acce33d11c7dcf007a8fc5df224d20d21e56955a0396b66d75ca9c490401f03f347195a60426a798852a83f5417c7ba55217af5f712beac7c10aafbb0f974ab06e6e157e8dbc9520fd47712d8ae1ca2f7f5af177373bd1fbbdfcf3aa64ac2a4a215451c3b11f0b2427c826f8ed1c26c7fba30dd59b60bbac3953bba48ae9db904acb55e9c0a6abab4901fec9acf97f667dc8f8ffb1f2dd88ae58115505bbc57ab54a4830feb384a9f3cbf806581be4c8ee03ec7d8bd48d6ab6dc13338976687834054a10df116c2193ecdd157c45bc0b16ebd7e680c8a5e2789c9b3df1e0f8705416064a1632759972af309f62e402dcade74c03cad093924528a0ab9366c5219d5f200809074a54aa2cf099a58e44155402d5adb6ac2c1a40eb04690bb3c5043b96e619ff7b1a4afafc024048c40bfe9ad8d0e4b9d3eaca5da9e9d8c44205748762425eb2d81b614a6e6f7573c4eba84282a5a7648646242243e21a002c40bd92c270707dc42c07d54a2b65ee2b0c8e1a56746b814dd15d54ba359e100a675969c1200de2c4f5d407594afdb6f89b9b5e9ef16f3a7b6ccce50ce50de37349cb191d03343385c67f1c4f584ac51543c6ff37df884a799ca87c0c3ecf4e24d92ce441220146f60f6fee265ce74a0697418195b983ae16392f6d6fa4fec54e4b2d6fb51a1b20eb7f19487314091909074ac9ff5c3cda9a19206184177785250ae368d821601248d98a8fa2281e1b6ee3d24a1e3079ab2d14e6984851d465d72c08f2f38d0417397860c32bfe9454d9b71d584a2e48384b1ae34da8ca2c23eaf4c845456d643c751b7b263bfbb82d17ad5d2cd04a8cbaffa7da8548841ff86d679e01dc08deadb6ae1581c28eeb495eca9a5793634ae433aed172ff8efb0b9f881e91eb8d491f2aeac2087685acaa245ca454ae5f544a23c488ecb21927ab1859218f3f1160d1d29e6ce192d3478ab535e60fafdf6b494a0323d2e7e27ff2495f642ababf73ae9b46838ea58ba14c8d3a3816948006056b4ae12d9ed05c2b5447f0928d333a2c433c35c0cf13fe7dea4d065b905be9b6400e0c806aa66e")));
+		validate_transaction(asset, wallet, prepared, "pay to subaddress, pay to standard address", "0200010200102c01010101010101010101020102012ac2c5fc1768ac64423f5d993c85e4d855d82bab37439ff0c35f157889e50fff8a0200033c6b2339986643f8f672dd0572e96ab222fa5c516c4d8a6ec78181b9ade8fbf7e00003cf5e9b7588a4f29892504d610b76b486842bbbb8fda3d742895a6ba1a300d7d03743012b948830acce33d11c7dcf007a8fc5df224d20d21e56955a0396b66d75ca9c490401f03f347195a60426a798852a83f5417c7ba55217af5f712beac7c10aafbb0f970680d599f506813b06999711cf8908450850f3541e3ba72305ffd093b31a6acf74220b6387317d9c8af7cbc173a3192c2c534d813e8fd6dff3e9c9cd7416e0b37cf96d83542f5c4a2f7424eff1e71943ee44f0436a2e01b06e6e157e8dbc9520fd47712d8ae1ca2f7f5af177373bd1fbbdfcf3aa64ac2a215451c3b11f0b2427c826f8ed1c26c7fba30dd59b60bbac3953bba48ae9db90cb55e9c0a6abab4901fec9acf97f667dc8f8ffb1f2dd88ae58115505bbc57ab54830feb384a9f3cbf806581be4c8ee03ec7d8bd48d6ab6dc133389766878340510df116c2193ecdd157c45bc0b16ebd7e680c8a5e2789c9b3df1e0f8705416061632759972af309f62e402dcade74c03cad093924528a0ab9366c5219d5f20080754aa2cf099a58e44155402d5adb6ac2c1a40eb04690bb3c5043b96e619ff7b1afafc024048c40bfe9ad8d0e4b9d3eaca5da9e9d8c44205748762425eb2d81b616e6f7573c4eba84282a5a7648646242243e21a002c40bd92c270707dc42c07d52b65ee2b0c8e1a56746b814dd15d54ba359e100a675969c1200de2c4f5d40759fdb6f89b9b5e9ef16f3a7b6ccce50ce50de37349cb191d03343385c67f1c4f58c51543c6ff37df884a799ca87c0c3ecf4e24d92ce441220146f60f6fee265ce70697418195b983ae16392f6d6fa4fec54e4b2d6fb51a1b20eb7f19487314091907c9ff5c3cda9a19206184177785250ae368d821601248d98a8fa2281e1b6ee3d21e3079ab2d14e6984851d465d72c08f2f38d0417397860c32bfe9454d9b71d582e48384b1ae34da8ca2c23eaf4c845456d643c751b7b263bfbb82d17ad5d2cd08cbaffa7da8548841ff86d679e01dc08deadb6ae1581c28eeb495eca9a579363e433aed172ff8efb0b9f881e91eb8d491f2aeac2087685acaa245ca454ae5f5423c488ecb21927ab1859218f3f1160d1d29e6ce192d3478ab535e60fafdf6b490323d2e7e27ff2495f642ababf73ae9b46838ea58ba14c8d3a3816948006056bc2f58cc9e2ee608adb53afdf0c16acd8a49751a8419c13c812816b31c6c65f04b79a027ac00d5d7d44d52546fb6fb86b8d8d8f15df4f15c4018dc4cbf186bb06720343927b01b79b6b86c30baa711b31f366d362e3033eec10dc39bcb15e1104906f3d10e3def6d8dfbe1ffb73de16dfae2f360eb7f86cb674784db54e1f5306cb01f559b7c086bb5b1a9adb0681ab6fc4b4fc0ab3168295001045cbff1c710d27efa6e9f8866a7053cc1c3f06e3c38c96d5a2c5a0905680940b1b0fd5edfa059a2f26fa10c3f01a6c269cefcdf479255983219f2cfa7b929db4c12df86da000859c9cbe8c279c821918587625fb92863b0714c9df557248654b9353f6e88d0181b3ff9ee21ba9fc338e0118554df29519c0e2d4f57ea6f5917acef424b29f036e16284cdd86b4ccbf1e9a8d873de603c589365a0d646efd727e22dffd9bcc0abd6651ab789bed41281f8ea5f7d870c01d579b267bc1bf39e557f1a1ea574c08e53f3ac20ec43206fcb17b8e7a49b45c79b0bb2bc5f0a11c3ae323f8b4c48d004d1e91bdd96c0f0d1f444691f8ea8886ef2dc1f454851dee412807b2b0b1f30e7f925f852e0faaba4f82941065e7dacb073ffe0695a6e58c5c41ba51c6fc6207800ff83ed5754c1ce08d18a0a30860ff89ba1c27a95a1d58e6d1b2d3ebc5e80fce7fb9d4b5138c877d6eadbeeaa57dcc32084a1b2dda80a129454bc5bd6ae40e3a6150a5960f354119766105bde58ed16e10ec81925aeff8211cc1881d27c405c27336a094df0aecb8b6acd65c601b87c54f12c6c070b7c45e52a32ea868f63eff5c789d0c923a976af13744676be9be9f5c86ade43e1ebdcc6954f055e17892");
+	});
+}
+/* blockchain containing all transaction types (zero balance accounts, valid regtest chain) */
+static void test_blockchain_full_coverage(vector<block_account>* userdata)
+{
+	new_chain_state([&]()
+	{
+		vector<block_account> users; vector<algorithm::pubkeyhash_t> contracts;
+		for (size_t i = 0; i < kernel::params().policy.participation.min_per_account + 2; i++)
+			users.push_back(block_account(ledger::wallet::from_seed(stringify::text("00000%i", (int)i)), 0));
+
+		format::tree results;
+		format::tree* data = userdata ? nullptr : &results;
+		TEST_BLOCK(&block_generator::setup_stage_1, "0x4ac925923511664a166d121086652707ef18e5e1ac22d289cb99e364dfc5194c", 1);
+		TEST_BLOCK(std::bind(&block_generator::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 1, 0), "0xfa43969e1e426980619035b91584e5561489f9604cd65ebdee2f043a122861d4", 2);
+		TEST_BLOCK(&block_generator::route_stage_1, "0x748fbe9bb5dae9141db46d250a89d1cc8da3b8cde90a20e1dae66e0eda22c231", 3);
+		TEST_BLOCK(&block_generator::route_stage_2, "0xc0d48c136ebba3380d754914ecc4dbc49ceb11bf8fa1d6f5661ba72e2d0d03dc", 5);
+		TEST_BLOCK(&block_generator::route_stage_3, "0xc242ad17206c8ef22eed10d7a7b5ea14ef28198466b0d7c8a3d26bc852298f53", 6);
+		TEST_BLOCK(&block_generator::attestate_stage_1, "0x5902099ccec56507de3cdbc4e4a687a500492b7d20ce6345cbc967d46647f3d9", 8);
+		TEST_BLOCK(&block_generator::transfer_stage_1, "0x65697a97c581d3d5117fb36f6d332b8c1dc2b79dc59e293ea07f1a7338e2b825", 9);
+		TEST_BLOCK(&block_generator::transfer_stage_2, "0xd189e0bb01d78642b8c8deda7382f95ae3293c092082a0b65e352b8f9e1a553b", 10);
+		TEST_BLOCK(std::bind(&block_generator::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), users[2].wallet.get_address(), 0.05), "0x4c837440c26ceb0a00993a6f0bea4c6aebeb0354472e80b4c53435230b0a5c90", 11);
+		TEST_BLOCK(std::bind(&block_generator::deploy_stage_1, std::placeholders::_1, std::placeholders::_2, &contracts), "0x50f547e6c1fe35de4e0dd95d281ae09b64d847ee72ac730d35c84d02ad4b818a", 12);
+		TEST_BLOCK(std::bind(&block_generator::deploy_stage_2, std::placeholders::_1, std::placeholders::_2, &contracts), "0x070eab2dd13e96698ad6e7ad8a3266db369f44b4d199d19014e91b981eb5537c", 13);
+		TEST_BLOCK(std::bind(&block_generator::call_stage_1, std::placeholders::_1, std::placeholders::_2, &contracts), "0x61bc6c7ad1bfb1f9e653a50e6705e04fc5eb54e8325c16cf33b07a6263f20727", 14);
+		TEST_BLOCK(&block_generator::rollup_stage_1, "0xc44e18bebe29346985a70633c19b0e17613200de0f1560e87d5c8234e73e864a", 15);
+		TEST_BLOCK(std::bind(&block_generator::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 0, 1), "0x00d1cf499f0a94d92d1dd88da2bb4654f546b4dff11ff0302c3d0db14d15ee71", 16);
+		TEST_BLOCK_FAULTY(&block_generator::migrate_stage_1, "0xc8578eb0d6de5b7e1984bc031f5b36dce6dc571e5feefc92523bc75929085cdf", 17);
+		TEST_BLOCK(&block_generator::migrate_stage_2, "0xac8d7d5409ac5f31617b94eeea7f8bb81d109839f4198b88f4813fcb127c7366", 19);
+		TEST_BLOCK(&block_generator::migrate_stage_3, "0x699b959c6ff18d07c840e0ddd9a17824e5d3b2f4e1c983c4cc81f1210f38b390", 20);
+		TEST_BLOCK(&block_generator::migrate_stage_4, "0x098e569eb306244e19159e2f2abbd9e526aa1224c0791c231465766c18a715fd", 22);
+		TEST_BLOCK(&block_generator::withdraw_stage_1, "0x9c8d92c1240c44bafac997f043dba774666d7ea4781e6b25cbc87ddc85155a48", 24);
+		TEST_BLOCK(&block_generator::withdraw_stage_2, "0xfd8f9740cefe997ed2d4975a6be5edda6ee1a8632076844cb0bbcba2420cddb6", 26);
+		TEST_BLOCK(&block_generator::withdraw_stage_3, "0x88fb2d2af8573b0d4dc2d2497178fd0106a7ec53ca6483f71c2590aaef1f221f", 28);
+		TEST_BLOCK(&block_generator::withdraw_stage_4, "0xdd2800bb3e252d565a9a9a392dbd1144d1de55f85b7ddcdfb711a621ad5e785e", 30);
+		TEST_BLOCK(&block_generator::withdraw_stage_5, "0xf62e71419984b700bf15da26ab552a125db3efc22be12f6160f8ffe746d47b5a", 31);
+		TEST_BLOCK(&block_generator::withdraw_stage_6, "0x75da8023808df2c91f1c10f977382464d7cd49827022bd4590deb22f80212824", 32);
+		TEST_BLOCK(&block_generator::withdraw_stage_7, "0x967cb9ec1d7484323105130b75a5b0ccc85140eaf93c28af39d734dd5b45a77a", 33);
+		TEST_BLOCK(&block_generator::withdraw_stage_8, "0xaa19cd5199a31f666c7464e9e7771601dcdea51aaa60d46a068c1bbc1b7cdbc1", 34);
+		TEST_BLOCK(&block_generator::withdraw_stage_9, "0xb2ffe1edc47946c983bdd461440134ac10a6211c253f8216a4fbe4c6423f78f5", 36);
+		TEST_BLOCK(&block_generator::withdraw_stage_10, "0xff27c1bdda08551173f71a351d48c50d8b3afbe3fdb2ec4be796596425f37719", 38);
+		TEST_BLOCK(std::bind(&block_generator::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 1, 0), "0x063f61d4f398404ecdfece2102c4bf63f615dee2a229af15b3211da0148be0ef", 40);
+		TEST_BLOCK_FALLBACK(&block_generator::production_stage_1, "0x7f71fbdd8037683dc33c94cb1dc0982e22bad64e1ca2863b1f5d13d9f5b38657", 41);
+		TEST_BLOCK(&block_generator::production_stage_2, "0xea398914b4309ee86c9d19dc76d444485c02b7dd7acc00dcc883d877c5926815", 42);
+		if (userdata != nullptr)
+			*userdata = std::move(users);
+		else
+			console::get()->write_line(data->as_json(true));
+	});
+}
+/* blockchain containing setup transactions for p2p testing (zero balance accounts, valid regtest chain) */
+static void test_blockchain_bridge_coverage(vector<block_account>* userdata)
+{
+	new_chain_state([&]()
+	{
+		vector<block_account> users;
+		for (size_t i = 0; i < kernel::params().policy.participation.min_per_account + 2; i++)
+			users.push_back(block_account(ledger::wallet::from_seed(stringify::text("00000%i", (int)i)), 0));
+
+		format::tree results;
+		format::tree* data = userdata ? nullptr : &results;
+		TEST_BLOCK(&block_generator::setup_stage_2, "0xa704968f959fd9432dbaf662eeefadcc0cb7acf6a0e58e62d9680a1580918596", 1);
+		TEST_BLOCK(&block_generator::route_stage_4, "0xa97b62b93217d48ee3b6f5233746d07362eaab7a3bbbcf7cfc288e135b8dc28d", 2);
+		if (userdata != nullptr)
+			*userdata = std::move(users);
+		else
+			console::get()->write_line(data->as_json(true));
+	});
+}
+/* blockchain containing some transaction types (non-zero balance accounts, valid regtest chain) */
+static void test_blockchain_partial_coverage(vector<block_account>* userdata)
+{
+	new_chain_state([&]()
+	{
+		vector<block_account> users;
+		for (size_t i = 0; i < kernel::params().policy.participation.min_per_account + 1; i++)
+			users.push_back(block_account(ledger::wallet::from_seed(stringify::text("00000%i", (int)i)), 0));
+
+		format::tree results;
+		format::tree* data = userdata ? nullptr : &results;
+		TEST_BLOCK(&block_generator::setup_stage_0, "0x723017f46bb8f47c72020a104fe4fa66086dae7fd9f79ce048e73bd5be5c877c", 1);
+		TEST_BLOCK(&block_generator::route_stage_0, "0xfdc09ff9e80bddb1876b496123b59168fd8091d897e674e804a4fc7ffcde2147", 2);
+		TEST_BLOCK(&block_generator::attestate_stage_0, "0xce89e424fe4bff581354b625e160f349a559517f1369b5465c1353562794a10b", 4);
+		TEST_BLOCK(std::bind(&block_generator::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), "tcrt1x00g22stp0qcprrxra7x2pz2au33armtfc50460", 5), "0xc0d0b42d1b90e908e5fed6066ce55a870b07a980cafa5231f354477d46a13412", 5);
+		TEST_BLOCK(std::bind(&block_generator::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("ETH", "tBTC", "0x18084fbA666a33d37592fA2633fD49a74DD93a88"), "tcrt1x00g22stp0qcprrxra7x2pz2au33armtfc50460", 5), "0x04382f1e432f42de8aac2cd0a693220dfc8508b6bdfa769e6f6811322babab15", 6);
+		TEST_BLOCK(std::bind(&block_generator::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("ETH", "USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7"), "tcrt1x00g22stp0qcprrxra7x2pz2au33armtfc50460", 300000), "0xf8bc3461137f4c4a30b508ce792cd902bb405ade806a2b87bc4933ca808f2759", 7);
+		TEST_BLOCK(std::bind(&block_generator::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("TRX", "USDT", "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"), "tcrt1x00g22stp0qcprrxra7x2pz2au33armtfc50460", 200000), "0xb8944eff5644dcf0b5d21a1730d087fd907e4ede4a20f0fa9a6f7e06be61002e", 8);
+		TEST_BLOCK(std::bind(&block_generator::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), "tcrt1xu0k7jd2hsv2x5h80tcslpk3n0kvzzw5kup6vng", 5), "0x90db7890f5be85562eb74aac69fc67c1ba2c080ef36b036341b9d96cc0b2ea28", 9);
+		TEST_BLOCK(std::bind(&block_generator::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("ETH", "tBTC", "0x18084fbA666a33d37592fA2633fD49a74DD93a88"), "tcrt1xu0k7jd2hsv2x5h80tcslpk3n0kvzzw5kup6vng", 5), "0x1268d07fcf91422029c5a4c555bfe34c28c7b4570e060138a16863f670765b04", 10);
+		TEST_BLOCK(std::bind(&block_generator::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("ETH", "USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7"), "tcrt1xu0k7jd2hsv2x5h80tcslpk3n0kvzzw5kup6vng", 300000), "0xe8671f7c9e24bfa6d594ee8ed5266ff321c890e3b93f3a15c34bd71ab68de29e", 11);
+		TEST_BLOCK(std::bind(&block_generator::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("TRX", "USDT", "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"), "tcrt1xu0k7jd2hsv2x5h80tcslpk3n0kvzzw5kup6vng", 200000), "0x840358604c0197da18fbff1b7ac91842f8d5f12ceae856ce7f5fb9493c02abf1", 12);
+		if (userdata != nullptr)
+			*userdata = std::move(users);
+		else
+			console::get()->write_line(data->as_json(true));
+	});
+}
+/* blockchain exclusively for testing bridges of specific networks (possibly non-zero balance accounts, valid regtest chain) */
+static void test_blockchain_integration_coverage(const algorithm::asset_id& asset, const std::string_view& url, const std::string_view& deposit_account, const std::string_view& withdraw_account, const decimal& deposit_value, const decimal& bridge_fee, std::function<uint64_t()>&& new_block, std::function<void(const std::string_view&, const std::string_view&, const algorithm::asset_id&, const decimal&)>&& new_transaction)
+{
+	new_chain_state([&]()
+	{
+		vector<block_account> producers;
+		for (size_t i = 0; i < kernel::params().policy.participation.max_per_account; i++)
+			producers.push_back(block_account(ledger::wallet::from_seed(stringify::text("00000%i", (int)i)), 0));
+
+		auto new_block_from_one = [](format::tree * results, vector<block_account>&users, uptr<ledger::transaction_message> && transaction, block_type type) -> ledger::block_body
+		{
+			auto transactions = vector<uptr<ledger::transaction_message>>();
+			transactions.push_back(std::move(transaction));
+			return new_block_from_list(results, users, std::move(transactions), type);
+		};
+		auto native_asset = algorithm::asset::base_id_of(asset);
+		auto* term = console::get();
+		auto& [user1, user1_nonce] = producers[0];
+		auto& [user2, user2_nonce] = producers[1];
+		auto& [user3, user3_nonce] = producers[2];
+		auto* setup = memory::init<transactions::setup>();
+		setup->asset = native_asset;
+		setup->allocate_production_stake(decimal::zero());
+		setup->allocate_attestation_stake(native_asset, decimal::zero(), 0);
+		setup->allocate_bridge(native_asset, (uint8_t)kernel::params().policy.participation.min_per_account, bridge_fee);
+		setup->allocate_participation_stake(decimal::zero());
+		setup->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
+		new_block_from_one(nullptr, producers, setup, block_type::normal);
+
+		for (size_t i = 3; i < producers.size(); i++)
+		{
+			auto& [user, user_nonce] = producers[i];
+			setup = memory::init<transactions::setup>();
+			setup->asset = native_asset;
+			setup->allocate_attestation_stake(native_asset, decimal::zero(), 0);
+			setup->allocate_participation_stake(decimal::zero());
+			setup->sign(user.secret_key, user_nonce++, decimal::zero()).expect("pre-validation failed");
+			new_block_from_one(nullptr, producers, setup, block_type::normal);
+		}
+
+		auto executor = ledger::executor_context(nullptr);
+		auto bridge_instance = executor.get_bridge_instances(native_asset, 0, 1)->front();
+		auto* bridge_account = memory::init<transactions::route>();
+		bridge_account->asset = native_asset;
+		bridge_account->set_bridge_hash(bridge_instance.ref.hash);
+		bridge_account->solve_pow_challenge(user1.public_key_hash, user1_nonce, 0);
+		bridge_account->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
+		new_block_from_one(nullptr, producers, bridge_account, block_type::normal);
+
+		auto& config = kernel::mparams();
+		config.user.superchain.listener = true;
+
+		auto* offchain = superchain::bridge::get();
+		auto params = (superchain::translation_unit::chainparams*)offchain->get_network_params(native_asset);
+		kernel::mparams().user.superchain.polling_frequency = 3000;
+		offchain->add_network_connection(native_asset, url, std::string_view(), { }, 5.0);
+		offchain->network_active = []() -> bool { return schedule::get()->is_active(); };
+		offchain->network_fetch = [](const algorithm::asset_id&, const std::string_view& location, const std::string_view& method, const http::fetch_frame& options) -> expects_promise_system<http::response_frame>
+		{
+			return http::fetch(location, method, options);
+		};
+
+		auto receive_transaction = [&]()
+		{
+			bool awaiting_transaction = true;
+			while (awaiting_transaction)
 			{
-				result->set("status", format::variable("block validation test failed"));
-				result->set("detail", format::variable(validation.error().message()));
+				uint64_t block_number = new_block();
+				term->fwrite_line("trying block %" PRIu64, block_number);
+				offchain->scan_from_block_height(native_asset, (block_number > 0 ? block_number - 1 : 0) + params->sync_latency);
+				auto result = coasync<expects_rt<vector<superchain::transaction_logs>>>([&]() -> expects_promise_rt<vector<superchain::transaction_logs>>
+				{
+					coreturn coawait(offchain->link_transactions(native_asset));
+				}).get();
+				if (!result)
+				{
+					term->fwrite_line("transaction(s) not found; retrying", block_number);
+					continue;
+				}
+
+				for (auto& logs : *result)
+				{
+					auto transactions = vector<uptr<ledger::transaction_message>>();
+					logs.report_logs(native_asset, offchain->get_network_instance(native_asset)->options, 0);
+					for (auto& receipt : logs.receipts)
+					{
+						auto* transaction = memory::init<transactions::attestate>();
+						transaction->asset = native_asset;
+						transaction->set_computed_proof(receipt.as_proof_hash(native_asset), std::move(receipt), { });
+						transactions.push_back(transaction);
+					}
+
+					if (!transactions.empty())
+					{
+						new_block_from_list(nullptr, producers, std::move(transactions), block_type::normal);
+						awaiting_transaction = false;
+					}
+				}
+			}
+			term->write_line("transaction(s) found; continuing");
+		};
+
+		bridge_account = memory::init<transactions::route>();
+		bridge_account->asset = native_asset;
+		bridge_account->set_routing_address(deposit_account);
+		bridge_account->set_bridge_hash(bridge_instance.ref.hash);
+		bridge_account->solve_pow_challenge(user3.public_key_hash, user3_nonce, 0);
+		bridge_account->sign(user3.secret_key, user3_nonce++, decimal::zero()).expect("pre-validation failed");
+		new_block_from_one(nullptr, producers, bridge_account, block_type::normal);
+
+		size_t deposits = 0;
+		auto accounts = *executor.get_witness_accounts_by_purpose(params->routing == superchain::routing_policy::account ? user1.public_key_hash : user3.public_key_hash, states::witness_account::account_type::bridge, 0, 128);
+		for (auto& account : accounts)
+		{
+			if (account.ref.hash == bridge_instance.ref.hash)
+			{
+				for (auto& [type, to_account] : account.addresses)
+				{
+					if (native_asset != asset)
+					{
+						new_transaction(deposit_account, to_account, native_asset, deposit_value);
+						receive_transaction();
+					}
+					new_transaction(deposit_account, to_account, asset, deposit_value);
+					receive_transaction();
+					++deposits;
+				}
+			}
+		}
+
+		VI_PANIC(deposits > 0, "deposit address generation failed");
+		auto expected_balance = deposit_value * deposits;
+		auto native_balance = executor.get_account_balance(native_asset, user3.public_key_hash).expect("native balance mismatch").get_balance();
+		VI_PANIC(native_asset == asset || native_balance >= expected_balance, "actual native balance is expected to be >=%s but is %s", expected_balance.to_string().c_str(), native_balance.to_string().c_str());
+
+		auto balance = executor.get_account_balance(asset, user3.public_key_hash).expect("balance mismatch").get_balance();
+		VI_PANIC(balance >= expected_balance, "actual balance is expected to be >=%s but is %s", expected_balance.to_string().c_str(), balance.to_string().c_str());
+
+		auto withdrawal_value = native_asset == asset ? balance - bridge_fee : balance;
+		term->write_line("outgoing transaction integration:");
+		term->fwrite_line(" - withdraw %s into %.*s", withdrawal_value.to_string().c_str(), (int)withdraw_account.size(), withdraw_account.data());
+
+		auto* withdraw = memory::init<transactions::withdraw>();
+		withdraw->asset = asset;
+		withdraw->set_routing_target(withdraw_account, withdrawal_value);
+		withdraw->set_bridge_hash(bridge_instance.ref.hash);
+		withdraw->sign(user3.secret_key, user3_nonce++, decimal::zero()).expect("pre-validation failed");
+		new_block_from_one(nullptr, producers, withdraw, block_type::normal);
+
+		auto chain = storages::chainstate();
+		auto confirmation_block = chain.get_latest_block();
+		VI_PANIC(confirmation_block && !confirmation_block->transactions.empty(), "blocks with withdrawal confirmation were not found");
+
+		auto& confirmation = confirmation_block->transactions.front();
+		VI_PANIC(confirmation.transaction->as_type() == transactions::broadcast::as_instance_type(), "no withdrawal confirmation");
+
+		auto* confirmation_event = confirmation.receipt.find_event<transactions::broadcast>();
+		auto* confirmation_transaction = (transactions::broadcast*)*confirmation.transaction;
+		VI_PANIC(confirmation_transaction->proof && !confirmation_event, "withdrawal confirmation failed: %s", confirmation_event ? (confirmation_event->args.empty() ? "unknown error" : confirmation_event->args.front().as_blob().c_str()) : confirmation_transaction->proof.what().c_str());
+		term->fwrite_line(" - block required for transaction %s", confirmation_transaction->proof->hashdata.c_str());
+		receive_transaction();
+
+		if (native_asset != asset)
+		{
+			auto target_balance = native_balance - bridge_fee;
+			auto actual_balance = executor.get_account_balance(native_asset, user3.public_key_hash).or_else(states::account_balance(user3.public_key_hash, asset, nullptr)).get_balance();
+			VI_PANIC(actual_balance >= target_balance, "actual balance is expected to be %s but is %s", target_balance.to_string().c_str(), actual_balance.to_string().c_str());
+		}
+
+		auto target_balance = native_asset == asset ? (balance - withdrawal_value - bridge_fee) : (balance - withdrawal_value);
+		auto actual_balance = executor.get_account_balance(asset, user3.public_key_hash).or_else(states::account_balance(user3.public_key_hash, asset, nullptr)).get_balance();
+		VI_PANIC(actual_balance >= target_balance, "actual balance is expected to be %s but is %s", target_balance.to_string().c_str(), actual_balance.to_string().c_str());
+	});
+}
+/* verify current blockchain */
+static void test_blockchain_verification()
+{
+	auto* term = console::get();
+	auto chain = storages::chainstate();
+	VI_PANIC(!chain.get_checkpoint_block_number().or_else(0), "blockchain cannot be validated without re-executing entire blockchain");
+		
+	uint64_t current_number = 1;
+	format::tree data = format::tree::list();
+	auto solver = ledger::solver_context();
+	auto parent_block = chain.get_block_header_by_number(current_number > 0 ? current_number - 1 : 0);
+	while (true)
+	{
+		auto next = chain.get_block_by_number(current_number++);
+		if (!next)
+			break;
+
+		auto* result = data.push(format::tree::map());
+		result->set("block_number", algorithm::encoding::serialize_uint256(next->number));
+		result->set("block_hash", format::variable(algorithm::encoding::encode_0xhex256(next->as_hash())));
+
+		ledger::block_evaluation evaluation;
+		auto validation = ledger::solver_context::validate_solved_block(solver, parent_block.address(), *next, &evaluation);
+		if (!validation)
+		{
+			result->set("status", format::variable("block validation test failed"));
+			result->set("detail", format::variable(validation.error().message()));
+			term->write_line(data.as_json(true));
+			VI_PANIC(false, "block verification failed");
+		}
+
+		auto proof = next->as_proof(parent_block.address(), &evaluation.state);
+		if (next->transaction_root != proof.transaction_tree.root())
+		{
+			term->write_line(data.as_json(true));
+			VI_PANIC(false, "block verification failed - transaction merkle root deviation");
+		}
+
+		if (next->receipt_root != proof.receipt_tree.root())
+		{
+			term->write_line(data.as_json(true));
+			VI_PANIC(false, "block verification failed - receipt merkle root deviation");
+		}
+
+		if (next->state_root != proof.state_tree.root())
+		{
+			term->write_line(data.as_json(true));
+			VI_PANIC(false, "block verification failed - state merkle root deviation");
+		}
+
+		for (auto& tx : next->transactions)
+		{
+			if (!proof.has_transaction(tx.receipt.transaction_hash))
+			{
+				result->set("transaction_hash", format::variable(algorithm::encoding::encode_0xhex256(tx.receipt.transaction_hash)));
+				result->set("status", format::variable("transaction merkle test failed"));
 				term->write_line(data.as_json(true));
 				VI_PANIC(false, "block verification failed");
 			}
-
-			auto proof = next->as_proof(parent_block.address(), &evaluation.state);
-			if (next->transaction_root != proof.transaction_tree.root())
+			else if (!proof.has_receipt(tx.receipt.as_hash()))
 			{
+				result->set("transaction_hash", format::variable(algorithm::encoding::encode_0xhex256(tx.receipt.transaction_hash)));
+				result->set("status", format::variable("receipt merkle test failed"));
 				term->write_line(data.as_json(true));
-				VI_PANIC(false, "block verification failed - transaction merkle root deviation");
-			}
-
-			if (next->receipt_root != proof.receipt_tree.root())
-			{
-				term->write_line(data.as_json(true));
-				VI_PANIC(false, "block verification failed - receipt merkle root deviation");
-			}
-
-			if (next->state_root != proof.state_tree.root())
-			{
-				term->write_line(data.as_json(true));
-				VI_PANIC(false, "block verification failed - state merkle root deviation");
-			}
-
-			for (auto& tx : next->transactions)
-			{
-				if (!proof.has_transaction(tx.receipt.transaction_hash))
-				{
-					result->set("transaction_hash", format::variable(algorithm::encoding::encode_0xhex256(tx.receipt.transaction_hash)));
-					result->set("status", format::variable("transaction merkle test failed"));
-					term->write_line(data.as_json(true));
-					VI_PANIC(false, "block verification failed");
-				}
-				else if (!proof.has_receipt(tx.receipt.as_hash()))
-				{
-					result->set("transaction_hash", format::variable(algorithm::encoding::encode_0xhex256(tx.receipt.transaction_hash)));
-					result->set("status", format::variable("receipt merkle test failed"));
-					term->write_line(data.as_json(true));
-					VI_PANIC(false, "block verification failed");
-				}
-			}
-
-			size_t state_index = 0;
-			for (auto& [index, change] : evaluation.state)
-			{
-				uint256_t hash = change.state->as_hash();
-				if (!proof.has_state(hash))
-				{
-					result->set("state_hash", format::variable(algorithm::encoding::encode_0xhex256(hash)));
-					result->set("status", format::variable("state merkle test failed"));
-					term->write_line(data.as_json(true));
-					VI_PANIC(false, "block verification failed");
-				}
-			}
-
-			result->set("status", format::variable("passed"));
-			parent_block = *next;
-			if (data.childs().size() > 32)
-			{
-				term->write_line(data.as_json(true));
-				data.childs().clear();
+				VI_PANIC(false, "block verification failed");
 			}
 		}
-		term->write_line(data.as_json(true));
+
+		size_t state_index = 0;
+		for (auto& [index, change] : evaluation.state)
+		{
+			uint256_t hash = change.state->as_hash();
+			if (!proof.has_state(hash))
+			{
+				result->set("state_hash", format::variable(algorithm::encoding::encode_0xhex256(hash)));
+				result->set("status", format::variable("state merkle test failed"));
+				term->write_line(data.as_json(true));
+				VI_PANIC(false, "block verification failed");
+			}
+		}
+
+		result->set("status", format::variable("passed"));
+		parent_block = *next;
+		if (data.childs().size() > 32)
+		{
+			term->write_line(data.as_json(true));
+			data.childs().clear();
+		}
 	}
-	/* gas estimation */
-	static void blockchain_gas_estimation()
-	{
-		auto* term = console::get();
-		term->capture_time();
+	term->write_line(data.as_json(true));
+}
+/* gas estimation */
+static void test_blockchain_gas_estimation()
+{
+	auto* term = console::get();
+	term->capture_time();
 
-		algorithm::seckey_t from;
-		crypto::fill_random_bytes(from.blob, sizeof(from));
+	algorithm::seckey_t from;
+	crypto::fill_random_bytes(from.blob, sizeof(from));
 
-		algorithm::pubkeyhash_t to;
-		crypto::fill_random_bytes(to.blob, sizeof(to));
+	algorithm::pubkeyhash_t to;
+	crypto::fill_random_bytes(to.blob, sizeof(to));
 
-		auto transaction = transactions::setup();
-		transaction.allocate_production_stake(decimal::zero());
-		transaction.allocate_attestation_stake(algorithm::asset::id_of("ETH"), decimal::zero(), 0.0001);
-		transaction.allocate_attestation_stake(algorithm::asset::id_of("XRP"), decimal::zero(), 1.0);
-		transaction.allocate_attestation_stake(algorithm::asset::id_of("BTC"), decimal::zero(), 0.00005);
-		transaction.allocate_participation_stake(decimal::zero());
-		VI_PANIC(transaction.sign(from, 1, decimal::zero()), "setup not signed");
+	auto transaction = transactions::setup();
+	transaction.allocate_production_stake(decimal::zero());
+	transaction.allocate_attestation_stake(algorithm::asset::id_of("ETH"), decimal::zero(), 0.0001);
+	transaction.allocate_attestation_stake(algorithm::asset::id_of("XRP"), decimal::zero(), 1.0);
+	transaction.allocate_attestation_stake(algorithm::asset::id_of("BTC"), decimal::zero(), 0.00005);
+	transaction.allocate_participation_stake(decimal::zero());
+	VI_PANIC(transaction.sign(from, 1, decimal::zero()), "setup not signed");
 
-		format::tree data = format::tree::map();
-		data.set("setup_transaction_gas_limit", algorithm::encoding::serialize_uint256(transaction.gas_limit));
-		data.set("block_gas_limit", algorithm::encoding::serialize_uint256(ledger::block_body::get_gas_limit()));
-		data.set("slot_gas_limit", algorithm::encoding::serialize_uint256(ledger::block_body::get_slot_gas_limit()));
-		term->write_line(data.as_json(true));
-	}
-};
+	format::tree data = format::tree::map();
+	data.set("setup_transaction_gas_limit", algorithm::encoding::serialize_uint256(transaction.gas_limit));
+	data.set("block_gas_limit", algorithm::encoding::serialize_uint256(ledger::block_body::get_gas_limit()));
+	data.set("slot_gas_limit", algorithm::encoding::serialize_uint256(ledger::block_body::get_slot_gas_limit()));
+	term->write_line(data.as_json(true));
+}
 
 int main(int argc, char* argv[])
 {
@@ -2425,17 +2437,17 @@ int main(int argc, char* argv[])
 		auto* queue = schedule::get();
 		queue->start(schedule::desc());
 
-		vector<account_ref> users;
-		tests::blockchain_partial_coverage(&users);
+		vector<block_account> users;
+		test_blockchain_partial_coverage(&users);
 		const size_t block_count = 2048;
 		const decimal starting_account_balance = decimal(500).truncate(12);
 		auto transactions_mutex = std::mutex();
 		auto transactions_queue = single_queue<vector<uptr<ledger::transaction_message>>>();
-		auto checkpoint = [&](vector<uptr<ledger::transaction_message>>&& transactions, vector<account_ref>& users)
+		auto checkpoint = [&](vector<uptr<ledger::transaction_message>>&& transactions, vector<block_account>& users)
 		{
 			static uint64_t cumulative_transaction_count = 0, cumulative_transition_count = 0;
 			auto cumulative_query_count = (uint64_t)ledger::storage_util::get_thread_invocations(); term->capture_time();
-			auto block = tester::new_block_from_list(nullptr, users, std::move(transactions), tester::block_type::normal);
+			auto block = new_block_from_list(nullptr, users, std::move(transactions), block_type::normal);
 			auto time = term->get_captured_time();
 			auto hash = algorithm::encoding::encode_0xhex256(block.as_hash());
 			cumulative_transaction_count += block.transaction_count;
@@ -2547,15 +2559,15 @@ int main(int argc, char* argv[])
 			genesis.push_back(attestation);
 			checkpoint(std::move(genesis), users);
 
-			vector<account_ref> senders;
+			vector<block_account> senders;
 			senders.reserve(sender_count);
 			for (size_t i = 0; i < sender_count; i++)
-				senders.emplace_back(account_ref(ledger::wallet::from_seed(stringify::text("00001%i", (int)i)), 0));
+				senders.emplace_back(block_account(ledger::wallet::from_seed(stringify::text("00001%i", (int)i)), 0));
 
-			vector<account_ref> receivers;
+			vector<block_account> receivers;
 			receivers.reserve(receiver_count);
 			for (size_t i = 0; i < receiver_count; i++)
-				receivers.emplace_back(account_ref(ledger::wallet::from_seed(stringify::text("00002%i", (int)i)), 0));
+				receivers.emplace_back(block_account(ledger::wallet::from_seed(stringify::text("00002%i", (int)i)), 0));
 
 			auto* transfer = memory::init<transactions::transfer>();
 			transfer->set_asset("BTC");
@@ -2611,10 +2623,10 @@ int main(int argc, char* argv[])
 			genesis.push_back(attestation);
 			checkpoint(std::move(genesis), users);
 
-			vector<account_ref> senders;
+			vector<block_account> senders;
 			senders.reserve(sender_count);
 			for (size_t i = 0; i < sender_count; i++)
-				senders.emplace_back(account_ref({ ledger::wallet::from_seed(stringify::text("00001%i", (int)i)), 0 }));
+				senders.emplace_back(block_account({ ledger::wallet::from_seed(stringify::text("00001%i", (int)i)), 0 }));
 
 			auto* transfer = memory::init<transactions::transfer>();
 			transfer->set_asset("BTC");
@@ -2673,26 +2685,26 @@ int main(int argc, char* argv[])
 		size_t executions = 0;
 		vector<std::pair<std::string_view, std::function<void()>>> cases =
 		{
-			{ "generic / integer serialization", &tests::generic_integer_serialization },
-			{ "generic / integer conversion", &tests::generic_integer_conversion },
-			{ "generic / message serialization", &tests::generic_message_serialization },
-			{ "cryptography / pow 256bit", &tests::cryptography_pow256 },
-			{ "cryptography / wesolowski 2048bit", &tests::cryptography_wesolowski },
-			{ "cryptography / signatures", &tests::cryptography_signatures },
-			{ "cryptography / wallet", &tests::cryptography_wallet },
-			{ "cryptography / wallet encryption", &tests::cryptography_wallet_encryption },
-			{ "cryptography / transaction", &tests::cryptography_transaction },
-			{ "cryptography / merkle tree", &tests::cryptography_merkle_tree },
-			{ "cryptography / multichain wallet", &tests::cryptography_multichain_wallet },
-			{ "cryptography / multichain mpc", &tests::cryptography_multichain_mpc },
-			{ "cryptography / multichain transaction", &tests::cryptography_multichain_transaction },
-			{ "blockchain / full coverage", std::bind(&tests::blockchain_full_coverage, (vector<account_ref>*)nullptr) },
-			{ "blockchain / verification", &tests::blockchain_verification },
-			{ "blockchain / bridge coverage", std::bind(&tests::blockchain_bridge_coverage, (vector<account_ref>*)nullptr) },
-			{ "blockchain / verification", &tests::blockchain_verification },
-			{ "blockchain / partial coverage", std::bind(&tests::blockchain_partial_coverage, (vector<account_ref>*)nullptr) },
-			{ "blockchain / verification", &tests::blockchain_verification },
-			{ "blockchain / gas estimation", &tests::blockchain_gas_estimation }
+			{ "generic / integer serialization", &test_generic_integer_serialization },
+			{ "generic / integer conversion", &test_generic_integer_conversion },
+			{ "generic / message serialization", &test_generic_message_serialization },
+			{ "cryptography / pow 256bit", &test_cryptography_pow256 },
+			{ "cryptography / wesolowski 2048bit", &test_cryptography_wesolowski },
+			{ "cryptography / signatures", &test_cryptography_signatures },
+			{ "cryptography / wallet", &test_cryptography_wallet },
+			{ "cryptography / wallet encryption", &test_cryptography_wallet_encryption },
+			{ "cryptography / transaction", &test_cryptography_transaction },
+			{ "cryptography / merkle tree", &test_cryptography_merkle_tree },
+			{ "cryptography / multichain wallet", &test_cryptography_multichain_wallet },
+			{ "cryptography / multichain mpc", &test_cryptography_multichain_mpc },
+			{ "cryptography / multichain transaction", &test_cryptography_multichain_transaction },
+			{ "blockchain / full coverage", std::bind(&test_blockchain_full_coverage, (vector<block_account>*)nullptr) },
+			{ "blockchain / verification", &test_blockchain_verification },
+			{ "blockchain / bridge coverage", std::bind(&test_blockchain_bridge_coverage, (vector<block_account>*)nullptr) },
+			{ "blockchain / verification", &test_blockchain_verification },
+			//{ "blockchain / partial coverage", std::bind(&test_blockchain_partial_coverage, (vector<block_account>*)nullptr) },
+			{ "blockchain / verification", &test_blockchain_verification },
+			{ "blockchain / gas estimation", &test_blockchain_gas_estimation }
 		};
 
 		for (size_t i = 0; i < cases.size(); i++)
@@ -2738,7 +2750,7 @@ int main(int argc, char* argv[])
 		VI_PANIC(amount.is_positive(), "amount should be positive");
 		VI_PANIC(fee.is_positive(), "fee should be positive");
 
-		tests::blockchain_integration_coverage(algorithm::asset::id_of(network, token, contract), url, from_address, to_address, amount, fee, [&]()
+		test_blockchain_integration_coverage(algorithm::asset::id_of(network, token, contract), url, from_address, to_address, amount, fee, [&]()
 		{
 			term->write("block number with tx: ");
 			return from_string<uint64_t>(term->read(128)).expect("failed to parse the block number");
