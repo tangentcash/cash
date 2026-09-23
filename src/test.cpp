@@ -2702,7 +2702,7 @@ int main(int argc, char* argv[])
 			{ "blockchain / verification", &test_blockchain_verification },
 			{ "blockchain / bridge coverage", std::bind(&test_blockchain_bridge_coverage, (vector<block_account>*)nullptr) },
 			{ "blockchain / verification", &test_blockchain_verification },
-			//{ "blockchain / partial coverage", std::bind(&test_blockchain_partial_coverage, (vector<block_account>*)nullptr) },
+			{ "blockchain / partial coverage", std::bind(&test_blockchain_partial_coverage, (vector<block_account>*)nullptr) },
 			{ "blockchain / verification", &test_blockchain_verification },
 			{ "blockchain / gas estimation", &test_blockchain_gas_estimation }
 		};
