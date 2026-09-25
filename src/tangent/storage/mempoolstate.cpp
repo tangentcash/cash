@@ -719,18 +719,6 @@ namespace tangent
 		}
 		expects_lr<void> mempoolstate::add_transaction(const ledger::transaction_message& value, bool bypass_cooldown)
 		{
-			uint8_t hash[32];
-			value.as_hash().encode(hash);
-			if (!bypass_cooldown)
-			{
-				schema_list map;
-				map.push_back(var::set::binary(hash, sizeof(hash)));
-
-				auto cursor = get_peer_storage().emplace_query(__func__, "SELECT TRUE FROM observations WHERE hash = ?", &map);
-				if (cursor && !cursor->error_or_empty())
-					return layer_exception("finality conflict");
-			}
-
 			format::wo_stream message;
 			if (!value.store(&message))
 				return layer_exception("transaction serialization error");
@@ -753,11 +741,13 @@ namespace tangent
 			else
 				quality = -((int64_t)commitment_priority);
 
-			uint8_t asset[32], other_hash[32];
+			uint8_t asset[32], hash[32], other_hash[32];
 			value.asset.encode(asset);
+			value.as_hash().encode(hash);
 			commitment_hash.encode(other_hash);
 
 			schema_list map;
+			map.push_back(var::set::string(bypass_cooldown ? string() : string(" OR REPLACE")));
 			map.push_back(var::set::binary(hash, sizeof(hash)));
 			map.push_back(var::set::integer(kernel::params().time.now_cpu() + TRANSACTION_EXPIRATION + OBSERVATION_EXPIRATION));
 			map.push_back(var::set::binary(hash, sizeof(hash)));
@@ -772,7 +762,7 @@ namespace tangent
 			map.push_back(var::set::binary(owner.view()));
 
 			auto cursor = get_peer_storage().emplace_query(__func__,
-				"INSERT OR REPLACE INTO observations (hash, time) VALUES (?, ?);"
+				"INSERT$? INTO observations (hash, time) VALUES (?, ?);"
 				"INSERT OR REPLACE INTO transactions (hash, commitment_hash, owner, asset, nonce, quality, time, price, message) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);"
 				"WITH epochs AS (SELECT rowid, ROW_NUMBER() OVER (ORDER BY nonce) AS epoch FROM transactions WHERE owner = ?) UPDATE transactions SET epoch = epochs.epoch FROM epochs WHERE transactions.rowid = epochs.rowid", &map);
 			if (!cursor || cursor->error())
@@ -813,7 +803,7 @@ namespace tangent
 			map.push_back(var::set::string(*sqlite::utils::inline_array(std::move(hash_list))));
 
 			auto cursor = get_peer_storage().emplace_query(__func__,
-				"WITH hashes AS (SELECT c.hash FROM transactions p INNER JOIN transactions c ON c.owner = p.owner WHERE p.hash IN ($?) AND c.nonce <= p.nonce) "
+				"WITH hashes AS MATERIALIZED (SELECT c.hash FROM transactions p JOIN transactions c ON c.owner = p.owner WHERE p.hash IN ($?) AND c.nonce <= p.nonce) "
 				"DELETE FROM transactions WHERE hash IN (SELECT hash FROM hashes)", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));

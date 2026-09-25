@@ -408,31 +408,15 @@ namespace tangent
 					if (executor->receipt.from == callable)
 						return layer_exception("invalid payment");
 
+					auto balance_in = executor->get_account_balance_delta(paying_asset, executor->receipt.from);
 					auto balance_out = executor->get_account_balance(paying_asset, executor->receipt.from).or_else(states::account_balance(executor->receipt.from, paying_asset, executor->block));
-					auto balance_in = balance_out;
-					for (auto& event_args : executor->receipt.find_events<states::account_balance>())
-					{
-						auto& args = event_args->args;
-						if (args.size() != 4 || args[0].as_uint256() != paying_asset || !args[1].is_string())
-							continue;
+					balance_in.supply += balance_out.supply;
+					balance_in.reserve += balance_out.reserve;
 
-						bool spender = args[1].as_string() == executor->receipt.from.view();
-						if (spender && args[2].is_decimal() && args[3].is_decimal())
-						{
-							balance_in.supply -= args[2].as_decimal();
-							balance_in.reserve -= args[3].as_decimal();
-						}
-						else if (spender && args[2].is_decimal() && args[3].is_boolean() && !args[3].as_boolean())
-							balance_in.supply += args[2].as_decimal();
-						else if (args[2].is_string() && (spender || args[2].as_string() == executor->receipt.from.view()) && args[3].is_decimal())
-							balance_in.supply -= spender ? -args[3].as_decimal() : args[3].as_decimal();
-					}
-
-					auto available_value = std::max(balance_out.get_balance() - balance_in.get_balance(), decimal::zero());
-					if (!available_value.is_positive())
+					auto capped_value = std::min(paying_value, std::max(balance_out.get_balance() - balance_in.get_balance(), decimal::zero()));
+					if (!capped_value.is_positive())
 						continue;
 
-					auto& capped_value = std::min(paying_value, available_value);
 					auto payment = executor->apply_payment(paying_asset, executor->receipt.from, callable, capped_value);
 					if (!payment)
 						return payment.error();

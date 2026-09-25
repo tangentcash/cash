@@ -2028,6 +2028,16 @@ namespace tangent
 			auto mutability = p->external_mutability_of(hash, entrypoint.view());
 			return mutability.is_value();
 		}
+		decimal address_repr::balance_delta_of(const algorithm::asset_id& asset) const
+		{
+			auto* p = program::fetch_immutable_or_throw();
+			return p ? -p->executor->get_account_balance_delta(asset, hash).supply : decimal::zero();
+		}
+		decimal address_repr::reserve_delta_of(const algorithm::asset_id& asset) const
+		{
+			auto* p = program::fetch_immutable_or_throw();
+			return p ? -p->executor->get_account_balance_delta(asset, hash).reserve : decimal::zero();
+		}
 		decimal address_repr::token_balance_of(const string_repr& token) const
 		{
 			return balance_of(contract::coin_token(token));
@@ -5518,6 +5528,8 @@ namespace tangent
 			address_type->set_method_address("void pay(const payable&in) const", WRAP_MFN(address_repr, pay_all), convention::generic_call);
 			address_type->set_method_address("void mint(const string&in, const real320&in, const real320&in = real320()) const", WRAP_MFN(address_repr, mint), convention::generic_call);
 			address_type->set_method_address("void burn(const string&in, const real320&in, const real320&in = real320()) const", WRAP_MFN(address_repr, burn), convention::generic_call);
+			address_type->set_method_address("real320 balance_delta_of(const uint256&in) const", WRAP_MFN(address_repr, balance_delta_of), convention::generic_call);
+			address_type->set_method_address("real320 reserve_delta_of(const uint256&in) const", WRAP_MFN(address_repr, reserve_delta_of), convention::generic_call);
 			address_type->set_method_address("real320 token_balance_of(const string&in) const", WRAP_MFN(address_repr, token_balance_of), convention::generic_call);
 			address_type->set_method_address("real320 token_reserve_of(const string&in) const", WRAP_MFN(address_repr, token_reserve_of), convention::generic_call);
 			address_type->set_method_address("real320 balance_of(const uint256&in) const", WRAP_MFN(address_repr, balance_of), convention::generic_call);

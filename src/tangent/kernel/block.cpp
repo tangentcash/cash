@@ -2822,6 +2822,28 @@ namespace tangent
 
 			return block_number;
 		}
+		states::account_balance executor_context::get_account_balance_delta(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner) const
+		{
+			states::account_balance result = states::account_balance(owner, asset, block);
+			for (auto& event_args : receipt.find_events<states::account_balance>())
+			{
+				auto& args = event_args->args;
+				if (args.size() != 4 || args[0].as_uint256() != asset || !args[1].is_string())
+					continue;
+
+				bool spender = args[1].as_string() == owner.view();
+				if (spender && args[2].is_decimal() && args[3].is_decimal())
+				{
+					result.supply -= args[2].as_decimal();
+					result.reserve -= args[3].as_decimal();
+				}
+				else if (spender && args[2].is_decimal() && args[3].is_boolean() && !args[3].as_boolean())
+					result.supply += args[2].as_decimal();
+				else if (args[2].is_string() && (spender || args[2].as_string() == owner.view()) && args[3].is_decimal())
+					result.supply -= spender ? -args[3].as_decimal() : args[3].as_decimal();
+			}
+			return result;
+		}
 		algorithm::wesolowski::distribution executor_context::get_random(const uint256_t& seed, block_header* from_block, ledger::transaction_receipt* from_receipt)
 		{
 			auto* target_block = from_block ? from_block : block;

@@ -495,6 +495,8 @@ namespace tangent
 			void mint(const string_repr& token, const decimal& supply, const decimal& reserve);
 			void burn(const string_repr& token, const decimal& supply, const decimal& reserve);
 			bool callable(const string_repr& entrypoint) const;
+			decimal balance_delta_of(const algorithm::asset_id& asset) const;
+			decimal reserve_delta_of(const algorithm::asset_id& asset) const;
 			decimal token_balance_of(const string_repr& token) const;
 			decimal token_reserve_of(const string_repr& token) const;
 			decimal balance_of(const uint256_t& asset) const;
