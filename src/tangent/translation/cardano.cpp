@@ -399,16 +399,17 @@ namespace tangent
 
 					hash_map<algorithm::asset_id, decimal> total_token_value; decimal total_value = fee_value;
 					auto min_output_value = get_min_protocol_value_per_output(to.asset != native_asset ? 1 : 0);
+					auto to_value = this->to_value(to.value);
 					if (to.asset == native_asset)
 					{
-						total_value += to.value;
-						if (to.asset == native_asset && to.value < min_output_value)
-							return expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s (value is less than minimum required by protocol)", to.value.to_string().c_str(), min_output_value.to_string().c_str())));
+						total_value += to_value;
+						if (to.asset == native_asset && to_value < min_output_value)
+							return expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s (value is less than minimum required by protocol)", to_value.to_string().c_str(), min_output_value.to_string().c_str())));
 					}
 					else
 					{
 						auto& value = total_token_value[to.asset];
-						value = value.is_nan() ? to.value : (value + to.value);
+						value = value.is_nan() ? to_value : (value + to_value);
 						total_value += min_output_value;
 					}
 
@@ -432,12 +433,13 @@ namespace tangent
 					}
 
 					auto to_link = find_linked_addresses({ to.address });
-					auto output = coin_utxo(to_link ? std::move(to_link->begin()->second) : wallet_link::from_address(to.address), string(), (uint32_t)result.outputs.size(), to.asset == native_asset ? decimal(to.value) : std::move(min_output_value));
+					auto output = coin_utxo(to_link ? std::move(to_link->begin()->second) : wallet_link::from_address(to.address), string(), (uint32_t)result.outputs.size(), to.asset == native_asset ? decimal(to_value) : std::move(min_output_value));
 					if (to.asset != native_asset)
 					{
 						auto& change_token = change_tokens[to.asset];
-						output.apply_token_value(change_token.contract_address, change_token.symbol, to.value, change_token.decimals);
-						change_token.value -= to.value;
+						to_value.truncate(change_token.decimals);
+						output.apply_token_value(change_token.contract_address, change_token.symbol, to_value, change_token.decimals);
+						change_token.value -= to_value;
 					}
 					result.requires_output(std::move(output));
 

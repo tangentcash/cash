@@ -68,6 +68,7 @@ namespace tangent
 				public:
 					static string get_ledger(uint64_t block_height);
 					static string get_ledger_operations(uint64_t block_height, const std::string_view& cursor, uint64_t count);
+					static string get_account_transactions(const std::string_view& address, const std::string_view& cursor, uint64_t count);
 					static string get_transactions(const std::string_view& tx_id);
 					static string get_accounts(const std::string_view& address);
 					static string get_assets(const std::string_view& issuer, const std::string_view& code);
@@ -76,12 +77,18 @@ namespace tangent
 				};
 
 			protected:
+				struct
+				{
+					btree_map<uint64_t, hash_set<string>> blocks;
+					hash_set<string> accounts;
+				} linker;
 				chain_config config;
 				chainparams netdata;
 
 			public:
 				stellar(const algorithm::asset_id& new_asset, chain_config* config = nullptr) noexcept;
 				virtual ~stellar() override = default;
+				virtual expects_promise_rt<uint64_t> get_linked_block_height(uint64_t seen_block_height) override;
 				virtual expects_promise_rt<uint64_t> get_latest_block_height() override;
 				virtual expects_promise_rt<vector<block_log>> get_block_transactions(uint64_t block_height, uint64_t block_count) override;
 				virtual expects_promise_rt<computed_transaction> link_transaction(uint64_t block_height, const std::string_view& block_hash, format::tree& transaction_data) override;
@@ -107,6 +114,7 @@ namespace tangent
 				virtual expects_promise_rt<account_info> get_account_info(const std::string_view& address);
 				virtual expects_promise_rt<tx_info> get_transaction_metadata(const std::string_view& tx_id);
 				virtual expects_promise_rt<bool> is_account_exists(const std::string_view& address);
+				virtual option<uint64_t> get_unseen_slot(uint64_t target_block_height);
 				virtual string get_network_passphrase();
 				virtual decimal from_stroop(const uint256_t& value);
 				virtual uint256_t to_stroop(const decimal& value);

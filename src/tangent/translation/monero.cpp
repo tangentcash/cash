@@ -513,7 +513,8 @@ namespace tangent
 					if (fee_value > max_fee)
 						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
 
-					decimal total_value = to.value + fee_value;
+					auto to_value = this->to_value(to.value);
+					auto total_value = to_value + fee_value;
 					auto possible_inputs = calculate_utxo(from_link, balance_query(total_value, { }), true);
 					decimal input_value = possible_inputs ? get_utxo_value(*possible_inputs, optional::none) : 0.0;
 					if (!possible_inputs || possible_inputs->empty())
@@ -603,7 +604,7 @@ namespace tangent
 						return option<unsigned_transaction::tx_out>(std::move(vout));
 					};
 					auto change_value = input_value - total_value;
-					auto main_output = make_vout(0, *to_public_spend_view_key, to.value);
+					auto main_output = make_vout(0, *to_public_spend_view_key, to_value);
 					auto change_output = make_vout(1, *change_public_spend_view_key, change_value);
 					if (!main_output)
 						coreturn expects_rt<prepared_transaction>(remote_exception("failed to build the main output"));
@@ -729,7 +730,7 @@ namespace tangent
 						seeder.nonce = (uint64_t)(tx.as_hash() % uint256_t(std::numeric_limits<uint64_t>::max()));
 
 						xmr_bpp::scalar_vec_t blinding_factors = { xmr_bpp::scalar_t(tx.vout[0].out_pk.blinding_factor), xmr_bpp::scalar_t(tx.vout[1].out_pk.blinding_factor) };
-						std::vector<uint64_t> amounts = { (uint64_t)to_atomic(to.value), (uint64_t)to_atomic(change_value) };
+						std::vector<uint64_t> amounts = { (uint64_t)to_atomic(to_value), (uint64_t)to_atomic(change_value) };
 						auto [proof, pedersen_commitments] = xmr_bpp::prove(seeder, amounts, blinding_factors);
 						memcpy(tx.bpp.a, proof.A.b32, sizeof(proof.A.b32));
 						memcpy(tx.bpp.a1, proof.A1.b32, sizeof(proof.A1.b32));
@@ -795,7 +796,7 @@ namespace tangent
 					}
 
 					auto to_link = find_linked_addresses({ to.address });
-					result.requires_output(coin_utxo(to_link ? std::move(to_link->begin()->second) : wallet_link::from_address(to.address), string(), 0, decimal(to.value)));
+					result.requires_output(coin_utxo(to_link ? std::move(to_link->begin()->second) : wallet_link::from_address(to.address), string(), 0, decimal(to_value)));
 					if (change_value.is_positive())
 						result.requires_output(coin_utxo(wallet_link(change_link), string(), 1, decimal(change_value)));
 					coreturn expects_rt<prepared_transaction>(std::move(result));

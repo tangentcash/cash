@@ -991,14 +991,19 @@ namespace tangent
 					if (!public_key)
 						coreturn expects_rt<prepared_transaction>(remote_exception(std::move(public_key.error().message())));
 
+					auto to_value = to.value;
+					to_value.truncate((uint32_t)divisibility.to_string().size() - 1);
+					if (!contract_address)
+						total_value = to_value + fee_value;
+
 					auto type = legacy.eip_155 ? evm_transaction::evm_type::eip_155 : evm_transaction::evm_type::eip_1559;
 					auto hash = transaction.hash(transaction.serialize(type));
 					prepared_transaction result;
 					if (contract_address)
-						result.requires_account_input(algorithm::composition::type::secp256k1, wallet_link(from_link), *public_key, (uint8_t*)hash.data(), hash.size(), { { to.asset, to.value }, { native_asset, fee_value } });
+						result.requires_account_input(algorithm::composition::type::secp256k1, wallet_link(from_link), *public_key, (uint8_t*)hash.data(), hash.size(), { { to.asset, to_value }, { native_asset, fee_value } });
 					else
 						result.requires_account_input(algorithm::composition::type::secp256k1, wallet_link(from_link), *public_key, (uint8_t*)hash.data(), hash.size(), { { native_asset, total_value } });
-					result.requires_account_output(to.address, { { to.asset, to.value } });
+					result.requires_account_output(to.address, { { to.asset, to_value } });
 					result.requires_abi(format::variable(!!legacy.eip_155));
 					result.requires_abi(format::variable(contract_address.or_else(string())));
 					result.requires_abi(format::variable(divisibility));

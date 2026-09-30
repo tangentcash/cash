@@ -247,6 +247,10 @@ namespace tangent
 			{
 				return stringify::text("/ledgers/%" PRIu64 "/operations?include_failed=false%s%.*s&limit=%" PRIu64 "&order=asc", block_height, cursor.empty() ? "" : "&cursor=", (int)cursor.size(), cursor.data(), count);
 			}
+			string stellar::nd_call::get_account_transactions(const std::string_view& address, const std::string_view& cursor, uint64_t count)
+			{
+				return stringify::text("/accounts/%.*s/transactions?include_failed=false%s%.*s&limit=%" PRIu64 "&order=asc", (int)address.size(), address.data(), cursor.empty() ? "" : "&cursor=", (int)cursor.size(), cursor.data(), count);
+			}
 			string stellar::nd_call::get_transactions(const std::string_view& tx_id)
 			{
 				return stringify::text("/transactions/%.*s", (int)tx_id.size(), tx_id.data());
@@ -361,6 +365,74 @@ namespace tangent
 						return expects_rt<bool>(account_data.error());
 
 					return expects_rt<bool>(account_data && account_data->has("account_id"));
+				});
+			}
+			expects_promise_rt<uint64_t> stellar::get_linked_block_height(uint64_t seen_block_height)
+			{
+				auto unseen_block_height = get_unseen_slot(seen_block_height);
+				if (unseen_block_height)
+					return expects_promise_rt<uint64_t>(*unseen_block_height);
+
+				return coasync<expects_rt<uint64_t>>([this, seen_block_height]() -> expects_promise_rt<uint64_t>
+				{
+					size_t offset = 0;
+					while (true)
+					{
+						auto links = find_linked_addresses(offset, ELEMENTS_MANY);
+						if (!links)
+							break;
+
+						for (auto& link : *links)
+						{
+							if (!link.second.address.empty())
+								linker.accounts.insert(link.second.address);
+						}
+
+						offset += links->size();
+						if (links->size() != ELEMENTS_MANY)
+							break;
+					}
+
+					uint64_t count = 16;
+					for (auto& account : linker.accounts)
+					{
+						string cursor;
+					lookback:
+						auto result = coawait(execute_rest("GET", nd_call::get_account_transactions(account, cursor, count), format::tree(), cache_policy::no_cache));
+						auto* subresult = result ? result->child("_embedded.records") : nullptr;
+						if (!subresult || subresult->childs().empty())
+							continue;
+
+						auto& transactions = subresult->childs(); bool eof = false;
+						for (size_t i = 0; i < transactions.size(); i++)
+						{
+							auto& transaction = transactions[i];
+							uint64_t block_height = transaction.child_var("ledger").as_uint64();
+							eof = (block_height <= seen_block_height);
+							if (eof)
+								break;
+
+							linker.blocks[block_height].insert(account);
+						}
+
+						auto next_cursor = result->child_var("_links.next.href").as_blob();
+						if (eof || next_cursor.empty() || transactions.size() < count)
+							continue;
+
+						location href = location(next_cursor);
+						auto it = href.query.find("cursor");
+						if (it == href.query.end() || it->second.empty())
+							continue;
+
+						cursor = std::move(it->second);
+						goto lookback;
+					}
+
+					auto unseen_block_height = get_unseen_slot(seen_block_height);
+					if (unseen_block_height)
+						coreturn* unseen_block_height;
+
+					coreturn remote_exception::retry_later();
 				});
 			}
 			expects_promise_rt<uint64_t> stellar::get_latest_block_height()
@@ -608,8 +680,9 @@ namespace tangent
 
 					option<StellarCreateAccountOp> account = optional::none;
 					option<StellarPaymentOp> payment = optional::none;
+					auto to_value = this->to_value(to.value);
 					if (!*has_account)
-						account = tx_create_account_prepared(to.address, from_link.address, (uint64_t)to_stroop(to.value), !!contract_address);
+						account = tx_create_account_prepared(to.address, from_link.address, (uint64_t)to_stroop(to_value), !!contract_address);
 
 					if (contract_address)
 					{
@@ -621,10 +694,10 @@ namespace tangent
 						if (token_type == asset_type::ASSET_TYPE_NATIVE)
 							coreturn expects_rt<prepared_transaction>(remote_exception("standard not supported"));
 
-						payment = tx_create_payment_prepared(to.address, from_link.address, tx_create_token_asset_prepared(token->second.info.code, token->second.info.issuer, token_type), (uint64_t)to_stroop(to.value));
+						payment = tx_create_payment_prepared(to.address, from_link.address, tx_create_token_asset_prepared(token->second.info.code, token->second.info.issuer, token_type), (uint64_t)to_stroop(to_value));
 					}
 					else if (!account)
-						payment = tx_create_payment_prepared(to.address, from_link.address, tx_create_native_asset_prepared(), (uint64_t)to_stroop(to.value));
+						payment = tx_create_payment_prepared(to.address, from_link.address, tx_create_native_asset_prepared(), (uint64_t)to_stroop(to_value));
 
 					auto passphrase = get_network_passphrase();
 					auto accounts = account ? vector<StellarCreateAccountOp>({ *account }) : vector<StellarCreateAccountOp>();
@@ -634,7 +707,7 @@ namespace tangent
 					if (fee_value > max_fee)
 						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
 
-					hash_map<algorithm::asset_id, decimal> inputs = { { to.asset, to.value } };
+					hash_map<algorithm::asset_id, decimal> inputs = { { to.asset, to_value } };
 					auto& fee_input = inputs[native_asset];
 					fee_input = fee_input.is_nan() ? fee_value : (fee_input + fee_value);
 					transaction = tx_create_transaction(from_link.address, passphrase, account_info->sequence + 1, memo_id.or_else(0), !memo.empty(), accounts.size(), payments.size(), get_base_stroop_fee());
@@ -659,7 +732,7 @@ namespace tangent
 					vector<uint8_t> raw_data = tx_data_from_signature(transaction, accounts, payments);
 					prepared_transaction result;
 					result.requires_account_input(algorithm::composition::type::ed25519, wallet_link(from_link), public_key, raw_data.data(), raw_data.size(), hash_map<algorithm::asset_id, decimal>(inputs));
-					result.requires_account_output(to.address, { { to.asset, to.value } });
+					result.requires_account_output(to.address, { { to.asset, to_value } });
 					result.requires_abi(format::variable(transaction.sequence_number));
 					result.requires_abi(format::variable(!!account));
 					result.requires_abi(format::variable(!!payment));
@@ -829,6 +902,12 @@ namespace tangent
 
 				address_map result = { { (uint8_t)1, encoded_public_key } };
 				return expects_lr<address_map>(std::move(result));
+			}
+			option<uint64_t> stellar::get_unseen_slot(uint64_t target_block_height)
+			{
+				while (!linker.blocks.empty() && linker.blocks.begin()->first <= target_block_height)
+					linker.blocks.erase(linker.blocks.begin());
+				return linker.blocks.empty() ? option<uint64_t>(optional::none) : option<uint64_t>(linker.blocks.begin()->first);
 			}
 			const stellar::chainparams& stellar::get_chainparams() const
 			{

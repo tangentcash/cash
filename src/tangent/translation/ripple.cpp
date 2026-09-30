@@ -157,6 +157,10 @@ namespace tangent
 			{
 				return "server_info";
 			}
+			const char* ripple::nd_call::account_tx()
+			{
+				return "account_tx";
+			}
 			const char* ripple::nd_call::account_info()
 			{
 				return "account_info";
@@ -273,6 +277,84 @@ namespace tangent
 					info.index = block_data->child_var("ledger_index").as_uint64();
 					info.sequence = info.index + 20;
 					return expects_rt<ripple::ledger_sequence_info>(std::move(info));
+				});
+			}
+			expects_promise_rt<uint64_t> ripple::get_linked_block_height(uint64_t seen_block_height)
+			{
+				auto unseen_block_height = get_unseen_slot(seen_block_height);
+				if (unseen_block_height)
+					return expects_promise_rt<uint64_t>(*unseen_block_height);
+
+				return coasync<expects_rt<uint64_t>>([this, seen_block_height]() -> expects_promise_rt<uint64_t>
+				{
+					size_t offset = 0;
+					while (true)
+					{
+						auto links = find_linked_addresses(offset, ELEMENTS_MANY);
+						if (!links)
+							break;
+
+						for (auto& link : *links)
+						{
+							if (!link.second.address.empty())
+								linker.accounts.insert(link.second.address);
+						}
+
+						offset += links->size();
+						if (links->size() != ELEMENTS_MANY)
+							break;
+					}
+
+					uint64_t count = 16;
+					for (auto& account : linker.accounts)
+					{
+						option<format::tree> marker = optional::none;
+					lookback:
+						auto map = format::tree::list();
+						auto params = map.push(format::tree::map());
+						params->set("account", format::variable(account));
+						params->set("binary", format::variable(false));
+						params->set("forward", format::variable(false));
+						params->set("ledger_index_min", format::variable(decimal(-1)));
+						params->set("ledger_index_max", format::variable(decimal(-1)));
+						params->set("limit", format::variable(count));
+						params->set("api_version", format::variable((uint8_t)2));
+						if (marker)
+						{
+							params->set("marker", std::move(*marker));
+							marker = optional::none;
+						}
+
+						auto result = coawait(execute_rpc(nd_call::account_tx(), std::move(map), cache_policy::no_cache));
+						auto* subresult = result ? result->child("transactions") : nullptr;
+						if (!subresult || subresult->childs().empty())
+							continue;
+
+						auto& transactions = subresult->childs(); bool eof = false;
+						for (size_t i = 0; i < transactions.size(); i++)
+						{
+							auto& transaction = transactions[i];
+							uint64_t block_height = transaction.child_var("ledger_index").as_uint64();
+							eof = (block_height <= seen_block_height);
+							if (eof)
+								break;
+
+							linker.blocks[block_height].insert(account);
+						}
+
+						auto* next_marker = result->child("marker");
+						if (eof || !next_marker || transactions.size() < count)
+							continue;
+
+						marker = std::move(*next_marker);
+						goto lookback;
+					}
+
+					auto unseen_block_height = get_unseen_slot(seen_block_height);
+					if (unseen_block_height)
+						coreturn* unseen_block_height;
+
+					coreturn remote_exception::retry_later();
 				});
 			}
 			expects_promise_rt<uint64_t> ripple::get_latest_block_height()
@@ -447,14 +529,15 @@ namespace tangent
 					if (fee_value > max_fee)
 						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
 
+					auto to_value = this->to_value(to.value);
 					if (contract_address)
 					{
 						auto account_token_info = coawait(get_account_token_info(to.asset, *contract_address));
-						if (!account_token_info || account_token_info->balance < to.value)
-							coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", (account_token_info ? account_token_info->balance : decimal(0.0)).to_string().c_str(), to.value.to_string().c_str())));
+						if (!account_token_info || account_token_info->balance < to_value)
+							coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", (account_token_info ? account_token_info->balance : decimal(0.0)).to_string().c_str(), to_value.to_string().c_str())));
 					}
 
-					auto total_value = contract_address ? fee_value : (to.value + fee_value);
+					auto total_value = contract_address ? fee_value : (to_value + fee_value);
 					if (account_info->balance < total_value || total_value.is_negative())
 						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", account_info->balance.to_string().c_str(), total_value.to_string().c_str())));
 					else if (account_info->balance - total_value < 1)
@@ -473,12 +556,12 @@ namespace tangent
 					buffer.destination = output_address;
 					if (contract_address)
 					{
-						buffer.amount.token_value = to.value;
+						buffer.amount.token_value = to_value;
 						buffer.amount.asset = algorithm::asset::token_of(to.asset);
 						buffer.amount.issuer = *contract_address;
 					}
 					else
-						buffer.amount.base_value = (uint64_t)to_drop(to.value);
+						buffer.amount.base_value = (uint64_t)to_drop(to_value);
 
 					auto signing_public_key = decode_public_key(from_link.public_key);
 					if (!signing_public_key)
@@ -488,10 +571,10 @@ namespace tangent
 					auto message = tx_serialize(&buffer, true);
 					prepared_transaction result;
 					if (contract_address)
-						result.requires_account_input(algorithm::composition::type::ed25519, wallet_link(from_link), public_key, message.data(), message.size(), { { to.asset, to.value }, { native_asset, fee_value } });
+						result.requires_account_input(algorithm::composition::type::ed25519, wallet_link(from_link), public_key, message.data(), message.size(), { { to.asset, to_value }, { native_asset, fee_value } });
 					else
 						result.requires_account_input(algorithm::composition::type::ed25519, wallet_link(from_link), public_key, message.data(), message.size(), { { native_asset, total_value } });
-					result.requires_account_output(to.address, { { to.asset, to.value } });
+					result.requires_account_output(to.address, { { to.asset, to_value } });
 					result.requires_abi(format::variable(contract_address.or_else(string())));
 					result.requires_abi(format::variable(buffer.sequence));
 					result.requires_abi(format::variable(buffer.last_ledger_sequence));
@@ -663,6 +746,12 @@ namespace tangent
 
 				address_map result = { { (uint8_t)1, string(intermediate, intermediate_size - 1) } };
 				return expects_lr<address_map>(std::move(result));
+			}
+			option<uint64_t> ripple::get_unseen_slot(uint64_t target_block_height)
+			{
+				while (!linker.blocks.empty() && linker.blocks.begin()->first <= target_block_height)
+					linker.blocks.erase(linker.blocks.begin());
+				return linker.blocks.empty() ? option<uint64_t>(optional::none) : option<uint64_t>(linker.blocks.begin()->first);
 			}
 			const ripple::chainparams& ripple::get_chainparams() const
 			{

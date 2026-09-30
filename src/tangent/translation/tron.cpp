@@ -555,6 +555,11 @@ namespace tangent
 					if (!public_key)
 						coreturn expects_rt<prepared_transaction>(remote_exception(std::move(public_key.error().message())));
 
+					auto to_value = to.value;
+					to_value.truncate((uint32_t)divisibility.to_string().size() - 1);
+					if (!contract_address)
+						total_value = to_value + fee_value;
+
 					auto eth_contract_address = contract_address ? decode_non_eth_address_pf(*contract_address) : string();
 					auto eth_like_from_address = decode_non_eth_address_pf(from_link.address);
 					auto eth_like_to_address = decode_non_eth_address_pf(to.address);
@@ -564,10 +569,10 @@ namespace tangent
 					auto transaction = tx_serialize(*block_header, eth_contract_address, eth_like_from_address, eth_like_to_address, eth_to_address, eth_value, fee_limit);
 					prepared_transaction result;
 					if (contract_address)
-						result.requires_account_input(algorithm::composition::type::secp256k1, wallet_link(from_link), *public_key, (uint8_t*)transaction.raw_transaction_id.data(), transaction.raw_transaction_id.size(), { { to.asset, to.value }, { native_asset, fee_value } });
+						result.requires_account_input(algorithm::composition::type::secp256k1, wallet_link(from_link), *public_key, (uint8_t*)transaction.raw_transaction_id.data(), transaction.raw_transaction_id.size(), { { to.asset, to_value }, { native_asset, fee_value } });
 					else
 						result.requires_account_input(algorithm::composition::type::secp256k1, wallet_link(from_link), *public_key, (uint8_t*)transaction.raw_transaction_id.data(), transaction.raw_transaction_id.size(), { { native_asset, total_value } });
-					result.requires_account_output(to.address, { { to.asset, to.value } });
+					result.requires_account_output(to.address, { { to.asset, to_value } });
 					result.requires_abi(format::variable(contract_address.or_else(string())));
 					result.requires_abi(format::variable(block_header->ref_block_bytes));
 					result.requires_abi(format::variable(block_header->ref_block_hash));

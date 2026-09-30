@@ -56,6 +56,7 @@ namespace tangent
 				{
 				public:
 					static const char* ledger();
+					static const char* account_tx();
 					static const char* account_info();
 					static const char* account_objects();
 					static const char* server_info();
@@ -63,11 +64,17 @@ namespace tangent
 				};
 
 			protected:
+				struct
+				{
+					btree_map<uint64_t, hash_set<string>> blocks;
+					hash_set<string> accounts;
+				} linker;
 				chainparams netdata;
 
 			public:
 				ripple(const algorithm::asset_id& new_asset) noexcept;
 				virtual ~ripple() override = default;
+				virtual expects_promise_rt<uint64_t> get_linked_block_height(uint64_t seen_block_height) override;
 				virtual expects_promise_rt<uint64_t> get_latest_block_height() override;
 				virtual expects_promise_rt<vector<block_log>> get_block_transactions(uint64_t block_height, uint64_t block_count) override;
 				virtual expects_promise_rt<computed_transaction> link_transaction(uint64_t block_height, const std::string_view& block_hash, format::tree& transaction_data) override;
@@ -92,6 +99,7 @@ namespace tangent
 				virtual expects_promise_rt<account_info> get_account_info(const std::string_view& address);
 				virtual expects_promise_rt<account_token_info> get_account_token_info(const algorithm::asset_id& for_asset, const std::string_view& address);
 				virtual expects_promise_rt<ledger_sequence_info> get_ledger_sequence_info();
+				virtual option<uint64_t> get_unseen_slot(uint64_t target_block_height);
 				virtual vector<uint8_t> tx_serialize(transaction_buffer* tx_data, bool signing_data);
 				virtual string tx_hash(const vector<uint8_t>& tx_blob);
 				virtual decimal get_base_fee_xrp();
