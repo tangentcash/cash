@@ -1643,7 +1643,7 @@ namespace tangent
 				return format::variables({ format::variable((*transaction)->as_message().data) });
 
 			auto chain = storages::chainstate();
-			auto block_transaction = chain.get_block_transaction_by_hash(transaction_hash, false);
+			auto block_transaction = chain.get_block_transaction_by_hash(transaction_hash);
 			if (block_transaction)
 				return format::variables({ format::variable(block_transaction->transaction->as_message().data) });
 
@@ -1668,7 +1668,7 @@ namespace tangent
 				auto transaction = mempool.get_transaction_by_hash(transaction_hash);
 				if (!transaction)
 				{
-					auto block_transaction = chain.get_block_transaction_by_hash(transaction_hash, false);
+					auto block_transaction = chain.get_block_transaction_by_hash(transaction_hash);
 					if (block_transaction)
 						result.push_back(format::variable(block_transaction->transaction->as_message().data));
 				}
@@ -1697,7 +1697,7 @@ namespace tangent
 
 			auto transaction_hash = packed->at(2).as_uint256();
 			auto executor = ledger::executor_context(nullptr);
-			auto context = executor.get_block_transaction_instance(transaction_hash);
+			auto context = executor.get_block_transaction_instance(0, transaction_hash);
 			if (!context)
 				return remote_exception("transaction not found");
 

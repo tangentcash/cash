@@ -720,8 +720,7 @@ namespace tangent
 			vector<promise<void>> queue;
 			vector<transaction_blob> transactions;
 			size_t concurrency = std::max<size_t>(1, parallel::get_threads());
-			bool transaction_to_account_index = kernel::params().user.storage.transaction_to_account_index;
-			bool transaction_to_alias_index = kernel::params().user.storage.transaction_to_alias_index;
+			bool transaction_history = kernel::params().user.storage.transaction_history;
 			if (!reorganization)
 			{
 				auto cursor = get_tx_storage().prepared_query(__func__, *fetch_transaction_nonce);
@@ -744,26 +743,17 @@ namespace tangent
 					item.context->store(&item.message);
 					item.dispatchable = item.context->receipt.successful && item.context->transaction->as_delegation_type() > 0;
 					item.context->receipt.transaction_hash.encode(item.transaction_hash);
-					if (transaction_to_account_index)
+					item.context->transaction->enumerate_aliases([&item](const uint256_t& hash)
+					{
+						hash.encode(item.aliases.emplace_back().transaction_hash);
+					});
+					if (transaction_history)
 					{
 						auto executor = ledger::executor_context(nullptr);
-						item.context->transaction->recover_many(&executor, item.context->receipt, item.parties);
-						item.parties.insert(algorithm::pubkeyhash_t(item.context->receipt.from));
-					}
-					if (transaction_to_alias_index)
-					{
-						btree_set<uint256_t> aliases;
-						item.context->transaction->recover_aliases(aliases);
-						item.aliases.reserve(aliases.size());
-						if (!aliases.empty())
+						item.context->transaction->enumerate_accounts(&executor, item.context->receipt, [&item](const algorithm::pubkeyhash_t& account)
 						{
-							transaction_alias_blob alias;
-							for (auto& hash : aliases)
-							{
-								hash.encode(alias.transaction_hash);
-								item.aliases.push_back(alias);
-							}
-						}
+							item.parties.insert(account);
+						});
 					}
 				}))
 					queue.emplace_back(std::move(task));
@@ -952,9 +942,9 @@ namespace tangent
 					}
 					return expectation::met;
 				}, false));
-				expectation_queue.emplace_back(cotask<expects_lr<void>>([this, &transactions, &evaluation, transaction_to_account_index, &commit_account_data, &commit_party_data]() -> expects_lr<void>
+				expectation_queue.emplace_back(cotask<expects_lr<void>>([this, &transactions, &evaluation, transaction_history, &commit_account_data, &commit_party_data]() -> expects_lr<void>
 				{
-					if (!transaction_to_account_index)
+					if (!transaction_history)
 						return expectation::met;
 
 					auto& account_storage = get_account_storage();
@@ -987,11 +977,8 @@ namespace tangent
 					}
 					return expectation::met;
 				}, false));
-				expectation_queue.emplace_back(cotask<expects_lr<void>>([this, &transactions, &evaluation, transaction_to_alias_index, &commit_alias_data]() -> expects_lr<void>
+				expectation_queue.emplace_back(cotask<expects_lr<void>>([this, &transactions, &evaluation, &commit_alias_data]() -> expects_lr<void>
 				{
-					if (!transaction_to_alias_index)
-						return expectation::met;
-
 					auto& alias_storage = get_alias_storage();
 					auto* alias_storage_ptr = alias_storage.ptr();
 					auto* statement = *commit_alias_data;
@@ -2096,17 +2083,7 @@ namespace tangent
 
 			return expects_lr<bool>(!cursor->empty());
 		}
-		expects_lr<ledger::block_transaction> chainstate::get_block_transaction_by_hash(const uint256_t& transaction_hash, bool include_aliases)
-		{
-			auto result = get_block_transactions_by_hash(transaction_hash, include_aliases);
-			if (!result)
-				return result.error();
-			else if (result->empty())
-				return layer_exception("transaction not found");
-
-			return expects_lr<ledger::block_transaction>(std::move(result->front()));
-		}
-		expects_lr<vector<ledger::block_transaction>> chainstate::get_block_transactions_by_hash(const uint256_t& transaction_hash, bool include_aliases)
+		expects_lr<ledger::block_transaction> chainstate::get_block_transaction_by_hash(const uint256_t& transaction_hash)
 		{
 			uint8_t hash[32];
 			transaction_hash.encode(hash);
@@ -2114,22 +2091,41 @@ namespace tangent
 			schema_list map;
 			map.push_back(var::set::binary(hash, sizeof(hash)));
 
+			auto cursor = get_tx_storage().emplace_query(__func__, "SELECT transaction_hash FROM transactions WHERE transaction_hash = ?", &map);
+			if (!cursor || cursor->error_or_empty())
+				return expects_lr<ledger::block_transaction>(layer_exception(ledger::storage_util::error_of(cursor)));
+
+			auto& blob_storage = get_blob_storage();
+			auto parent_transaction_hash = (*cursor)["transaction_hash"].get();
+			auto parent_transaction_blob = blob_storage.load(__func__, get_block_transaction_label(parent_transaction_hash.get_binary())).or_else(string());
+			auto parent_transaction_message = format::ro_stream(parent_transaction_blob);
+			auto next = ledger::block_transaction();
+			if (!next.load(parent_transaction_message))
+				return expects_lr<ledger::block_transaction>(layer_exception("transaction deserialization error"));
+
+			finalize_checksum(**next.transaction, parent_transaction_hash);
+			return expects_lr<ledger::block_transaction>(std::move(next));
+		}
+		expects_lr<vector<ledger::block_transaction>> chainstate::get_block_transactions_by_hash(const uint256_t& transaction_hash)
+		{
+			uint8_t hash[32];
+			transaction_hash.encode(hash);
+
+			schema_list map;
+			map.push_back(var::set::binary(hash, sizeof(hash)));
+
+			auto cursor = get_alias_storage().emplace_query(__func__, "SELECT transaction_number FROM aliases WHERE transaction_hash = ?", &map);
 			string dynamic_query = "SELECT transaction_hash FROM transactions WHERE transaction_hash = ?";
-			if (include_aliases)
+			if (cursor && !cursor->error_or_empty())
 			{
-				auto cursor = get_alias_storage().emplace_query(__func__, "SELECT transaction_number FROM aliases WHERE transaction_hash = ?", &map);
-				if (cursor && !cursor->error_or_empty())
-				{
-					dynamic_query.append("OR transaction_number IN (");
-					for (auto row : cursor->first())
-						dynamic_query.append(row.get_column(0).get().get_blob()).push_back(',');
-					dynamic_query.pop_back();
-					dynamic_query.push_back(')');
-				}
+				dynamic_query.append("OR transaction_number IN (");
+				for (auto row : cursor->first())
+					dynamic_query.append(row.get_column(0).get().get_blob()).push_back(',');
+				dynamic_query.back() = ')';
 				dynamic_query.append(" ORDER BY transaction_number DESC");
 			}
 
-			auto cursor = get_tx_storage().emplace_query(__func__, dynamic_query, &map);
+			cursor = get_tx_storage().emplace_query(__func__, dynamic_query, &map);
 			if (!cursor || cursor->error_or_empty())
 				return expects_lr<vector<ledger::block_transaction>>(layer_exception(ledger::storage_util::error_of(cursor)));
 

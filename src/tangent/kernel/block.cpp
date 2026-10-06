@@ -2784,27 +2784,41 @@ namespace tangent
 
 			return states::witness_transaction(std::move(*state->as<states::witness_transaction>()));
 		}
-		expects_lr<block_transaction> executor_context::get_block_transaction_instance(const uint256_t& transaction_hash, bool may_have_distinct_asset) const
+		expects_lr<block_transaction> executor_context::get_block_transaction_instance(uint32_t type, const uint256_t& transaction_hash, bool may_have_distinct_asset) const
 		{
 			if (!transaction_hash)
 				return layer_exception("block transaction not found");
 
 			auto chain = storages::chainstate();
-			auto candidate = chain.get_block_transaction_by_hash(transaction_hash, false);
-			if (!candidate || !candidate->transaction || !candidate->receipt.successful)
-				return layer_exception("block transaction not found");
+			auto candidates = chain.get_block_transactions_by_hash(transaction_hash);
+			if (candidates && !candidates->empty())
+			{
+				auto& policy = kernel::params().policy;
+				for (auto& candidate : *candidates)
+				{
+					if (!candidate.transaction || !candidate.receipt.successful)
+						continue;
+					else if (block != nullptr && candidate.receipt.block_number <= block->number && block->number - candidate.receipt.block_number > policy.participation.referencing_time / policy.pow.time)
+						continue;
+					else if (!may_have_distinct_asset && transaction && transaction->asset != candidate.transaction->asset)
+						continue;
+					
+					if (type > 0)
+					{
+						if (candidate.transaction->as_type() == type)
+							return expects_lr<block_transaction>(std::move(candidate));
+						else if (candidate.transaction->as_type() != transactions::rollup::as_instance_type())
+							continue;
+					}
+					else if (candidate.transaction->as_type() != transactions::rollup::as_instance_type() || candidate.receipt.transaction_hash == transaction_hash)
+						return expects_lr<block_transaction>(std::move(candidate));
 
-			auto& policy = kernel::params().policy;
-			if (block != nullptr && candidate->receipt.block_number <= block->number && block->number - candidate->receipt.block_number > policy.participation.referencing_time / policy.pow.time)
-				return layer_exception("block transaction not found");
-
-			if (!may_have_distinct_asset && transaction && transaction->asset != candidate->transaction->asset)
-				return layer_exception("block transaction asset is distinct");
-
-			if (candidate->receipt.transaction_hash != transaction_hash && candidate->transaction->as_type() == transactions::rollup::as_instance_type())
-				candidate = ((transactions::rollup*)*candidate->transaction)->resolve_block_transaction(candidate->receipt, transaction_hash);
-
-			return candidate;
+					auto subcandidate = ((transactions::rollup*)*candidate.transaction)->resolve_block_transaction(candidate.receipt, type, transaction_hash);
+					if (subcandidate)
+						return subcandidate;
+				}
+			}
+			return layer_exception("block transaction not found");
 		}
 		expects_lr<uint64_t> executor_context::get_block_number_by_hash(const uint256_t& block_hash) const
 		{

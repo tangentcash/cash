@@ -258,7 +258,7 @@ namespace tangent
 					interrupter(true);
 				}
 
-				auto execution = call_transaction(script::ccall::deploy_call, entrypoint, args);
+				auto execution = call_transaction(script::ccall::event_call, entrypoint, args);
 				if (attach_debugger_context)
 				{
 					interrupter(false);

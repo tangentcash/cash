@@ -101,11 +101,11 @@ namespace tangent
 
 			return true;
 		}
-		bool transfer::recover_many(const ledger::executor_context*, const ledger::transaction_receipt&, btree_set<algorithm::pubkeyhash_t>& parties) const
+		void transfer::enumerate_accounts(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, const std::function<void(const algorithm::pubkeyhash_t&)>& callback) const
 		{
+			VI_ASSERT(callback, "callback should be set");
 			for (auto& [owner, value] : to)
-				parties.insert(owner);
-			return true;
+				callback(owner);
 		}
 		void transfer::set_to(const algorithm::pubkeyhash_t& new_to, const decimal& new_value)
 		{
@@ -234,7 +234,7 @@ namespace tangent
 			}
 
 			auto script = script::program(executor, entrypoint->get_module());
-			return script.execute(script::payable_repr(), script::ccall::deploy_call, script.deploy_function(), args, nullptr);
+			return script.execute(script::payable_repr(), script::ccall::event_call, script.deploy_function(), args, nullptr);
 		}
 		bool deploy::store_body(format::wo_stream* stream) const
 		{
@@ -250,21 +250,22 @@ namespace tangent
 			args.clear();
 			return format::variables_util::deserialize_merge_from(stream, &args);
 		}
-		bool deploy::recover_many(const ledger::executor_context*, const ledger::transaction_receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const
+		void deploy::enumerate_accounts(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, const std::function<void(const algorithm::pubkeyhash_t&)>& callback) const
 		{
+			VI_ASSERT(callback, "callback should be set");
 			size_t offset = 0;
-			parties.insert(get_account());
+			callback(get_account());
 
 			auto* event = receipt.find_event<states::account_balance>();
 			while (event != nullptr)
 			{
 				auto from = event->args.size() > 1 ? event->args.at(1).as_string() : std::string_view();
 				if (from.size() == sizeof(algorithm::pubkeyhash_t))
-					parties.insert(algorithm::pubkeyhash_t(from));
+					callback(algorithm::pubkeyhash_t(from));
 
 				auto to = event->args.size() > 2 ? event->args.at(2).as_string() : std::string_view();
 				if (to.size() == sizeof(algorithm::pubkeyhash_t))
-					parties.insert(algorithm::pubkeyhash_t(to));
+					callback(algorithm::pubkeyhash_t(to));
 
 				event = receipt.find_event<states::account_balance>(++offset);
 			}
@@ -272,9 +273,8 @@ namespace tangent
 			for (auto& event : receipt.events)
 			{
 				if (!event.emitter.empty())
-					parties.insert(event.emitter);
+					callback(event.emitter);
 			}
-			return true;
 		}
 		void deploy::from_program(const std::string_view& new_data, format::variables&& new_args)
 		{
@@ -484,30 +484,30 @@ namespace tangent
 			args.clear();
 			return format::variables_util::deserialize_merge_from(stream, &args);
 		}
-		bool call::recover_many(const ledger::executor_context*, const ledger::transaction_receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const
+		void call::enumerate_accounts(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, const std::function<void(const algorithm::pubkeyhash_t&)>& callback) const
 		{
+			VI_ASSERT(callback, "callback should be set");
 			size_t offset = 0;
 			auto* event = receipt.find_event<states::account_balance>();
 			while (event != nullptr)
 			{
 				auto from = event->args.size() > 1 ? event->args.at(1).as_string() : std::string_view();
 				if (from.size() == sizeof(algorithm::pubkeyhash_t))
-					parties.insert(algorithm::pubkeyhash_t(from));
+					callback(algorithm::pubkeyhash_t(from));
 
 				auto to = event->args.size() > 2 ? event->args.at(2).as_string() : std::string_view();
 				if (to.size() == sizeof(algorithm::pubkeyhash_t))
-					parties.insert(algorithm::pubkeyhash_t(to));
+					callback(algorithm::pubkeyhash_t(to));
 
 				event = receipt.find_event<states::account_balance>(++offset);
 			}
 
-			parties.insert(algorithm::pubkeyhash_t(callable));
+			callback(algorithm::pubkeyhash_t(callable));
 			for (auto& event : receipt.events)
 			{
 				if (!event.emitter.empty())
-					parties.insert(event.emitter);
+					callback(event.emitter);
 			}
-			return true;
 		}
 		void call::call_to(const algorithm::pubkeyhash_t& new_callable, const std::string_view& new_function, format::variables&& new_args, bool pipeline_pay)
 		{
@@ -556,6 +556,161 @@ namespace tangent
 		std::string_view call::as_instance_typename()
 		{
 			return "call";
+		}
+
+		delegate::delegate(const delegate& other) : callable(other.callable), args(other.args)
+		{
+			if (other.transaction)
+				transaction = resolver::from_copy(*other.transaction);
+		}
+		delegate& delegate::operator= (const delegate& other)
+		{
+			if (this == &other)
+				return *this;
+
+			callable = other.callable;
+			args = other.args;
+			if (other.transaction)
+				transaction = resolver::from_copy(*other.transaction);
+			else
+				transaction.destroy();
+			return *this;
+		}
+		expects_lr<void> delegate::validate(uint64_t block_number) const
+		{
+			if (!transaction || transaction->as_type() == as_type() || transaction->as_type() == rollup::as_instance_type())
+				return layer_exception("invalid delegate transaction");
+
+			if (transaction->asset != asset || !transaction->gas_price.is_nan() || transaction->gas_limit > 0 || !transaction->signature.empty() || transaction->nonce > 0)
+				return layer_exception("invalid delegate transaction data");
+
+			return ledger::transaction_message::validate(block_number);
+		}
+		expects_lr<void> delegate::execute(ledger::executor_context* executor) const
+		{
+			auto validation = transaction_message::execute(executor);
+			if (!validation)
+				return validation.error();
+
+			auto index = executor->get_account_program(callable);
+			if (!index)
+				return layer_exception("program is not assigned");
+
+			auto& hashcode = index->hashcode;
+			auto program = executor->get_witness_program(hashcode);
+			if (!program)
+				return layer_exception("program is not stored");
+
+			auto pmodule = script::factory::get()->compile_module(format::util::encode_0xhex(hashcode), [&]() { return program->as_code(); });
+			if (!pmodule)
+				return pmodule.error();
+
+			auto script = script::program(executor, pmodule->ref.get_module());
+			auto execution = script.execute(script::payable_repr(call::payable_array()), script::ccall::event_call, script.delegate_function(), args, nullptr);
+			if (!execution)
+				return execution.error();
+
+			uint8_t execution_flags = (uint8_t)ledger::executor_context::flags::pedantic | (uint8_t)ledger::executor_context::flags::preserve_events | (uint8_t)ledger::executor_context::flags::replayable;
+			uint256_t transaction_hash = transaction->as_hash();
+			auto destructor = uscope([&]()
+			{
+				transaction->signature.clear();
+				transaction->gas_limit = 0;
+				transaction->gas_price = decimal::nan();
+			});
+			transaction->gas_price = decimal::zero();
+			transaction->gas_limit = gas_limit - executor->receipt.relative_gas_use;
+			transaction->signature.blob[0] = 0xFF;
+			return ledger::executor_context::execute_tx(executor, callable, *transaction, transaction_hash, 0, execution_flags);
+		}
+		bool delegate::store_body(format::wo_stream* stream) const
+		{
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			stream->write_string(callable.optimized_view());
+			stream->write_integer(transaction->as_type());
+			if (!transaction->store_body(stream))
+				return false;
+
+			return format::variables_util::serialize_merge_into(args, stream);
+		}
+		bool delegate::load_body(format::ro_stream& stream)
+		{
+			if (!stream.read_optimized_view(stream.read_type(), callable.blob, sizeof(callable)))
+				return false;
+
+			uint32_t type;
+			if (!stream.read_integer(stream.read_type(), &type))
+				return false;
+
+			transaction = resolver::from_type(type);
+			if (!transaction)
+				return false;
+
+			transaction->asset = asset;
+			transaction->signature.clear();
+			transaction->nonce = 0;
+			transaction->gas_price = decimal::nan();
+			transaction->gas_limit = 0;
+			if (!transaction->load_body(stream))
+				return false;
+
+			args.clear();
+			return format::variables_util::deserialize_merge_from(stream, &args);
+		}
+		void delegate::enumerate_accounts(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, const std::function<void(const algorithm::pubkeyhash_t&)>& callback) const
+		{
+			VI_ASSERT(callback, "callback should be set");
+			callback(algorithm::pubkeyhash_t(callable));
+			if (transaction)
+				transaction->enumerate_accounts(executor, receipt, callback);
+		}
+		void delegate::enumerate_aliases(const std::function<void(const uint256_t&)>& callback) const
+		{
+			VI_ASSERT(callback, "callback should be set");
+			if (transaction)
+			{
+				callback(transaction->as_hash());
+				transaction->enumerate_aliases(callback);
+			}
+		}
+		uint64_t delegate::commitment_priority(uint256_t* event_hash) const
+		{
+			if (!transaction)
+				return transaction_message::commitment_priority(event_hash);
+
+			return transaction->commitment_priority(event_hash);
+		}
+		uint32_t delegate::as_delegation_type() const
+		{
+			if (!transaction)
+				return transaction_message::as_delegation_type();
+
+			return transaction->as_delegation_type();
+		}
+		format::tree delegate::as_tree() const
+		{
+			format::tree data = ledger::transaction_message::as_tree();
+			data.set("callable", algorithm::signing::serialize_address(callable));
+			data.set("args", format::variables_util::serialize(args));
+			data.set("action", transaction->as_tree());
+			return data;
+		}
+		uint32_t delegate::as_type() const
+		{
+			return as_instance_type();
+		}
+		std::string_view delegate::as_typename() const
+		{
+			return as_instance_typename();
+		}
+		uint32_t delegate::as_instance_type()
+		{
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
+		}
+		std::string_view delegate::as_instance_typename()
+		{
+			return "delegate";
 		}
 
 		rollup::rollup(const rollup& other)
@@ -777,8 +932,9 @@ namespace tangent
 			}
 			return true;
 		}
-		bool rollup::recover_many(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const
+		void rollup::enumerate_accounts(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, const std::function<void(const algorithm::pubkeyhash_t&)>& callback) const
 		{
+			VI_ASSERT(callback, "callback should be set");
 			algorithm::pubkeyhash_t from;
 			for (auto& group : transactions)
 			{
@@ -786,24 +942,23 @@ namespace tangent
 				{
 					bool internal_transaction = transaction->signature.empty();
 					if (!internal_transaction && transaction->recover_hash(from))
-						parties.insert(from);
-					transaction->recover_many(executor, receipt, parties);
+						callback(from);
+
+					transaction->enumerate_accounts(executor, receipt, callback);
 				}
 			}
-			return true;
 		}
-		bool rollup::recover_aliases(btree_set<uint256_t>& aliases) const
+		void rollup::enumerate_aliases(const std::function<void(const uint256_t&)>& callback) const
 		{
+			VI_ASSERT(callback, "callback should be set");
 			for (auto& group : transactions)
 			{
 				for (auto& transaction : group.second)
 				{
-					aliases.insert(transaction->as_hash());
-					if (!transaction->recover_aliases(aliases))
-						return false;
+					callback(transaction->as_hash());
+					transaction->enumerate_aliases(callback);
 				}
 			}
-			return true;
 		}
 		bool rollup::import_transaction(const ledger::transaction_message& transaction)
 		{
@@ -832,7 +987,7 @@ namespace tangent
 
 			return import_transaction(transaction);
 		}
-		expects_lr<ledger::block_transaction> rollup::resolve_block_transaction(const ledger::transaction_receipt& receipt, const uint256_t& transaction_hash) const
+		expects_lr<ledger::block_transaction> rollup::resolve_block_transaction(const ledger::transaction_receipt& receipt, uint32_t type, const uint256_t& transaction_hash) const
 		{
 			if (!transaction_hash)
 				return layer_exception("sub-transaction not found");
@@ -842,17 +997,11 @@ namespace tangent
 			{
 				for (auto& transaction : group.second)
 				{
-					if (transaction->as_hash() == transaction_hash)
+					if (transaction->as_hash() == transaction_hash && (!type || transaction->as_type() == type))
 					{
 						target = *transaction;
 						break;
 					}
-					else if (transaction->as_type() != rollup::as_instance_type())
-						continue;
-
-					auto candidate = ((rollup*)*transaction)->resolve_block_transaction(receipt, transaction_hash);
-					if (candidate)
-						return candidate;
 				}
 			}
 
@@ -1241,15 +1390,15 @@ namespace tangent
 
 			return true;
 		}
-		bool route::recover_many(const ledger::executor_context*, const ledger::transaction_receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const
+		void route::enumerate_accounts(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, const std::function<void(const algorithm::pubkeyhash_t&)>& callback) const
 		{
+			VI_ASSERT(callback, "callback should be set");
 			auto attester = get_attester(receipt);
 			if (!attester.empty())
-				parties.insert(attester);
+				callback(attester);
 
-			auto participants = get_participants(receipt);
-			parties.insert(participants.begin(), participants.end());
-			return true;
+			for (auto& participant : get_participants(receipt))
+				callback(participant);
 		}
 		uint64_t route::commitment_priority(uint256_t* event_hash) const
 		{
@@ -1512,13 +1661,12 @@ namespace tangent
 			memcpy(group_signature.data(), group_signature_assembly.data(), group_signature_assembly.size());
 			return true;
 		}
-		bool bind::recover_many(const ledger::executor_context* executor, const ledger::transaction_receipt&, btree_set<algorithm::pubkeyhash_t>& parties) const
+		void bind::enumerate_accounts(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, const std::function<void(const algorithm::pubkeyhash_t&)>& callback) const
 		{
+			VI_ASSERT(callback, "callback should be set");
 			auto parent = executor->get_block_transaction<route>(route_hash);
 			if (parent)
-				parties.insert(algorithm::pubkeyhash_t(parent->receipt.from));
-
-			return true;
+				callback(algorithm::pubkeyhash_t(parent->receipt.from));
 		}
 		uint64_t bind::commitment_priority(uint256_t* event_hash) const
 		{
@@ -1761,13 +1909,12 @@ namespace tangent
 			memcpy(proof.key_commitment.data(), key_commitment_assembly.data(), key_commitment_assembly.size());
 			return true;
 		}
-		bool imbind::recover_many(const ledger::executor_context* executor, const ledger::transaction_receipt&, btree_set<algorithm::pubkeyhash_t>& parties) const
+		void imbind::enumerate_accounts(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, const std::function<void(const algorithm::pubkeyhash_t&)>& callback) const
 		{
+			VI_ASSERT(callback, "callback should be set");
 			auto parent = executor->get_block_transaction<route>(route_hash);
 			if (parent)
-				parties.insert(algorithm::pubkeyhash_t(parent->receipt.from));
-
-			return true;
+				callback(algorithm::pubkeyhash_t(parent->receipt.from));
 		}
 		uint64_t imbind::commitment_priority(uint256_t* event_hash) const
 		{
@@ -2202,16 +2349,15 @@ namespace tangent
 
 			return true;
 		}
-		bool setup::recover_many(const ledger::executor_context*, const ledger::transaction_receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const
+		void setup::enumerate_accounts(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, const std::function<void(const algorithm::pubkeyhash_t&)>& callback) const
 		{
+			VI_ASSERT(callback, "callback should be set");
 			for (auto& [broadcast_hash, participant] : migrations)
-				parties.insert(participant);
+				callback(participant);
 
 			auto participant = get_new_participant(receipt);
 			if (!participant.empty())
-				parties.insert(participant);
-
-			return true;
+				callback(participant);
 		}
 		void setup::allocate_production_stake(const decimal& value)
 		{
@@ -2717,18 +2863,22 @@ namespace tangent
 			if (!bridge_hash)
 				return layer_exception("invalid bridge hash");
 
-			auto* chain = superchain::bridge::get()->get_network_params(asset);
-			if (!chain)
-				return layer_exception("invalid operation");
-
 			if (!algorithm::asset::is_aux(asset))
 				return layer_exception("not a valid withdrawal asset");
 
-			if (address.empty())
-				return layer_exception("invalid routing address");
-
 			if (!value.is_positive())
 				return layer_exception("invalid value");
+
+			auto* chain = superchain::bridge::get()->get_network(asset);
+			if (!chain)
+				return layer_exception("invalid operation");
+
+			if (address.empty())
+				return layer_exception("invalid address: empty value");
+
+			auto hash = chain->decode_address(address);
+			if (!hash)
+				return layer_exception("invalid address: " + hash.error().message());
 
 			return ledger::transaction_message::validate(block_number);
 		}
@@ -2774,13 +2924,16 @@ namespace tangent
 			if (!token_balance || token_balance->supply < token_value)
 				return layer_exception(algorithm::asset::handle_of(asset) + " balance is insufficient to cover token withdrawal value (value: " + token_value.to_string() + ")");
 
-			auto collision = executor->get_witness_account_tagged(fee_asset, address, 0);
-			if (!collision)
-				collision = executor->apply_witness_routing_account(executor->receipt.from, asset, { { (uint8_t)1, string(address) } });
-			if (!collision)
-				return collision.error();
-			else if (!collision->is_routing_account() || collision->ref.owner != executor->receipt.from)
-				return layer_exception("invalid routing address");
+			if (!kernel::params().on(fork_id::anonymous_broadcast, executor->receipt.block_number))
+			{
+				auto collision = executor->get_witness_account_tagged(fee_asset, address, 0);
+				if (!collision)
+					collision = executor->apply_witness_routing_account(executor->receipt.from, asset, { { (uint8_t)1, string(address) } });
+				if (!collision)
+					return collision.error();
+				else if (!collision->is_routing_account() || collision->ref.owner != executor->receipt.from)
+					return layer_exception("invalid routing address");
+			}
 
 			if (fee_asset != asset)
 			{
@@ -2820,12 +2973,12 @@ namespace tangent
 
 			return true;
 		}
-		bool withdraw::recover_many(const ledger::executor_context*, const ledger::transaction_receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const
+		void withdraw::enumerate_accounts(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, const std::function<void(const algorithm::pubkeyhash_t&)>& callback) const
 		{
+			VI_ASSERT(callback, "callback should be set");
 			auto attester = get_attester(receipt);
 			if (!attester.empty())
-				parties.insert(algorithm::pubkeyhash_t(attester));
-			return true;
+				callback(algorithm::pubkeyhash_t(attester));
 		}
 		void withdraw::set_routing_target(const std::string_view& new_address, const decimal& new_value)
 		{
@@ -3026,24 +3179,22 @@ namespace tangent
 
 			return true;
 		}
-		bool broadcast::recover_many(const ledger::executor_context* executor, const ledger::transaction_receipt&, btree_set<algorithm::pubkeyhash_t>& parties) const
+		void broadcast::enumerate_accounts(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, const std::function<void(const algorithm::pubkeyhash_t&)>& callback) const
 		{
-			auto parent = executor->get_block_transaction_instance(withdraw_hash);
-			if (!parent)
-				return false;
-
-			parties.insert(algorithm::pubkeyhash_t(parent->receipt.from));
-			return true;
+			VI_ASSERT(callback, "callback should be set");
+			auto parent = executor->get_block_transaction_instance(withdraw::as_instance_type(), withdraw_hash);
+			if (parent)
+				callback(algorithm::pubkeyhash_t(parent->receipt.from));
 		}
-		bool broadcast::recover_aliases(btree_set<uint256_t>& aliases) const
+		void broadcast::enumerate_aliases(const std::function<void(const uint256_t&)>& callback) const
 		{
+			VI_ASSERT(callback, "callback should be set");
 			if (proof && !proof->hashdata.empty())
 			{
 				format::wo_stream message;
 				message.write_string(proof->hashdata);
-				aliases.insert(message.hash());
+				callback(message.hash());
 			}
-			return true;
 		}
 		uint64_t broadcast::commitment_priority(uint256_t* event_hash) const
 		{
@@ -3430,14 +3581,11 @@ namespace tangent
 
 			return true;
 		}
-		bool anticast::recover_many(const ledger::executor_context* executor, const ledger::transaction_receipt&, btree_set<algorithm::pubkeyhash_t>& parties) const
+		void anticast::enumerate_accounts(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, const std::function<void(const algorithm::pubkeyhash_t&)>& callback) const
 		{
-			auto parent = executor->get_block_transaction_instance(broadcast_hash);
-			if (!parent)
-				return false;
-
-			parties.insert(algorithm::pubkeyhash_t(parent->receipt.from));
-			return true;
+			auto parent = executor->get_block_transaction_instance(broadcast::as_instance_type(), broadcast_hash);
+			if (parent)
+				callback(algorithm::pubkeyhash_t(parent->receipt.from));
 		}
 		void anticast::set_reconcile(const uint256_t& new_broadcast_hash, const uint256_t& new_attestate_hash)
 		{
@@ -3538,7 +3686,22 @@ namespace tangent
 			uint256_t bridge_hash = 0;
 			decimal network_fee = decimal::zero();
 			algorithm::pubkeyhash_t depositor_account = proof.memo;
+			option<algorithm::pubkeyhash_t> withdrawer_account_maybe = optional::none;
 			bool signers_hardening = kernel::params().on(fork_id::key_bind_commitment, executor->receipt.block_number);
+			bool enforce_aliasing = kernel::params().on(fork_id::anonymous_broadcast, executor->receipt.block_number);
+			auto withdrawer_account = [&]()
+			{
+				if (!withdrawer_account_maybe)
+				{
+					format::wo_stream message;
+					message.write_string(proof.transaction_id);
+					auto parent = bridge_hash > 0 && enforce_aliasing ? executor->get_block_transaction<broadcast>(message.hash(), true) : expects_lr<ledger::block_transaction>(layer_exception());
+					auto origin = parent ? executor->get_block_transaction<withdraw>(((broadcast*)*parent->transaction)->withdraw_hash, true) : expects_lr<ledger::block_transaction>(layer_exception());
+					withdrawer_account_maybe = origin ? origin->receipt.from : algorithm::pubkeyhash_t();
+				}
+				return *withdrawer_account_maybe;
+			};
+
 			for (auto& [hash, input] : proof.inputs)
 			{
 				auto baseline = states::witness_account(states::bridge_ref(), { }, nullptr);
@@ -3591,7 +3754,7 @@ namespace tangent
 						imbalance = imbalance.is_nan() ? token.value : (imbalance + token.value);
 					}
 				}
-				else if (source && source->is_routing_account() && params->routing == superchain::routing_policy::account && depositor_account.empty())
+				else if (depositor_account.empty() && params->routing == superchain::routing_policy::account && source && source->is_routing_account())
 					depositor_account = source->ref.owner;
 			}
 
@@ -3637,30 +3800,34 @@ namespace tangent
 							transfer[token_asset].supply += token.value;
 					}
 				}
-				else if (source && source->is_routing_account() && bridge_hash > 0)
+				else if (bridge_hash > 0)
 				{
-					auto& subtransfers = transfers[source->ref.owner];
-					if (output.value.is_positive())
+					auto source_ref_owner = source && source->is_routing_account() ? source->ref.owner : withdrawer_account();
+					if (!source_ref_owner.empty())
 					{
-						auto token_asset = output.get_asset(asset);
-						auto& transfer = subtransfers[token_asset];
-						auto& imbalance = imbalances[token_asset];
-						transfer.supply -= output.value;
-						transfer.reserve -= output.value;
-						imbalance = imbalance.is_nan() ? -output.value : (imbalance - output.value);
-					}
+						auto& subtransfers = transfers[source_ref_owner];
+						if (output.value.is_positive())
+						{
+							auto token_asset = output.get_asset(asset);
+							auto& transfer = subtransfers[token_asset];
+							auto& imbalance = imbalances[token_asset];
+							transfer.supply -= output.value;
+							transfer.reserve -= output.value;
+							imbalance = imbalance.is_nan() ? -output.value : (imbalance - output.value);
+						}
 
-					for (auto& [token_hash, token] : output.tokens)
-					{
-						if (!token.value.is_positive())
-							continue;
+						for (auto& [token_hash, token] : output.tokens)
+						{
+							if (!token.value.is_positive())
+								continue;
 
-						auto token_asset = token.get_asset(asset);
-						auto& transfer = subtransfers[token_asset];
-						auto& imbalance = imbalances[token_asset];
-						transfer.supply -= token.value;
-						transfer.reserve -= token.value;
-						imbalance = imbalance.is_nan() ? -token.value : (imbalance - token.value);
+							auto token_asset = token.get_asset(asset);
+							auto& transfer = subtransfers[token_asset];
+							auto& imbalance = imbalances[token_asset];
+							transfer.supply -= token.value;
+							transfer.reserve -= token.value;
+							imbalance = imbalance.is_nan() ? -token.value : (imbalance - token.value);
+						}
 					}
 				}
 				network_fee = std::max(network_fee - output.value, decimal::zero());
@@ -3887,29 +4054,29 @@ namespace tangent
 
 			return true;
 		}
-		bool attestate::recover_many(const ledger::executor_context*, const ledger::transaction_receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const
+		void attestate::enumerate_accounts(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, const std::function<void(const algorithm::pubkeyhash_t&)>& callback) const
 		{
+			VI_ASSERT(callback, "callback should be set");
 			for (auto& event : receipt.find_events<states::account_balance>())
 			{
 				if (event->args.size() >= 2 && event->args.at(1).as_string().size() == sizeof(algorithm::pubkeyhash_t))
-					parties.insert(algorithm::pubkeyhash_t(event->args.at(1).as_blob()));
+					callback(algorithm::pubkeyhash_t(event->args.at(1).as_blob()));
 			}
 			for (auto& event : receipt.find_events<states::bridge_balance>())
 			{
 				if (event->args.size() >= 2 && event->args.at(1).as_string().size() == sizeof(algorithm::pubkeyhash_t))
-					parties.insert(algorithm::pubkeyhash_t(event->args.at(1).as_blob()));
+					callback(algorithm::pubkeyhash_t(event->args.at(1).as_blob()));
 			}
-			return true;
 		}
-		bool attestate::recover_aliases(btree_set<uint256_t>& aliases) const
+		void attestate::enumerate_aliases(const std::function<void(const uint256_t&)>& callback) const
 		{
+			VI_ASSERT(callback, "callback should be set");
 			if (!proof.transaction_id.empty())
 			{
 				format::wo_stream message;
 				message.write_string(proof.transaction_id);
-				aliases.insert(message.hash());
+				callback(message.hash());
 			}
-			return true;
 		}
 		uint64_t attestate::commitment_priority(uint256_t* event_hash) const
 		{

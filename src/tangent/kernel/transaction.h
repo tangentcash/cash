@@ -71,8 +71,8 @@ namespace tangent
 			virtual bool load_payload(format::ro_stream& stream) override;
 			virtual bool store_body(format::wo_stream* stream) const = 0;
 			virtual bool load_body(format::ro_stream& stream) = 0;
-			virtual bool recover_many(const executor_context* executor, const transaction_receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const;
-			virtual bool recover_aliases(btree_set<uint256_t>& aliases) const;
+			virtual void enumerate_accounts(const executor_context* executor, const transaction_receipt& receipt, const std::function<void(const algorithm::pubkeyhash_t&)>& callback) const;
+			virtual void enumerate_aliases(const std::function<void(const uint256_t&)>& callback) const;
 			virtual bool sign(const algorithm::seckey_t& secret_key) override;
 			virtual bool sign(const algorithm::seckey_t& secret_key, uint64_t new_nonce);
 			virtual expects_lr<void> sign(const algorithm::seckey_t& secret_key, uint64_t new_nonce, const decimal& price);

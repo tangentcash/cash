@@ -37,7 +37,8 @@ namespace tangent
 		difficulty_gas_work = 890000,
 		consensus_challenge = 920000,
 		base_to_root_modulo = 1001000,
-		attesters_hardening = 1273450
+		attesters_hardening = 1273450,
+		anonymous_broadcast = 1700000
 	};
 
 	enum class network_type
@@ -225,8 +226,7 @@ namespace tangent
 				double flush_threads_ratio = 0.25;
 				double compaction_threads_ratio = 0.25;
 				double computation_threads_ratio = 0.00;
-				bool transaction_to_account_index = true;
-				bool transaction_to_alias_index = true;
+				bool transaction_history = true;
 				bool logging = false;
 			} storage;
 			struct

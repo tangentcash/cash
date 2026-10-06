@@ -395,7 +395,7 @@ namespace tangent
 			expects_lr<states::witness_account> get_witness_account(const algorithm::asset_id& asset, const std::string_view& address, size_t offset) const;
 			expects_lr<states::witness_account> get_witness_account_tagged(const algorithm::asset_id& asset, const std::string_view& address, size_t offset) const;
 			expects_lr<states::witness_transaction> get_witness_transaction(const algorithm::asset_id& asset, const std::string_view& transaction_id) const;
-			expects_lr<block_transaction> get_block_transaction_instance(const uint256_t& transaction_hash, bool may_have_distinct_asset = false) const;
+			expects_lr<block_transaction> get_block_transaction_instance(uint32_t type, const uint256_t& transaction_hash, bool may_have_distinct_asset = false) const;
 			expects_lr<uint64_t> get_block_number_by_hash(const uint256_t& block_hash) const;
 			states::account_balance get_account_balance_delta(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner) const;
 			algorithm::wesolowski::distribution get_random(const uint256_t& seed, block_header* from_block = nullptr, ledger::transaction_receipt* from_receipt = nullptr);
@@ -413,14 +413,7 @@ namespace tangent
 			template <typename t>
 			expects_lr<block_transaction> get_block_transaction(const uint256_t& transaction_hash, bool may_have_distinct_asset = false) const
 			{
-				auto result = get_block_transaction_instance(transaction_hash, may_have_distinct_asset);
-				if (!result)
-					return result.error();
-
-				if (result->transaction->as_type() != t::as_instance_type())
-					return layer_exception("block transaction is not " + string(t::as_instance_typename()) + " transaction");
-
-				return result;
+				return get_block_transaction_instance(t::as_instance_type(), transaction_hash, may_have_distinct_asset);
 			}
 
 		public:

@@ -27,6 +27,7 @@ extern "C"
 #define SCRIPT_TYPE_PMUT "pmut"
 #define SCRIPT_TYPE_PCONST "pconst"
 #define SCRIPT_FUNCTION_CONSTRUCT "construct"
+#define SCRIPT_FUNCTION_DELEGATE "delegate"
 #define SCRIPT_VM "program"
 
 namespace tangent
@@ -6279,7 +6280,7 @@ namespace tangent
 		{
 			if (!entrypoint.is_valid())
 			{
-				if (mutability == ccall::deploy_call)
+				if (mutability == ccall::event_call)
 					return expectation::met;
 
 				return layer_exception("illegal call to function: null function");
@@ -6297,7 +6298,7 @@ namespace tangent
 			auto* context = caller ? caller : vm->request_context();
 			auto* prev_mutable_program = context->get_user_data(SCRIPT_TAG_MUTABLE_PROGRAM);
 			auto* prev_immutable_program = context->get_user_data(SCRIPT_TAG_IMMUTABLE_PROGRAM);
-			auto* next_mutable_program = mutability == ccall::deploy_call || mutability == ccall::paying_call ? this : nullptr;
+			auto* next_mutable_program = mutability == ccall::event_call || mutability == ccall::paying_call ? this : nullptr;
 			context->set_user_data(next_mutable_program, SCRIPT_TAG_MUTABLE_PROGRAM);
 			context->set_user_data(this, SCRIPT_TAG_IMMUTABLE_PROGRAM);
 			context->is_nested(&depth_in);
@@ -6424,7 +6425,7 @@ namespace tangent
 			if (!entrypoint.get_namespace().empty())
 				return layer_exception(stringify::text("illegal call to function \"%.*s\": illegal operation", (int)function_name.size(), function_name.data()));
 
-			if (function_name == SCRIPT_FUNCTION_CONSTRUCT && *mutability != ccall::deploy_call)
+			if (*mutability != ccall::event_call && (function_name == deploy_function_name() || function_name == delegate_function_name()))
 				return layer_exception(stringify::text("illegal call to function \"%.*s\": illegal operation", (int)function_name.size(), function_name.data()));
 
 			auto* vm = entrypoint.get_vm();
@@ -6513,7 +6514,7 @@ namespace tangent
 
 					if (type.get_name() == SCRIPT_TYPE_PMUT)
 					{
-						if (*mutability != ccall::deploy_call && *mutability != ccall::paying_call)
+						if (*mutability != ccall::event_call && *mutability != ccall::paying_call)
 							return layer_exception(stringify::text("illegal call to function \"%s\": argument #%i not bound to required instruction set (" SCRIPT_TYPE_PMUT ")", entrypoint.get_decl().data(), (int)i));
 
 						*mutability = ccall::paying_call;
@@ -6589,6 +6590,8 @@ namespace tangent
 				return ((transactions::call*)executor->transaction)->callable;
 			else if (type == transactions::deploy::as_instance_type())
 				return ((transactions::deploy*)executor->transaction)->get_account();
+			else if (type == transactions::delegate::as_instance_type())
+				return ((transactions::delegate*)executor->transaction)->callable;
 
 			return executor->receipt.from;
 		}
@@ -6598,7 +6601,11 @@ namespace tangent
 		}
 		function program::deploy_function() const
 		{
-			return module.get_function_by_name(SCRIPT_FUNCTION_CONSTRUCT);
+			return module.get_function_by_name(deploy_function_name());
+		}
+		function program::delegate_function() const
+		{
+			return module.get_function_by_name(delegate_function_name());
 		}
 		string program::function_declaration() const
 		{
@@ -6606,21 +6613,28 @@ namespace tangent
 			if (type == transactions::call::as_instance_type())
 				return ((transactions::call*)executor->transaction)->function;
 			else if (type == transactions::deploy::as_instance_type())
-				return string(SCRIPT_FUNCTION_CONSTRUCT);
+				return string(deploy_function_name());
+			else if (type == transactions::delegate::as_instance_type())
+				return string(delegate_function_name());
 
 			return string();
 		}
 		const format::variables* program::function_arguments() const
 		{
 			uint32_t type = executor->transaction->as_type();
-			if (type == transactions::deploy::as_instance_type())
+			if (type == transactions::call::as_instance_type())
+			{
+				auto& args = ((transactions::call*)executor->transaction)->args;
+				return &args;
+			}
+			else if (type == transactions::deploy::as_instance_type())
 			{
 				auto& args = ((transactions::deploy*)executor->transaction)->args;
 				return &args;
 			}
-			else if (type == transactions::call::as_instance_type())
+			else if (type == transactions::delegate::as_instance_type())
 			{
-				auto& args = ((transactions::call*)executor->transaction)->args;
+				auto& args = ((transactions::delegate*)executor->transaction)->args;
 				return &args;
 			}
 			return nullptr;
@@ -6681,6 +6695,14 @@ namespace tangent
 		bool program::request_gas_vmemory_marshall(const format::ro_stream& stream, size_t prev_seek)
 		{
 			return prev_seek < stream.seek ? request_gas_vmemory(stream.seek - prev_seek) : true;
+		}
+		std::string_view program::deploy_function_name()
+		{
+			return std::string_view(SCRIPT_FUNCTION_CONSTRUCT, sizeof(SCRIPT_FUNCTION_CONSTRUCT) - 1);
+		}
+		std::string_view program::delegate_function_name()
+		{
+			return std::string_view(SCRIPT_FUNCTION_DELEGATE, sizeof(SCRIPT_FUNCTION_DELEGATE) - 1);
 		}
 	}
 }

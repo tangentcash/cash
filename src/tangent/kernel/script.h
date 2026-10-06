@@ -17,7 +17,7 @@ namespace tangent
 
 		enum class ccall
 		{
-			deploy_call,
+			event_call,
 			paying_call,
 			const_call
 		};
@@ -877,6 +877,7 @@ namespace tangent
 			virtual algorithm::pubkeyhash_t callable() const;
 			virtual payable_repr payable_value() const;
 			virtual function deploy_function() const;
+			virtual function delegate_function() const;
 			virtual string function_declaration() const;
 			virtual const format::variables* function_arguments() const;
 			virtual uint64_t virtual_block_number() const;
@@ -887,6 +888,8 @@ namespace tangent
 			static bool request_gas_mop(size_t difficulty);
 			static bool request_gas_vmemory(size_t size);
 			static bool request_gas_vmemory_marshall(const format::ro_stream& stream, size_t prev_seek);
+			static std::string_view deploy_function_name();
+			static std::string_view delegate_function_name();
 			template <typename t>
 			static inline t* request_gas_memory(size_t size)
 			{

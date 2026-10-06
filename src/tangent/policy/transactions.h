@@ -20,7 +20,7 @@ namespace tangent
 			expects_lr<void> execute(ledger::executor_context* executor) const override;
 			bool store_body(format::wo_stream* stream) const override;
 			bool load_body(format::ro_stream& stream) override;
-			bool recover_many(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const override;
+			void enumerate_accounts(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, const std::function<void(const algorithm::pubkeyhash_t&)>& callback) const override;
 			void set_to(const algorithm::pubkeyhash_t& new_to, const decimal& new_value);
 			format::tree as_tree() const override;
 			uint32_t as_type() const override;
@@ -43,7 +43,7 @@ namespace tangent
 			expects_lr<void> execute(ledger::executor_context* executor) const override;
 			bool store_body(format::wo_stream* stream) const override;
 			bool load_body(format::ro_stream& stream) override;
-			bool recover_many(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const override;
+			void enumerate_accounts(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, const std::function<void(const algorithm::pubkeyhash_t&)>& callback) const override;
 			void from_program(const std::string_view& new_data, format::variables&& new_args);
 			void from_hashcode(const std::string_view& new_data, format::variables&& new_args);
 			algorithm::pubkeyhash_t get_account() const;
@@ -68,11 +68,37 @@ namespace tangent
 			expects_lr<void> subexecute(ledger::executor_context* executor, std::function<expects_lr<void>(const payable_array&, void*)>&& callback) const;
 			bool store_body(format::wo_stream* stream) const override;
 			bool load_body(format::ro_stream& stream) override;
-			bool recover_many(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const override;
+			void enumerate_accounts(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, const std::function<void(const algorithm::pubkeyhash_t&)>& callback) const override;
 			void call_to(const algorithm::pubkeyhash_t& new_callable, const std::string_view& new_function, format::variables&& new_args, bool pipeline_pay);
 			void pay_with(const algorithm::asset_id& asset, const decimal& new_value);
 			bool uses_pipeline_pay() const;
 			format::tree as_tree() const override;
+			uint32_t as_type() const override;
+			std::string_view as_typename() const override;
+			static uint32_t as_instance_type();
+			static std::string_view as_instance_typename();
+		};
+
+		struct delegate final : ledger::transaction_message
+		{
+			uptr<ledger::transaction_message> transaction;
+			algorithm::pubkeyhash_t callable;
+			format::variables args;
+
+			delegate() = default;
+			delegate(const delegate& other);
+			delegate(delegate&&) noexcept = default;
+			delegate& operator= (const delegate& other);
+			delegate& operator= (delegate&&) noexcept = default;
+			expects_lr<void> validate(uint64_t block_number) const override;
+			expects_lr<void> execute(ledger::executor_context* executor) const override;
+			bool store_body(format::wo_stream* stream) const override;
+			bool load_body(format::ro_stream& stream) override;
+			void enumerate_accounts(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, const std::function<void(const algorithm::pubkeyhash_t&)>& callback) const override;
+			void enumerate_aliases(const std::function<void(const uint256_t&)>& callback) const override;
+			uint64_t commitment_priority(uint256_t* event_hash) const override;
+			format::tree as_tree() const override;
+			uint32_t as_delegation_type() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
@@ -92,12 +118,12 @@ namespace tangent
 			expects_lr<void> execute(ledger::executor_context* executor) const override;
 			bool store_body(format::wo_stream* stream) const override;
 			bool load_body(format::ro_stream& stream) override;
-			bool recover_many(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const override;
-			bool recover_aliases(btree_set<uint256_t>& aliases) const override;
+			void enumerate_accounts(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, const std::function<void(const algorithm::pubkeyhash_t&)>& callback) const override;
+			void enumerate_aliases(const std::function<void(const uint256_t&)>& callback) const override;
 			bool import_transaction(const ledger::transaction_message& transaction);
 			bool import_internal_transaction(ledger::transaction_message& transaction);
 			bool import_external_transaction(ledger::transaction_message& transaction, const algorithm::seckey_t& secret_key, uint64_t nonce);
-			expects_lr<ledger::block_transaction> resolve_block_transaction(const ledger::transaction_receipt& receipt, const uint256_t& transaction_hash) const;
+			expects_lr<ledger::block_transaction> resolve_block_transaction(const ledger::transaction_receipt& receipt, uint32_t type, const uint256_t& transaction_hash) const;
 			const ledger::transaction_message* resolve_transaction(const uint256_t& transaction_hash) const;
 			format::tree as_tree() const override;
 			uint32_t as_type() const override;
@@ -125,7 +151,7 @@ namespace tangent
 			expects_lr<void> execute(ledger::executor_context* executor) const override;
 			bool store_body(format::wo_stream* stream) const override;
 			bool load_body(format::ro_stream& stream) override;
-			bool recover_many(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const override;
+			void enumerate_accounts(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, const std::function<void(const algorithm::pubkeyhash_t&)>& callback) const override;
 			uint64_t commitment_priority(uint256_t* event_hash) const override;
 			void solve_pow_challenge(const algorithm::pubkeyhash_t& owner, uint64_t owner_nonce, const uint256_t& block_hash);
 			void set_routing_address(const std::string_view& new_address);
@@ -154,7 +180,7 @@ namespace tangent
 			void set_witness(const uint256_t& new_route_hash, algorithm::composition::cpubkey_t&& new_group_public_key, algorithm::composition::chashsig_t&& new_group_signature);
 			bool store_body(format::wo_stream* stream) const override;
 			bool load_body(format::ro_stream& stream) override;
-			bool recover_many(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const override;
+			void enumerate_accounts(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, const std::function<void(const algorithm::pubkeyhash_t&)>& callback) const override;
 			uint64_t commitment_priority(uint256_t* event_hash) const override;
 			format::tree as_tree() const override;
 			uint32_t as_type() const override;
@@ -179,7 +205,7 @@ namespace tangent
 			void set_proof(const uint256_t& new_route_hash, const algorithm::hashsig_t& new_correction_commitment, algorithm::composition::cpubkey_t&& new_correction_key, algorithm::composition::cpubkey_t&& new_imperfect_key, algorithm::composition::chashsig_t&& new_key_commitment);
 			bool store_body(format::wo_stream* stream) const override;
 			bool load_body(format::ro_stream& stream) override;
-			bool recover_many(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const override;
+			void enumerate_accounts(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, const std::function<void(const algorithm::pubkeyhash_t&)>& callback) const override;
 			uint64_t commitment_priority(uint256_t* event_hash) const override;
 			expects_lr<algorithm::composition::cpubkey_t> to_group_public_key(algorithm::composition::compositor* compositor = nullptr) const;
 			static expects_lr<algorithm::composition::cpubkey_t> to_group_public_key(const algorithm::asset_id& asset, const binding_proof& target, algorithm::composition::compositor* compositor = nullptr);
@@ -220,7 +246,7 @@ namespace tangent
 			expects_lr<void> execute(ledger::executor_context* executor) const override;
 			bool store_body(format::wo_stream* stream) const override;
 			bool load_body(format::ro_stream& stream) override;
-			bool recover_many(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const override;
+			void enumerate_accounts(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, const std::function<void(const algorithm::pubkeyhash_t&)>& callback) const override;
 			void allocate_production_stake(const decimal& value);
 			void disable_production();
 			void standby_on_production();
@@ -272,7 +298,7 @@ namespace tangent
 			expects_lr<void> execute(ledger::executor_context* executor) const override;
 			bool store_body(format::wo_stream* stream) const override;
 			bool load_body(format::ro_stream& stream) override;
-			bool recover_many(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const override;
+			void enumerate_accounts(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, const std::function<void(const algorithm::pubkeyhash_t&)>& callback) const override;
 			void set_routing_target(const std::string_view& address, const decimal& value);
 			void set_bridge_hash(const uint256_t& new_bridge_hash);
 			algorithm::pubkeyhash_t get_attester(const ledger::transaction_receipt& receipt) const;
@@ -293,8 +319,8 @@ namespace tangent
 			expects_lr<void> execute(ledger::executor_context* executor) const override;
 			bool store_body(format::wo_stream* stream) const override;
 			bool load_body(format::ro_stream& stream) override;
-			bool recover_many(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const override;
-			bool recover_aliases(btree_set<uint256_t>& aliases) const override;
+			void enumerate_accounts(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, const std::function<void(const algorithm::pubkeyhash_t&)>& callback) const override;
+			void enumerate_aliases(const std::function<void(const uint256_t&)>& callback) const override;
 			uint64_t commitment_priority(uint256_t* event_hash) const override;
 			void set_proof(const uint256_t& new_withdraw_hash, expects_lr<superchain::finalized_transaction>&& new_proof);
 			bool eligible_migration_target(const algorithm::pubkeyhash_t& target) const;
@@ -316,7 +342,7 @@ namespace tangent
 			expects_lr<void> execute(ledger::executor_context* executor) const override;
 			bool store_body(format::wo_stream* stream) const override;
 			bool load_body(format::ro_stream& stream) override;
-			bool recover_many(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const override;
+			void enumerate_accounts(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, const std::function<void(const algorithm::pubkeyhash_t&)>& callback) const override;
 			void set_reconcile(const uint256_t& new_broadcast_hash, const uint256_t& new_attestate_hash);
 			format::tree as_tree() const override;
 			uint32_t as_type() const override;
@@ -340,8 +366,8 @@ namespace tangent
 			expects_lr<void> execute(ledger::executor_context* executor) const override;
 			bool store_body(format::wo_stream* stream) const override;
 			bool load_body(format::ro_stream& stream) override;
-			bool recover_many(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const override;
-			bool recover_aliases(btree_set<uint256_t>& aliases) const override;
+			void enumerate_accounts(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, const std::function<void(const algorithm::pubkeyhash_t&)>& callback) const override;
+			void enumerate_aliases(const std::function<void(const uint256_t&)>& callback) const override;
 			uint64_t commitment_priority(uint256_t* event_hash) const override;
 			void set_finalized_proof(uint64_t block_id, const std::string_view& transaction_id, const vector<superchain::value_transfer>& inputs, const vector<superchain::value_transfer>& outputs, bool reset_signatures = true);
 			void set_computed_proof(const uint256_t& new_commitment_hash, superchain::computed_transaction&& new_proof, btree_set<algorithm::hashsig_t>&& new_signatures);

@@ -180,13 +180,11 @@ namespace tangent
 
 			return load_body(stream);
 		}
-		bool transaction_message::recover_many(const executor_context* executor, const transaction_receipt& receipt, btree_set<algorithm::pubkeyhash_t>& parties) const
+		void transaction_message::enumerate_accounts(const executor_context* executor, const transaction_receipt& receipt, const std::function<void(const algorithm::pubkeyhash_t&)>& callback) const
 		{
-			return true;
 		}
-		bool transaction_message::recover_aliases(btree_set<uint256_t>& aliases) const
+		void transaction_message::enumerate_aliases(const std::function<void(const uint256_t&)>& callback) const
 		{
-			return true;
 		}
 		bool transaction_message::sign(const algorithm::seckey_t& secret_key)
 		{

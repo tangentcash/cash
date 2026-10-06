@@ -683,12 +683,15 @@ namespace tangent
 			if (listeners.empty())
 				return;
 
-			btree_set<algorithm::pubkeyhash_t> addresses;
+			btree_set<algorithm::pubkeyhash_t> accounts;
 			auto executor = ledger::executor_context(nullptr);
 			for (auto& transaction : block.transactions)
 			{
-				addresses.insert(algorithm::pubkeyhash_t(transaction.receipt.from));
-				transaction.transaction->recover_many(&executor, transaction.receipt, addresses);
+				accounts.insert(algorithm::pubkeyhash_t(transaction.receipt.from));
+				transaction.transaction->enumerate_accounts(&executor, transaction.receipt, [&accounts](const algorithm::pubkeyhash_t& account)
+				{
+					accounts.insert(account);
+				});
 			}
 
 			hash_set<http::web_socket_frame*> web_sockets;
@@ -702,7 +705,7 @@ namespace tangent
 					bool found = false;
 					for (auto& address : listener.second.addresses)
 					{
-						found = addresses.find(address) != addresses.end();
+						found = accounts.find(address) != accounts.end();
 						if (found)
 							break;
 					}
@@ -1190,7 +1193,7 @@ namespace tangent
 			}
 			else
 			{
-				auto parties = btree_set<algorithm::pubkeyhash_t>();
+				auto accounts = btree_set<algorithm::pubkeyhash_t>();
 				auto aliases = btree_set<uint256_t>();
 				auto executor = ledger::executor_context(nullptr);
 				while (true)
@@ -1207,15 +1210,21 @@ namespace tangent
 
 						auto accounts_data = affected_data->set("accounts", format::tree::list());
 						auto aliases_data = affected_data->set("aliases", format::tree::list());
-						item.transaction->recover_many(&executor, item.receipt, parties);
-						item.transaction->recover_aliases(aliases);
+						item.transaction->enumerate_accounts(&executor, item.receipt, [&accounts](const algorithm::pubkeyhash_t& account)
+						{
+							accounts.insert(account);
+						});
+						item.transaction->enumerate_aliases([&aliases](const uint256_t& hash)
+						{
+							aliases.insert(hash);
+						});
 						accounts_data->push(algorithm::signing::serialize_address(item.receipt.from));
-						for (auto& party : parties)
-							accounts_data->push(algorithm::signing::serialize_address(party));
+						for (auto& account : accounts)
+							accounts_data->push(algorithm::signing::serialize_address(account));
 						for (auto& alias : aliases)
 							aliases_data->push(format::variable(algorithm::encoding::encode_0xhex256(alias)));
 						data.push(std::move(tx_data));
-						parties.clear();
+						accounts.clear();
 						aliases.clear();
 					}
 					if (list->size() < kernel::params().message.items_per_query)
@@ -1255,7 +1264,7 @@ namespace tangent
 			}
 			else
 			{
-				auto parties = btree_set<algorithm::pubkeyhash_t>();
+				auto accounts = btree_set<algorithm::pubkeyhash_t>();
 				auto aliases = btree_set<uint256_t>();
 				auto executor = ledger::executor_context(nullptr);
 				while (true)
@@ -1272,15 +1281,21 @@ namespace tangent
 
 						auto accounts_data = affected_data->set("accounts", format::tree::list());
 						auto aliases_data = affected_data->set("aliases", format::tree::list());
-						item.transaction->recover_many(&executor, item.receipt, parties);
-						item.transaction->recover_aliases(aliases);
+						item.transaction->enumerate_accounts(&executor, item.receipt, [&accounts](const algorithm::pubkeyhash_t& account)
+						{
+							accounts.insert(account);
+						});
+						item.transaction->enumerate_aliases([&aliases](const uint256_t& hash)
+						{
+							aliases.insert(hash);
+						});
 						accounts_data->push(algorithm::signing::serialize_address(item.receipt.from));
-						for (auto& party : parties)
-							accounts_data->push(algorithm::signing::serialize_address(party));
+						for (auto& account : accounts)
+							accounts_data->push(algorithm::signing::serialize_address(account));
 						for (auto& alias : aliases)
 							aliases_data->push(format::variable(algorithm::encoding::encode_0xhex256(alias)));
 						data.push(std::move(tx_data));
-						parties.clear();
+						accounts.clear();
 						aliases.clear();
 					}
 					if (list->size() < kernel::params().message.items_per_query)
@@ -1389,7 +1404,7 @@ namespace tangent
 			uint256_t hash = args[0].as_uint256();
 			uint8_t unrolling = args.size() > 1 ? args[1].as_uint8() : 0;
 			auto chain = storages::chainstate();
-			auto list = chain.get_block_transactions_by_hash(hash, true);
+			auto list = chain.get_block_transactions_by_hash(hash);
 			if (!list)
 				return server_response().error(error_codes::not_found, "transactions not found");
 
@@ -1416,7 +1431,7 @@ namespace tangent
 			uint256_t hash = args[0].as_uint256();
 			uint8_t unrolling = args.size() > 1 ? args[1].as_uint8() : 0;
 			auto chain = storages::chainstate();
-			auto transaction = chain.get_block_transaction_by_hash(hash, true);
+			auto transaction = chain.get_block_transaction_by_hash(hash);
 			if (!transaction)
 				return server_response().error(error_codes::not_found, "transaction not found");
 
@@ -1426,7 +1441,7 @@ namespace tangent
 		{
 			uint256_t hash = args[0].as_uint256();
 			auto chain = storages::chainstate();
-			auto transaction = chain.get_block_transaction_by_hash(hash, false);
+			auto transaction = chain.get_block_transaction_by_hash(hash);
 			if (!transaction)
 				return server_response().error(error_codes::not_found, "transaction not found");
 
@@ -3245,8 +3260,7 @@ namespace tangent
 
 			auto* storage = data.set("storage", format::tree::map());
 			storage->set("checkpoint_size", format::variable(kernel::params().user.storage.checkpoint_size));
-			storage->set("transaction_to_account_index", format::variable(kernel::params().user.storage.transaction_to_account_index));
-			storage->set("transaction_to_alias_index", format::variable(kernel::params().user.storage.transaction_to_alias_index));
+			storage->set("transaction_history", format::variable(kernel::params().user.storage.transaction_history));
 
 			if (block_header)
 			{
