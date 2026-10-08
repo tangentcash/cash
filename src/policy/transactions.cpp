@@ -560,6 +560,8 @@ namespace tangent
 
 		delegate::delegate(const delegate& other) : callable(other.callable), args(other.args)
 		{
+			ledger::transaction_message& base = *this;
+			base = *(ledger::transaction_message*)&other;
 			if (other.transaction)
 				transaction = resolver::from_copy(*other.transaction);
 		}
@@ -568,6 +570,8 @@ namespace tangent
 			if (this == &other)
 				return *this;
 
+			ledger::transaction_message& base = *this;
+			base = *(ledger::transaction_message*)&other;
 			callable = other.callable;
 			args = other.args;
 			if (other.transaction)
@@ -579,10 +583,10 @@ namespace tangent
 		expects_lr<void> delegate::validate(uint64_t block_number) const
 		{
 			if (!transaction || transaction->as_type() == as_type() || transaction->as_type() == rollup::as_instance_type() || transaction->as_type() == setup::as_instance_type())
-				return layer_exception("invalid delegate transaction");
+				return layer_exception("invalid sub-transaction");
 
 			if (transaction->asset != asset || !transaction->gas_price.is_nan() || transaction->gas_limit > 0 || !transaction->signature.empty() || transaction->nonce > 0)
-				return layer_exception("invalid delegate transaction data");
+				return layer_exception("invalid sub-transaction data");
 
 			return ledger::transaction_message::validate(block_number);
 		}
@@ -610,25 +614,42 @@ namespace tangent
 			if (!execution)
 				return execution.error();
 
-			uint8_t nonce_buffer[sizeof(executor->receipt.from.blob) + sizeof(nonce)];
+			uint8_t nonce_buffer[sizeof(executor->receipt.from.blob) + sizeof(nonce)] = { 0 };
 			uint64_t nonce_value = os::hw::to_endianness(os::hw::endian::little, nonce);
 			memcpy(nonce_buffer, executor->receipt.from.blob, sizeof(executor->receipt.from.blob));
 			memcpy(nonce_buffer + sizeof(executor->receipt.from.blob), &nonce_value, sizeof(nonce_value));
 
-			uint8_t execution_flags = (uint8_t)ledger::executor_context::flags::preserve_events | (uint8_t)ledger::executor_context::flags::replayable;
 			uint256_t transaction_hash = transaction->as_hash();
-			auto destructor = uscope([&]()
+			uint256_t absolute_gas_limit = executor->block->gas_limit;
+			uint256_t absolute_gas_use = executor->block->gas_use;
+			uint256_t relative_gas_use = executor->receipt.relative_gas_use;
+			auto internal_executor = ledger::executor_context(executor->changelog, executor->solver, executor->block, *transaction);
+			auto block_transaction_normalization = uscope([&]()
 			{
 				transaction->signature.clear();
 				transaction->nonce = 0;
 				transaction->gas_limit = 0;
 				transaction->gas_price = decimal::nan();
+				executor->block->gas_limit = absolute_gas_limit;
+				executor->block->gas_use = absolute_gas_use;
+				executor->receipt.relative_gas_use = std::min(relative_gas_use, gas_limit);
 			});
 			transaction->gas_price = decimal::zero();
 			transaction->gas_limit = gas_limit - executor->receipt.relative_gas_use;
 			transaction->nonce = (uint64_t)(algorithm::hashing::hash256i(std::string_view((char*)nonce_buffer, sizeof(nonce_buffer))) % std::numeric_limits<uint64_t>::max());
 			transaction->signature.blob[0] = 0xFF;
-			return ledger::executor_context::execute_tx(executor, callable, *transaction, transaction_hash, 0, execution_flags);
+			
+			execution = ledger::executor_context::execute_tx(&internal_executor, callable, *transaction, executor->receipt.transaction_hash, 0, (uint8_t)ledger::executor_context::flags::preserve_events | (uint8_t)ledger::executor_context::flags::replayable);
+			relative_gas_use += internal_executor.receipt.relative_gas_use;
+			if (!execution)
+				return layer_exception("sub-transaction execution failed: " + execution.error().message());
+
+			auto report = executor->emit_event<delegate>({ format::variable(transaction_hash), format::variable(internal_executor.receipt.relative_gas_use) });
+			if (!report)
+				return layer_exception("sub-transaction merge failed: " + report.error().message());
+
+			executor->receipt.events.insert(executor->receipt.events.end(), internal_executor.receipt.events.begin(), internal_executor.receipt.events.end());
+			return expectation::met;
 		}
 		bool delegate::store_body(format::wo_stream* stream) const
 		{
@@ -685,12 +706,38 @@ namespace tangent
 			transaction->commitment_priority(event_hash);
 			return 0;
 		}
-		ledger::delegation_binder delegate::as_delegation_binder() const
+		expects_lr<ledger::block_transaction> delegate::as_internal_block_transaction(const ledger::transaction_receipt& receipt, uint32_t type) const
+		{
+			if (!transaction || (type > 0 && type != transaction->as_type()))
+				return layer_exception("sub-transaction not found");
+
+			ledger::block_transaction result;
+			result.transaction = resolver::from_copy(*transaction);
+			result.transaction->checksum = receipt.transaction_hash;
+			result.receipt = receipt;
+			result.receipt.from = callable;
+			if (!result.transaction)
+				return layer_exception("sub-transaction not valid");
+
+			size_t event_index = 0;
+			for (auto& event : receipt.events)
+			{
+				++event_index;
+				if (event.event == delegate::as_instance_type() && event.args.size() == 2 && event.args[0].as_uint256() == transaction->as_hash())
+				{
+					result.receipt.relative_gas_use = event.args[1].as_uint256();
+					result.receipt.events.erase(result.receipt.events.begin(), result.receipt.events.begin() + event_index);
+					return expects_lr<ledger::block_transaction>(std::move(result));
+				}
+			}
+			return layer_exception("sub-transaction not valid");
+		}
+		uint32_t delegate::as_delegation_type() const
 		{
 			if (!transaction)
-				return transaction_message::as_delegation_binder();
+				return transaction_message::as_delegation_type();
 
-			return transaction->as_delegation_binder();
+			return transaction->as_delegation_type();
 		}
 		format::tree delegate::as_tree() const
 		{
@@ -774,7 +821,7 @@ namespace tangent
 					if (transaction->asset != group.first || !transaction->gas_price.is_nan() || transaction->gas_limit > 0)
 						return layer_exception("invalid sub-transaction data");
 
-					if (transaction->as_delegation_binder().delegation_type > 0)
+					if (transaction->as_delegation_type() > 0)
 						return layer_exception("invalid sub-transaction type - must be non-delegable");
 				}
 			}
@@ -806,6 +853,12 @@ namespace tangent
 			});
 
 			auto internal_executor = ledger::executor_context(executor->changelog, executor->solver, executor->block, nullptr);
+			auto block_normalization = uscope([&]()
+			{
+				executor->block->gas_limit = absolute_gas_limit;
+				executor->block->gas_use = absolute_gas_use;
+				executor->receipt.relative_gas_use = std::min(relative_gas_use, gas_limit);
+			});
 			for (auto& [transaction, index] : queue)
 			{
 				bool internal_transaction = transaction->signature.empty();
@@ -813,7 +866,7 @@ namespace tangent
 				uint64_t transaction_nonce = transaction->nonce;
 				uint8_t transaction_code = transaction->signature.blob[0];
 				uint8_t execution_flags = (uint8_t)ledger::executor_context::flags::pedantic | (uint8_t)ledger::executor_context::flags::preserve_events;
-				auto destructor = uscope([&]()
+				auto transaction_normalization = uscope([&]()
 				{
 					transaction->signature.blob[0] = transaction_code;
 					transaction->nonce = transaction_nonce;
@@ -833,22 +886,19 @@ namespace tangent
 				size_t prev_events_size = internal_executor.receipt.events.size();
 				transaction->gas_price = decimal::zero();
 				transaction->gas_limit = gas_limit - executor->receipt.relative_gas_use;
+
 				auto execution = ledger::executor_context::execute_tx(&internal_executor, owner, transaction, transaction_hash, 0, execution_flags);
+				relative_gas_use += internal_executor.receipt.relative_gas_use;
 				if (!execution)
 					return layer_exception("sub-transaction " + algorithm::encoding::encode_0xhex256(transaction_hash) + " execution failed: " + execution.error().message());
 
-				relative_gas_use += internal_executor.receipt.relative_gas_use;
-				auto report = executor->emit_event<rollup>({ format::variable(internal_executor.receipt.transaction_hash), format::variable(index), format::variable(internal_executor.receipt.relative_gas_use) });
+				auto report = executor->emit_event<rollup>({ format::variable(transaction_hash), format::variable(index), format::variable(internal_executor.receipt.relative_gas_use) });
 				if (!report)
 					return layer_exception("sub-transaction " + algorithm::encoding::encode_0xhex256(transaction_hash) + " merge failed: " + report.error().message());
 
 				if (internal_executor.receipt.events.size() > prev_events_size)
 					executor->receipt.events.insert(executor->receipt.events.end(), internal_executor.receipt.events.begin() + prev_events_size, internal_executor.receipt.events.end());
 			}
-
-			executor->block->gas_limit = absolute_gas_limit;
-			executor->block->gas_use = absolute_gas_use;
-			executor->receipt.relative_gas_use = relative_gas_use;
 			return expectation::met;
 		}
 		bool rollup::store_body(format::wo_stream* stream) const
@@ -989,7 +1039,7 @@ namespace tangent
 
 			return import_transaction(transaction);
 		}
-		expects_lr<ledger::block_transaction> rollup::find_block_transaction(const ledger::transaction_receipt& receipt, uint32_t type, size_t offset) const
+		expects_lr<ledger::block_transaction> rollup::as_internal_block_transaction(const ledger::transaction_receipt& receipt, uint32_t type, size_t offset) const
 		{
 			size_t index = 0;
 			ledger::transaction_message* target = nullptr;
@@ -1008,15 +1058,16 @@ namespace tangent
 			if (!target)
 				return layer_exception("sub-transaction not found");
 
-			ledger::block_transaction transaction;
-			transaction.transaction = resolver::from_copy(target);
-			transaction.receipt = receipt;
-			if (!transaction.transaction)
+			ledger::block_transaction result;
+			result.transaction = resolver::from_copy(target);
+			result.receipt = receipt;
+			if (!result.transaction)
 				return layer_exception("sub-transaction not valid");
 
-			transaction.receipt.relative_gas_use = 0;
-			transaction.receipt.transaction_hash = transaction.transaction->as_hash();
-			if (!transaction.transaction->recover_hash(transaction.receipt.from))
+			result.transaction->checksum = receipt.transaction_hash;
+			result.receipt.relative_gas_use = 0;
+			result.receipt.transaction_hash = result.transaction->as_hash();
+			if (!result.transaction->signature.empty() && !result.transaction->recover_hash(result.receipt.from))
 				return layer_exception("sub-transaction not valid");
 
 			size_t event_index = 0;
@@ -1024,14 +1075,13 @@ namespace tangent
 			for (auto& event : receipt.events)
 			{
 				++event_index;
-				if (event.event != rollup::as_instance_type() || event.args.size() != 2)
+				if (event.event != rollup::as_instance_type() || event.args.size() != 3)
 					continue;
 
-				uint256_t candidate_hash = event.args[0].as_uint256();
-				if (candidate_hash == transaction.receipt.transaction_hash)
+				if (event.args[0].as_uint256() == result.receipt.transaction_hash)
 				{
+					result.receipt.relative_gas_use = event.args[2].as_uint256();
 					begin = event_index - 1;
-					transaction.receipt.relative_gas_use = event.args[1].as_uint256();
 					continue;
 				}
 				else if (begin != std::string::npos)
@@ -1046,9 +1096,9 @@ namespace tangent
 			else if (end == std::string::npos)
 				end = event_index;
 
-			transaction.receipt.events.resize(end - 1);
-			transaction.receipt.events.erase(transaction.receipt.events.begin(), transaction.receipt.events.begin() + begin + 1);
-			return transaction;
+			result.receipt.events.resize(end - 1);
+			result.receipt.events.erase(result.receipt.events.begin(), result.receipt.events.begin() + begin + 1);
+			return result;
 		}
 		format::tree rollup::as_tree() const
 		{
@@ -1439,12 +1489,9 @@ namespace tangent
 			}
 			return data;
 		}
-		ledger::delegation_binder route::as_delegation_binder() const
+		uint32_t route::as_delegation_type() const
 		{
-			ledger::delegation_binder result;
-			result.delegation_type = delegations::bind_delegation::as_instance_type();
-			result.transaction_type = as_type();
-			return result;
+			return delegations::bind_delegation::as_instance_type();
 		}
 		uint32_t route::as_type() const
 		{
@@ -2116,7 +2163,7 @@ namespace tangent
 
 				auto cost = (uint64_t)ledger::gas_cost::write_tx_byte;
 				auto bridge_hash = executor->get_random(executor->receipt.transaction_hash).derive();
-				auto payment = executor->burn_gas(cost * cost * cost * (1 + (kernel::params().policy.participation.max_per_account - setup.security_level)));
+				auto payment = executor->burn_gas(cost * cost * cost * (1 + (kernel::params().policy.participation.max_per_account - setup.security_level)), ledger::executor_context::meter::paid);
 				if (!payment)
 					return payment.error();
 
@@ -2560,12 +2607,9 @@ namespace tangent
 				data.set("block_production", production->is_zero() || production->is_positive() ? format::variable(*production) : format::variable(false));
 			return data;
 		}
-		ledger::delegation_binder setup::as_delegation_binder() const
+		uint32_t setup::as_delegation_type() const
 		{
-			ledger::delegation_binder result;
-			result.delegation_type = delegations::rebind_delegation::as_instance_type();
-			result.transaction_type = as_type();
-			return result;
+			return delegations::rebind_delegation::as_instance_type();
 		}
 		uint32_t setup::as_type() const
 		{
@@ -2989,12 +3033,9 @@ namespace tangent
 			data.set("value", format::variable(value));
 			return data;
 		}
-		ledger::delegation_binder withdraw::as_delegation_binder() const
+		uint32_t withdraw::as_delegation_type() const
 		{
-			ledger::delegation_binder result;
-			result.delegation_type = delegations::broadcast_delegation::as_instance_type();
-			result.transaction_type = as_type();
-			return result;
+			return delegations::broadcast_delegation::as_instance_type();
 		}
 		uint32_t withdraw::as_type() const
 		{
@@ -3172,7 +3213,7 @@ namespace tangent
 		void broadcast::enumerate_accounts(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, const std::function<void(const algorithm::pubkeyhash_t&)>& callback) const
 		{
 			VI_ASSERT(callback, "callback should be set");
-			auto parent = executor->get_block_transaction_instance(withdraw::as_instance_type(), withdraw_hash);
+			auto parent = executor->get_block_transaction<withdraw>(withdraw_hash);
 			if (parent)
 				callback(algorithm::pubkeyhash_t(parent->receipt.from));
 		}
@@ -3574,7 +3615,7 @@ namespace tangent
 		}
 		void anticast::enumerate_accounts(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, const std::function<void(const algorithm::pubkeyhash_t&)>& callback) const
 		{
-			auto parent = executor->get_block_transaction_instance(broadcast::as_instance_type(), broadcast_hash);
+			auto parent = executor->get_block_transaction<broadcast>(broadcast_hash);
 			if (parent)
 				callback(algorithm::pubkeyhash_t(parent->receipt.from));
 		}
@@ -4308,6 +4349,8 @@ namespace tangent
 				return memory::init<deploy>();
 			else if (hash == call::as_instance_type())
 				return memory::init<call>();
+			else if (hash == delegate::as_instance_type())
+				return memory::init<delegate>();
 			else if (hash == rollup::as_instance_type())
 				return memory::init<rollup>();
 			else if (hash == route::as_instance_type())
@@ -4339,6 +4382,8 @@ namespace tangent
 				return memory::init<deploy>(*(const deploy*)base);
 			else if (hash == call::as_instance_type())
 				return memory::init<call>(*(const call*)base);
+			else if (hash == delegate::as_instance_type())
+				return memory::init<delegate>(*(const delegate*)base);
 			else if (hash == rollup::as_instance_type())
 				return memory::init<rollup>(*(const rollup*)base);
 			else if (hash == route::as_instance_type())

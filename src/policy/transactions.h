@@ -97,8 +97,9 @@ namespace tangent
 			void enumerate_accounts(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, const std::function<void(const algorithm::pubkeyhash_t&)>& callback) const override;
 			void enumerate_aliases(const std::function<void(const uint256_t&)>& callback) const override;
 			uint64_t commitment_priority(uint256_t* event_hash) const override;
+			expects_lr<ledger::block_transaction> as_internal_block_transaction(const ledger::transaction_receipt& receipt, uint32_t type) const;
 			format::tree as_tree() const override;
-			ledger::delegation_binder as_delegation_binder() const override;
+			uint32_t as_delegation_type() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
@@ -123,7 +124,7 @@ namespace tangent
 			bool import_transaction(const ledger::transaction_message& transaction);
 			bool import_internal_transaction(ledger::transaction_message& transaction);
 			bool import_external_transaction(ledger::transaction_message& transaction, const algorithm::seckey_t& secret_key, uint64_t nonce);
-			expects_lr<ledger::block_transaction> find_block_transaction(const ledger::transaction_receipt& receipt, uint32_t type, size_t offset) const;
+			expects_lr<ledger::block_transaction> as_internal_block_transaction(const ledger::transaction_receipt& receipt, uint32_t type, size_t offset) const;
 			format::tree as_tree() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
@@ -159,7 +160,7 @@ namespace tangent
 			algorithm::pubkeyhash_t get_attester(const ledger::transaction_receipt& receipt) const;
 			btree_set<algorithm::pubkeyhash_t> get_participants(const ledger::transaction_receipt& receipt) const;
 			format::tree as_tree() const override;
-			ledger::delegation_binder as_delegation_binder() const override;
+			uint32_t as_delegation_type() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
@@ -262,7 +263,7 @@ namespace tangent
 			expects_lr<vector<migration_ref>> get_migration_refs(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt) const;
 			algorithm::pubkeyhash_t get_new_participant(const ledger::transaction_receipt& receipt) const;
 			format::tree as_tree() const override;
-			ledger::delegation_binder as_delegation_binder() const override;
+			uint32_t as_delegation_type() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
@@ -302,7 +303,7 @@ namespace tangent
 			void set_bridge_hash(const uint256_t& new_bridge_hash);
 			algorithm::pubkeyhash_t get_attester(const ledger::transaction_receipt& receipt) const;
 			format::tree as_tree() const override;
-			ledger::delegation_binder as_delegation_binder() const override;
+			uint32_t as_delegation_type() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();

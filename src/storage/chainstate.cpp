@@ -741,7 +741,7 @@ namespace tangent
 				{
 					item.message.data.reserve(1024);
 					item.context->store(&item.message);
-					item.dispatchable = item.context->receipt.successful && item.context->transaction->as_delegation_binder().delegation_type > 0;
+					item.dispatchable = item.context->receipt.successful && item.context->transaction->as_delegation_type() > 0;
 					item.context->receipt.transaction_hash.encode(item.transaction_hash);
 					item.context->transaction->enumerate_aliases([&item](const uint256_t& hash)
 					{

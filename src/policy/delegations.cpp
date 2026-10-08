@@ -548,6 +548,10 @@ namespace tangent
 			method_bind(hash, bind_delegation, &bind_delegation::distribute_encrypted_shares);
 			return nullptr;
 		}
+		uint32_t bind_delegation::as_transaction_type() const
+		{
+			return transactions::route::as_instance_type();
+		}
 		uint32_t bind_delegation::as_type() const
 		{
 			return as_instance_type();
@@ -1381,6 +1385,10 @@ namespace tangent
 			method_bind(hash, rebind_delegation, &rebind_delegation::distribute_tweaked_encrypted_shares);
 			return nullptr;
 		}
+		uint32_t rebind_delegation::as_transaction_type() const
+		{
+			return transactions::setup::as_instance_type();
+		}
 		uint32_t rebind_delegation::as_type() const
 		{
 			return as_instance_type();
@@ -1701,6 +1709,10 @@ namespace tangent
 		{
 			method_bind(hash, broadcast_delegation, &broadcast_delegation::aggregate_signature);
 			return nullptr;
+		}
+		uint32_t broadcast_delegation::as_transaction_type() const
+		{
+			return transactions::withdraw::as_instance_type();
 		}
 		uint32_t broadcast_delegation::as_type() const
 		{

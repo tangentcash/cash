@@ -40,6 +40,7 @@ namespace tangent
 			{
 				hash_map<size_t, format::tree> events;
 				uptr<transactions::call> contextual;
+				uptr<ledger::transaction_message> delegate;
 				ledger::solver_context solver;
 				script::cmodule pmodule;
 				format::tree returning;
@@ -95,8 +96,14 @@ namespace tangent
 				executor->receipt.successful = !!execution;
 				executor->receipt.block_time = kernel::params().time.now();
 				if (!executor->receipt.successful)
-					executor->emit_event(0, { format::variable(execution.what()) }, false);
+					executor->emit_event(0, { format::variable(execution.what()) }, ledger::executor_context::meter::unpaid);
 
+				build_call_log();
+
+				return execution;
+			}
+			void build_call_log()
+			{
 				tracer.log = format::tree::list();
 				for (auto& item : executor->receipt.events)
 				{
@@ -113,8 +120,94 @@ namespace tangent
 					else
 						next->set(target->second.key, target->second);
 				}
+			}
+			expects_lr<void> call_delegate(bool attach_debugger_context)
+			{
+				if (program.path.empty())
+					return layer_exception("program not bound");
 
+				if (!tracer.delegate)
+					return layer_exception("delegate transaction not bound");
+
+				if (env.from.empty())
+					return layer_exception("caller address not valid");
+
+				if (env.to.empty())
+					return layer_exception("contract address not valid");
+
+				auto outer = transactions::delegate();
+				outer.asset = algorithm::asset::native();
+				outer.callable = env.to;
+				outer.transaction = transactions::resolver::from_copy(*tracer.delegate);
+				if (!outer.transaction)
+					return layer_exception("delegate inner transaction is invalid");
+
+				auto* inner = dynamic_cast<const transactions::call*>(*outer.transaction);
+
+				ledger::transaction_receipt receipt;
+				receipt.from = env.from;
+				tracer.solver.apply_temporary_state(&tracer.block, &outer, std::move(receipt));
+
+				for (auto& [account, balances] : env.balances)
+				{
+					for (auto& [asset, value] : balances)
+					{
+						auto prev_balance = executor->get_account_balance(asset, account);
+						if (prev_balance && prev_balance->get_balance() >= value)
+							continue;
+
+						auto balance = states::account_balance(account, asset, nullptr);
+						balance.supply = value;
+
+						auto status = executor->store(&balance, ledger::executor_context::meter::unpaid);
+						if (!status)
+							return status.error();
+					}
+				}
+
+				auto payer = inner != nullptr ? inner->callable : env.from;
+				for (auto& [paying_asset, paying_value] : env.payable.payments)
+				{
+					auto payment = executor->apply_payment(paying_asset, payer, env.to, paying_value);
+					if (!payment)
+						return payment.error();
+				}
+
+				auto* vm = module.get_vm();
+				if (attach_debugger_context)
+				{
+					auto* factory = script::factory::get();
+					auto* debugger = new script::debugger_context();
+					debugger->set_interrupt_callback([](bool is_interrupted) { console::get()->write_line(is_interrupted ? "program execution interrupted" : "resuming program execution"); });
+					factory->bind_debugger_tools(debugger);
+					vm->set_debugger(debugger);
+					interrupter(true);
+				}
+
+				tracer.returning = format::tree();
+				tracer.events.clear();
+				auto execution = outer.execute(executor);
+				if (attach_debugger_context)
+				{
+					interrupter(false);
+					vm->set_debugger(nullptr);
+				}
+
+				build_call_log();
+
+				if (execution)
+				{
+					tracer.solver.state.changelog.commit();
+					env.payable = script::payable_repr();
+					env.balances.clear();
+				}
+
+				tracer.delegate = nullptr;
 				return execution;
+			}
+			bool delegate_bound() const
+			{
+				return !!tracer.delegate;
 			}
 			expects_lr<void> compile(const std::string_view& new_path)
 			{
@@ -200,6 +293,9 @@ namespace tangent
 			{
 				if (program.path.empty())
 					return layer_exception("program not bound");
+				if (tracer.delegate)
+					return call_delegate(attach_debugger_context);
+
 
 				if (env.from.empty())
 					return layer_exception("caller address not valid");
@@ -231,7 +327,7 @@ namespace tangent
 							auto balance = states::account_balance(account, asset, nullptr);
 							balance.supply = value;
 
-							auto status = executor->store(&balance, false);
+							auto status = executor->store(&balance, ledger::executor_context::meter::unpaid);
 							if (!status)
 								return status.error();
 						}
@@ -319,6 +415,7 @@ namespace tangent
 				program.instructions = false;
 				tracer.solver = ledger::solver_context();
 				tracer.contextual = uptr<transactions::call>();
+				tracer.delegate = nullptr;
 				tracer.returning = format::tree();
 				tracer.log = format::tree();
 				tracer.events.clear();
@@ -526,6 +623,72 @@ namespace tangent
 						ok(value.to_string() + " " + algorithm::asset::name_of(asset));
 
 					return true;
+				}
+				else if (method == "delegate")
+				{
+					if (args.size() < 2)
+					{
+						if (!context.delegate_bound())
+							return ok("null");
+
+						return ok(context.tracer.delegate->as_tree().as_json(true));
+					}
+
+					if (args[1] == "off")
+					{
+						context.tracer.delegate = nullptr;
+						return ok("null");
+					}
+
+					auto subtx = transactions::delegate();
+					subtx.asset = algorithm::asset::native();
+					if (args[1] == "withdraw")
+					{
+						if (args.size() < 5)
+							return err("usage: delegate withdraw <bridge_hash> <value> <address>");
+
+						auto bridge_hash = algorithm::encoding::decode_0xhex256(args[2]);
+						if (!bridge_hash)
+							return err("not a valid bridge hash");
+
+						decimal value = decimal(args[3]);
+						if (value.is_nan() || !value.is_positive())
+							return err("not a valid decimal value");
+
+						auto inner = transactions::withdraw();
+						inner.asset = algorithm::asset::native();
+						inner.bridge_hash = bridge_hash;
+						inner.value = value;
+						inner.address = args[4];
+						subtx.transaction = transactions::resolver::from_copy(&inner);
+					}
+					else if (args[1] == "call")
+					{
+						if (args.size() < 4)
+							return err("usage: delegate call <address> <declaration> [args?]...");
+
+						algorithm::pubkeyhash_t callable;
+						if (!algorithm::signing::decode_address(args[2], callable))
+							return err("not a valid address");
+
+						format::variables function_args;
+						function_args.reserve(args.size() - 4);
+						for (size_t i = 4; i < args.size(); i++)
+							function_args.push_back(format::variable::from(args[i]));
+
+						auto inner = transactions::call();
+						inner.asset = algorithm::asset::native();
+						inner.call_to(callable, args[3], std::move(function_args), false);
+						subtx.transaction = transactions::resolver::from_copy(&inner);
+					}
+					else
+						return err("unsupported delegate sub-transaction type");
+
+					if (!subtx.transaction)
+						return err("failed to construct delegate sub-transaction");
+
+					context.tracer.delegate = transactions::resolver::from_copy(&subtx);
+					return ok(context.tracer.delegate->as_tree().as_json(true));
 				}
 				else if (method == "block")
 				{
@@ -977,6 +1140,7 @@ namespace tangent
 						"pay [value?] [blockchain?] [token?] [contract?]         -- get/set caller address paying value\n"
 						"pay_funded [value?] [blockchain?] [token?] [contract?]  -- combination of fund then pay\n"
 						"compile [path]                                          -- compile and use program\n"
+						"delegate [off|withdraw <bridge> <value> <addr>|call <addr> <decl> [args?]] -- bind delegate sub-transaction; call/debug then run it\n"
 						"assemble [type:deploy|call|abi|code] [path] [args?]     -- assemble current program (type=deploy/call: assemble deploy tx data with packed args)\n"
 						"pack [args?]...                                         -- pack many args into one (for non-trivial function args)\n"
 						"pack256 [integer]...                                    -- pack a decimal uint256 into a hex number\n"

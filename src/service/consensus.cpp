@@ -1694,27 +1694,25 @@ namespace tangent
 			if (chainstate.get_latest_block_number().or_else(1) < block_number)
 				return remote_exception::retry_later();
 
-			auto transaction_hash = packed->at(2).as_uint256();
-			auto executor = ledger::executor_context(nullptr);
-			auto context = executor.get_block_transaction_instance(0, transaction_hash);
-			if (!context)
-				return remote_exception("transaction not found");
-
 			uint32_t delegation_type;
-			executor.transaction = *context->transaction;
-			executor.receipt = std::move(context->receipt);
-
 			auto reader = format::ro_stream(packed->at(3).as_string());
 			if (!reader.read_integer(reader.read_type(), &delegation_type))
 				return remote_exception("invalid delegation type");
 
+			auto executor = ledger::executor_context(nullptr);
 			auto adapter = server_delegation_adapter(this);
 			auto delegation = uptr(delegations::resolver::from_type(delegation_type, &adapter, &executor, event.callee->second.public_key_hash));
 			if (!delegation)
 				return remote_exception("invalid delegation type");
 
-			uint32_t delegate;
-			if (!reader.read_integer(reader.read_type(), &delegate))
+			auto transaction_hash = packed->at(2).as_uint256();
+			auto context = executor.get_block_transaction(delegation->as_transaction_type(), transaction_hash);
+			if (!context)
+				return remote_exception("transaction not found");
+
+			executor.transaction = *context->transaction;
+			executor.receipt = std::move(context->receipt);
+			if (!reader.read_integer(reader.read_type(), &delegation_type))
 				return remote_exception("invalid delegate");
 
 			if (!delegation->load_payload(reader))
@@ -1724,7 +1722,7 @@ namespace tangent
 			if (!validation)
 				return remote_exception(std::move(validation.error().message()));
 
-			auto execution = delegation->yield_to_self(delegation->runner->public_key_hash, delegate, false);
+			auto execution = delegation->yield_to_self(delegation->runner->public_key_hash, delegation_type, false);
 			if (kernel::params().user.consensus.logging)
 				VI_INFO("%s delegation%s: %s (delegator: %s)", delegation->as_typename().data(), execution ? "" : " failed", execution ? "OK" : execution.what().c_str(), algorithm::signing::encode_address(yielding_delegator.public_key_hash).c_str());
 			if (!execution)

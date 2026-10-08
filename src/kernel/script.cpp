@@ -359,7 +359,7 @@ namespace tangent
 			if (!check_max_size(length))
 				return;
 
-			create_buffer(&buffer, length);
+			try_create_buffer(&buffer, length);
 			if (obj_type.flags() & (uint32_t)object_behaviours::gc)
 				obj_type.get_vm()->notify_of_new_object(this, obj_type);
 		}
@@ -370,7 +370,7 @@ namespace tangent
 			if (obj_type.flags() & (uint32_t)object_behaviours::gc)
 				obj_type.get_vm()->notify_of_new_object(this, obj_type);
 
-			create_buffer(&buffer, 0);
+			try_create_buffer(&buffer, 0);
 			*this = other;
 		}
 		array_repr::array_repr(uint32_t length, void* default_value, asITypeInfo* info) : obj_type(info), buffer(nullptr), element_size(0), sub_type_id(-1)
@@ -386,12 +386,15 @@ namespace tangent
 			if (!check_max_size(length))
 				return;
 
-			create_buffer(&buffer, length);
+			bool may_copy = try_create_buffer(&buffer, length);
 			if (obj_type.flags() & (uint32_t)object_behaviours::gc)
 				obj_type.get_vm()->notify_of_new_object(this, obj_type);
 
-			for (uint32_t i = 0; i < size(); i++)
-				set_value(i, default_value);
+			if (may_copy)
+			{
+				for (uint32_t i = 0; i < size(); i++)
+					set_value(i, default_value);
+			}
 		}
 		array_repr::~array_repr()
 		{
@@ -408,7 +411,9 @@ namespace tangent
 			{
 				if (other.buffer != nullptr)
 				{
-					resize(other.buffer->num_elements);
+					if (!try_resize_buffer((int32_t)other.buffer->num_elements - (int32_t)(buffer ? buffer->num_elements : 0), (uint32_t)-1))
+						return *this;
+
 					copy_buffer(buffer, other.buffer);
 				}
 				else
@@ -488,7 +493,7 @@ namespace tangent
 			if (!check_max_size(num_elements))
 				return;
 
-			resize_buffer((int64_t)num_elements - (int64_t)(buffer ? buffer->num_elements : 0), (uint32_t)-1);
+			try_resize_buffer((int64_t)num_elements - (int64_t)(buffer ? buffer->num_elements : 0), (uint32_t)-1);
 		}
 		void array_repr::remove_range(uint32_t start, uint32_t count)
 		{
@@ -504,64 +509,6 @@ namespace tangent
 			destroy(buffer, start, start + count);
 			memmove(buffer->data + start * (size_t)element_size, buffer->data + (start + count) * (size_t)element_size, (size_t)(buffer->num_elements - start - count) * (size_t)element_size);
 			buffer->num_elements -= count;
-		}
-		void array_repr::resize_buffer(int32_t delta, uint32_t where)
-		{
-			uint32_t buffer_size = buffer ? buffer->num_elements : 0;
-			if (delta < 0)
-			{
-				if (-delta > (int32_t)buffer_size)
-					delta = -(int32_t)buffer_size;
-
-				if (where > buffer_size + delta)
-					where = buffer_size + delta;
-			}
-			else if (delta > 0)
-			{
-				if (!check_max_size(buffer_size + delta))
-					return;
-
-				if (where > buffer_size)
-					where = buffer_size;
-			}
-
-			if (delta == 0)
-				return;
-
-			if (buffer_size < buffer_size + delta)
-			{
-				size_t count = (size_t)buffer_size + (size_t)delta, size = (size_t)element_size;
-				sbuffer* new_buffer = program::request_gas_memory<sbuffer>(sizeof(sbuffer) - 1 + size * count);
-				if (!new_buffer)
-					return;
-
-				new_buffer->num_elements = buffer_size + delta;
-				new_buffer->max_elements = new_buffer->num_elements;
-				if (buffer != nullptr)
-				{
-					memcpy(new_buffer->data, buffer->data, (size_t)where * (size_t)element_size);
-					if (where < buffer->num_elements)
-						memcpy(new_buffer->data + (where + delta) * (size_t)element_size, buffer->data + where * (size_t)element_size, (size_t)(buffer->num_elements - where) * (size_t)element_size);
-				}
-				create(new_buffer, where, where + delta);
-				memory::deallocate(buffer);
-				buffer = new_buffer;
-			}
-			else if (delta < 0)
-			{
-				if (buffer != nullptr)
-				{
-					destroy(buffer, where, where - delta);
-					memmove(buffer->data + where * (size_t)element_size, buffer->data + (where - delta) * (size_t)element_size, (size_t)(buffer->num_elements - (where - delta)) * (size_t)element_size);
-					buffer->num_elements += delta;
-				}
-			}
-			else if (buffer != nullptr)
-			{
-				memmove(buffer->data + (where + delta) * (size_t)element_size, buffer->data + where * (size_t)element_size, (size_t)(buffer->num_elements - where) * (size_t)element_size);
-				create(buffer, where, where + delta);
-				buffer->num_elements += delta;
-			}
 		}
 		bool array_repr::check_max_size(uint32_t num_elements)
 		{
@@ -592,8 +539,8 @@ namespace tangent
 			if (index > (buffer ? buffer->num_elements : 0))
 				return contract::throw_ptr(exception_repr(exception_repr::category::argument(), stringify::text("range [%i; %i) is out of bounds (size: %i)", index, index + 1, buffer ? buffer->num_elements : 0)));
 
-			resize_buffer(1, index);
-			set_value(index, value);
+			if (try_resize_buffer(1, index))
+				set_value(index, value);
 		}
 		void array_repr::insert_array_at(uint32_t index, const array_repr& array)
 		{
@@ -603,8 +550,12 @@ namespace tangent
 			if (obj_type.get_type_info() != array.obj_type.get_type_info())
 				return contract::throw_ptr(exception_repr(exception_repr::category::argument(), stringify::text("array types (%s, %s) are incompatible", obj_type.get_name().data(), array.obj_type.get_name().data())));
 
+			if (this == &array)
+				return contract::throw_ptr(exception_repr(exception_repr::category::argument(), "cannot insert an array into itself"));
+
 			uint32_t new_size = array.size();
-			resize_buffer((int)new_size, index);
+			if (!try_resize_buffer((int)new_size, index))
+				return;
 
 			if (&array != this)
 			{
@@ -641,7 +592,8 @@ namespace tangent
 		{
 			if (index >= (buffer ? buffer->num_elements : 0))
 				return contract::throw_ptr(exception_repr(exception_repr::category::argument(), stringify::text("range [%i; %i) is out of bounds (size: %i)", index, index + 1, buffer ? buffer->num_elements : 0)));
-			resize_buffer(-1, index);
+			
+			try_resize_buffer(-1, index);
 		}
 		void array_repr::remove_first()
 		{
@@ -711,15 +663,75 @@ namespace tangent
 		{
 			return buffer ? buffer->data : nullptr;
 		}
-		void array_repr::create_buffer(sbuffer** buffer_ptr, uint32_t num_elements)
+		bool array_repr::try_resize_buffer(int32_t delta, uint32_t where)
+		{
+			uint32_t buffer_size = buffer ? buffer->num_elements : 0;
+			if (delta < 0)
+			{
+				if (-delta > (int32_t)buffer_size)
+					delta = -(int32_t)buffer_size;
+
+				if (where > buffer_size + delta)
+					where = buffer_size + delta;
+			}
+			else if (delta > 0)
+			{
+				if (!check_max_size(buffer_size + delta))
+					return false;
+
+				if (where > buffer_size)
+					where = buffer_size;
+			}
+
+			if (delta == 0)
+				return true;
+
+			if (buffer_size < buffer_size + delta)
+			{
+				size_t count = (size_t)buffer_size + (size_t)delta, size = (size_t)element_size;
+				sbuffer* new_buffer = program::request_gas_memory<sbuffer>(sizeof(sbuffer) - 1 + size * count);
+				if (!new_buffer)
+					return false;
+
+				new_buffer->num_elements = buffer_size + delta;
+				new_buffer->max_elements = new_buffer->num_elements;
+				if (buffer != nullptr)
+				{
+					memcpy(new_buffer->data, buffer->data, (size_t)where * (size_t)element_size);
+					if (where < buffer->num_elements)
+						memcpy(new_buffer->data + (where + delta) * (size_t)element_size, buffer->data + where * (size_t)element_size, (size_t)(buffer->num_elements - where) * (size_t)element_size);
+				}
+				create(new_buffer, where, where + delta);
+				memory::deallocate(buffer);
+				buffer = new_buffer;
+			}
+			else if (delta < 0)
+			{
+				if (buffer != nullptr)
+				{
+					destroy(buffer, where, where - delta);
+					memmove(buffer->data + where * (size_t)element_size, buffer->data + (where - delta) * (size_t)element_size, (size_t)(buffer->num_elements - (where - delta)) * (size_t)element_size);
+					buffer->num_elements += delta;
+				}
+			}
+			else if (buffer != nullptr)
+			{
+				memmove(buffer->data + (where + delta) * (size_t)element_size, buffer->data + where * (size_t)element_size, (size_t)(buffer->num_elements - where) * (size_t)element_size);
+				create(buffer, where, where + delta);
+				buffer->num_elements += delta;
+			}
+			return true;
+		}
+		bool array_repr::try_create_buffer(sbuffer** buffer_ptr, uint32_t num_elements)
 		{
 			*buffer_ptr = program::request_gas_memory<sbuffer>(sizeof(sbuffer) - 1 + (size_t)element_size * (size_t)num_elements);
 			if (!*buffer_ptr)
-				return;
+				return false;
 
 			(*buffer_ptr)->num_elements = num_elements;
 			(*buffer_ptr)->max_elements = num_elements;
 			create(*buffer_ptr, 0, num_elements);
+			return true;
 		}
 		void array_repr::delete_buffer(sbuffer* buffer_ptr)
 		{
@@ -735,7 +747,6 @@ namespace tangent
 
 				virtual_machine* engine = obj_type.get_vm();
 				vitex::scripting::type_info sub_type = obj_type.get_sub_type();
-
 				for (; d < max; d++)
 				{
 					*d = (void*)engine->create_object(sub_type);
@@ -995,23 +1006,23 @@ namespace tangent
 		{
 			char init = '\0';
 			memset((void*)this, 0, sizeof(*this));
-			copy_buffer(&init, 0);
+			try_copy_buffer(&init, 0);
 		}
 		string_repr::string_repr(const string_repr& other)
 		{
 			memset((void*)this, 0, sizeof(*this));
-			copy_buffer(other.data(), other.size());
+			try_copy_buffer(other.data(), other.size());
 		}
 		string_repr::string_repr(const std::string_view& other)
 		{
 			memset((void*)this, 0, sizeof(*this));
-			copy_buffer(other.data(), (uint32_t)other.size());
+			try_copy_buffer(other.data(), (uint32_t)other.size());
 		}
 		string_repr::string_repr(const std::string_view& other, bool constant_string)
 		{
 			memset((void*)this, 0, sizeof(*this));
 			flags = constant_string ? FLAG_UNMETERED_ALLOCATION : 0;
-			copy_buffer(other.data(), (uint32_t)other.size());
+			try_copy_buffer(other.data(), (uint32_t)other.size());
 		}
 		string_repr::string_repr(string_repr&& other)
 		{
@@ -1023,12 +1034,12 @@ namespace tangent
 			if (this == &other)
 				return *this;
 
-			copy_buffer(other.data(), other.size());
+			try_copy_buffer(other.data(), other.size());
 			return *this;
 		}
 		string_repr& string_repr::operator=(const std::string_view& other)
 		{
-			copy_buffer(other.data(), (uint32_t)other.size());
+			try_copy_buffer(other.data(), (uint32_t)other.size());
 			return *this;
 		}
 		string_repr& string_repr::operator=(string_repr&& other)
@@ -1066,12 +1077,13 @@ namespace tangent
 		}
 		string_repr& string_repr::assign(const string_repr& other)
 		{
-			copy_buffer(other.data(), other.size());
+			if (this != &other)
+				try_copy_buffer(other.data(), other.size());
 			return *this;
 		}
 		string_repr& string_repr::assign_view(const std::string_view& other)
 		{
-			copy_buffer(other.data(), (uint32_t)other.size());
+			try_copy_buffer(other.data(), (uint32_t)other.size());
 			return *this;
 		}
 		string_repr& string_repr::assign_append(const string_repr& other)
@@ -1079,14 +1091,17 @@ namespace tangent
 			if (other.empty())
 				return *this;
 
+			uint32_t other_size = other.size();
 			uint32_t offset = size();
-			uint32_t count = offset + other.size();
+			uint32_t count = offset + other_size;
 			if (count < offset)
 				return *this;
 
-			resize_buffer(count);
+			if (!try_resize_buffer(count))
+				return *this;
+
 			char* buffer = data();
-			memcpy(buffer + offset, other.data(), other.size());
+			memcpy(buffer + offset, other.data(), other_size);
 			return *this;
 		}
 		string_repr& string_repr::assign_append_char(char c)
@@ -1095,7 +1110,9 @@ namespace tangent
 			if (offset + 1 < offset)
 				return *this;
 
-			resize_buffer(offset + 1);
+			if (!try_resize_buffer(offset + 1))
+				return *this;
+
 			char* buffer = data();
 			buffer[offset] = c;
 			return *this;
@@ -1186,12 +1203,13 @@ namespace tangent
 		}
 		void string_repr::clear()
 		{
-			resize_buffer(0);
+			try_resize_buffer(0);
 		}
 		void string_repr::push_front(char c)
 		{
 			uint32_t buffer_size = size();
-			resize_buffer(buffer_size + 1);
+			if (!try_resize_buffer(buffer_size + 1))
+				return;
 
 			char* buffer = data();
 			memmove(buffer + 1, buffer, buffer_size);
@@ -1205,7 +1223,7 @@ namespace tangent
 			char* buffer = data();
 			uint32_t buffer_size = size() - 1;
 			memmove(buffer, buffer + 1, buffer_size);
-			resize_buffer(buffer_size);
+			try_resize_buffer(buffer_size);
 		}
 		void string_repr::push_back(char c)
 		{
@@ -1216,7 +1234,7 @@ namespace tangent
 			if (empty())
 				return contract::throw_ptr(exception_repr(exception_repr::category::argument(), stringify::text("range [-1; -2) is out of bounds (size: %i)", size())));
 
-			resize_buffer(size() - 1);
+			try_resize_buffer(size() - 1);
 		}
 		bool string_repr::starts_with(const string_repr& other, uint32_t offset) const
 		{
@@ -1397,21 +1415,24 @@ namespace tangent
 		{
 			return allocated() ? heap.data : stack.data;
 		}
-		void string_repr::copy_buffer(const char* buffer, uint32_t buffer_size)
-		{
-			resize_buffer(buffer_size);
-			memcpy(data(), buffer, buffer_size);
-		}
 		void string_repr::move_buffer(string_repr&& other)
 		{
 			clear();
 			memcpy((void*)this, (void*)&other, sizeof(other));
 			memset((void*)&other, 0, sizeof(other));
 		}
-		void string_repr::resize_buffer(uint32_t required_size)
+		bool string_repr::try_copy_buffer(const char* buffer, uint32_t buffer_size)
+		{
+			if (!try_resize_buffer(buffer_size))
+				return false;
+
+			memcpy(data(), buffer, buffer_size);
+			return true;
+		}
+		bool string_repr::try_resize_buffer(uint32_t required_size)
 		{
 			if (!require_buffer_capacity(buffer_capacity_of(required_size)))
-				return;
+				return false;
 
 			if (allocated())
 			{
@@ -1423,6 +1444,7 @@ namespace tangent
 				stack.size = required_size;
 				stack.data[stack.size] = '\0';
 			}
+			return true;
 		}
 		bool string_repr::require_buffer_capacity(uint32_t required_capacity)
 		{
@@ -1783,6 +1805,11 @@ namespace tangent
 			base -= v;
 			return base;
 		}
+		uint128_t& uint128_repr::mod_eq(uint128_t& base, const uint128_t& v)
+		{
+			base %= v;
+			return base;
+		}
 		uint128_t& uint128_repr::fpp(uint128_t& base)
 		{
 			return ++base;
@@ -1919,6 +1946,11 @@ namespace tangent
 		uint256_t& uint256_repr::sub_eq(uint256_t& base, const uint256_t& v)
 		{
 			base -= v;
+			return base;
+		}
+		uint256_t& uint256_repr::mod_eq(uint256_t& base, const uint256_t& v)
+		{
+			base %= v;
 			return base;
 		}
 		uint256_t& uint256_repr::fpp(uint256_t& base)
@@ -3538,7 +3570,7 @@ namespace tangent
 				return contract::throw_ptr(exception_repr(exception_repr::category::argument(), stringify::text("event %.*s load failed", (int)id.size(), id.data())));
 
 			auto code = algorithm::hashing::hash32d(id);
-			auto data = immediate_context::get()->is_nested() ? p->executor->emit_forwarded_event(code, p->callable(), std::move(returns), true) : p->executor->emit_event(code, std::move(returns), true);
+			auto data = immediate_context::get()->is_nested() ? p->executor->emit_forwarded_event(code, p->callable(), std::move(returns), ledger::executor_context::meter::paid) : p->executor->emit_event(code, std::move(returns), ledger::executor_context::meter::paid);
 			if (!data)
 				return contract::throw_ptr(exception_repr(exception_repr::category::storage(), std::string_view(data.error().message())));
 
@@ -3567,7 +3599,7 @@ namespace tangent
 				return contract::throw_ptr(exception_repr(exception_repr::category::argument(), stringify::text("event %.*s load failed", (int)id.size(), id.data())));
 			
 			auto code = algorithm::hashing::hash32d(id);
-			auto data = immediate_context::get()->is_nested() ? p->executor->emit_forwarded_event(code, p->callable(), std::move(returns), true) : p->executor->emit_event(code, std::move(returns), true);
+			auto data = immediate_context::get()->is_nested() ? p->executor->emit_forwarded_event(code, p->callable(), std::move(returns), ledger::executor_context::meter::paid) : p->executor->emit_event(code, std::move(returns), ledger::executor_context::meter::paid);
 			if (!data)
 				contract::throw_ptr(exception_repr(exception_repr::category::storage(), std::string_view(data.error().message())));
 
@@ -5534,6 +5566,8 @@ namespace tangent
 			array_type->set_operator_copy_address(WRAP_MFN(array_repr, operator=), convention::generic_call);
 			array_type->set_method_address("t& opIndex(usize)", WRAP_MFN_PR(array_repr, at, (uint32_t), void*), convention::generic_call);
 			array_type->set_method_address("const t& opIndex(usize) const", WRAP_MFN_PR(array_repr, at, (uint32_t) const, const void*), convention::generic_call);
+			array_type->set_method_address("t& at(usize)", WRAP_MFN_PR(array_repr, at, (uint32_t), void*), convention::generic_call);
+			array_type->set_method_address("const t& at(usize) const", WRAP_MFN_PR(array_repr, at, (uint32_t) const, const void*), convention::generic_call);
 			array_type->set_method_address("t& front()", WRAP_MFN_PR(array_repr, front, (), void*), convention::generic_call);
 			array_type->set_method_address("const t& front() const", WRAP_MFN_PR(array_repr, front, () const, const void*), convention::generic_call);
 			array_type->set_method_address("t& back()", WRAP_MFN_PR(array_repr, back, (), void*), convention::generic_call);
@@ -5600,17 +5634,17 @@ namespace tangent
 			string_type->set_method_address("usize find_last_of(const string&in, usize) const", WRAP_MFN(string_repr, find_last_of_offset), convention::generic_call);
 			string_type->set_method_address("usize find_last_not_of(const string&in, usize) const", WRAP_MFN(string_repr, find_last_not_of_offset), convention::generic_call);
 			string_type->set_method_address("array<string>@ split(const string&in) const", WRAP_MFN(string_repr, split), convention::generic_call);
-			string_type->set_method_address("int8 i8(int = 10)", WRAP_MFN(string_repr, from_string<int8_t>), convention::generic_call);
-			string_type->set_method_address("int16 i16(int = 10)", WRAP_MFN(string_repr, from_string<int16_t>), convention::generic_call);
-			string_type->set_method_address("int32 i32(int = 10)", WRAP_MFN(string_repr, from_string<int32_t>), convention::generic_call);
-			string_type->set_method_address("int64 i64(int = 10)", WRAP_MFN(string_repr, from_string<int64_t>), convention::generic_call);
-			string_type->set_method_address("uint8 u8(int = 10)", WRAP_MFN(string_repr, from_string<uint8_t>), convention::generic_call);
-			string_type->set_method_address("uint16 u16(int = 10)", WRAP_MFN(string_repr, from_string<uint16_t>), convention::generic_call);
-			string_type->set_method_address("uint32 u32(int = 10)", WRAP_MFN(string_repr, from_string<uint32_t>), convention::generic_call);
-			string_type->set_method_address("uint64 u64(int = 10)", WRAP_MFN(string_repr, from_string<uint64_t>), convention::generic_call);
-			string_type->set_method_address("uint128 u128(int = 10)", WRAP_MFN(string_repr, from_string_uint128), convention::generic_call);
-			string_type->set_method_address("uint256 u256(int = 10)", WRAP_MFN(string_repr, from_string_uint256), convention::generic_call);
-			string_type->set_method_address("real320 r320(int = 10)", WRAP_MFN(string_repr, from_string_decimal), convention::generic_call);
+			string_type->set_method_address("int8 i8(int = 10) const", WRAP_MFN(string_repr, from_string<int8_t>), convention::generic_call);
+			string_type->set_method_address("int16 i16(int = 10) const", WRAP_MFN(string_repr, from_string<int16_t>), convention::generic_call);
+			string_type->set_method_address("int32 i32(int = 10) const", WRAP_MFN(string_repr, from_string<int32_t>), convention::generic_call);
+			string_type->set_method_address("int64 i64(int = 10) const", WRAP_MFN(string_repr, from_string<int64_t>), convention::generic_call);
+			string_type->set_method_address("uint8 u8(int = 10) const", WRAP_MFN(string_repr, from_string<uint8_t>), convention::generic_call);
+			string_type->set_method_address("uint16 u16(int = 10) const", WRAP_MFN(string_repr, from_string<uint16_t>), convention::generic_call);
+			string_type->set_method_address("uint32 u32(int = 10) const", WRAP_MFN(string_repr, from_string<uint32_t>), convention::generic_call);
+			string_type->set_method_address("uint64 u64(int = 10) const", WRAP_MFN(string_repr, from_string<uint64_t>), convention::generic_call);
+			string_type->set_method_address("uint128 u128(int = 10) const", WRAP_MFN(string_repr, from_string_uint128), convention::generic_call);
+			string_type->set_method_address("uint256 u256(int = 10) const", WRAP_MFN(string_repr, from_string_uint256), convention::generic_call);
+			string_type->set_method_address("real320 r320(int = 10) const", WRAP_MFN(string_repr, from_string_decimal), convention::generic_call);
 			uint128_type->set_behaviour_address("void f()", behaviours::construct, WRAP_OBJ_FIRST(uint128_repr::default_construct), convention::generic_call);
 			uint128_type->set_behaviour_address("void f(int8)", behaviours::construct, WRAP_CON(uint128_t, (int8_t)), convention::generic_call);
 			uint128_type->set_behaviour_address("void f(uint8)", behaviours::construct, WRAP_CON(uint128_t, (uint8_t)), convention::generic_call);
@@ -5628,6 +5662,7 @@ namespace tangent
 			uint128_type->set_operator_address("uint128& opDivAssign(const uint128&in)", WRAP_OBJ_FIRST(uint128_repr::div_eq), convention::generic_call);
 			uint128_type->set_operator_address("uint128& opAddAssign(const uint128&in)", WRAP_OBJ_FIRST(uint128_repr::add_eq), convention::generic_call);
 			uint128_type->set_operator_address("uint128& opSubAssign(const uint128&in)", WRAP_OBJ_FIRST(uint128_repr::sub_eq), convention::generic_call);
+			uint128_type->set_operator_address("uint128& opModAssign(const uint128&in)", WRAP_OBJ_FIRST(uint128_repr::mod_eq), convention::generic_call);
 			uint128_type->set_operator_address("uint128& opPreInc()", WRAP_OBJ_FIRST(uint128_repr::fpp), convention::generic_call);
 			uint128_type->set_operator_address("uint128& opPreDec()", WRAP_OBJ_FIRST(uint128_repr::fmm), convention::generic_call);
 			uint128_type->set_operator_address("uint128& opPostInc()", WRAP_OBJ_FIRST(uint128_repr::pp), convention::generic_call);
@@ -5671,6 +5706,7 @@ namespace tangent
 			uint256_type->set_operator_address("uint256& opDivAssign(const uint256&in)", WRAP_OBJ_FIRST(uint256_repr::div_eq), convention::generic_call);
 			uint256_type->set_operator_address("uint256& opAddAssign(const uint256&in)", WRAP_OBJ_FIRST(uint256_repr::add_eq), convention::generic_call);
 			uint256_type->set_operator_address("uint256& opSubAssign(const uint256&in)", WRAP_OBJ_FIRST(uint256_repr::sub_eq), convention::generic_call);
+			uint256_type->set_operator_address("uint256& opModAssign(const uint256&in)", WRAP_OBJ_FIRST(uint256_repr::mod_eq), convention::generic_call);
 			uint256_type->set_operator_address("uint256& opPreInc()", WRAP_OBJ_FIRST(uint256_repr::fpp), convention::generic_call);
 			uint256_type->set_operator_address("uint256& opPreDec()", WRAP_OBJ_FIRST(uint256_repr::fmm), convention::generic_call);
 			uint256_type->set_operator_address("uint256& opPostInc()", WRAP_OBJ_FIRST(uint256_repr::pp), convention::generic_call);
@@ -5936,7 +5972,7 @@ namespace tangent
 			vm->set_function_address("uint32 payments()", WRAP_FN(contract::tx_delegate_payments), convention::generic_call);
 			vm->set_function_address("string address(uint32)", WRAP_FN(contract::tx_delegate_address), convention::generic_call);
 			vm->set_function_address("uint256 asset(uint32)", WRAP_FN(contract::tx_delegate_asset), convention::generic_call);
-			vm->set_function_address("uint256 amount(uint32)", WRAP_FN(contract::tx_delegate_amount), convention::generic_call);
+			vm->set_function_address("real320 amount(uint32)", WRAP_FN(contract::tx_delegate_amount), convention::generic_call);
 			vm->end_namespace();
 
 			vm->begin_namespace("coin");
@@ -6812,7 +6848,7 @@ namespace tangent
 		}
 		void program::dispatch_coroutine(immediate_context* coroutine)
 		{
-			auto status = executor->burn_gas((uint64_t)ledger::gas_cost::program_iop);
+			auto status = executor->burn_gas((uint64_t)ledger::gas_cost::program_iop, ledger::executor_context::meter::paid);
 			if (!status)
 				coroutine->abort();
 		}
@@ -6831,9 +6867,10 @@ namespace tangent
 			if (!pmodule)
 				return optional::none;
 
-			auto candidate = module.get_function_by_name(entrypoint);
+			auto& tmodule = pmodule->ref;
+			auto candidate = tmodule.get_function_by_name(entrypoint);
 			if (!candidate.is_valid())
-				candidate = module.get_function_by_decl(entrypoint);
+				candidate = tmodule.get_function_by_decl(entrypoint);
 			if (!candidate.is_valid())
 				return optional::none;
 
@@ -6936,7 +6973,7 @@ namespace tangent
 		bool program::request_gas_mop(size_t difficulty)
 		{
 			auto* program = program::fetch_immutable();
-			if (program && !program->executor->burn_gas((size_t)ledger::gas_cost::program_mop * (1 + difficulty)))
+			if (program && !program->executor->burn_gas((size_t)ledger::gas_cost::program_mop * (1 + difficulty), ledger::executor_context::meter::paid))
 			{
 				contract::throw_ptr(exception_repr(exception_repr::category::execution(), std::string_view("ran out of gas")));
 				return false;
@@ -6950,7 +6987,7 @@ namespace tangent
 			{
 				size_t paid_blocks = std::max(size / sizeof(uint128_t), sizeof(uint128_t));
 				size_t paid_gas = (size_t)ledger::gas_cost::program_memory * paid_blocks;
-				if (paid_gas > 0 && !program->executor->burn_gas(paid_gas))
+				if (paid_gas > 0 && !program->executor->burn_gas(paid_gas, ledger::executor_context::meter::paid))
 				{
 					contract::throw_ptr(exception_repr(exception_repr::category::memory(), std::string_view("ran out of gas")));
 					return false;

@@ -1500,7 +1500,7 @@ namespace tangent
 			temp_solver.state.executor.receipt.successful = !!execution;
 			temp_solver.state.executor.receipt.block_time = kernel::params().time.now();
 			if (!temp_solver.state.executor.receipt.successful)
-				temp_solver.state.executor.emit_event(0, { format::variable(execution.what()) }, false);
+				temp_solver.state.executor.emit_event(0, { format::variable(execution.what()) }, ledger::executor_context::meter::unpaid);
 
 			auto data = temp_solver.state.executor.receipt.as_tree();
 			data.set("to", algorithm::signing::serialize_address(to));

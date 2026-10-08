@@ -418,6 +418,13 @@ namespace test
         require(tx::gas_use() > 0 && tx::gas_use() < tx::gas_limit());
         require(tx::gas_left() > 0 && tx::gas_left() < tx::gas_limit());
         require(tx::asset() == coin::native());
+        require(tx::function() == "test_module");
+        require(tx::delegate::type() == tx::none);
+        require(!tx::delegate::paid());
+        require(tx::delegate::payments() == 0);
+        require(tx::delegate::address(0).empty());
+        require(tx::delegate::asset(0) == 0);
+        require(tx::delegate::amount(0).nan());
     }
     void module_coin()
     {
@@ -524,6 +531,101 @@ namespace test
         require(math::sqrt<int64>(4) == 2 && math::sqrt<uint64>(4) == 2);
         require(math::sqrt<uint128>(4) == 2 && math::sqrt<uint256>(4) == 2 && math::sqrt<real320>(4) == 2);
     }
+    void module_edge()
+    {
+        uint256 u = 0;
+        u -= 1;
+        require(u == math::max_value<uint256>(), "uint256 underflow must wrap to the maximum");
+        u += 1;
+        require(u == 0, "uint256 overflow must wrap to zero");
+        uint128 w = 0;
+        w -= 1;
+        require(w == math::max_value<uint128>(), "uint128 underflow must wrap to the maximum");
+        w *= 3;
+        require(w == math::max_value<uint128>() - 2, "uint128 multiplication must wrap modulo 2^128");
+        uint256 m = math::max_value<uint256>();
+        m *= 2;
+        require(m == math::max_value<uint256>() - 1, "uint256 multiplication must wrap modulo 2^256");
+        uint256 q = 1;
+        q %= 1;
+        require(q == 0, "uint256 modulo by one must be zero");
+
+        uint256 n = 256 + 15;
+        require(n.u8() == 15 && n.u16() == 271, "unsigned narrowing must truncate to the low bits");
+        uint256 wrap = 0;
+        wrap -= 1;
+        require(wrap.i8() == -1 && wrap.i16() == -1 && wrap.i64() == -1, "signed narrowing must sign-extend the truncated bits");
+
+        require(0.1 + 0.2 == 0.3, "real320 addition must be exact decimal");
+        real320 r_sub = real320(0.3) - real320(0.1);
+        require(r_sub == 0.2, "real320 subtraction must be exact decimal");
+        real320 r_mul = real320(1.1) * real320(1.1);
+        require(r_mul == 1.21, "real320 multiplication must be exact decimal");
+        real320 third = real320(1) / real320(3);
+        require(third == 0.333333333333333333, "pin r320-div13=" + string::from(third));
+        real320 two_thirds = real320(2) / real320(3);
+        require(-third < 0, "negative division result must compare below zero");
+
+        real320 nan = real320::enan();
+        require((nan + nan).nan(), "nan must propagate through addition");
+        require(string::from(nan + 1) == string::from(nan), "pin r320-nan-add=" + string::from(nan + 1));
+        require((nan * 0).nan(), "nan must propagate through multiplication by zero");
+        require((nan / real320(1)).nan() && (real320(1) / nan).nan(), "nan must propagate through division");
+        require(!nan.positive() && !nan.negative() && !nan.zero(), "nan must be neither zero, positive nor negative");
+        require(nan != 0, "pin r320-nan-cmp=" + string::from(real320(nan != 0 ? 1 : 0)));
+
+        real320 trunc = 2.9;
+        require(trunc.u32() == 2, "real320 to unsigned must truncate toward zero");
+        require((-trunc).i32() == -2, "negative real320 to signed must truncate toward zero");
+        require(trunc.u256() == 2, "real320 to uint256 must truncate toward zero");
+
+        require("".u32() == 0 && "".i64() == 0 && "".r320().nan(), "empty string must parse to zero or nan");
+        require("10abc".i32() == 0 && "abc10".u32() == 0, "mixed numeric text must parse to zero");
+        require(" 10".i32() == 0, "leading whitespace must fail to parse");
+        require("-5".u32() == 0, "negative value must not parse as unsigned");
+        require("-5".i32() == -5, "negative value must parse as signed");
+        require("+5".i32() == 0, "leading plus must fail to parse");
+        require("99999999".i8() == 0, "pin i8-overflow=" + string::from("99999999".i8()));
+        require("0x10".u8(16) == 0, "pin hex-prefix-scan=" + string::from(uint256("0x10".u8(16))));
+        require("ff".u16(16) == 255, "hexadecimal parse must accept lowercase digits");
+        require("4294967296".u32() == 0, "pin u32-overflow=" + string::from(uint256("4294967296".u32())));
+        array<uint256> indexed(4);
+        indexed[0] = 7;
+        indexed[1] = 7;
+        require(indexed.at(0) == 7 && indexed.at(1) == indexed[1], "array.at must read the same slot as opIndex");
+
+        abi left;
+        left.wu8(true);
+        left.wstr("x");
+        abi right;
+        right.wu8(true);
+        right.wstr("x");
+        require(left.data() == right.data(), "identical write sequences must produce identical encodings");
+
+        abi bounds;
+        bounds.wu256(math::max_value<uint256>());
+        bounds.wr320(math::max_value<real320>());
+        bounds.wstr("");
+        abi bounds_reader(bounds.data());
+        uint256 read_u; real320 read_r; string read_s;
+        require(bounds_reader.ru256(read_u) && read_u == math::max_value<uint256>(), "abi must roundtrip the maximum uint256");
+        require(bounds_reader.rr320(read_r) && read_r == math::max_value<real320>(), "abi must roundtrip the maximum real320");
+        require(bounds_reader.rstr(read_s) && read_s.empty(), "abi must roundtrip the empty string");
+        bool dummy_b; uint256 dummy_u; real320 dummy_r; string dummy_s; address dummy_a;
+        require(!bounds_reader.ru8(dummy_b) && !bounds_reader.ru256(dummy_u) && !bounds_reader.rr320(dummy_r) && !bounds_reader.rstr(dummy_s) && !bounds_reader.ru160(dummy_a), "abi reads past the end must fail");
+        require(!bounds_reader.ru8(dummy_b), "abi read past the end must stay failed");
+        bounds_reader.seek(0);
+        require(bounds_reader.ru256(dummy_u) && dummy_u == math::max_value<uint256>(), "abi seek(0) must restart the reader");
+
+        payable pack;
+        pack.plus(1, 10);
+        require(!pack.minus(2, 5), "subtracting an absent asset must fail");
+        require(pack.of(1) == 10 && pack.size() == 1, "a failed subtraction must not alter the pack");
+        require(!pack.minus(1, 11), "subtracting more than held must fail");
+        require(pack.of(1) == 10, "an over-subtraction must not alter the pack");
+        pack.minus(1, 10);
+        require(!pack.has(1) && pack.empty() && pack.total() == 0, "subtracting the exact balance must drop the entry");
+    }
 }
 
 void test_module(pmut@)
@@ -544,7 +646,7 @@ void test_module(pmut@)
     test::module_tx();
     test::module_coin();
     test::module_alg();
-    test::module_math();
+    test::module_edge();
 }
 array<string> test_string_split(pmut@, const string&in target)
 {

@@ -46,6 +46,8 @@ class array<t>
 	void erase(uint, uint);
 	void reverse();
 	void swap(uint, uint);
+	t& at(uint);
+	const t& at(uint) const;
 }
 class string
 {
@@ -98,17 +100,17 @@ class string
 	uint find_last_of(const string&in, uint) const;
 	uint find_last_not_of(const string&in, uint) const;
 	array<string>@ split(const string&in) const;
-	int8 i8(int = 10);
-	int16 i16(int = 10);
-	int i32(int = 10);
-	int64 i64(int = 10);
-	uint8 u8(int = 10);
-	uint16 u16(int = 10);
-	uint u32(int = 10);
-	uint64 u64(int = 10);
-	uint128 u128(int = 10);
-	uint256 u256(int = 10);
-	real320 r320(int = 10);
+	int8 i8(int = 10) const;
+	int16 i16(int = 10) const;
+	int i32(int = 10) const;
+	int64 i64(int = 10) const;
+	uint8 u8(int = 10) const;
+	uint16 u16(int = 10) const;
+	uint u32(int = 10) const;
+	uint64 u64(int = 10) const;
+	uint128 u128(int = 10) const;
+	uint256 u256(int = 10) const;
+	real320 r320(int = 10) const;
 }
 class uint128
 {
@@ -128,6 +130,7 @@ class uint128
 	uint128& opMulAssign(const uint128&in);
 	uint128& opDivAssign(const uint128&in);
 	uint128& opAddAssign(const uint128&in);
+	uint128& opModAssign(const uint128&in);
 	uint128& opSubAssign(const uint128&in);
 	uint128& opPreInc();
 	uint128& opPreDec();
@@ -174,6 +177,7 @@ class uint256
 	uint256& opMulAssign(const uint256&in);
 	uint256& opDivAssign(const uint256&in);
 	uint256& opAddAssign(const uint256&in);
+	uint256& opModAssign(const uint256&in);
 	uint256& opSubAssign(const uint256&in);
 	uint256& opPreInc();
 	uint256& opPreDec();
@@ -440,7 +444,7 @@ namespace tx::delegate { string function(); }
 namespace tx::delegate { uint payments(); }
 namespace tx::delegate { string address(uint); }
 namespace tx::delegate { uint256 asset(uint); }
-namespace tx::delegate { uint256 amount(uint); }
+namespace tx::delegate { real320 amount(uint); }
 namespace coin { uint256 native(); }
 namespace coin { uint256 token(const string&in); }
 namespace coin { uint256 id_of(const string&in, const string&in = string(), const string&in = string()); }

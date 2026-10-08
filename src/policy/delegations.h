@@ -24,6 +24,7 @@ namespace tangent
 			bool store_payload(format::wo_stream* stream) const override;
 			bool load_payload(format::ro_stream& stream) override;
 			delegate_ptr as_delegate_ptr(uint32_t hash) const override;
+			uint32_t as_transaction_type() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
@@ -69,6 +70,7 @@ namespace tangent
 			bool store_payload(format::wo_stream* stream) const override;
 			bool load_payload(format::ro_stream& stream) override;
 			delegate_ptr as_delegate_ptr(uint32_t hash) const override;
+			uint32_t as_transaction_type() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
@@ -92,6 +94,7 @@ namespace tangent
 			bool store_payload(format::wo_stream* stream) const override;
 			bool load_payload(format::ro_stream& stream) override;
 			delegate_ptr as_delegate_ptr(uint32_t hash) const override;
+			uint32_t as_transaction_type() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();

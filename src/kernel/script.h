@@ -181,9 +181,9 @@ namespace tangent
 			array_repr* split(const string_repr& delimiter) const;
 			char* data();
 			const char* data() const;
-			void copy_buffer(const char* buffer, uint32_t buffer_size);
 			void move_buffer(string_repr&& other);
-			void resize_buffer(uint32_t required_size);
+			bool try_copy_buffer(const char* buffer, uint32_t buffer_size);
+			bool try_resize_buffer(uint32_t required_size);
 			bool require_buffer_capacity(uint32_t required_capacity);
 			uint128_t from_string_uint128(int base) const;
 			uint256_t from_string_uint256(int base) const;
@@ -300,8 +300,8 @@ namespace tangent
 			void* get_data_pointer(void* buffer);
 			void copy(void* dst, void* src);
 			bool check_max_size(uint32_t num_elements);
-			void resize_buffer(int32_t delta, uint32_t at);
-			void create_buffer(sbuffer** buf, uint32_t num_elements);
+			bool try_resize_buffer(int32_t delta, uint32_t at);
+			bool try_create_buffer(sbuffer** buf, uint32_t num_elements);
 			void delete_buffer(sbuffer* buf);
 			void copy_buffer(sbuffer* dst, sbuffer* src);
 			void create(sbuffer* buf, uint32_t start, uint32_t end);
@@ -415,6 +415,7 @@ namespace tangent
 			static uint128_t& div_eq(uint128_t& base, const uint128_t& v);
 			static uint128_t& add_eq(uint128_t& base, const uint128_t& v);
 			static uint128_t& sub_eq(uint128_t& base, const uint128_t& v);
+			static uint128_t& mod_eq(uint128_t& base, const uint128_t& v);
 			static uint128_t& fpp(uint128_t& base);
 			static uint128_t& fmm(uint128_t& base);
 			static uint128_t& pp(uint128_t& base);
@@ -447,6 +448,7 @@ namespace tangent
 			static uint256_t& div_eq(uint256_t& base, const uint256_t& v);
 			static uint256_t& add_eq(uint256_t& base, const uint256_t& v);
 			static uint256_t& sub_eq(uint256_t& base, const uint256_t& v);
+			static uint256_t& mod_eq(uint256_t& base, const uint256_t& v);
 			static uint256_t& fpp(uint256_t& base);
 			static uint256_t& fmm(uint256_t& base);
 			static uint256_t& pp(uint256_t& base);

@@ -1158,22 +1158,22 @@ namespace tangent
 			if (!next)
 				return layer_exception("state not found");
 			else if (!paid_in_full)
-				return burn_gas((size_t)gas_cost::query_result);
+				return burn_gas((size_t)gas_cost::query_result, meter::paid);
 
 			size_t bytes = next->as_message().data.size();
-			return burn_gas(bytes * (size_t)gas_cost::read_byte + (size_t)gas_cost::query_result);
+			return burn_gas(bytes * (size_t)gas_cost::read_byte + (size_t)gas_cost::query_result, meter::paid);
 		}
-		expects_lr<void> executor_context::load(transition_state* next, bool paid)
+		expects_lr<void> executor_context::load(transition_state* next, meter pay)
 		{
 			if (!next)
 				return layer_exception("state not found");
-			else if (!paid)
+			else if (pay == meter::unpaid)
 				return expectation::met;
 
 			size_t bytes = next->as_message().data.size();
-			return burn_gas(bytes * (size_t)gas_cost::read_byte);
+			return burn_gas(bytes * (size_t)gas_cost::read_byte, pay);
 		}
-		expects_lr<void> executor_context::store(transition_state* next, bool paid, bool force_delete)
+		expects_lr<void> executor_context::store(transition_state* next, meter pay, bool force_delete)
 		{
 			if (!next)
 				return layer_exception("invalid state");
@@ -1232,15 +1232,15 @@ namespace tangent
 
 			states::resolver::value_copy(type, next, *prev);
 			changelog->outgoing.emplace(std::move(prev), will_delete);
-			if (!paid)
+			if (pay == meter::unpaid)
 				return expectation::met;
 
 			size_t size = next->as_message().data.size();
-			return burn_gas(size * (size_t)(will_delete ? gas_cost::erase_byte : gas_cost::write_byte));
+			return burn_gas(size * (size_t)(will_delete ? gas_cost::erase_byte : gas_cost::write_byte), pay);
 		}
-		expects_lr<void> executor_context::reset(transition_state* value, bool paid)
+		expects_lr<void> executor_context::reset(transition_state* value, meter pay)
 		{
-			return store(value, paid, true);
+			return store(value, pay, true);
 		}
 		expects_lr<void> executor_context::emit_witness(const algorithm::asset_id& asset, uint64_t block_number)
 		{
@@ -1253,9 +1253,9 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<void> executor_context::emit_event(uint32_t event, format::variables&& values, bool paid)
+		expects_lr<void> executor_context::emit_event(uint32_t event, format::variables&& values, meter pay)
 		{
-			if (paid)
+			if (pay != meter::unpaid)
 			{
 				if (!event)
 					return layer_exception("invalid event id");
@@ -1264,16 +1264,16 @@ namespace tangent
 				format::variables_util::serialize_merge_into(values, &stream);
 				stream.write_integer(event);
 
-				auto status = burn_gas(stream.data.size() * (size_t)gas_cost::write_byte);
+				auto status = burn_gas(stream.data.size() * (size_t)gas_cost::write_byte, pay);
 				if (!status)
 					return status;
 			}
 			receipt.emit_event(event, std::move(values));
 			return expectation::met;
 		}
-		expects_lr<void> executor_context::emit_forwarded_event(uint32_t event, const algorithm::pubkeyhash_t& emitter, format::variables&& values, bool paid)
+		expects_lr<void> executor_context::emit_forwarded_event(uint32_t event, const algorithm::pubkeyhash_t& emitter, format::variables&& values, meter pay)
 		{
-			if (paid)
+			if (pay != meter::unpaid)
 			{
 				if (!event)
 					return layer_exception("invalid event id");
@@ -1282,7 +1282,7 @@ namespace tangent
 				format::variables_util::serialize_merge_into(values, &stream);
 				stream.write_integer(event);
 
-				auto status = burn_gas(stream.data.size() * (size_t)gas_cost::write_byte);
+				auto status = burn_gas(stream.data.size() * (size_t)gas_cost::write_byte, pay);
 				if (!status)
 					return status;
 			}
@@ -1294,11 +1294,11 @@ namespace tangent
 			if (!transaction)
 				return expectation::met;
 
-			return burn_gas(transaction->gas_limit - receipt.relative_gas_use);
+			return burn_gas(transaction->gas_limit - receipt.relative_gas_use, meter::paid);
 		}
-		expects_lr<void> executor_context::burn_gas(const uint256_t& value)
+		expects_lr<void> executor_context::burn_gas(const uint256_t& value, meter pay)
 		{
-			if (!transaction || (options & (uint8_t)flags::unrestricted))
+			if (!transaction || (options & (uint8_t)flags::unrestricted) || pay == meter::unpaid)
 				return expectation::met;
 
 			uint256_t prev_relative_gas_use = receipt.relative_gas_use;
@@ -1310,6 +1310,9 @@ namespace tangent
 				return expectation::met;
 
 			receipt.relative_gas_use = transaction->gas_limit;
+			if (pay == meter::paid_if_possible)
+				return expectation::met;
+
 			return layer_exception("ran out of gas");
 		}
 		expects_lr<void> executor_context::verify_account_nonce() const
@@ -1385,7 +1388,7 @@ namespace tangent
 		}
 		expects_lr<vector<states::validator_production>> executor_context::calculate_producers(size_t target_size)
 		{
-			auto payment = burn_gas((uint64_t)gas_cost::query_result * 2048);
+			auto payment = burn_gas((uint64_t)gas_cost::query_result * 2048, meter::paid);
 			if (!payment)
 				return payment.error();
 
@@ -1430,7 +1433,7 @@ namespace tangent
 		}
 		expects_lr<vector<states::validator_attestation>> executor_context::calculate_attesters(const algorithm::asset_id& asset, size_t target_size)
 		{
-			auto payment = burn_gas((uint64_t)gas_cost::query_result * 2048);
+			auto payment = burn_gas((uint64_t)gas_cost::query_result * 2048, meter::paid);
 			if (!payment)
 				return payment.error();
 
@@ -1458,7 +1461,7 @@ namespace tangent
 		}
 		expects_lr<vector<states::validator_attestation>> executor_context::calculate_attesters(const algorithm::asset_id& asset, size_t target_size, const decimal& fee_threshold, btree_set<algorithm::pubkeyhash_t>& exclusion)
 		{
-			auto payment = burn_gas((uint64_t)gas_cost::query_result * 2048);
+			auto payment = burn_gas((uint64_t)gas_cost::query_result * 2048, meter::paid);
 			if (!payment)
 				return payment.error();
 
@@ -1501,7 +1504,7 @@ namespace tangent
 					if (exclusion.find(hash) != exclusion.end())
 						continue;
 
-					auto status = load(result.ptr(), !result.cached);
+					auto status = load(result.ptr(), result.cached ? meter::unpaid : meter::paid);
 					if (!status)
 						return status.error();
 
@@ -1525,7 +1528,7 @@ namespace tangent
 		}
 		expects_lr<vector<states::validator_participation>> executor_context::calculate_participants(size_t target_size, btree_set<algorithm::pubkeyhash_t>& exclusion)
 		{
-			auto payment = burn_gas((uint64_t)gas_cost::query_result * 2048);
+			auto payment = burn_gas((uint64_t)gas_cost::query_result * 2048, meter::paid);
 			if (!payment)
 				return payment.error();
 
@@ -1568,7 +1571,7 @@ namespace tangent
 					if (exclusion.find(hash) != exclusion.end())
 						continue;
 
-					auto status = load(result.ptr(), !result.cached);
+					auto status = load(result.ptr(), result.cached ? meter::unpaid : meter::paid);
 					if (!status)
 						return status.error();
 
@@ -1592,7 +1595,7 @@ namespace tangent
 			states::account_nonce new_state = states::account_nonce(owner, block);
 			new_state.nonce = nonce;
 
-			auto status = store(&new_state, true);
+			auto status = store(&new_state, meter::paid_if_possible);
 			if (!status)
 				return status.error();
 			else if (receipt.from == owner)
@@ -1605,7 +1608,7 @@ namespace tangent
 			states::account_program new_state = states::account_program(owner, block);
 			new_state.hashcode = program_hashcode;
 
-			auto result = store(&new_state, true);
+			auto result = store(&new_state, meter::paid);
 			if (!result)
 				return result.error();
 
@@ -1616,7 +1619,7 @@ namespace tangent
 			states::account_uniform new_state = states::account_uniform(owner, index, block);
 			new_state.data = data;
 
-			auto result = store(&new_state, true);
+			auto result = store(&new_state, meter::paid);
 			if (!result)
 				return result.error();
 
@@ -1628,7 +1631,7 @@ namespace tangent
 			new_state.data = data;
 			new_state.filter = filter;
 
-			auto result = store(&new_state, true);
+			auto result = store(&new_state, meter::paid);
 			if (!result)
 				return result.error();
 
@@ -1643,7 +1646,7 @@ namespace tangent
 			new_state.supply = supply;
 			new_state.reserve = reserve;
 
-			auto status = store(&new_state, true);
+			auto status = store(&new_state, meter::paid);
 			if (!status)
 				return status.error();
 
@@ -1663,11 +1666,11 @@ namespace tangent
 			if (solver != nullptr && solver->state.public_key_hash == owner)
 				return new_state;
 
-			auto status = store(&new_state, false);
+			auto status = store(&new_state, meter::unpaid);
 			if (!status)
 				return status.error();
 
-			status = emit_event<states::account_balance>({ format::variable(asset), format::variable(owner.view()), format::variable(-value) }, false);
+			status = emit_event<states::account_balance>({ format::variable(asset), format::variable(owner.view()), format::variable(-value) }, meter::unpaid);
 			if (!status)
 				return status.error();
 
@@ -1681,14 +1684,14 @@ namespace tangent
 			states::account_balance new_state1 = states::account_balance(from, asset, block);
 			new_state1.supply = -value;
 
-			auto status = store(&new_state1, true);
+			auto status = store(&new_state1, meter::paid);
 			if (!status)
 				return status.error();
 
 			states::account_balance new_state2 = states::account_balance(to, asset, block);
 			new_state2.supply = value;
 
-			status = store(&new_state2, true);
+			status = store(&new_state2, meter::paid);
 			if (!status)
 				return status.error();
 
@@ -1764,7 +1767,7 @@ namespace tangent
 					return layer_exception("invalid stake action");
 			}
 
-			auto result = store(&new_state, true);
+			auto result = store(&new_state, meter::paid);
 			if (!result)
 				return result.error();
 
@@ -1780,7 +1783,7 @@ namespace tangent
 			if (!transfer)
 				return transfer.error();
 
-			auto status = store(&new_state, true);
+			auto status = store(&new_state, meter::paid);
 			if (!status)
 				return status.error();
 
@@ -1851,7 +1854,7 @@ namespace tangent
 					return layer_exception("invalid stake action");
 			}
 
-			auto result = store(&new_state, true);
+			auto result = store(&new_state, meter::paid);
 			if (!result)
 				return result.error();
 
@@ -1867,7 +1870,7 @@ namespace tangent
 			if (!transfer)
 				return transfer.error();
 
-			auto status = store(&new_state, true);
+			auto status = store(&new_state, meter::paid);
 			if (!status)
 				return status.error();
 
@@ -1878,7 +1881,7 @@ namespace tangent
 			states::validator_participation_ref new_state = states::validator_participation_ref(owner, ref, block);
 			new_state.active = active;
 
-			auto status = store(&new_state, true);
+			auto status = store(&new_state, meter::paid);
 			if (!status)
 				return status.error();
 
@@ -1950,7 +1953,7 @@ namespace tangent
 					return layer_exception("invalid stake action");
 			}
 
-			auto result = store(&new_state, true);
+			auto result = store(&new_state, meter::paid);
 			if (!result)
 				return result.error();
 
@@ -1966,7 +1969,7 @@ namespace tangent
 			if (!transfer)
 				return transfer.error();
 
-			auto status = store(&new_state, true);
+			auto status = store(&new_state, meter::paid);
 			if (!status)
 				return status.error();
 
@@ -1982,7 +1985,7 @@ namespace tangent
 			new_state.security_level = security_level;
 			new_state.fee_rate = fee;
 
-			auto status = store(&new_state, true);
+			auto status = store(&new_state, meter::paid);
 			if (!status)
 				return status.error();
 
@@ -2002,7 +2005,7 @@ namespace tangent
 			new_state.transaction_hash = transaction_hash;
 			++new_state.transaction_nonce;
 
-			auto status = store(&new_state, true);
+			auto status = store(&new_state, meter::paid);
 			if (!status)
 				return status.error();
 
@@ -2023,7 +2026,7 @@ namespace tangent
 			if (new_state.ref.owner.empty())
 				new_state.ref.owner = owner;
 
-			auto status = store(&new_state, true);
+			auto status = store(&new_state, meter::paid);
 			if (!status)
 				return status.error();
 
@@ -2039,7 +2042,7 @@ namespace tangent
 			if (active)
 			{
 				new_state.index = get_bridge_queue(asset, bridge_hash, -1).or_else(states::bridge_queue(asset, bridge_hash, 0, nullptr)).index + 1;
-				auto status = store(&new_state, true);
+				auto status = store(&new_state, meter::paid);
 				if (!status)
 					return status.error();
 
@@ -2049,7 +2052,7 @@ namespace tangent
 			}
 			else
 			{
-				auto status = store(&new_state, true);
+				auto status = store(&new_state, meter::paid);
 				if (!status)
 					return status.error();
 			}
@@ -2063,7 +2066,7 @@ namespace tangent
 			states::bridge_balance new_state = states::bridge_balance(asset, bridge_hash, block);
 			new_state.supply = balance;
 
-			auto status = store(&new_state, true);
+			auto status = store(&new_state, meter::paid);
 			if (!status)
 				return status.error();
 
@@ -2083,7 +2086,7 @@ namespace tangent
 			states::bridge_account new_state = states::bridge_account(ref, block);
 			new_state.set_group(public_key, std::move(group));
 
-			auto status = store(&new_state, true);
+			auto status = store(&new_state, meter::paid);
 			if (!status)
 				return status.error();
 
@@ -2094,7 +2097,7 @@ namespace tangent
 			states::witness_program new_state = states::witness_program(states::witness_program::as_instance_packed_hashcode(packed_program_code), block);
 			new_state.storage = packed_program_code;
 
-			auto status = store(&new_state, true);
+			auto status = store(&new_state, meter::paid);
 			if (!status)
 				return status.error();
 
@@ -2105,7 +2108,7 @@ namespace tangent
 			states::witness_event new_state = states::witness_event(parent_transaction_hash, block);
 			new_state.child_transaction_hash = child_transaction_hash;
 
-			auto status = store(&new_state, true);
+			auto status = store(&new_state, meter::paid);
 			if (!status)
 				return status.error();
 
@@ -2151,7 +2154,7 @@ namespace tangent
 				new_state = states::witness_account(ref, segment.second, block);
 				new_state.active = active;
 
-				auto status = store(&new_state, true);
+				auto status = store(&new_state, meter::paid);
 				if (!status)
 					return status.error();
 
@@ -2197,7 +2200,7 @@ namespace tangent
 				new_state = states::witness_account(ref, segment.second, block);
 				new_state.active = false;
 
-				auto status = reset(&new_state, true);
+				auto status = reset(&new_state, meter::paid);
 				if (!status)
 					return status.error();
 			}
@@ -2206,7 +2209,7 @@ namespace tangent
 		expects_lr<states::witness_transaction> executor_context::apply_witness_transaction(const algorithm::asset_id& asset, const std::string_view& transaction_id)
 		{
 			states::witness_transaction new_state = states::witness_transaction(asset, transaction_id, block);
-			auto status = store(&new_state, true);
+			auto status = store(&new_state, meter::paid);
 			if (!status)
 				return status.error();
 
@@ -2223,7 +2226,7 @@ namespace tangent
 			if (!state)
 				return layer_exception("account nonce required but not applicable (" + state.what() + ")");
 
-			auto status = ((executor_context*)this)->load(state->ptr(), !state->cached);
+			auto status = ((executor_context*)this)->load(state->ptr(), state->cached ? meter::unpaid : meter::paid);
 			if (!status)
 				return status.error();
 
@@ -2236,7 +2239,7 @@ namespace tangent
 			if (!state)
 				return layer_exception("account program required but not applicable (" + state.what() + ")");
 
-			auto status = ((executor_context*)this)->load(state->ptr(), !state->cached);
+			auto status = ((executor_context*)this)->load(state->ptr(), state->cached ? meter::unpaid : meter::paid);
 			if (!status)
 				return status.error();
 
@@ -2253,7 +2256,7 @@ namespace tangent
 			if (!state)
 				return layer_exception("account uniform required but not applicable (" + state.what() + ")");
 
-			auto status = ((executor_context*)this)->load(state->ptr(), !state->cached);
+			auto status = ((executor_context*)this)->load(state->ptr(), state->cached ? meter::unpaid : meter::paid);
 			if (!status)
 				return status.error();
 
@@ -2266,7 +2269,7 @@ namespace tangent
 			if (!state)
 				return layer_exception("account multiform required but not applicable (" + state.what() + ")");
 
-			auto status = ((executor_context*)this)->load(state->ptr(), !state->cached);
+			auto status = ((executor_context*)this)->load(state->ptr(), state->cached ? meter::unpaid : meter::paid);
 			if (!status)
 				return status.error();
 
@@ -2365,7 +2368,7 @@ namespace tangent
 			if (!state)
 				return layer_exception("account balance required but not found (" + state.what() + ")");
 
-			auto status = ((executor_context*)this)->load(state->ptr(), !state->cached);
+			auto status = ((executor_context*)this)->load(state->ptr(), state->cached ? meter::unpaid : meter::paid);
 			if (!status)
 				return status.error();
 
@@ -2378,7 +2381,7 @@ namespace tangent
 			if (!state)
 				return layer_exception("validator production required but not applicable (" + state.what() + ")");
 
-			auto status = ((executor_context*)this)->load(state->ptr(), !state->cached);
+			auto status = ((executor_context*)this)->load(state->ptr(), state->cached ? meter::unpaid : meter::paid);
 			if (!status)
 				return status.error();
 
@@ -2391,7 +2394,7 @@ namespace tangent
 			if (!state)
 				return layer_exception("validator production reward required but not found (" + state.what() + ")");
 
-			auto status = ((executor_context*)this)->load(state->ptr(), !state->cached);
+			auto status = ((executor_context*)this)->load(state->ptr(), state->cached ? meter::unpaid : meter::paid);
 			if (!status)
 				return status.error();
 
@@ -2423,7 +2426,7 @@ namespace tangent
 			if (!state)
 				return layer_exception("validator participation required but not applicable (" + state.what() + ")");
 
-			auto status = ((executor_context*)this)->load(state->ptr(), !state->cached);
+			auto status = ((executor_context*)this)->load(state->ptr(), state->cached ? meter::unpaid : meter::paid);
 			if (!status)
 				return status.error();
 
@@ -2436,7 +2439,7 @@ namespace tangent
 			if (!state)
 				return layer_exception("validator participation reward required but not found (" + state.what() + ")");
 
-			auto status = ((executor_context*)this)->load(state->ptr(), !state->cached);
+			auto status = ((executor_context*)this)->load(state->ptr(), state->cached ? meter::unpaid : meter::paid);
 			if (!status)
 				return status.error();
 
@@ -2487,7 +2490,7 @@ namespace tangent
 			if (!state)
 				return layer_exception("validator attestation required but not applicable (" + state.what() + ")");
 
-			auto status = ((executor_context*)this)->load(state->ptr(), !state->cached);
+			auto status = ((executor_context*)this)->load(state->ptr(), state->cached ? meter::unpaid : meter::paid);
 			if (!status)
 				return status.error();
 
@@ -2527,7 +2530,7 @@ namespace tangent
 			if (!state)
 				return layer_exception("validator attestation reward required but not found (" + state.what() + ")");
 
-			auto status = ((executor_context*)this)->load(state->ptr(), !state->cached);
+			auto status = ((executor_context*)this)->load(state->ptr(), state->cached ? meter::unpaid : meter::paid);
 			if (!status)
 				return status.error();
 
@@ -2559,7 +2562,7 @@ namespace tangent
 			if (!state)
 				return layer_exception("bridge instance required but not applicable (" + state.what() + ")");
 
-			auto status = ((executor_context*)this)->load(state->ptr(), !state->cached);
+			auto status = ((executor_context*)this)->load(state->ptr(), state->cached ? meter::unpaid : meter::paid);
 			if (!status)
 				return status.error();
 
@@ -2609,7 +2612,7 @@ namespace tangent
 			if (!state)
 				return layer_exception("bridge balance required but not applicable (" + state.what() + ")");
 
-			auto status = ((executor_context*)this)->load(state->ptr(), !state->cached);
+			auto status = ((executor_context*)this)->load(state->ptr(), state->cached ? meter::unpaid : meter::paid);
 			if (!status)
 				return status.error();
 
@@ -2660,7 +2663,7 @@ namespace tangent
 			if (!state)
 				return layer_exception("bridge account required but not applicable (" + state.what() + ")");
 
-			auto status = ((executor_context*)this)->load(state->ptr(), !state->cached);
+			auto status = ((executor_context*)this)->load(state->ptr(), state->cached ? meter::unpaid : meter::paid);
 			if (!status)
 				return status.error();
 
@@ -2676,7 +2679,7 @@ namespace tangent
 			if (!state->cached)
 			{
 				uint64_t optimized_program_size = algorithm::arithmetic::integer_sqrt<uint64_t>((uint64_t)state->ptr()->as_message().data.size());
-				auto status = ((executor_context*)this)->burn_gas(optimized_program_size * (size_t)gas_cost::program_byte);
+				auto status = ((executor_context*)this)->burn_gas(optimized_program_size * (size_t)gas_cost::program_byte, meter::paid);
 				if (!status)
 					return status.error();
 			}
@@ -2690,7 +2693,7 @@ namespace tangent
 			if (!state)
 				return layer_exception("witness event required but not applicable (" + state.what() + ")");
 
-			auto status = ((executor_context*)this)->load(state->ptr(), !state->cached);
+			auto status = ((executor_context*)this)->load(state->ptr(), state->cached ? meter::unpaid : meter::paid);
 			if (!status)
 				return status.error();
 
@@ -2742,7 +2745,7 @@ namespace tangent
 			if (!state)
 				return layer_exception("witness account required but not applicable (" + state.what() + ")");
 
-			auto status = ((executor_context*)this)->load(state->ptr(), !state->cached);
+			auto status = ((executor_context*)this)->load(state->ptr(), state->cached ? meter::unpaid : meter::paid);
 			if (!status)
 				return status.error();
 
@@ -2778,13 +2781,13 @@ namespace tangent
 			if (!state)
 				return layer_exception("witness transaction required but not applicable (" + state.what() + ")");
 
-			auto status = ((executor_context*)this)->load(state->ptr(), !state->cached);
+			auto status = ((executor_context*)this)->load(state->ptr(), state->cached ? meter::unpaid : meter::paid);
 			if (!status)
 				return status.error();
 
 			return states::witness_transaction(std::move(*state->as<states::witness_transaction>()));
 		}
-		expects_lr<block_transaction> executor_context::get_block_transaction_instance(uint32_t target_type, const uint256_t& transaction_hash, size_t offset) const
+		expects_lr<block_transaction> executor_context::get_block_transaction(uint32_t target_type, const uint256_t& transaction_hash, size_t offset) const
 		{
 			if (!transaction_hash)
 				return layer_exception("block transaction not found");
@@ -2807,19 +2810,15 @@ namespace tangent
 
 					static uint32_t delegate_type = transactions::delegate::as_instance_type();
 					static uint32_t rollup_type = transactions::rollup::as_instance_type();
-					if (type == delegate_type)
+					if (type == delegate_type && !offset)
 					{
-						auto subcandidate = ((transactions::delegate*)*candidate.transaction);
-						if (subcandidate && subcandidate->as_type() == target_type)
-						{
-							candidate.transaction = transactions::resolver::from_copy(subcandidate);
-							candidate.transaction->checksum = candidate.receipt.transaction_hash;
-							return expects_lr<block_transaction>(std::move(candidate));
-						}
+						auto subcandidate = ((transactions::delegate*)*candidate.transaction)->as_internal_block_transaction(candidate.receipt, target_type);
+						if (subcandidate)
+							return subcandidate;
 					}
 					else if (type == rollup_type)
 					{
-						auto subcandidate = ((transactions::rollup*)*candidate.transaction)->find_block_transaction(candidate.receipt, type, offset);
+						auto subcandidate = ((transactions::rollup*)*candidate.transaction)->as_internal_block_transaction(candidate.receipt, target_type, offset);
 						if (subcandidate)
 							return subcandidate;
 					}
@@ -2984,7 +2983,7 @@ namespace tangent
 			if (!validation)
 				return validation.error();
 
-			auto storage = executor->burn_gas(transaction_size * (size_t)gas_cost::write_tx_byte);
+			auto storage = executor->burn_gas(transaction_size * (size_t)gas_cost::write_tx_byte, meter::paid);
 			if (!storage)
 				return storage.error();
 
@@ -3019,7 +3018,7 @@ namespace tangent
 					executor->block->set_witness_requirement(item.first, item.second);
 			}
 			else
-				executor->emit_event(0, { format::variable(execution.what()) }, false);
+				executor->emit_event(0, { format::variable(execution.what()) }, meter::unpaid);
 
 			executor->options = 0;
 			executor->block->gas_use += executor->receipt.relative_gas_use;
@@ -3049,7 +3048,6 @@ namespace tangent
 		{
 			for (auto& [runner_wallet, transaction] : other.emissions)
 				emissions.emplace_back(std::make_pair(runner_wallet, uptr(transactions::resolver::from_copy(*transaction))));
-			sort_emissions();
 		}
 		delegation_adapter& delegation_adapter::operator=(const delegation_adapter& other) noexcept
 		{
@@ -3059,15 +3057,7 @@ namespace tangent
 			emissions.clear();
 			for (auto& [runner_wallet, transaction] : other.emissions)
 				emissions.emplace_back(std::make_pair(runner_wallet, uptr(transactions::resolver::from_copy(*transaction))));
-			sort_emissions();
 			return *this;
-		}
-		void delegation_adapter::sort_emissions()
-		{
-			std::stable_sort(emissions.begin(), emissions.end(), [](const std::pair<const ledger::wallet*, uptr<transaction_message>>& a, const std::pair<const ledger::wallet*, uptr<transaction_message>>& b)
-			{
-				return a.second->commitment_priority(nullptr) < b.second->commitment_priority(nullptr);
-			});
 		}
 		promise<delegation_adapter::dispatcher_result> delegation_adapter::execute_dispatcher_on(uint64_t block_number)
 		{
@@ -3094,8 +3084,8 @@ namespace tangent
 						executor.transaction = *input.transaction;
 						executor.receipt = std::move(input.receipt);
 
-						ledger::delegation_binder binder = executor.receipt.successful ? executor.transaction->as_delegation_binder() : ledger::delegation_binder();
-						uptr<delegation_contract> delegation = binder.delegation_type > 0 ? delegations::resolver::from_type(binder.delegation_type, this, &executor, runner->public_key_hash) : nullptr;
+						uint32_t delegation_type = executor.receipt.successful ? executor.transaction->as_delegation_type() : 0;
+						uptr<delegation_contract> delegation = delegation_type > 0 ? delegations::resolver::from_type(delegation_type, this, &executor, runner->public_key_hash) : nullptr;
 						if (!delegation)
 						{
 							auto& error = result.errors[executor.receipt.transaction_hash] = remote_exception::retry_after(block_number + blocks_to_update, "unrecognized delegation type");
@@ -3104,9 +3094,9 @@ namespace tangent
 						}
 
 						uptr<transaction_message> transaction;
-						if (binder.transaction_type != executor.transaction->as_type())
+						if (delegation->as_transaction_type() != executor.transaction->as_type())
 						{
-							auto subtransaction = executor.get_block_transaction_instance(binder.transaction_type, executor.receipt.transaction_hash);
+							auto subtransaction = executor.get_block_transaction(delegation->as_transaction_type(), executor.receipt.transaction_hash);
 							if (!subtransaction)
 							{
 								auto& error = result.errors[executor.receipt.transaction_hash] = remote_exception::retry_after(block_number + blocks_to_update, "unrecognized transaction type");
@@ -3125,7 +3115,7 @@ namespace tangent
 						{
 							format::ro_stream message = format::ro_stream(cache->value.as_string());
 							if (!delegation->load(message))
-								delegation = delegations::resolver::from_type(binder.delegation_type, this, &executor, executor.receipt.from);
+								delegation = delegations::resolver::from_type(delegation_type, this, &executor, executor.receipt.from);
 						}
 
 						uint64_t next_block_number = 0;
@@ -3223,7 +3213,6 @@ namespace tangent
 		void delegation_contract::emit_transaction(ledger::transaction_message* transaction)
 		{
 			adapter->emissions.emplace_back(std::make_pair(runner, uptr(transaction)));
-			adapter->sort_emissions();
 		}
 		expects_promise_rt<btree_set<algorithm::pubkeyhash_t>> delegation_contract::convene_delegates(const btree_set<algorithm::pubkeyhash_t>& targets)
 		{
@@ -3757,7 +3746,7 @@ namespace tangent
 			result.block.signature = child_block.signature;
 			result.block.recalculate(parent_block, &result.state);
 			if (child_block.as_hash() != result.block.as_hash())
-				return layer_exception("state verification failed");
+				return layer_exception("integrity verification failed");
 
 			auto verification = solver.verify_block(result, producer.public_key_hash, verify_pow);
 			if (!verification)
