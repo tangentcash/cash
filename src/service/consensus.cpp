@@ -1082,8 +1082,7 @@ namespace tangent
 				return layer_exception("nonce is too old");
 			}
 
-			uint256_t commitment_hash = 0;
-			bool commitment = candidate_tx->commitment_priority(&commitment_hash) > 0 || commitment_hash > 0;
+			bool commitment = candidate_tx->commitment_priority(nullptr) > 0;
 			if (!commitment && !candidate_tx->gas_price.is_positive())
 			{
 				if (candidate_message.data.size() > kernel::params().policy.zero_gas_price_size_limit)

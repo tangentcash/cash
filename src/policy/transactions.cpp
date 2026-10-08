@@ -234,7 +234,7 @@ namespace tangent
 			}
 
 			auto script = script::program(executor, entrypoint->get_module());
-			return script.execute(script::payable_repr(), script::ccall::event_call, script.deploy_function(), args, nullptr);
+			return script.execute(script::payable_repr(), script::ccall::deploy_call, script.deploy_function(), args, nullptr);
 		}
 		bool deploy::store_body(format::wo_stream* stream) const
 		{
@@ -381,7 +381,7 @@ namespace tangent
 			return subexecute(executor, [this, executor](const payable_array& payable, void* module_ptr)
 			{
 				auto script = script::program(executor, (asIScriptModule*)module_ptr);
-				return script.execute(script::payable_repr(payable_array(payable)), script::ccall::paying_call, uses_pipeline_pay() ? std::string_view(function).substr(1) : std::string_view(function), args, nullptr);
+				return script.execute(script::payable_repr(payable_array(payable)), script::ccall::standard_call, uses_pipeline_pay() ? std::string_view(function).substr(1) : std::string_view(function), args, nullptr);
 			});
 		}
 		expects_lr<void> call::subexecute(ledger::executor_context* executor, std::function<expects_lr<void>(const payable_array&, void*)>&& callback) const
@@ -578,7 +578,7 @@ namespace tangent
 		}
 		expects_lr<void> delegate::validate(uint64_t block_number) const
 		{
-			if (!transaction || transaction->as_type() == as_type() || transaction->as_type() == rollup::as_instance_type())
+			if (!transaction || transaction->as_type() == as_type() || transaction->as_type() == rollup::as_instance_type() || transaction->as_type() == setup::as_instance_type())
 				return layer_exception("invalid delegate transaction");
 
 			if (transaction->asset != asset || !transaction->gas_price.is_nan() || transaction->gas_limit > 0 || !transaction->signature.empty() || transaction->nonce > 0)
@@ -606,20 +606,27 @@ namespace tangent
 				return pmodule.error();
 
 			auto script = script::program(executor, pmodule->ref.get_module());
-			auto execution = script.execute(script::payable_repr(call::payable_array()), script::ccall::event_call, script.delegate_function(), args, nullptr);
+			auto execution = script.execute(script::payable_repr(call::payable_array()), script::ccall::delegate_call, script.delegate_function(), args, nullptr);
 			if (!execution)
 				return execution.error();
 
-			uint8_t execution_flags = (uint8_t)ledger::executor_context::flags::pedantic | (uint8_t)ledger::executor_context::flags::preserve_events | (uint8_t)ledger::executor_context::flags::replayable;
+			uint8_t nonce_buffer[sizeof(executor->receipt.from.blob) + sizeof(nonce)];
+			uint64_t nonce_value = os::hw::to_endianness(os::hw::endian::little, nonce);
+			memcpy(nonce_buffer, executor->receipt.from.blob, sizeof(executor->receipt.from.blob));
+			memcpy(nonce_buffer + sizeof(executor->receipt.from.blob), &nonce_value, sizeof(nonce_value));
+
+			uint8_t execution_flags = (uint8_t)ledger::executor_context::flags::preserve_events | (uint8_t)ledger::executor_context::flags::replayable;
 			uint256_t transaction_hash = transaction->as_hash();
 			auto destructor = uscope([&]()
 			{
 				transaction->signature.clear();
+				transaction->nonce = 0;
 				transaction->gas_limit = 0;
 				transaction->gas_price = decimal::nan();
 			});
 			transaction->gas_price = decimal::zero();
 			transaction->gas_limit = gas_limit - executor->receipt.relative_gas_use;
+			transaction->nonce = (uint64_t)(algorithm::hashing::hash256i(std::string_view((char*)nonce_buffer, sizeof(nonce_buffer))) % std::numeric_limits<uint64_t>::max());
 			transaction->signature.blob[0] = 0xFF;
 			return ledger::executor_context::execute_tx(executor, callable, *transaction, transaction_hash, 0, execution_flags);
 		}
@@ -668,24 +675,22 @@ namespace tangent
 		{
 			VI_ASSERT(callback, "callback should be set");
 			if (transaction)
-			{
-				callback(transaction->as_hash());
 				transaction->enumerate_aliases(callback);
-			}
 		}
 		uint64_t delegate::commitment_priority(uint256_t* event_hash) const
 		{
 			if (!transaction)
 				return transaction_message::commitment_priority(event_hash);
 
-			return transaction->commitment_priority(event_hash);
+			transaction->commitment_priority(event_hash);
+			return 0;
 		}
-		uint32_t delegate::as_delegation_type() const
+		ledger::delegation_binder delegate::as_delegation_binder() const
 		{
 			if (!transaction)
-				return transaction_message::as_delegation_type();
+				return transaction_message::as_delegation_binder();
 
-			return transaction->as_delegation_type();
+			return transaction->as_delegation_binder();
 		}
 		format::tree delegate::as_tree() const
 		{
@@ -769,7 +774,7 @@ namespace tangent
 					if (transaction->asset != group.first || !transaction->gas_price.is_nan() || transaction->gas_limit > 0)
 						return layer_exception("invalid sub-transaction data");
 
-					if (transaction->as_delegation_type() > 0)
+					if (transaction->as_delegation_binder().delegation_type > 0)
 						return layer_exception("invalid sub-transaction type - must be non-delegable");
 				}
 			}
@@ -954,10 +959,7 @@ namespace tangent
 			for (auto& group : transactions)
 			{
 				for (auto& transaction : group.second)
-				{
-					callback(transaction->as_hash());
 					transaction->enumerate_aliases(callback);
-				}
 			}
 		}
 		bool rollup::import_transaction(const ledger::transaction_message& transaction)
@@ -987,17 +989,15 @@ namespace tangent
 
 			return import_transaction(transaction);
 		}
-		expects_lr<ledger::block_transaction> rollup::resolve_block_transaction(const ledger::transaction_receipt& receipt, uint32_t type, const uint256_t& transaction_hash) const
+		expects_lr<ledger::block_transaction> rollup::find_block_transaction(const ledger::transaction_receipt& receipt, uint32_t type, size_t offset) const
 		{
-			if (!transaction_hash)
-				return layer_exception("sub-transaction not found");
-
+			size_t index = 0;
 			ledger::transaction_message* target = nullptr;
 			for (auto& group : transactions)
 			{
 				for (auto& transaction : group.second)
 				{
-					if (transaction->as_hash() == transaction_hash && (!type || transaction->as_type() == type))
+					if ((!type || transaction->as_type() == type) && offset == index++)
 					{
 						target = *transaction;
 						break;
@@ -1019,24 +1019,24 @@ namespace tangent
 			if (!transaction.transaction->recover_hash(transaction.receipt.from))
 				return layer_exception("sub-transaction not valid");
 
-			size_t offset = 0;
+			size_t event_index = 0;
 			size_t begin = std::string::npos, end = std::string::npos;
 			for (auto& event : receipt.events)
 			{
-				++offset;
+				++event_index;
 				if (event.event != rollup::as_instance_type() || event.args.size() != 2)
 					continue;
 
 				uint256_t candidate_hash = event.args[0].as_uint256();
-				if (candidate_hash == transaction_hash)
+				if (candidate_hash == transaction.receipt.transaction_hash)
 				{
-					begin = offset - 1;
+					begin = event_index - 1;
 					transaction.receipt.relative_gas_use = event.args[1].as_uint256();
 					continue;
 				}
 				else if (begin != std::string::npos)
 				{
-					end = offset - 1;
+					end = event_index - 1;
 					break;
 				}
 			}
@@ -1044,33 +1044,11 @@ namespace tangent
 			if (begin == std::string::npos)
 				return layer_exception("sub-transaction not valid");
 			else if (end == std::string::npos)
-				end = offset;
+				end = event_index;
 
 			transaction.receipt.events.resize(end - 1);
 			transaction.receipt.events.erase(transaction.receipt.events.begin(), transaction.receipt.events.begin() + begin + 1);
 			return transaction;
-		}
-		const ledger::transaction_message* rollup::resolve_transaction(const uint256_t& transaction_hash) const
-		{
-			if (!transaction_hash)
-				return nullptr;
-
-			for (auto& group : transactions)
-			{
-				for (auto& transaction : group.second)
-				{
-					if (transaction->as_hash() == transaction_hash)
-						return *transaction;
-					else if (transaction->as_type() != rollup::as_instance_type())
-						continue;
-
-					auto* candidate = ((rollup*)*transaction)->resolve_transaction(transaction_hash);
-					if (candidate != nullptr)
-						return candidate;
-				}
-			}
-
-			return nullptr;
 		}
 		format::tree rollup::as_tree() const
 		{
@@ -1461,9 +1439,12 @@ namespace tangent
 			}
 			return data;
 		}
-		uint32_t route::as_delegation_type() const
+		ledger::delegation_binder route::as_delegation_binder() const
 		{
-			return delegations::bind_delegation::as_instance_type();
+			ledger::delegation_binder result;
+			result.delegation_type = delegations::bind_delegation::as_instance_type();
+			result.transaction_type = as_type();
+			return result;
 		}
 		uint32_t route::as_type() const
 		{
@@ -2035,7 +2016,7 @@ namespace tangent
 			btree_set<algorithm::pubkeyhash_t> exclusion;
 			for (auto& [broadcast_hash, participant] : migrations)
 			{
-				auto parent = executor->get_block_transaction<broadcast>(broadcast_hash, true);
+				auto parent = executor->get_block_transaction<broadcast>(broadcast_hash);
 				if (!parent)
 					return layer_exception("broadcast transaction not found");
 
@@ -2043,7 +2024,7 @@ namespace tangent
 				if (!parent_transaction->eligible_migration_target(participant))
 					return layer_exception("migration participant not applicable");
 
-				auto origin = executor->get_block_transaction<withdraw>(parent_transaction->withdraw_hash, true);
+				auto origin = executor->get_block_transaction<withdraw>(parent_transaction->withdraw_hash);
 				if (!origin)
 					return layer_exception("withdraw transaction not found");
 
@@ -2066,7 +2047,7 @@ namespace tangent
 
 				if (bridge->transaction_hash > 0 && bridge->transaction_hash != broadcast_hash)
 				{
-					parent = executor->get_block_transaction<broadcast>(bridge->transaction_hash, true);
+					parent = executor->get_block_transaction<broadcast>(bridge->transaction_hash);
 					if (!parent)
 						return layer_exception("last broadcast transaction not found");
 
@@ -2475,11 +2456,11 @@ namespace tangent
 				if (!event || event->child_transaction_hash != broadcast_hash)
 					continue;
 
-				auto parent = executor->get_block_transaction<broadcast>(broadcast_hash, true);
+				auto parent = executor->get_block_transaction<broadcast>(broadcast_hash);
 				if (!parent)
 					return layer_exception("broadcast transaction not found");
 
-				auto origin = executor->get_block_transaction<withdraw>(((broadcast*)*parent->transaction)->withdraw_hash, true);
+				auto origin = executor->get_block_transaction<withdraw>(((broadcast*)*parent->transaction)->withdraw_hash);
 				if (!origin)
 					return layer_exception("withdraw transaction not found");
 
@@ -2579,9 +2560,12 @@ namespace tangent
 				data.set("block_production", production->is_zero() || production->is_positive() ? format::variable(*production) : format::variable(false));
 			return data;
 		}
-		uint32_t setup::as_delegation_type() const
+		ledger::delegation_binder setup::as_delegation_binder() const
 		{
-			return delegations::rebind_delegation::as_instance_type();
+			ledger::delegation_binder result;
+			result.delegation_type = delegations::rebind_delegation::as_instance_type();
+			result.transaction_type = as_type();
+			return result;
 		}
 		uint32_t setup::as_type() const
 		{
@@ -3005,9 +2989,12 @@ namespace tangent
 			data.set("value", format::variable(value));
 			return data;
 		}
-		uint32_t withdraw::as_delegation_type() const
+		ledger::delegation_binder withdraw::as_delegation_binder() const
 		{
-			return delegations::broadcast_delegation::as_instance_type();
+			ledger::delegation_binder result;
+			result.delegation_type = delegations::broadcast_delegation::as_instance_type();
+			result.transaction_type = as_type();
+			return result;
 		}
 		uint32_t withdraw::as_type() const
 		{
@@ -3054,6 +3041,9 @@ namespace tangent
 				return confirmation.error();
 
 			auto fee_asset = algorithm::asset::base_id_of(parent_transaction->asset);
+			if (fee_asset != algorithm::asset::base_id_of(asset))
+				return layer_exception("invalid parent transaction asset");
+
 			auto bridge = executor->get_bridge_instance(fee_asset, parent_transaction->bridge_hash);
 			if (!bridge)
 				return bridge.error();
@@ -3192,13 +3182,14 @@ namespace tangent
 			if (proof && !proof->hashdata.empty())
 			{
 				format::wo_stream message;
+				message.write_integer(algorithm::asset::base_id_of(asset));
 				message.write_string(proof->hashdata);
 				callback(message.hash());
 			}
 		}
 		uint64_t broadcast::commitment_priority(uint256_t* event_hash) const
 		{
-			return 3;
+			return 2;
 		}
 		void broadcast::set_proof(const uint256_t& new_withdraw_hash, expects_lr<superchain::finalized_transaction>&& new_proof)
 		{
@@ -3252,26 +3243,27 @@ namespace tangent
 
 			auto offchain = superchain::bridge::get();
 			auto base_asset = algorithm::asset::base_id_of(transaction->asset);
-			auto required_output_witness = btree_map<string, states::witness_account>();
-			auto required_output_value = btree_map<algorithm::asset_id, decimal>();
-			auto normalized_address = transaction->address;
-			auto status = offchain->normalize_address(transaction->asset, &normalized_address);
+			auto required_output_normalized_address = transaction->address;
+			auto status = offchain->normalize_address(transaction->asset, &required_output_normalized_address);
 			if (!status)
 				return status.error();
-
-			if (required_output_witness.find(normalized_address) == required_output_witness.end())
+			
+			auto required_output_value = btree_map<algorithm::asset_id, decimal>();
+			auto required_output_witness = executor->get_witness_account_tagged(base_asset, required_output_normalized_address, 0);
+			if (!required_output_witness)
 			{
-				auto witness = executor->get_witness_account_tagged(base_asset, normalized_address, 0);
-				if (!witness)
-					return layer_exception("transaction requires paying to unknown address");
-
-				required_output_witness.insert(std::make_pair(std::move(normalized_address), std::move(*witness)));
+				states::bridge_ref ref;
+				ref.asset = base_asset;
+				ref.hash = transaction->bridge_hash;
+				ref.owner = receipt.from;
+				required_output_witness = states::witness_account(ref, address_map({ { (uint8_t)1, required_output_normalized_address } }), executor->block);
 			}
 
-			auto inout_witness = btree_map<string, states::witness_account>();
+			auto inout_witness = btree_map<string, states::witness_account>({ { required_output_normalized_address, *required_output_witness } });
 			auto input_value = btree_map<algorithm::asset_id, decimal>();
 			auto output_value = btree_map<algorithm::asset_id, decimal>();
 			auto change_value = btree_map<algorithm::asset_id, decimal>();
+			auto required_output_witness_it = inout_witness.begin();
 			auto& value = required_output_value[transaction->asset];
 			value = value.is_nan() ? transaction->value : (value + transaction->value);
 			for (auto& input : prepared.inputs)
@@ -3325,8 +3317,7 @@ namespace tangent
 					it = inout_witness.find(normalized_address);
 				}
 
-				auto change_output = required_output_witness.find(normalized_address);
-				if (change_output == required_output_witness.end())
+				if (it != required_output_witness_it)
 				{
 					if (!it->second.is_bridge_account())
 						return layer_exception("witness transaction output receives change into unrelated address");
@@ -3337,12 +3328,12 @@ namespace tangent
 				}
 
 				auto output_asset = output.get_asset(base_asset);
-				auto& value = change_output == required_output_witness.end() ? change_value[output_asset] : output_value[output_asset];
+				auto& value = it != required_output_witness_it ? change_value[output_asset] : output_value[output_asset];
 				value = value.is_nan() ? output.value : (value + output.value);
 				for (auto& [token_hash, token] : output.tokens)
 				{
 					auto token_asset = token.get_asset(base_asset);
-					auto& token_value = change_output == required_output_witness.end() ? change_value[token_asset] : output_value[token_asset];
+					auto& token_value = it != required_output_witness_it ? change_value[token_asset] : output_value[token_asset];
 					token_value = token_value.is_nan() ? token.value : (token_value + token.value);
 				}
 			}
@@ -3426,7 +3417,7 @@ namespace tangent
 			if (!validation)
 				return validation.error();
 
-			auto parent = executor->get_block_transaction<broadcast>(broadcast_hash, true);
+			auto parent = executor->get_block_transaction<broadcast>(broadcast_hash);
 			if (!parent)
 				return layer_exception("parent transaction not found");
 
@@ -3434,7 +3425,7 @@ namespace tangent
 			if (!parent_transaction->proof)
 				return layer_exception("parent transaction not valid");
 
-			auto origin = executor->get_block_transaction<withdraw>(parent_transaction->withdraw_hash, true);
+			auto origin = executor->get_block_transaction<withdraw>(parent_transaction->withdraw_hash);
 			if (!origin)
 				return layer_exception("origin transaction not found");
 
@@ -3446,7 +3437,7 @@ namespace tangent
 				if (!attestate_hash)
 					return layer_exception("broadcast is considered final either by attestation or older anticast");
 
-				auto confirmation = executor->get_block_transaction<attestate>(attestate_hash, true);
+				auto confirmation = executor->get_block_transaction<attestate>(attestate_hash);
 				if (!confirmation)
 					return layer_exception("confirmation transaction not found");
 
@@ -3687,6 +3678,7 @@ namespace tangent
 			decimal network_fee = decimal::zero();
 			algorithm::pubkeyhash_t depositor_account = proof.memo;
 			option<algorithm::pubkeyhash_t> withdrawer_account_maybe = optional::none;
+			auto base_asset = algorithm::asset::base_id_of(asset);
 			bool signers_hardening = kernel::params().on(fork_id::key_bind_commitment, executor->receipt.block_number);
 			bool enforce_aliasing = kernel::params().on(fork_id::anonymous_broadcast, executor->receipt.block_number);
 			auto withdrawer_account = [&]()
@@ -3694,14 +3686,14 @@ namespace tangent
 				if (!withdrawer_account_maybe)
 				{
 					format::wo_stream message;
+					message.write_integer(base_asset);
 					message.write_string(proof.transaction_id);
-					auto parent = bridge_hash > 0 && enforce_aliasing ? executor->get_block_transaction<broadcast>(message.hash(), true) : expects_lr<ledger::block_transaction>(layer_exception());
-					auto origin = parent ? executor->get_block_transaction<withdraw>(((broadcast*)*parent->transaction)->withdraw_hash, true) : expects_lr<ledger::block_transaction>(layer_exception());
-					withdrawer_account_maybe = origin ? origin->receipt.from : algorithm::pubkeyhash_t();
+					auto parent = bridge_hash > 0 && enforce_aliasing ? executor->get_block_transaction<broadcast>(message.hash()) : expects_lr<ledger::block_transaction>(layer_exception());
+					auto origin = parent ? executor->get_block_transaction<withdraw>(((broadcast*)*parent->transaction)->withdraw_hash) : expects_lr<ledger::block_transaction>(layer_exception());
+					withdrawer_account_maybe = origin && algorithm::asset::base_id_of(parent->transaction->asset) == base_asset ? origin->receipt.from : algorithm::pubkeyhash_t();
 				}
 				return *withdrawer_account_maybe;
 			};
-
 			for (auto& [hash, input] : proof.inputs)
 			{
 				auto baseline = states::witness_account(states::bridge_ref(), { }, nullptr);
@@ -3717,6 +3709,13 @@ namespace tangent
 					}) != source.addresses.end();
 				}) != proof.signers.end()) ? source.ref.hash : bridge_hash;
 				network_fee += input.value;
+			}
+
+			if (enforce_aliasing && bridge_hash > 0 && withdrawer_account().empty())
+			{
+				auto front = executor->get_bridge_queue(asset, bridge_hash, 1);
+				if (front)
+					return layer_exception("attestation race condition (attestate later)");
 			}
 
 			btree_map<uint256_t, btree_map<algorithm::asset_id, decimal>> balances;
@@ -3833,7 +3832,6 @@ namespace tangent
 				network_fee = std::max(network_fee - output.value, decimal::zero());
 			}
 
-			auto base_asset = algorithm::asset::base_id_of(asset);
 			auto bridge_reward = decimal::zero();
 			bool bridge_exists = false;
 			if (bridge_hash > 0)
@@ -4074,6 +4072,7 @@ namespace tangent
 			if (!proof.transaction_id.empty())
 			{
 				format::wo_stream message;
+				message.write_integer(algorithm::asset::base_id_of(asset));
 				message.write_string(proof.transaction_id);
 				callback(message.hash());
 			}
@@ -4082,7 +4081,7 @@ namespace tangent
 		{
 			if (event_hash != nullptr)
 				*event_hash = proof.as_proof_hash(asset);
-			return 2;
+			return 3;
 		}
 		void attestate::set_finalized_proof(uint64_t block_id, const std::string_view& transaction_id, const vector<superchain::value_transfer>& inputs, const vector<superchain::value_transfer>& outputs, bool reset_signatures)
 		{

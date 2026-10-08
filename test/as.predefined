@@ -1,0 +1,493 @@
+namespace tx
+{
+	enum identity
+	{
+		none,
+		transfer,
+		deploy,
+		call,
+		delegate,
+		rollup,
+		route,
+		bind,
+		imbind,
+		setup,
+		rebind,
+		withdraw,
+		broadcast,
+		anticast,
+		attestate
+	}
+}
+class pmut { }
+class pconst { }
+class array<t>
+{
+	array(usize) explicit;
+	array(usize, const ?&in) explicit;
+	array<t>& opAssign(const array<t>&in);
+	t& opIndex(uint);
+	const t& opIndex(uint) const;
+	t& front();
+	const t& front() const;
+	t& back();
+	const t& back() const;
+	bool empty() const;
+	uint size() const;
+	void resize(uint);
+	void clear();
+	void push(const t&in);
+	void push_front(const t&in);
+	void pop();
+	void pop_front();
+	void insert(uint, const t&in);
+	void insert(uint, const array<t>&inout);
+	void erase(uint);
+	void erase(uint, uint);
+	void reverse();
+	void swap(uint, uint);
+}
+class string
+{
+	string(uint64);
+	~string();
+	string();
+	string(const string&in);
+	string& opAssign(const string&in);
+	string& opAddAssign(const string&in);
+	string& opAddAssign(uint8);
+	string opAdd(const string&in) const;
+	string opAdd(uint8) const;
+	string opAdd_r(uint8) const;
+	int opCmp(const string&in) const;
+	uint8& opIndex(uint);
+	const uint8& opIndex(uint) const;
+	uint8& at(uint);
+	const uint8& at(uint) const;
+	uint8& front();
+	const uint8& front() const;
+	uint8& back();
+	const uint8& back() const;
+	bool empty() const;
+	uint size() const;
+	void clear();
+	string& append(const string&in);
+	string& append(uint8);
+	void push(uint8);
+	void pop();
+	bool starts_with(const string&in, uint = 0) const;
+	bool ends_with(const string&in) const;
+	string substring(uint) const;
+	string substring(uint, uint) const;
+	string& trim();
+	string& trim_front();
+	string& trim_back();
+	string& lower();
+	string& upper();
+	string& reverse();
+	uint rfind(const string&in) const;
+	uint rfind(uint8) const;
+	uint rfind(const string&in, uint) const;
+	uint rfind(uint8, uint) const;
+	uint find(const string&in, uint = 0) const;
+	uint find(uint8, uint = 0) const;
+	uint find_first_of(const string&in, uint = 0) const;
+	uint find_first_not_of(const string&in, uint = 0) const;
+	uint find_last_of(const string&in) const;
+	uint find_last_not_of(const string&in) const;
+	uint find_last_of(const string&in, uint) const;
+	uint find_last_not_of(const string&in, uint) const;
+	array<string>@ split(const string&in) const;
+	int8 i8(int = 10);
+	int16 i16(int = 10);
+	int i32(int = 10);
+	int64 i64(int = 10);
+	uint8 u8(int = 10);
+	uint16 u16(int = 10);
+	uint u32(int = 10);
+	uint64 u64(int = 10);
+	uint128 u128(int = 10);
+	uint256 u256(int = 10);
+	real320 r320(int = 10);
+}
+class uint128
+{
+	~uint128();
+	uint128();
+	uint128(int8);
+	uint128(uint8);
+	uint128(int16);
+	uint128(uint16);
+	uint128(int);
+	uint128(uint);
+	uint128(int64);
+	uint128(uint64);
+	uint128(const uint128&in);
+	uint128(const string&in);
+	uint128& opAssign(const uint128&in);
+	uint128& opMulAssign(const uint128&in);
+	uint128& opDivAssign(const uint128&in);
+	uint128& opAddAssign(const uint128&in);
+	uint128& opSubAssign(const uint128&in);
+	uint128& opPreInc();
+	uint128& opPreDec();
+	uint128& opPostInc();
+	uint128& opPostDec();
+	bool opEquals(const uint128&in) const;
+	int opCmp(const uint128&in) const;
+	uint128 opMul(const uint128&in) const;
+	uint128 opDiv(const uint128&in) const;
+	uint128 opAdd(const uint128&in) const;
+	uint128 opSub(const uint128&in) const;
+	uint128 opMod(const uint128&in) const;
+	bool opImplConv() const;
+	int8 i8() const;
+	int16 i16() const;
+	int i32() const;
+	int64 i64() const;
+	uint8 u8() const;
+	uint16 u16() const;
+	uint u32() const;
+	uint64 u64() const;
+	uint256 u256() const;
+	real320 r320() const;
+	uint8 bits() const;
+	uint8 bytes() const;
+}
+class uint256
+{
+	~uint256();
+	uint256();
+	uint256(int8);
+	uint256(uint8);
+	uint256(int16);
+	uint256(uint16);
+	uint256(int);
+	uint256(uint);
+	uint256(int64);
+	uint256(uint64);
+	uint256(const uint256&in);
+	uint256(const uint128&in);
+	uint256(const uint128&in, const uint128&in);
+	uint256(const string&in);
+	uint256& opAssign(const uint256&in);
+	uint256& opMulAssign(const uint256&in);
+	uint256& opDivAssign(const uint256&in);
+	uint256& opAddAssign(const uint256&in);
+	uint256& opSubAssign(const uint256&in);
+	uint256& opPreInc();
+	uint256& opPreDec();
+	uint256& opPostInc();
+	uint256& opPostDec();
+	bool opEquals(const uint256&in) const;
+	int opCmp(const uint256&in) const;
+	uint256 opMul(const uint256&in) const;
+	uint256 opDiv(const uint256&in) const;
+	uint256 opAdd(const uint256&in) const;
+	uint256 opSub(const uint256&in) const;
+	uint256 opMod(const uint256&in) const;
+	bool opImplConv() const;
+	int8 i8() const;
+	int16 i16() const;
+	int i32() const;
+	int64 i64() const;
+	uint8 u8() const;
+	uint16 u16() const;
+	uint u32() const;
+	uint64 u64() const;
+	uint128 u128() const;
+	real320 r320() const;
+	uint16 bits() const;
+	uint16 bytes() const;
+}
+class real320
+{
+	~real320();
+	real320();
+	real320(bool);
+	real320(int8);
+	real320(uint8);
+	real320(int16);
+	real320(uint16);
+	real320(int);
+	real320(uint);
+	real320(int64);
+	real320(uint64);
+	real320(const string&in);
+	real320(const uint128&in);
+	real320(const uint256&in);
+	real320(const real320&in);
+	real320& opAssign(const real320&in);
+	bool opImplConv() const;
+	bool nan() const;
+	bool zero() const;
+	bool zero_or_nan() const;
+	bool positive() const;
+	bool negative() const;
+	int8 i8() const;
+	int16 i16() const;
+	int i32() const;
+	int64 i64() const;
+	uint8 u8() const;
+	uint16 u16() const;
+	uint u32() const;
+	uint64 u64() const;
+	uint128 u128() const;
+	uint256 u256() const;
+	real320& opMulAssign(const real320&in);
+	real320& opDivAssign(const real320&in);
+	real320& opAddAssign(const real320&in);
+	real320& opSubAssign(const real320&in);
+	real320& opPreInc();
+	real320& opPreDec();
+	real320& opPostInc();
+	real320& opPostDec();
+	bool opEquals(const real320&in) const;
+	int opCmp(const real320&in) const;
+	real320 opMul(const real320&in) const;
+	real320 opDiv(const real320&in) const;
+	real320 opAdd(const real320&in) const;
+	real320 opSub(const real320&in) const;
+	real320 opNeg() const;
+}
+class payable
+{
+	~payable();
+	payable();
+	payable(const payable&in);
+	payable& opAssign(const payable&in);
+	bool plus(const uint256&in, const real320&in);
+	bool minus(const uint256&in, const real320&in);
+	bool minus(const real320&in);
+	bool has(const uint256&in) const;
+	real320 of(const uint256&in) const;
+	const real320& total() const;
+	uint256 opIndex(uint);
+	uint256 opIndex(uint) const;
+	bool empty() const;
+	uint size() const;
+}
+class address
+{
+	~address();
+	address();
+	address(const string&in);
+	address(const uint256&in);
+	address(const address&in);
+	address& opAssign(const address&in);
+	uint256 u256() const;
+	bool empty() const;
+	void pay(const uint256&in, const real320&in) const;
+	void pay(const payable&in) const;
+	void mint(const string&in, const real320&in, const real320&in = real320()) const;
+	void burn(const string&in, const real320&in, const real320&in = real320()) const;
+	real320 balance_delta_of(const uint256&in) const;
+	real320 reserve_delta_of(const uint256&in) const;
+	real320 token_balance_of(const string&in) const;
+	real320 token_reserve_of(const string&in) const;
+	real320 balance_of(const uint256&in) const;
+	real320 reserve_of(const uint256&in) const;
+	bool callable(const string&in) const;
+	t static_call<t>(const string&in, const ?&in...) const;
+	t protected_call<t>(const string&in, const payable&in, const ?&in...) const;
+	t call<t>(const string&in, const payable&in, const ?&in...) const;
+	bool opEquals(const address&in) const;
+}
+class batch_payout
+{
+	~batch_payout();
+	batch_payout();
+	batch_payout(const batch_payout&in);
+	batch_payout& opAssign(const batch_payout&in);
+	void to(const address&in, const uint256&in, const real320&in);
+	void pay();
+}
+class abi
+{
+	~abi();
+	abi();
+	abi(const string&in);
+	abi(const address&in);
+	abi& opAssign(const abi&in);
+	void merge(const string&in);
+	void seek(uint);
+	void clear();
+	void wu8(bool);
+	void wu160(const address&in);
+	void wu256(const uint256&in);
+	void wr320(const real320&in);
+	void wstr(const string&in);
+	bool rstr(string&out);
+	bool ru8(bool&out);
+	bool ru160(address&out);
+	bool ru256(uint256&out);
+	bool rr320(real320&out);
+	string data();
+}
+class varying<t>
+{
+	~varying();
+	varying(int&in);
+	void erase();
+	void opAssign(const t&in);
+	void set();
+	void set(const t&in);
+	void set_if(bool, const t&in);
+	const t& get_ref() const property;
+	bool empty() const;
+}
+class mapping<k, v>
+{
+	~mapping();
+	mapping(int&in);
+	void erase(const k&in);
+	void insert(const k&in, const v&in);
+	void insert_if(bool, const k&in, const v&in);
+	const v& opIndex(const k&in) const;
+	bool has(const k&in) const;
+}
+class listing<v>
+{
+	~listing();
+	listing(int&in);
+	uint size() const;
+	bool empty() const;
+	void clear();
+	void erase(uint);
+	void set(uint, const v&in);
+	void push(const v&in);
+	void push_front(const v&in);
+	void pop();
+	void pop_front();
+	const v& front() const;
+	const v& back() const;
+	const v& opIndex(uint) const;
+}
+class ranging<c, r, v>
+{
+	~ranging();
+	ranging(int&in);
+	ranging_slice x(const c&in) const;
+	ranging_slice y(const r&in) const;
+	void erase(const c&in, const r&in);
+	void insert(const c&in, const r&in, const v&in);
+	void insert(const c&in, const r&in, const v&in, const uint256&in);
+	void insert_if(bool, const c&in, const r&in, const v&in);
+	void insert_if(bool, const c&in, const r&in, const v&in, const uint256&in);
+	const v& opIndex(const c&in, const r&in) const;
+	bool has(const c&in, const r&in) const;
+	bool has_x(const c&in) const;
+	bool has_y(const r&in) const;
+}
+class ranging_slice
+{
+	~ranging_slice();
+	ranging_slice();
+	ranging_slice(const address&in);
+	ranging_slice& opAssign(const ranging_slice&in);
+	bool next();
+	bool next(?&out);
+	bool next(?&out, ?&out);
+	bool next(?&out, ?&out, uint256&out);
+	ranging_slice& offset(uint = 0);
+	ranging_slice& count(uint = 0);
+	ranging_slice& gt(const uint256&in);
+	ranging_slice& gte(const uint256&in);
+	ranging_slice& eq(const uint256&in);
+	ranging_slice& neq(const uint256&in);
+	ranging_slice& lt(const uint256&in);
+	ranging_slice& lte(const uint256&in);
+	ranging_slice& asc();
+	ranging_slice& desc();
+}
+namespace real320 { real320 enan(); }
+namespace real320 { real320 from(const string&in, uint8); }
+namespace log { void emit(const ?&in); }
+namespace log { void event(const ?&in, const ?&in); }
+namespace log { bool into(int, ?&out, const address&in = address()); }
+namespace log { bool event_into(const ?&in, int, ?&out, const address&in = address()); }
+namespace log { t get<t>(int, const address&in = address()); }
+namespace log { t get_event<t>(const ?&in, int, const address&in = address()); }
+namespace block { address proposer(); }
+namespace block { uint256 parent_hash(); }
+namespace block { uint256 gas_use(); }
+namespace block { uint256 gas_left(); }
+namespace block { uint256 gas_limit(); }
+namespace block { uint128 difficulty(); }
+namespace block { uint64 time(); }
+namespace block { uint64 time_between(uint64, uint64); }
+namespace block { uint64 priority(); }
+namespace block { uint64 number(); }
+namespace tx { bool paid(); }
+namespace tx { address from(); }
+namespace tx { address to(); }
+namespace tx { payable value(); }
+namespace tx { string blockchain(); }
+namespace tx { string token(); }
+namespace tx { string contract(); }
+namespace tx { string function(); }
+namespace tx { real320 gas_price(); }
+namespace tx { uint256 gas_use(); }
+namespace tx { uint256 gas_left(); }
+namespace tx { uint256 gas_limit(); }
+namespace tx { uint256 asset(); }
+namespace tx::delegate { tx::identity type(); }
+namespace tx::delegate { bool paid(); }
+namespace tx::delegate { address from(); }
+namespace tx::delegate { address to(); }
+namespace tx::delegate { payable value(); }
+namespace tx::delegate { string function(); }
+namespace tx::delegate { uint payments(); }
+namespace tx::delegate { string address(uint); }
+namespace tx::delegate { uint256 asset(uint); }
+namespace tx::delegate { uint256 amount(uint); }
+namespace coin { uint256 native(); }
+namespace coin { uint256 token(const string&in); }
+namespace coin { uint256 id_of(const string&in, const string&in = string(), const string&in = string()); }
+namespace coin { string blockchain_of(const uint256&in); }
+namespace coin { string token_of(const uint256&in); }
+namespace coin { string contract_of(const uint256&in); }
+namespace coin { string name_of(const uint256&in); }
+namespace alg { real320 from_r256(const uint256&in); }
+namespace alg { uint256 to_r256(const real320&in); }
+namespace alg { string from_u256(const uint256&in); }
+namespace alg { uint256 to_u256(const string&in); }
+namespace alg { string from_e16(const string&in); }
+namespace alg { string to_e16(const string&in); }
+namespace alg { address erecover160(const uint256&in, const string&in); }
+namespace alg { string erecover264(const uint256&in, const string&in); }
+namespace alg { uint256 prandom256(); }
+namespace alg { string crc32(const string&in); }
+namespace alg { string ripemd160(const string&in); }
+namespace alg { uint256 blake2b256(const string&in); }
+namespace alg { string blake2b256s(const string&in); }
+namespace alg { uint256 keccak256(const string&in); }
+namespace alg { string keccak256s(const string&in); }
+namespace alg { string keccak512(const string&in); }
+namespace alg { uint256 sha256(const string&in); }
+namespace alg { string sha256s(const string&in); }
+namespace alg { string sha512(const string&in); }
+namespace math { t min_value<t>(); }
+namespace math { t max_value<t>(); }
+namespace math { t abs<t>(const t&in); }
+namespace math { t min<t>(const t&in, const t&in); }
+namespace math { t max<t>(const t&in, const t&in); }
+namespace math { t clamp<t>(const t&in, const t&in, const t&in); }
+namespace math { t lerp<t>(const t&in, const t&in, const t&in); }
+namespace math { t pow<t>(const t&in, const t&in); }
+namespace math { t sqrt<t>(const t&in); }
+void require(bool, const string&in = string());
+namespace string { string from(int8, int = 10); }
+namespace string { string from(int16, int = 10); }
+namespace string { string from(int, int = 10); }
+namespace string { string from(int64, int = 10); }
+namespace string { string from(uint8, int = 10); }
+namespace string { string from(uint16, int = 10); }
+namespace string { string from(uint, int = 10); }
+namespace string { string from(uint64, int = 10); }
+namespace string { string from(const uint128&in, int = 10); }
+namespace string { string from(const uint256&in, int = 10); }
+namespace string { string from(const real320&in); }
+namespace string { string from(const address&in); }
+namespace string { uint npos; }
+typedef uint usize;

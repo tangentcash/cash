@@ -1,4 +1,4 @@
-#include "tangent/entrypoints.hpp"
+#include "entrypoint.hpp"
 #include <vitex/vitex.h>
 
 using namespace tangent;

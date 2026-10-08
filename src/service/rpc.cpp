@@ -1482,7 +1482,7 @@ namespace tangent
 			auto execution = temp_transaction.subexecute(&temp_solver.state.executor, [&](const transactions::call::payable_array& payable, void* module_ptr)
 			{
 				auto script = script::program(&temp_solver.state.executor, (asIScriptModule*)module_ptr);
-				return script.execute(script::payable_repr(transactions::call::payable_array(payable)), script::ccall::const_call, temp_transaction.function, temp_transaction.args, [&](void* address, int type_id) -> expects_lr<void>
+				return script.execute(script::payable_repr(transactions::call::payable_array(payable)), script::ccall::constant_call, temp_transaction.function, temp_transaction.args, [&](void* address, int type_id) -> expects_lr<void>
 				{
 					returning = format::tree::map();
 					auto serialization = script::marshall::store(returning, address, type_id);

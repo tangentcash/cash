@@ -26,7 +26,8 @@ file(GLOB_RECURSE SOURCE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/*.h*
     ${CMAKE_CURRENT_SOURCE_DIR}/src/*.hpp*
     ${CMAKE_CURRENT_SOURCE_DIR}/src/*.inc*
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/*.table*)
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/*.table*
+    ${CMAKE_CURRENT_SOURCE_DIR}/test/*.cpp*)
 foreach(ITEM IN ITEMS ${SOURCE})
     get_filename_component(ITEM_PATH "${ITEM}" PATH)
     string(REPLACE "${PROJECT_SOURCE_DIR}" "" ITEM_GROUP "${ITEM_PATH}")
@@ -36,9 +37,9 @@ endforeach()
 
 set(TAN_TEST OFF CACHE BOOL "Build in testing mode")
 if (TAN_TEST)
-    list(FILTER SOURCE EXCLUDE REGEX "src/main")
+    list(FILTER SOURCE EXCLUDE REGEX "src/entrypoint\\.cpp")
 else()
-    list(FILTER SOURCE EXCLUDE REGEX "src/test")
+    list(FILTER SOURCE EXCLUDE REGEX "test/entrypoint\\.cpp")
 endif()
 add_executable(tangentcash ${SOURCE})
 set_target_properties(tangentcash PROPERTIES
@@ -48,13 +49,17 @@ set_target_properties(tangentcash PROPERTIES
     CXX_EXTENSIONS OFF
     VERSION ${PROJECT_VERSION}
     SOVERSION ${PROJECT_VERSION})
-target_precompile_headers(tangentcash PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${CMAKE_CURRENT_LIST_DIR}/src/tangent/kernel/chain.h>)
+target_precompile_headers(tangentcash PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${CMAKE_CURRENT_LIST_DIR}/src/kernel/chain.h>)
 if (MSVC)
     set(CMAKE_EXE_LINKER_FLAGS "/ENTRY:mainCRTStartup /SUBSYSTEM:CONSOLE")
     target_compile_definitions(tangentcash PRIVATE -D_CRT_SECURE_NO_WARNINGS)
 endif()
 if (TAN_TEST)
     target_compile_definitions(tangentcash PUBLIC -DTAN_TEST)
+    file(GLOB TEST_SCRIPTS CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/test/*.as)
+    add_custom_command(TARGET tangentcash POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:tangentcash>/.test"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${TEST_SCRIPTS} "$<TARGET_FILE_DIR:tangentcash>/.test/" VERBATIM)
 endif()
 
 set(VI_SOURCE_EXCLUDE "as_compiler.cpp|as_tokenizer.cpp")

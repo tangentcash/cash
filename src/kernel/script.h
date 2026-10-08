@@ -17,9 +17,10 @@ namespace tangent
 
 		enum class ccall
 		{
-			event_call,
-			paying_call,
-			const_call
+			deploy_call,
+			delegate_call,
+			standard_call,
+			constant_call
 		};
 
 		enum class cquery
@@ -688,6 +689,25 @@ namespace tangent
 
 		struct contract
 		{
+			enum class tx_identity : int32_t
+			{
+				none = 0,
+				transfer = 1,
+				deploy = 2,
+				call = 3,
+				delegate = 4,
+				rollup = 5,
+				route = 6,
+				bind = 7,
+				imbind = 8,
+				setup = 9,
+				rebind = 10,
+				withdraw = 11,
+				broadcast = 12,
+				anticast = 13,
+				attestate = 14
+			};
+
 			static void uniform_store(const void* index_value, int index_type_id, const void* object_value, int object_type_id);
 			static void uniform_store_slot(uint8_t slot, const void* index_value, int index_type_id, const void* object_value, int object_type_id);
 			static bool uniform_load(const void* index_value, int index_type_id, void* object_value, int object_type_id, bool throw_on_error);
@@ -734,11 +754,22 @@ namespace tangent
 			static string_repr tx_blockchain();
 			static string_repr tx_token();
 			static string_repr tx_contract();
+			static string_repr tx_function();
 			static decimal tx_gas_price();
 			static uint256_t tx_gas_use();
 			static uint256_t tx_gas_left();
 			static uint256_t tx_gas_limit();
 			static uint256_t tx_asset();
+			static tx_identity tx_delegate_type();
+			static payable_repr tx_delegate_value();
+			static bool tx_delegate_paid();
+			static uint32_t tx_delegate_payments();
+			static string_repr tx_delegate_address(uint32_t index);
+			static uint256_t tx_delegate_asset(uint32_t index);
+			static decimal tx_delegate_amount(uint32_t index);
+			static address_repr tx_delegate_from();
+			static address_repr tx_delegate_to();
+			static string_repr tx_delegate_function();
 			static uint256_t coin_native();
 			static uint256_t coin_token(const string_repr& token);
 			static uint256_t coin_id_of(const string_repr& blockchain, const string_repr& token, const string_repr& contract_address);
@@ -858,7 +889,8 @@ namespace tangent
 			{
 				hash_map<string, hash_map<string, uptr<states::account_multiform>>> index[2];
 				option<algorithm::wesolowski::distribution> distribution = optional::none;
-				option<payable_repr> payable = optional::none;
+				option<payable_repr> delegate_payable = optional::none;
+				option<payable_repr> direct_payable = optional::none;
 			} cache;
 			hash_set<algorithm::pubkeyhash_t> reentrancy_guards;
 			ledger::executor_context* executor;
@@ -881,6 +913,8 @@ namespace tangent
 			virtual string function_declaration() const;
 			virtual const format::variables* function_arguments() const;
 			virtual uint64_t virtual_block_number() const;
+			virtual uint32_t delegate_transaction_type() const;
+			virtual const ledger::transaction_message* delegate_transaction_ptr(uint32_t type = 0) const;
 			static program* fetch_mutable(immediate_context* coroutine = immediate_context::get());
 			static const program* fetch_immutable(immediate_context* coroutine = immediate_context::get());
 			static program* fetch_mutable_or_throw(immediate_context* coroutine = immediate_context::get());
@@ -894,6 +928,11 @@ namespace tangent
 			static inline t* request_gas_memory(size_t size)
 			{
 				return request_gas_vmemory(size) ? memory::allocate<t>(size) : nullptr;
+			}
+			template <typename t>
+			const t* delegate_transaction() const
+			{
+				return (const t*)delegate_transaction_ptr(t::as_instance_type());
 			}
 		};
 	}

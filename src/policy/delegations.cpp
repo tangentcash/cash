@@ -1558,7 +1558,7 @@ namespace tangent
 						coreturn cancel(algorithm::pubkeyhash_t(), remote_exception(std::move(verification.error().message())));
 				}
 
-				result = coawait(broadcast_transaction(algorithm::asset::base_id_of(withdraw->asset), executor->receipt.transaction_hash, superchain::finalized_transaction(*finalization), this));
+				result = coawait(broadcast_transaction(algorithm::asset::base_id_of(withdraw->asset), executor->receipt.transaction_hash, superchain::finalized_transaction(*finalization)));
 				if (!result && (result.error().is_retry() || result.error().is_shutdown()))
 				{
 					compositor.destroy();
@@ -1794,48 +1794,22 @@ namespace tangent
 			regtest_finalized.calldata = regtest_finalized.as_message().encode();
 			return expects_lr<superchain::finalized_transaction>(std::move(regtest_finalized));
 		}
-		expects_promise_rt<void> broadcast_delegation::broadcast_transaction(const algorithm::asset_id& asset, const uint256_t& external_id, superchain::finalized_transaction&& finalized, ledger::delegation_contract* contract)
+		expects_promise_rt<void> broadcast_delegation::broadcast_transaction(const algorithm::asset_id& asset, const uint256_t& external_id, superchain::finalized_transaction&& finalized)
 		{
 			auto* offchain = superchain::bridge::get();
 			bool may_mockup = kernel::params().is(network_type::regtest);
-			if (!may_mockup || offchain->has_network(asset, true))
+			if (may_mockup && !offchain->has_network(asset, true))
+				return expects_promise_rt<void>(expectation::met);
+
+			auto preserved = memory::init<superchain::finalized_transaction>(std::move(finalized));
+			return offchain->broadcast_transaction(asset, external_id, *preserved).then<expects_rt<void>>([preserved](expects_rt<void>&& status) mutable -> expects_rt<void>
 			{
-				auto preserved = memory::init<superchain::finalized_transaction>(std::move(finalized));
-				return offchain->broadcast_transaction(asset, external_id, *preserved).then<expects_rt<void>>([preserved](expects_rt<void>&& status) mutable -> expects_rt<void>
-				{
-					memory::deinit(preserved);
-					if (!status)
-						return expects_rt<void>(std::move(status.error()));
+				memory::deinit(preserved);
+				if (!status)
+					return expects_rt<void>(std::move(status.error()));
 
-					return expects_rt<void>(expectation::met);
-				});
-			}
-
-			if (contract != nullptr && (finalized.prepared.outputs.size() != 1 || finalized.prepared.outputs.front().link.address != mockup_target_attestate_absent()))
-			{
-				auto computed = finalized.as_computed();
-				computed.reverted = finalized.prepared.outputs.front().link.address == mockup_target_attestate_error();
-				if (!computed.reverted && finalized.prepared.outputs.front().link.address == mockup_target_broadcast_underflow())
-				{
-					for (auto& [hash, input] : computed.inputs)
-					{
-						for (auto& token : input.tokens)
-							token.second.value.truncate(2);
-					}
-					for (auto& [hash, output] : computed.outputs)
-					{
-						for (auto& token : output.tokens)
-							token.second.value.truncate(2);
-					}
-				}
-
-				auto* transaction = memory::init<transactions::attestate>();
-				transaction->asset = asset;
-				transaction->set_gas(decimal::zero(), 0);
-				transaction->set_computed_proof(computed.as_proof_hash(asset), std::move(computed), { });
-				contract->emit_transaction(transaction);
-			}
-			return expects_promise_rt<void>(expectation::met);
+				return expects_rt<void>(expectation::met);
+			});
 		}
 
 		ledger::delegation_contract* resolver::from_stream(format::ro_stream& stream, ledger::delegation_adapter* adapter, const ledger::executor_context* executor, const algorithm::pubkeyhash_t& delegator)

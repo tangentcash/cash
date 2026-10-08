@@ -254,9 +254,9 @@ namespace tangent
 			data.set("gas_limit", algorithm::encoding::serialize_uint256(gas_limit));
 			return data;
 		}
-		uint32_t transaction_message::as_delegation_type() const
+		delegation_binder transaction_message::as_delegation_binder() const
 		{
-			return 0;
+			return delegation_binder();
 		}
 
 		commitment_message::commitment_message() : transaction_message()

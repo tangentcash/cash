@@ -58,6 +58,12 @@ namespace tangent
 			virtual format::wo_stream as_signable() const;
 		};
 
+		struct delegation_binder
+		{
+			uint32_t transaction_type = 0;
+			uint32_t delegation_type = 0;
+		};
+
 		struct transaction_message : authentic_serializer
 		{
 			algorithm::asset_id asset = 0;
@@ -82,7 +88,7 @@ namespace tangent
 			virtual uint64_t commitment_priority(uint256_t* event_hash) const;
 			virtual uint256_t gas_asset() const;
 			virtual format::tree as_tree() const override;
-			virtual uint32_t as_delegation_type() const;
+			virtual delegation_binder as_delegation_binder() const;
 			virtual uint32_t as_type() const override = 0;
 			virtual std::string_view as_typename() const override = 0;
 		};

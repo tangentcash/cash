@@ -1,12 +1,10 @@
-#ifndef TAN_VALIDATOR_ENTRYPOINTS_HPP
-#define TAN_VALIDATOR_ENTRYPOINTS_HPP
+#ifndef TAN_ENTRYPOINT_HPP
+#define TAN_ENTRYPOINT_HPP
 #include "service/consensus.h"
 #include "service/discovery.h"
 #include "service/rpc.h"
-#include "storage/chainstate.h"
 #include "kernel/script.h"
 #include "policy/transactions.h"
-#include <sstream>
 #include <regex>
 
 namespace tangent
@@ -219,7 +217,7 @@ namespace tangent
 				if (!assignment)
 					return assignment.error();
 
-				auto read_only = mutability_of(entrypoint) == script::ccall::const_call;
+				auto read_only = mutability_of(entrypoint) == script::ccall::constant_call;
 				if (!read_only)
 				{
 					for (auto& [account, balances] : env.balances)
@@ -258,7 +256,13 @@ namespace tangent
 					interrupter(true);
 				}
 
-				auto execution = call_transaction(script::ccall::event_call, entrypoint, args);
+				script::ccall call_type = script::ccall::standard_call;
+				if (entrypoint.get_name() == script::program::deploy_function_name())
+					call_type = script::ccall::deploy_call;
+				else if (entrypoint.get_name() == script::program::delegate_function_name())
+					call_type = script::ccall::delegate_call;
+
+				auto execution = call_transaction(call_type, entrypoint, args);
 				if (attach_debugger_context)
 				{
 					interrupter(false);

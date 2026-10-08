@@ -78,6 +78,137 @@ namespace tangent
 			bool result = ((script::bindings::any*)inout.get_object_address())->retrieve(inout.get_arg_address(0), inout.get_arg_type_id(0));
 			inout.set_return_byte(result);
 		}
+		static contract::tx_identity to_tx_identity(uint32_t type)
+		{
+			if (type > 0)
+			{
+				if (type == transactions::transfer::as_instance_type())
+					return contract::tx_identity::transfer;
+				else if (type == transactions::deploy::as_instance_type())
+					return contract::tx_identity::deploy;
+				else if (type == transactions::call::as_instance_type())
+					return contract::tx_identity::call;
+				else if (type == transactions::delegate::as_instance_type())
+					return contract::tx_identity::delegate;
+				else if (type == transactions::rollup::as_instance_type())
+					return contract::tx_identity::rollup;
+				else if (type == transactions::route::as_instance_type())
+					return contract::tx_identity::route;
+				else if (type == transactions::bind::as_instance_type())
+					return contract::tx_identity::bind;
+				else if (type == transactions::imbind::as_instance_type())
+					return contract::tx_identity::imbind;
+				else if (type == transactions::setup::as_instance_type())
+					return contract::tx_identity::setup;
+				else if (type == transactions::rebind::as_instance_type())
+					return contract::tx_identity::rebind;
+				else if (type == transactions::withdraw::as_instance_type())
+					return contract::tx_identity::withdraw;
+				else if (type == transactions::broadcast::as_instance_type())
+					return contract::tx_identity::broadcast;
+				else if (type == transactions::anticast::as_instance_type())
+					return contract::tx_identity::anticast;
+				else if (type == transactions::attestate::as_instance_type())
+					return contract::tx_identity::attestate;
+			}
+			return contract::tx_identity::none;
+		}
+		static algorithm::pubkeyhash_t tx_callable(const ledger::transaction_message* transaction, const algorithm::pubkeyhash_t& fallback)
+		{
+			uint32_t type = transaction->as_type();
+			if (type == transactions::call::as_instance_type())
+				return ((transactions::call*)transaction)->callable;
+			else if (type == transactions::deploy::as_instance_type())
+				return ((transactions::deploy*)transaction)->get_account();
+			else if (type == transactions::delegate::as_instance_type())
+				return ((transactions::delegate*)transaction)->callable;
+			return fallback;
+		}
+		static constexpr uint32_t all_payments = (uint32_t)-1;
+		template <typename callback_type>
+		static void tx_payments(const ledger::transaction_message* transaction, uint32_t filter, callback_type&& callback)
+		{
+			uint32_t type = transaction->as_type();
+			if (type == transactions::transfer::as_instance_type())
+			{
+				auto& target = *(transactions::transfer*)transaction;
+				for (uint32_t i = 0; i < (uint32_t)target.to.size(); i++)
+				{
+					if (filter == all_payments)
+						callback(algorithm::signing::encode_address(target.to[i].first), target.asset, target.to[i].second);
+					else if (filter == i)
+					{
+						callback(algorithm::signing::encode_address(target.to[i].first), target.asset, target.to[i].second);
+						break;
+					}
+				}
+			}
+			else if (type == transactions::call::as_instance_type())
+			{
+				auto& target = *(transactions::call*)transaction;
+				string callable = algorithm::signing::encode_address(target.callable);
+				for (uint32_t i = 0; i < (uint32_t)target.pays.size(); i++)
+				{
+					if (filter == all_payments)
+						callback(callable, target.pays[i].first, target.pays[i].second);
+					else if (filter == i)
+					{
+						callback(callable, target.pays[i].first, target.pays[i].second);
+						break;
+					}
+				}
+			}
+			else if (type == transactions::withdraw::as_instance_type())
+			{
+				auto& target = *(transactions::withdraw*)transaction;
+				if (filter == all_payments || filter == 0)
+					callback(target.address, target.asset, target.value);
+			}
+			else if (type == transactions::route::as_instance_type())
+			{
+				auto& target = *(transactions::route*)transaction;
+				if (filter == all_payments || filter == 0)
+					callback(target.routing_address, target.asset, decimal::zero());
+			}
+		}
+		static uint32_t tx_payment_count(const ledger::transaction_message* transaction)
+		{
+			uint32_t count = 0;
+			tx_payments(transaction, all_payments, [&count](const string&, const algorithm::asset_id&, const decimal&) { count++; });
+			return count;
+		}
+		static string tx_function_declaration(const ledger::transaction_message* transaction)
+		{
+			uint32_t type = transaction->as_type();
+			if (type == transactions::call::as_instance_type())
+				return ((transactions::call*)transaction)->function;
+			else if (type == transactions::deploy::as_instance_type())
+				return string(program::deploy_function_name());
+			else if (type == transactions::delegate::as_instance_type())
+				return string(program::delegate_function_name());
+
+			return string();
+		}
+		static const format::variables* tx_function_arguments(const ledger::transaction_message* transaction)
+		{
+			uint32_t type = transaction->as_type();
+			if (type == transactions::call::as_instance_type())
+			{
+				auto& args = ((transactions::call*)transaction)->args;
+				return &args;
+			}
+			else if (type == transactions::deploy::as_instance_type())
+			{
+				auto& args = ((transactions::deploy*)transaction)->args;
+				return &args;
+			}
+			else if (type == transactions::delegate::as_instance_type())
+			{
+				auto& args = ((transactions::delegate*)transaction)->args;
+				return &args;
+			}
+			return nullptr;
+		}
 
 		std::string_view exception_repr::category::generic()
 		{
@@ -2117,7 +2248,7 @@ namespace tangent
 			auto* p = program::fetch_mutable();
 			if (p != nullptr)
 			{
-				auto execution = p->subexecute(object->hash, payable, ccall::paying_call, non_reentrant, function.view(), std::move(function_args), output_value, output_type_id);
+				auto execution = p->subexecute(object->hash, payable, ccall::standard_call, non_reentrant, function.view(), std::move(function_args), output_value, output_type_id);
 				if (!execution)
 					return contract::throw_ptr(exception_repr(exception_repr::category::execution(), std::string_view(execution.error().message())));
 			}
@@ -2126,7 +2257,7 @@ namespace tangent
 				auto* immutable_program = (program*)program::fetch_immutable_or_throw();
 				if (immutable_program != nullptr)
 				{
-					auto execution = immutable_program->subexecute(object->hash, payable, ccall::const_call, non_reentrant, function.view(), std::move(function_args), output_value, output_type_id);
+					auto execution = immutable_program->subexecute(object->hash, payable, ccall::constant_call, non_reentrant, function.view(), std::move(function_args), output_value, output_type_id);
 					if (!execution)
 						return contract::throw_ptr(exception_repr(exception_repr::category::execution(), std::string_view(execution.error().message())));
 				}
@@ -3645,6 +3776,11 @@ namespace tangent
 			auto* p = program::fetch_immutable_or_throw();
 			return p ? string_repr(algorithm::asset::checksum_of(p->executor->transaction->asset)) : string_repr();
 		}
+		string_repr contract::tx_function()
+		{
+			auto* p = program::fetch_immutable_or_throw();
+			return p ? string_repr(p->function_declaration()) : string_repr();
+		}
 		decimal contract::tx_gas_price()
 		{
 			auto* p = program::fetch_immutable_or_throw();
@@ -3669,6 +3805,111 @@ namespace tangent
 		{
 			auto* p = program::fetch_immutable_or_throw();
 			return p ? p->executor->transaction->asset : uint256_t((uint8_t)0);
+		}
+		contract::tx_identity contract::tx_delegate_type()
+		{
+			auto* p = program::fetch_immutable_or_throw();
+			return to_tx_identity(p ? p->delegate_transaction_type() : 0);
+		}
+		payable_repr contract::tx_delegate_value()
+		{
+			auto* p = program::fetch_immutable_or_throw();
+			if (!p)
+				return payable_repr();
+			
+			if (!p->cache.delegate_payable)
+			{
+				vector<std::pair<algorithm::asset_id, decimal>> payments;
+				auto* transaction = p->delegate_transaction_ptr();
+				if (transaction != nullptr)
+				{
+					payments.reserve(tx_payment_count(transaction));
+					tx_payments(transaction, all_payments, [&payments](const string&, const algorithm::asset_id& asset, const decimal& amount) { payments.push_back(std::make_pair(asset, amount)); });
+				}
+				((program*)p)->cache.delegate_payable = payable_repr(std::move(payments));
+			}
+
+			return payable_repr(*p->cache.delegate_payable);
+		}
+		bool contract::tx_delegate_paid()
+		{
+			return !tx_delegate_value().empty();
+		}
+		uint32_t contract::tx_delegate_payments()
+		{
+			auto* p = program::fetch_immutable_or_throw();
+			auto* transaction = p ? p->delegate_transaction_ptr() : nullptr;
+			return transaction ? tx_payment_count(transaction) : 0;
+		}
+		string_repr contract::tx_delegate_address(uint32_t index)
+		{
+			auto* p = program::fetch_immutable_or_throw();
+			auto* transaction = p ? p->delegate_transaction_ptr() : nullptr;
+			if (!transaction)
+				return string_repr();
+
+			uint32_t size = tx_payment_count(transaction);
+			if (index >= size)
+			{
+				contract::throw_ptr(exception_repr(exception_repr::category::argument(), stringify::text("range [%i; %i) is out of bounds (size: %i)", index, index + 1, size)));
+				return string_repr();
+			}
+
+			string address;
+			tx_payments(transaction, index, [&address](const string& payment_address, const algorithm::asset_id&, const decimal&) { address = payment_address; });
+			return string_repr(address);
+		}
+		uint256_t contract::tx_delegate_asset(uint32_t index)
+		{
+			auto* p = program::fetch_immutable_or_throw();
+			auto* transaction = p ? p->delegate_transaction_ptr() : nullptr;
+			if (!transaction)
+				return uint256_t((uint8_t)0);
+
+			uint32_t size = tx_payment_count(transaction);
+			if (index >= size)
+			{
+				contract::throw_ptr(exception_repr(exception_repr::category::argument(), stringify::text("range [%i; %i) is out of bounds (size: %i)", index, index + 1, size)));
+				return uint256_t((uint8_t)0);
+			}
+
+			algorithm::asset_id asset = algorithm::asset::native();
+			tx_payments(transaction, index, [&asset](const string&, const algorithm::asset_id& payment_asset, const decimal&) { asset = payment_asset; });
+			return asset;
+		}
+		decimal contract::tx_delegate_amount(uint32_t index)
+		{
+			auto* p = program::fetch_immutable_or_throw();
+			auto* transaction = p ? p->delegate_transaction_ptr() : nullptr;
+			if (!transaction)
+				return decimal::nan();
+
+			uint32_t size = tx_payment_count(transaction);
+			if (index >= size)
+			{
+				contract::throw_ptr(exception_repr(exception_repr::category::argument(), stringify::text("range [%i; %i) is out of bounds (size: %i)", index, index + 1, size)));
+				return decimal::nan();
+			}
+
+			decimal amount = decimal::nan();
+			tx_payments(transaction, index, [&amount](const string&, const algorithm::asset_id&, const decimal& payment_amount) { amount = payment_amount; });
+			return amount;
+		}
+		address_repr contract::tx_delegate_from()
+		{
+			return tx_from();
+		}
+		address_repr contract::tx_delegate_to()
+		{
+			auto* p = program::fetch_immutable_or_throw();
+			auto* transaction = p ? p->delegate_transaction_ptr() : nullptr;
+			return transaction ? tx_callable(transaction, p->callable()) : address_repr();
+		}
+		string_repr contract::tx_delegate_function()
+		{
+			auto* p = program::fetch_immutable_or_throw();
+			auto* transaction = p ? p->delegate_transaction_ptr() : nullptr;
+			return transaction ? string_repr(tx_function_declaration(transaction)) : string_repr();
 		}
 		uint256_t contract::coin_native()
 		{
@@ -5654,6 +5895,22 @@ namespace tangent
 			vm->end_namespace();
 
 			vm->begin_namespace("tx");
+			auto tx_identity_type = vm->set_enum("identity");
+			tx_identity_type->set_value("none", (int)contract::tx_identity::none);
+			tx_identity_type->set_value("transfer", (int)contract::tx_identity::transfer);
+			tx_identity_type->set_value("deploy", (int)contract::tx_identity::deploy);
+			tx_identity_type->set_value("call", (int)contract::tx_identity::call);
+			tx_identity_type->set_value("delegate", (int)contract::tx_identity::delegate);
+			tx_identity_type->set_value("rollup", (int)contract::tx_identity::rollup);
+			tx_identity_type->set_value("route", (int)contract::tx_identity::route);
+			tx_identity_type->set_value("bind", (int)contract::tx_identity::bind);
+			tx_identity_type->set_value("imbind", (int)contract::tx_identity::imbind);
+			tx_identity_type->set_value("setup", (int)contract::tx_identity::setup);
+			tx_identity_type->set_value("rebind", (int)contract::tx_identity::rebind);
+			tx_identity_type->set_value("withdraw", (int)contract::tx_identity::withdraw);
+			tx_identity_type->set_value("broadcast", (int)contract::tx_identity::broadcast);
+			tx_identity_type->set_value("anticast", (int)contract::tx_identity::anticast);
+			tx_identity_type->set_value("attestate", (int)contract::tx_identity::attestate);
 			vm->set_function_address("bool paid()", WRAP_FN(contract::tx_paid), convention::generic_call);
 			vm->set_function_address("address from()", WRAP_FN(contract::tx_from), convention::generic_call);
 			vm->set_function_address("address to()", WRAP_FN(contract::tx_to), convention::generic_call);
@@ -5661,11 +5918,25 @@ namespace tangent
 			vm->set_function_address("string blockchain()", WRAP_FN(contract::tx_blockchain), convention::generic_call);
 			vm->set_function_address("string token()", WRAP_FN(contract::tx_token), convention::generic_call);
 			vm->set_function_address("string contract()", WRAP_FN(contract::tx_contract), convention::generic_call);
+			vm->set_function_address("string function()", WRAP_FN(contract::tx_function), convention::generic_call);
 			vm->set_function_address("real320 gas_price()", WRAP_FN(contract::tx_gas_price), convention::generic_call);
 			vm->set_function_address("uint256 gas_use()", WRAP_FN(contract::tx_gas_use), convention::generic_call);
 			vm->set_function_address("uint256 gas_left()", WRAP_FN(contract::tx_gas_left), convention::generic_call);
 			vm->set_function_address("uint256 gas_limit()", WRAP_FN(contract::tx_gas_limit), convention::generic_call);
 			vm->set_function_address("uint256 asset()", WRAP_FN(contract::tx_asset), convention::generic_call);
+			vm->end_namespace();
+
+			vm->begin_namespace("tx::delegate");
+			vm->set_function_address("identity type()", WRAP_FN(contract::tx_delegate_type), convention::generic_call);
+			vm->set_function_address("bool paid()", WRAP_FN(contract::tx_delegate_paid), convention::generic_call);
+			vm->set_function_address("address from()", WRAP_FN(contract::tx_delegate_from), convention::generic_call);
+			vm->set_function_address("address to()", WRAP_FN(contract::tx_delegate_to), convention::generic_call);
+			vm->set_function_address("payable value()", WRAP_FN(contract::tx_delegate_value), convention::generic_call);
+			vm->set_function_address("string function()", WRAP_FN(contract::tx_delegate_function), convention::generic_call);
+			vm->set_function_address("uint32 payments()", WRAP_FN(contract::tx_delegate_payments), convention::generic_call);
+			vm->set_function_address("string address(uint32)", WRAP_FN(contract::tx_delegate_address), convention::generic_call);
+			vm->set_function_address("uint256 asset(uint32)", WRAP_FN(contract::tx_delegate_asset), convention::generic_call);
+			vm->set_function_address("uint256 amount(uint32)", WRAP_FN(contract::tx_delegate_amount), convention::generic_call);
 			vm->end_namespace();
 
 			vm->begin_namespace("coin");
@@ -6280,12 +6551,12 @@ namespace tangent
 		{
 			if (!entrypoint.is_valid())
 			{
-				if (mutability == ccall::event_call)
+				if (mutability == ccall::deploy_call)
 					return expectation::met;
 
 				return layer_exception("illegal call to function: null function");
 			}
-			else if (mutability == ccall::const_call && !payable.empty())
+			else if (mutability == ccall::constant_call && !payable.empty())
 				return layer_exception("illegal payment to constant function");
 
 			auto binders = dispatch_arguments(&mutability, entrypoint, &args);
@@ -6298,11 +6569,11 @@ namespace tangent
 			auto* context = caller ? caller : vm->request_context();
 			auto* prev_mutable_program = context->get_user_data(SCRIPT_TAG_MUTABLE_PROGRAM);
 			auto* prev_immutable_program = context->get_user_data(SCRIPT_TAG_IMMUTABLE_PROGRAM);
-			auto* next_mutable_program = mutability == ccall::event_call || mutability == ccall::paying_call ? this : nullptr;
+			auto* next_mutable_program = mutability == ccall::deploy_call || mutability == ccall::delegate_call || mutability == ccall::standard_call ? this : nullptr;
 			context->set_user_data(next_mutable_program, SCRIPT_TAG_MUTABLE_PROGRAM);
 			context->set_user_data(this, SCRIPT_TAG_IMMUTABLE_PROGRAM);
 			context->is_nested(&depth_in);
-			cache.payable = payable;
+			cache.direct_payable = payable;
 
 			auto top_call = caller != context;
 			auto* subcontext = top_call ? context : vm->request_context();
@@ -6366,9 +6637,9 @@ namespace tangent
 			if (!link)
 				return layer_exception(stringify::text("illegal subcall to %s program on function \"%.*s\": illegal operation", address_repr(target).to_string().data(), (int)entrypoint.size(), entrypoint.data()));
 
-			if (mutability != ccall::const_call && reentrancy_guards.find(target) != reentrancy_guards.end())
+			if (mutability != ccall::constant_call && reentrancy_guards.find(target) != reentrancy_guards.end())
 				return layer_exception(stringify::text("illegal subcall to %s program on function \"%.*s\": reentrancy guard", address_repr(target).to_string().data(), (int)entrypoint.size(), entrypoint.data()));
-			else if (mutability != ccall::const_call && non_reentrant)
+			else if (mutability != ccall::constant_call && non_reentrant)
 				reentrancy_guards.insert(target);
 
 			auto transaction = transactions::call();
@@ -6396,7 +6667,7 @@ namespace tangent
 					executor = prev_executor;
 					executor->receipt.events.insert(executor->receipt.events.end(), subexecutor.receipt.events.begin(), subexecutor.receipt.events.end());
 					executor->receipt.relative_gas_use += subexecutor.receipt.relative_gas_use;
-					if (mutability != ccall::const_call && non_reentrant)
+					if (mutability != ccall::constant_call && non_reentrant)
 						reentrancy_guards.erase(target);
 				});
 				executor = &subexecutor;
@@ -6425,7 +6696,9 @@ namespace tangent
 			if (!entrypoint.get_namespace().empty())
 				return layer_exception(stringify::text("illegal call to function \"%.*s\": illegal operation", (int)function_name.size(), function_name.data()));
 
-			if (*mutability != ccall::event_call && (function_name == deploy_function_name() || function_name == delegate_function_name()))
+			if (*mutability != ccall::deploy_call && function_name == deploy_function_name())
+				return layer_exception(stringify::text("illegal call to function \"%.*s\": illegal operation", (int)function_name.size(), function_name.data()));
+			else if (*mutability != ccall::delegate_call && function_name == delegate_function_name())
 				return layer_exception(stringify::text("illegal call to function \"%.*s\": illegal operation", (int)function_name.size(), function_name.data()));
 
 			auto* vm = entrypoint.get_vm();
@@ -6514,10 +6787,10 @@ namespace tangent
 
 					if (type.get_name() == SCRIPT_TYPE_PMUT)
 					{
-						if (*mutability != ccall::event_call && *mutability != ccall::paying_call)
+						if (*mutability != ccall::deploy_call && *mutability != ccall::delegate_call && *mutability != ccall::standard_call)
 							return layer_exception(stringify::text("illegal call to function \"%s\": argument #%i not bound to required instruction set (" SCRIPT_TYPE_PMUT ")", entrypoint.get_decl().data(), (int)i));
 
-						*mutability = ccall::paying_call;
+						*mutability = ccall::standard_call;
 					}
 					else if (type.get_name() != SCRIPT_TYPE_PCONST)
 					{
@@ -6525,7 +6798,7 @@ namespace tangent
 						return layer_exception(stringify::text("illegal call to function \"%s\": argument #%i not bound to required instruction set (" SCRIPT_TYPE_PMUT " or " SCRIPT_TYPE_PCONST ") - \"%s\" type", entrypoint.get_decl().data(), (int)i, name.data()));
 					}
 					else
-						*mutability = ccall::const_call;
+						*mutability = ccall::constant_call;
 					frames.emplace_back([i, this](immediate_context* coroutine) { coroutine->set_arg_object(i, (program*)this); });
 				}
 			}
@@ -6564,7 +6837,7 @@ namespace tangent
 			if (!candidate.is_valid())
 				return optional::none;
 
-			ccall mutability = ccall::paying_call;
+			ccall mutability = ccall::standard_call;
 			if (!dispatch_arguments(&mutability, candidate, nullptr))
 				return optional::none;
 
@@ -6579,25 +6852,17 @@ namespace tangent
 				auto type = vm->get_type_info_by_id(type_id);
 				auto name = type.get_name();
 				if (name == SCRIPT_TYPE_PMUT)
-					return ccall::paying_call;
+					return ccall::standard_call;
 			}
-			return ccall::const_call;
+			return ccall::constant_call;
 		}
 		algorithm::pubkeyhash_t program::callable() const
 		{
-			uint32_t type = executor->transaction->as_type();
-			if (type == transactions::call::as_instance_type())
-				return ((transactions::call*)executor->transaction)->callable;
-			else if (type == transactions::deploy::as_instance_type())
-				return ((transactions::deploy*)executor->transaction)->get_account();
-			else if (type == transactions::delegate::as_instance_type())
-				return ((transactions::delegate*)executor->transaction)->callable;
-
-			return executor->receipt.from;
+			return tx_callable(executor->transaction, executor->receipt.from);
 		}
 		payable_repr program::payable_value() const
 		{
-			return cache.payable ? *cache.payable : payable_repr();
+			return cache.direct_payable ? *cache.direct_payable : payable_repr();
 		}
 		function program::deploy_function() const
 		{
@@ -6609,39 +6874,40 @@ namespace tangent
 		}
 		string program::function_declaration() const
 		{
-			uint32_t type = executor->transaction->as_type();
-			if (type == transactions::call::as_instance_type())
-				return ((transactions::call*)executor->transaction)->function;
-			else if (type == transactions::deploy::as_instance_type())
-				return string(deploy_function_name());
-			else if (type == transactions::delegate::as_instance_type())
-				return string(delegate_function_name());
-
-			return string();
+			return tx_function_declaration(executor->transaction);
 		}
 		const format::variables* program::function_arguments() const
 		{
-			uint32_t type = executor->transaction->as_type();
-			if (type == transactions::call::as_instance_type())
-			{
-				auto& args = ((transactions::call*)executor->transaction)->args;
-				return &args;
-			}
-			else if (type == transactions::deploy::as_instance_type())
-			{
-				auto& args = ((transactions::deploy*)executor->transaction)->args;
-				return &args;
-			}
-			else if (type == transactions::delegate::as_instance_type())
-			{
-				auto& args = ((transactions::delegate*)executor->transaction)->args;
-				return &args;
-			}
-			return nullptr;
+			return tx_function_arguments(executor->transaction);
 		}
 		uint64_t program::virtual_block_number() const
 		{
 			return executor->block->number;
+		}
+		uint32_t program::delegate_transaction_type() const
+		{
+			if (executor->transaction->as_type() != transactions::delegate::as_instance_type())
+				return 0;
+
+			auto& target = ((transactions::delegate*)executor->transaction)->transaction;
+			return target ? target->as_type() : 0;
+		}
+		const ledger::transaction_message* program::delegate_transaction_ptr(uint32_t type) const
+		{
+			if (executor->transaction->as_type() != transactions::delegate::as_instance_type())
+			{
+				contract::throw_ptr(exception_repr(exception_repr::category::requirement(), "not a delegate approval call"));
+				return nullptr;
+			}
+
+			auto& target = ((transactions::delegate*)executor->transaction)->transaction;
+			if (!target || (type > 0 && type != target->as_type()))
+			{
+				contract::throw_ptr(exception_repr(exception_repr::category::requirement(), "no matching delegate approval"));
+				return nullptr;
+			}
+
+			return *target;
 		}
 		program* program::fetch_mutable(immediate_context* coroutine)
 		{

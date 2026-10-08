@@ -395,7 +395,7 @@ namespace tangent
 			expects_lr<states::witness_account> get_witness_account(const algorithm::asset_id& asset, const std::string_view& address, size_t offset) const;
 			expects_lr<states::witness_account> get_witness_account_tagged(const algorithm::asset_id& asset, const std::string_view& address, size_t offset) const;
 			expects_lr<states::witness_transaction> get_witness_transaction(const algorithm::asset_id& asset, const std::string_view& transaction_id) const;
-			expects_lr<block_transaction> get_block_transaction_instance(uint32_t type, const uint256_t& transaction_hash, bool may_have_distinct_asset = false) const;
+			expects_lr<block_transaction> get_block_transaction_instance(uint32_t type, const uint256_t& transaction_hash, size_t offset = 0) const;
 			expects_lr<uint64_t> get_block_number_by_hash(const uint256_t& block_hash) const;
 			states::account_balance get_account_balance_delta(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner) const;
 			algorithm::wesolowski::distribution get_random(const uint256_t& seed, block_header* from_block = nullptr, ledger::transaction_receipt* from_receipt = nullptr);
@@ -411,9 +411,9 @@ namespace tangent
 				return emit_event(t::as_instance_type(), std::move(values), paid);
 			}
 			template <typename t>
-			expects_lr<block_transaction> get_block_transaction(const uint256_t& transaction_hash, bool may_have_distinct_asset = false) const
+			expects_lr<block_transaction> get_block_transaction(const uint256_t& transaction_hash, size_t offset = 0) const
 			{
-				return get_block_transaction_instance(t::as_instance_type(), transaction_hash, may_have_distinct_asset);
+				return get_block_transaction_instance(t::as_instance_type(), transaction_hash, offset);
 			}
 
 		public:
@@ -437,6 +437,7 @@ namespace tangent
 			delegation_adapter(delegation_adapter&&) noexcept = default;
 			delegation_adapter& operator=(const delegation_adapter& other) noexcept;
 			delegation_adapter& operator=(delegation_adapter&&) noexcept = default;
+			virtual void sort_emissions();
 			virtual expects_promise_rt<btree_set<algorithm::pubkeyhash_t>> require_validators(delegation_contract* contract, const btree_set<algorithm::pubkeyhash_t>& targets) = 0;
 			virtual expects_promise_rt<format::wo_stream> execute_on_validator(delegation_contract* contract, const algorithm::pubkeyhash_t& target, const format::wo_stream& message) = 0;
 			virtual algorithm::pubkey_t get_public_key(const algorithm::pubkeyhash_t& target) const = 0;
