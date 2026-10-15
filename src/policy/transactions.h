@@ -96,14 +96,15 @@ namespace tangent
 			bool load_body(format::ro_stream& stream) override;
 			void enumerate_accounts(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, const std::function<void(const algorithm::pubkeyhash_t&)>& callback) const override;
 			void enumerate_aliases(const std::function<void(const uint256_t&)>& callback) const override;
-			uint64_t commitment_priority(uint256_t* event_hash) const override;
 			expects_lr<ledger::block_transaction> as_internal_block_transaction(const ledger::transaction_receipt& receipt, uint32_t type) const;
 			format::tree as_tree() const override;
+			uint64_t as_commitment(uint256_t* event_hash) const override;
 			uint32_t as_delegation_type() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
+			static void normalize_transaction(ledger::transaction_message* child, const delegate* parent, const ledger::transaction_receipt* parent_receipt);
 		};
 
 		struct rollup final : ledger::transaction_message
@@ -152,7 +153,6 @@ namespace tangent
 			bool store_body(format::wo_stream* stream) const override;
 			bool load_body(format::ro_stream& stream) override;
 			void enumerate_accounts(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, const std::function<void(const algorithm::pubkeyhash_t&)>& callback) const override;
-			uint64_t commitment_priority(uint256_t* event_hash) const override;
 			void solve_pow_challenge(const algorithm::pubkeyhash_t& owner, uint64_t owner_nonce, const uint256_t& block_hash);
 			void set_routing_address(const std::string_view& new_address);
 			void set_ownership_proof(const std::string_view& new_signature, const std::string_view& new_public_key);
@@ -160,6 +160,7 @@ namespace tangent
 			algorithm::pubkeyhash_t get_attester(const ledger::transaction_receipt& receipt) const;
 			btree_set<algorithm::pubkeyhash_t> get_participants(const ledger::transaction_receipt& receipt) const;
 			format::tree as_tree() const override;
+			uint64_t as_commitment(uint256_t* event_hash) const override;
 			uint32_t as_delegation_type() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
@@ -181,8 +182,8 @@ namespace tangent
 			bool store_body(format::wo_stream* stream) const override;
 			bool load_body(format::ro_stream& stream) override;
 			void enumerate_accounts(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, const std::function<void(const algorithm::pubkeyhash_t&)>& callback) const override;
-			uint64_t commitment_priority(uint256_t* event_hash) const override;
 			format::tree as_tree() const override;
+			uint64_t as_commitment(uint256_t* event_hash) const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
@@ -206,10 +207,10 @@ namespace tangent
 			bool store_body(format::wo_stream* stream) const override;
 			bool load_body(format::ro_stream& stream) override;
 			void enumerate_accounts(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, const std::function<void(const algorithm::pubkeyhash_t&)>& callback) const override;
-			uint64_t commitment_priority(uint256_t* event_hash) const override;
 			expects_lr<algorithm::composition::cpubkey_t> to_group_public_key(algorithm::composition::compositor* compositor = nullptr) const;
 			static expects_lr<algorithm::composition::cpubkey_t> to_group_public_key(const algorithm::asset_id& asset, const binding_proof& target, algorithm::composition::compositor* compositor = nullptr);
 			format::tree as_tree() const override;
+			uint64_t as_commitment(uint256_t* event_hash) const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
@@ -280,8 +281,8 @@ namespace tangent
 			void add_proof(const uint256_t& new_setup_hash, const algorithm::hashsig_t& new_correction_commitment, algorithm::composition::cpubkey_t&& new_correction_key, algorithm::composition::cpubkey_t&& new_imperfect_key, algorithm::composition::chashsig_t&& new_key_commitment);
 			bool store_body(format::wo_stream* stream) const override;
 			bool load_body(format::ro_stream& stream) override;
-			uint64_t commitment_priority(uint256_t* event_hash) const override;
 			format::tree as_tree() const override;
+			uint64_t as_commitment(uint256_t* event_hash) const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
@@ -321,10 +322,10 @@ namespace tangent
 			bool load_body(format::ro_stream& stream) override;
 			void enumerate_accounts(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, const std::function<void(const algorithm::pubkeyhash_t&)>& callback) const override;
 			void enumerate_aliases(const std::function<void(const uint256_t&)>& callback) const override;
-			uint64_t commitment_priority(uint256_t* event_hash) const override;
 			void set_proof(const uint256_t& new_withdraw_hash, expects_lr<superchain::finalized_transaction>&& new_proof);
 			bool eligible_migration_target(const algorithm::pubkeyhash_t& target) const;
 			format::tree as_tree() const override;
+			uint64_t as_commitment(uint256_t* event_hash) const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
@@ -368,11 +369,11 @@ namespace tangent
 			bool load_body(format::ro_stream& stream) override;
 			void enumerate_accounts(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, const std::function<void(const algorithm::pubkeyhash_t&)>& callback) const override;
 			void enumerate_aliases(const std::function<void(const uint256_t&)>& callback) const override;
-			uint64_t commitment_priority(uint256_t* event_hash) const override;
 			void set_finalized_proof(uint64_t block_id, const std::string_view& transaction_id, const vector<superchain::value_transfer>& inputs, const vector<superchain::value_transfer>& outputs, bool reset_signatures = true);
 			void set_computed_proof(const uint256_t& new_commitment_hash, superchain::computed_transaction&& new_proof, btree_set<algorithm::hashsig_t>&& new_signatures);
 			bool add_commitment(const algorithm::seckey_t& secret_key);
 			format::tree as_tree() const override;
+			uint64_t as_commitment(uint256_t* event_hash) const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();

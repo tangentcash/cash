@@ -131,7 +131,7 @@ namespace tangent
 			if (gas_limit > ledger::block_header::get_gas_limit())
 				return layer_exception("gas limit requirement not met (max: " + ledger::block_header::get_gas_limit().to_string() + ")");
 
-			if (!commitment_priority(nullptr))
+			if (!as_commitment(nullptr))
 			{
 				if (gas_price.is_nan() || gas_price.is_negative())
 					return layer_exception("invalid gas price");
@@ -232,7 +232,7 @@ namespace tangent
 		{
 			asset = algorithm::asset::id_of(blockchain, token, contract_address);
 		}
-		uint64_t transaction_message::commitment_priority(uint256_t* event_hash) const
+		uint64_t transaction_message::as_commitment(uint256_t* event_hash) const
 		{
 			if (event_hash != nullptr)
 				*event_hash = uint256_t(0);
@@ -250,7 +250,7 @@ namespace tangent
 			data.set("type", format::variable(as_typename()));
 			data.set("asset", algorithm::asset::serialize(asset));
 			data.set("nonce", format::variable(nonce));
-			data.set("gas_price", commitment_priority(nullptr) ? format::variable() : format::variable(gas_price));
+			data.set("gas_price", as_commitment(nullptr) ? format::variable() : format::variable(gas_price));
 			data.set("gas_limit", algorithm::encoding::serialize_uint256(gas_limit));
 			return data;
 		}

@@ -28,6 +28,8 @@ class array<t>
 	array<t>& opAssign(const array<t>&in);
 	t& opIndex(uint);
 	const t& opIndex(uint) const;
+	t& at(uint);
+	const t& at(uint) const;
 	t& front();
 	const t& front() const;
 	t& back();
@@ -46,8 +48,6 @@ class array<t>
 	void erase(uint, uint);
 	void reverse();
 	void swap(uint, uint);
-	t& at(uint);
-	const t& at(uint) const;
 }
 class string
 {
@@ -130,8 +130,8 @@ class uint128
 	uint128& opMulAssign(const uint128&in);
 	uint128& opDivAssign(const uint128&in);
 	uint128& opAddAssign(const uint128&in);
-	uint128& opModAssign(const uint128&in);
 	uint128& opSubAssign(const uint128&in);
+	uint128& opModAssign(const uint128&in);
 	uint128& opPreInc();
 	uint128& opPreDec();
 	uint128& opPostInc();
@@ -177,8 +177,8 @@ class uint256
 	uint256& opMulAssign(const uint256&in);
 	uint256& opDivAssign(const uint256&in);
 	uint256& opAddAssign(const uint256&in);
-	uint256& opModAssign(const uint256&in);
 	uint256& opSubAssign(const uint256&in);
+	uint256& opModAssign(const uint256&in);
 	uint256& opPreInc();
 	uint256& opPreDec();
 	uint256& opPostInc();
@@ -404,6 +404,43 @@ class ranging_slice
 	ranging_slice& asc();
 	ranging_slice& desc();
 }
+namespace block
+{
+	class tx
+	{
+		~tx();
+		tx(const uint256&in);
+		tx(const block::tx&in);
+		block::tx& opAssign(const block::tx&in);
+		bool exists() const;
+		tx::identity type() const;
+		bool paid() const;
+		address from() const;
+		address to() const;
+		payable value() const;
+		string function() const;
+		string blockchain() const;
+		string token() const;
+		string contract() const;
+		real320 gas_price() const;
+		uint256 gas_use() const;
+		uint256 gas_left() const;
+		uint256 gas_limit() const;
+		uint256 asset() const;
+		uint256 hash() const;
+		uint payments() const;
+		string payment_address(uint) const;
+		uint256 payment_asset(uint) const;
+		real320 payment_amount(uint) const;
+		real320 balance_delta_of(const address&in, const uint256&in) const;
+		real320 reserve_delta_of(const address&in, const uint256&in) const;
+		payable payments_from(const address&in) const;
+		payable payments_to(const address&in) const;
+		payable reservations_from(const address&in) const;
+		payable reservations_to(const address&in) const;
+		block::tx delegate() const;
+	}
+}
 namespace real320 { real320 enan(); }
 namespace real320 { real320 from(const string&in, uint8); }
 namespace log { void emit(const ?&in); }
@@ -435,19 +472,14 @@ namespace tx { uint256 gas_use(); }
 namespace tx { uint256 gas_left(); }
 namespace tx { uint256 gas_limit(); }
 namespace tx { uint256 asset(); }
-namespace tx::delegate { tx::identity type(); }
-namespace tx::delegate { bool paid(); }
-namespace tx::delegate { address from(); }
-namespace tx::delegate { address to(); }
-namespace tx::delegate { payable value(); }
-namespace tx::delegate { string function(); }
-namespace tx::delegate { uint payments(); }
-namespace tx::delegate { string address(uint); }
-namespace tx::delegate { uint256 asset(uint); }
-namespace tx::delegate { real320 amount(uint); }
+namespace tx { uint256 hash(); }
+namespace tx { block::tx self(); }
+namespace coin { bool valid(const uint256&in); }
+namespace coin { bool bridged(const uint256&in); }
 namespace coin { uint256 native(); }
 namespace coin { uint256 token(const string&in); }
 namespace coin { uint256 id_of(const string&in, const string&in = string(), const string&in = string()); }
+namespace coin { uint256 base_of(const uint256&in); }
 namespace coin { string blockchain_of(const uint256&in); }
 namespace coin { string token_of(const uint256&in); }
 namespace coin { string contract_of(const uint256&in); }
@@ -460,6 +492,7 @@ namespace alg { string from_e16(const string&in); }
 namespace alg { string to_e16(const string&in); }
 namespace alg { address erecover160(const uint256&in, const string&in); }
 namespace alg { string erecover264(const uint256&in, const string&in); }
+namespace alg { bool epoint264(const string&in); }
 namespace alg { uint256 prandom256(); }
 namespace alg { string crc32(const string&in); }
 namespace alg { string ripemd160(const string&in); }

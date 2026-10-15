@@ -1,3 +1,4 @@
+#include <cstdlib>
 #include "../src/entrypoint.hpp"
 #include "../src/storage/superchainstate.h"
 #include "../src/storage/chainstate.h"
@@ -327,7 +328,6 @@ struct block_generator
 		auto& [user1, user1_nonce] = users[0];
 		auto* setup_user1 = memory::init<transactions::setup>();
 		setup_user1->allocate_production_stake(decimal::zero());
-		setup_user1->allocate_participation_stake(decimal::zero());
 		setup_user1->allocate_attestation_stake(algorithm::asset::id_of("BTC"), decimal::zero(), 0);
 		setup_user1->allocate_attestation_stake(algorithm::asset::id_of("ETH"), decimal::zero(), 0);
 		setup_user1->allocate_attestation_stake(algorithm::asset::id_of("SOL"), decimal::zero(), 0);
@@ -908,9 +908,6 @@ struct block_generator
 		withdrawal_bitcoin->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(withdrawal_bitcoin);
 	}
-	static constexpr const char* delegate_withdraw_target = "0x89a0181659bd280836A2d33F57e3B5Dfa1a823CE";
-	static constexpr const char* delegate_forbidden_target = "0x00000000000000000000000000000000000000b0";
-	static constexpr const char* delegate_unarmed_target = "0x00000000000000000000000000000000000000a0";
 	static void deploy_delegate_stage(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users, vector<algorithm::pubkeyhash_t>* contracts)
 	{
 		auto& [user1, user1_nonce] = users[0];
@@ -940,7 +937,7 @@ struct block_generator
 		auto& [user1, user1_nonce] = users[0];
 		auto* arm = memory::init<transactions::call>();
 		arm->set_asset("ETH");
-		arm->call_to(contracts->at(5), "arm_withdraw", { format::variable(string(delegate_withdraw_target)) }, false);
+		arm->call_to(contracts->at(5), "arm_withdraw", { format::variable(string("0x89a0181659bd280836A2d33F57e3B5Dfa1a823CE")) }, false);
 		arm->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(arm);
 	}
@@ -951,8 +948,7 @@ struct block_generator
 		auto bridge_hash = executor.get_bridge_instances(algorithm::asset::id_of("ETH"), 0, 1)->front().ref.hash;
 
 		auto* out_of_bounds = memory::init<transactions::withdraw>();
-		out_of_bounds->set_asset("ETH");
-		out_of_bounds->set_routing_target(delegate_forbidden_target, decimal(1u));
+		out_of_bounds->set_routing_target("0x00000000000000000000000000000000000000b0", decimal(1u));
 		out_of_bounds->set_bridge_hash(bridge_hash);
 
 		auto* out_of_bounds_delegate = memory::init<transactions::delegate>();
@@ -964,8 +960,7 @@ struct block_generator
 		transactions.push_back(out_of_bounds_delegate);
 
 		auto* unarmed = memory::init<transactions::withdraw>();
-		unarmed->set_asset("ETH");
-		unarmed->set_routing_target(delegate_unarmed_target, decimal(1u));
+		unarmed->set_routing_target("0x00000000000000000000000000000000000000a0", decimal(1u));
 		unarmed->set_bridge_hash(bridge_hash);
 
 		auto* unarmed_delegate = memory::init<transactions::delegate>();
@@ -977,7 +972,6 @@ struct block_generator
 		transactions.push_back(unarmed_delegate);
 
 		auto* unapproved_call = memory::init<transactions::call>();
-		unapproved_call->set_asset("ETH");
 		unapproved_call->call_to(contracts->at(5), "ping", { }, false);
 
 		auto* unapproved_call_delegate = memory::init<transactions::delegate>();
@@ -989,8 +983,6 @@ struct block_generator
 		transactions.push_back(unapproved_call_delegate);
 
 		auto* forbidden_inner = memory::init<transactions::setup>();
-		forbidden_inner->set_asset("ETH");
-
 		auto* forbidden_inner_delegate = memory::init<transactions::delegate>();
 		forbidden_inner_delegate->callable = contracts->at(5);
 		forbidden_inner_delegate->transaction = forbidden_inner;
@@ -1009,8 +1001,7 @@ struct block_generator
 		VI_PANIC((vault_balance - bridge_ethereum.fee_rate).is_positive(), "contract balance must cover the withdrawal fee");
 
 		auto* withdrawal = memory::init<transactions::withdraw>();
-		withdrawal->set_asset("ETH");
-		withdrawal->set_routing_target(delegate_withdraw_target, vault_balance - bridge_ethereum.fee_rate);
+		withdrawal->set_routing_target("0x89a0181659bd280836A2d33F57e3B5Dfa1a823CE", vault_balance - bridge_ethereum.fee_rate);
 		withdrawal->set_bridge_hash(bridge_ethereum.ref.hash);
 
 		auto* delegation = memory::init<transactions::delegate>();
@@ -1043,8 +1034,7 @@ struct block_generator
 		VI_PANIC(invalid_asset->validate(0).is_error(), "inner transaction asset mismatch must be rejected");
 
 		auto* signed_inner = memory::init<transactions::withdraw>();
-		signed_inner->set_asset("ETH");
-		signed_inner->set_routing_target(delegate_withdraw_target, decimal(1u));
+		signed_inner->set_routing_target("0x89a0181659bd280836A2d33F57e3B5Dfa1a823CE", decimal(1u));
 		signed_inner->set_bridge_hash(bridge_ethereum.ref.hash);
 		signed_inner->sign(user2.secret_key, user2_nonce + 999u);
 
@@ -1065,7 +1055,7 @@ struct block_generator
 
 		auto* verify = memory::init<transactions::call>();
 		verify->set_asset("ETH");
-		verify->call_to(contracts->at(5), "verify_withdraw", { format::variable(string(delegate_withdraw_target)), format::variable(bridge_ethereum.fee_rate) }, false);
+		verify->call_to(contracts->at(5), "verify_withdraw", { format::variable(string("0x89a0181659bd280836A2d33F57e3B5Dfa1a823CE")), format::variable(bridge_ethereum.fee_rate) }, false);
 		verify->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(verify);
 	}
@@ -1076,8 +1066,7 @@ struct block_generator
 		auto bridge_hash = executor.get_bridge_instances(algorithm::asset::id_of("ETH"), 0, 1)->front().ref.hash;
 
 		auto* replayed = memory::init<transactions::withdraw>();
-		replayed->set_asset("ETH");
-		replayed->set_routing_target(delegate_withdraw_target, decimal(1u));
+		replayed->set_routing_target("0x89a0181659bd280836A2d33F57e3B5Dfa1a823CE", decimal(1u));
 		replayed->set_bridge_hash(bridge_hash);
 
 		auto* replayed_delegate = memory::init<transactions::delegate>();
@@ -1142,7 +1131,6 @@ struct block_generator
 		transactions.push_back(seed_recipient1);
 
 		auto* distribution = memory::init<transactions::transfer>();
-		distribution->set_asset("ETH");
 		distribution->set_to(users[0].wallet.public_key_hash, first);
 		distribution->set_to(users[1].wallet.public_key_hash, second);
 
@@ -1157,7 +1145,6 @@ struct block_generator
 	{
 		auto& [user1, user1_nonce] = users[0];
 		auto* ping = memory::init<transactions::call>();
-		ping->set_asset("ETH");
 		ping->call_to(contracts->at(5), "ping", { }, false);
 
 		auto* delegation = memory::init<transactions::delegate>();
@@ -1180,6 +1167,12 @@ struct block_generator
 		verify->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(verify);
 
+		auto* probe_mint = memory::init<transactions::call>();
+		probe_mint->set_asset("ETH");
+		probe_mint->call_to(contracts->at(5), "probe_mint", { format::variable(string("RESV")), format::variable(decimal(100)) }, false);
+		probe_mint->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
+		transactions.push_back(probe_mint);
+
 		auto* report = memory::init<transactions::call>();
 		report->set_asset("ETH");
 		report->call_to(contracts->at(5), "report_state", { }, false);
@@ -1197,6 +1190,15 @@ struct block_generator
 		auto user2_now = executor.get_account_balance(algorithm::asset::id_of("ETH"), users[1].wallet.public_key_hash).or_else(states::account_balance(users[1].wallet.public_key_hash, algorithm::asset::id_of("ETH"), nullptr)).get_balance();
 		VI_PANIC(user1_now - fields[2].as_decimal() == fields[4].as_decimal(), "delegated transfer must credit exactly the approved amount to the first recipient");
 		VI_PANIC(user2_now - fields[3].as_decimal() == fields[5].as_decimal(), "delegated transfer must credit exactly the approved amount to the second recipient and spare the signer");
+	}
+	static void delegate_probe_burn_stage(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users, vector<algorithm::pubkeyhash_t>* contracts)
+	{
+		auto& [user2, user2_nonce] = users[1];
+		auto* probe_burn = memory::init<transactions::call>();
+		probe_burn->set_asset("ETH");
+		probe_burn->call_to(contracts->at(5), "probe_burn", { format::variable(string("RESV")), format::variable(decimal(100)) }, false);
+		probe_burn->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
+		transactions.push_back(probe_burn);
 	}
 	static void deploy_sandbox_stage(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users, vector<algorithm::pubkeyhash_t>* contracts)
 	{
@@ -2410,42 +2412,43 @@ static void test_blockchain_full_coverage(vector<block_account>* userdata)
 		TEST_BLOCK(&block_generator::transfer_stage_2, "0xd189e0bb01d78642b8c8deda7382f95ae3293c092082a0b65e352b8f9e1a553b", 10);
 		TEST_BLOCK(std::bind(&block_generator::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), users[2].wallet.get_address(), 0.05), "0x4c837440c26ceb0a00993a6f0bea4c6aebeb0354472e80b4c53435230b0a5c90", 11);
 		TEST_BLOCK(std::bind(&block_generator::deploy_stage_1, std::placeholders::_1, std::placeholders::_2, &contracts), "0x50f547e6c1fe35de4e0dd95d281ae09b64d847ee72ac730d35c84d02ad4b818a", 12);
-		TEST_BLOCK(std::bind(&block_generator::deploy_stage_2, std::placeholders::_1, std::placeholders::_2, &contracts), "0xf3fe8f1d0ad2f945c2e270087af91c72c5de06653f4548cbceb2c1ad84f4671b", 13);
-		TEST_BLOCK(std::bind(&block_generator::call_stage_1, std::placeholders::_1, std::placeholders::_2, &contracts), "0x8b9ecfde7de679c285b1c98a93e5d1ccb1c97a632bc141d5a569fc1c201881aa", 14);
-		TEST_BLOCK(&block_generator::rollup_stage_1, "0xde9396524ef97935dc61f8fb59f539291074499460c7a83d86e574d1a76e4a0b", 15);
-		TEST_BLOCK(std::bind(&block_generator::deploy_delegate_stage, std::placeholders::_1, std::placeholders::_2, &contracts), "0x8d89177d649d45181af2586cb18ab215d7ea99606abb88a059e7eff2b3d6ce3b", 16);
-		TEST_BLOCK(std::bind(&block_generator::delegate_fund_stage, std::placeholders::_1, std::placeholders::_2, &contracts), "0xd57aea8d42c12ed29c4d648c4e654d90cdd455f600907b9ed967d78523a44f51", 17);
-		TEST_BLOCK(std::bind(&block_generator::delegate_arm_stage, std::placeholders::_1, std::placeholders::_2, &contracts), "0x080acc4259edd756f311816c7bc37fd41a868d5871446b0a94d6552c94a70fc1", 18);
-		TEST_BLOCK_FAULTY(std::bind(&block_generator::delegate_reject_stage, std::placeholders::_1, std::placeholders::_2, &contracts), "0xd73a170723265a133beefa7d74731e34aa18332943c4750f2dc2bc7a784bc1e0", 19);
-		TEST_BLOCK(std::bind(&block_generator::delegate_withdraw_stage, std::placeholders::_1, std::placeholders::_2, &contracts), "0x6173e001785965234c35ea59acc11ef832257bde5f7029fc2720dd01f4eb0a8b", 20);
-		TEST_BLOCK(std::bind(&block_generator::delegate_verify_stage, std::placeholders::_1, std::placeholders::_2, &contracts), "0x0fe4e53461dbcd4d1bb28ef3216e09550ceda7b75d17897259cd416e56971207", 23);
-		TEST_BLOCK_FAULTY(std::bind(&block_generator::delegate_replay_stage, std::placeholders::_1, std::placeholders::_2, &contracts), "0xcf782b9c1a645bff493b7853ae1b10fe9e1faca230bbe6bef1d1ee5d60de5854", 24);
-		TEST_BLOCK(std::bind(&block_generator::delegate_gates_stage, std::placeholders::_1, std::placeholders::_2, &contracts), "0xbb9afbe42c65cbfe9c971f1761aafe963e6109a076d705514bef63d58125c8a4", 25);
-		TEST_BLOCK(std::bind(&block_generator::delegate_transfer_stage, std::placeholders::_1, std::placeholders::_2, &contracts), "0x2c5115a42fcdc1dba7809ff0bb7ea9b9bbef3603669f16d320b169d94d39aa38", 26);
-		TEST_BLOCK(std::bind(&block_generator::delegate_call_stage, std::placeholders::_1, std::placeholders::_2, &contracts), "0x8bee10cc6771987e838940360b56a77e68ad7ab30a09cc6b16dd860b581cb847", 27);
-		TEST_BLOCK(std::bind(&block_generator::delegate_verify_state_stage, std::placeholders::_1, std::placeholders::_2, &contracts), "0xe00d6d71a28ee573878f42ee3ea0cce49e19098d0a552b39eed35ffa5ab31cbc", 28);
-		TEST_BLOCK(std::bind(&block_generator::deploy_sandbox_stage, std::placeholders::_1, std::placeholders::_2, &contracts), "0x89d7a5cb450d14f632d9a792079ca45ffc541ad22b2afec692b31743c0b42541", 29);
-		TEST_BLOCK(std::bind(&block_generator::deploy_sandbox_2_stage, std::placeholders::_1, std::placeholders::_2, &contracts), "0xf0447ab158833d8da2cf560f3257da94055d717e7b0d9e5f2527b986650167ea", 30);
-		TEST_BLOCK_FAULTY(std::bind(&block_generator::sandbox_traps_stage, std::placeholders::_1, std::placeholders::_2, &contracts), "0xd220df40faa7853a13ce1ac3ec32689528e9948a5d98d97665667e7295b7b6f1", 31);
-		TEST_BLOCK(std::bind(&block_generator::sandbox_verify_stage, std::placeholders::_1, std::placeholders::_2, &contracts), "0xc3d0ca7fe45ff5a89dd0f72184fcb31a012c1c8cd4bd3e112e087e697f8c254c", 32);
-		TEST_BLOCK(std::bind(&block_generator::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 0, 1), "0xd235609885003f63e855d2c444d4319bc01c40a752a22f1090465f3f88dbe50a", 33);
-		TEST_BLOCK_FAULTY(&block_generator::migrate_stage_1, "0x735616d1d07de0f4d10e7ec6ce20f5adb20188d32a9d272a8aeb76a7b96a5f5b", 34);
-		TEST_BLOCK(&block_generator::migrate_stage_2, "0x6f8eca3a7710a2a762800c40d9689d8a7dc56463e8143c449a7c5c1ee1f1053a", 36);
-		TEST_BLOCK(&block_generator::migrate_stage_3, "0x6e8648d4df520258df9af91a671da7e272e013e206918dacc64b98ff388363c0", 37);
-		TEST_BLOCK(&block_generator::migrate_stage_4, "0x07d19fb5d9359634394c3c940e4b02401f8af226473f9dec1dbd125d551d313d", 39);
-		TEST_BLOCK(&block_generator::withdraw_stage_1, "0xb7b1bc6f6198c03f6772492aa5a95a8f8eb7f9e15d127d7766f95435029a98a7", 41);
-		TEST_BLOCK(&block_generator::withdraw_stage_2, "0x25d2193528388ea34c38a85a101d8b8c1ef980c1b3a000892cc132728af7b03a", 44);
-		TEST_BLOCK(&block_generator::withdraw_stage_3, "0xc98e59e4ef4cf8bf332553481ee48051b4dca862b37a9d318e16141dcf496a42", 47);
-		TEST_BLOCK(&block_generator::withdraw_stage_4, "0xa80aa539e84ad9b25b091ce2d2c29507a36d8676ed9370549506f3e0a5afb9ba", 49);
-		TEST_BLOCK(&block_generator::withdraw_stage_5, "0x26eeb7784769489b9cc329b83fac85d3e3126a8024ace2a463bc9232d7cd6093", 50);
-		TEST_BLOCK(&block_generator::withdraw_stage_6, "0x2896f5da65fd8393a986585dfdb9ff75b05015f9730fa81da877665578bc25da", 51);
-		TEST_BLOCK(&block_generator::withdraw_stage_7, "0xba5f797c85ca66ba7fb65b3a7d09ed40b108c9ee0161d166631e17db1b244bdb", 52);
-		TEST_BLOCK(&block_generator::withdraw_stage_8, "0x007d9973f5579dadf3c0dbfedcf259c24d3bf585f6170a10a032d73383af6bef", 53);
-		TEST_BLOCK(&block_generator::withdraw_stage_9, "0x8a7ac9e83e47a4600119a1e84ad223e7ad4159556f742b18d1cd36e7dff360f6", 56);
-		TEST_BLOCK(&block_generator::withdraw_stage_10, "0x03521ee1e637968331e00ce5a69faaa5e7baec1c3f8101a6a4931205ec66bda1", 59);
-		TEST_BLOCK(std::bind(&block_generator::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 1, 0), "0x08d0ac2ed166be4bc1624f85cd9be64d675eb7f7f43e9d029818c91b014e6985", 62);
-		TEST_BLOCK_FALLBACK(&block_generator::production_stage_1, "0xe4aeb107649ecc9282e92f60c506ca2e48df48e51cf8ac7d2cf56bce2eff124b", 63);
-		TEST_BLOCK(&block_generator::production_stage_2, "0xd469129f087f0653127d21645720ce2f3467f46d0fabd55aba09fff0418311b4", 64);
+		TEST_BLOCK(std::bind(&block_generator::deploy_stage_2, std::placeholders::_1, std::placeholders::_2, &contracts), "0x8b6d01b3db9c3ed6a377160845d1e697616b022c3013381cdce26cd799f47b91", 13);
+		TEST_BLOCK(std::bind(&block_generator::call_stage_1, std::placeholders::_1, std::placeholders::_2, &contracts), "0xd9523025539150742c0c4c1bf3708a9bafb808a37cb7d591bab1e7fb3e975779", 14);
+		TEST_BLOCK(&block_generator::rollup_stage_1, "0x0bbff21ae8c36a91cd256a4ad1aa03fe801e4294b1ae427ed79215677d7d550c", 15);
+		TEST_BLOCK(std::bind(&block_generator::deploy_delegate_stage, std::placeholders::_1, std::placeholders::_2, &contracts), "0x5d7977e9ba002ff2bcaf614cfb0516fe9baaf9703ecdc36db6deea2b824fbe5d", 16);
+		TEST_BLOCK(std::bind(&block_generator::delegate_fund_stage, std::placeholders::_1, std::placeholders::_2, &contracts), "0xd2f455764d0d691613611098964731e4304b258f1a3bbafb975edd47dd9b7a67", 17);
+		TEST_BLOCK(std::bind(&block_generator::delegate_arm_stage, std::placeholders::_1, std::placeholders::_2, &contracts), "0x8a42953c6c8dd839ea5170d083289e7cdcddcf715a959b59efa84797b3d6cca8", 18);
+		TEST_BLOCK_FAULTY(std::bind(&block_generator::delegate_reject_stage, std::placeholders::_1, std::placeholders::_2, &contracts), "0x0f4cc2befba163cfb0efa648e84cbe2c0df48f66f3991c58cf4aaf6b966ef328", 19);
+		TEST_BLOCK(std::bind(&block_generator::delegate_withdraw_stage, std::placeholders::_1, std::placeholders::_2, &contracts), "0xeda913556f5af806b8db063a9e4dfffdebefe9c83f74e8b3f1000860fb60f4e5", 20);
+		TEST_BLOCK(std::bind(&block_generator::delegate_verify_stage, std::placeholders::_1, std::placeholders::_2, &contracts), "0x8229bac768e26a9d0f28961527214088f88e30fbc09686cffba6d332c03a040d", 23);
+		TEST_BLOCK_FAULTY(std::bind(&block_generator::delegate_replay_stage, std::placeholders::_1, std::placeholders::_2, &contracts), "0xbc9bfd0e190bbaee1cdf1a7ddd924c09d8e63680b949b0d0c815c50b7d330fc6", 24);
+		TEST_BLOCK(std::bind(&block_generator::delegate_gates_stage, std::placeholders::_1, std::placeholders::_2, &contracts), "0xcc0d92b1c3e3db35ec2d7f095497b96b641cf68c11828ce6b587c2c4510e87e2", 25);
+		TEST_BLOCK(std::bind(&block_generator::delegate_transfer_stage, std::placeholders::_1, std::placeholders::_2, &contracts), "0xa8ecaf4c76a7c2936ab24f1cc76eece7450a358e708b9b304b6fbeaab6b1513b", 26);
+		TEST_BLOCK(std::bind(&block_generator::delegate_call_stage, std::placeholders::_1, std::placeholders::_2, &contracts), "0x964044815f0f5b400554d7d7f69787f6ef35c282b2f6b156b1f692c9cdca44aa", 27);
+		TEST_BLOCK(std::bind(&block_generator::delegate_verify_state_stage, std::placeholders::_1, std::placeholders::_2, &contracts), "0xe254de36d9e32b42e70e7dda23516210f3d5e8903fed0a142d61a2ed4661c68c", 28);
+		TEST_BLOCK(std::bind(&block_generator::delegate_probe_burn_stage, std::placeholders::_1, std::placeholders::_2, &contracts), "0xe5cc331350511ecd8bf5f822dd6fffcc2ee903754ac9bc8b37fdc21034d3fd0d", 29);
+		TEST_BLOCK(std::bind(&block_generator::deploy_sandbox_stage, std::placeholders::_1, std::placeholders::_2, &contracts), "0xf7c950f5b83368f40b55635e923e38b77411591523a635e991d51cca27255c66", 30);
+		TEST_BLOCK(std::bind(&block_generator::deploy_sandbox_2_stage, std::placeholders::_1, std::placeholders::_2, &contracts), "0x4e4fcd82bac73adcbbf88cd54cf616ca9206895c05f731b6a9171b2b2c84950e", 31);
+		TEST_BLOCK_FAULTY(std::bind(&block_generator::sandbox_traps_stage, std::placeholders::_1, std::placeholders::_2, &contracts), "0x761cb2d5379d16dfa27262a19eca2a294ad22063ff2525a289df4ac588548915", 32);
+		TEST_BLOCK(std::bind(&block_generator::sandbox_verify_stage, std::placeholders::_1, std::placeholders::_2, &contracts), "0x3316e1cf660ccaf40d054156222a10355e11ec1952dab26e03799e3e9d35967f", 33);
+		TEST_BLOCK(std::bind(&block_generator::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 0, 1), "0xa0b44694303905e6e2779c7f9575f37b116a04f048c605ac75187e3b34ba4d0a", 34);
+		TEST_BLOCK_FAULTY(&block_generator::migrate_stage_1, "0x88b651f3ecff2e3f25ea19130f2ba51b2376d46f2a2779f061538c2bcf4ed24c", 35);
+		TEST_BLOCK(&block_generator::migrate_stage_2, "0xf6ba5fe6ebf83543c24fa7c690c546e2bc56c2a3b4c36980deb69614df985f7b", 37);
+		TEST_BLOCK(&block_generator::migrate_stage_3, "0xa4ef5c7bc1750dc608a76e8df545e81db8d1720ee873533c9cfe278e592877e1", 38);
+		TEST_BLOCK(&block_generator::migrate_stage_4, "0xa217501928c6647986910e0a9c203d2173b73b4b93c41ee93d11d4912b8f03ed", 40);
+		TEST_BLOCK(&block_generator::withdraw_stage_1, "0xec2decb166ad588b295568e81099ec979e3f4e5d391b99d40e310f3851f9fa11", 42);
+		TEST_BLOCK(&block_generator::withdraw_stage_2, "0x819b1493cb0c0a11a3243339b1eb36b3e435a59a393096eb60c0e1eaa2628bbd", 45);
+		TEST_BLOCK(&block_generator::withdraw_stage_3, "0x4c9a40acb55c2137f2583b0461ce526af37360ba13140d34ca442675809b9936", 48);
+		TEST_BLOCK(&block_generator::withdraw_stage_4, "0xabb1007f3e7b6b00bc7071a2271e7bf3918c70747bfac26752a19eaf33c148bf", 50);
+		TEST_BLOCK(&block_generator::withdraw_stage_5, "0x556103874f0d2b95d0825ec943d11858fc72627c66fa6b2e336448d49881c94e", 51);
+		TEST_BLOCK(&block_generator::withdraw_stage_6, "0x3542b7d1f3792749398feed76093b717333481108ae93a61a4c69799f611c95c", 52);
+		TEST_BLOCK(&block_generator::withdraw_stage_7, "0x62a98c483d14d7c1875c1eff97e08f363908c87999fd7892715bc3c1d2c4c5be", 53);
+		TEST_BLOCK(&block_generator::withdraw_stage_8, "0xec4d1b7d2ea3b3e20507dc68a73964755c65b91d5174f4eaa9ba8b2a940e3879", 54);
+		TEST_BLOCK(&block_generator::withdraw_stage_9, "0x503506501cddafcbd2990a00be996a0a1b871be880fa4a4ee283f24db729da71", 57);
+		TEST_BLOCK(&block_generator::withdraw_stage_10, "0x87222153ceaa6d0887c5452d90e8e03bf57d9363aea525bacd333f3d6b5689fd", 60);
+		TEST_BLOCK(std::bind(&block_generator::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 1, 0), "0x28c34b7d70c6da44e952fefdeae5b820f56562b1e6701ecb51a66c48e9528caf", 63);
+		TEST_BLOCK_FALLBACK(&block_generator::production_stage_1, "0x0a338aefae89649949e64a70f237264d838c12442f561123eb7987fc9a68d26e", 64);
+		TEST_BLOCK(&block_generator::production_stage_2, "0x67997eef75832e7dbae832cfa7556adee0e51bc8657b02d4d48283799d06541a", 65);
 		if (userdata != nullptr)
 			*userdata = std::move(users);
 		else
@@ -2458,13 +2461,13 @@ static void test_blockchain_bridge_coverage(vector<block_account>* userdata)
 	new_chain_state([&]()
 	{
 		vector<block_account> users;
-		for (size_t i = 0; i < kernel::params().policy.participation.min_per_account + 2; i++)
+		for (size_t i = 0; i < kernel::params().policy.participation.min_per_account + 1; i++)
 			users.push_back(block_account(ledger::wallet::from_seed(stringify::text("00000%i", (int)i)), 0));
 
 		format::tree results;
 		format::tree* data = userdata ? nullptr : &results;
-		TEST_BLOCK(&block_generator::setup_stage_2, "0xa704968f959fd9432dbaf662eeefadcc0cb7acf6a0e58e62d9680a1580918596", 1);
-		TEST_BLOCK(&block_generator::route_stage_4, "0xa97b62b93217d48ee3b6f5233746d07362eaab7a3bbbcf7cfc288e135b8dc28d", 2);
+		TEST_BLOCK(&block_generator::setup_stage_2, "0xdca263ad5328457af99f36924672232ee63e8307effb242acbabfc55acc6fad5", 1);
+		TEST_BLOCK(&block_generator::route_stage_4, "0x3e75c46bfd49f72b624adf09a0469ea7acfc2e96cf0195f6b7477b30c95b33e2", 2);
 		if (userdata != nullptr)
 			*userdata = std::move(users);
 		else
@@ -2799,37 +2802,36 @@ int main(int argc, char* argv[])
 	auto* term = console::get();
 	term->show();
 
+	if (!os::process::has_debugger())
+		_set_abort_behavior(0, _WRITE_ABORT_MSG);
+
 	int bad_entrypoint_exit_code = 0x39ce8025;
 	int exit_code = bad_entrypoint_exit_code;
 	auto test = args.get("test");
 	if (test == "consensus")
 	{
 		/* consensus, discovery, superchain, rpc nodes */
-		if (args.has("test-account-set"))
+		format::tree accounts = format::tree::list();
+		for (auto& test_account_set : stringify::split(args.get("test-accounts"), ','))
 		{
-			format::tree accounts = format::tree::list();
-			for (size_t i = 0; i < 32; i++)
+			auto sides = stringify::split(stringify::trim(test_account_set), '-');
+			VI_PANIC(sides.size() == 1 || sides.size() == 2, "must either use account index or account index range (start-end)");		
+			auto start = from_string<uint32_t>(sides[0]).or_else(0);
+			auto end = (sides.size() == 1 ? start : from_string<uint32_t>(sides[1]).or_else(0));
+			for (uint32_t i = start; i <= end; i++)
 			{
-				ledger::wallet wallet = ledger::wallet::from_seed(stringify::text("00000%i", (int)i));
 				ledger::node node;
 				node.address = socket_address(params.user.consensus.address, params.user.consensus.port);
-				storages::mempoolstate().apply_node(std::make_pair(node, wallet), i == 0 ? storages::node_peer::runner : storages::node_peer::neighbor);
+
+				ledger::wallet wallet = ledger::wallet::from_seed(stringify::text("00000%i", i));
+				storages::mempoolstate().apply_node(std::make_pair(node, wallet), accounts.childs().empty() ? storages::node_peer::runner : storages::node_peer::neighbor);
 				accounts.push(wallet.as_secret_tree());
 			}
+		}
+		if (accounts.childs().size() > 1)
 			console::get()->write_line(accounts.as_json(true));
-		}
-		else
-		{
-			auto test_account = from_string<uint32_t>(args.get("test-account"));
-			if (test_account)
-			{
-				ledger::wallet wallet = ledger::wallet::from_seed(stringify::text("00000%i", *test_account - 1));
-				ledger::node node;
-				node.address = socket_address(params.user.consensus.address, params.user.consensus.port);
-				storages::mempoolstate().apply_node(std::make_pair(node, wallet), storages::node_peer::runner);
-				console::get()->write_line(wallet.as_secret_tree().as_json(true));
-			}
-		}
+		else if (!accounts.childs().empty())
+			console::get()->write_line(accounts.childs().front().as_json(true));
 
 		consensus::server_node consensus_service;
 		discovery::server_node discovery_service;

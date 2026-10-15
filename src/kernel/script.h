@@ -13,6 +13,8 @@ namespace tangent
 
 		struct address_repr;
 
+		struct block_tx_repr;
+
 		class array_repr;
 
 		enum class ccall
@@ -514,6 +516,67 @@ namespace tangent
 			static bool equals(const address_repr& a, const address_repr& b);
 		};
 
+		enum class tx_identity : int32_t
+		{
+			none = 0,
+			transfer = 1,
+			deploy = 2,
+			call = 3,
+			delegate = 4,
+			rollup = 5,
+			route = 6,
+			bind = 7,
+			imbind = 8,
+			setup = 9,
+			rebind = 10,
+			withdraw = 11,
+			broadcast = 12,
+			anticast = 13,
+			attestate = 14
+		};
+
+		struct block_tx_repr
+		{
+			uint256_t transaction_hash;
+			uptr<ledger::block_transaction> cached;
+			bool current;
+
+			block_tx_repr();
+			block_tx_repr(const uint256_t& new_hash);
+			block_tx_repr(const block_tx_repr& other);
+			block_tx_repr(block_tx_repr&& other) noexcept = default;
+			block_tx_repr& operator=(const block_tx_repr& other);
+			block_tx_repr& operator=(block_tx_repr&& other) noexcept = default;
+			~block_tx_repr() noexcept = default;
+			bool exists();
+			bool paid();
+			tx_identity identity();
+			address_repr from();
+			address_repr to();
+			payable_repr value();
+			string_repr entrypoint();
+			string_repr blockchain();
+			string_repr token();
+			string_repr contract_name();
+			decimal gas_price();
+			uint256_t gas_use();
+			uint256_t gas_left();
+			uint256_t gas_limit();
+			uint256_t asset();
+			uint256_t hash();
+			uint32_t payments();
+			string_repr payment_address(uint32_t index);
+			uint256_t payment_asset(uint32_t index);
+			decimal payment_amount(uint32_t index);
+			decimal balance_delta_of(const address_repr& address, const uint256_t& coin);
+			decimal reserve_delta_of(const address_repr& address, const uint256_t& coin);
+			payable_repr payments_from(const address_repr& address);
+			payable_repr payments_to(const address_repr& address);
+			payable_repr reservations_from(const address_repr& address);
+			payable_repr reservations_to(const address_repr& address);
+			block_tx_repr delegate();
+		};
+
 		struct batch_payout_repr
 		{
 			btree_map<algorithm::pubkeyhash_t, btree_map<algorithm::asset_id, decimal>> payouts;
@@ -691,24 +754,7 @@ namespace tangent
 
 		struct contract
 		{
-			enum class tx_identity : int32_t
-			{
-				none = 0,
-				transfer = 1,
-				deploy = 2,
-				call = 3,
-				delegate = 4,
-				rollup = 5,
-				route = 6,
-				bind = 7,
-				imbind = 8,
-				setup = 9,
-				rebind = 10,
-				withdraw = 11,
-				broadcast = 12,
-				anticast = 13,
-				attestate = 14
-			};
+			typedef script::tx_identity tx_identity;
 
 			static void uniform_store(const void* index_value, int index_type_id, const void* object_value, int object_type_id);
 			static void uniform_store_slot(uint8_t slot, const void* index_value, int index_type_id, const void* object_value, int object_type_id);
@@ -762,19 +808,14 @@ namespace tangent
 			static uint256_t tx_gas_left();
 			static uint256_t tx_gas_limit();
 			static uint256_t tx_asset();
-			static tx_identity tx_delegate_type();
-			static payable_repr tx_delegate_value();
-			static bool tx_delegate_paid();
-			static uint32_t tx_delegate_payments();
-			static string_repr tx_delegate_address(uint32_t index);
-			static uint256_t tx_delegate_asset(uint32_t index);
-			static decimal tx_delegate_amount(uint32_t index);
-			static address_repr tx_delegate_from();
-			static address_repr tx_delegate_to();
-			static string_repr tx_delegate_function();
+			static uint256_t tx_hash();
+			static block_tx_repr tx_self();
 			static uint256_t coin_native();
 			static uint256_t coin_token(const string_repr& token);
 			static uint256_t coin_id_of(const string_repr& blockchain, const string_repr& token, const string_repr& contract_address);
+			static uint256_t coin_base_of(const uint256_t& asset);
+			static bool coin_valid(const uint256_t& asset);
+			static bool coin_bridged(const uint256_t& asset);
 			static string_repr coin_blockchain_of(const uint256_t& value);
 			static string_repr coin_token_of(const uint256_t& value);
 			static string_repr coin_checksum_of(const uint256_t& value);
@@ -787,6 +828,7 @@ namespace tangent
 			static string_repr alg_to_e16(const string_repr& value);
 			static address_repr alg_erecover160(const uint256_t& hash, const string_repr& signature);
 			static string_repr alg_erecover264(const uint256_t& hash, const string_repr& signature);
+			static bool alg_epoint264(const string_repr& public_key);
 			static string_repr alg_crc32(const string_repr& data);
 			static string_repr alg_ripemd160(const string_repr& data);
 			static uint256_t alg_blake2b256(const string_repr& data);
@@ -891,7 +933,6 @@ namespace tangent
 			{
 				hash_map<string, hash_map<string, uptr<states::account_multiform>>> index[2];
 				option<algorithm::wesolowski::distribution> distribution = optional::none;
-				option<payable_repr> delegate_payable = optional::none;
 				option<payable_repr> direct_payable = optional::none;
 			} cache;
 			hash_set<algorithm::pubkeyhash_t> reentrancy_guards;

@@ -750,6 +750,7 @@ namespace tangent
 					if (transaction_history)
 					{
 						auto executor = ledger::executor_context(nullptr);
+						item.parties.insert(algorithm::pubkeyhash_t(item.context->receipt.from));
 						item.context->transaction->enumerate_accounts(&executor, item.context->receipt, [&item](const algorithm::pubkeyhash_t& account)
 						{
 							item.parties.insert(account);

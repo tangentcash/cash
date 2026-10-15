@@ -1342,7 +1342,7 @@ namespace tangent
 			if (pays_for_gas && transaction->gas_price < kernel::params().policy.production.min_gas_price)
 				return layer_exception("gas price must be at least " + kernel::params().policy.production.min_gas_price.to_string());
 
-			if (!transaction->commitment_priority(nullptr) && (options & (uint8_t)flags::congestion) && !pays_for_gas)
+			if (!transaction->as_commitment(nullptr) && (options & (uint8_t)flags::congestion) && !pays_for_gas)
 				return layer_exception("must pay for gas - network congestion requirement");
 			else if (!pays_for_gas || (options & (uint8_t)flags::evaluation))
 				return expectation::met;
@@ -2805,7 +2805,7 @@ namespace tangent
 						continue;
 
 					uint32_t type = candidate.transaction->as_type();
-					if (type == target_type || !target_type)
+					if (type == target_type || (!target_type && candidate.receipt.transaction_hash == transaction_hash))
 						return expects_lr<block_transaction>(std::move(candidate));
 
 					static uint32_t delegate_type = transactions::delegate::as_instance_type();
@@ -2842,27 +2842,55 @@ namespace tangent
 
 			return block_number;
 		}
-		states::account_balance executor_context::get_account_balance_delta(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner) const
+		states::account_balance executor_context::get_account_balance_delta(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const ledger::transaction_receipt* maybe_receipt) const
 		{
 			states::account_balance result = states::account_balance(owner, asset, block);
-			for (auto& event_args : receipt.find_events<states::account_balance>())
+			enumerate_account_balance_changes(maybe_receipt, [&](const states::account_balance& change)
+			{
+				if (change.asset == asset && change.owner == owner)
+				{
+					result.supply += change.supply;
+					result.reserve += change.reserve;
+				}
+			});
+			return result;
+		}
+		void executor_context::enumerate_account_balance_changes(const ledger::transaction_receipt* maybe_receipt, const std::function<void(const states::account_balance&)>& callback) const
+		{
+			states::account_balance change = states::account_balance(algorithm::pubkeyhash_t(), uint256_t(0), block);
+			const ledger::transaction_receipt* target_receipt = maybe_receipt ? maybe_receipt : &receipt;
+			for (auto& event_args : target_receipt->find_events<states::account_balance>())
 			{
 				auto& args = event_args->args;
-				if (args.size() != 4 || args[0].as_uint256() != asset || !args[1].is_string())
-					continue;
-
-				bool spender = args[1].as_string() == owner.view();
-				if (spender && args[2].is_decimal() && args[3].is_decimal())
+				if (args.size() == 4 && args[0].is_integer() && args[1].is_string() && args[2].is_decimal() && args[3].is_decimal())
 				{
-					result.supply -= args[2].as_decimal();
-					result.reserve -= args[3].as_decimal();
+					change.asset = args[0].as_uint256();
+					change.owner = algorithm::pubkeyhash_t(args[1].as_string());
+					change.supply = args[2].as_decimal();
+					change.reserve = args[3].as_decimal();
+					callback(change);
 				}
-				else if (spender && args[2].is_decimal() && args[3].is_boolean() && !args[3].as_boolean())
-					result.supply += args[2].as_decimal();
-				else if (args[2].is_string() && (spender || args[2].as_string() == owner.view()) && args[3].is_decimal())
-					result.supply -= spender ? -args[3].as_decimal() : args[3].as_decimal();
+				else if (args.size() == 3 && args[0].is_integer() && args[1].is_string() && args[2].is_string())
+				{
+					change.asset = args[0].as_uint256();
+					change.owner = algorithm::pubkeyhash_t(args[1].as_string());
+					change.supply = args[2].as_decimal();
+					change.reserve = decimal::zero();
+					callback(change);
+				}
+				else if (args.size() == 4 && args[0].is_integer() && args[1].is_string() && args[2].is_string() && args[3].is_decimal())
+				{
+					change.asset = args[0].as_uint256();
+					change.reserve = decimal::zero();
+					change.owner = algorithm::pubkeyhash_t(args[1].as_string());
+					change.supply = -args[3].as_decimal();
+					callback(change);
+
+					change.owner = algorithm::pubkeyhash_t(args[2].as_string());
+					change.supply = args[3].as_decimal();
+					callback(change);
+				}
 			}
-			return result;
 		}
 		algorithm::wesolowski::distribution executor_context::get_random(const uint256_t& seed, block_header* from_block, ledger::transaction_receipt* from_receipt)
 		{
@@ -3444,7 +3472,7 @@ namespace tangent
 					auto& nonce = nonces[algorithm::pubkeyhash_t(item.owner)];
 					nonce = std::max(item.candidate->nonce, nonce);
 					state.gas_usage += item.candidate->gas_limit;
-					state.commitments += item.candidate->commitment_priority(nullptr) ? 1 : 0;
+					state.commitments += item.candidate->as_commitment(nullptr) ? 1 : 0;
 					transactions.pending.emplace_back(std::move(item));
 					++transactions.queued;
 				}
@@ -3471,7 +3499,7 @@ namespace tangent
 			if (new_gas_limit < state.gas_usage || new_gas_limit > block_header::get_gas_limit())
 				return include_decision::not_includable;
 
-			bool commitment = !!item.candidate->commitment_priority(nullptr);
+			bool commitment = !!item.candidate->as_commitment(nullptr);
 			if (!commitment && ((uint8_t)state.executor.options & (uint8_t)executor_context::flags::congestion))
 				return item.candidate->gas_price.is_positive() && item.candidate->gas_price < kernel::params().policy.production.min_gas_price ? include_decision::not_executable : include_decision::not_includable;
 			else if (commitment && state.commitments + 1 > kernel::params().policy.commitments_per_block)
@@ -3521,7 +3549,7 @@ namespace tangent
 			uint8_t state_options = state.executor.options;
 			for (auto& item : transactions.pending)
 			{
-				uint8_t tx_options = item.candidate->commitment_priority(nullptr) ? (uint8_t)executor_context::flags::pedantic : 0;
+				uint8_t tx_options = item.candidate->as_commitment(nullptr) ? (uint8_t)executor_context::flags::pedantic : 0;
 				auto execution = executor_context::execute_tx(&state.executor, item.owner, *item.candidate, item.hash, item.size, state_options | tx_options);
 				if (execution)
 				{
@@ -3716,7 +3744,7 @@ namespace tangent
 
 				auto& info = solver.force_include_transaction(transactions::resolver::from_copy(*transaction.transaction));
 				childs[transaction.receipt.transaction_hash] = std::make_pair(&transaction, (const solver_context::queued_transaction*)&info);
-				commitments += transaction.transaction->commitment_priority(nullptr) ? 1 : 0;
+				commitments += transaction.transaction->as_commitment(nullptr) ? 1 : 0;
 			}
 			if (commitments > kernel::params().policy.commitments_per_block)
 				return layer_exception("too many commitment transactions");
@@ -3837,7 +3865,7 @@ namespace tangent
 			{
 				uint256_t commitment_hash;
 				finalized_transactions.insert(transaction.receipt.transaction_hash);
-				transaction.transaction->commitment_priority(&commitment_hash);
+				transaction.transaction->as_commitment(&commitment_hash);
 				if (commitment_hash > 0)
 					finalized_commitments.insert(commitment_hash);
 			}

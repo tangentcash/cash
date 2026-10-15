@@ -419,12 +419,15 @@ namespace test
         require(tx::gas_left() > 0 && tx::gas_left() < tx::gas_limit());
         require(tx::asset() == coin::native());
         require(tx::function() == "test_module");
-        require(tx::delegate::type() == tx::none);
-        require(!tx::delegate::paid());
-        require(tx::delegate::payments() == 0);
-        require(tx::delegate::address(0).empty());
-        require(tx::delegate::asset(0) == 0);
-        require(tx::delegate::amount(0).nan());
+		block::tx current = tx::self();
+		require(current.exists());
+		require(current.type() == tx::call);
+		require(current.hash() == tx::hash());
+		require(current.from() == tx::from());
+		require(current.to() == tx::to());
+		require(current.function() == tx::function());
+		block::tx sub = current.delegate();
+		require(!sub.exists());
     }
     void module_coin()
     {

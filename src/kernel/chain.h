@@ -189,7 +189,7 @@ namespace tangent
 			struct
 			{
 				uptr<format::tree> options;
-				uint64_t polling_frequency = 120000;
+				uint64_t polling_frequency = 60000;
 				uint32_t cache1_size = 4096;
 				uint32_t cache2_size = 16384;
 				bool listener = false;

@@ -728,9 +728,9 @@ namespace tangent
 				return layer_exception("transaction owner recovery error");
 
 			uint256_t commitment_hash = 0;
-			uint64_t commitment_priority = value.commitment_priority(&commitment_hash);
+			uint64_t as_commitment = value.as_commitment(&commitment_hash);
 			decimal quality = decimal::nan();
-			if (!commitment_priority)
+			if (!as_commitment)
 			{
 				decimal median_gas_price = get_gas_price(value.asset, fee_percentile(fee_priority::medium)).or_else(decimal::nan());
 				decimal delta_gas = median_gas_price.is_positive() ? value.gas_price / median_gas_price : 1.0;
@@ -739,7 +739,7 @@ namespace tangent
 				quality = max_gas * multiplier;
 			}
 			else
-				quality = -((int64_t)commitment_priority);
+				quality = -((int64_t)as_commitment);
 
 			uint8_t asset[32], hash[32], other_hash[32];
 			value.asset.encode(asset);

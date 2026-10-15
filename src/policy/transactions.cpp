@@ -585,7 +585,7 @@ namespace tangent
 			if (!transaction || transaction->as_type() == as_type() || transaction->as_type() == rollup::as_instance_type() || transaction->as_type() == setup::as_instance_type())
 				return layer_exception("invalid sub-transaction");
 
-			if (transaction->asset != asset || !transaction->gas_price.is_nan() || transaction->gas_limit > 0 || !transaction->signature.empty() || transaction->nonce > 0)
+			if (transaction->asset > 0 || !transaction->gas_price.is_nan() || transaction->gas_limit > 0 || !transaction->signature.empty() || transaction->nonce > 0)
 				return layer_exception("invalid sub-transaction data");
 
 			return ledger::transaction_message::validate(block_number);
@@ -614,30 +614,20 @@ namespace tangent
 			if (!execution)
 				return execution.error();
 
-			uint8_t nonce_buffer[sizeof(executor->receipt.from.blob) + sizeof(nonce)] = { 0 };
-			uint64_t nonce_value = os::hw::to_endianness(os::hw::endian::little, nonce);
-			memcpy(nonce_buffer, executor->receipt.from.blob, sizeof(executor->receipt.from.blob));
-			memcpy(nonce_buffer + sizeof(executor->receipt.from.blob), &nonce_value, sizeof(nonce_value));
-
 			uint256_t transaction_hash = transaction->as_hash();
 			uint256_t absolute_gas_limit = executor->block->gas_limit;
 			uint256_t absolute_gas_use = executor->block->gas_use;
 			uint256_t relative_gas_use = executor->receipt.relative_gas_use;
+			auto* mutable_view = ((transactions::delegate*)this);
 			auto internal_executor = ledger::executor_context(executor->changelog, executor->solver, executor->block, *transaction);
 			auto block_transaction_normalization = uscope([&]()
 			{
-				transaction->signature.clear();
-				transaction->nonce = 0;
-				transaction->gas_limit = 0;
-				transaction->gas_price = decimal::nan();
+				normalize_transaction(*mutable_view->transaction, nullptr, nullptr);
 				executor->block->gas_limit = absolute_gas_limit;
 				executor->block->gas_use = absolute_gas_use;
 				executor->receipt.relative_gas_use = std::min(relative_gas_use, gas_limit);
 			});
-			transaction->gas_price = decimal::zero();
-			transaction->gas_limit = gas_limit - executor->receipt.relative_gas_use;
-			transaction->nonce = (uint64_t)(algorithm::hashing::hash256i(std::string_view((char*)nonce_buffer, sizeof(nonce_buffer))) % std::numeric_limits<uint64_t>::max());
-			transaction->signature.blob[0] = 0xFF;
+			normalize_transaction(*mutable_view->transaction, mutable_view, &executor->receipt);
 			
 			execution = ledger::executor_context::execute_tx(&internal_executor, callable, *transaction, executor->receipt.transaction_hash, 0, (uint8_t)ledger::executor_context::flags::preserve_events | (uint8_t)ledger::executor_context::flags::replayable);
 			relative_gas_use += internal_executor.receipt.relative_gas_use;
@@ -671,18 +661,11 @@ namespace tangent
 				return false;
 
 			transaction = resolver::from_type(type);
-			if (!transaction)
-				return false;
-
-			transaction->asset = asset;
-			transaction->signature.clear();
-			transaction->nonce = 0;
-			transaction->gas_price = decimal::nan();
-			transaction->gas_limit = 0;
-			if (!transaction->load_body(stream))
+			if (!transaction || !transaction->load_body(stream))
 				return false;
 
 			args.clear();
+			normalize_transaction(*transaction, nullptr, nullptr);
 			return format::variables_util::deserialize_merge_from(stream, &args);
 		}
 		void delegate::enumerate_accounts(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, const std::function<void(const algorithm::pubkeyhash_t&)>& callback) const
@@ -696,14 +679,17 @@ namespace tangent
 		{
 			VI_ASSERT(callback, "callback should be set");
 			if (transaction)
+			{
+				callback(transaction->as_hash());
 				transaction->enumerate_aliases(callback);
+			}
 		}
-		uint64_t delegate::commitment_priority(uint256_t* event_hash) const
+		uint64_t delegate::as_commitment(uint256_t* event_hash) const
 		{
 			if (!transaction)
-				return transaction_message::commitment_priority(event_hash);
+				return transaction_message::as_commitment(event_hash);
 
-			transaction->commitment_priority(event_hash);
+			transaction->as_commitment(event_hash);
 			return 0;
 		}
 		expects_lr<ledger::block_transaction> delegate::as_internal_block_transaction(const ledger::transaction_receipt& receipt, uint32_t type) const
@@ -714,6 +700,7 @@ namespace tangent
 			ledger::block_transaction result;
 			result.transaction = resolver::from_copy(*transaction);
 			result.transaction->checksum = receipt.transaction_hash;
+			result.transaction->asset = asset;
 			result.receipt = receipt;
 			result.receipt.from = callable;
 			if (!result.transaction)
@@ -730,7 +717,7 @@ namespace tangent
 					return expects_lr<ledger::block_transaction>(std::move(result));
 				}
 			}
-			return layer_exception("sub-transaction not valid");
+			return expects_lr<ledger::block_transaction>(std::move(result));
 		}
 		uint32_t delegate::as_delegation_type() const
 		{
@@ -763,6 +750,31 @@ namespace tangent
 		std::string_view delegate::as_instance_typename()
 		{
 			return "delegate";
+		}
+		void delegate::normalize_transaction(ledger::transaction_message* child, const delegate* parent, const ledger::transaction_receipt* parent_receipt)
+		{
+			VI_ASSERT(child != nullptr, "child transaction should be set");
+			if (parent != nullptr && parent_receipt != nullptr)
+			{
+				uint8_t nonce_buffer[sizeof(parent_receipt->from.blob) + sizeof(nonce)] = { 0 };
+				uint64_t nonce_value = os::hw::to_endianness(os::hw::endian::little, parent->nonce);
+				memcpy(nonce_buffer, parent_receipt->from.blob, sizeof(parent_receipt->from.blob));
+				memcpy(nonce_buffer + sizeof(parent_receipt->from.blob), &nonce_value, sizeof(nonce_value));
+
+				child->signature.blob[0] = 0xFF;
+				child->nonce = (uint64_t)(algorithm::hashing::hash256i(std::string_view((char*)nonce_buffer, sizeof(nonce_buffer))) % std::numeric_limits<uint64_t>::max());
+				child->gas_price = decimal::zero();
+				child->gas_limit = parent->gas_limit - parent_receipt->relative_gas_use;
+				child->asset = parent->asset;
+			}
+			else
+			{
+				child->signature.clear();
+				child->nonce = 0;
+				child->gas_price = decimal::nan();
+				child->gas_limit = 0;
+				child->asset = 0;
+			}
 		}
 
 		rollup::rollup(const rollup& other)
@@ -815,7 +827,7 @@ namespace tangent
 
 				for (auto& transaction : group.second)
 				{
-					if (!transaction || transaction->as_type() == as_type() || transaction->commitment_priority(nullptr))
+					if (!transaction || transaction->as_type() == as_type() || transaction->as_commitment(nullptr))
 						return layer_exception("invalid sub-transaction");
 
 					if (transaction->asset != group.first || !transaction->gas_price.is_nan() || transaction->gas_limit > 0)
@@ -1092,13 +1104,13 @@ namespace tangent
 			}
 
 			if (begin == std::string::npos)
-				return layer_exception("sub-transaction not valid");
+				return expects_lr<ledger::block_transaction>(std::move(result));
 			else if (end == std::string::npos)
 				end = event_index;
 
 			result.receipt.events.resize(end - 1);
 			result.receipt.events.erase(result.receipt.events.begin(), result.receipt.events.begin() + begin + 1);
-			return result;
+			return expects_lr<ledger::block_transaction>(std::move(result));
 		}
 		format::tree rollup::as_tree() const
 		{
@@ -1428,7 +1440,7 @@ namespace tangent
 			for (auto& participant : get_participants(receipt))
 				callback(participant);
 		}
-		uint64_t route::commitment_priority(uint256_t* event_hash) const
+		uint64_t route::as_commitment(uint256_t* event_hash) const
 		{
 			return 1;
 		}
@@ -1696,7 +1708,7 @@ namespace tangent
 			if (parent)
 				callback(algorithm::pubkeyhash_t(parent->receipt.from));
 		}
-		uint64_t bind::commitment_priority(uint256_t* event_hash) const
+		uint64_t bind::as_commitment(uint256_t* event_hash) const
 		{
 			return 5;
 		}
@@ -1944,7 +1956,7 @@ namespace tangent
 			if (parent)
 				callback(algorithm::pubkeyhash_t(parent->receipt.from));
 		}
-		uint64_t imbind::commitment_priority(uint256_t* event_hash) const
+		uint64_t imbind::as_commitment(uint256_t* event_hash) const
 		{
 			return 6;
 		}
@@ -2849,7 +2861,7 @@ namespace tangent
 
 			return true;
 		}
-		uint64_t rebind::commitment_priority(uint256_t* event_hash) const
+		uint64_t rebind::as_commitment(uint256_t* event_hash) const
 		{
 			return 4;
 		}
@@ -3228,7 +3240,7 @@ namespace tangent
 				callback(message.hash());
 			}
 		}
-		uint64_t broadcast::commitment_priority(uint256_t* event_hash) const
+		uint64_t broadcast::as_commitment(uint256_t* event_hash) const
 		{
 			return 2;
 		}
@@ -4118,7 +4130,7 @@ namespace tangent
 				callback(message.hash());
 			}
 		}
-		uint64_t attestate::commitment_priority(uint256_t* event_hash) const
+		uint64_t attestate::as_commitment(uint256_t* event_hash) const
 		{
 			if (event_hash != nullptr)
 				*event_hash = proof.as_proof_hash(asset);

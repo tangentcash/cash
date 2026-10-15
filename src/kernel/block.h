@@ -404,7 +404,8 @@ namespace tangent
 			expects_lr<states::witness_transaction> get_witness_transaction(const algorithm::asset_id& asset, const std::string_view& transaction_id) const;
 			expects_lr<block_transaction> get_block_transaction(uint32_t type, const uint256_t& transaction_hash, size_t offset = 0) const;
 			expects_lr<uint64_t> get_block_number_by_hash(const uint256_t& block_hash) const;
-			states::account_balance get_account_balance_delta(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner) const;
+			states::account_balance get_account_balance_delta(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const ledger::transaction_receipt* target_receipt = nullptr) const;
+			void enumerate_account_balance_changes(const ledger::transaction_receipt* target_receipt, const std::function<void(const states::account_balance&)>& callback) const;
 			algorithm::wesolowski::distribution get_random(const uint256_t& seed, block_header* from_block = nullptr, ledger::transaction_receipt* from_receipt = nullptr);
 			uint64_t get_validation_nonce() const;
 			uint256_t get_gas_use() const;
