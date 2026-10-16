@@ -20,7 +20,6 @@ namespace tangent
 		enum class ccall
 		{
 			deploy_call,
-			delegate_call,
 			standard_call,
 			constant_call
 		};
@@ -516,27 +515,14 @@ namespace tangent
 			static bool equals(const address_repr& a, const address_repr& b);
 		};
 
-		enum class tx_identity : int32_t
-		{
-			none = 0,
-			transfer = 1,
-			deploy = 2,
-			call = 3,
-			delegate = 4,
-			rollup = 5,
-			route = 6,
-			bind = 7,
-			imbind = 8,
-			setup = 9,
-			rebind = 10,
-			withdraw = 11,
-			broadcast = 12,
-			anticast = 13,
-			attestate = 14
-		};
-
 		struct block_tx_repr
 		{
+			struct source
+			{
+				const ledger::transaction_message* message;
+				const ledger::transaction_receipt* receipt;
+			};
+
 			uint256_t transaction_hash;
 			uptr<ledger::block_transaction> cached;
 			bool current;
@@ -550,7 +536,6 @@ namespace tangent
 			~block_tx_repr() noexcept = default;
 			bool exists();
 			bool paid();
-			tx_identity identity();
 			address_repr from();
 			address_repr to();
 			payable_repr value();
@@ -564,17 +549,19 @@ namespace tangent
 			uint256_t gas_limit();
 			uint256_t asset();
 			uint256_t hash();
-			uint32_t payments();
-			string_repr payment_address(uint32_t index);
-			uint256_t payment_asset(uint32_t index);
-			decimal payment_amount(uint32_t index);
+			uint64_t block_number();
 			decimal balance_delta_of(const address_repr& address, const uint256_t& coin);
 			decimal reserve_delta_of(const address_repr& address, const uint256_t& coin);
 			payable_repr payments_from(const address_repr& address);
 			payable_repr payments_to(const address_repr& address);
 			payable_repr reservations_from(const address_repr& address);
 			payable_repr reservations_to(const address_repr& address);
-			block_tx_repr delegate();
+
+		private:
+			static source source_of(const block_tx_repr& self);
+			static payable_repr collect(const source& transaction_source, const algorithm::pubkeyhash_t& owner, bool supply_part, bool outgoing);
+			template <typename callback_type>
+			static void enumerate_payments(const ledger::transaction_message* transaction, callback_type&& callback);
 		};
 
 		struct batch_payout_repr
@@ -754,8 +741,6 @@ namespace tangent
 
 		struct contract
 		{
-			typedef script::tx_identity tx_identity;
-
 			static void uniform_store(const void* index_value, int index_type_id, const void* object_value, int object_type_id);
 			static void uniform_store_slot(uint8_t slot, const void* index_value, int index_type_id, const void* object_value, int object_type_id);
 			static bool uniform_load(const void* index_value, int index_type_id, void* object_value, int object_type_id, bool throw_on_error);
@@ -810,6 +795,12 @@ namespace tangent
 			static uint256_t tx_asset();
 			static uint256_t tx_hash();
 			static block_tx_repr tx_self();
+			static bool tx_pipelined();
+			static program* bridge_internal_check(const char* name, const algorithm::asset_id& asset, const uint256_t& bridge_hash);
+			static void bridge_link(const uint256_t& bridge_hash, const uint256_t& asset, const string_repr& routing_address);
+			static void bridge_send(const uint256_t& bridge_hash, const uint256_t& asset, const string_repr& address, const decimal& value, const decimal& fee);
+			static bool bridge_requires_link();
+			static bool bridge_requires_send();
 			static uint256_t coin_native();
 			static uint256_t coin_token(const string_repr& token);
 			static uint256_t coin_id_of(const string_repr& blockchain, const string_repr& token, const string_repr& contract_address);
@@ -952,12 +943,9 @@ namespace tangent
 			virtual algorithm::pubkeyhash_t callable() const;
 			virtual payable_repr payable_value() const;
 			virtual function deploy_function() const;
-			virtual function delegate_function() const;
 			virtual string function_declaration() const;
 			virtual const format::variables* function_arguments() const;
 			virtual uint64_t virtual_block_number() const;
-			virtual uint32_t delegate_transaction_type() const;
-			virtual const ledger::transaction_message* delegate_transaction_ptr(uint32_t type = 0) const;
 			static program* fetch_mutable(immediate_context* coroutine = immediate_context::get());
 			static const program* fetch_immutable(immediate_context* coroutine = immediate_context::get());
 			static program* fetch_mutable_or_throw(immediate_context* coroutine = immediate_context::get());
@@ -966,16 +954,10 @@ namespace tangent
 			static bool request_gas_vmemory(size_t size);
 			static bool request_gas_vmemory_marshall(const format::ro_stream& stream, size_t prev_seek);
 			static std::string_view deploy_function_name();
-			static std::string_view delegate_function_name();
 			template <typename t>
 			static inline t* request_gas_memory(size_t size)
 			{
 				return request_gas_vmemory(size) ? memory::allocate<t>(size) : nullptr;
-			}
-			template <typename t>
-			const t* delegate_transaction() const
-			{
-				return (const t*)delegate_transaction_ptr(t::as_instance_type());
 			}
 		};
 	}

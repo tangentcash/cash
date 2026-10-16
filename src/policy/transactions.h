@@ -58,6 +58,14 @@ namespace tangent
 		struct call final : ledger::transaction_message
 		{
 			typedef vector<std::pair<algorithm::asset_id, decimal>> payable_array;
+			enum class feature : uint8_t
+			{
+				none = 0,
+				pipeline_pay = 1 << 0,
+				require_route = 1 << 1,
+				require_withdraw = 1 << 2
+			};
+
 			algorithm::pubkeyhash_t callable;
 			payable_array pays;
 			format::variables args;
@@ -69,42 +77,19 @@ namespace tangent
 			bool store_body(format::wo_stream* stream) const override;
 			bool load_body(format::ro_stream& stream) override;
 			void enumerate_accounts(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, const std::function<void(const algorithm::pubkeyhash_t&)>& callback) const override;
-			void call_to(const algorithm::pubkeyhash_t& new_callable, const std::string_view& new_function, format::variables&& new_args, bool pipeline_pay);
-			void pay_with(const algorithm::asset_id& asset, const decimal& new_value);
-			bool uses_pipeline_pay() const;
-			format::tree as_tree() const override;
-			uint32_t as_type() const override;
-			std::string_view as_typename() const override;
-			static uint32_t as_instance_type();
-			static std::string_view as_instance_typename();
-		};
-
-		struct delegate final : ledger::transaction_message
-		{
-			uptr<ledger::transaction_message> transaction;
-			algorithm::pubkeyhash_t callable;
-			format::variables args;
-
-			delegate() = default;
-			delegate(const delegate& other);
-			delegate(delegate&&) noexcept = default;
-			delegate& operator= (const delegate& other);
-			delegate& operator= (delegate&&) noexcept = default;
-			expects_lr<void> validate(uint64_t block_number) const override;
-			expects_lr<void> execute(ledger::executor_context* executor) const override;
-			bool store_body(format::wo_stream* stream) const override;
-			bool load_body(format::ro_stream& stream) override;
-			void enumerate_accounts(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, const std::function<void(const algorithm::pubkeyhash_t&)>& callback) const override;
-			void enumerate_aliases(const std::function<void(const uint256_t&)>& callback) const override;
+			void call_to(const algorithm::pubkeyhash_t& new_callable, const std::string_view& new_function, format::variables&& new_args);
+			void pay_with(const algorithm::asset_id& new_asset, const decimal& new_value);
+			void set_flags(uint8_t new_flags);
+			option<uint8_t> get_flags() const;
+			bool has_feature(feature new_feature) const;
+			std::string_view get_function() const;
 			expects_lr<ledger::block_transaction> as_internal_block_transaction(const ledger::transaction_receipt& receipt, uint32_t type) const;
 			format::tree as_tree() const override;
-			uint64_t as_commitment(uint256_t* event_hash) const override;
 			uint32_t as_delegation_type() const override;
 			uint32_t as_type() const override;
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
-			static void normalize_transaction(ledger::transaction_message* child, const delegate* parent, const ledger::transaction_receipt* parent_receipt);
 		};
 
 		struct rollup final : ledger::transaction_message

@@ -1,24 +1,3 @@
-namespace tx
-{
-	enum identity
-	{
-		none,
-		transfer,
-		deploy,
-		call,
-		delegate,
-		rollup,
-		route,
-		bind,
-		imbind,
-		setup,
-		rebind,
-		withdraw,
-		broadcast,
-		anticast,
-		attestate
-	}
-}
 class pmut { }
 class pconst { }
 class array<t>
@@ -413,7 +392,6 @@ namespace block
 		tx(const block::tx&in);
 		block::tx& opAssign(const block::tx&in);
 		bool exists() const;
-		tx::identity type() const;
 		bool paid() const;
 		address from() const;
 		address to() const;
@@ -428,17 +406,13 @@ namespace block
 		uint256 gas_limit() const;
 		uint256 asset() const;
 		uint256 hash() const;
-		uint payments() const;
-		string payment_address(uint) const;
-		uint256 payment_asset(uint) const;
-		real320 payment_amount(uint) const;
+		uint64 block_number() const;
 		real320 balance_delta_of(const address&in, const uint256&in) const;
 		real320 reserve_delta_of(const address&in, const uint256&in) const;
 		payable payments_from(const address&in) const;
 		payable payments_to(const address&in) const;
 		payable reservations_from(const address&in) const;
 		payable reservations_to(const address&in) const;
-		block::tx delegate() const;
 	}
 }
 namespace real320 { real320 enan(); }
@@ -474,6 +448,11 @@ namespace tx { uint256 gas_limit(); }
 namespace tx { uint256 asset(); }
 namespace tx { uint256 hash(); }
 namespace tx { block::tx self(); }
+namespace tx { bool pipelined(); }
+namespace bridge { void link(const uint256&in, const uint256&in, const string&in); }
+namespace bridge { void send(const uint256&in, const uint256&in, const string&in, const real320&in, const real320&in); }
+namespace bridge { bool requires_link(); }
+namespace bridge { bool requires_send(); }
 namespace coin { bool valid(const uint256&in); }
 namespace coin { bool bridged(const uint256&in); }
 namespace coin { uint256 native(); }

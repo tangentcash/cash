@@ -177,7 +177,7 @@ namespace tangent
 					function_args.erase(function_args.begin());
 
 					auto transaction = transactions::call();
-					transaction.call_to(env.to, function_decl, std::move(function_args), false);
+					transaction.call_to(env.to, function_decl, std::move(function_args));
 					transaction.pays = env.payable.payments;
 
 					auto message = transaction.as_message();
@@ -209,31 +209,28 @@ namespace tangent
 				if (env.to.empty())
 					return layer_exception("contract address not valid");
 
-				if (function == script::program::delegate_function_name())
-				{
-					auto* transaction = memory::init<transactions::delegate>();
-					if (!tracer.subtransaction)
-						return layer_exception("delegate sub-transaction is not bound");
-					transaction->callable = env.to;
-					transaction->asset = tracer.subtransaction->asset;
-					transaction->set_gas(decimal::zero(), ledger::block_body::get_gas_limit());
-					transaction->transaction = transactions::resolver::from_copy(*tracer.subtransaction);
-					if (!transaction->transaction)
-						return layer_exception("delegate inner transaction is invalid");
+				bool as_delegate = function == "delegate";
+				if (as_delegate && !tracer.subtransaction)
+					return layer_exception("delegate sub-transaction is not bound");
 
-					tracer.transaction = std::move(transaction);
-				}
-				else
+				auto* transaction = memory::init<transactions::call>();
+				transaction->asset = algorithm::asset::native();
+				transaction->pays = env.payable.payments;
+				transaction->signature.blob[0] = 0xFF;
+				transaction->nonce = std::max<size_t>(1, tracer.solver.state.executor.get_account_nonce(env.from).or_else(states::account_nonce(algorithm::pubkeyhash_t(), nullptr)).nonce);
+				transaction->call_to(env.to, function, format::variables(args));
+				if (as_delegate)
 				{
-					auto* transaction = memory::init<transactions::call>();
-					transaction->asset = algorithm::asset::native();
-					transaction->pays = env.payable.payments;
-					transaction->signature.blob[0] = 0xFF;
-					transaction->nonce = std::max<size_t>(1, tracer.solver.state.executor.get_account_nonce(env.from).or_else(states::account_nonce(algorithm::pubkeyhash_t(), nullptr)).nonce);
-					transaction->call_to(env.to, function, format::variables(args), false);
-					transaction->set_gas(decimal::zero(), ledger::block_body::get_gas_limit());
-					tracer.transaction = std::move(transaction);
+					uint32_t sub_type = tracer.subtransaction->as_type();
+					if (sub_type == transactions::route::as_instance_type())
+						transaction->set_flags((uint8_t)transactions::call::feature::require_route);
+					else if (sub_type == transactions::withdraw::as_instance_type())
+						transaction->set_flags((uint8_t)transactions::call::feature::require_withdraw);
+					else
+						return layer_exception("delegate sub-transaction must be a bridge route or withdrawal");
 				}
+				transaction->set_gas(decimal::zero(), ledger::block_body::get_gas_limit());
+				tracer.transaction = std::move(transaction);
 
 				ledger::transaction_receipt receipt;
 				receipt.from = env.from;
@@ -242,8 +239,6 @@ namespace tangent
 				script::ccall call_type = script::ccall::standard_call;
 				if (function == script::program::deploy_function_name())
 					call_type = script::ccall::deploy_call;
-				else if (function == script::program::delegate_function_name())
-					call_type = script::ccall::delegate_call;
 
 				auto entrypoint = module.get_function_by_decl(function);
 				if (!entrypoint.is_valid())
@@ -271,22 +266,18 @@ namespace tangent
 						}
 					}
 
-					auto delegate = tracer.transaction->as_type() == transactions::delegate::as_instance_type();
-					auto subcall = delegate && tracer.subtransaction && tracer.subtransaction->as_type() == transactions::call::as_instance_type();
-					auto from = delegate ? env.to : env.from;
-					auto to = subcall ? ((transactions::call*)*tracer.subtransaction)->callable : env.to;
 					for (auto& [paying_asset, paying_value] : env.payable.payments)
 					{
-						auto payment = executor->apply_payment(paying_asset, from, to, paying_value);
+						auto payment = executor->apply_payment(paying_asset, env.from, env.to, paying_value);
 						if (!payment)
 							return payment.error();
 					}
 				}
 
-				if (tracer.transaction->as_type() == transactions::delegate::as_instance_type())
+				if (as_delegate && tracer.subtransaction->as_type() == transactions::withdraw::as_instance_type())
 				{
-					auto outer = (const transactions::delegate*)*tracer.transaction;
-					if (auto withdrawal = dynamic_cast<const transactions::withdraw*>(*outer->transaction))
+					auto withdrawal = (const transactions::withdraw*)*tracer.subtransaction;
+					if (withdrawal)
 					{
 						if (!executor->get_bridge_instance(withdrawal->asset, withdrawal->bridge_hash))
 						{
@@ -320,7 +311,7 @@ namespace tangent
 							if (!token_funds)
 								return token_funds.error();
 
-							auto fee_funds = executor->apply_transfer(algorithm::asset::base_id_of(withdrawal->asset), outer->callable, decimal("1"), decimal::zero());
+							auto fee_funds = executor->apply_transfer(algorithm::asset::base_id_of(withdrawal->asset), env.to, decimal("1"), decimal::zero());
 							if (!fee_funds)
 								return fee_funds.error();
 
@@ -340,7 +331,7 @@ namespace tangent
 				}
 
 				tracer.returning = format::tree();
-				auto execution = tracer.transaction->as_type() == transactions::delegate::as_instance_type() ? tracer.transaction->execute(executor) : call_transaction(call_type, entrypoint, args);
+				auto execution = as_delegate ? tracer.transaction->execute(executor) : call_transaction(call_type, entrypoint, args);
 				executor->receipt.successful = !!execution;
 				if (attach_debugger_context)
 				{
@@ -663,7 +654,7 @@ namespace tangent
 
 						auto inner = transactions::call();
 						inner.asset = algorithm::asset::native();
-						inner.call_to(callable, args[3], std::move(function_args), false);
+						inner.call_to(callable, args[3], std::move(function_args));
 						context.tracer.subtransaction = transactions::resolver::from_copy(&inner);
 					}
 					else

@@ -359,6 +359,9 @@ namespace tangent
 			if (function.empty() || function.size() > 256)
 				return layer_exception("invalid function call");
 
+			if (!get_flags())
+				return layer_exception("invalid function feature flags");
+
 			hash_set<algorithm::asset_id> duplicates;
 			for (auto& [paying_asset, paying_value] : pays)
 			{
@@ -378,11 +381,42 @@ namespace tangent
 			if (!validation)
 				return validation.error();
 
-			return subexecute(executor, [this, executor](const payable_array& payable, void* module_ptr)
+			auto flags = get_flags();
+			if (!flags)
+				return layer_exception("invalid function feature flags");
+
+			auto execution = subexecute(executor, [this, executor](const payable_array& payable, void* module_ptr)
 			{
 				auto script = script::program(executor, (asIScriptModule*)module_ptr);
-				return script.execute(script::payable_repr(payable_array(payable)), script::ccall::standard_call, uses_pipeline_pay() ? std::string_view(function).substr(1) : std::string_view(function), args, nullptr);
+				return script.execute(script::payable_repr(payable_array(payable)), script::ccall::standard_call, get_function(), args, nullptr);
 			});
+			if (!execution)
+				return execution.error();
+			else if (!(*flags & (uint8_t)feature::require_route) && !(*flags & (uint8_t)feature::require_withdraw))
+				return expectation::met;
+
+			auto subtransaction = as_internal_block_transaction(executor->receipt, 0);
+			if (!subtransaction)
+				return layer_exception("sub-transaction execution failed: " + subtransaction.error().message());
+
+			uint256_t absolute_gas_limit = executor->block->gas_limit;
+			uint256_t absolute_gas_use = executor->block->gas_use;
+			uint256_t relative_gas_use = executor->receipt.relative_gas_use;
+			auto internal_executor = ledger::executor_context(executor->changelog, executor->solver, executor->block, *subtransaction->transaction);
+			auto subtransaction_normalization = uscope([&]()
+			{
+				executor->block->gas_limit = absolute_gas_limit;
+				executor->block->gas_use = absolute_gas_use;
+				executor->receipt.relative_gas_use = std::min(relative_gas_use, gas_limit);
+			});
+
+			execution = ledger::executor_context::execute_tx(&internal_executor, callable, *subtransaction->transaction, executor->receipt.transaction_hash, 0, (uint8_t)ledger::executor_context::flags::preserve_events | (uint8_t)ledger::executor_context::flags::replayable | (uint8_t)ledger::executor_context::flags::skip_pow);
+			relative_gas_use += internal_executor.receipt.relative_gas_use;
+			if (!execution)
+				return layer_exception("sub-transaction execution failed: " + execution.error().message());
+
+			executor->receipt.events.insert(executor->receipt.events.end(), internal_executor.receipt.events.begin(), internal_executor.receipt.events.end());
+			return expectation::met;
 		}
 		expects_lr<void> call::subexecute(ledger::executor_context* executor, std::function<expects_lr<void>(const payable_array&, void*)>&& callback) const
 		{
@@ -400,7 +434,7 @@ namespace tangent
 			if (!pmodule)
 				return pmodule.error();
 
-			if (uses_pipeline_pay())
+			if (has_feature(feature::pipeline_pay))
 			{
 				payable_array pipeline_pays;
 				for (auto& [paying_asset, paying_value] : pays)
@@ -509,21 +543,126 @@ namespace tangent
 					callback(event.emitter);
 			}
 		}
-		void call::call_to(const algorithm::pubkeyhash_t& new_callable, const std::string_view& new_function, format::variables&& new_args, bool pipeline_pay)
+		void call::call_to(const algorithm::pubkeyhash_t& new_callable, const std::string_view& new_function, format::variables&& new_args)
 		{
 			args = std::move(new_args);
 			function = new_function;
 			callable = new_callable;
-			if (pipeline_pay && !uses_pipeline_pay())
-				function.insert(function.begin(), '>');
 		}
 		void call::pay_with(const algorithm::asset_id& new_asset, const decimal& new_value)
 		{
 			pays.push_back(std::make_pair(new_asset, new_value));
 		}
-		bool call::uses_pipeline_pay() const
+		void call::set_flags(uint8_t new_flags)
 		{
-			return !function.empty() && function.front() == '>';
+			string result;
+			if (new_flags & (uint8_t)feature::pipeline_pay)
+				result += '>';
+			if (new_flags & (uint8_t)feature::require_route)
+				result += '@';
+			if (new_flags & (uint8_t)feature::require_withdraw)
+				result += '^';
+			result += get_function();
+			function = std::move(result);
+		}
+		option<uint8_t> call::get_flags() const
+		{
+			uint8_t flags = 0;
+			size_t offset = 0;
+			while (offset < function.size())
+			{
+				uint8_t bit = 0;
+				switch (function[offset])
+				{
+					case '>': bit = (uint8_t)call::feature::pipeline_pay; break;
+					case '@': bit = (uint8_t)call::feature::require_route; break;
+					case '^': bit = (uint8_t)call::feature::require_withdraw; break;
+					default: return option<uint8_t>(flags);
+				}
+
+				if (flags & bit)
+					return optional::none;
+
+				flags |= bit;
+				++offset;
+				if ((flags & ((uint8_t)call::feature::require_route | (uint8_t)call::feature::require_withdraw)) == ((uint8_t)call::feature::require_route | (uint8_t)call::feature::require_withdraw))
+					return optional::none;
+			}
+			return option<uint8_t>(flags);
+		}
+		bool call::has_feature(feature new_feature) const
+		{
+			auto flags = get_flags();
+			return flags && (*flags & (uint8_t)new_feature);
+		}
+		std::string_view call::get_function() const
+		{
+			size_t offset = 0;
+			while (offset < function.size() && (function[offset] == '>' || function[offset] == '@' || function[offset] == '^'))
+				++offset;
+			return std::string_view(function).substr(offset);
+		}
+		expects_lr<ledger::block_transaction> call::as_internal_block_transaction(const ledger::transaction_receipt& receipt, uint32_t type) const
+		{
+			auto flags = get_flags();
+			if (!flags)
+				return layer_exception("sub-transaction not found");
+
+			uptr<ledger::transaction_message> subtransaction;
+			auto* event = receipt.find_event<transactions::call>();
+			if (event != nullptr && event->args.size() == 4 && event->args[0].as_uint32() == route::as_instance_type())
+			{
+				auto* context = memory::init<route>();
+				context->bridge_hash = event->args[1].as_uint256();
+				context->asset = event->args[2].as_uint256();
+				context->routing_address = event->args[3].as_string();
+				context->pow_challenge.solution = 1;
+				subtransaction = context;
+			}
+			else if (event != nullptr && event->args.size() == 5 && event->args[0].as_uint32() == withdraw::as_instance_type())
+			{
+				auto* context = memory::init<withdraw>();
+				context->bridge_hash = event->args[1].as_uint256();
+				context->asset = event->args[2].as_uint256();
+				context->address = event->args[3].as_string();
+				context->value = event->args[4].as_decimal();
+				subtransaction = context;
+			}
+			if (!subtransaction)
+				return layer_exception("sub-transaction not found");
+
+			ledger::block_transaction result;
+			result.transaction = std::move(subtransaction);
+			result.transaction->checksum = receipt.transaction_hash;
+			result.transaction->signature.blob[0] = 0xFF;
+			result.transaction->gas_price = decimal::zero();
+			result.transaction->gas_limit = gas_limit;
+			result.receipt = receipt;
+			result.receipt.from = callable;
+
+			size_t event_index = 0;
+			for (auto& subevent : receipt.events)
+			{
+				++event_index;
+				if (&subevent == event)
+				{
+					result.receipt.events.erase(result.receipt.events.begin(), result.receipt.events.begin() + event_index);
+					break;
+				}
+			}
+			return expects_lr<ledger::block_transaction>(std::move(result));
+		}
+		uint32_t call::as_delegation_type() const
+		{
+			auto flags = get_flags();
+			if (flags)
+			{
+				if (*flags & (uint8_t)feature::require_route)
+					return delegations::bind_delegation::as_instance_type();
+				else if (*flags & (uint8_t)feature::require_withdraw)
+					return delegations::broadcast_delegation::as_instance_type();
+			}
+			return transaction_message::as_delegation_type();
 		}
 		format::tree call::as_tree() const
 		{
@@ -556,225 +695,6 @@ namespace tangent
 		std::string_view call::as_instance_typename()
 		{
 			return "call";
-		}
-
-		delegate::delegate(const delegate& other) : callable(other.callable), args(other.args)
-		{
-			ledger::transaction_message& base = *this;
-			base = *(ledger::transaction_message*)&other;
-			if (other.transaction)
-				transaction = resolver::from_copy(*other.transaction);
-		}
-		delegate& delegate::operator= (const delegate& other)
-		{
-			if (this == &other)
-				return *this;
-
-			ledger::transaction_message& base = *this;
-			base = *(ledger::transaction_message*)&other;
-			callable = other.callable;
-			args = other.args;
-			if (other.transaction)
-				transaction = resolver::from_copy(*other.transaction);
-			else
-				transaction.destroy();
-			return *this;
-		}
-		expects_lr<void> delegate::validate(uint64_t block_number) const
-		{
-			if (!transaction || transaction->as_type() == as_type() || transaction->as_type() == rollup::as_instance_type() || transaction->as_type() == setup::as_instance_type())
-				return layer_exception("invalid sub-transaction");
-
-			if (transaction->asset > 0 || !transaction->gas_price.is_nan() || transaction->gas_limit > 0 || !transaction->signature.empty() || transaction->nonce > 0)
-				return layer_exception("invalid sub-transaction data");
-
-			return ledger::transaction_message::validate(block_number);
-		}
-		expects_lr<void> delegate::execute(ledger::executor_context* executor) const
-		{
-			auto validation = transaction_message::execute(executor);
-			if (!validation)
-				return validation.error();
-
-			auto index = executor->get_account_program(callable);
-			if (!index)
-				return layer_exception("program is not assigned");
-
-			auto& hashcode = index->hashcode;
-			auto program = executor->get_witness_program(hashcode);
-			if (!program)
-				return layer_exception("program is not stored");
-
-			auto pmodule = script::factory::get()->compile_module(format::util::encode_0xhex(hashcode), [&]() { return program->as_code(); });
-			if (!pmodule)
-				return pmodule.error();
-
-			auto script = script::program(executor, pmodule->ref.get_module());
-			auto execution = script.execute(script::payable_repr(call::payable_array()), script::ccall::delegate_call, script.delegate_function(), args, nullptr);
-			if (!execution)
-				return execution.error();
-
-			uint256_t transaction_hash = transaction->as_hash();
-			uint256_t absolute_gas_limit = executor->block->gas_limit;
-			uint256_t absolute_gas_use = executor->block->gas_use;
-			uint256_t relative_gas_use = executor->receipt.relative_gas_use;
-			auto* mutable_view = ((transactions::delegate*)this);
-			auto internal_executor = ledger::executor_context(executor->changelog, executor->solver, executor->block, *transaction);
-			auto block_transaction_normalization = uscope([&]()
-			{
-				normalize_transaction(*mutable_view->transaction, nullptr, nullptr);
-				executor->block->gas_limit = absolute_gas_limit;
-				executor->block->gas_use = absolute_gas_use;
-				executor->receipt.relative_gas_use = std::min(relative_gas_use, gas_limit);
-			});
-			normalize_transaction(*mutable_view->transaction, mutable_view, &executor->receipt);
-			
-			execution = ledger::executor_context::execute_tx(&internal_executor, callable, *transaction, executor->receipt.transaction_hash, 0, (uint8_t)ledger::executor_context::flags::preserve_events | (uint8_t)ledger::executor_context::flags::replayable);
-			relative_gas_use += internal_executor.receipt.relative_gas_use;
-			if (!execution)
-				return layer_exception("sub-transaction execution failed: " + execution.error().message());
-
-			auto report = executor->emit_event<delegate>({ format::variable(transaction_hash), format::variable(internal_executor.receipt.relative_gas_use) });
-			if (!report)
-				return layer_exception("sub-transaction merge failed: " + report.error().message());
-
-			executor->receipt.events.insert(executor->receipt.events.end(), internal_executor.receipt.events.begin(), internal_executor.receipt.events.end());
-			return expectation::met;
-		}
-		bool delegate::store_body(format::wo_stream* stream) const
-		{
-			VI_ASSERT(stream != nullptr, "stream should be set");
-			stream->write_string(callable.optimized_view());
-			stream->write_integer(transaction->as_type());
-			if (!transaction->store_body(stream))
-				return false;
-
-			return format::variables_util::serialize_merge_into(args, stream);
-		}
-		bool delegate::load_body(format::ro_stream& stream)
-		{
-			if (!stream.read_optimized_view(stream.read_type(), callable.blob, sizeof(callable)))
-				return false;
-
-			uint32_t type;
-			if (!stream.read_integer(stream.read_type(), &type))
-				return false;
-
-			transaction = resolver::from_type(type);
-			if (!transaction || !transaction->load_body(stream))
-				return false;
-
-			args.clear();
-			normalize_transaction(*transaction, nullptr, nullptr);
-			return format::variables_util::deserialize_merge_from(stream, &args);
-		}
-		void delegate::enumerate_accounts(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, const std::function<void(const algorithm::pubkeyhash_t&)>& callback) const
-		{
-			VI_ASSERT(callback, "callback should be set");
-			callback(algorithm::pubkeyhash_t(callable));
-			if (transaction)
-				transaction->enumerate_accounts(executor, receipt, callback);
-		}
-		void delegate::enumerate_aliases(const std::function<void(const uint256_t&)>& callback) const
-		{
-			VI_ASSERT(callback, "callback should be set");
-			if (transaction)
-			{
-				callback(transaction->as_hash());
-				transaction->enumerate_aliases(callback);
-			}
-		}
-		uint64_t delegate::as_commitment(uint256_t* event_hash) const
-		{
-			if (!transaction)
-				return transaction_message::as_commitment(event_hash);
-
-			transaction->as_commitment(event_hash);
-			return 0;
-		}
-		expects_lr<ledger::block_transaction> delegate::as_internal_block_transaction(const ledger::transaction_receipt& receipt, uint32_t type) const
-		{
-			if (!transaction || (type > 0 && type != transaction->as_type()))
-				return layer_exception("sub-transaction not found");
-
-			ledger::block_transaction result;
-			result.transaction = resolver::from_copy(*transaction);
-			result.transaction->checksum = receipt.transaction_hash;
-			result.transaction->asset = asset;
-			result.receipt = receipt;
-			result.receipt.from = callable;
-			if (!result.transaction)
-				return layer_exception("sub-transaction not valid");
-
-			size_t event_index = 0;
-			for (auto& event : receipt.events)
-			{
-				++event_index;
-				if (event.event == delegate::as_instance_type() && event.args.size() == 2 && event.args[0].as_uint256() == transaction->as_hash())
-				{
-					result.receipt.relative_gas_use = event.args[1].as_uint256();
-					result.receipt.events.erase(result.receipt.events.begin(), result.receipt.events.begin() + event_index);
-					return expects_lr<ledger::block_transaction>(std::move(result));
-				}
-			}
-			return expects_lr<ledger::block_transaction>(std::move(result));
-		}
-		uint32_t delegate::as_delegation_type() const
-		{
-			if (!transaction)
-				return transaction_message::as_delegation_type();
-
-			return transaction->as_delegation_type();
-		}
-		format::tree delegate::as_tree() const
-		{
-			format::tree data = ledger::transaction_message::as_tree();
-			data.set("callable", algorithm::signing::serialize_address(callable));
-			data.set("args", format::variables_util::serialize(args));
-			data.set("action", transaction->as_tree());
-			return data;
-		}
-		uint32_t delegate::as_type() const
-		{
-			return as_instance_type();
-		}
-		std::string_view delegate::as_typename() const
-		{
-			return as_instance_typename();
-		}
-		uint32_t delegate::as_instance_type()
-		{
-			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
-			return hash;
-		}
-		std::string_view delegate::as_instance_typename()
-		{
-			return "delegate";
-		}
-		void delegate::normalize_transaction(ledger::transaction_message* child, const delegate* parent, const ledger::transaction_receipt* parent_receipt)
-		{
-			VI_ASSERT(child != nullptr, "child transaction should be set");
-			if (parent != nullptr && parent_receipt != nullptr)
-			{
-				uint8_t nonce_buffer[sizeof(parent_receipt->from.blob) + sizeof(nonce)] = { 0 };
-				uint64_t nonce_value = os::hw::to_endianness(os::hw::endian::little, parent->nonce);
-				memcpy(nonce_buffer, parent_receipt->from.blob, sizeof(parent_receipt->from.blob));
-				memcpy(nonce_buffer + sizeof(parent_receipt->from.blob), &nonce_value, sizeof(nonce_value));
-
-				child->signature.blob[0] = 0xFF;
-				child->nonce = (uint64_t)(algorithm::hashing::hash256i(std::string_view((char*)nonce_buffer, sizeof(nonce_buffer))) % std::numeric_limits<uint64_t>::max());
-				child->gas_price = decimal::zero();
-				child->gas_limit = parent->gas_limit - parent_receipt->relative_gas_use;
-				child->asset = parent->asset;
-			}
-			else
-			{
-				child->signature.clear();
-				child->nonce = 0;
-				child->gas_price = decimal::nan();
-				child->gas_limit = 0;
-				child->asset = 0;
-			}
 		}
 
 		rollup::rollup(const rollup& other)
@@ -1179,7 +1099,7 @@ namespace tangent
 			if (!validation)
 				return validation.error();
 
-			if (kernel::params().on(fork_id::consensus_challenge, executor->receipt.block_number))
+			if (!(executor->options & (uint8_t)ledger::executor_context::flags::skip_pow) && kernel::params().on(fork_id::consensus_challenge, executor->receipt.block_number))
 			{
 				auto& policy = kernel::params().policy;
 				auto block_number = executor->get_block_number_by_hash(pow_challenge.block_hash).or_else(std::numeric_limits<uint64_t>::max());
@@ -4361,8 +4281,6 @@ namespace tangent
 				return memory::init<deploy>();
 			else if (hash == call::as_instance_type())
 				return memory::init<call>();
-			else if (hash == delegate::as_instance_type())
-				return memory::init<delegate>();
 			else if (hash == rollup::as_instance_type())
 				return memory::init<rollup>();
 			else if (hash == route::as_instance_type())
@@ -4394,8 +4312,6 @@ namespace tangent
 				return memory::init<deploy>(*(const deploy*)base);
 			else if (hash == call::as_instance_type())
 				return memory::init<call>(*(const call*)base);
-			else if (hash == delegate::as_instance_type())
-				return memory::init<delegate>(*(const delegate*)base);
 			else if (hash == rollup::as_instance_type())
 				return memory::init<rollup>(*(const rollup*)base);
 			else if (hash == route::as_instance_type())

@@ -10,7 +10,6 @@ extern "C"
 #include "../internal/sha2.h"
 #include "../internal/sha3.h"
 }
-#define SCRIPT_PAYMENTS_ALL ((uint32_t)-1)
 #define SCRIPT_QUERY_PREFETCH 16
 #define SCRIPT_TAG_MUTABLE_PROGRAM 19190
 #define SCRIPT_TAG_IMMUTABLE_PROGRAM 19191
@@ -28,7 +27,6 @@ extern "C"
 #define SCRIPT_TYPE_PMUT "pmut"
 #define SCRIPT_TYPE_PCONST "pconst"
 #define SCRIPT_FUNCTION_CONSTRUCT "construct"
-#define SCRIPT_FUNCTION_DELEGATE "delegate"
 #define SCRIPT_VM "program"
 
 namespace tangent
@@ -37,12 +35,6 @@ namespace tangent
 	{
 		typedef hash_map<string_repr, std::atomic<int32_t>> string_repr_cache_type;
 		
-		struct block_tx_source
-		{
-			const ledger::transaction_message* message;
-			const ledger::transaction_receipt* receipt;
-		};
-
 		static string mpf_to_string(const mpf_t target)
 		{
 			char buffer[1024]; string result; mp_exp_t exp;
@@ -85,41 +77,6 @@ namespace tangent
 			bool result = ((script::bindings::any*)inout.get_object_address())->retrieve(inout.get_arg_address(0), inout.get_arg_type_id(0));
 			inout.set_return_byte(result);
 		}
-		static contract::tx_identity to_tx_identity(uint32_t type)
-		{
-			if (type > 0)
-			{
-				if (type == transactions::transfer::as_instance_type())
-					return contract::tx_identity::transfer;
-				else if (type == transactions::deploy::as_instance_type())
-					return contract::tx_identity::deploy;
-				else if (type == transactions::call::as_instance_type())
-					return contract::tx_identity::call;
-				else if (type == transactions::delegate::as_instance_type())
-					return contract::tx_identity::delegate;
-				else if (type == transactions::rollup::as_instance_type())
-					return contract::tx_identity::rollup;
-				else if (type == transactions::route::as_instance_type())
-					return contract::tx_identity::route;
-				else if (type == transactions::bind::as_instance_type())
-					return contract::tx_identity::bind;
-				else if (type == transactions::imbind::as_instance_type())
-					return contract::tx_identity::imbind;
-				else if (type == transactions::setup::as_instance_type())
-					return contract::tx_identity::setup;
-				else if (type == transactions::rebind::as_instance_type())
-					return contract::tx_identity::rebind;
-				else if (type == transactions::withdraw::as_instance_type())
-					return contract::tx_identity::withdraw;
-				else if (type == transactions::broadcast::as_instance_type())
-					return contract::tx_identity::broadcast;
-				else if (type == transactions::anticast::as_instance_type())
-					return contract::tx_identity::anticast;
-				else if (type == transactions::attestate::as_instance_type())
-					return contract::tx_identity::attestate;
-			}
-			return contract::tx_identity::none;
-		}
 		static algorithm::pubkeyhash_t tx_callable(const ledger::transaction_message* transaction, const algorithm::pubkeyhash_t& fallback)
 		{
 			uint32_t type = transaction->as_type();
@@ -127,61 +84,7 @@ namespace tangent
 				return ((transactions::call*)transaction)->callable;
 			else if (type == transactions::deploy::as_instance_type())
 				return ((transactions::deploy*)transaction)->get_account();
-			else if (type == transactions::delegate::as_instance_type())
-				return ((transactions::delegate*)transaction)->callable;
 			return fallback;
-		}
-		template <typename callback_type>
-		static void tx_payments(const ledger::transaction_message* transaction, uint32_t filter, callback_type&& callback)
-		{
-			uint32_t type = transaction->as_type();
-			if (type == transactions::transfer::as_instance_type())
-			{
-				auto& target = *(transactions::transfer*)transaction;
-				for (uint32_t i = 0; i < (uint32_t)target.to.size(); i++)
-				{
-					if (filter == SCRIPT_PAYMENTS_ALL)
-						callback(algorithm::signing::encode_address(target.to[i].first), target.asset, target.to[i].second);
-					else if (filter == i)
-					{
-						callback(algorithm::signing::encode_address(target.to[i].first), target.asset, target.to[i].second);
-						break;
-					}
-				}
-			}
-			else if (type == transactions::call::as_instance_type())
-			{
-				auto& target = *(transactions::call*)transaction;
-				string callable = algorithm::signing::encode_address(target.callable);
-				for (uint32_t i = 0; i < (uint32_t)target.pays.size(); i++)
-				{
-					if (filter == SCRIPT_PAYMENTS_ALL)
-						callback(callable, target.pays[i].first, target.pays[i].second);
-					else if (filter == i)
-					{
-						callback(callable, target.pays[i].first, target.pays[i].second);
-						break;
-					}
-				}
-			}
-			else if (type == transactions::withdraw::as_instance_type())
-			{
-				auto& target = *(transactions::withdraw*)transaction;
-				if (filter == SCRIPT_PAYMENTS_ALL || filter == 0)
-					callback(target.address, target.asset, target.value);
-			}
-			else if (type == transactions::route::as_instance_type())
-			{
-				auto& target = *(transactions::route*)transaction;
-				if (filter == SCRIPT_PAYMENTS_ALL || filter == 0)
-					callback(target.routing_address, target.asset, decimal::zero());
-			}
-		}
-		static uint32_t tx_payment_count(const ledger::transaction_message* transaction)
-		{
-			uint32_t count = 0;
-			tx_payments(transaction, SCRIPT_PAYMENTS_ALL, [&count](const string&, const algorithm::asset_id&, const decimal&) { count++; });
-			return count;
 		}
 		static string tx_function_declaration(const ledger::transaction_message* transaction)
 		{
@@ -190,8 +93,6 @@ namespace tangent
 				return ((transactions::call*)transaction)->function;
 			else if (type == transactions::deploy::as_instance_type())
 				return string(program::deploy_function_name());
-			else if (type == transactions::delegate::as_instance_type())
-				return string(program::delegate_function_name());
 
 			return string();
 		}
@@ -208,49 +109,7 @@ namespace tangent
 				auto& args = ((transactions::deploy*)transaction)->args;
 				return &args;
 			}
-			else if (type == transactions::delegate::as_instance_type())
-			{
-				auto& args = ((transactions::delegate*)transaction)->args;
-				return &args;
-			}
 			return nullptr;
-		}
-		static block_tx_source block_tx_source_of(const block_tx_repr& self)
-		{
-			auto* p = program::fetch_immutable();
-			if (!p)
-				return block_tx_source{ nullptr, nullptr };
-			if (self.current)
-				return block_tx_source{ p->executor->transaction, &p->executor->receipt };
-			if (!self.cached || !self.cached->transaction)
-				return block_tx_source{ nullptr, nullptr };
-			return block_tx_source{ *self.cached->transaction, &self.cached->receipt };
-		}
-		static payable_repr block_tx_collect(const block_tx_source& source, const algorithm::pubkeyhash_t& owner, bool supply_part, bool outgoing)
-		{
-			auto* p = program::fetch_immutable_or_throw();
-			if (!p || source.receipt == nullptr || owner == algorithm::pubkeyhash_t())
-				return payable_repr();
-			btree_map<algorithm::asset_id, decimal> payouts;
-			p->executor->enumerate_account_balance_changes(source.receipt, [&](const states::account_balance& change)
-			{
-				if (!(change.owner == owner))
-					return;
-				decimal value = supply_part ? change.supply : change.reserve;
-				if (outgoing)
-					value = decimal::zero() - value;
-				if (value.is_nan() || !value.is_positive())
-					return;
-				auto found = payouts.find(change.asset);
-				if (found != payouts.end())
-					found->second = found->second + value;
-				else
-					payouts.insert(std::make_pair(change.asset, value));
-			});
-			vector<std::pair<algorithm::asset_id, decimal>> result;
-			for (auto& payout : payouts)
-				result.push_back(payout);
-			return payable_repr(std::move(result));
 		}
 
 		std::string_view exception_repr::category::generic()
@@ -2381,17 +2240,17 @@ namespace tangent
 		}
 		bool block_tx_repr::exists()
 		{
-			return block_tx_source_of(*this).message != nullptr;
+			return source_of(*this).message != nullptr;
 		}
-		contract::tx_identity block_tx_repr::identity()
+		uint64_t block_tx_repr::block_number()
 		{
-			auto source = block_tx_source_of(*this);
+			auto source = source_of(*this);
 			if (!source.message)
 			{
 				contract::throw_ptr(exception_repr(exception_repr::category::requirement(), stringify::text("%s is not a transaction", algorithm::encoding::encode_0xhex256(transaction_hash))));
-				return contract::tx_identity::none;
+				return 0;
 			}
-			return to_tx_identity(source.message->as_type());
+			return source.receipt->block_number;
 		}
 		bool block_tx_repr::paid()
 		{
@@ -2399,7 +2258,7 @@ namespace tangent
 		}
 		address_repr block_tx_repr::from()
 		{
-			auto source = block_tx_source_of(*this);
+			auto source = source_of(*this);
 			if (!source.message)
 			{
 				contract::throw_ptr(exception_repr(exception_repr::category::requirement(), stringify::text("%s is not a transaction", algorithm::encoding::encode_0xhex256(transaction_hash))));
@@ -2409,7 +2268,7 @@ namespace tangent
 		}
 		address_repr block_tx_repr::to()
 		{
-			auto source = block_tx_source_of(*this);
+			auto source = source_of(*this);
 			if (!source.message)
 			{
 				contract::throw_ptr(exception_repr(exception_repr::category::requirement(), stringify::text("%s is not a transaction", algorithm::encoding::encode_0xhex256(transaction_hash))));
@@ -2425,7 +2284,7 @@ namespace tangent
 			if (current && p)
 				return p->payable_value();
 
-			auto source = block_tx_source_of(*this);
+			auto source = source_of(*this);
 			if (!source.message)
 			{
 				contract::throw_ptr(exception_repr(exception_repr::category::requirement(), stringify::text("%s is not a transaction", algorithm::encoding::encode_0xhex256(transaction_hash))));
@@ -2433,13 +2292,12 @@ namespace tangent
 			}
 
 			vector<std::pair<algorithm::asset_id, decimal>> payments;
-			payments.reserve(tx_payment_count(source.message));
-			tx_payments(source.message, SCRIPT_PAYMENTS_ALL, [&payments](const string&, const algorithm::asset_id& asset, const decimal& amount) { payments.push_back(std::make_pair(asset, amount)); });
+			enumerate_payments(source.message, [&payments](const string&, const algorithm::asset_id& asset, const decimal& amount) { payments.push_back(std::make_pair(asset, amount)); });
 			return payable_repr(std::move(payments));
 		}
 		string_repr block_tx_repr::entrypoint()
 		{
-			auto source = block_tx_source_of(*this);
+			auto source = source_of(*this);
 			if (!source.message)
 			{
 				contract::throw_ptr(exception_repr(exception_repr::category::requirement(), stringify::text("%s is not a transaction", algorithm::encoding::encode_0xhex256(transaction_hash))));
@@ -2449,7 +2307,7 @@ namespace tangent
 		}
 		string_repr block_tx_repr::blockchain()
 		{
-			auto source = block_tx_source_of(*this);
+			auto source = source_of(*this);
 			if (!source.message)
 			{
 				contract::throw_ptr(exception_repr(exception_repr::category::requirement(), stringify::text("%s is not a transaction", algorithm::encoding::encode_0xhex256(transaction_hash))));
@@ -2459,7 +2317,7 @@ namespace tangent
 		}
 		string_repr block_tx_repr::token()
 		{
-			auto source = block_tx_source_of(*this);
+			auto source = source_of(*this);
 			if (!source.message)
 			{
 				contract::throw_ptr(exception_repr(exception_repr::category::requirement(), stringify::text("%s is not a transaction", algorithm::encoding::encode_0xhex256(transaction_hash))));
@@ -2469,7 +2327,7 @@ namespace tangent
 		}
 		string_repr block_tx_repr::contract_name()
 		{
-			auto source = block_tx_source_of(*this);
+			auto source = source_of(*this);
 			if (!source.message)
 			{
 				contract::throw_ptr(exception_repr(exception_repr::category::requirement(), stringify::text("%s is not a transaction", algorithm::encoding::encode_0xhex256(transaction_hash))));
@@ -2479,7 +2337,7 @@ namespace tangent
 		}
 		decimal block_tx_repr::gas_price()
 		{
-			auto source = block_tx_source_of(*this);
+			auto source = source_of(*this);
 			if (!source.message)
 			{
 				contract::throw_ptr(exception_repr(exception_repr::category::requirement(), stringify::text("%s is not a transaction", algorithm::encoding::encode_0xhex256(transaction_hash))));
@@ -2489,7 +2347,7 @@ namespace tangent
 		}
 		uint256_t block_tx_repr::gas_use()
 		{
-			auto source = block_tx_source_of(*this);
+			auto source = source_of(*this);
 			if (!source.message)
 			{
 				contract::throw_ptr(exception_repr(exception_repr::category::requirement(), stringify::text("%s is not a transaction", algorithm::encoding::encode_0xhex256(transaction_hash))));
@@ -2499,7 +2357,7 @@ namespace tangent
 		}
 		uint256_t block_tx_repr::gas_left()
 		{
-			auto source = block_tx_source_of(*this);
+			auto source = source_of(*this);
 			if (!source.message)
 			{
 				contract::throw_ptr(exception_repr(exception_repr::category::requirement(), stringify::text("%s is not a transaction", algorithm::encoding::encode_0xhex256(transaction_hash))));
@@ -2514,7 +2372,7 @@ namespace tangent
 		}
 		uint256_t block_tx_repr::gas_limit()
 		{
-			auto source = block_tx_source_of(*this);
+			auto source = source_of(*this);
 			if (!source.message)
 			{
 				contract::throw_ptr(exception_repr(exception_repr::category::requirement(), stringify::text("%s is not a transaction", algorithm::encoding::encode_0xhex256(transaction_hash))));
@@ -2524,7 +2382,7 @@ namespace tangent
 		}
 		uint256_t block_tx_repr::asset()
 		{
-			auto source = block_tx_source_of(*this);
+			auto source = source_of(*this);
 			if (!source.message)
 			{
 				contract::throw_ptr(exception_repr(exception_repr::category::requirement(), stringify::text("%s is not a transaction", algorithm::encoding::encode_0xhex256(transaction_hash))));
@@ -2536,79 +2394,73 @@ namespace tangent
 		{
 			return transaction_hash;
 		}
-		uint32_t block_tx_repr::payments()
+		template <typename callback_type>
+		void block_tx_repr::enumerate_payments(const ledger::transaction_message* transaction, callback_type&& callback)
 		{
-			auto source = block_tx_source_of(*this);
-			if (!source.message)
+			uint32_t type = transaction->as_type();
+			if (type == transactions::transfer::as_instance_type())
 			{
-				contract::throw_ptr(exception_repr(exception_repr::category::requirement(), stringify::text("%s is not a transaction", algorithm::encoding::encode_0xhex256(transaction_hash))));
-				return 0;
+				auto& target = *(transactions::transfer*)transaction;
+				for (auto& [to, amount] : target.to)
+					callback(algorithm::signing::encode_address(to), target.asset, amount);
 			}
-			return tx_payment_count(source.message);
+			else if (type == transactions::call::as_instance_type())
+			{
+				auto& target = *(transactions::call*)transaction;
+				for (auto& [asset, amount] : target.pays)
+					callback(algorithm::signing::encode_address(target.callable), asset, amount);
+			}
+			else if (type == transactions::withdraw::as_instance_type())
+			{
+				auto& target = *(transactions::withdraw*)transaction;
+				callback(target.address, target.asset, target.value);
+			}
+			else if (type == transactions::route::as_instance_type())
+			{
+				auto& target = *(transactions::route*)transaction;
+				callback(target.routing_address, target.asset, decimal::zero());
+			}
 		}
-		string_repr block_tx_repr::payment_address(uint32_t index)
+		block_tx_repr::source block_tx_repr::source_of(const block_tx_repr& self)
 		{
-			auto source = block_tx_source_of(*this);
-			if (!source.message)
-			{
-				contract::throw_ptr(exception_repr(exception_repr::category::requirement(), stringify::text("%s is not a transaction", algorithm::encoding::encode_0xhex256(transaction_hash))));
-				return string_repr();
-			}
-
-			uint32_t size = tx_payment_count(source.message);
-			if (index >= size)
-			{
-				contract::throw_ptr(exception_repr(exception_repr::category::argument(), stringify::text("range [%i; %i) is out of bounds (size: %i)", index, index + 1, size)));
-				return string_repr();
-			}
-
-			string address;
-			tx_payments(source.message, index, [&address](const string& payment_address, const algorithm::asset_id&, const decimal&) { address = payment_address; });
-			return string_repr(address);
+			auto* p = program::fetch_immutable();
+			if (!p)
+				return source{ nullptr, nullptr };
+			if (self.current)
+				return source{ p->executor->transaction, &p->executor->receipt };
+			if (!self.cached || !self.cached->transaction)
+				return source{ nullptr, nullptr };
+			return source{ *self.cached->transaction, &self.cached->receipt };
 		}
-		uint256_t block_tx_repr::payment_asset(uint32_t index)
+		payable_repr block_tx_repr::collect(const source& transaction_source, const algorithm::pubkeyhash_t& owner, bool supply_part, bool outgoing)
 		{
-			auto source = block_tx_source_of(*this);
-			if (!source.message)
+			auto* p = program::fetch_immutable_or_throw();
+			if (!p || transaction_source.receipt == nullptr || owner == algorithm::pubkeyhash_t())
+				return payable_repr();
+			btree_map<algorithm::asset_id, decimal> payouts;
+			p->executor->enumerate_account_balance_changes(transaction_source.receipt, [&](const states::account_balance& change)
 			{
-				contract::throw_ptr(exception_repr(exception_repr::category::requirement(), stringify::text("%s is not a transaction", algorithm::encoding::encode_0xhex256(transaction_hash))));
-				return uint256_t((uint8_t)0);
-			}
-
-			uint32_t size = tx_payment_count(source.message);
-			if (index >= size)
-			{
-				contract::throw_ptr(exception_repr(exception_repr::category::argument(), stringify::text("range [%i; %i) is out of bounds (size: %i)", index, index + 1, size)));
-				return uint256_t((uint8_t)0);
-			}
-
-			algorithm::asset_id asset = algorithm::asset::native();
-			tx_payments(source.message, index, [&asset](const string&, const algorithm::asset_id& payment_asset, const decimal&) { asset = payment_asset; });
-			return asset;
-		}
-		decimal block_tx_repr::payment_amount(uint32_t index)
-		{
-			auto source = block_tx_source_of(*this);
-			if (!source.message)
-			{
-				contract::throw_ptr(exception_repr(exception_repr::category::requirement(), stringify::text("%s is not a transaction", algorithm::encoding::encode_0xhex256(transaction_hash))));
-				return decimal::nan();
-			}
-
-			uint32_t size = tx_payment_count(source.message);
-			if (index >= size)
-			{
-				contract::throw_ptr(exception_repr(exception_repr::category::argument(), stringify::text("range [%i; %i) is out of bounds (size: %i)", index, index + 1, size)));
-				return decimal::nan();
-			}
-
-			decimal amount = decimal::nan();
-			tx_payments(source.message, index, [&amount](const string&, const algorithm::asset_id&, const decimal& payment_amount) { amount = payment_amount; });
-			return amount;
+				if (!(change.owner == owner))
+					return;
+				decimal value = supply_part ? change.supply : change.reserve;
+				if (outgoing)
+					value = decimal::zero() - value;
+				if (value.is_nan() || !value.is_positive())
+					return;
+				auto found = payouts.find(change.asset);
+				if (found != payouts.end())
+					found->second = found->second + value;
+				else
+					payouts.insert(std::make_pair(change.asset, value));
+			});
+			vector<std::pair<algorithm::asset_id, decimal>> result;
+			for (auto& payout : payouts)
+				result.push_back(payout);
+			return payable_repr(std::move(result));
 		}
 		decimal block_tx_repr::balance_delta_of(const address_repr& address, const uint256_t& coin)
 		{
-			auto source = block_tx_source_of(*this);
+			auto source = source_of(*this);
 			if (!source.message)
 			{
 				contract::throw_ptr(exception_repr(exception_repr::category::requirement(), stringify::text("%s is not a transaction", algorithm::encoding::encode_0xhex256(transaction_hash))));
@@ -2621,7 +2473,7 @@ namespace tangent
 		}
 		decimal block_tx_repr::reserve_delta_of(const address_repr& address, const uint256_t& coin)
 		{
-			auto source = block_tx_source_of(*this);
+			auto source = source_of(*this);
 			if (!source.message)
 			{
 				contract::throw_ptr(exception_repr(exception_repr::category::requirement(), stringify::text("%s is not a transaction", algorithm::encoding::encode_0xhex256(transaction_hash))));
@@ -2634,73 +2486,47 @@ namespace tangent
 		}
 		payable_repr block_tx_repr::payments_from(const address_repr& address)
 		{
-			auto source = block_tx_source_of(*this);
+			auto source = source_of(*this);
 			if (!source.message)
 			{
 				contract::throw_ptr(exception_repr(exception_repr::category::requirement(), stringify::text("%s is not a transaction", algorithm::encoding::encode_0xhex256(transaction_hash))));
 				return payable_repr();
 			}
 
-			return block_tx_collect(source, address.hash, true, true);
+			return collect(source, address.hash, true, true);
 		}
 		payable_repr block_tx_repr::payments_to(const address_repr& address)
 		{
-			auto source = block_tx_source_of(*this);
+			auto source = source_of(*this);
 			if (!source.message)
 			{
 				contract::throw_ptr(exception_repr(exception_repr::category::requirement(), stringify::text("%s is not a transaction", algorithm::encoding::encode_0xhex256(transaction_hash))));
 				return payable_repr();
 			}
 
-			return block_tx_collect(source, address.hash, true, false);
+			return collect(source, address.hash, true, false);
 		}
 		payable_repr block_tx_repr::reservations_from(const address_repr& address)
 		{
-			auto source = block_tx_source_of(*this);
+			auto source = source_of(*this);
 			if (!source.message)
 			{
 				contract::throw_ptr(exception_repr(exception_repr::category::requirement(), stringify::text("%s is not a transaction", algorithm::encoding::encode_0xhex256(transaction_hash))));
 				return payable_repr();
 			}
 
-			return block_tx_collect(source, address.hash, false, true);
+			return collect(source, address.hash, false, true);
 		}
 		payable_repr block_tx_repr::reservations_to(const address_repr& address)
 		{
-			auto source = block_tx_source_of(*this);
+			auto source = source_of(*this);
 			if (!source.message)
 			{
 				contract::throw_ptr(exception_repr(exception_repr::category::requirement(), stringify::text("%s is not a transaction", algorithm::encoding::encode_0xhex256(transaction_hash))));
 				return payable_repr();
 			}
 
-			return block_tx_collect(source, address.hash, false, false);
-		}
-		block_tx_repr block_tx_repr::delegate()
-		{
-			block_tx_repr result;
-			result.current = false;
-			result.transaction_hash = uint256_t((uint8_t)0);
-
-			auto* p = program::fetch_immutable();
-			if (!p)
-				return result;
-
-			auto source = block_tx_source_of(*this);
-			if (!source.message || source.message->as_type() != transactions::delegate::as_instance_type())
-				return result;
-
-			auto* outer = (const transactions::delegate*)source.message;
-			if (!outer->transaction)
-				return result;
-
-			auto inner = outer->as_internal_block_transaction(*source.receipt, 0);
-			if (!inner)
-				return result;
-
-			result.transaction_hash = outer->transaction->as_hash();
-			result.cached = uptr<ledger::block_transaction>(memory::init<ledger::block_transaction>(std::move(*inner)));
-			return result;
+			return collect(source, address.hash, false, false);
 		}
 
 		void batch_payout_repr::to(const address_repr& new_to, const algorithm::asset_id& new_asset, const decimal& new_value)
@@ -4236,6 +4062,122 @@ namespace tangent
 		block_tx_repr contract::tx_self()
 		{
 			return block_tx_repr();
+		}
+		bool contract::tx_pipelined()
+		{
+			auto* p = program::fetch_immutable();
+			if (p == nullptr || p->executor == nullptr || p->executor->transaction == nullptr || p->executor->transaction->as_type() != transactions::call::as_instance_type())
+				return false;
+			return ((const transactions::call*)p->executor->transaction)->has_feature(transactions::call::feature::pipeline_pay);
+		}
+		bool contract::bridge_requires_link()
+		{
+			auto* p = program::fetch_immutable();
+			if (p == nullptr || p->executor == nullptr || p->executor->transaction == nullptr || p->executor->transaction->as_type() != transactions::call::as_instance_type())
+				return false;
+			return ((const transactions::call*)p->executor->transaction)->has_feature(transactions::call::feature::require_route);
+		}
+		bool contract::bridge_requires_send()
+		{
+			auto* p = program::fetch_immutable();
+			if (p == nullptr || p->executor == nullptr || p->executor->transaction == nullptr || p->executor->transaction->as_type() != transactions::call::as_instance_type())
+				return false;
+			return ((const transactions::call*)p->executor->transaction)->has_feature(transactions::call::feature::require_withdraw);
+		}
+		program* contract::bridge_internal_check(const char* name, const algorithm::asset_id& asset, const uint256_t& bridge_hash)
+		{
+			auto* p = program::fetch_mutable_or_throw();
+			if (!p)
+				return nullptr;
+
+			if (!bridge_hash)
+				contract::throw_ptr(exception_repr(exception_repr::category::argument(), stringify::text("bridge::%s requires a non-zero bridge hash", name)));
+
+			if (!algorithm::asset::is_any(asset) || !algorithm::asset::token_of(asset).empty())
+				contract::throw_ptr(exception_repr(exception_repr::category::argument(), stringify::text("bridge::%s requires a valid base-chain asset", name)));
+
+			if (p->executor->transaction == nullptr || p->executor->transaction->as_type() != transactions::call::as_instance_type())
+				contract::throw_ptr(exception_repr(exception_repr::category::requirement(), stringify::text("bridge::%s is only available during a call transaction", name)));
+
+			return p;
+		}
+		void contract::bridge_link(const uint256_t& bridge_hash, const uint256_t& asset, const string_repr& routing_address)
+		{
+			auto* p = bridge_internal_check("link", asset, bridge_hash);
+			if (p == nullptr)
+				return;
+
+			auto* caller = (const transactions::call*)p->executor->transaction;
+			if (!caller->has_feature(transactions::call::feature::require_route))
+			{
+				contract::throw_ptr(exception_repr(exception_repr::category::requirement(), "bridge::link is not permitted by the function feature flags of this transaction"));
+				return;
+			}
+
+			if (routing_address.empty())
+			{
+				contract::throw_ptr(exception_repr(exception_repr::category::argument(), "bridge::link requires a routing address"));
+				return;
+			}
+
+			for (auto& event : p->executor->receipt.events)
+			{
+				if (event.event == transactions::call::as_instance_type())
+				{
+					contract::throw_ptr(exception_repr(exception_repr::category::requirement(), "bridge::link can only be invoked once per transaction"));
+					return;
+				}
+			}
+
+			p->executor->emit_event<transactions::call>({ format::variable(transactions::route::as_instance_type()), format::variable(bridge_hash), format::variable(asset), format::variable(routing_address.view()) });
+		}
+		void contract::bridge_send(const uint256_t& bridge_hash, const uint256_t& asset, const string_repr& address, const decimal& value, const decimal& fee)
+		{
+			auto* p = bridge_internal_check("send", asset, bridge_hash);
+			if (p == nullptr)
+				return;
+
+			auto* caller = (const transactions::call*)p->executor->transaction;
+			if (!caller->has_feature(transactions::call::feature::require_withdraw))
+			{
+				contract::throw_ptr(exception_repr(exception_repr::category::requirement(), "bridge::send is not permitted by the function feature flags of this transaction"));
+				return;
+			}
+
+			if (address.empty())
+			{
+				contract::throw_ptr(exception_repr(exception_repr::category::argument(), "bridge::send requires a destination address"));
+				return;
+			}
+
+			if (!value.is_positive())
+			{
+				contract::throw_ptr(exception_repr(exception_repr::category::argument(), "bridge::send requires a positive value"));
+				return;
+			}
+
+			for (auto& event : p->executor->receipt.events)
+			{
+				if (event.event == transactions::call::as_instance_type())
+				{
+					contract::throw_ptr(exception_repr(exception_repr::category::requirement(), "bridge::send can only be invoked once per transaction"));
+					return;
+				}
+			}
+
+			auto bridge = p->executor->get_bridge_instance(asset, bridge_hash);
+			if (!bridge)
+			{
+				contract::throw_ptr(exception_repr(exception_repr::category::requirement(), "bridge::send requires a valid bridge instance"));
+				return;
+			}
+			else if (bridge->fee_rate != fee)
+			{
+				contract::throw_ptr(exception_repr(exception_repr::category::requirement(), "bridge::send fee does not match the actual bridge fee"));
+				return;
+			}
+
+			p->executor->emit_event<transactions::call>({ format::variable(transactions::withdraw::as_instance_type()), format::variable(bridge_hash), format::variable(asset), format::variable(address.view()), format::variable(value) });
 		}
 		uint256_t contract::coin_native()
 		{
@@ -6243,22 +6185,6 @@ namespace tangent
 			vm->end_namespace();
 
 			vm->begin_namespace("tx");
-			auto tx_identity_type = vm->set_enum("identity");
-			tx_identity_type->set_value("none", (int)contract::tx_identity::none);
-			tx_identity_type->set_value("transfer", (int)contract::tx_identity::transfer);
-			tx_identity_type->set_value("deploy", (int)contract::tx_identity::deploy);
-			tx_identity_type->set_value("call", (int)contract::tx_identity::call);
-			tx_identity_type->set_value("delegate", (int)contract::tx_identity::delegate);
-			tx_identity_type->set_value("rollup", (int)contract::tx_identity::rollup);
-			tx_identity_type->set_value("route", (int)contract::tx_identity::route);
-			tx_identity_type->set_value("bind", (int)contract::tx_identity::bind);
-			tx_identity_type->set_value("imbind", (int)contract::tx_identity::imbind);
-			tx_identity_type->set_value("setup", (int)contract::tx_identity::setup);
-			tx_identity_type->set_value("rebind", (int)contract::tx_identity::rebind);
-			tx_identity_type->set_value("withdraw", (int)contract::tx_identity::withdraw);
-			tx_identity_type->set_value("broadcast", (int)contract::tx_identity::broadcast);
-			tx_identity_type->set_value("anticast", (int)contract::tx_identity::anticast);
-			tx_identity_type->set_value("attestate", (int)contract::tx_identity::attestate);
 			vm->set_function_address("bool paid()", WRAP_FN(contract::tx_paid), convention::generic_call);
 			vm->set_function_address("address from()", WRAP_FN(contract::tx_from), convention::generic_call);
 			vm->set_function_address("address to()", WRAP_FN(contract::tx_to), convention::generic_call);
@@ -6274,6 +6200,7 @@ namespace tangent
 			vm->set_function_address("uint256 asset()", WRAP_FN(contract::tx_asset), convention::generic_call);
 			vm->set_function_address("uint256 hash()", WRAP_FN(contract::tx_hash), convention::generic_call);
 			vm->set_function_address("block::tx self()", WRAP_FN(contract::tx_self), convention::generic_call);
+			vm->set_function_address("bool pipelined()", WRAP_FN(contract::tx_pipelined), convention::generic_call);
 			vm->end_namespace();
 
 			vm->begin_namespace("block");
@@ -6282,7 +6209,6 @@ namespace tangent
 			block_tx_type->set_behaviour_address("void f()", behaviours::destruct, WRAP_DES(block_tx_repr), convention::generic_call);
 			block_tx_type->set_operator_copy_address(WRAP_MFN_PR(block_tx_repr, operator=, (const block_tx_repr&), block_tx_repr&), convention::generic_call);
 			block_tx_type->set_method_address("bool exists() const", WRAP_MFN(block_tx_repr, exists), convention::generic_call);
-			block_tx_type->set_method_address("tx::identity type() const", WRAP_MFN(block_tx_repr, identity), convention::generic_call);
 			block_tx_type->set_method_address("bool paid() const", WRAP_MFN(block_tx_repr, paid), convention::generic_call);
 			block_tx_type->set_method_address("address from() const", WRAP_MFN(block_tx_repr, from), convention::generic_call);
 			block_tx_type->set_method_address("address to() const", WRAP_MFN(block_tx_repr, to), convention::generic_call);
@@ -6297,17 +6223,20 @@ namespace tangent
 			block_tx_type->set_method_address("uint256 gas_limit() const", WRAP_MFN(block_tx_repr, gas_limit), convention::generic_call);
 			block_tx_type->set_method_address("uint256 asset() const", WRAP_MFN_PR(block_tx_repr, asset, (), uint256_t), convention::generic_call);
 			block_tx_type->set_method_address("uint256 hash() const", WRAP_MFN(block_tx_repr, hash), convention::generic_call);
-			block_tx_type->set_method_address("uint32 payments() const", WRAP_MFN(block_tx_repr, payments), convention::generic_call);
-			block_tx_type->set_method_address("string payment_address(uint32) const", WRAP_MFN(block_tx_repr, payment_address), convention::generic_call);
-			block_tx_type->set_method_address("uint256 payment_asset(uint32) const", WRAP_MFN(block_tx_repr, payment_asset), convention::generic_call);
-			block_tx_type->set_method_address("real320 payment_amount(uint32) const", WRAP_MFN(block_tx_repr, payment_amount), convention::generic_call);
+			block_tx_type->set_method_address("uint64 block_number() const", WRAP_MFN(block_tx_repr, block_number), convention::generic_call);
 			block_tx_type->set_method_address("real320 balance_delta_of(const address&in, const uint256&in) const", WRAP_MFN(block_tx_repr, balance_delta_of), convention::generic_call);
 			block_tx_type->set_method_address("real320 reserve_delta_of(const address&in, const uint256&in) const", WRAP_MFN(block_tx_repr, reserve_delta_of), convention::generic_call);
 			block_tx_type->set_method_address("payable payments_from(const address&in) const", WRAP_MFN(block_tx_repr, payments_from), convention::generic_call);
 			block_tx_type->set_method_address("payable payments_to(const address&in) const", WRAP_MFN(block_tx_repr, payments_to), convention::generic_call);
 			block_tx_type->set_method_address("payable reservations_from(const address&in) const", WRAP_MFN(block_tx_repr, reservations_from), convention::generic_call);
 			block_tx_type->set_method_address("payable reservations_to(const address&in) const", WRAP_MFN(block_tx_repr, reservations_to), convention::generic_call);
-			block_tx_type->set_method_address("tx delegate() const", WRAP_MFN(block_tx_repr, delegate), convention::generic_call);
+			vm->end_namespace();
+
+			vm->begin_namespace("bridge");
+			vm->set_function_address("void link(const uint256&in, const uint256&in, const string&in)", WRAP_FN(contract::bridge_link), convention::generic_call);
+			vm->set_function_address("void send(const uint256&in, const uint256&in, const string&in, const real320&in, const real320&in)", WRAP_FN(contract::bridge_send), convention::generic_call);
+			vm->set_function_address("bool requires_link()", WRAP_FN(contract::bridge_requires_link), convention::generic_call);
+			vm->set_function_address("bool requires_send()", WRAP_FN(contract::bridge_requires_send), convention::generic_call);
 			vm->end_namespace();
 
 			vm->begin_namespace("coin");
@@ -6944,7 +6873,7 @@ namespace tangent
 			auto* context = caller ? caller : vm->request_context();
 			auto* prev_mutable_program = context->get_user_data(SCRIPT_TAG_MUTABLE_PROGRAM);
 			auto* prev_immutable_program = context->get_user_data(SCRIPT_TAG_IMMUTABLE_PROGRAM);
-			auto* next_mutable_program = mutability == ccall::deploy_call || mutability == ccall::delegate_call || mutability == ccall::standard_call ? this : nullptr;
+			auto* next_mutable_program = mutability == ccall::deploy_call || mutability == ccall::standard_call ? this : nullptr;
 			context->set_user_data(next_mutable_program, SCRIPT_TAG_MUTABLE_PROGRAM);
 			context->set_user_data(this, SCRIPT_TAG_IMMUTABLE_PROGRAM);
 			context->is_nested(&depth_in);
@@ -7018,7 +6947,7 @@ namespace tangent
 				reentrancy_guards.insert(target);
 
 			auto transaction = transactions::call();
-			transaction.call_to(target, entrypoint, std::move(args), false);
+			transaction.call_to(target, entrypoint, std::move(args));
 			transaction.pays = payable.payments;
 			transaction.asset = executor->transaction->asset;
 			transaction.gas_price = executor->transaction->gas_price;
@@ -7072,8 +7001,6 @@ namespace tangent
 				return layer_exception(stringify::text("illegal call to function \"%.*s\": illegal operation", (int)function_name.size(), function_name.data()));
 
 			if (*mutability != ccall::deploy_call && function_name == deploy_function_name())
-				return layer_exception(stringify::text("illegal call to function \"%.*s\": illegal operation", (int)function_name.size(), function_name.data()));
-			else if (*mutability != ccall::delegate_call && function_name == delegate_function_name())
 				return layer_exception(stringify::text("illegal call to function \"%.*s\": illegal operation", (int)function_name.size(), function_name.data()));
 
 			auto* vm = entrypoint.get_vm();
@@ -7162,7 +7089,7 @@ namespace tangent
 
 					if (type.get_name() == SCRIPT_TYPE_PMUT)
 					{
-						if (*mutability != ccall::deploy_call && *mutability != ccall::delegate_call && *mutability != ccall::standard_call)
+						if (*mutability != ccall::deploy_call && *mutability != ccall::standard_call)
 							return layer_exception(stringify::text("illegal call to function \"%s\": argument #%i not bound to required instruction set (" SCRIPT_TYPE_PMUT ")", entrypoint.get_decl().data(), (int)i));
 
 						*mutability = ccall::standard_call;
@@ -7244,10 +7171,6 @@ namespace tangent
 		{
 			return module.get_function_by_name(deploy_function_name());
 		}
-		function program::delegate_function() const
-		{
-			return module.get_function_by_name(delegate_function_name());
-		}
 		string program::function_declaration() const
 		{
 			return tx_function_declaration(executor->transaction);
@@ -7259,31 +7182,6 @@ namespace tangent
 		uint64_t program::virtual_block_number() const
 		{
 			return executor->block->number;
-		}
-		uint32_t program::delegate_transaction_type() const
-		{
-			if (executor->transaction->as_type() != transactions::delegate::as_instance_type())
-				return 0;
-
-			auto& target = ((transactions::delegate*)executor->transaction)->transaction;
-			return target ? target->as_type() : 0;
-		}
-		const ledger::transaction_message* program::delegate_transaction_ptr(uint32_t type) const
-		{
-			if (executor->transaction->as_type() != transactions::delegate::as_instance_type())
-			{
-				contract::throw_ptr(exception_repr(exception_repr::category::requirement(), "not a delegate approval call"));
-				return nullptr;
-			}
-
-			auto& target = ((transactions::delegate*)executor->transaction)->transaction;
-			if (!target || (type > 0 && type != target->as_type()))
-			{
-				contract::throw_ptr(exception_repr(exception_repr::category::requirement(), "no matching delegate approval"));
-				return nullptr;
-			}
-
-			return *target;
 		}
 		program* program::fetch_mutable(immediate_context* coroutine)
 		{
@@ -7341,10 +7239,6 @@ namespace tangent
 		std::string_view program::deploy_function_name()
 		{
 			return std::string_view(SCRIPT_FUNCTION_CONSTRUCT, sizeof(SCRIPT_FUNCTION_CONSTRUCT) - 1);
-		}
-		std::string_view program::delegate_function_name()
-		{
-			return std::string_view(SCRIPT_FUNCTION_DELEGATE, sizeof(SCRIPT_FUNCTION_DELEGATE) - 1);
 		}
 	}
 }

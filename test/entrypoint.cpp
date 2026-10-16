@@ -61,6 +61,7 @@ struct block_mpc
 	algorithm::storage_type<uint8_t, 64> seed;
 };
 
+
 struct block_generator
 {
 	static void transfer_stage_1(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users)
@@ -229,38 +230,39 @@ struct block_generator
 		auto& [user1, user1_nonce] = users[0];
 		auto& [user2, user2_nonce] = users[1];
 		auto* call1 = memory::init<transactions::call>();
-		call1->call_to(contracts->at(0), "transfer", { format::variable(user2.public_key_hash.view()), format::variable(decimal(1234u)) }, false);
+		call1->call_to(contracts->at(0), "transfer", { format::variable(user2.public_key_hash.view()), format::variable(decimal(1234u)) });
 		call1->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(call1);
 
 		auto* call2 = memory::init<transactions::call>();
-		call2->call_to(contracts->at(0), "info", { }, false);
+		call2->call_to(contracts->at(0), "info", { });
 		call2->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(call2);
 
 		auto* call3 = memory::init<transactions::call>();
-		call3->call_to(contracts->at(2), "transfer", { format::variable(user1.public_key_hash.view()), format::variable(decimal(4321u)) }, true);
+		call3->call_to(contracts->at(2), "transfer", { format::variable(user1.public_key_hash.view()), format::variable(decimal(4321u)) });
+		call3->set_flags((uint8_t)transactions::call::feature::pipeline_pay);
 		call3->pay_with(algorithm::asset::id_of("TRX"), 10);
 		call3->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(call3);
 
 		auto* call4 = memory::init<transactions::call>();
-		call4->call_to(contracts->at(2), "info", { }, false);
+		call4->call_to(contracts->at(2), "info", { });
 		call4->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(call4);
 
 		auto* call5 = memory::init<transactions::call>();
-		call5->call_to(contracts->at(1), "balance_of_test_token", { }, false);
+		call5->call_to(contracts->at(1), "balance_of_test_token", { });
 		call5->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(call5);
 
 		auto* call6 = memory::init<transactions::call>();
-		call6->call_to(contracts->at(3), "balance_of_test_token", { }, false);
+		call6->call_to(contracts->at(3), "balance_of_test_token", { });
 		call6->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(call6);
 
 		auto* call7 = memory::init<transactions::call>();
-		call7->call_to(contracts->at(4), "test_module", { }, false);
+		call7->call_to(contracts->at(4), "test_module", { });
 		call7->set_gas(decimal::zero(), 1500000);
 		call7->sign(user2.secret_key, user2_nonce++);
 		transactions.push_back(call7);
@@ -908,10 +910,10 @@ struct block_generator
 		withdrawal_bitcoin->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(withdrawal_bitcoin);
 	}
-	static void deploy_delegate_stage(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users, vector<algorithm::pubkeyhash_t>* contracts)
+	static void deploy_bridge_stage(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users, vector<algorithm::pubkeyhash_t>* contracts)
 	{
 		auto& [user1, user1_nonce] = users[0];
-		string vault_program = os::file::read_as_string(*os::path::resolve("./.test/as_delegate.as", *os::directory::get_module(), true)).expect("delegate test contract not found");
+		string vault_program = os::file::read_as_string(*os::path::resolve("./.test/as_bridge.as", *os::directory::get_module(), true)).expect("bridge test contract not found");
 
 		auto* deploy = memory::init<transactions::deploy>();
 		deploy->from_program(vault_program, { });
@@ -919,7 +921,7 @@ struct block_generator
 		transactions.push_back(deploy);
 		contracts->push_back(deploy->get_account());
 	}
-	static void delegate_fund_stage(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users, vector<algorithm::pubkeyhash_t>* contracts)
+	static void bridge_fund_stage(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users, vector<algorithm::pubkeyhash_t>* contracts)
 	{
 		auto& [user2, user2_nonce] = users[1];
 		auto executor = ledger::executor_context(nullptr);
@@ -932,120 +934,83 @@ struct block_generator
 		transfer_funds->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(transfer_funds);
 	}
-	static void delegate_arm_stage(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users, vector<algorithm::pubkeyhash_t>* contracts)
-	{
-		auto& [user1, user1_nonce] = users[0];
-		auto* arm = memory::init<transactions::call>();
-		arm->set_asset("ETH");
-		arm->call_to(contracts->at(5), "arm_withdraw", { format::variable(string("0x89a0181659bd280836A2d33F57e3B5Dfa1a823CE")) }, false);
-		arm->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
-		transactions.push_back(arm);
-	}
-	static void delegate_reject_stage(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users, vector<algorithm::pubkeyhash_t>* contracts)
+	static void bridge_arm_stage(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users, vector<algorithm::pubkeyhash_t>* contracts)
 	{
 		auto& [user1, user1_nonce] = users[0];
 		auto executor = ledger::executor_context(nullptr);
-		auto bridge_hash = executor.get_bridge_instances(algorithm::asset::id_of("ETH"), 0, 1)->front().ref.hash;
+		auto bridge_ethereum = executor.get_bridge_instances(algorithm::asset::id_of("ETH"), 0, 1)->front();
+		auto bridge_hash = bridge_ethereum.ref.hash;
 
-		auto* out_of_bounds = memory::init<transactions::withdraw>();
-		out_of_bounds->set_routing_target("0x00000000000000000000000000000000000000b0", decimal(1u));
-		out_of_bounds->set_bridge_hash(bridge_hash);
-
-		auto* out_of_bounds_delegate = memory::init<transactions::delegate>();
-		out_of_bounds_delegate->callable = contracts->at(5);
-		out_of_bounds_delegate->transaction = out_of_bounds;
-		out_of_bounds_delegate->set_asset("ETH");
-		out_of_bounds_delegate->set_gas(decimal::zero(), 500000);
-		VI_PANIC(out_of_bounds_delegate->sign(user1.secret_key, user1_nonce++), "signing failed");
-		transactions.push_back(out_of_bounds_delegate);
-
-		auto* unarmed = memory::init<transactions::withdraw>();
-		unarmed->set_routing_target("0x00000000000000000000000000000000000000a0", decimal(1u));
-		unarmed->set_bridge_hash(bridge_hash);
-
-		auto* unarmed_delegate = memory::init<transactions::delegate>();
-		unarmed_delegate->callable = contracts->at(5);
-		unarmed_delegate->transaction = unarmed;
-		unarmed_delegate->set_asset("ETH");
-		unarmed_delegate->set_gas(decimal::zero(), 500000);
-		VI_PANIC(unarmed_delegate->sign(user1.secret_key, user1_nonce++), "signing failed");
-		transactions.push_back(unarmed_delegate);
-
-		auto* unapproved_call = memory::init<transactions::call>();
-		unapproved_call->call_to(contracts->at(5), "ping", { }, false);
-
-		auto* unapproved_call_delegate = memory::init<transactions::delegate>();
-		unapproved_call_delegate->callable = contracts->at(5);
-		unapproved_call_delegate->transaction = unapproved_call;
-		unapproved_call_delegate->set_asset("ETH");
-		unapproved_call_delegate->set_gas(decimal::zero(), 500000);
-		VI_PANIC(unapproved_call_delegate->sign(user1.secret_key, user1_nonce++), "signing failed");
-		transactions.push_back(unapproved_call_delegate);
-
-		auto* forbidden_inner = memory::init<transactions::setup>();
-		auto* forbidden_inner_delegate = memory::init<transactions::delegate>();
-		forbidden_inner_delegate->callable = contracts->at(5);
-		forbidden_inner_delegate->transaction = forbidden_inner;
-		forbidden_inner_delegate->set_asset("ETH");
-		forbidden_inner_delegate->set_gas(decimal::zero(), 500000);
-		VI_PANIC(forbidden_inner_delegate->sign(user1.secret_key, user1_nonce++), "signing failed");
-		transactions.push_back(forbidden_inner_delegate);
+		auto* arm = memory::init<transactions::call>();
+		arm->set_asset("ETH");
+		arm->call_to(contracts->at(5), "arm_withdraw", { format::variable(string("0x89a0181659bd280836A2d33F57e3B5Dfa1a823CE")), format::variable(bridge_hash), format::variable(bridge_ethereum.fee_rate) });
+		arm->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
+		transactions.push_back(arm);
 	}
-	static void delegate_withdraw_stage(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users, vector<algorithm::pubkeyhash_t>* contracts)
+	static void bridge_reject_stage(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users, vector<algorithm::pubkeyhash_t>* contracts)
 	{
 		auto& [user1, user1_nonce] = users[0];
-		auto& [user2, user2_nonce] = users[1];
+		auto executor = ledger::executor_context(nullptr);
+		auto bridge_ethereum = executor.get_bridge_instances(algorithm::asset::id_of("ETH"), 0, 1)->front();
+		auto bridge_hash = bridge_ethereum.ref.hash;
+
+		auto* unarmed = memory::init<transactions::call>();
+		unarmed->set_asset("ETH");
+		unarmed->call_to(contracts->at(5), "delegate", { format::variable(string("0x00000000000000000000000000000000000000b0")), format::variable(decimal(1u)) });
+		unarmed->set_flags((uint8_t)transactions::call::feature::require_withdraw);
+		VI_PANIC(unarmed->sign(user1.secret_key, user1_nonce++), "signing failed");
+		transactions.push_back(unarmed);
+
+		auto* unflagged = memory::init<transactions::call>();
+		unflagged->set_asset("ETH");
+		unflagged->call_to(contracts->at(5), "try_send", { format::variable(bridge_hash) });
+		VI_PANIC(unflagged->sign(user1.secret_key, user1_nonce++), "signing failed");
+		transactions.push_back(unflagged);
+
+		auto* mismatched = memory::init<transactions::call>();
+		mismatched->set_asset("ETH");
+		mismatched->call_to(contracts->at(5), "delegate", { format::variable(string("0x89a0181659bd280836A2d33F57e3B5Dfa1a823CE")), format::variable(decimal(1u)) });
+		mismatched->set_flags((uint8_t)transactions::call::feature::require_route);
+		VI_PANIC(mismatched->sign(user1.secret_key, user1_nonce++), "signing failed");
+		transactions.push_back(mismatched);
+
+		auto* misrouted = memory::init<transactions::call>();
+		misrouted->set_asset("ETH");
+		misrouted->call_to(contracts->at(5), "try_link", { format::variable(bridge_hash) });
+		misrouted->set_flags((uint8_t)transactions::call::feature::require_withdraw);
+		VI_PANIC(misrouted->sign(user1.secret_key, user1_nonce++), "signing failed");
+		transactions.push_back(misrouted);
+
+		auto* mispriced_arm = memory::init<transactions::call>();
+		mispriced_arm->set_asset("ETH");
+		mispriced_arm->call_to(contracts->at(5), "arm_withdraw", { format::variable(string("0x00000000000000000000000000000000000000b1")), format::variable(bridge_hash), format::variable(bridge_ethereum.fee_rate * decimal(2)) });
+		mispriced_arm->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
+		transactions.push_back(mispriced_arm);
+
+		auto* mispriced = memory::init<transactions::call>();
+		mispriced->set_asset("ETH");
+		mispriced->call_to(contracts->at(5), "delegate", { format::variable(string("0x00000000000000000000000000000000000000b1")), format::variable(decimal(1u)) });
+		mispriced->set_flags((uint8_t)transactions::call::feature::require_withdraw);
+		VI_PANIC(mispriced->sign(user1.secret_key, user1_nonce++), "signing failed");
+		transactions.push_back(mispriced);
+	}
+	static void bridge_withdraw_stage(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users, vector<algorithm::pubkeyhash_t>* contracts, uint256_t* call_hash)
+	{
+		auto& [user1, user1_nonce] = users[0];
 		auto executor = ledger::executor_context(nullptr);
 		auto bridge_ethereum = executor.get_bridge_instances(algorithm::asset::id_of("ETH"), 0, 1)->front();
 		auto vault_balance = executor.get_account_balance(algorithm::asset::id_of("ETH"), contracts->at(5)).expect("contract balance not valid").get_balance();
 		VI_PANIC((vault_balance - bridge_ethereum.fee_rate).is_positive(), "contract balance must cover the withdrawal fee");
 
-		auto* withdrawal = memory::init<transactions::withdraw>();
-		withdrawal->set_routing_target("0x89a0181659bd280836A2d33F57e3B5Dfa1a823CE", vault_balance - bridge_ethereum.fee_rate);
-		withdrawal->set_bridge_hash(bridge_ethereum.ref.hash);
-
-		auto* delegation = memory::init<transactions::delegate>();
-		delegation->callable = contracts->at(5);
-		delegation->transaction = withdrawal;
+		auto* delegation = memory::init<transactions::call>();
 		delegation->set_asset("ETH");
+		delegation->call_to(contracts->at(5), "delegate", { format::variable(string("0x89a0181659bd280836A2d33F57e3B5Dfa1a823CE")), format::variable(vault_balance - bridge_ethereum.fee_rate) });
+		delegation->set_flags((uint8_t)transactions::call::feature::require_withdraw);
 		delegation->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
+		*call_hash = delegation->as_hash();
 		transactions.push_back(delegation);
-
-		auto* invalid_nested = memory::init<transactions::delegate>();
-		invalid_nested->callable = contracts->at(5);
-		invalid_nested->transaction = memory::init<transactions::withdraw>();
-		invalid_nested->set_asset("ETH");
-		invalid_nested->sign(user1.secret_key, user1_nonce);
-		VI_PANIC(invalid_nested->validate(0).is_error(), "nested delegate transaction must be rejected");
-
-		auto* invalid_rollup = memory::init<transactions::delegate>();
-		invalid_rollup->callable = contracts->at(5);
-		invalid_rollup->transaction = memory::init<transactions::rollup>();
-		invalid_rollup->set_asset("ETH");
-		invalid_rollup->sign(user1.secret_key, user1_nonce);
-		VI_PANIC(invalid_rollup->validate(0).is_error(), "rolled up inner transaction must be rejected");
-
-		auto* invalid_asset = memory::init<transactions::delegate>();
-		invalid_asset->callable = contracts->at(5);
-		invalid_asset->transaction = memory::init<transactions::withdraw>();
-		invalid_asset->transaction->set_asset("BTC");
-		invalid_asset->set_asset("ETH");
-		invalid_asset->sign(user1.secret_key, user1_nonce);
-		VI_PANIC(invalid_asset->validate(0).is_error(), "inner transaction asset mismatch must be rejected");
-
-		auto* signed_inner = memory::init<transactions::withdraw>();
-		signed_inner->set_routing_target("0x89a0181659bd280836A2d33F57e3B5Dfa1a823CE", decimal(1u));
-		signed_inner->set_bridge_hash(bridge_ethereum.ref.hash);
-		signed_inner->sign(user2.secret_key, user2_nonce + 999u);
-
-		auto* invalid_signed = memory::init<transactions::delegate>();
-		invalid_signed->callable = contracts->at(5);
-		invalid_signed->transaction = signed_inner;
-		invalid_signed->set_asset("ETH");
-		invalid_signed->sign(user1.secret_key, user1_nonce);
-		VI_PANIC(invalid_signed->validate(0).is_error(), "pre-signed inner transaction must be rejected");
 	}
-	static void delegate_verify_stage(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users, vector<algorithm::pubkeyhash_t>* contracts)
+	static void bridge_verify_stage(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users, vector<algorithm::pubkeyhash_t>* contracts, uint256_t* call_hash)
 	{
 		auto& [user1, user1_nonce] = users[0];
 		auto executor = ledger::executor_context(nullptr);
@@ -1053,37 +1018,44 @@ struct block_generator
 		auto vault_balance = executor.get_account_balance(algorithm::asset::id_of("ETH"), contracts->at(5)).or_else(states::account_balance(contracts->at(5), algorithm::asset::id_of("ETH"), nullptr)).get_balance();
 		VI_PANIC(vault_balance == decimal::zero(), "delegated withdrawal must drain the contract account");
 
+		auto delegation = executor.get_block_transaction(transactions::call::as_instance_type(), *call_hash);
+		VI_PANIC(delegation && delegation->receipt.successful, "delegated call transaction must be confirmed");
+
+		bool requested = false, reported = false;
+		for (auto& event : delegation->receipt.events)
+		{
+			if (event.emitter.empty() && event.event == transactions::call::as_instance_type() && event.args.size() == 5 && event.args[0].as_uint32() == transactions::withdraw::as_instance_type() && event.args[1].as_uint256() == bridge_ethereum.ref.hash && event.args[3].as_string() == "0x89a0181659bd280836A2d33F57e3B5Dfa1a823CE")
+				requested = true;
+			else if (event.emitter.empty() && event.event == transactions::withdraw::as_instance_type() && event.args.size() == 1 && event.args[0].as_string().size() == sizeof(algorithm::pubkeyhash_t))
+				reported = true;
+		}
+		VI_PANIC(requested && reported, "delegated call must emit both withdrawal request and execution report");
+
 		auto* verify = memory::init<transactions::call>();
 		verify->set_asset("ETH");
-		verify->call_to(contracts->at(5), "verify_withdraw", { format::variable(string("0x89a0181659bd280836A2d33F57e3B5Dfa1a823CE")), format::variable(bridge_ethereum.fee_rate) }, false);
+		verify->call_to(contracts->at(5), "verify_withdraw", { format::variable(string("0x89a0181659bd280836A2d33F57e3B5Dfa1a823CE")), format::variable(bridge_ethereum.fee_rate) });
 		verify->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(verify);
 	}
-	static void delegate_replay_stage(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users, vector<algorithm::pubkeyhash_t>* contracts)
+	static void bridge_replay_stage(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users, vector<algorithm::pubkeyhash_t>* contracts)
 	{
-		auto& [user2, user2_nonce] = users[1];
-		auto executor = ledger::executor_context(nullptr);
-		auto bridge_hash = executor.get_bridge_instances(algorithm::asset::id_of("ETH"), 0, 1)->front().ref.hash;
+		auto& [user1, user1_nonce] = users[0];
 
-		auto* replayed = memory::init<transactions::withdraw>();
-		replayed->set_routing_target("0x89a0181659bd280836A2d33F57e3B5Dfa1a823CE", decimal(1u));
-		replayed->set_bridge_hash(bridge_hash);
-
-		auto* replayed_delegate = memory::init<transactions::delegate>();
-		replayed_delegate->callable = contracts->at(5);
-		replayed_delegate->transaction = replayed;
-		replayed_delegate->set_asset("ETH");
-		replayed_delegate->set_gas(decimal::zero(), 500000);
-		VI_PANIC(replayed_delegate->sign(user2.secret_key, user2_nonce++), "signing failed");
-		transactions.push_back(replayed_delegate);
+		auto* replayed = memory::init<transactions::call>();
+		replayed->set_asset("ETH");
+		replayed->call_to(contracts->at(5), "delegate", { format::variable(string("0x89a0181659bd280836A2d33F57e3B5Dfa1a823CE")), format::variable(decimal(1u)) });
+		replayed->set_flags((uint8_t)transactions::call::feature::require_withdraw);
+		VI_PANIC(replayed->sign(user1.secret_key, user1_nonce++), "signing failed");
+		transactions.push_back(replayed);
 	}
-	static void delegate_gates_stage(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users, vector<algorithm::pubkeyhash_t>* contracts)
+	static void bridge_rearm_stage(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users, vector<algorithm::pubkeyhash_t>* contracts)
 	{
 		auto& [user1, user1_nonce] = users[0];
 		auto& [user2, user2_nonce] = users[1];
 		auto executor = ledger::executor_context(nullptr);
-		auto value = executor.get_account_balance(algorithm::asset::id_of("ETH"), user2.public_key_hash).expect("user balance not valid").get_balance() * decimal(std::string_view("0.5"));
-		VI_PANIC(value.is_positive(), "contract funding value must be positive");
+		auto bridge_ethereum = executor.get_bridge_instances(algorithm::asset::id_of("ETH"), 0, 1)->front();
+		auto value = executor.get_account_balance(algorithm::asset::id_of("ETH"), user2.public_key_hash).expect("user balance not valid").get_balance() * decimal(std::string_view("0.25"));
+		VI_PANIC((value - bridge_ethereum.fee_rate).is_positive(), "contract funding value must cover the withdrawal fee");
 
 		auto* transfer_funds = memory::init<transactions::transfer>();
 		transfer_funds->set_asset("ETH");
@@ -1091,113 +1063,34 @@ struct block_generator
 		transfer_funds->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(transfer_funds);
 
-		auto* allow_transfer = memory::init<transactions::call>();
-		allow_transfer->set_asset("ETH");
-		allow_transfer->call_to(contracts->at(5), "allow_transfer", { }, false);
-		allow_transfer->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
-		transactions.push_back(allow_transfer);
+		auto* arm = memory::init<transactions::call>();
+		arm->set_asset("ETH");
+		arm->call_to(contracts->at(5), "arm_withdraw", { format::variable(string("0x89a0181659bd280836A2d33F57e3B5Dfa1a823CE")), format::variable(bridge_ethereum.ref.hash), format::variable(bridge_ethereum.fee_rate) });
+		arm->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
+		transactions.push_back(arm);
 
-		auto* allow_call = memory::init<transactions::call>();
-		allow_call->set_asset("ETH");
-		allow_call->call_to(contracts->at(5), "allow_call", { }, false);
-		allow_call->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
-		transactions.push_back(allow_call);
+		auto* withdrawal = memory::init<transactions::call>();
+		withdrawal->set_asset("ETH");
+		withdrawal->call_to(contracts->at(5), "delegate", { format::variable(string("0x89a0181659bd280836A2d33F57e3B5Dfa1a823CE")), format::variable(value - bridge_ethereum.fee_rate) });
+		withdrawal->set_flags((uint8_t)transactions::call::feature::require_withdraw);
+		withdrawal->set_gas(decimal::zero(), 1500000);
+		VI_PANIC(withdrawal->sign(user1.secret_key, user1_nonce++), "signing failed");
+		transactions.push_back(withdrawal);
 	}
-	static void delegate_transfer_stage(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users, vector<algorithm::pubkeyhash_t>* contracts)
+	static void bridge_probe_stage(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users, vector<algorithm::pubkeyhash_t>* contracts)
 	{
 		auto& [user2, user2_nonce] = users[1];
-		auto executor = ledger::executor_context(nullptr);
-		auto vault_balance = executor.get_account_balance(algorithm::asset::id_of("ETH"), contracts->at(5)).expect("contract balance not valid").get_balance();
-		VI_PANIC(vault_balance.is_positive(), "contract balance must be positive");
-		auto first = vault_balance * decimal(std::string_view("0.5"));
-		auto second = vault_balance - first;
-
-		auto* seed_amounts = memory::init<transactions::call>();
-		seed_amounts->set_asset("ETH");
-		seed_amounts->call_to(contracts->at(5), "set_transfer_amounts", { format::variable(first), format::variable(second) }, false);
-		seed_amounts->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
-		transactions.push_back(seed_amounts);
-
-		auto* seed_recipient0 = memory::init<transactions::call>();
-		seed_recipient0->set_asset("ETH");
-		seed_recipient0->call_to(contracts->at(5), "set_transfer_recipient", { format::variable((uint64_t)0), format::variable(users[0].wallet.get_address()) }, false);
-		seed_recipient0->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
-		transactions.push_back(seed_recipient0);
-
-		auto* seed_recipient1 = memory::init<transactions::call>();
-		seed_recipient1->set_asset("ETH");
-		seed_recipient1->call_to(contracts->at(5), "set_transfer_recipient", { format::variable((uint64_t)1), format::variable(users[1].wallet.get_address()) }, false);
-		seed_recipient1->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
-		transactions.push_back(seed_recipient1);
-
-		auto* distribution = memory::init<transactions::transfer>();
-		distribution->set_to(users[0].wallet.public_key_hash, first);
-		distribution->set_to(users[1].wallet.public_key_hash, second);
-
-		auto* delegation = memory::init<transactions::delegate>();
-		delegation->callable = contracts->at(5);
-		delegation->transaction = distribution;
-		delegation->set_asset("ETH");
-		delegation->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
-		transactions.push_back(delegation);
-	}
-	static void delegate_call_stage(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users, vector<algorithm::pubkeyhash_t>* contracts)
-	{
-		auto& [user1, user1_nonce] = users[0];
-		auto* ping = memory::init<transactions::call>();
-		ping->call_to(contracts->at(5), "ping", { }, false);
-
-		auto* delegation = memory::init<transactions::delegate>();
-		delegation->callable = contracts->at(5);
-		delegation->transaction = ping;
-		delegation->set_asset("ETH");
-		delegation->sign(user1.secret_key, user1_nonce++, decimal::zero()).expect("pre-validation failed");
-		transactions.push_back(delegation);
-	}
-	static void delegate_verify_state_stage(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users, vector<algorithm::pubkeyhash_t>* contracts)
-	{
-		auto& [user2, user2_nonce] = users[1];
-		auto executor = ledger::executor_context(nullptr);
-		auto vault_balance = executor.get_account_balance(algorithm::asset::id_of("ETH"), contracts->at(5)).or_else(states::account_balance(contracts->at(5), algorithm::asset::id_of("ETH"), nullptr)).get_balance();
-		VI_PANIC(vault_balance == decimal::zero(), "delegated transfer must drain the contract account");
-
-		auto* verify = memory::init<transactions::call>();
-		verify->set_asset("ETH");
-		verify->call_to(contracts->at(5), "verify_state", { }, false);
-		verify->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
-		transactions.push_back(verify);
-
 		auto* probe_mint = memory::init<transactions::call>();
 		probe_mint->set_asset("ETH");
-		probe_mint->call_to(contracts->at(5), "probe_mint", { format::variable(string("RESV")), format::variable(decimal(100)) }, false);
+		probe_mint->call_to(contracts->at(5), "probe_mint", { format::variable(string("RESV")), format::variable(decimal(100)) });
 		probe_mint->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
 		transactions.push_back(probe_mint);
 
-		auto* report = memory::init<transactions::call>();
-		report->set_asset("ETH");
-		report->call_to(contracts->at(5), "report_state", { }, false);
-		report->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
-		transactions.push_back(report);
-
-		auto receipt = ledger::transaction_receipt();
-		auto gas_limit = ledger::executor_context::calculate_tx_gas((ledger::transaction_message*)report, ledger::block_header::get_gas_limit(), &receipt);
-		VI_PANIC(gas_limit && receipt.successful && receipt.events.size() == 1 && receipt.events.front().args.size() == 6, "state report must emit one six-field structure");
-
-		auto& fields = receipt.events.front().args;
-		VI_PANIC(fields[0].as_string() == users[0].wallet.get_address() && fields[1].as_string() == users[1].wallet.get_address(), "delegated transfer must pay the expected recipients");
-
-		auto user1_now = executor.get_account_balance(algorithm::asset::id_of("ETH"), users[0].wallet.public_key_hash).or_else(states::account_balance(users[0].wallet.public_key_hash, algorithm::asset::id_of("ETH"), nullptr)).get_balance();
-		auto user2_now = executor.get_account_balance(algorithm::asset::id_of("ETH"), users[1].wallet.public_key_hash).or_else(states::account_balance(users[1].wallet.public_key_hash, algorithm::asset::id_of("ETH"), nullptr)).get_balance();
-		VI_PANIC(user1_now - fields[2].as_decimal() == fields[4].as_decimal(), "delegated transfer must credit exactly the approved amount to the first recipient");
-		VI_PANIC(user2_now - fields[3].as_decimal() == fields[5].as_decimal(), "delegated transfer must credit exactly the approved amount to the second recipient and spare the signer");
-	}
-	static void delegate_probe_burn_stage(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users, vector<algorithm::pubkeyhash_t>* contracts)
-	{
-		auto& [user2, user2_nonce] = users[1];
 		auto* probe_burn = memory::init<transactions::call>();
 		probe_burn->set_asset("ETH");
-		probe_burn->call_to(contracts->at(5), "probe_burn", { format::variable(string("RESV")), format::variable(decimal(100)) }, false);
-		probe_burn->sign(user2.secret_key, user2_nonce++, decimal::zero()).expect("pre-validation failed");
+		probe_burn->call_to(contracts->at(5), "probe_burn", { format::variable(string("RESV")), format::variable(decimal(100)) });
+		probe_burn->set_gas(decimal::zero(), 1500000);
+		VI_PANIC(probe_burn->sign(user2.secret_key, user2_nonce++), "signing failed");
 		transactions.push_back(probe_burn);
 	}
 	static void deploy_sandbox_stage(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users, vector<algorithm::pubkeyhash_t>* contracts)
@@ -1243,7 +1136,7 @@ struct block_generator
 			{
 				auto* trap = memory::init<transactions::call>();
 				trap->set_asset("ETH");
-				trap->call_to(contracts->at(i), trap_name, { }, false);
+				trap->call_to(contracts->at(i), trap_name, { });
 				trap->set_gas(decimal::zero(), 50000);
 				VI_PANIC(trap->sign(user1.secret_key, user1_nonce++), "call sign failed");
 				transactions.push_back(trap);
@@ -2397,6 +2290,7 @@ static void test_blockchain_full_coverage(vector<block_account>* userdata)
 	new_chain_state([&]()
 	{
 		vector<block_account> users; vector<algorithm::pubkeyhash_t> contracts;
+		uint256_t bridge_call_hash = 0;
 		for (size_t i = 0; i < kernel::params().policy.participation.min_per_account + 2; i++)
 			users.push_back(block_account(ledger::wallet::from_seed(stringify::text("00000%i", (int)i)), 0));
 
@@ -2412,43 +2306,40 @@ static void test_blockchain_full_coverage(vector<block_account>* userdata)
 		TEST_BLOCK(&block_generator::transfer_stage_2, "0xd189e0bb01d78642b8c8deda7382f95ae3293c092082a0b65e352b8f9e1a553b", 10);
 		TEST_BLOCK(std::bind(&block_generator::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), users[2].wallet.get_address(), 0.05), "0x4c837440c26ceb0a00993a6f0bea4c6aebeb0354472e80b4c53435230b0a5c90", 11);
 		TEST_BLOCK(std::bind(&block_generator::deploy_stage_1, std::placeholders::_1, std::placeholders::_2, &contracts), "0x50f547e6c1fe35de4e0dd95d281ae09b64d847ee72ac730d35c84d02ad4b818a", 12);
-		TEST_BLOCK(std::bind(&block_generator::deploy_stage_2, std::placeholders::_1, std::placeholders::_2, &contracts), "0x8b6d01b3db9c3ed6a377160845d1e697616b022c3013381cdce26cd799f47b91", 13);
-		TEST_BLOCK(std::bind(&block_generator::call_stage_1, std::placeholders::_1, std::placeholders::_2, &contracts), "0xd9523025539150742c0c4c1bf3708a9bafb808a37cb7d591bab1e7fb3e975779", 14);
-		TEST_BLOCK(&block_generator::rollup_stage_1, "0x0bbff21ae8c36a91cd256a4ad1aa03fe801e4294b1ae427ed79215677d7d550c", 15);
-		TEST_BLOCK(std::bind(&block_generator::deploy_delegate_stage, std::placeholders::_1, std::placeholders::_2, &contracts), "0x5d7977e9ba002ff2bcaf614cfb0516fe9baaf9703ecdc36db6deea2b824fbe5d", 16);
-		TEST_BLOCK(std::bind(&block_generator::delegate_fund_stage, std::placeholders::_1, std::placeholders::_2, &contracts), "0xd2f455764d0d691613611098964731e4304b258f1a3bbafb975edd47dd9b7a67", 17);
-		TEST_BLOCK(std::bind(&block_generator::delegate_arm_stage, std::placeholders::_1, std::placeholders::_2, &contracts), "0x8a42953c6c8dd839ea5170d083289e7cdcddcf715a959b59efa84797b3d6cca8", 18);
-		TEST_BLOCK_FAULTY(std::bind(&block_generator::delegate_reject_stage, std::placeholders::_1, std::placeholders::_2, &contracts), "0x0f4cc2befba163cfb0efa648e84cbe2c0df48f66f3991c58cf4aaf6b966ef328", 19);
-		TEST_BLOCK(std::bind(&block_generator::delegate_withdraw_stage, std::placeholders::_1, std::placeholders::_2, &contracts), "0xeda913556f5af806b8db063a9e4dfffdebefe9c83f74e8b3f1000860fb60f4e5", 20);
-		TEST_BLOCK(std::bind(&block_generator::delegate_verify_stage, std::placeholders::_1, std::placeholders::_2, &contracts), "0x8229bac768e26a9d0f28961527214088f88e30fbc09686cffba6d332c03a040d", 23);
-		TEST_BLOCK_FAULTY(std::bind(&block_generator::delegate_replay_stage, std::placeholders::_1, std::placeholders::_2, &contracts), "0xbc9bfd0e190bbaee1cdf1a7ddd924c09d8e63680b949b0d0c815c50b7d330fc6", 24);
-		TEST_BLOCK(std::bind(&block_generator::delegate_gates_stage, std::placeholders::_1, std::placeholders::_2, &contracts), "0xcc0d92b1c3e3db35ec2d7f095497b96b641cf68c11828ce6b587c2c4510e87e2", 25);
-		TEST_BLOCK(std::bind(&block_generator::delegate_transfer_stage, std::placeholders::_1, std::placeholders::_2, &contracts), "0xa8ecaf4c76a7c2936ab24f1cc76eece7450a358e708b9b304b6fbeaab6b1513b", 26);
-		TEST_BLOCK(std::bind(&block_generator::delegate_call_stage, std::placeholders::_1, std::placeholders::_2, &contracts), "0x964044815f0f5b400554d7d7f69787f6ef35c282b2f6b156b1f692c9cdca44aa", 27);
-		TEST_BLOCK(std::bind(&block_generator::delegate_verify_state_stage, std::placeholders::_1, std::placeholders::_2, &contracts), "0xe254de36d9e32b42e70e7dda23516210f3d5e8903fed0a142d61a2ed4661c68c", 28);
-		TEST_BLOCK(std::bind(&block_generator::delegate_probe_burn_stage, std::placeholders::_1, std::placeholders::_2, &contracts), "0xe5cc331350511ecd8bf5f822dd6fffcc2ee903754ac9bc8b37fdc21034d3fd0d", 29);
-		TEST_BLOCK(std::bind(&block_generator::deploy_sandbox_stage, std::placeholders::_1, std::placeholders::_2, &contracts), "0xf7c950f5b83368f40b55635e923e38b77411591523a635e991d51cca27255c66", 30);
-		TEST_BLOCK(std::bind(&block_generator::deploy_sandbox_2_stage, std::placeholders::_1, std::placeholders::_2, &contracts), "0x4e4fcd82bac73adcbbf88cd54cf616ca9206895c05f731b6a9171b2b2c84950e", 31);
-		TEST_BLOCK_FAULTY(std::bind(&block_generator::sandbox_traps_stage, std::placeholders::_1, std::placeholders::_2, &contracts), "0x761cb2d5379d16dfa27262a19eca2a294ad22063ff2525a289df4ac588548915", 32);
-		TEST_BLOCK(std::bind(&block_generator::sandbox_verify_stage, std::placeholders::_1, std::placeholders::_2, &contracts), "0x3316e1cf660ccaf40d054156222a10355e11ec1952dab26e03799e3e9d35967f", 33);
-		TEST_BLOCK(std::bind(&block_generator::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 0, 1), "0xa0b44694303905e6e2779c7f9575f37b116a04f048c605ac75187e3b34ba4d0a", 34);
-		TEST_BLOCK_FAULTY(&block_generator::migrate_stage_1, "0x88b651f3ecff2e3f25ea19130f2ba51b2376d46f2a2779f061538c2bcf4ed24c", 35);
-		TEST_BLOCK(&block_generator::migrate_stage_2, "0xf6ba5fe6ebf83543c24fa7c690c546e2bc56c2a3b4c36980deb69614df985f7b", 37);
-		TEST_BLOCK(&block_generator::migrate_stage_3, "0xa4ef5c7bc1750dc608a76e8df545e81db8d1720ee873533c9cfe278e592877e1", 38);
-		TEST_BLOCK(&block_generator::migrate_stage_4, "0xa217501928c6647986910e0a9c203d2173b73b4b93c41ee93d11d4912b8f03ed", 40);
-		TEST_BLOCK(&block_generator::withdraw_stage_1, "0xec2decb166ad588b295568e81099ec979e3f4e5d391b99d40e310f3851f9fa11", 42);
-		TEST_BLOCK(&block_generator::withdraw_stage_2, "0x819b1493cb0c0a11a3243339b1eb36b3e435a59a393096eb60c0e1eaa2628bbd", 45);
-		TEST_BLOCK(&block_generator::withdraw_stage_3, "0x4c9a40acb55c2137f2583b0461ce526af37360ba13140d34ca442675809b9936", 48);
-		TEST_BLOCK(&block_generator::withdraw_stage_4, "0xabb1007f3e7b6b00bc7071a2271e7bf3918c70747bfac26752a19eaf33c148bf", 50);
-		TEST_BLOCK(&block_generator::withdraw_stage_5, "0x556103874f0d2b95d0825ec943d11858fc72627c66fa6b2e336448d49881c94e", 51);
-		TEST_BLOCK(&block_generator::withdraw_stage_6, "0x3542b7d1f3792749398feed76093b717333481108ae93a61a4c69799f611c95c", 52);
-		TEST_BLOCK(&block_generator::withdraw_stage_7, "0x62a98c483d14d7c1875c1eff97e08f363908c87999fd7892715bc3c1d2c4c5be", 53);
-		TEST_BLOCK(&block_generator::withdraw_stage_8, "0xec4d1b7d2ea3b3e20507dc68a73964755c65b91d5174f4eaa9ba8b2a940e3879", 54);
-		TEST_BLOCK(&block_generator::withdraw_stage_9, "0x503506501cddafcbd2990a00be996a0a1b871be880fa4a4ee283f24db729da71", 57);
-		TEST_BLOCK(&block_generator::withdraw_stage_10, "0x87222153ceaa6d0887c5452d90e8e03bf57d9363aea525bacd333f3d6b5689fd", 60);
-		TEST_BLOCK(std::bind(&block_generator::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 1, 0), "0x28c34b7d70c6da44e952fefdeae5b820f56562b1e6701ecb51a66c48e9528caf", 63);
-		TEST_BLOCK_FALLBACK(&block_generator::production_stage_1, "0x0a338aefae89649949e64a70f237264d838c12442f561123eb7987fc9a68d26e", 64);
-		TEST_BLOCK(&block_generator::production_stage_2, "0x67997eef75832e7dbae832cfa7556adee0e51bc8657b02d4d48283799d06541a", 65);
+		TEST_BLOCK(std::bind(&block_generator::deploy_stage_2, std::placeholders::_1, std::placeholders::_2, &contracts), "0xec8c0695b6701bdebc4b03f77fa1c5cf4846fe7844e2e6482948b4ca4cbf5590", 13);
+		TEST_BLOCK(std::bind(&block_generator::call_stage_1, std::placeholders::_1, std::placeholders::_2, &contracts), "0x80aad28bf41e9f6de61dde22853532502ac88b85f8304fdb89edbb5fd6d2dae9", 14);
+		TEST_BLOCK(&block_generator::rollup_stage_1, "0xc50da01a07aeca766947674385020dd6ba99cdc41445b47810243f5ec769442a", 15);
+		TEST_BLOCK(std::bind(&block_generator::deploy_bridge_stage, std::placeholders::_1, std::placeholders::_2, &contracts), "0x2f5356d953dd7de69a830f91616258fce0dbe53911350a4af86651dbe70e2bb4", 16);
+		TEST_BLOCK(std::bind(&block_generator::bridge_fund_stage, std::placeholders::_1, std::placeholders::_2, &contracts), "0x5b89b1611ad220d45669ee447bac48bc0d012eb13e9572b986b9091b5b70cba3", 17);
+		TEST_BLOCK(std::bind(&block_generator::bridge_arm_stage, std::placeholders::_1, std::placeholders::_2, &contracts), "0x88276ab0cbb6dd18a3ec06eef1d34fb0750e09de0b318a06a7b394112e26795e", 18);
+		TEST_BLOCK_FAULTY(std::bind(&block_generator::bridge_reject_stage, std::placeholders::_1, std::placeholders::_2, &contracts), "0x02673d2cb6c5f9794ac2b2e1416042afd099a67886531164eb1070620383047d", 19);
+		TEST_BLOCK(std::bind(&block_generator::bridge_withdraw_stage, std::placeholders::_1, std::placeholders::_2, &contracts, &bridge_call_hash), "0x52b9a74d78abf128ef4921cc5096a7e095ee1a7159feff6324b7984f615d08b0", 20);
+		TEST_BLOCK(std::bind(&block_generator::bridge_verify_stage, std::placeholders::_1, std::placeholders::_2, &contracts, &bridge_call_hash), "0xc0174fc24cfc70d61469db42a86a116e00b942becf94023d609ffaff853be448", 23);
+		TEST_BLOCK_FAULTY(std::bind(&block_generator::bridge_replay_stage, std::placeholders::_1, std::placeholders::_2, &contracts), "0x2386cb1638141f8cebb6720f6eb0cc63f85fa024df2aa14a4d5ea06998ac6c88", 24);
+		TEST_BLOCK(std::bind(&block_generator::bridge_rearm_stage, std::placeholders::_1, std::placeholders::_2, &contracts), "0x95622798a937930fe28b995968e96cba99b12c37c361bbff4589e264d138f61b", 25);
+		TEST_BLOCK(std::bind(&block_generator::bridge_probe_stage, std::placeholders::_1, std::placeholders::_2, &contracts), "0xa86b160ba1290c00c8243caa955d6d7bc273a77b4b7b8188e9bf3034df48a8d7", 28);
+		TEST_BLOCK(std::bind(&block_generator::deploy_sandbox_stage, std::placeholders::_1, std::placeholders::_2, &contracts), "0x2d49f69dee114de7e27be37a95a18406a6b387f3ff200d1e28d8ff7b8e433134", 29);
+		TEST_BLOCK(std::bind(&block_generator::deploy_sandbox_2_stage, std::placeholders::_1, std::placeholders::_2, &contracts), "0xcaf3d3f5142d18ef695d9228c714b7a0941ae2b593a0b4ab8023c5ad7368e0a9", 30);
+		TEST_BLOCK_FAULTY(std::bind(&block_generator::sandbox_traps_stage, std::placeholders::_1, std::placeholders::_2, &contracts), "0x71b4264d777cd2c570561c25a5298700787d854cebc0ad8fdd9ddc06fad68782", 31);
+		TEST_BLOCK(std::bind(&block_generator::sandbox_verify_stage, std::placeholders::_1, std::placeholders::_2, &contracts), "0x56285069f198bf32d0929498fcd068519478180f086baa7b6c4c3124daf24f67", 32);
+		TEST_BLOCK(std::bind(&block_generator::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 0, 1), "0x5a4f5a87ba1f4f87a851ebb1f7f2ba9906f07a67c58d6f2a837f51006117e90b", 33);
+		TEST_BLOCK_FAULTY(&block_generator::migrate_stage_1, "0x6bf33a76efcf1ddcaf0f77a278e95ca6c7e9f054651265cfea6090620d5b4063", 34);
+		TEST_BLOCK(&block_generator::migrate_stage_2, "0x73eea91cecdec46de0e87ade7feb67e8c20b39538f7b13e05de687a71269eb4e", 36);
+		TEST_BLOCK(&block_generator::migrate_stage_3, "0x2c00884042cd5f3a693bd125ac0d241e9d84338bb5a8ec0b9eab91dd15cc41a6", 37);
+		TEST_BLOCK(&block_generator::migrate_stage_4, "0x93b6cac58c07333aa93022944e9effe3ced8a262b7d545bfa59a9f85846cac2a", 39);
+		TEST_BLOCK(&block_generator::withdraw_stage_1, "0x3a06f111a81967402edb9481b2f758adde8d4072008b4e6cf11b57f7a53bd5aa", 41);
+		TEST_BLOCK(&block_generator::withdraw_stage_2, "0x28437404b04b4af58761a6d4f8d865330c825702a5292f376f95507e01e7168b", 44);
+		TEST_BLOCK(&block_generator::withdraw_stage_3, "0xf097dc6954808cfd411d50a24567d57987f2c8a82f9d885061d59641fda5ff18", 47);
+		TEST_BLOCK(&block_generator::withdraw_stage_4, "0x7eb278e09eaefc118103b1959d9932e2eebe9d48e5b692c1cdc93d2cbbb32156", 49);
+		TEST_BLOCK(&block_generator::withdraw_stage_5, "0xc5aee366f33db5366da2e11caf6ebb1b32923e49bfdb3ecb4a9d3fee4e708b3f", 50);
+		TEST_BLOCK(&block_generator::withdraw_stage_6, "0xa61a78a608dbac26f343b2556772eb1f3293ad277f4e8d7d5e7de75aef6c8b01", 51);
+		TEST_BLOCK(&block_generator::withdraw_stage_7, "0x3adccb1366ffe7ed9f58dca8c2ca51f3e0b1194814997ba12e8404c7392193e4", 52);
+		TEST_BLOCK(&block_generator::withdraw_stage_8, "0x14f08c0415d3b701fcfff1439fe2ac5772d0dd5309c6731ff0b36dc63d14c723", 53);
+		TEST_BLOCK(&block_generator::withdraw_stage_9, "0x074f30ece5697999ebbb90849a79414160fe853af11653bf706273e20259af42", 56);
+		TEST_BLOCK(&block_generator::withdraw_stage_10, "0x73b27628f40ea57ccfddf7a31428d4e3d14ba26ce1ab979aeebcde87ae264e86", 59);
+		TEST_BLOCK(std::bind(&block_generator::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 1, 0), "0x2252244e3572b426ee06d12c48142a8ca199ca726e735e325a873e816a606164", 62);
+		TEST_BLOCK_FALLBACK(&block_generator::production_stage_1, "0x584d1c203b8be37c03155197a298a6896072d655c32a114ccdbe8c3a007c47f0", 63);
+		TEST_BLOCK(&block_generator::production_stage_2, "0x54319a8594d2d25155ea602ffa4dce8dff14d0b19657ff1d3b5b71864c7a206e", 64);
 		if (userdata != nullptr)
 			*userdata = std::move(users);
 		else
@@ -2802,8 +2693,10 @@ int main(int argc, char* argv[])
 	auto* term = console::get();
 	term->show();
 
+#ifdef _MSC_VER
 	if (!os::process::has_debugger())
 		_set_abort_behavior(0, _WRITE_ABORT_MSG);
+#endif
 
 	int bad_entrypoint_exit_code = 0x39ce8025;
 	int exit_code = bad_entrypoint_exit_code;

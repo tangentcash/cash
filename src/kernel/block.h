@@ -287,7 +287,8 @@ namespace tangent
 				replayable = 1 << 2,
 				unrestricted = 1 << 3,
 				congestion = 1 << 4,
-				preserve_events = 1 << 5
+				preserve_events = 1 << 5,
+				skip_pow = 1 << 6
 			};
 
 			enum class staker : uint8_t

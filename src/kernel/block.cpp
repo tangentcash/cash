@@ -2808,11 +2808,11 @@ namespace tangent
 					if (type == target_type || (!target_type && candidate.receipt.transaction_hash == transaction_hash))
 						return expects_lr<block_transaction>(std::move(candidate));
 
-					static uint32_t delegate_type = transactions::delegate::as_instance_type();
+					static uint32_t call_type = transactions::call::as_instance_type();
 					static uint32_t rollup_type = transactions::rollup::as_instance_type();
-					if (type == delegate_type && !offset)
+					if (type == call_type && !offset)
 					{
-						auto subcandidate = ((transactions::delegate*)*candidate.transaction)->as_internal_block_transaction(candidate.receipt, target_type);
+						auto subcandidate = ((transactions::call*)*candidate.transaction)->as_internal_block_transaction(candidate.receipt, target_type);
 						if (subcandidate)
 							return subcandidate;
 					}

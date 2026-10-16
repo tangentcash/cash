@@ -421,13 +421,10 @@ namespace test
         require(tx::function() == "test_module");
 		block::tx current = tx::self();
 		require(current.exists());
-		require(current.type() == tx::call);
 		require(current.hash() == tx::hash());
 		require(current.from() == tx::from());
 		require(current.to() == tx::to());
 		require(current.function() == tx::function());
-		block::tx sub = current.delegate();
-		require(!sub.exists());
     }
     void module_coin()
     {
