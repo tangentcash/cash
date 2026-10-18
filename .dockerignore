@@ -3,7 +3,6 @@
 .gitignore
 .gitmodules
 bin
-var
 Dockerfile
 regtest.Dockerfile
 LICENSE

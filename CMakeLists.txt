@@ -27,7 +27,7 @@ file(GLOB_RECURSE SOURCE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/*.hpp*
     ${CMAKE_CURRENT_SOURCE_DIR}/src/*.inc*
     ${CMAKE_CURRENT_SOURCE_DIR}/src/*.table*
-    ${CMAKE_CURRENT_SOURCE_DIR}/test/*.cpp*)
+    ${CMAKE_CURRENT_SOURCE_DIR}/var/*.cpp*)
 foreach(ITEM IN ITEMS ${SOURCE})
     get_filename_component(ITEM_PATH "${ITEM}" PATH)
     string(REPLACE "${PROJECT_SOURCE_DIR}" "" ITEM_GROUP "${ITEM_PATH}")
@@ -39,7 +39,7 @@ set(TAN_TEST OFF CACHE BOOL "Build in testing mode")
 if (TAN_TEST)
     list(FILTER SOURCE EXCLUDE REGEX "src/entrypoint\\.cpp")
 else()
-    list(FILTER SOURCE EXCLUDE REGEX "test/entrypoint\\.cpp")
+    list(FILTER SOURCE EXCLUDE REGEX "var/entrypoint\\.cpp")
 endif()
 add_executable(tangentcash ${SOURCE})
 set_target_properties(tangentcash PROPERTIES
@@ -56,10 +56,6 @@ if (MSVC)
 endif()
 if (TAN_TEST)
     target_compile_definitions(tangentcash PUBLIC -DTAN_TEST)
-    file(GLOB TEST_SCRIPTS CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/test/*.as)
-    add_custom_command(TARGET tangentcash POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:tangentcash>/.test"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${TEST_SCRIPTS} "$<TARGET_FILE_DIR:tangentcash>/.test/" VERBATIM)
 endif()
 
 set(VI_SOURCE_EXCLUDE "as_compiler.cpp|as_tokenizer.cpp")
