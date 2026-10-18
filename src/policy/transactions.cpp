@@ -3303,7 +3303,11 @@ namespace tangent
 				{
 					auto witness = executor->get_witness_account_tagged(base_asset, normalized_address, 0);
 					if (!witness)
-						return layer_exception("witness transaction output pays to unknown address");
+					{
+						witness = required_output_witness;
+						if (normalized_address != required_output_normalized_address)
+							return layer_exception("witness transaction output pays to unknown address");
+					}
 
 					inout_witness.insert(std::make_pair(normalized_address, std::move(*witness)));
 					it = inout_witness.find(normalized_address);
