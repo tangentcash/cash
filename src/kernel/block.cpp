@@ -1300,7 +1300,7 @@ namespace tangent
 		{
 			if (!transaction || (options & (uint8_t)flags::unrestricted) || pay == meter::unpaid)
 				return expectation::met;
-
+			
 			uint256_t prev_relative_gas_use = receipt.relative_gas_use;
 			receipt.relative_gas_use += value;
 			if (value > transaction->gas_limit || prev_relative_gas_use > receipt.relative_gas_use)
@@ -2787,7 +2787,7 @@ namespace tangent
 
 			return states::witness_transaction(std::move(*state->as<states::witness_transaction>()));
 		}
-		expects_lr<block_transaction> executor_context::get_block_transaction(uint32_t target_type, const uint256_t& transaction_hash, size_t offset) const
+		expects_lr<block_transaction> executor_context::get_matching_block_transaction(uint32_t target_type, const uint256_t& transaction_hash, bool exclude_reverted, size_t offset) const
 		{
 			if (!transaction_hash)
 				return layer_exception("block transaction not found");
@@ -2799,7 +2799,7 @@ namespace tangent
 				auto& policy = kernel::params().policy;
 				for (auto& candidate : *candidates)
 				{
-					if (!candidate.transaction || !candidate.receipt.successful)
+					if (!candidate.transaction || (exclude_reverted && !candidate.receipt.successful))
 						continue;
 					else if (block && candidate.receipt.block_number <= block->number && block->number - candidate.receipt.block_number > policy.participation.referencing_time / policy.pow.time)
 						continue;
@@ -2825,6 +2825,10 @@ namespace tangent
 				}
 			}
 			return layer_exception("block transaction not found");
+		}
+		expects_lr<block_transaction> executor_context::get_applied_block_transaction(uint32_t target_type, const uint256_t& transaction_hash, size_t offset) const
+		{
+			return get_matching_block_transaction(target_type, transaction_hash, true, offset);
 		}
 		expects_lr<uint64_t> executor_context::get_block_number_by_hash(const uint256_t& block_hash) const
 		{
@@ -3124,7 +3128,7 @@ namespace tangent
 						uptr<transaction_message> transaction;
 						if (delegation->as_transaction_type() != executor.transaction->as_type())
 						{
-							auto subtransaction = executor.get_block_transaction(delegation->as_transaction_type(), executor.receipt.transaction_hash);
+							auto subtransaction = executor.get_applied_block_transaction(delegation->as_transaction_type(), executor.receipt.transaction_hash);
 							if (!subtransaction)
 							{
 								auto& error = result.errors[executor.receipt.transaction_hash] = remote_exception::retry_after(block_number + blocks_to_update, "unrecognized transaction type");

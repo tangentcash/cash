@@ -26,8 +26,8 @@ namespace tangent
 		ELEMENTS_BULK = 1 << 9,
 		ELEMENTS_MANY = 1 << 12,
 		ELEMENTS_HUGE = 1 << 17,
-		FORK_VERSION = 6,
-		PATCH_VERSION = 1
+		FORK_VERSION = 7,
+		PATCH_VERSION = 0
 	};
 
 	enum class fork_id
@@ -38,7 +38,7 @@ namespace tangent
 		consensus_challenge = 920000,
 		base_to_root_modulo = 1001000,
 		attesters_hardening = 1273450,
-		anonymous_broadcast = 1700000
+		anonymous_broadcast = 1800000
 	};
 
 	enum class network_type
@@ -189,7 +189,7 @@ namespace tangent
 			struct
 			{
 				uptr<format::tree> options;
-				uint64_t polling_frequency = 60000;
+				uint64_t polling_frequency = 90000;
 				uint32_t cache1_size = 4096;
 				uint32_t cache2_size = 16384;
 				bool listener = false;

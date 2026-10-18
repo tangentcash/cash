@@ -264,6 +264,78 @@ namespace tangent
 
 			return value;
 		}
+		expects_lr<void> superchainstate::add_unconfirmed_transaction(const std::string_view& transaction_id, uint64_t block_id, uint64_t confirmed_block_id, const uint256_t& proof_hash)
+		{
+			uint8_t hash[32];
+			proof_hash.encode(hash);
+
+			schema_list map;
+			map.push_back(var::set::string(transaction_id));
+			map.push_back(var::set::integer(block_id));
+			map.push_back(var::set::integer(confirmed_block_id));
+			map.push_back(var::set::binary(hash, sizeof(hash)));
+
+			auto cursor = get_storage().emplace_query(__func__, "INSERT OR REPLACE INTO unconfirmed_transactions (transaction_id, block_id, confirmed_block_id, proof_hash) VALUES (?, ?, ?, ?)", &map);
+			if (!cursor || cursor->error())
+				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
+
+			return expectation::met;
+		}
+		expects_lr<btree_set<uint64_t>> superchainstate::get_finalized_block_heights(uint64_t confirmed_block_id, uint64_t target)
+		{
+			if (!target)
+				return btree_set<uint64_t>();
+
+			schema_list map;
+			map.push_back(var::set::integer(confirmed_block_id));
+			map.push_back(var::set::integer(target));
+
+			auto cursor = get_storage().emplace_query(__func__, "SELECT DISTINCT block_id FROM unconfirmed_transactions WHERE (? - block_id + 1) >= ? ORDER BY block_id ASC", &map);
+			if (!cursor || cursor->error())
+				return expects_lr<btree_set<uint64_t>>(layer_exception(ledger::storage_util::error_of(cursor)));
+
+			auto& response = cursor->first();
+			size_t size = response.size();
+			btree_set<uint64_t> values;
+			for (size_t i = 0; i < size; i++)
+				values.insert((uint64_t)response[i]["block_id"].get().get_integer());
+
+			return values;
+		}
+		expects_lr<vector<superchain::uncomputed_transaction>> superchainstate::erase_unconfirmed_transactions(uint64_t block_id)
+		{
+			schema_list map;
+			map.push_back(var::set::integer(block_id));
+			map.push_back(var::set::integer(block_id));
+
+			auto cursor = get_storage().emplace_query(__func__,
+				"SELECT u.confirmed_block_id, t.message FROM unconfirmed_transactions u INNER JOIN transactions t ON t.transaction_id = u.transaction_id WHERE u.block_id = ?;"
+				"DELETE FROM unconfirmed_transactions WHERE block_id = ?", &map);
+			if (!cursor || cursor->error())
+				return expects_lr<vector<superchain::uncomputed_transaction>>(layer_exception(ledger::storage_util::error_of(cursor)));
+
+			auto& response = cursor->first();
+			size_t size = response.size();
+			vector<superchain::uncomputed_transaction> values;
+			values.reserve(size);
+
+			for (size_t i = 0; i < size; i++)
+			{
+				auto row = response[i];
+				superchain::computed_transaction value;
+				auto blob = row["message"].get().get_blob();
+				auto message = format::ro_stream(blob);
+				if (!value.load(message))
+					continue;
+
+				superchain::uncomputed_transaction uncomputed;
+				*(superchain::computed_transaction*)(&uncomputed) = std::move(value);
+				uncomputed.confirmed_block_id = (uint64_t)row["confirmed_block_id"].get().get_integer();
+				values.emplace_back(std::move(uncomputed));
+			}
+
+			return values;
+		}
 		expects_lr<void> superchainstate::set_property(const std::string_view& key, const format::tree& value)
 		{
 			schema_list map;
@@ -587,6 +659,15 @@ namespace tangent
 				message BLOB NOT NULL,
   				PRIMARY KEY (transaction_id)
 			) WITHOUT ROWID;
+			CREATE TABLE IF NOT EXISTS unconfirmed_transactions
+			(
+				transaction_id TEXT NOT NULL,
+				block_id BIGINT NOT NULL,
+				confirmed_block_id BIGINT NOT NULL,
+				proof_hash BLOB(32) NOT NULL,
+  				PRIMARY KEY (transaction_id)
+			) WITHOUT ROWID;
+			CREATE INDEX IF NOT EXISTS unconfirmed_block_id ON unconfirmed_transactions (block_id ASC);
 			CREATE TABLE IF NOT EXISTS links
 			(
 				hash BLOB(32) NOT NULL,

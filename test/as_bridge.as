@@ -65,3 +65,16 @@ void probe_burn(pmut@, const string&in sym, const real320&in amt)
 	require(cur.payments_to(tx::to()).of(tk) == real320(0));
 	require(cur.reservations_to(tx::to()).of(tk) == real320(0));
 }
+void probe_links(pmut@, const uint256&in ok_call, const uint256&in reverted_call, const uint256&in attested, const uint256&in reverted_attestation, const uint256&in finalized_broadcast, const uint256&in withdrawal_parent, const uint256&in reconciled_anticast, const uint256&in reconciliation_parent, const uint256&in foreign_hash)
+{
+	require(block::tx(ok_call).exists() && block::tx(ok_call).success(), "confirmed call must report success");
+	require(block::tx(reverted_call).exists() && !block::tx(reverted_call).success(), "reverted call must not report success");
+	require(block::tx(attested).success(), "attestation of a valid external transaction must report success");
+	require(!block::tx(reverted_attestation).success(), "attestation of a reverted external transaction must not report success");
+	require(block::tx(finalized_broadcast).success(), "finalized broadcast carrying a proof must report success");
+	require(block::tx(finalized_broadcast).by(withdrawal_parent), "broadcast must resolve the withdrawal it finalizes");
+	require(!block::tx(finalized_broadcast).by(reconciliation_parent), "broadcast must not resolve an unrelated parent");
+	require(block::tx(reconciled_anticast).by(reconciliation_parent), "anticast must resolve the attestation it reconciles");
+	require(!block::tx(reconciled_anticast).by(withdrawal_parent), "anticast must not resolve an unrelated parent");
+	require(!block::tx(ok_call).by(foreign_hash), "a transaction type without parent linkage must never resolve one");
+}

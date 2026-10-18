@@ -2097,12 +2097,12 @@ namespace tangent
 		decimal address_repr::balance_delta_of(const algorithm::asset_id& asset) const
 		{
 			auto* p = program::fetch_immutable_or_throw();
-			return p ? -p->executor->get_account_balance_delta(asset, hash).supply : decimal::zero();
+			return p ? p->executor->get_account_balance_delta(asset, hash).supply : decimal::zero();
 		}
 		decimal address_repr::reserve_delta_of(const algorithm::asset_id& asset) const
 		{
 			auto* p = program::fetch_immutable_or_throw();
-			return p ? -p->executor->get_account_balance_delta(asset, hash).reserve : decimal::zero();
+			return p ? p->executor->get_account_balance_delta(asset, hash).reserve : decimal::zero();
 		}
 		decimal address_repr::token_balance_of(const string_repr& token) const
 		{
@@ -2202,13 +2202,13 @@ namespace tangent
 			return a.hash.equals(b.hash);
 		}
 
-		block_tx_repr::block_tx_repr() : transaction_hash(uint256_t((uint8_t)0)), current(true)
+		tx_repr::tx_repr() : transaction_hash(uint256_t((uint8_t)0)), current(true)
 		{
 			auto* p = program::fetch_immutable();
 			if (p)
 				transaction_hash = p->executor->receipt.transaction_hash;
 		}
-		block_tx_repr::block_tx_repr(const uint256_t& new_hash) : transaction_hash(new_hash), current(false)
+		tx_repr::tx_repr(const uint256_t& new_hash) : transaction_hash(new_hash), current(false)
 		{
 			if (!new_hash)
 				return;
@@ -2217,16 +2217,16 @@ namespace tangent
 			if (!p)
 				return;
 
-			auto target = p->executor->get_block_transaction(0, new_hash);
+			auto target = p->executor->get_matching_block_transaction(0, new_hash);
 			if (target)
 				cached = uptr<ledger::block_transaction>(memory::init<ledger::block_transaction>(std::move(*target)));
 		}
-		block_tx_repr::block_tx_repr(const block_tx_repr& other) : transaction_hash(other.transaction_hash), current(other.current)
+		tx_repr::tx_repr(const tx_repr& other) : transaction_hash(other.transaction_hash), current(other.current)
 		{
 			if (other.cached)
 				cached = uptr<ledger::block_transaction>(memory::init<ledger::block_transaction>(**other.cached));
 		}
-		block_tx_repr& block_tx_repr::operator=(const block_tx_repr& other)
+		tx_repr& tx_repr::operator=(const tx_repr& other)
 		{
 			if (this == &other)
 				return *this;
@@ -2238,11 +2238,29 @@ namespace tangent
 				cached = uptr<ledger::block_transaction>(memory::init<ledger::block_transaction>(**other.cached));
 			return *this;
 		}
-		bool block_tx_repr::exists()
+		bool tx_repr::exists()
 		{
 			return source_of(*this).message != nullptr;
 		}
-		uint64_t block_tx_repr::block_number()
+		bool tx_repr::success()
+		{
+			auto source = source_of(*this);
+			if (!source.message || !source.receipt)
+			{
+				contract::throw_ptr(exception_repr(exception_repr::category::requirement(), stringify::text("%s is not a transaction", algorithm::encoding::encode_0xhex256(transaction_hash))));
+				return false;
+			}
+			else if (!source.receipt->successful)
+				return false;
+
+			uint32_t type = source.message->as_type();
+			if (type == transactions::broadcast::as_instance_type())
+				return !!((transactions::broadcast*)source.message)->proof;
+			else if (type == transactions::attestate::as_instance_type())
+				return !((transactions::attestate*)source.message)->proof.reverted;
+			return true;
+		}
+		uint64_t tx_repr::block_number()
 		{
 			auto source = source_of(*this);
 			if (!source.message)
@@ -2252,11 +2270,33 @@ namespace tangent
 			}
 			return source.receipt->block_number;
 		}
-		bool block_tx_repr::paid()
+		bool tx_repr::paid()
 		{
 			return !value().empty();
 		}
-		address_repr block_tx_repr::from()
+		bool tx_repr::by(const uint256_t& transaction_hash)
+		{
+			auto source = source_of(*this);
+			if (!source.message)
+			{
+				contract::throw_ptr(exception_repr(exception_repr::category::requirement(), stringify::text("%s is not a transaction", algorithm::encoding::encode_0xhex256(transaction_hash))));
+				return false;
+			}
+
+			uint32_t type = source.message->as_type();
+			if (type == transactions::bind::as_instance_type())
+				return ((transactions::bind*)source.message)->route_hash == transaction_hash;
+			else if (type == transactions::imbind::as_instance_type())
+				return ((transactions::imbind*)source.message)->route_hash == transaction_hash;
+			else if (type == transactions::rebind::as_instance_type())
+				return ((transactions::rebind*)source.message)->setup_hash == transaction_hash;
+			else if (type == transactions::broadcast::as_instance_type())
+				return ((transactions::broadcast*)source.message)->withdraw_hash == transaction_hash;
+			else if (type == transactions::anticast::as_instance_type())
+				return ((transactions::anticast*)source.message)->broadcast_hash == transaction_hash || ((transactions::anticast*)source.message)->attestate_hash == transaction_hash;
+			return false;
+		}
+		address_repr tx_repr::from()
 		{
 			auto source = source_of(*this);
 			if (!source.message)
@@ -2266,7 +2306,7 @@ namespace tangent
 			}
 			return address_repr(source.receipt->from);
 		}
-		address_repr block_tx_repr::to()
+		address_repr tx_repr::to()
 		{
 			auto source = source_of(*this);
 			if (!source.message)
@@ -2278,7 +2318,7 @@ namespace tangent
 			auto* p = program::fetch_immutable();
 			return address_repr(tx_callable(source.message, p ? p->callable() : algorithm::pubkeyhash_t()));
 		}
-		payable_repr block_tx_repr::value()
+		payable_repr tx_repr::value()
 		{
 			auto* p = program::fetch_immutable();
 			if (current && p)
@@ -2295,7 +2335,7 @@ namespace tangent
 			enumerate_payments(source.message, [&payments](const string&, const algorithm::asset_id& asset, const decimal& amount) { payments.push_back(std::make_pair(asset, amount)); });
 			return payable_repr(std::move(payments));
 		}
-		string_repr block_tx_repr::entrypoint()
+		string_repr tx_repr::entrypoint()
 		{
 			auto source = source_of(*this);
 			if (!source.message)
@@ -2305,7 +2345,7 @@ namespace tangent
 			}
 			return string_repr(tx_function_declaration(source.message));
 		}
-		string_repr block_tx_repr::blockchain()
+		string_repr tx_repr::blockchain()
 		{
 			auto source = source_of(*this);
 			if (!source.message)
@@ -2315,7 +2355,7 @@ namespace tangent
 			}
 			return string_repr(algorithm::asset::blockchain_of(source.message->asset));
 		}
-		string_repr block_tx_repr::token()
+		string_repr tx_repr::token()
 		{
 			auto source = source_of(*this);
 			if (!source.message)
@@ -2325,7 +2365,7 @@ namespace tangent
 			}
 			return string_repr(algorithm::asset::token_of(source.message->asset));
 		}
-		string_repr block_tx_repr::contract_name()
+		string_repr tx_repr::contract_name()
 		{
 			auto source = source_of(*this);
 			if (!source.message)
@@ -2335,7 +2375,7 @@ namespace tangent
 			}
 			return string_repr(algorithm::asset::checksum_of(source.message->asset));
 		}
-		decimal block_tx_repr::gas_price()
+		decimal tx_repr::gas_price()
 		{
 			auto source = source_of(*this);
 			if (!source.message)
@@ -2345,7 +2385,7 @@ namespace tangent
 			}
 			return source.message->gas_price;
 		}
-		uint256_t block_tx_repr::gas_use()
+		uint256_t tx_repr::gas_use()
 		{
 			auto source = source_of(*this);
 			if (!source.message)
@@ -2355,7 +2395,7 @@ namespace tangent
 			}
 			return source.receipt->relative_gas_use;
 		}
-		uint256_t block_tx_repr::gas_left()
+		uint256_t tx_repr::gas_left()
 		{
 			auto source = source_of(*this);
 			if (!source.message)
@@ -2370,7 +2410,7 @@ namespace tangent
 			}
 			return source.message->gas_limit > source.receipt->relative_gas_use ? source.message->gas_limit - source.receipt->relative_gas_use : uint256_t((uint8_t)0);
 		}
-		uint256_t block_tx_repr::gas_limit()
+		uint256_t tx_repr::gas_limit()
 		{
 			auto source = source_of(*this);
 			if (!source.message)
@@ -2380,7 +2420,7 @@ namespace tangent
 			}
 			return source.message->gas_limit;
 		}
-		uint256_t block_tx_repr::asset()
+		uint256_t tx_repr::asset()
 		{
 			auto source = source_of(*this);
 			if (!source.message)
@@ -2390,12 +2430,12 @@ namespace tangent
 			}
 			return source.message->asset;
 		}
-		uint256_t block_tx_repr::hash()
+		uint256_t tx_repr::hash()
 		{
 			return transaction_hash;
 		}
 		template <typename callback_type>
-		void block_tx_repr::enumerate_payments(const ledger::transaction_message* transaction, callback_type&& callback)
+		void tx_repr::enumerate_payments(const ledger::transaction_message* transaction, callback_type&& callback)
 		{
 			uint32_t type = transaction->as_type();
 			if (type == transactions::transfer::as_instance_type())
@@ -2421,7 +2461,7 @@ namespace tangent
 				callback(target.routing_address, target.asset, decimal::zero());
 			}
 		}
-		block_tx_repr::source block_tx_repr::source_of(const block_tx_repr& self)
+		tx_repr::source tx_repr::source_of(const tx_repr& self)
 		{
 			auto* p = program::fetch_immutable();
 			if (!p)
@@ -2432,7 +2472,7 @@ namespace tangent
 				return source{ nullptr, nullptr };
 			return source{ *self.cached->transaction, &self.cached->receipt };
 		}
-		payable_repr block_tx_repr::collect(const source& transaction_source, const algorithm::pubkeyhash_t& owner, bool supply_part, bool outgoing)
+		payable_repr tx_repr::collect(const source& transaction_source, const algorithm::pubkeyhash_t& owner, bool supply_part, bool outgoing)
 		{
 			auto* p = program::fetch_immutable_or_throw();
 			if (!p || transaction_source.receipt == nullptr || owner == algorithm::pubkeyhash_t())
@@ -2458,7 +2498,7 @@ namespace tangent
 				result.push_back(payout);
 			return payable_repr(std::move(result));
 		}
-		decimal block_tx_repr::balance_delta_of(const address_repr& address, const uint256_t& coin)
+		decimal tx_repr::balance_delta_of(const address_repr& address, const uint256_t& coin)
 		{
 			auto source = source_of(*this);
 			if (!source.message)
@@ -2471,7 +2511,7 @@ namespace tangent
 			auto delta = p->executor->get_account_balance_delta(coin, address.hash, source.receipt);
 			return delta.supply;
 		}
-		decimal block_tx_repr::reserve_delta_of(const address_repr& address, const uint256_t& coin)
+		decimal tx_repr::reserve_delta_of(const address_repr& address, const uint256_t& coin)
 		{
 			auto source = source_of(*this);
 			if (!source.message)
@@ -2484,7 +2524,7 @@ namespace tangent
 			auto delta = p->executor->get_account_balance_delta(coin, address.hash, source.receipt);
 			return delta.reserve;
 		}
-		payable_repr block_tx_repr::payments_from(const address_repr& address)
+		payable_repr tx_repr::payments_from(const address_repr& address)
 		{
 			auto source = source_of(*this);
 			if (!source.message)
@@ -2495,7 +2535,7 @@ namespace tangent
 
 			return collect(source, address.hash, true, true);
 		}
-		payable_repr block_tx_repr::payments_to(const address_repr& address)
+		payable_repr tx_repr::payments_to(const address_repr& address)
 		{
 			auto source = source_of(*this);
 			if (!source.message)
@@ -2506,7 +2546,7 @@ namespace tangent
 
 			return collect(source, address.hash, true, false);
 		}
-		payable_repr block_tx_repr::reservations_from(const address_repr& address)
+		payable_repr tx_repr::reservations_from(const address_repr& address)
 		{
 			auto source = source_of(*this);
 			if (!source.message)
@@ -2517,7 +2557,7 @@ namespace tangent
 
 			return collect(source, address.hash, false, true);
 		}
-		payable_repr block_tx_repr::reservations_to(const address_repr& address)
+		payable_repr tx_repr::reservations_to(const address_repr& address)
 		{
 			auto source = source_of(*this);
 			if (!source.message)
@@ -4005,63 +4045,63 @@ namespace tangent
 		}
 		payable_repr contract::tx_value()
 		{
-			return block_tx_repr().value();
+			return tx_repr().value();
 		}
 		bool contract::tx_paid()
 		{
-			return block_tx_repr().paid();
+			return tx_repr().paid();
 		}
 		address_repr contract::tx_from()
 		{
-			return block_tx_repr().from();
+			return tx_repr().from();
 		}
 		address_repr contract::tx_to()
 		{
-			return block_tx_repr().to();
+			return tx_repr().to();
 		}
 		string_repr contract::tx_blockchain()
 		{
-			return block_tx_repr().blockchain();
+			return tx_repr().blockchain();
 		}
 		string_repr contract::tx_token()
 		{
-			return block_tx_repr().token();
+			return tx_repr().token();
 		}
 		string_repr contract::tx_contract()
 		{
-			return block_tx_repr().contract_name();
+			return tx_repr().contract_name();
 		}
 		string_repr contract::tx_function()
 		{
-			return block_tx_repr().entrypoint();
+			return tx_repr().entrypoint();
 		}
 		decimal contract::tx_gas_price()
 		{
-			return block_tx_repr().gas_price();
+			return tx_repr().gas_price();
 		}
 		uint256_t contract::tx_gas_use()
 		{
-			return block_tx_repr().gas_use();
+			return tx_repr().gas_use();
 		}
 		uint256_t contract::tx_gas_left()
 		{
-			return block_tx_repr().gas_left();
+			return tx_repr().gas_left();
 		}
 		uint256_t contract::tx_gas_limit()
 		{
-			return block_tx_repr().gas_limit();
+			return tx_repr().gas_limit();
 		}
 		uint256_t contract::tx_asset()
 		{
-			return block_tx_repr().asset();
+			return tx_repr().asset();
 		}
 		uint256_t contract::tx_hash()
 		{
-			return block_tx_repr().hash();
+			return tx_repr().hash();
 		}
-		block_tx_repr contract::tx_self()
+		tx_repr contract::tx_self()
 		{
-			return block_tx_repr();
+			return tx_repr();
 		}
 		bool contract::tx_pipelined()
 		{
@@ -4129,9 +4169,11 @@ namespace tangent
 				}
 			}
 
-			p->executor->emit_event<transactions::call>({ format::variable(transactions::route::as_instance_type()), format::variable(bridge_hash), format::variable(asset), format::variable(routing_address.view()) });
+			auto event = transactions::call::emit_route_event(p->executor, bridge_hash, asset, routing_address.view());
+			if (!event)
+				contract::throw_ptr(exception_repr(exception_repr::category::storage(), std::string_view(event.error().message())));
 		}
-		void contract::bridge_send(const uint256_t& bridge_hash, const uint256_t& asset, const string_repr& address, const decimal& value, const decimal& fee)
+		void contract::bridge_send(const uint256_t& bridge_hash, const uint256_t& asset, const string_repr& routing_address, const decimal& value, const decimal& fee)
 		{
 			auto* p = bridge_internal_check("send", asset, bridge_hash);
 			if (p == nullptr)
@@ -4144,7 +4186,7 @@ namespace tangent
 				return;
 			}
 
-			if (address.empty())
+			if (routing_address.empty())
 			{
 				contract::throw_ptr(exception_repr(exception_repr::category::argument(), "bridge::send requires a destination address"));
 				return;
@@ -4177,7 +4219,9 @@ namespace tangent
 				return;
 			}
 
-			p->executor->emit_event<transactions::call>({ format::variable(transactions::withdraw::as_instance_type()), format::variable(bridge_hash), format::variable(asset), format::variable(address.view()), format::variable(value) });
+			auto event = transactions::call::emit_withdraw_event(p->executor, bridge_hash, asset, routing_address.view(), value);
+			if (!event)
+				contract::throw_ptr(exception_repr(exception_repr::category::storage(), std::string_view(event.error().message())));
 		}
 		uint256_t contract::coin_native()
 		{
@@ -6181,7 +6225,7 @@ namespace tangent
 			vm->set_function_address("uint64 time_between(uint64, uint64)", WRAP_FN(contract::block_time_between), convention::generic_call);
 			vm->set_function_address("uint64 priority()", WRAP_FN(contract::block_priority), convention::generic_call);
 			vm->set_function_address("uint64 number()", WRAP_FN(contract::block_number), convention::generic_call);
-			auto block_tx_type = vm->set_struct_address("tx", sizeof(block_tx_repr), (size_t)object_behaviours::value | bridge::type_traits_of<block_tx_repr>());
+			auto tx_type = vm->set_struct_address("tx", sizeof(tx_repr), (size_t)object_behaviours::value | bridge::type_traits_of<tx_repr>());
 			vm->end_namespace();
 
 			vm->begin_namespace("tx");
@@ -6204,32 +6248,34 @@ namespace tangent
 			vm->end_namespace();
 
 			vm->begin_namespace("block");
-			block_tx_type->set_behaviour_address("void f(const uint256&in)", behaviours::construct, WRAP_CON(block_tx_repr, (const uint256_t&)), convention::generic_call);
-			block_tx_type->set_behaviour_address("void f(const block::tx&in)", behaviours::construct, WRAP_CON(block_tx_repr, (const block_tx_repr&)), convention::generic_call);
-			block_tx_type->set_behaviour_address("void f()", behaviours::destruct, WRAP_DES(block_tx_repr), convention::generic_call);
-			block_tx_type->set_operator_copy_address(WRAP_MFN_PR(block_tx_repr, operator=, (const block_tx_repr&), block_tx_repr&), convention::generic_call);
-			block_tx_type->set_method_address("bool exists() const", WRAP_MFN(block_tx_repr, exists), convention::generic_call);
-			block_tx_type->set_method_address("bool paid() const", WRAP_MFN(block_tx_repr, paid), convention::generic_call);
-			block_tx_type->set_method_address("address from() const", WRAP_MFN(block_tx_repr, from), convention::generic_call);
-			block_tx_type->set_method_address("address to() const", WRAP_MFN(block_tx_repr, to), convention::generic_call);
-			block_tx_type->set_method_address("payable value() const", WRAP_MFN(block_tx_repr, value), convention::generic_call);
-			block_tx_type->set_method_address("string function() const", WRAP_MFN(block_tx_repr, entrypoint), convention::generic_call);
-			block_tx_type->set_method_address("string blockchain() const", WRAP_MFN(block_tx_repr, blockchain), convention::generic_call);
-			block_tx_type->set_method_address("string token() const", WRAP_MFN(block_tx_repr, token), convention::generic_call);
-			block_tx_type->set_method_address("string contract() const", WRAP_MFN(block_tx_repr, contract_name), convention::generic_call);
-			block_tx_type->set_method_address("real320 gas_price() const", WRAP_MFN(block_tx_repr, gas_price), convention::generic_call);
-			block_tx_type->set_method_address("uint256 gas_use() const", WRAP_MFN(block_tx_repr, gas_use), convention::generic_call);
-			block_tx_type->set_method_address("uint256 gas_left() const", WRAP_MFN(block_tx_repr, gas_left), convention::generic_call);
-			block_tx_type->set_method_address("uint256 gas_limit() const", WRAP_MFN(block_tx_repr, gas_limit), convention::generic_call);
-			block_tx_type->set_method_address("uint256 asset() const", WRAP_MFN_PR(block_tx_repr, asset, (), uint256_t), convention::generic_call);
-			block_tx_type->set_method_address("uint256 hash() const", WRAP_MFN(block_tx_repr, hash), convention::generic_call);
-			block_tx_type->set_method_address("uint64 block_number() const", WRAP_MFN(block_tx_repr, block_number), convention::generic_call);
-			block_tx_type->set_method_address("real320 balance_delta_of(const address&in, const uint256&in) const", WRAP_MFN(block_tx_repr, balance_delta_of), convention::generic_call);
-			block_tx_type->set_method_address("real320 reserve_delta_of(const address&in, const uint256&in) const", WRAP_MFN(block_tx_repr, reserve_delta_of), convention::generic_call);
-			block_tx_type->set_method_address("payable payments_from(const address&in) const", WRAP_MFN(block_tx_repr, payments_from), convention::generic_call);
-			block_tx_type->set_method_address("payable payments_to(const address&in) const", WRAP_MFN(block_tx_repr, payments_to), convention::generic_call);
-			block_tx_type->set_method_address("payable reservations_from(const address&in) const", WRAP_MFN(block_tx_repr, reservations_from), convention::generic_call);
-			block_tx_type->set_method_address("payable reservations_to(const address&in) const", WRAP_MFN(block_tx_repr, reservations_to), convention::generic_call);
+			tx_type->set_behaviour_address("void f(const uint256&in)", behaviours::construct, WRAP_CON(tx_repr, (const uint256_t&)), convention::generic_call);
+			tx_type->set_behaviour_address("void f(const block::tx&in)", behaviours::construct, WRAP_CON(tx_repr, (const tx_repr&)), convention::generic_call);
+			tx_type->set_behaviour_address("void f()", behaviours::destruct, WRAP_DES(tx_repr), convention::generic_call);
+			tx_type->set_operator_copy_address(WRAP_MFN_PR(tx_repr, operator=, (const tx_repr&), tx_repr&), convention::generic_call);
+			tx_type->set_method_address("bool exists() const", WRAP_MFN(tx_repr, exists), convention::generic_call);
+			tx_type->set_method_address("bool paid() const", WRAP_MFN(tx_repr, paid), convention::generic_call);
+			tx_type->set_method_address("bool success() const", WRAP_MFN(tx_repr, success), convention::generic_call);
+			tx_type->set_method_address("bool by(const uint256&in) const", WRAP_MFN(tx_repr, by), convention::generic_call);
+			tx_type->set_method_address("address from() const", WRAP_MFN(tx_repr, from), convention::generic_call);
+			tx_type->set_method_address("address to() const", WRAP_MFN(tx_repr, to), convention::generic_call);
+			tx_type->set_method_address("payable value() const", WRAP_MFN(tx_repr, value), convention::generic_call);
+			tx_type->set_method_address("string function() const", WRAP_MFN(tx_repr, entrypoint), convention::generic_call);
+			tx_type->set_method_address("string blockchain() const", WRAP_MFN(tx_repr, blockchain), convention::generic_call);
+			tx_type->set_method_address("string token() const", WRAP_MFN(tx_repr, token), convention::generic_call);
+			tx_type->set_method_address("string contract() const", WRAP_MFN(tx_repr, contract_name), convention::generic_call);
+			tx_type->set_method_address("real320 gas_price() const", WRAP_MFN(tx_repr, gas_price), convention::generic_call);
+			tx_type->set_method_address("uint256 gas_use() const", WRAP_MFN(tx_repr, gas_use), convention::generic_call);
+			tx_type->set_method_address("uint256 gas_left() const", WRAP_MFN(tx_repr, gas_left), convention::generic_call);
+			tx_type->set_method_address("uint256 gas_limit() const", WRAP_MFN(tx_repr, gas_limit), convention::generic_call);
+			tx_type->set_method_address("uint256 asset() const", WRAP_MFN_PR(tx_repr, asset, (), uint256_t), convention::generic_call);
+			tx_type->set_method_address("uint256 hash() const", WRAP_MFN(tx_repr, hash), convention::generic_call);
+			tx_type->set_method_address("uint64 block_number() const", WRAP_MFN(tx_repr, block_number), convention::generic_call);
+			tx_type->set_method_address("real320 balance_delta_of(const address&in, const uint256&in) const", WRAP_MFN(tx_repr, balance_delta_of), convention::generic_call);
+			tx_type->set_method_address("real320 reserve_delta_of(const address&in, const uint256&in) const", WRAP_MFN(tx_repr, reserve_delta_of), convention::generic_call);
+			tx_type->set_method_address("payable payments_from(const address&in) const", WRAP_MFN(tx_repr, payments_from), convention::generic_call);
+			tx_type->set_method_address("payable payments_to(const address&in) const", WRAP_MFN(tx_repr, payments_to), convention::generic_call);
+			tx_type->set_method_address("payable reservations_from(const address&in) const", WRAP_MFN(tx_repr, reservations_from), convention::generic_call);
+			tx_type->set_method_address("payable reservations_to(const address&in) const", WRAP_MFN(tx_repr, reservations_to), convention::generic_call);
 			vm->end_namespace();
 
 			vm->begin_namespace("bridge");

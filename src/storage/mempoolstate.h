@@ -113,6 +113,9 @@ namespace tangent
 			expects_lr<attestation_tree> get_attestation(const uint256_t& attestation_hash);
 			expects_lr<void> remove_attestation(const uint256_t& attestation_hash);
 			expects_lr<size_t> expire_attestations();
+			expects_lr<void> add_preattestation(const uint256_t& attestation_hash, const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& attester, uint64_t tip_height, const uint256_t& proof_hash, const algorithm::hashsig_t& signature, const superchain::computed_transaction& body);
+			expects_lr<superchain::uncomputed_transaction> get_preattestation_body(const uint256_t& attestation_hash, const uint256_t& proof_hash);
+			expects_lr<vector<superchain::uncomputed_transaction>> get_preattestations(const hash_set<string>& lookup_keys, size_t offset, size_t count);
 			expects_lr<void> add_transaction(const ledger::transaction_message& value, bool bypass_cooldown = false);
 			expects_lr<void> add_transaction_observation(const uint256_t& transaction_hash);
 			expects_lr<void> remove_transactions_by_hash(const hash_set<uint256_t>& transaction_hashes);
@@ -137,6 +140,9 @@ namespace tangent
 			uint32_t get_queries() const;
 
 		public:
+			static string transaction_lookup_key(const std::string_view& transaction_id);
+			static string address_lookup_key(const std::string_view& address);
+			static string memo_lookup_key(const algorithm::pubkeyhash_t& memo);
 			static double fee_percentile(fee_priority priority);
 			static uint32_t services_of(const ledger::node& node);
 			static uint64_t transaction_limit();

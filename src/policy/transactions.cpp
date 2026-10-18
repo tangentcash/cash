@@ -444,8 +444,8 @@ namespace tangent
 
 					auto balance_in = executor->get_account_balance_delta(paying_asset, executor->receipt.from);
 					auto balance_out = executor->get_account_balance(paying_asset, executor->receipt.from).or_else(states::account_balance(executor->receipt.from, paying_asset, executor->block));
-					balance_in.supply += balance_out.supply;
-					balance_in.reserve += balance_out.reserve;
+					balance_in.supply = balance_out.supply - balance_in.supply;
+					balance_in.reserve = balance_out.reserve - balance_in.reserve;
 
 					auto capped_value = std::min(paying_value, std::max(balance_out.get_balance() - balance_in.get_balance(), decimal::zero()));
 					if (!capped_value.is_positive())
@@ -696,6 +696,14 @@ namespace tangent
 		{
 			return "call";
 		}
+		expects_lr<void> call::emit_route_event(ledger::executor_context* executor, const uint256_t& bridge_hash, const algorithm::asset_id& asset, const std::string_view& routing_address)
+		{
+			return executor->emit_event<call>({ format::variable(route::as_instance_type()), format::variable(bridge_hash), format::variable(asset), format::variable(routing_address) });
+		}
+		expects_lr<void> call::emit_withdraw_event(ledger::executor_context* executor, const uint256_t& bridge_hash, const algorithm::asset_id& asset, const std::string_view& routing_address, const decimal& value)
+		{
+			return executor->emit_event<call>({ format::variable(withdraw::as_instance_type()), format::variable(bridge_hash), format::variable(asset), format::variable(routing_address), format::variable(value) });
+		}
 
 		rollup::rollup(const rollup& other)
 		{
@@ -778,18 +786,25 @@ namespace tangent
 			algorithm::pubkeyhash_t owner;
 			uint256_t absolute_gas_limit = executor->block->gas_limit;
 			uint256_t absolute_gas_use = executor->block->gas_use;
-			uint256_t relative_gas_use = executor->receipt.relative_gas_use;
+			uint256_t internal_relative_gas_use = executor->receipt.relative_gas_use;
 			std::sort(queue.begin(), queue.end(), [](const std::pair<ledger::transaction_message*, uint16_t>& a, const std::pair<ledger::transaction_message*, uint16_t>& b)
 			{
 				return a.first->nonce > 0 && b.first->nonce > 0 && a.first->nonce != b.first->nonce ? a.first->nonce < b.first->nonce : a.second < b.second;
 			});
 
+			bool revert_costs_gas = kernel::params().on(fork_id::anonymous_broadcast, executor->receipt.block_number);
+			auto& relative_gas_use = revert_costs_gas ? executor->receipt.relative_gas_use : internal_relative_gas_use;
 			auto internal_executor = ledger::executor_context(executor->changelog, executor->solver, executor->block, nullptr);
-			auto block_normalization = uscope([&]()
+			auto block_normalization_trigger = [&]()
 			{
 				executor->block->gas_limit = absolute_gas_limit;
 				executor->block->gas_use = absolute_gas_use;
 				executor->receipt.relative_gas_use = std::min(relative_gas_use, gas_limit);
+			};
+			auto block_normalization = uscope([&]()
+			{
+				if (revert_costs_gas)
+					block_normalization_trigger();
 			});
 			for (auto& [transaction, index] : queue)
 			{
@@ -831,6 +846,10 @@ namespace tangent
 				if (internal_executor.receipt.events.size() > prev_events_size)
 					executor->receipt.events.insert(executor->receipt.events.end(), internal_executor.receipt.events.begin() + prev_events_size, internal_executor.receipt.events.end());
 			}
+
+			if (!revert_costs_gas)
+				block_normalization_trigger();
+
 			return expectation::met;
 		}
 		bool rollup::store_body(format::wo_stream* stream) const
@@ -1501,7 +1520,7 @@ namespace tangent
 			if (!event)
 				return event.error();
 
-			auto parent = executor->get_block_transaction<route>(route_hash);
+			auto parent = executor->get_applied_block_transaction<route>(route_hash);
 			if (!parent)
 				return parent.error();
 
@@ -1624,7 +1643,7 @@ namespace tangent
 		void bind::enumerate_accounts(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, const std::function<void(const algorithm::pubkeyhash_t&)>& callback) const
 		{
 			VI_ASSERT(callback, "callback should be set");
-			auto parent = executor->get_block_transaction<route>(route_hash);
+			auto parent = executor->get_applied_block_transaction<route>(route_hash);
 			if (parent)
 				callback(algorithm::pubkeyhash_t(parent->receipt.from));
 		}
@@ -1710,7 +1729,7 @@ namespace tangent
 			if (!event)
 				return event.error();
 
-			auto parent = executor->get_block_transaction<route>(route_hash);
+			auto parent = executor->get_applied_block_transaction<route>(route_hash);
 			if (!parent)
 				return parent.error();
 
@@ -1872,7 +1891,7 @@ namespace tangent
 		void imbind::enumerate_accounts(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, const std::function<void(const algorithm::pubkeyhash_t&)>& callback) const
 		{
 			VI_ASSERT(callback, "callback should be set");
-			auto parent = executor->get_block_transaction<route>(route_hash);
+			auto parent = executor->get_applied_block_transaction<route>(route_hash);
 			if (parent)
 				callback(algorithm::pubkeyhash_t(parent->receipt.from));
 		}
@@ -1995,7 +2014,7 @@ namespace tangent
 			btree_set<algorithm::pubkeyhash_t> exclusion;
 			for (auto& [broadcast_hash, participant] : migrations)
 			{
-				auto parent = executor->get_block_transaction<broadcast>(broadcast_hash);
+				auto parent = executor->get_applied_block_transaction<broadcast>(broadcast_hash);
 				if (!parent)
 					return layer_exception("broadcast transaction not found");
 
@@ -2003,7 +2022,7 @@ namespace tangent
 				if (!parent_transaction->eligible_migration_target(participant))
 					return layer_exception("migration participant not applicable");
 
-				auto origin = executor->get_block_transaction<withdraw>(parent_transaction->withdraw_hash);
+				auto origin = executor->get_applied_block_transaction<withdraw>(parent_transaction->withdraw_hash);
 				if (!origin)
 					return layer_exception("withdraw transaction not found");
 
@@ -2026,7 +2045,7 @@ namespace tangent
 
 				if (bridge->transaction_hash > 0 && bridge->transaction_hash != broadcast_hash)
 				{
-					parent = executor->get_block_transaction<broadcast>(bridge->transaction_hash);
+					parent = executor->get_applied_block_transaction<broadcast>(bridge->transaction_hash);
 					if (!parent)
 						return layer_exception("last broadcast transaction not found");
 
@@ -2435,11 +2454,11 @@ namespace tangent
 				if (!event || event->child_transaction_hash != broadcast_hash)
 					continue;
 
-				auto parent = executor->get_block_transaction<broadcast>(broadcast_hash);
+				auto parent = executor->get_applied_block_transaction<broadcast>(broadcast_hash);
 				if (!parent)
 					return layer_exception("broadcast transaction not found");
 
-				auto origin = executor->get_block_transaction<withdraw>(((broadcast*)*parent->transaction)->withdraw_hash);
+				auto origin = executor->get_applied_block_transaction<withdraw>(((broadcast*)*parent->transaction)->withdraw_hash);
 				if (!origin)
 					return layer_exception("withdraw transaction not found");
 
@@ -2596,7 +2615,7 @@ namespace tangent
 			if (!event)
 				return event.error();
 
-			auto parent = executor->get_block_transaction<setup>(setup_hash);
+			auto parent = executor->get_applied_block_transaction<setup>(setup_hash);
 			if (!parent)
 				return layer_exception("setup transaction not found");
 
@@ -3000,7 +3019,7 @@ namespace tangent
 			if (!validation)
 				return validation.error();
 
-			auto parent = executor->get_block_transaction<withdraw>(withdraw_hash);
+			auto parent = executor->get_applied_block_transaction<withdraw>(withdraw_hash);
 			if (!parent)
 				return layer_exception("parent transaction not found");
 
@@ -3145,7 +3164,7 @@ namespace tangent
 		void broadcast::enumerate_accounts(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, const std::function<void(const algorithm::pubkeyhash_t&)>& callback) const
 		{
 			VI_ASSERT(callback, "callback should be set");
-			auto parent = executor->get_block_transaction<withdraw>(withdraw_hash);
+			auto parent = executor->get_applied_block_transaction<withdraw>(withdraw_hash);
 			if (parent)
 				callback(algorithm::pubkeyhash_t(parent->receipt.from));
 		}
@@ -3158,6 +3177,7 @@ namespace tangent
 				message.write_integer(algorithm::asset::base_id_of(asset));
 				message.write_string(proof->hashdata);
 				callback(message.hash());
+				callback(algorithm::hashing::hash256i(proof->hashdata));
 			}
 		}
 		uint64_t broadcast::as_commitment(uint256_t* event_hash) const
@@ -3232,11 +3252,10 @@ namespace tangent
 				required_output_witness = states::witness_account(ref, address_map({ { (uint8_t)1, required_output_normalized_address } }), executor->block);
 			}
 
-			auto inout_witness = btree_map<string, states::witness_account>({ { required_output_normalized_address, *required_output_witness } });
+			auto inout_witness = btree_map<string, states::witness_account>();
 			auto input_value = btree_map<algorithm::asset_id, decimal>();
 			auto output_value = btree_map<algorithm::asset_id, decimal>();
 			auto change_value = btree_map<algorithm::asset_id, decimal>();
-			auto required_output_witness_it = inout_witness.begin();
 			auto& value = required_output_value[transaction->asset];
 			value = value.is_nan() ? transaction->value : (value + transaction->value);
 			for (auto& input : prepared.inputs)
@@ -3290,7 +3309,8 @@ namespace tangent
 					it = inout_witness.find(normalized_address);
 				}
 
-				if (it != required_output_witness_it)
+				bool change_output = it->first != required_output_normalized_address;
+				if (change_output)
 				{
 					if (!it->second.is_bridge_account())
 						return layer_exception("witness transaction output receives change into unrelated address");
@@ -3301,12 +3321,12 @@ namespace tangent
 				}
 
 				auto output_asset = output.get_asset(base_asset);
-				auto& value = it != required_output_witness_it ? change_value[output_asset] : output_value[output_asset];
+				auto& value = change_output ? change_value[output_asset] : output_value[output_asset];
 				value = value.is_nan() ? output.value : (value + output.value);
 				for (auto& [token_hash, token] : output.tokens)
 				{
 					auto token_asset = token.get_asset(base_asset);
-					auto& token_value = it != required_output_witness_it ? change_value[token_asset] : output_value[token_asset];
+					auto& token_value = change_output ? change_value[token_asset] : output_value[token_asset];
 					token_value = token_value.is_nan() ? token.value : (token_value + token.value);
 				}
 			}
@@ -3390,7 +3410,7 @@ namespace tangent
 			if (!validation)
 				return validation.error();
 
-			auto parent = executor->get_block_transaction<broadcast>(broadcast_hash);
+			auto parent = executor->get_applied_block_transaction<broadcast>(broadcast_hash);
 			if (!parent)
 				return layer_exception("parent transaction not found");
 
@@ -3398,7 +3418,7 @@ namespace tangent
 			if (!parent_transaction->proof)
 				return layer_exception("parent transaction not valid");
 
-			auto origin = executor->get_block_transaction<withdraw>(parent_transaction->withdraw_hash);
+			auto origin = executor->get_applied_block_transaction<withdraw>(parent_transaction->withdraw_hash);
 			if (!origin)
 				return layer_exception("origin transaction not found");
 
@@ -3410,7 +3430,7 @@ namespace tangent
 				if (!attestate_hash)
 					return layer_exception("broadcast is considered final either by attestation or older anticast");
 
-				auto confirmation = executor->get_block_transaction<attestate>(attestate_hash);
+				auto confirmation = executor->get_applied_block_transaction<attestate>(attestate_hash);
 				if (!confirmation)
 					return layer_exception("confirmation transaction not found");
 
@@ -3547,7 +3567,7 @@ namespace tangent
 		}
 		void anticast::enumerate_accounts(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, const std::function<void(const algorithm::pubkeyhash_t&)>& callback) const
 		{
-			auto parent = executor->get_block_transaction<broadcast>(broadcast_hash);
+			auto parent = executor->get_applied_block_transaction<broadcast>(broadcast_hash);
 			if (parent)
 				callback(algorithm::pubkeyhash_t(parent->receipt.from));
 		}
@@ -3661,8 +3681,8 @@ namespace tangent
 					format::wo_stream message;
 					message.write_integer(base_asset);
 					message.write_string(proof.transaction_id);
-					auto parent = bridge_hash > 0 && enforce_aliasing ? executor->get_block_transaction<broadcast>(message.hash()) : expects_lr<ledger::block_transaction>(layer_exception());
-					auto origin = parent ? executor->get_block_transaction<withdraw>(((broadcast*)*parent->transaction)->withdraw_hash) : expects_lr<ledger::block_transaction>(layer_exception());
+					auto parent = bridge_hash > 0 && enforce_aliasing ? executor->get_applied_block_transaction<broadcast>(message.hash()) : expects_lr<ledger::block_transaction>(layer_exception());
+					auto origin = parent ? executor->get_applied_block_transaction<withdraw>(((broadcast*)*parent->transaction)->withdraw_hash) : expects_lr<ledger::block_transaction>(layer_exception());
 					withdrawer_account_maybe = origin && algorithm::asset::base_id_of(parent->transaction->asset) == base_asset ? origin->receipt.from : algorithm::pubkeyhash_t();
 				}
 				return *withdrawer_account_maybe;
@@ -4048,6 +4068,7 @@ namespace tangent
 				message.write_integer(algorithm::asset::base_id_of(asset));
 				message.write_string(proof.transaction_id);
 				callback(message.hash());
+				callback(algorithm::hashing::hash256i(proof.transaction_id));
 			}
 		}
 		uint64_t attestate::as_commitment(uint256_t* event_hash) const

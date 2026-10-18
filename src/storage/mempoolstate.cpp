@@ -694,10 +694,13 @@ namespace tangent
 			schema_list map;
 			map.push_back(var::set::binary(hash, sizeof(hash)));
 			map.push_back(var::set::binary(hash, sizeof(hash)));
+			map.push_back(var::set::binary(hash, sizeof(hash)));
 
 			auto cursor = get_peer_storage().emplace_query(__func__,
 				"DELETE FROM proofs WHERE hash = ?;"
-				"DELETE FROM commitments WHERE hash = ?", &map);
+				"DELETE FROM commitments WHERE hash = ?;"
+				"DELETE FROM preatestations WHERE hash = ?;"
+				"DELETE FROM preatestation_keys WHERE NOT EXISTS (SELECT TRUE FROM preatestations WHERE preatestations.proof_hash = preatestation_keys.proof_hash);", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -708,14 +711,144 @@ namespace tangent
 			auto timestamp = kernel::params().time.now_cpu();
 			schema_list map;
 			map.push_back(var::set::integer(timestamp));
+			map.push_back(var::set::integer(timestamp));
 
 			auto cursor = get_peer_storage().emplace_query(__func__,
 				"DELETE FROM proofs WHERE time < ?;"
-				"DELETE FROM commitments WHERE NOT EXISTS (SELECT TRUE FROM proofs WHERE proofs.hash = commitments.hash AND proofs.commitment = commitments.commitment)", &map);
+				"DELETE FROM commitments WHERE NOT EXISTS (SELECT TRUE FROM proofs WHERE proofs.hash = commitments.hash AND proofs.commitment = commitments.commitment);"
+				"DELETE FROM preatestations WHERE time < ?;"
+				"DELETE FROM preatestation_keys WHERE NOT EXISTS (SELECT TRUE FROM preatestations WHERE preatestations.proof_hash = preatestation_keys.proof_hash);", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<size_t>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 			return cursor->affected_rows();
+		}
+		expects_lr<void> mempoolstate::add_preattestation(const uint256_t& attestation_hash, const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& attester, uint64_t tip_height, const uint256_t& proof_hash, const algorithm::hashsig_t& signature, const superchain::computed_transaction& body)
+		{
+			format::wo_stream message;
+			if (!body.store(&message))
+				return expects_lr<void>(layer_exception("preattestation body serialization error"));
+
+			uint8_t hash[32], asset_hash[32], proof_bytes[32];
+			attestation_hash.encode(hash);
+			asset.encode(asset_hash);
+			proof_hash.encode(proof_bytes);
+
+			btree_set<string> lookup_keys;
+			lookup_keys.insert(transaction_lookup_key(body.transaction_id));
+			for (auto& [input_hash, input] : body.inputs)
+				lookup_keys.insert(address_lookup_key(input.link.address));
+			for (auto& [output_hash, output] : body.outputs)
+				lookup_keys.insert(address_lookup_key(output.link.address));
+			if (!body.memo.empty())
+				lookup_keys.insert(memo_lookup_key(body.memo));
+
+			string sql =
+				"INSERT INTO preatestations (hash, asset, attester, proof_hash, tip_height, signature, message, time) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (hash, attester) DO UPDATE SET "
+				" asset = CASE WHEN EXCLUDED.tip_height > preatestations.tip_height THEN EXCLUDED.asset ELSE preatestations.asset END, "
+				" proof_hash = CASE WHEN EXCLUDED.tip_height > preatestations.tip_height THEN EXCLUDED.proof_hash ELSE preatestations.proof_hash END, "
+				" tip_height = CASE WHEN EXCLUDED.tip_height > preatestations.tip_height THEN EXCLUDED.tip_height ELSE preatestations.tip_height END, "
+				" signature = CASE WHEN EXCLUDED.tip_height > preatestations.tip_height THEN EXCLUDED.signature ELSE preatestations.signature END, "
+				" message = CASE WHEN EXCLUDED.tip_height > preatestations.tip_height THEN EXCLUDED.message ELSE preatestations.message END; "
+				"INSERT OR IGNORE INTO preatestation_keys (lookup_key, proof_hash) VALUES ";
+
+			schema_list map;
+			map.push_back(var::set::binary(hash, sizeof(hash)));
+			map.push_back(var::set::binary(asset_hash, sizeof(asset_hash)));
+			map.push_back(var::set::binary(attester.view()));
+			map.push_back(var::set::binary(proof_bytes, sizeof(proof_bytes)));
+			map.push_back(var::set::integer(tip_height));
+			map.push_back(var::set::binary(signature.view()));
+			map.push_back(var::set::binary(message.data));
+			map.push_back(var::set::integer(kernel::params().time.now_cpu() + ATTESTATION_EXPIRATION));
+
+			bool first = true;
+			for (auto& lookup_key : lookup_keys)
+			{
+				sql += first ? "(?, ?)" : ",(?, ?)";
+				first = false;
+				map.push_back(var::set::binary(lookup_key));
+				map.push_back(var::set::binary(proof_bytes, sizeof(proof_bytes)));
+			}
+			sql += ";";
+
+			auto cursor = get_peer_storage().emplace_query(__func__, sql, &map);
+			if (!cursor || cursor->error())
+				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
+
+			return expectation::met;
+		}
+		expects_lr<superchain::uncomputed_transaction> mempoolstate::get_preattestation_body(const uint256_t& attestation_hash, const uint256_t& proof_hash)
+		{
+			uint8_t hash[32], body[32];
+			attestation_hash.encode(hash);
+			proof_hash.encode(body);
+
+			schema_list map;
+			map.push_back(var::set::binary(hash, sizeof(hash)));
+			map.push_back(var::set::binary(body, sizeof(body)));
+
+			auto cursor = get_peer_storage().emplace_query(__func__, "SELECT message, tip_height FROM preatestations WHERE hash = ? AND proof_hash = ? AND message IS NOT NULL LIMIT 1", &map);
+			if (!cursor || cursor->error_or_empty())
+				return expects_lr<superchain::uncomputed_transaction>(layer_exception(ledger::storage_util::error_of(cursor)));
+
+			superchain::computed_transaction value;
+			auto blob = (*cursor)["message"].get().get_blob();
+			auto message = format::ro_stream(blob);
+			if (!value.load(message))
+				return expects_lr<superchain::uncomputed_transaction>(layer_exception("preattestation body deserialization error"));
+
+			superchain::uncomputed_transaction uncomputed;
+			*(superchain::computed_transaction*)(&uncomputed) = std::move(value);
+			uncomputed.confirmed_block_id = (uint64_t)(*cursor)["tip_height"].get().get_integer();
+			return uncomputed;
+		}
+		expects_lr<vector<superchain::uncomputed_transaction>> mempoolstate::get_preattestations(const hash_set<string>& lookup_keys, size_t offset, size_t count)
+		{
+			string command;
+			schema_list map;
+			if (!lookup_keys.empty())
+			{
+				command = "SELECT c.message, MAX(c.tip_height) AS tip_height FROM preatestations c INNER JOIN preatestation_keys k ON k.proof_hash = c.proof_hash WHERE k.lookup_key IN (";
+				bool first = true;
+				for (auto& lookup_key : lookup_keys)
+				{
+					command += first ? "?" : ", ?";
+					first = false;
+					map.push_back(var::set::binary(lookup_key));
+				}
+				command += ") AND c.message IS NOT NULL AND c.tip_height != ? GROUP BY c.proof_hash ORDER BY MIN(c.time) ASC LIMIT ? OFFSET ?";
+			}
+			else
+				command = "SELECT message, MAX(tip_height) AS tip_height FROM preatestations WHERE message IS NOT NULL AND tip_height != ? GROUP BY proof_hash ORDER BY MIN(time) ASC LIMIT ? OFFSET ?";
+			map.push_back(var::set::integer(superchain::uncomputed_transaction::erased_confirmed_block_id()));
+			map.push_back(var::set::integer(count));
+			map.push_back(var::set::integer(offset));
+
+			auto cursor = get_peer_storage().emplace_query(__func__, command, &map);
+			if (!cursor || cursor->error())
+				return expects_lr<vector<superchain::uncomputed_transaction>>(layer_exception(ledger::storage_util::error_of(cursor)));
+
+			auto& response = cursor->first();
+			size_t size = response.size();
+			vector<superchain::uncomputed_transaction> values;
+			values.reserve(size);
+
+			for (size_t i = 0; i < size; i++)
+			{
+				superchain::computed_transaction value;
+				auto blob = response[i]["message"].get().get_blob();
+				auto message = format::ro_stream(blob);
+				if (!value.load(message))
+					continue;
+
+				superchain::uncomputed_transaction uncomputed;
+				*(superchain::computed_transaction*)(&uncomputed) = std::move(value);
+				uncomputed.confirmed_block_id = (uint64_t)response[i]["tip_height"].get().get_integer();
+				values.emplace_back(std::move(uncomputed));
+			}
+
+			return values;
 		}
 		expects_lr<void> mempoolstate::add_transaction(const ledger::transaction_message& value, bool bypass_cooldown)
 		{
@@ -1233,6 +1366,39 @@ namespace tangent
 		{
 			return 1024 * 1024;
 		}
+		string mempoolstate::transaction_lookup_key(const std::string_view& transaction_id)
+		{
+			format::wo_stream message;
+			message.write_typeless(uint256_t((uint8_t)'t'));
+			if (format::util::is_hex_encoding(transaction_id))
+			{
+				string key = format::util::decode_0xhex(transaction_id);
+				message.write_typeless(key.data(), key.size());
+			}
+			else
+				message.write_typeless(transaction_id.data(), transaction_id.size());
+			return message.data;
+		}
+		string mempoolstate::address_lookup_key(const std::string_view& address)
+		{
+			format::wo_stream message;
+			message.write_typeless(uint256_t((uint8_t)'a'));
+			if (format::util::is_hex_encoding(address))
+			{
+				string key = format::util::decode_0xhex(address);
+				message.write_typeless(key.data(), key.size());
+			}
+			else
+				message.write_typeless(address.data(), address.size());
+			return message.data;
+		}
+		string mempoolstate::memo_lookup_key(const algorithm::pubkeyhash_t& memo)
+		{
+			format::wo_stream message;
+			message.write_typeless(uint256_t((uint8_t)'m'));
+			message.write_typeless(memo.blob, sizeof(memo.blob));
+			return message.data;
+		}
 		bool mempoolstate::make_schema(sqlite::connection* connection, const std::string_view& name)
 		{
 			string command;
@@ -1279,6 +1445,27 @@ namespace tangent
 					signature BLOB(65) NOT NULL,
 					PRIMARY KEY (hash, commitment, signature)
 				);
+				CREATE TABLE IF NOT EXISTS preatestations
+				(
+					hash BLOB(32) NOT NULL,
+					asset BLOB(32) NOT NULL,
+					attester BLOB(20) NOT NULL,
+					proof_hash BLOB(32) NOT NULL,
+					tip_height BIGINT NOT NULL,
+					signature BLOB(65) NOT NULL,
+					message BLOB DEFAULT NULL,
+					time INTEGER NOT NULL,
+					PRIMARY KEY (hash, attester)
+				) WITHOUT ROWID;
+				CREATE INDEX IF NOT EXISTS preatestations_body ON preatestations (hash, proof_hash);
+				CREATE INDEX IF NOT EXISTS preatestations_time ON preatestations (time ASC);
+				CREATE INDEX IF NOT EXISTS preatestations_proof ON preatestations (proof_hash);
+				CREATE TABLE IF NOT EXISTS preatestation_keys
+				(
+					lookup_key BLOB NOT NULL,
+					proof_hash BLOB(32) NOT NULL,
+					PRIMARY KEY (lookup_key, proof_hash)
+				) WITHOUT ROWID;
 				CREATE TABLE IF NOT EXISTS observations
 				(
 					hash BLOB(32) NOT NULL,

@@ -121,6 +121,8 @@ namespace tangent
 			static callable::descriptor fetch_transaction();
 			static callable::descriptor fetch_transactions();
 			static callable::descriptor delegate_execution();
+			static callable::descriptor broadcast_preattestation();
+			static callable::descriptor fetch_preattestation_body();
 		};
 
 		class relay : public reference<relay>
@@ -294,6 +296,7 @@ namespace tangent
 			expects_rt<void> broadcast_block_hash(uref<relay>&& state, const exchange& event);
 			expects_rt<void> broadcast_transaction_hash(uref<relay>&& state, const exchange& event);
 			expects_rt<void> broadcast_attestation(uref<relay>&& state, const exchange& event);
+			expects_rt<void> broadcast_preattestation(uref<relay>&& state, const exchange& event);
 			expects_rt<void> announce_neighbor(uref<relay>&& state, const exchange& event);
 			expects_rt<void> broadcast_intermediary(uref<relay>&& state, const exchange& event);
 			expects_rt<format::variables> perform_handshake(uref<relay>&& state, const exchange& event, bool is_acknowledgement);
@@ -304,6 +307,7 @@ namespace tangent
 			expects_rt<format::variables> fetch_mempool(uref<relay>&& state, const exchange& event);
 			expects_rt<format::variables> fetch_transaction(uref<relay>&& state, const exchange& event);
 			expects_rt<format::variables> fetch_transactions(uref<relay>&& state, const exchange& event);
+			expects_rt<format::variables> fetch_preattestation_body(uref<relay>&& state, const exchange& event);
 			expects_rt<format::variables> delegate_execution(uref<relay>&& state, const exchange& event);
 			expects_lr<void> dispatch_transaction_logs(const algorithm::asset_id& asset, superchain::transaction_logs&& logs);
 			expects_lr<socket_address> find_node_from_mempool();

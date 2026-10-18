@@ -13,7 +13,7 @@ namespace tangent
 
 		struct address_repr;
 
-		struct block_tx_repr;
+		struct tx_repr;
 
 		class array_repr;
 
@@ -515,7 +515,7 @@ namespace tangent
 			static bool equals(const address_repr& a, const address_repr& b);
 		};
 
-		struct block_tx_repr
+		struct tx_repr
 		{
 			struct source
 			{
@@ -527,15 +527,17 @@ namespace tangent
 			uptr<ledger::block_transaction> cached;
 			bool current;
 
-			block_tx_repr();
-			block_tx_repr(const uint256_t& new_hash);
-			block_tx_repr(const block_tx_repr& other);
-			block_tx_repr(block_tx_repr&& other) noexcept = default;
-			block_tx_repr& operator=(const block_tx_repr& other);
-			block_tx_repr& operator=(block_tx_repr&& other) noexcept = default;
-			~block_tx_repr() noexcept = default;
+			tx_repr();
+			tx_repr(const uint256_t& new_hash);
+			tx_repr(const tx_repr& other);
+			tx_repr(tx_repr&& other) noexcept = default;
+			tx_repr& operator=(const tx_repr& other);
+			tx_repr& operator=(tx_repr&& other) noexcept = default;
+			~tx_repr() noexcept = default;
 			bool exists();
+			bool success();
 			bool paid();
+			bool by(const uint256_t& transaction_hash);
 			address_repr from();
 			address_repr to();
 			payable_repr value();
@@ -558,7 +560,7 @@ namespace tangent
 			payable_repr reservations_to(const address_repr& address);
 
 		private:
-			static source source_of(const block_tx_repr& self);
+			static source source_of(const tx_repr& self);
 			static payable_repr collect(const source& transaction_source, const algorithm::pubkeyhash_t& owner, bool supply_part, bool outgoing);
 			template <typename callback_type>
 			static void enumerate_payments(const ledger::transaction_message* transaction, callback_type&& callback);
@@ -794,11 +796,11 @@ namespace tangent
 			static uint256_t tx_gas_limit();
 			static uint256_t tx_asset();
 			static uint256_t tx_hash();
-			static block_tx_repr tx_self();
+			static tx_repr tx_self();
 			static bool tx_pipelined();
 			static program* bridge_internal_check(const char* name, const algorithm::asset_id& asset, const uint256_t& bridge_hash);
 			static void bridge_link(const uint256_t& bridge_hash, const uint256_t& asset, const string_repr& routing_address);
-			static void bridge_send(const uint256_t& bridge_hash, const uint256_t& asset, const string_repr& address, const decimal& value, const decimal& fee);
+			static void bridge_send(const uint256_t& bridge_hash, const uint256_t& asset, const string_repr& routing_address, const decimal& value, const decimal& fee);
 			static bool bridge_requires_link();
 			static bool bridge_requires_send();
 			static uint256_t coin_native();

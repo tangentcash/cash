@@ -58,6 +58,7 @@ namespace tangent
 		struct call final : ledger::transaction_message
 		{
 			typedef vector<std::pair<algorithm::asset_id, decimal>> payable_array;
+
 			enum class feature : uint8_t
 			{
 				none = 0,
@@ -80,8 +81,8 @@ namespace tangent
 			void call_to(const algorithm::pubkeyhash_t& new_callable, const std::string_view& new_function, format::variables&& new_args);
 			void pay_with(const algorithm::asset_id& new_asset, const decimal& new_value);
 			void set_flags(uint8_t new_flags);
-			option<uint8_t> get_flags() const;
 			bool has_feature(feature new_feature) const;
+			option<uint8_t> get_flags() const;
 			std::string_view get_function() const;
 			expects_lr<ledger::block_transaction> as_internal_block_transaction(const ledger::transaction_receipt& receipt, uint32_t type) const;
 			format::tree as_tree() const override;
@@ -90,6 +91,8 @@ namespace tangent
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
+			static expects_lr<void> emit_route_event(ledger::executor_context* executor, const uint256_t& bridge_hash, const algorithm::asset_id& asset, const std::string_view& routing_address);
+			static expects_lr<void> emit_withdraw_event(ledger::executor_context* executor, const uint256_t& bridge_hash, const algorithm::asset_id& asset, const std::string_view& routing_address, const decimal& value);
 		};
 
 		struct rollup final : ledger::transaction_message

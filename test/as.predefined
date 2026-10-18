@@ -393,6 +393,8 @@ namespace block
 		block::tx& opAssign(const block::tx&in);
 		bool exists() const;
 		bool paid() const;
+		bool success() const;
+		bool by(const uint256&in) const;
 		address from() const;
 		address to() const;
 		payable value() const;

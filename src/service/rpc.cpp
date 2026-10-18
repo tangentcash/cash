@@ -420,6 +420,7 @@ namespace tangent
 			bind(0 | access_type::r, "mempoolstate", "getnextaccountnonce", 1, 1, "string owner_address", "uint64", "get account nonce for next transaction by owner", std::bind(&server_node::mempoolstate_get_next_account_nonce, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getmempooltransactions", 3, 4, "bool commitment, uint64 offset, uint64 count, uint8? unrolling", "uint256[] | txn[]", "get mempool transactions", std::bind(&server_node::mempoolstate_get_transactions, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getmempooltransactionsbyowner", 3, 5, "const string address, uint64 offset, uint64 count, uint8? direction = 1, uint8? unrolling", "uint256[] | txn[]", "get mempool transactions by signing address", std::bind(&server_node::mempoolstate_get_transactions_by_owner, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "mempoolstate", "getmempoolpreattestations", 2, 5, "uint64 offset, uint64 count, string? transaction_ids, string? addresses, string? memo_accounts", "superchain::uncomputed_transaction[]", "get off-chain transactions with preattestations, optionally filtered by a comma separated list of transaction ids, addresses and/or memo accounts", std::bind(&server_node::mempoolstate_get_preattestations, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "validatorstate", "getblockchains", 0, 0, "", "superchain::asset_info[]", "get supported blockchains", std::bind(&server_node::validatorstate_get_blockchains, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "validatorstate", "status", 0, 0, "", "validator::status", "get validator status", std::bind(&server_node::validatorstate_pruned_status, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::r | access_type::a, "validatorstate", "getnode", 1, 1, "string uri_address", "validator", "get a node by ip address", std::bind(&server_node::validatorstate_get_node, this, std::placeholders::_1, std::placeholders::_2));
@@ -2933,6 +2934,50 @@ namespace tangent
 				return server_response().error(error_codes::not_found, "transaction not found");
 
 			return server_response().success(format::variable((*transaction)->as_message().encode()));
+		}
+		server_response server_node::mempoolstate_get_preattestations(http::connection*, format::variables&& args)
+		{
+			uint64_t offset = args[0].as_uint64(), count = args[1].as_uint64();
+			if (!count || count > kernel::params().message.pages_per_query)
+				return server_response().error(error_codes::bad_params, "count not valid");
+
+			hash_set<string> lookup_keys;
+			string transaction_id_list = args.size() > 2 ? string(args[2].as_string()) : string();
+			if (!transaction_id_list.empty())
+			{
+				for (auto& transaction_id : stringify::split(transaction_id_list, ','))
+					lookup_keys.insert(storages::mempoolstate::transaction_lookup_key(transaction_id));
+			}
+
+			string address_list = args.size() > 3 ? string(args[3].as_string()) : string();
+			if (!address_list.empty())
+			{
+				for (auto& address : stringify::split(address_list, ','))
+					lookup_keys.insert(storages::mempoolstate::address_lookup_key(address));
+			}
+
+			string memo_account_list = args.size() > 4 ? string(args[4].as_string()) : string();
+			if (!memo_account_list.empty())
+			{
+				for (auto& memo_account_address : stringify::split(memo_account_list, ','))
+				{
+					algorithm::pubkeyhash_t memo_account;
+					if (!algorithm::signing::decode_address(memo_account_address, memo_account))
+						return server_response().error(error_codes::bad_params, "memo address not valid");
+
+					lookup_keys.insert(storages::mempoolstate::memo_lookup_key(memo_account));
+				}
+			}
+
+			auto mempool = storages::mempoolstate();
+			auto transactions = mempool.get_preattestations(lookup_keys, offset, count);
+			if (!transactions)
+				return server_response().error(error_codes::not_found, "transactions not found");
+
+			auto data = format::tree::list();
+			for (auto& transaction : *transactions)
+				data.push(transaction.as_tree());
+			return server_response().success(std::move(data));
 		}
 		server_response server_node::mempoolstate_get_next_account_nonce(http::connection*, format::variables&& args)
 		{

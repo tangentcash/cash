@@ -30,6 +30,9 @@ namespace tangent
 			expects_lr<void> add_incoming_transaction(const superchain::computed_transaction& value);
 			expects_lr<void> add_outgoing_transaction(const superchain::computed_transaction& value, const uint256_t& external_id);
 			expects_lr<superchain::computed_transaction> get_computed_transaction(const std::string_view& transaction_id, const uint256_t& external_id, const uint256_t& optimized_id);
+			expects_lr<void> add_unconfirmed_transaction(const std::string_view& transaction_id, uint64_t block_id, uint64_t confirmed_block_id, const uint256_t& proof_hash);
+			expects_lr<vector<superchain::uncomputed_transaction>> erase_unconfirmed_transactions(uint64_t block_id);
+			expects_lr<btree_set<uint64_t>> get_finalized_block_heights(uint64_t confirmed_block_id, uint64_t target);
 			expects_lr<void> set_property(const std::string_view& key, const format::tree& value);
 			expects_lr<format::tree> get_property(const std::string_view& key);
 			expects_lr<void> set_cache(superchain::cache_policy policy, const std::string_view& key, const format::tree& value);

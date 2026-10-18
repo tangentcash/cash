@@ -162,6 +162,18 @@ namespace tangent
 			static std::string_view as_instance_typename();
 		};
 
+		struct uncomputed_transaction : computed_transaction
+		{
+			uint64_t confirmed_block_id = 0;
+
+			void mark_erased();
+			bool finalized(const algorithm::asset_id& asset) const;
+			bool erased() const;
+			uint64_t confirmations() const;
+			format::tree as_tree() const override;
+			static uint64_t erased_confirmed_block_id();
+		};
+
 		struct prepared_transaction : ledger::uniform_serializer
 		{
 			enum class status
@@ -233,11 +245,14 @@ namespace tangent
 
 		struct transaction_logs
 		{
-			vector<computed_transaction> receipts;
+			vector<uncomputed_transaction> receipts;
 			uint64_t transactions_count = 0;
 			uint64_t block_height = (uint64_t)-1;
 			string block_hash;
 
+			void attach_block(block_log& new_block, uint64_t new_block_height);
+			void attach_transaction(const algorithm::asset_id& asset, computed_transaction&& computed, uint64_t confirmed_block_height);
+			void finalize_state(const algorithm::asset_id& asset);
 			void report_logs(const algorithm::asset_id& asset, const network_options& options, size_t requests);
 		};
 
@@ -497,6 +512,7 @@ namespace tangent
 			expects_lr<void> store_cache(const algorithm::asset_id& asset, cache_policy policy, const std::string_view& key, const format::tree& value);
 			option<string> get_contract_address(const algorithm::asset_id& asset);
 			vector<algorithm::asset_id> get_assets(bool observing_only = false);
+			uint64_t get_finality_target(const algorithm::asset_id& asset);
 			hash_map<algorithm::asset_id, translation_unit::chainparams> get_assets_with_params();
 			const hash_map<string, invocation_callback>& get_registrations();
 			hash_map<string, network_instance>& get_networks();

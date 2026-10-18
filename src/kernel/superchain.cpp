@@ -561,6 +561,7 @@ namespace tangent
 				inputs[input.as_hash(true)] = std::move(input);
 			for (auto& [hash, output] : prev_outputs)
 				outputs[output.as_hash(true)] = std::move(output);
+			checksum = 0;
 		}
 		void computed_transaction::add_input(coin_utxo&& input)
 		{
@@ -816,6 +817,36 @@ namespace tangent
 		std::string_view computed_transaction::as_instance_typename()
 		{
 			return "computed_transaction";
+		}
+
+		void uncomputed_transaction::mark_erased()
+		{
+			confirmed_block_id = erased_confirmed_block_id();
+		}
+		bool uncomputed_transaction::finalized(const algorithm::asset_id& asset) const
+		{
+			return confirmations() >= bridge::get()->get_finality_target(asset);
+		}
+		bool uncomputed_transaction::erased() const
+		{
+			return confirmed_block_id == erased_confirmed_block_id();
+		}
+		uint64_t uncomputed_transaction::confirmations() const
+		{
+			if (erased())
+				return 0;
+
+			return (confirmed_block_id >= block_id ? confirmed_block_id - block_id : 0) + 1;
+		}
+		format::tree uncomputed_transaction::as_tree() const
+		{
+			auto data = computed_transaction::as_tree();
+			data.set("confirmed_block_height", format::variable(confirmed_block_id));
+			return data;
+		}
+		uint64_t uncomputed_transaction::erased_confirmed_block_id()
+		{
+			return std::numeric_limits<uint64_t>::max();
 		}
 
 		prepared_transaction& prepared_transaction::requires_input(algorithm::composition::type new_alg, const algorithm::composition::cpubkey_t& new_public_key, uint8_t* new_message, size_t new_message_size, coin_utxo&& input)
@@ -1213,6 +1244,35 @@ namespace tangent
 			return "finalized_transaction";
 		}
 
+		void transaction_logs::attach_block(block_log& new_block, uint64_t new_block_height)
+		{
+			block_height = new_block_height;
+			block_hash = new_block.block_hash.empty() ? to_string(block_height) : new_block.block_hash;
+			transactions_count = new_block.transactions.childs().size();
+		}
+		void transaction_logs::attach_transaction(const algorithm::asset_id& asset, computed_transaction&& computed, uint64_t confirmed_block_height)
+		{
+			auto uncomputed = uncomputed_transaction();
+			*(computed_transaction*)(&uncomputed) = std::move(computed);
+			bridge::get()->normalize_transaction_id(asset, &uncomputed.transaction_id);
+			uncomputed.confirmed_block_id = confirmed_block_height;
+			uncomputed.block_id = block_height;
+			uncomputed.rebuild_index();
+			receipts.push_back(std::move(uncomputed));
+		}
+		void transaction_logs::finalize_state(const algorithm::asset_id& asset)
+		{
+			if (receipts.empty())
+				return;
+
+			auto state = storages::superchainstate(asset);
+			for (auto& new_transaction : receipts)
+			{
+				state.add_incoming_transaction(new_transaction);
+				if (!new_transaction.erased() && !new_transaction.finalized(asset))
+					state.add_unconfirmed_transaction(new_transaction.transaction_id, new_transaction.block_id, new_transaction.confirmed_block_id, new_transaction.as_proof_hash(asset));
+			}
+		}
 		void transaction_logs::report_logs(const algorithm::asset_id& asset, const network_options& options, size_t requests)
 		{
 			auto blockchain = algorithm::asset::blockchain_of(asset);
@@ -1227,10 +1287,7 @@ namespace tangent
 
 			for (auto& tx : receipts)
 			{
-				string transfer_logs = stringify::text(
-					"%s transaction %s (block: %" PRIu64 ")\n",
-					blockchain.c_str(),
-					tx.transaction_id.c_str(), tx.block_id);
+				string transfer_logs = stringify::text("%s transaction %s (block: %" PRIu64 ", %s)\n", blockchain.c_str(), tx.transaction_id.c_str(), tx.block_id, tx.erased() ? "erased" : (tx.finalized(asset) ? "finalized" : "pending"));
 				for (auto& [hash, input] : tx.inputs)
 				{
 					transfer_logs += stringify::text("  %s spends %s %s\n", input.link.as_name().c_str(), input.value.to_string().c_str(), blockchain.c_str());
@@ -2115,18 +2172,13 @@ namespace tangent
 			return coasync<expects_rt<vector<transaction_logs>>>([this, asset, implementation, options]() -> expects_promise_rt<vector<transaction_logs>>
 			{
 				format::tree tip_now, tip_min, tip_max;
-				auto to_delayed_block_height = [&](uint64_t block_height, bool zero_as_min)
-				{
-					auto latency = std::max<uint64_t>(kernel::params().is(network_type::regtest) ? 1 : implementation->get_chainparams().sync_latency, 1) - 1;
-					return block_height > latency ? block_height - latency : (zero_as_min ? 0 : 1);
-				};
 				{
 					storages::superchainstate state = storages::superchainstate(asset);
 					auto tip_set = state.get_property("TIP:SET").or_else(format::tree());
 					tip_min = state.get_property("TIP:MIN").or_else(format::tree());
 					if (tip_set.value.is_integer())
 					{
-						uint64_t tip = to_delayed_block_height(tip_set.value.as_uint64(), !tip_set.value.as_uint64());
+						uint64_t tip = tip_set.value.as_uint64();
 						options->set_checkpoint_from_block(tip);
 						state.set_property("TIP:SET", format::variable());
 						state.set_property("TIP:NOW", format::variable());
@@ -2171,7 +2223,6 @@ namespace tangent
 					if (!latest_block_height)
 						coreturn expects_rt<vector<transaction_logs>>(std::move(latest_block_height.error()));
 
-					*latest_block_height = to_delayed_block_height(*latest_block_height, true);
 					options->set_checkpoint_to_block(*latest_block_height);
 				}
 
@@ -2194,48 +2245,83 @@ namespace tangent
 					coreturn expects_rt<vector<transaction_logs>>(stringify::text("while resolving tip received %" PRIu64 " but expected %" PRIu64 " or higher", block_height, min_block_height));
 				}
 
-				auto logs = vector<transaction_logs>();
 				auto block_batch = coawait(implementation->get_block_transactions(block_height, block_count));
 				if (!block_batch)
 					coreturn expects_rt<vector<transaction_logs>>(stringify::text("while fetching block(s) %" PRIu64 " received %s", block_height, block_batch.error().message().c_str()));
 
-				auto* utxo_implementation = utxo_translation_unit::from(implementation);
+				auto logs = vector<transaction_logs>();
+				auto confirmed_block_height = block_height + block_batch->size() - 1;
+				auto linker_network_error = [&](const remote_exception& error)
+				{
+					if (!error.is_retry_after())
+						return remote_exception::retry_later();
+
+					options->state.retry_after_time = error.retry_after_timestamp();
+					return error;
+				};
 				for (auto& block : *block_batch)
 				{
 					transaction_logs log;
-					log.block_height = block_height + (uint64_t)logs.size();
-					log.block_hash = block.block_hash.empty() ? to_string(log.block_height) : block.block_hash;
-					log.transactions_count = block.transactions.childs().size();
-
+					log.attach_block(block, block_height + (uint64_t)logs.size());
 					for (auto& item : block.transactions.childs())
 					{
-						auto computed = coawait(implementation->link_transaction(log.block_height, log.block_hash, item));
-						if (computed)
-						{
-							computed->rebuild_index();
-							computed->block_id = log.block_height;
-							normalize_transaction_id(asset, &computed->transaction_id);
-							log.receipts.push_back(std::move(*computed));
-							item.key.clear();
-						}
-						else if (computed.error().is_retry() || computed.error().is_shutdown())
-						{
-							if (!computed.error().is_retry_after())
-								coreturn expects_rt<vector<transaction_logs>>(remote_exception::retry_later());
+						auto computed = coawait(implementation->link_transaction(log.block_height, log.block_hash, item)); item.key.clear();
+						if (!computed && (computed.error().is_retry() || computed.error().is_shutdown()))
+							coreturn expects_rt<vector<transaction_logs>>(linker_network_error(computed.error()));
+						else if (!computed)
+							continue;
 
-							options->state.retry_after_time = computed.error().retry_after_timestamp();
-							coreturn computed.error();
-						}
+						log.attach_transaction(asset, std::move(*computed), confirmed_block_height);
 					}
-
-					hash_set<string> transaction_ids;
-					auto state = storages::superchainstate(asset);
-					for (auto& new_transaction : log.receipts)
-					{
-						state.add_incoming_transaction(new_transaction);
-						transaction_ids.insert(algorithm::asset::handle_of(asset) + ":" + new_transaction.transaction_id);
-					}
+					log.finalize_state(asset);
 					logs.push_back(std::move(log));
+				}
+
+				auto confirmation_target = get_finality_target(asset);
+				auto finalized_block_heights = storages::superchainstate(asset).get_finalized_block_heights(confirmed_block_height, confirmation_target);
+				if (finalized_block_heights)
+				{
+					hash_set<string> transaction_ids;
+					for (auto& finalized_block_height : *finalized_block_heights)
+					{
+						block_batch = coawait(implementation->get_block_transactions(finalized_block_height, 1));
+						if (!block_batch)
+							coreturn expects_rt<vector<transaction_logs>>(stringify::text("while fetching finalized block(s) %" PRIu64 " received %s", finalized_block_height, block_batch.error().message().c_str()));
+						else if (block_batch->empty())
+							continue;
+
+						auto& block = block_batch->front();
+						transaction_logs log;
+						log.attach_block(block, finalized_block_height);
+						for (auto& item : block.transactions.childs())
+						{
+							auto computed = coawait(implementation->link_transaction(log.block_height, log.block_hash, item)); item.key.clear();
+							if (!computed && (computed.error().is_retry() || computed.error().is_shutdown()))
+								coreturn expects_rt<vector<transaction_logs>>(linker_network_error(computed.error()));
+							else if (!computed)
+								continue;
+
+							log.attach_transaction(asset, std::move(*computed), confirmed_block_height);
+							transaction_ids.insert(log.receipts.back().transaction_id);
+						}
+
+						auto state = storages::superchainstate(asset);
+						auto unconfirmed_transactions = state.erase_unconfirmed_transactions(log.block_height);
+						if (unconfirmed_transactions)
+						{
+							for (auto& unconfirmed_transaction : *unconfirmed_transactions)
+							{
+								if (transaction_ids.find(unconfirmed_transaction.transaction_id) == transaction_ids.end())
+								{
+									unconfirmed_transaction.mark_erased();
+									log.receipts.push_back(std::move(unconfirmed_transaction));
+								}
+							}
+						}
+
+						log.finalize_state(asset);
+						logs.push_back(std::move(log));
+					}
 				}
 
 				auto state = storages::superchainstate(asset);
@@ -2266,6 +2352,14 @@ namespace tangent
 				return expects_rt<computed_transaction>(remote_exception("chain not found"));
 
 			return implementation->link_transaction(block_height, block_hash, transaction_data);
+		}
+		uint64_t bridge::get_finality_target(const algorithm::asset_id& asset)
+		{
+			//if (kernel::params().is(network_type::regtest) || !has_network(asset))
+				//return 0;
+
+			auto* implementation = get_network(asset);
+			return implementation ? std::max<uint64_t>(implementation->get_chainparams().sync_latency, 1) : 1;
 		}
 		expects_promise_rt<decimal> bridge::calculate_balance(const algorithm::asset_id& asset, const wallet_link& link)
 		{

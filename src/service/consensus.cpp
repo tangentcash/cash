@@ -107,6 +107,15 @@ namespace tangent
 				message.write_typeless(account.view());
 			return message.hash();
 		}
+		static uint256_t preattestation_proof(const algorithm::asset_id& asset, const uint256_t& attestation_hash, uint64_t tip_height, const uint256_t& proof_hash)
+		{
+			format::wo_stream message;
+			message.write_integer(algorithm::asset::base_id_of(asset));
+			message.write_integer(attestation_hash);
+			message.write_integer(tip_height);
+			message.write_integer(proof_hash);
+			return message.hash();
+		}
 		static format::variables pack_query_result(const expects_rt<format::variables>& result)
 		{
 			if (!result)
@@ -795,6 +804,14 @@ namespace tangent
 		{
 			return callable::descriptor(__func__, 14);
 		}
+		callable::descriptor descriptors::broadcast_preattestation()
+		{
+			return callable::descriptor(__func__, 15);
+		}
+		callable::descriptor descriptors::fetch_preattestation_body()
+		{
+			return callable::descriptor(__func__, 16);
+		}
 
 		server_node::server_node() noexcept : socket_server(), control_sys("consensus-node"), runner_descriptor(nullptr)
 		{
@@ -1183,6 +1200,9 @@ namespace tangent
 		}
 		expects_rt<void> server_node::accept_committed_attestation(const algorithm::asset_id& asset, const superchain::computed_transaction& proof, const btree_set<algorithm::hashsig_t>& signatures)
 		{
+			if (signatures.empty())
+				return remote_exception("not enough signatures");
+
 			umutex<std::recursive_mutex> unique(sync.attestation);
 			auto mempool = storages::mempoolstate();
 			for (auto& signature : signatures)
@@ -1233,7 +1253,7 @@ namespace tangent
 			if (target && block_hash == target->as_hash())
 				return expectation::met;
 
-			query(uref(from), descriptors::fetch_block(), { format::variable(block_hash) }, kernel::params().user.tcp.timeout).then([this, from](expects_rt<exchange>&& event) mutable
+			query(uref(from), descriptors::fetch_block(), { format::variable(block_hash) }, kernel::params().user.tcp.timeout).when([this, from](expects_rt<exchange>&& event) mutable
 			{
 				if (event && !event->args.empty())
 				{
@@ -1266,7 +1286,7 @@ namespace tangent
 			if (chain.has_block_transaction(transaction_hash).or_else(false))
 				return expectation::met;
 
-			query(uref(from), descriptors::fetch_transaction(), { format::variable(transaction_hash) }, kernel::params().user.tcp.timeout).then([this, from](expects_rt<exchange>&& event) mutable
+			query(uref(from), descriptors::fetch_transaction(), { format::variable(transaction_hash) }, kernel::params().user.tcp.timeout).when([this, from](expects_rt<exchange>&& event) mutable
 			{
 				if (event && !event->args.empty())
 				{
@@ -1327,6 +1347,73 @@ namespace tangent
 			if (notifications > 0 && kernel::params().user.consensus.logging)
 				VI_DEBUG("attestation %s broadcasted to %i nodes", uint256_to_label(commitment_hash).c_str(), (int)notifications);
 
+			return expectation::met;
+		}
+		expects_rt<void> server_node::broadcast_preattestation(uref<relay>&& from, const exchange& event)
+		{
+			if (event.args.size() != 5)
+				return remote_exception("invalid arguments");
+
+			algorithm::asset_id asset = event.args[0].as_uint256();
+			uint256_t attestation_hash = event.args[1].as_uint256();
+			uint64_t tip_height = event.args[2].as_uint64();
+			uint256_t proof_hash = event.args[3].as_uint256();
+			algorithm::hashsig_t signature = algorithm::hashsig_t(event.args[4].as_string());
+			if (!attestation_hash || !proof_hash || signature.empty())
+				return remote_exception("invalid preattestation");
+
+			algorithm::pubkeyhash_t attester;
+			if (!algorithm::signing::recover_hash(preattestation_proof(asset, attestation_hash, tip_height, proof_hash), attester, signature))
+				return remote_exception("invalid preattestation signature");
+
+			auto executor = ledger::executor_context(nullptr);
+			auto validation = executor.get_verified_validator_attestation(asset, attester);
+			if (!validation)
+				return remote_exception(std::move(validation.error().message()));
+
+			auto mempool = storages::mempoolstate();
+			auto cached = mempool.get_preattestation_body(attestation_hash, proof_hash);
+			if (cached)
+			{
+				auto collision = executor.get_witness_transaction(asset, cached->transaction_id);
+				if (collision)
+					return expectation::met;
+
+				auto status = mempool.add_preattestation(attestation_hash, asset, attester, tip_height, proof_hash, signature, *cached);
+				if (!status)
+					return remote_exception(std::move(status.error().message()));
+
+				size_t notifications = notify_all_except(std::move(from), descriptors::broadcast_preattestation(), format::variables(event.args));
+				if (notifications > 0 && kernel::params().user.consensus.logging)
+					VI_DEBUG("preattestation %" PRIu64 " for %s broadcasted to %i nodes", tip_height, uint256_to_label(attestation_hash).c_str(), (int)notifications);
+
+				return expectation::met;
+			}
+
+			auto args = format::variables(event.args);
+			query(uref(from), descriptors::fetch_preattestation_body(), { format::variable(asset), format::variable(attestation_hash), format::variable(proof_hash) }, kernel::params().user.tcp.timeout).when([this, asset, attestation_hash, attester, tip_height, proof_hash, signature, args, from](expects_rt<exchange>&& event) mutable
+			{
+				if (!event || event->args.empty())
+					return;
+
+				superchain::computed_transaction body;
+				format::ro_stream proof_message = format::ro_stream(event->args.front().as_string());
+				if (!body.load(proof_message) || body.as_proof_hash(asset) != proof_hash)
+					return;
+
+				auto executor = ledger::executor_context(nullptr);
+				auto collision = executor.get_witness_transaction(asset, body.transaction_id);
+				if (collision)
+					return;
+
+				auto mempool = storages::mempoolstate();
+				if (!mempool.add_preattestation(attestation_hash, asset, attester, tip_height, proof_hash, signature, body))
+					return;
+
+				size_t notifications = notify_all_except(std::move(from), descriptors::broadcast_preattestation(), std::move(args));
+				if (notifications > 0 && kernel::params().user.consensus.logging)
+					VI_DEBUG("preattestation %" PRIu64 " for %s broadcasted to %i nodes", tip_height, uint256_to_label(attestation_hash).c_str(), (int)notifications);
+			});
 			return expectation::met;
 		}
 		expects_rt<void> server_node::broadcast_intermediary(uref<relay>&& from, const exchange& event)
@@ -1676,6 +1763,39 @@ namespace tangent
 			}
 			return expects_rt<format::variables>(std::move(result));
 		}
+		expects_rt<format::variables> server_node::fetch_preattestation_body(uref<relay>&& from, const exchange& event)
+		{
+			if (event.args.size() != 3)
+				return remote_exception("invalid arguments");
+
+			algorithm::asset_id asset = event.args[0].as_uint256();
+			uint256_t attestation_hash = event.args[1].as_uint256();
+			uint256_t proof_hash = event.args[2].as_uint256();
+			if (!attestation_hash || !proof_hash)
+				return remote_exception("invalid hash");
+
+			auto* channel = from ? from->as_descriptor() : nullptr;
+			if (!channel)
+				return remote_exception("invalid channel");
+
+			auto executor = ledger::executor_context(nullptr);
+			auto validation = executor.get_verified_validator_attestation(asset, channel->second.public_key_hash);
+			if (!validation)
+				return remote_exception("active attestation required to fetch preattestation body");
+
+			auto mempool = storages::mempoolstate();
+			auto body = mempool.get_preattestation_body(attestation_hash, proof_hash);
+			if (body && body->as_proof_hash(asset) == proof_hash)
+				return format::variables({ format::variable(body->as_message().data) });
+
+			auto batch = mempool.get_attestation(attestation_hash);
+			if (batch)
+				for (auto& item : batch->proofs)
+					if (item.second.as_proof_hash(asset) == proof_hash)
+						return format::variables({ format::variable(item.second.as_message().data) });
+
+			return format::variables();
+		}
 		expects_rt<format::variables> server_node::delegate_execution(uref<relay>&&, const exchange& event)
 		{
 			auto sender = algorithm::pubkeyhash_t();
@@ -1706,7 +1826,7 @@ namespace tangent
 				return remote_exception("invalid delegation type");
 
 			auto transaction_hash = packed->at(2).as_uint256();
-			auto context = executor.get_block_transaction(delegation->as_transaction_type(), transaction_hash);
+			auto context = executor.get_applied_block_transaction(delegation->as_transaction_type(), transaction_hash);
 			if (!context)
 				return remote_exception("transaction not found");
 
@@ -1732,36 +1852,61 @@ namespace tangent
 		}
 		expects_lr<void> server_node::dispatch_transaction_logs(const algorithm::asset_id& asset, superchain::transaction_logs&& logs)
 		{
+			if (logs.receipts.empty())
+				return expectation::met;
+
+			auto executor = ledger::executor_context(nullptr);
 			for (auto& receipt : logs.receipts)
 			{
-				btree_set<algorithm::hashsig_t> signatures;
-				for (auto& [account, descriptor] : descriptors)
-				{
-					algorithm::hashsig_t commitment_signature; uint256_t commitment_hash;
-					if (descriptor.first.services.has_attestation && transactions::attestate::commit_to_proof(asset, receipt, descriptor.second.secret_key, commitment_hash, commitment_signature))
-						signatures.insert(commitment_signature);
-				}
-				if (signatures.empty())
+				auto collision = executor.get_witness_transaction(asset, receipt.transaction_id);
+				if (collision)
 					continue;
 
-				auto finalization = accept_committed_attestation(asset, receipt, signatures);
-				if (finalization)
-					continue;
-
-				if (finalization.error().is_retry() || finalization.error().is_shutdown())
+				if (receipt.finalized(asset))
 				{
-					auto args = format::variables({ format::variable(asset), format::variable(receipt.as_message().data) });
-					for (auto& signature : signatures)
-						args.push_back(format::variable(signature.view()));
+					btree_set<algorithm::hashsig_t> signatures;
+					for (auto& [account, descriptor] : descriptors)
+					{
+						algorithm::hashsig_t commitment_signature; uint256_t commitment_hash;
+						if (descriptor.first.services.has_attestation && transactions::attestate::commit_to_proof(asset, receipt, descriptor.second.secret_key, commitment_hash, commitment_signature))
+							signatures.insert(commitment_signature);
+					}
 
-					size_t notifications = args.size() > 2 ? notify_all(descriptors::broadcast_attestation(), std::move(args)) : 0;
-					if (notifications > 0 && kernel::params().user.consensus.logging)
-						VI_DEBUG("attestation %s broadcasted to %i nodes (signatures: %i)", uint256_to_label(receipt.as_attestation_hash()).c_str(), (int)notifications, (int)signatures.size());
+					auto finalization = accept_committed_attestation(asset, receipt, signatures);
+					if (!finalization && (finalization.error().is_retry() || finalization.error().is_shutdown()))
+					{
+						auto args = format::variables({ format::variable(asset), format::variable(receipt.as_message().data) });
+						for (auto& signature : signatures)
+							args.push_back(format::variable(signature.view()));
+
+						size_t notifications = args.size() > 2 ? notify_all(descriptors::broadcast_attestation(), std::move(args)) : 0;
+						if (notifications > 0 && kernel::params().user.consensus.logging)
+							VI_DEBUG("attestation %s broadcasted to %i nodes (signatures: %i)", uint256_to_label(receipt.as_attestation_hash()).c_str(), (int)notifications, (int)signatures.size());
+					}
+					else if (!finalization && kernel::params().user.consensus.logging)
+						VI_ERR("attestation %s verification failed: %s", uint256_to_label(receipt.as_attestation_hash()).c_str(), finalization.what().c_str());
 				}
-				else if (kernel::params().user.consensus.logging)
-					VI_ERR("attestation %s verification failed: %s", uint256_to_label(receipt.as_attestation_hash()).c_str(), finalization.what().c_str());
+				else
+				{
+					auto attestation_hash = receipt.as_attestation_hash();
+					auto proof_hash = receipt.as_proof_hash(asset);
+					auto preattestation_hash = preattestation_proof(asset, attestation_hash, receipt.confirmed_block_id, proof_hash);
+					for (auto& [account, descriptor] : descriptors)
+					{
+						algorithm::hashsig_t signature;
+						if (descriptor.first.services.has_attestation && algorithm::signing::sign(preattestation_hash, descriptor.second.secret_key, signature))
+						{
+							auto mempool = storages::mempoolstate();
+							mempool.add_preattestation(attestation_hash, asset, descriptor.second.public_key_hash, receipt.confirmed_block_id, proof_hash, signature, receipt).report("preattestation seed failure");
+
+							auto args = format::variables({ format::variable(asset), format::variable(attestation_hash), format::variable(receipt.confirmed_block_id), format::variable(proof_hash), format::variable(signature.view()) });
+							size_t notifications = notify_all(descriptors::broadcast_preattestation(), std::move(args));
+							if (notifications > 0 && kernel::params().user.consensus.logging)
+								VI_DEBUG("preattestation %" PRIu64 " for %s broadcasted to %i nodes", receipt.confirmed_block_id, uint256_to_label(attestation_hash).c_str(), (int)notifications);
+						}
+					}
+				}
 			}
-
 			return expectation::met;
 		}
 		expects_lr<socket_address> server_node::find_node_from_mempool()
@@ -3364,6 +3509,7 @@ namespace tangent
 			bind_event(descriptors::broadcast_block_hash(), std::bind(&server_node::broadcast_block_hash, this, std::placeholders::_2, std::placeholders::_3));
 			bind_event(descriptors::broadcast_transaction_hash(), std::bind(&server_node::broadcast_transaction_hash, this, std::placeholders::_2, std::placeholders::_3));
 			bind_event(descriptors::broadcast_attestation(), std::bind(&server_node::broadcast_attestation, this, std::placeholders::_2, std::placeholders::_3));
+			bind_event(descriptors::broadcast_preattestation(), std::bind(&server_node::broadcast_preattestation, this, std::placeholders::_2, std::placeholders::_3));
 			bind_event(descriptors::broadcast_intermediary(), std::bind(&server_node::broadcast_intermediary, this, std::placeholders::_2, std::placeholders::_3));
 			bind_event(descriptors::announce_neighbor(), std::bind(&server_node::announce_neighbor, this, std::placeholders::_2, std::placeholders::_3));
 			bind_query(descriptors::perform_handshake(), std::bind(&server_node::perform_handshake, this, std::placeholders::_2, std::placeholders::_3, false), false);
@@ -3374,6 +3520,7 @@ namespace tangent
 			bind_query(descriptors::fetch_mempool(), std::bind(&server_node::fetch_mempool, this, std::placeholders::_2, std::placeholders::_3));
 			bind_query(descriptors::fetch_transaction(), std::bind(&server_node::fetch_transaction, this, std::placeholders::_2, std::placeholders::_3));
 			bind_query(descriptors::fetch_transactions(), std::bind(&server_node::fetch_transactions, this, std::placeholders::_2, std::placeholders::_3));
+			bind_query(descriptors::fetch_preattestation_body(), std::bind(&server_node::fetch_preattestation_body, this, std::placeholders::_2, std::placeholders::_3));
 			bind_query(descriptors::delegate_execution(), std::bind(&server_node::delegate_execution, this, std::placeholders::_2, std::placeholders::_3));
 			control_sys.interval_if_none(TASK_TOPOLOGY_OPTIMIZATION "_runner", 180000, std::bind(&server_node::run_topology_optimization, this));
 			control_sys.interval_if_none(TASK_BLOCK_DISPATCH_RETRIAL "_runner", 120000, std::bind(&server_node::run_block_dispatcher, this));

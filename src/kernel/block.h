@@ -403,7 +403,8 @@ namespace tangent
 			expects_lr<states::witness_account> get_witness_account(const algorithm::asset_id& asset, const std::string_view& address, size_t offset) const;
 			expects_lr<states::witness_account> get_witness_account_tagged(const algorithm::asset_id& asset, const std::string_view& address, size_t offset) const;
 			expects_lr<states::witness_transaction> get_witness_transaction(const algorithm::asset_id& asset, const std::string_view& transaction_id) const;
-			expects_lr<block_transaction> get_block_transaction(uint32_t type, const uint256_t& transaction_hash, size_t offset = 0) const;
+			expects_lr<block_transaction> get_matching_block_transaction(uint32_t type, const uint256_t& transaction_hash, bool exclude_reverted = false, size_t offset = 0) const;
+			expects_lr<block_transaction> get_applied_block_transaction(uint32_t type, const uint256_t& transaction_hash, size_t offset = 0) const;
 			expects_lr<uint64_t> get_block_number_by_hash(const uint256_t& block_hash) const;
 			states::account_balance get_account_balance_delta(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& owner, const ledger::transaction_receipt* target_receipt = nullptr) const;
 			void enumerate_account_balance_changes(const ledger::transaction_receipt* target_receipt, const std::function<void(const states::account_balance&)>& callback) const;
@@ -420,9 +421,14 @@ namespace tangent
 				return emit_event(t::as_instance_type(), std::move(values), pay);
 			}
 			template <typename t>
-			expects_lr<block_transaction> get_block_transaction(const uint256_t& transaction_hash, size_t offset = 0) const
+			expects_lr<block_transaction> get_matching_block_transaction(const uint256_t& transaction_hash, bool exclude_reverted = false, size_t offset = 0) const
 			{
-				return get_block_transaction(t::as_instance_type(), transaction_hash, offset);
+				return get_matching_block_transaction(t::as_instance_type(), transaction_hash, exclude_reverted, offset);
+			}
+			template <typename t>
+			expects_lr<block_transaction> get_applied_block_transaction(const uint256_t& transaction_hash, size_t offset = 0) const
+			{
+				return get_applied_block_transaction(t::as_instance_type(), transaction_hash, offset);
 			}
 
 		public:
