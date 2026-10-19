@@ -451,8 +451,9 @@ namespace tx { uint256 asset(); }
 namespace tx { uint256 hash(); }
 namespace tx { block::tx self(); }
 namespace tx { bool pipelined(); }
+namespace bridge { real320 fee(const uint256&in, const uint256&in); }
 namespace bridge { void link(const uint256&in, const uint256&in, const string&in); }
-namespace bridge { void send(const uint256&in, const uint256&in, const string&in, const real320&in, const real320&in); }
+namespace bridge { void send(const uint256&in, const uint256&in, const string&in, const real320&in); }
 namespace bridge { bool requires_link(); }
 namespace bridge { bool requires_send(); }
 namespace coin { bool valid(const uint256&in); }

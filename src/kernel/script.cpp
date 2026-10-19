@@ -4141,6 +4141,21 @@ namespace tangent
 
 			return p;
 		}
+		decimal contract::bridge_fee(const uint256_t& bridge_hash, const uint256_t& asset)
+		{
+			auto* p = bridge_internal_check("link", asset, bridge_hash);
+			if (p == nullptr)
+				return decimal::nan();
+
+			auto bridge = p->executor->get_bridge_instance(asset, bridge_hash);
+			if (!bridge)
+			{
+				contract::throw_ptr(exception_repr(exception_repr::category::requirement(), "bridge::fee requires a valid bridge instance"));
+				return decimal::nan();
+			}
+
+			return bridge->fee_rate;
+		}
 		void contract::bridge_link(const uint256_t& bridge_hash, const uint256_t& asset, const string_repr& routing_address)
 		{
 			auto* p = bridge_internal_check("link", asset, bridge_hash);
@@ -4169,11 +4184,18 @@ namespace tangent
 				}
 			}
 
+			auto bridge = p->executor->get_bridge_instance(asset, bridge_hash);
+			if (!bridge)
+			{
+				contract::throw_ptr(exception_repr(exception_repr::category::requirement(), "bridge::link requires a valid bridge instance"));
+				return;
+			}
+
 			auto event = transactions::call::emit_route_event(p->executor, bridge_hash, asset, routing_address.view());
 			if (!event)
 				contract::throw_ptr(exception_repr(exception_repr::category::storage(), std::string_view(event.error().message())));
 		}
-		void contract::bridge_send(const uint256_t& bridge_hash, const uint256_t& asset, const string_repr& routing_address, const decimal& value, const decimal& fee)
+		void contract::bridge_send(const uint256_t& bridge_hash, const uint256_t& asset, const string_repr& routing_address, const decimal& value)
 		{
 			auto* p = bridge_internal_check("send", asset, bridge_hash);
 			if (p == nullptr)
@@ -4211,11 +4233,6 @@ namespace tangent
 			if (!bridge)
 			{
 				contract::throw_ptr(exception_repr(exception_repr::category::requirement(), "bridge::send requires a valid bridge instance"));
-				return;
-			}
-			else if (bridge->fee_rate != fee)
-			{
-				contract::throw_ptr(exception_repr(exception_repr::category::requirement(), "bridge::send fee does not match the actual bridge fee"));
 				return;
 			}
 
@@ -6279,8 +6296,9 @@ namespace tangent
 			vm->end_namespace();
 
 			vm->begin_namespace("bridge");
+			vm->set_function_address("real320 fee(const uint256&in, const uint256&in)", WRAP_FN(contract::bridge_fee), convention::generic_call);
 			vm->set_function_address("void link(const uint256&in, const uint256&in, const string&in)", WRAP_FN(contract::bridge_link), convention::generic_call);
-			vm->set_function_address("void send(const uint256&in, const uint256&in, const string&in, const real320&in, const real320&in)", WRAP_FN(contract::bridge_send), convention::generic_call);
+			vm->set_function_address("void send(const uint256&in, const uint256&in, const string&in, const real320&in)", WRAP_FN(contract::bridge_send), convention::generic_call);
 			vm->set_function_address("bool requires_link()", WRAP_FN(contract::bridge_requires_link), convention::generic_call);
 			vm->set_function_address("bool requires_send()", WRAP_FN(contract::bridge_requires_send), convention::generic_call);
 			vm->end_namespace();

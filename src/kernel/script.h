@@ -799,8 +799,9 @@ namespace tangent
 			static tx_repr tx_self();
 			static bool tx_pipelined();
 			static program* bridge_internal_check(const char* name, const algorithm::asset_id& asset, const uint256_t& bridge_hash);
+			static decimal bridge_fee(const uint256_t& bridge_hash, const uint256_t& asset);
 			static void bridge_link(const uint256_t& bridge_hash, const uint256_t& asset, const string_repr& routing_address);
-			static void bridge_send(const uint256_t& bridge_hash, const uint256_t& asset, const string_repr& routing_address, const decimal& value, const decimal& fee);
+			static void bridge_send(const uint256_t& bridge_hash, const uint256_t& asset, const string_repr& routing_address, const decimal& value);
 			static bool bridge_requires_link();
 			static bool bridge_requires_send();
 			static uint256_t coin_native();
