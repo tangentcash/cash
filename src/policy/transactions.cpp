@@ -3799,6 +3799,8 @@ namespace tangent
 				else if (bridge_hash > 0)
 				{
 					auto source_ref_owner = source && source->is_routing_account() ? source->ref.owner : withdrawer_account();
+					if (enforce_aliasing && !withdrawer_account().empty())
+						source_ref_owner = withdrawer_account();
 					if (!source_ref_owner.empty())
 					{
 						auto& subtransfers = transfers[source_ref_owner];

@@ -549,12 +549,18 @@ namespace tangent
 		if (environment != nullptr)
 		{
 			auto library = *os::directory::get_module();
-			VI_PANIC(!environment->params.empty() && !environment->params.back().empty(), "specify the node config (json) file as the last argument");
-			path = os::path::resolve(environment->params.back(), library, true).or_else(string(path));
+			if (!environment->has("no-config"))
+			{
+				VI_PANIC(!environment->params.empty() && !environment->params.back().empty(), "specify the node config (json) file as the last argument");
+				path = os::path::resolve(environment->params.back(), library, true).or_else(string(path));
 
-			auto file = os::file::read_as_string(path).expect(stringify::text("node config (json) not found in \"%s\"", path.c_str()));
-			config = format::tree::from_json(file).expect(stringify::text("invalid node config (json) in \"%s\"", path.c_str()));
-			VI_PANIC(config && config->type == format::structure::map, "node config (json) in \"%s\" must be an object", path.c_str());
+				auto file = os::file::read_as_string(path).expect(stringify::text("node config (json) not found in \"%s\"", path.c_str()));
+				config = format::tree::from_json(file).expect(stringify::text("invalid node config (json) in \"%s\"", path.c_str()));
+				VI_PANIC(config && config->type == format::structure::map, "node config (json) in \"%s\" must be an object", path.c_str());
+			}
+			else
+				config = format::tree::map();
+
 			for (auto& [key, value] : environment->args)
 			{
 				auto* parent = config.address();

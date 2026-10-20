@@ -5,4 +5,4 @@ COPY ./ /home/tangentcash/source/
 WORKDIR /home/tangentcash/source
 RUN cmake -G Ninja -S=/home/tangentcash/source -B=/home/tangentcash/make -DCMAKE_BUILD_TYPE=Debug -DTAN_TEST=ON -DCMAKE_RUNTIME_OUTPUT_DIRECTORY=/usr/local/bin -DCMAKE_LIBRARY_OUTPUT_DIRECTORY=/usr/local/lib
 RUN cmake --build /home/tangentcash/make -j
-RUN tangentcash --test=regression --network=regtest
+RUN tangentcash --test=regression --network=regtest --no-config
