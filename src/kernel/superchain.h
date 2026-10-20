@@ -468,6 +468,7 @@ namespace tangent
 			expects_promise_rt<uint64_t> get_latest_block_height(const algorithm::asset_id& asset);
 			expects_promise_rt<vector<block_log>> get_block_transactions(const algorithm::asset_id& asset, uint64_t block_height, uint64_t block_count);
 			expects_promise_rt<vector<transaction_logs>> link_transactions(const algorithm::asset_id& asset);
+			expects_promise_rt<void> finalize_transactions(const algorithm::asset_id& asset, translation_unit* implementation, network_options* options, uint64_t confirmed_block_height, vector<transaction_logs>* logs);
 			expects_promise_rt<computed_transaction> link_transaction(const algorithm::asset_id& asset, uint64_t block_height, const std::string_view& block_hash, format::tree& transaction_data);
 			expects_promise_rt<decimal> calculate_balance(const algorithm::asset_id& asset, const wallet_link& link);
 			expects_promise_rt<void> broadcast_transaction(const algorithm::asset_id& asset, const uint256_t& external_id, const finalized_transaction& finalized);

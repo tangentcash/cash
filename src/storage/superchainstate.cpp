@@ -302,6 +302,14 @@ namespace tangent
 
 			return values;
 		}
+		expects_lr<bool> superchainstate::has_unfinalized_transactions()
+		{
+			auto cursor = get_storage().query(__func__, "SELECT TRUE AS unfinalized FROM unconfirmed_transactions LIMIT 1");
+			if (!cursor || cursor->error())
+				return expects_lr<bool>(layer_exception(ledger::storage_util::error_of(cursor)));
+
+			return (*cursor)["unfinalized"].get().get_boolean();
+		}
 		expects_lr<vector<superchain::uncomputed_transaction>> superchainstate::erase_unconfirmed_transactions(uint64_t block_id)
 		{
 			schema_list map;

@@ -2193,7 +2193,6 @@ namespace tangent
 					}
 				}
 
-				uint64_t linked_block_height = 0;
 				if (options->blocks_linker)
 				{
 					auto result = coawait(implementation->get_linked_block_height(options->state.index_block_height > 0 ? options->state.index_block_height - 1 : options->state.index_block_height));
@@ -2202,18 +2201,20 @@ namespace tangent
 						if (!result.error().is_retry() && !result.error().is_shutdown())
 							coreturn expects_rt<vector<transaction_logs>>(result.error());
 
-						if (result.error().is_retry_after())
+						auto pending = result.error().is_shutdown() ? false : storages::superchainstate(asset).has_unfinalized_transactions().or_else(false);
+						auto latest_block_height = pending ? coawait(implementation->get_latest_block_height()) : expects_rt<uint64_t>(remote_exception());
+						if (latest_block_height)
 						{
-							options->state.retry_after_time = result.error().retry_after_timestamp();
-							coreturn expects_rt<vector<transaction_logs>>(result.error());
+							vector<transaction_logs> finalized_logs;
+							auto finality = coawait(finalize_transactions(asset, implementation, options, *latest_block_height, &finalized_logs));
+							if (finality && !finalized_logs.empty())
+								coreturn expects_rt<vector<transaction_logs>>(std::move(finalized_logs));
 						}
 
-						options->state.retry_after_time = kernel::params().time.now_cpu() + kernel::params().user.superchain.polling_frequency;
-						coreturn expects_rt<vector<transaction_logs>>(remote_exception::retry_after(options->state.retry_after_time));
+						options->state.retry_after_time = result.error().is_retry_after() ? result.error().retry_after_timestamp() : kernel::params().time.now_cpu() + kernel::params().user.superchain.polling_frequency;
+						coreturn expects_rt<vector<transaction_logs>>(result.error().is_retry_after() ? result.error() : remote_exception::retry_after(options->state.retry_after_time));
 					}
-					else
-						options->set_checkpoint_from_block(*result);
-					linked_block_height = result.or_else(0);
+					options->set_checkpoint_from_block(*result);
 				}
 
 				options->state.retry_after_time = 0;
@@ -2251,14 +2252,6 @@ namespace tangent
 
 				auto logs = vector<transaction_logs>();
 				auto confirmed_block_height = block_height + block_batch->size() - 1;
-				auto linker_network_error = [&](const remote_exception& error)
-				{
-					if (!error.is_retry_after())
-						return remote_exception::retry_later();
-
-					options->state.retry_after_time = error.retry_after_timestamp();
-					return error;
-				};
 				for (auto& block : *block_batch)
 				{
 					transaction_logs log;
@@ -2267,7 +2260,13 @@ namespace tangent
 					{
 						auto computed = coawait(implementation->link_transaction(log.block_height, log.block_hash, item)); item.key.clear();
 						if (!computed && (computed.error().is_retry() || computed.error().is_shutdown()))
-							coreturn expects_rt<vector<transaction_logs>>(linker_network_error(computed.error()));
+						{
+							if (!computed.error().is_retry_after())
+								coreturn remote_exception::retry_later();
+
+							options->state.retry_after_time = computed.error().retry_after_timestamp();
+							coreturn computed.error();
+						}
 						else if (!computed)
 							continue;
 
@@ -2277,52 +2276,9 @@ namespace tangent
 					logs.push_back(std::move(log));
 				}
 
-				auto confirmation_target = get_finality_target(asset);
-				auto finalized_block_heights = storages::superchainstate(asset).get_finalized_block_heights(confirmed_block_height, confirmation_target);
-				if (finalized_block_heights)
-				{
-					hash_set<string> transaction_ids;
-					for (auto& finalized_block_height : *finalized_block_heights)
-					{
-						block_batch = coawait(implementation->get_block_transactions(finalized_block_height, 1));
-						if (!block_batch)
-							coreturn expects_rt<vector<transaction_logs>>(stringify::text("while fetching finalized block(s) %" PRIu64 " received %s", finalized_block_height, block_batch.error().message().c_str()));
-						else if (block_batch->empty())
-							continue;
-
-						auto& block = block_batch->front();
-						transaction_logs log;
-						log.attach_block(block, finalized_block_height);
-						for (auto& item : block.transactions.childs())
-						{
-							auto computed = coawait(implementation->link_transaction(log.block_height, log.block_hash, item)); item.key.clear();
-							if (!computed && (computed.error().is_retry() || computed.error().is_shutdown()))
-								coreturn expects_rt<vector<transaction_logs>>(linker_network_error(computed.error()));
-							else if (!computed)
-								continue;
-
-							log.attach_transaction(asset, std::move(*computed), confirmed_block_height);
-							transaction_ids.insert(log.receipts.back().transaction_id);
-						}
-
-						auto state = storages::superchainstate(asset);
-						auto unconfirmed_transactions = state.erase_unconfirmed_transactions(log.block_height);
-						if (unconfirmed_transactions)
-						{
-							for (auto& unconfirmed_transaction : *unconfirmed_transactions)
-							{
-								if (transaction_ids.find(unconfirmed_transaction.transaction_id) == transaction_ids.end())
-								{
-									unconfirmed_transaction.mark_erased();
-									log.receipts.push_back(std::move(unconfirmed_transaction));
-								}
-							}
-						}
-
-						log.finalize_state(asset);
-						logs.push_back(std::move(log));
-					}
-				}
+				auto finality = coawait(finalize_transactions(asset, implementation, options, confirmed_block_height, &logs));
+				if (!finality)
+					coreturn expects_rt<vector<transaction_logs>>(std::move(finality.error()));
 
 				auto state = storages::superchainstate(asset);
 				if (!tip_now.value.is_integer() || tip_now.value.as_uint64() != block_height)
@@ -2334,6 +2290,66 @@ namespace tangent
 
 				options->move_index_block(block_count);
 				coreturn expects_rt<vector<transaction_logs>>(std::move(logs));
+			});
+		}
+		expects_promise_rt<void> bridge::finalize_transactions(const algorithm::asset_id& asset, translation_unit* implementation, network_options* options, uint64_t confirmed_block_height, vector<transaction_logs>* logs)
+		{
+			VI_ASSERT(logs != nullptr, "logs should be set");
+			return coasync<expects_rt<void>>([this, asset, implementation, options, confirmed_block_height, logs]() -> expects_promise_rt<void>
+			{
+				auto confirmation_target = get_finality_target(asset);
+				auto finalized_block_heights = storages::superchainstate(asset).get_finalized_block_heights(confirmed_block_height, confirmation_target);
+				if (!finalized_block_heights)
+					coreturn expects_rt<void>(expectation::met);
+
+				hash_set<string> transaction_ids;
+				for (auto& finalized_block_height : *finalized_block_heights)
+				{
+					auto finalized_batch = coawait(implementation->get_block_transactions(finalized_block_height, 1));
+					if (!finalized_batch)
+						coreturn remote_exception(stringify::text("while fetching finalized block(s) %" PRIu64 " received %s", finalized_block_height, finalized_batch.error().message().c_str()));
+					else if (finalized_batch->empty())
+						continue;
+
+					auto& block = finalized_batch->front();
+					transaction_logs log;
+					log.attach_block(block, finalized_block_height);
+					for (auto& item : block.transactions.childs())
+					{
+						auto computed = coawait(implementation->link_transaction(log.block_height, log.block_hash, item)); item.key.clear();
+						if (!computed && (computed.error().is_retry() || computed.error().is_shutdown()))
+						{
+							if (!computed.error().is_retry_after())
+								coreturn remote_exception::retry_later();
+
+							options->state.retry_after_time = computed.error().retry_after_timestamp();
+							coreturn computed.error();
+						}
+						else if (!computed)
+							continue;
+
+						log.attach_transaction(asset, std::move(*computed), confirmed_block_height);
+						transaction_ids.insert(log.receipts.back().transaction_id);
+					}
+
+					auto state = storages::superchainstate(asset);
+					auto unconfirmed_transactions = state.erase_unconfirmed_transactions(log.block_height);
+					if (unconfirmed_transactions)
+					{
+						for (auto& unconfirmed_transaction : *unconfirmed_transactions)
+						{
+							if (transaction_ids.find(unconfirmed_transaction.transaction_id) == transaction_ids.end())
+							{
+								unconfirmed_transaction.mark_erased();
+								log.receipts.push_back(std::move(unconfirmed_transaction));
+							}
+						}
+					}
+
+					log.finalize_state(asset);
+					logs->push_back(std::move(log));
+				}
+				coreturn expectation::met;
 			});
 		}
 		expects_promise_rt<computed_transaction> bridge::link_transaction(const algorithm::asset_id& asset, uint64_t block_height, const std::string_view& block_hash, format::tree& transaction_data)
@@ -2355,8 +2371,8 @@ namespace tangent
 		}
 		uint64_t bridge::get_finality_target(const algorithm::asset_id& asset)
 		{
-			//if (kernel::params().is(network_type::regtest) || !has_network(asset))
-				//return 0;
+			if (kernel::params().is(network_type::regtest) || !has_network(asset))
+				return 0;
 
 			auto* implementation = get_network(asset);
 			return implementation ? std::max<uint64_t>(implementation->get_chainparams().sync_latency, 1) : 1;

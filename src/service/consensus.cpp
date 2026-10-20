@@ -1774,25 +1774,20 @@ namespace tangent
 			if (!attestation_hash || !proof_hash)
 				return remote_exception("invalid hash");
 
-			auto* channel = from ? from->as_descriptor() : nullptr;
-			if (!channel)
-				return remote_exception("invalid channel");
-
-			auto executor = ledger::executor_context(nullptr);
-			auto validation = executor.get_verified_validator_attestation(asset, channel->second.public_key_hash);
-			if (!validation)
-				return remote_exception("active attestation required to fetch preattestation body");
-
 			auto mempool = storages::mempoolstate();
 			auto body = mempool.get_preattestation_body(attestation_hash, proof_hash);
 			if (body && body->as_proof_hash(asset) == proof_hash)
 				return format::variables({ format::variable(body->as_message().data) });
 
 			auto batch = mempool.get_attestation(attestation_hash);
-			if (batch)
-				for (auto& item : batch->proofs)
-					if (item.second.as_proof_hash(asset) == proof_hash)
-						return format::variables({ format::variable(item.second.as_message().data) });
+			if (!batch)
+				return remote_exception("preattestation body not found");
+
+			for (auto& item : batch->proofs)
+			{
+				if (item.second.as_proof_hash(asset) == proof_hash)
+					return format::variables({ format::variable(item.second.as_message().data) });
+			}
 
 			return format::variables();
 		}
