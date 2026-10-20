@@ -1360,12 +1360,12 @@ namespace tangent
 			if (!temp)
 				return false;
 
-			heap.capacity = required_capacity;
-			memset(temp, 0, heap.capacity + 1);
+			memset(temp, 0, required_capacity + 1);
 			if (!allocated())
 			{
-				memcpy(temp, stack.data, stack.size);
-				heap.size = stack.size;
+				uint32_t prev_size = stack.size;
+				memcpy(temp, stack.data, prev_size);
+				heap.size = prev_size;
 				flags |= FLAG_HEAP_BUFFER;
 			}
 			else
@@ -1373,6 +1373,7 @@ namespace tangent
 				memcpy(temp, heap.data, heap.size);
 				memory::deallocate(heap.data);
 			}
+			heap.capacity = required_capacity;
 			heap.data = temp;
 			return true;
 		}

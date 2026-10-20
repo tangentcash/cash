@@ -113,7 +113,6 @@ namespace tangent
 			}
 			return execution;
 		}
-		const uint256_t session::temporary_hash = algorithm::hashing::hash256i("tangent.cli.temporary.transaction");
 		expects_lr<ledger::block_transaction> session::block_transaction_of(const uint256_t& transaction_hash) const
 		{
 			if (temporary_transaction && transaction_hash == temporary_hash)
@@ -430,6 +429,7 @@ namespace tangent
 					exit(1);
 			});
 		}
+		const uint256_t session::temporary_hash = algorithm::hashing::hash256i("tangent.cli.temporary.transaction");
 
 		interpreter::interpreter(bool machine_mode) : machine(machine_mode)
 		{
