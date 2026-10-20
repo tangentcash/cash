@@ -543,27 +543,19 @@ namespace tangent
 		resource = os::file::open_archive(archive_path, params->user.logs.archive_size).or_else(nullptr);
 	}
 
-	kernel::kernel(const inline_args& environment)
+	kernel::kernel(const inline_args* environment)
 	{
-		if (!environment.params.empty())
-			path = environment.params.back();
-
-		auto library = os::directory::get_module();
-		if (!path.empty())
-			path = os::path::resolve(path, *library, true).or_else(string(path));
-
-		error_handling::set_flag(log_option::pretty, true);
-		error_handling::set_flag(log_option::dated, true);
-		error_handling::set_flag(log_option::active, true);
-		os::directory::set_working(library->c_str());
-		console::get()->attach();
-
-		option<format::tree> config = path.empty() ? option<format::tree>(optional::none) : option<format::tree>(*format::tree::from_json(*os::file::read_as_string(path)));
-		if (!environment.args.empty())
+		option<format::tree> config = optional::none;
+		if (environment != nullptr)
 		{
-			if (!config)
-				config = format::tree::map();
-			for (auto& [key, value] : environment.args)
+			auto library = *os::directory::get_module();
+			VI_PANIC(!environment->params.empty() && !environment->params.back().empty(), "specify the node config (json) file as the last argument");
+			path = os::path::resolve(environment->params.back(), library, true).or_else(string(path));
+
+			auto file = os::file::read_as_string(path).expect(stringify::text("node config (json) not found in \"%s\"", path.c_str()));
+			config = format::tree::from_json(file).expect(stringify::text("invalid node config (json) in \"%s\"", path.c_str()));
+			VI_PANIC(config && config->type == format::structure::map, "node config (json) in \"%s\" must be an object", path.c_str());
+			for (auto& [key, value] : environment->args)
 			{
 				auto* parent = config.address();
 				for (auto& name : stringify::split(key, '.'))
@@ -573,7 +565,14 @@ namespace tangent
 				}
 				parent->value = format::variable::from(value);
 			}
+
+			error_handling::set_flag(log_option::pretty, true);
+			error_handling::set_flag(log_option::dated, true);
+			error_handling::set_flag(log_option::active, true);
+			os::directory::set_working(library);
+			console::get()->attach();
 		}
+
 		if (config)
 		{
 			auto* value = config->child("network");
@@ -886,7 +885,7 @@ namespace tangent
 		if (!user.logs.info_path.empty())
 		{
 			auto log_base = database_path + user.logs.info_path;
-			auto log_path = os::path::resolve(os::path::resolve(log_base, *library, true).or_else(user.logs.info_path)).or_else(user.logs.info_path);
+			auto log_path = os::path::resolve(os::path::resolve(log_base, *os::directory::get_module(), true).or_else(user.logs.info_path)).or_else(user.logs.info_path);
 			stringify::eval_envs(log_path, os::path::get_directory(log_path), vitex::network::utils::get_host_ip_addresses());
 			os::directory::patch(os::path::get_directory(log_path));
 			if (!log_path.empty())
@@ -896,7 +895,7 @@ namespace tangent
 		if (!user.logs.error_path.empty())
 		{
 			auto log_base = database_path + user.logs.error_path;
-			auto log_path = os::path::resolve(os::path::resolve(log_base, *library, true).or_else(user.logs.error_path)).or_else(user.logs.error_path);
+			auto log_path = os::path::resolve(os::path::resolve(log_base, *os::directory::get_module(), true).or_else(user.logs.error_path)).or_else(user.logs.error_path);
 			stringify::eval_envs(log_path, os::path::get_directory(log_path), vitex::network::utils::get_host_ip_addresses());
 			os::directory::patch(os::path::get_directory(log_path));
 			if (!log_path.empty())
@@ -906,7 +905,7 @@ namespace tangent
 		if (!user.logs.query_path.empty())
 		{
 			auto log_base = database_path + user.logs.query_path;
-			auto log_path = os::path::resolve(os::path::resolve(log_base, *library, true).or_else(user.logs.query_path)).or_else(user.logs.query_path);
+			auto log_path = os::path::resolve(os::path::resolve(log_base, *os::directory::get_module(), true).or_else(user.logs.query_path)).or_else(user.logs.query_path);
 			stringify::eval_envs(log_path, os::path::get_directory(log_path), vitex::network::utils::get_host_ip_addresses());
 			os::directory::patch(os::path::get_directory(log_path));
 			if (!log_path.empty())
@@ -1036,10 +1035,6 @@ namespace tangent
 			return true;
 
 		return block_number >= (uint64_t)fork;
-	}
-	bool kernel::custom() const
-	{
-		return !path.empty();
 	}
 	const kernel& kernel::params()
 	{

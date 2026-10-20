@@ -941,6 +941,7 @@ namespace tangent
 			virtual void dispatch_event(int event_type_id, const void* object_value, int object_type_id);
 			virtual void dispatch_exception(immediate_context* coroutine);
 			virtual void dispatch_coroutine(immediate_context* coroutine);
+			virtual expects_lr<ledger::block_transaction> block_transaction_of(const uint256_t& transaction_hash) const;
             virtual option<ccall> external_mutability_of(const algorithm::pubkeyhash_t& target, const std::string_view& entrypoint) const;
 			virtual ccall mutability_of(const function& entrypoint) const;
 			virtual algorithm::pubkeyhash_t callable() const;

@@ -1,10 +1,14 @@
 #include <cstdlib>
-#include "../src/entrypoint.hpp"
+#include "../src/service/cli.h"
+#include "../src/service/consensus.h"
+#include "../src/service/discovery.h"
+#include "../src/service/rpc.h"
 #include "../src/storage/superchainstate.h"
 #include "../src/storage/chainstate.h"
 #include "../src/storage/mempoolstate.h"
 #include "../src/policy/compositions.h"
 #include "../src/policy/delegations.h"
+#include "../src/policy/transactions.h"
 #include "../src/translation/bitcoin.h"
 #include "../src/internal/sha3.h"
 #include <vitex/vitex.h>
@@ -2459,6 +2463,9 @@ static void test_blockchain_partial_coverage(vector<block_account>* userdata)
 		TEST_BLOCK(std::bind(&block_generator::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("ETH", "USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7"), "tcrt1x00g22stp0qcprrxra7x2pz2au33armtfc50460", 300000), "0xa165fcd10612fa685bb7065d28e4904342a5d34d65b6f9249a2f86e61ea9e985", 8);
 		TEST_BLOCK(std::bind(&block_generator::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("TRX"), "tcrt1x00g22stp0qcprrxra7x2pz2au33armtfc50460", 800), "0xc67645314dc236341b2c609fb52bca24704c4ea39d057a594510c4728e2fbeea", 9);
 		TEST_BLOCK(std::bind(&block_generator::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("TRX", "USDT", "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"), "tcrt1x00g22stp0qcprrxra7x2pz2au33armtfc50460", 200000), "0x5ce06f8b4acc2733bc0dc9999157462abfdbf1f0597658f49fcb658a83f74a21", 10);
+		TEST_BLOCK(std::bind(&block_generator::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("BTC"), "tcrt1xqvvsy3ayfp8w7fs4wg3pt5y6r69c56jjuf87ys", 0.1), "0xa4653b0a52e1b1b6ab1ef7855a2167510ee0cbc696b4372034393fe0824ed3b5", 11);
+		TEST_BLOCK(std::bind(&block_generator::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("ETH"), "tcrt1xqvvsy3ayfp8w7fs4wg3pt5y6r69c56jjuf87ys", 1), "0x3810bdb6015aa2a48b00f04ae14b35439cc7bbf78d7d5c27df2b2a9cbd7114f0", 12);
+		TEST_BLOCK(std::bind(&block_generator::transfer_custom, std::placeholders::_1, std::placeholders::_2, 0, algorithm::asset::id_of("ETH", "USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7"), "tcrt1xqvvsy3ayfp8w7fs4wg3pt5y6r69c56jjuf87ys", 5000), "0x1d184909daba32c9a7870112fec8c179eb62c70f636d85609933df94a7d14649", 13);
 		if (userdata != nullptr)
 			*userdata = std::move(users);
 		else
@@ -2759,15 +2766,16 @@ static void test_blockchain_gas_estimation()
 
 int main(int argc, char* argv[])
 {
-	vitex::runtime scope;
-	inline_args args = os::process::parse_args(argc, argv, (size_t)args_format::key | (size_t)args_format::key_value);
-	kernel params = kernel(args);
-	auto* term = console::get();
-	term->show();
 #ifdef VI_MICROSOFT
 	if (!os::process::has_debugger())
 		_set_abort_behavior(0, _WRITE_ABORT_MSG);
 #endif
+	vitex::runtime scope;
+	inline_args args = os::process::parse_args(argc, argv, (size_t)args_format::key | (size_t)args_format::key_value);
+	kernel params = kernel(&args);
+	auto* term = console::get();
+	term->show();
+
 	int bad_entrypoint_exit_code = 0x39ce8025;
 	int exit_code = bad_entrypoint_exit_code;
 	auto test = args.get("test");
@@ -3158,12 +3166,13 @@ int main(int argc, char* argv[])
 		queue->stop();
 		exit_code = 0;
 	}
-	else if (test == "script")
-		exit_code = entrypoints::script(args);
-	else if (test == "node")
-		exit_code = entrypoints::node(args);
+	else if (test == "cli")
+	{
+		cli::interpreter control(args.is_enabled("machine"));
+		exit_code = control.launch(args, 0, 1);
+	}
 
-	VI_PANIC(exit_code != bad_entrypoint_exit_code, "must provide a \"test\" flag (string in [consensus, benchmark, regression, integration] or in [script, node])");
+	VI_PANIC(exit_code != bad_entrypoint_exit_code, "must provide a \"test\" flag (string in [consensus, benchmark, regression, integration, cli])");
 	if (os::process::has_debugger())
 	{
 		auto* term = console::get();

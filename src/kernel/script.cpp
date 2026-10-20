@@ -2217,7 +2217,7 @@ namespace tangent
 			if (!p)
 				return;
 
-			auto target = p->executor->get_matching_block_transaction(0, new_hash);
+			auto target = p->block_transaction_of(new_hash);
 			if (target)
 				cached = uptr<ledger::block_transaction>(memory::init<ledger::block_transaction>(std::move(*target)));
 		}
@@ -4133,8 +4133,8 @@ namespace tangent
 			if (!bridge_hash)
 				contract::throw_ptr(exception_repr(exception_repr::category::argument(), stringify::text("bridge::%s requires a non-zero bridge hash", name)));
 
-			if (!algorithm::asset::is_any(asset) || !algorithm::asset::token_of(asset).empty())
-				contract::throw_ptr(exception_repr(exception_repr::category::argument(), stringify::text("bridge::%s requires a valid base-chain asset", name)));
+			if (!algorithm::asset::is_any(asset, false, true))
+				contract::throw_ptr(exception_repr(exception_repr::category::argument(), stringify::text("bridge::%s requires a valid off-chain asset", name)));
 
 			if (p->executor->transaction == nullptr || p->executor->transaction->as_type() != transactions::call::as_instance_type())
 				contract::throw_ptr(exception_repr(exception_repr::category::requirement(), stringify::text("bridge::%s is only available during a call transaction", name)));
@@ -4191,7 +4191,7 @@ namespace tangent
 				return;
 			}
 
-			auto event = transactions::call::emit_route_event(p->executor, bridge_hash, asset, routing_address.view());
+			auto event = transactions::call::emit_route_event(p->executor, bridge_hash, algorithm::asset::base_id_of(asset), routing_address.view());
 			if (!event)
 				contract::throw_ptr(exception_repr(exception_repr::category::storage(), std::string_view(event.error().message())));
 		}
@@ -7181,6 +7181,10 @@ namespace tangent
 			auto status = executor->burn_gas((uint64_t)ledger::gas_cost::program_iop, ledger::executor_context::meter::paid);
 			if (!status)
 				coroutine->abort();
+		}
+		expects_lr<ledger::block_transaction> program::block_transaction_of(const uint256_t& transaction_hash) const
+		{
+			return executor->get_matching_block_transaction(0, transaction_hash);
 		}
 		option<ccall> program::external_mutability_of(const algorithm::pubkeyhash_t& target, const std::string_view& entrypoint) const
 		{

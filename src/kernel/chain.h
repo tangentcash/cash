@@ -38,7 +38,7 @@ namespace tangent
 		consensus_challenge = 920000,
 		base_to_root_modulo = 1001000,
 		attesters_hardening = 1273450,
-		anonymous_broadcast = 1800000
+		anonymous_broadcast = 1790000
 	};
 
 	enum class network_type
@@ -357,11 +357,10 @@ namespace tangent
 		timepoint time;
 
 	public:
-		kernel(const inline_args& environment);
+		kernel(const inline_args* environment);
 		virtual ~kernel();
 		bool is(network_type type) const;
 		bool on(fork_id fork, uint64_t block_number) const;
-		bool custom() const;
 		static const kernel& params();
 		static const kernel* pparams();
 		static kernel& mparams();
