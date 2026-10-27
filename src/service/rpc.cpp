@@ -312,8 +312,10 @@ namespace tangent
 			node->listen().expect("listen queue error");
 			if (consensus_service != nullptr)
 			{
-				consensus_service->events.accept_block = std::bind(&server_node::dispatch_accept_block, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3);
-				consensus_service->events.accept_transaction = std::bind(&server_node::dispatch_accept_transaction, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3);
+				if (!consensus_service->events.accept_block)
+					consensus_service->events.accept_block = std::bind(&server_node::dispatch_accept_block, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3);
+				if (!consensus_service->events.accept_transaction)
+					consensus_service->events.accept_transaction = std::bind(&server_node::dispatch_accept_transaction, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3);
 			}
 
 			if (kernel::params().user.consensus.logging)
@@ -342,7 +344,7 @@ namespace tangent
 			bind(0 | access_type::r, "txnstate", "getblocktransactionsbyhash", 1, 2, "uint256 hash, uint8? unrolling = 0", "uint256[] | txn[] | block::txn[]", "get block transactions by hash", std::bind(&server_node::txnstate_get_block_transactions_by_hash, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "txnstate", "getblocktransactionsbynumber", 1, 2, "uint64 number, uint8? unrolling = 0", "uint256[] | txn[] | block::txn[]", "get block transactions by number", std::bind(&server_node::txnstate_get_block_transactions_by_number, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "txnstate", "getfinalizedtransactions", 2, 3, "uint64 offset, uint64 count, uint8? unrolling = 0", "uint256[] | txn[] | block::txn[]", "get latest finalized transactions", std::bind(&server_node::txnstate_get_finalized_transactions, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "txnstate", "gettransactionsbyowner", 3, 5, "string owner_address, uint64 offset, uint64 count, uint8? direction = 1, uint8? unrolling = 0", "uint256[] | txn[] | block::txn[]", "get transactions by owner", std::bind(&server_node::txnstate_get_transactions_by_owner, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "txnstate", "gettransactionsbyowner", 3, 5, "string owner_address, uint64 offset, uint64 count, uint8? direction = 1, uint8? unrolling = 0", "uint256[] | txn[] | block::txn[]", "get transactions by owner(s), owner_address is a comma-separated list", std::bind(&server_node::txnstate_get_transactions_by_owner, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "txnstate", "gettransactionsbyhash", 1, 2, "uint256 hash, uint8? unrolling = 0", "txn[] | block::txn[]", "get transactions by hash including aliases", std::bind(&server_node::txnstate_get_transactions_by_hash, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "txnstate", "gettransactionbyhash", 1, 2, "uint256 hash, uint8? unrolling = 0", "txn | block::txn", "get transaction by hash including aliases", std::bind(&server_node::txnstate_get_transaction_by_hash, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "txnstate", "getrawtransactionbyhash", 1, 1, "uint256 hash", "string", "get raw transaction by hash", std::bind(&server_node::txnstate_get_raw_transaction_by_hash, this, std::placeholders::_1, std::placeholders::_2));
@@ -1367,18 +1369,39 @@ namespace tangent
 		}
 		server_response server_node::txnstate_get_transactions_by_owner(http::connection*, format::variables&& args)
 		{
-			algorithm::pubkeyhash_t owner;
-			if (!algorithm::signing::decode_address(args[0].as_string(), owner))
-				return server_response().error(error_codes::bad_params, "owner address not valid");
-
+			auto addresses = args[0].as_string();
 			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
+			uint8_t direction = args.size() > 3 ? args[3].as_uint8() : 1;
+			uint8_t unrolling = args.size() > 4 ? args[4].as_uint8() : 0;
 			if (!count || count > kernel::params().message.pages_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
-			uint8_t direction = args.size() > 3 ? args[3].as_uint8() : 1;
-			uint8_t unrolling = args.size() > 4 ? args[4].as_uint8() : 0;
 			auto chain = storages::chainstate();
-			auto list = chain.get_block_transactions_by_owner(std::numeric_limits<int64_t>::max(), owner, direction >= 1 ? 1 : -1, offset, count);
+			auto list = expects_lr<vector<ledger::block_transaction>>(layer_exception());
+			if (stringify::find(addresses, ',').found)
+			{
+				vector<algorithm::pubkeyhash_t> owners;
+				for (auto& address : stringify::split(addresses, ','))
+				{
+					algorithm::pubkeyhash_t owner;
+					if (!algorithm::signing::decode_address(address, owner))
+						return server_response().error(error_codes::bad_params, "owner address not valid");
+
+					owners.push_back(owner);
+				}
+				if (owners.size() > kernel::params().message.pages_per_query)
+					return server_response().error(error_codes::bad_params, "too many addresses");
+
+				list = chain.get_block_transactions_by_owners(std::numeric_limits<int64_t>::max(), owners, direction >= 1 ? 1 : -1, offset, count);
+			}
+			else
+			{
+				algorithm::pubkeyhash_t owner;
+				if (!algorithm::signing::decode_address(args[0].as_string(), owner))
+					return server_response().error(error_codes::bad_params, "owner address not valid");
+
+				list = chain.get_block_transactions_by_owner(std::numeric_limits<int64_t>::max(), owner, direction >= 1 ? 1 : -1, offset, count);
+			}
 			if (!list)
 				return server_response().error(error_codes::not_found, "transactions not found");
 

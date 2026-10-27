@@ -2013,8 +2013,68 @@ namespace tangent
 			string dynamic_query = "SELECT transaction_hash FROM transactions WHERE transaction_number IN (";
 			for (auto row : cursor->first())
 				dynamic_query.append(row.get_column(0).get().get_blob()).push_back(',');
-			dynamic_query.pop_back();
-			dynamic_query.append(") ORDER BY transaction_number ");
+			dynamic_query.back() = ')';
+			dynamic_query.append(" ORDER BY transaction_number ");
+			dynamic_query.append(direction < 0 ? "DESC" : "ASC");
+
+			cursor = get_tx_storage().query(__func__, dynamic_query);
+			if (!cursor || cursor->error())
+				return expects_lr<vector<ledger::block_transaction>>(layer_exception(ledger::storage_util::error_of(cursor)));
+
+			auto& response = cursor->first();
+			size_t size = response.size();
+			vector<ledger::block_transaction> values;
+			values.resize(size);
+
+			auto& blob_storage = get_blob_storage();
+			parallel::wait_all(parallel::for_loop(size, ELEMENTS_FEW, [&](size_t i)
+			{
+				auto transaction_hash = response[i]["transaction_hash"].get();
+				auto transaction_blob = blob_storage.load(__func__, get_block_transaction_label(transaction_hash.get_binary())).or_else(string());
+				auto transaction_message = format::ro_stream(transaction_blob);
+				auto& next = values[i];
+				if (next.load(transaction_message))
+					finalize_checksum(**next.transaction, transaction_hash);
+			}));
+
+			values.erase(std::remove_if(values.begin(), values.end(), [](const ledger::block_transaction& a) { return !a.transaction; }), values.end());
+			return values;
+		}
+		expects_lr<vector<ledger::block_transaction>> chainstate::get_block_transactions_by_owners(uint64_t block_number, const vector<algorithm::pubkeyhash_t>& owners, int8_t direction, size_t offset, size_t count)
+		{
+			size_t locations = 0;
+			string dynamic_query = "SELECT transaction_number FROM parties WHERE transaction_account_number IN (";
+			for (auto& owner : owners)
+			{
+				auto location = resolve_account_location(owner);
+				if (location)
+				{
+					dynamic_query.append(to_string(*location)).push_back(',');
+					++locations;
+				}
+			}
+			if (!locations)
+				return expects_lr<vector<ledger::block_transaction>>(vector<ledger::block_transaction>());
+
+			schema_list map;
+			map.push_back(var::set::integer(block_number));
+			map.push_back(var::set::string(direction < 0 ? "DESC" : "ASC"));
+			map.push_back(var::set::integer(count));
+			map.push_back(var::set::integer(offset));
+			dynamic_query.back() = ')';
+			dynamic_query.append(" AND block_number <= ? ORDER BY transaction_number $? LIMIT ? OFFSET ?");
+
+			auto cursor = get_party_storage().emplace_query(__func__, dynamic_query, &map);
+			if (!cursor || cursor->error())
+				return expects_lr<vector<ledger::block_transaction>>(layer_exception(ledger::storage_util::error_of(cursor)));
+			else if (cursor->empty())
+				return expects_lr<vector<ledger::block_transaction>>(vector<ledger::block_transaction>());
+
+			dynamic_query = "SELECT transaction_hash FROM transactions WHERE transaction_number IN (";
+			for (auto row : cursor->first())
+				dynamic_query.append(row.get_column(0).get().get_blob()).push_back(',');
+			dynamic_query.back() = ')';
+			dynamic_query.append(" ORDER BY transaction_number ");
 			dynamic_query.append(direction < 0 ? "DESC" : "ASC");
 
 			cursor = get_tx_storage().query(__func__, dynamic_query);

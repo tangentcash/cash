@@ -93,6 +93,8 @@ namespace tangent
 			void startup();
 			void shutdown();
 			void bind(uint32_t access_types, const std::string_view& domain, const std::string_view& method, size_t min_params, size_t max_params, const std::string_view& args, const std::string_view& returns, const std::string_view& description, server_function&& function);
+			void dispatch_accept_block(const uint256_t& hash, const ledger::block_body& block, const ledger::block_checkpoint& checkpoint);
+			void dispatch_accept_transaction(const uint256_t& hash, const ledger::transaction_message* transaction, const algorithm::pubkeyhash_t& owner); 
 			bool is_active();
 			service_control::service_node get_entrypoint();
 
@@ -104,8 +106,6 @@ namespace tangent
 			bool ws_receive(http::web_socket_frame* web_socket, http::web_socket_op opcode, const std::string_view& buffer);
 			void ws_disconnect(http::web_socket_frame* web_socket);
 			bool dispatch_response(http::connection* base, format::tree&& requests, option<format::tree>&& responses, size_t index, std::function<void(http::connection*, option<format::tree>&&)>&& callback);
-			void dispatch_accept_block(const uint256_t& hash, const ledger::block_body& block, const ledger::block_checkpoint& checkpoint);
-			void dispatch_accept_transaction(const uint256_t& hash, const ledger::transaction_message* transaction, const algorithm::pubkeyhash_t& owner);
 			server_response web_socket_subscribe(http::connection* base, format::variables&& args);
 			server_response web_socket_unsubscribe(http::connection* base, format::variables&& args);
 			server_response utility_encode_address(http::connection* base, format::variables&& args);

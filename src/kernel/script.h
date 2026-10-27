@@ -371,6 +371,7 @@ namespace tangent
 			static string_repr to_string(decimal& base);
 			static string_repr to_exponent(decimal& base);
 			static decimal negate(decimal& base);
+			static decimal truncate(decimal& base, uint8_t length);
 			static decimal& mul_eq(decimal& base, const decimal& v);
 			static decimal& div_eq(decimal& base, const decimal& v);
 			static decimal& add_eq(decimal& base, const decimal& v);
@@ -386,7 +387,6 @@ namespace tangent
 			static decimal mul(const decimal& left, const decimal& right);
 			static decimal div(const decimal& left, const decimal& right);
 			static decimal from(const string_repr& data, uint8_t base);
-			static decimal zero();
 			static uint32_t estimate_bits(uint32_t digits);
 			static uint32_t target_bits();
 			template <typename t>

@@ -1289,30 +1289,74 @@ static void new_chain_state(f&& callback)
 	auto chain = storages::chainstate();
 	callback();
 }
+static void new_unsigned_attestations_from_block(const ledger::block_body& block, vector<uptr<ledger::transaction_message>>& transactions)
+{
+	bool may_mockup = kernel::params().is(network_type::regtest);
+	if (!may_mockup)
+		return;
+
+	auto* offchain = superchain::bridge::get();
+	for (auto& transaction : block.transactions)
+	{
+		if (transaction.transaction->as_type() != transactions::broadcast::as_instance_type())
+			continue;
+
+		auto* broadcast = (transactions::broadcast*)*transaction.transaction;
+		if (!broadcast->proof || (broadcast->proof->prepared.outputs.size() == 1 && broadcast->proof->prepared.outputs.front().link.address == delegations::broadcast_delegation::mockup_target_attestate_absent()))
+			continue;
+
+		if (offchain->has_network(broadcast->asset, true))
+			continue;
+
+		auto computed = broadcast->proof->as_computed();
+		computed.reverted = broadcast->proof->prepared.outputs.front().link.address == delegations::broadcast_delegation::mockup_target_attestate_error();
+		if (!computed.reverted && broadcast->proof->prepared.outputs.front().link.address == delegations::broadcast_delegation::mockup_target_broadcast_underflow())
+		{
+			for (auto& [hash, input] : computed.inputs)
+			{
+				for (auto& token : input.tokens)
+					token.second.value.truncate(2);
+			}
+			for (auto& [hash, output] : computed.outputs)
+			{
+				for (auto& token : output.tokens)
+					token.second.value.truncate(2);
+			}
+		}
+
+		auto* attestation = memory::init<transactions::attestate>();
+		attestation->asset = algorithm::asset::base_id_of(broadcast->asset);
+		attestation->set_computed_proof(computed.as_proof_hash(attestation->asset), std::move(computed), { });
+		transactions.push_back(std::move(attestation));
+	}
+}
+static void new_signed_attestations_from_transactions(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users)
+{
+	for (size_t i = 0; i < transactions.size(); i++)
+	{
+		auto& transaction = transactions[i];
+		if (transaction->as_type() != transactions::attestate::as_instance_type())
+			continue;
+
+		auto* attestation = (transactions::attestate*)*transaction;
+		auto executor = ledger::executor_context(nullptr);
+		for (auto& user : users)
+		{
+			auto validator = executor.get_validator_attestation(attestation->asset, user.wallet.public_key_hash);
+			if (validator && validator->is_active())
+				VI_PANIC(attestation->add_commitment(user.wallet.secret_key), "attestation failed");
+		}
+
+		auto& submitter = users.front();
+		attestation->sign(submitter.wallet.secret_key, submitter.nonce++, decimal::zero()).expect("pre-validation failed");
+	}
+}
 static ledger::block_body new_block_from_list(format::tree* results, vector<block_account>& users, vector<uptr<ledger::transaction_message>>&& transactions, block_type type)
 {
-	ledger::solver_context solver;
 	if (type != block_type::faulty_unattested)
-	{
-		for (size_t i = 0; i < transactions.size(); i++)
-		{
-			auto& transaction = transactions[i];
-			if (transaction->as_type() != transactions::attestate::as_instance_type())
-				continue;
+		new_signed_attestations_from_transactions(transactions, users);
 
-			auto* attestation = (transactions::attestate*)*transaction;
-			for (auto& user : users)
-			{
-				auto validator = solver.state.executor.get_validator_attestation(attestation->asset, user.wallet.public_key_hash);
-				if (validator && validator->is_active())
-					VI_PANIC(attestation->add_commitment(user.wallet.secret_key), "attestation failed");
-			}
-
-			auto& submitter = users.front();
-			attestation->sign(submitter.wallet.secret_key, submitter.nonce++, decimal::zero()).expect("pre-validation failed");
-		}
-	}
-
+	ledger::solver_context solver;
 	uint64_t priority = solver.apply_validator_state([&](size_t index) { return index < users.size() ? &users[index].wallet : nullptr; }).or_else(std::numeric_limits<uint64_t>::max());
 	if (type == block_type::fallback)
 	{
@@ -1405,36 +1449,7 @@ static ledger::block_body new_block_from_list(format::tree* results, vector<bloc
 		new_block_from_list(results, users, std::move(transactions), type);
 
 	transactions = vector<uptr<ledger::transaction_message>>();
-	for (auto& transaction : proposal.block.transactions)
-	{
-		if (transaction.transaction->as_type() != transactions::broadcast::as_instance_type())
-			continue;
-
-		auto* broadcast = (transactions::broadcast*)*transaction.transaction;
-		if (!broadcast->proof || (broadcast->proof->prepared.outputs.size() == 1 && broadcast->proof->prepared.outputs.front().link.address == delegations::broadcast_delegation::mockup_target_attestate_absent()))
-			continue;
-
-		auto computed = broadcast->proof->as_computed();
-		computed.reverted = broadcast->proof->prepared.outputs.front().link.address == delegations::broadcast_delegation::mockup_target_attestate_error();
-		if (!computed.reverted && broadcast->proof->prepared.outputs.front().link.address == delegations::broadcast_delegation::mockup_target_broadcast_underflow())
-		{
-			for (auto& [hash, input] : computed.inputs)
-			{
-				for (auto& token : input.tokens)
-					token.second.value.truncate(2);
-			}
-			for (auto& [hash, output] : computed.outputs)
-			{
-				for (auto& token : output.tokens)
-					token.second.value.truncate(2);
-			}
-		}
-
-		auto* attestation = memory::init<transactions::attestate>();
-		attestation->asset = algorithm::asset::base_id_of(broadcast->asset);
-		attestation->set_computed_proof(computed.as_proof_hash(attestation->asset), std::move(computed), { });
-		transactions.push_back(std::move(attestation));
-	}
+	new_unsigned_attestations_from_block(proposal.block, transactions);
 	if (!transactions.empty())
 		new_block_from_list(results, users, std::move(transactions), type);
 
@@ -2787,6 +2802,7 @@ int main(int argc, char* argv[])
 		if (!id.empty())
 			ids.insert(ids.begin(), id);
 
+		vector<block_account> users;
 		format::tree accounts = format::tree::list();
 		for (auto& test_account_set : ids)
 		{
@@ -2809,9 +2825,31 @@ int main(int argc, char* argv[])
 		else if (!accounts.childs().empty())
 			console::get()->write_line(accounts.childs().front().as_json(true));
 
+		auto nodes = storages::mempoolstate().get_local_nodes().or_else(vector<consensus::relay_descriptor>());
+		for (auto& [node, wallet] : nodes)
+			users.push_back(block_account(wallet, 0));
+
 		consensus::server_node consensus_service;
 		discovery::server_node discovery_service;
 		rpc::server_node rpc_service = rpc::server_node(&consensus_service);
+		consensus_service.events.accept_block = [&](const uint256_t& block_hash, const ledger::block_body& block, const ledger::block_checkpoint& checkpoint)
+		{
+			rpc_service.dispatch_accept_block(block_hash, block, checkpoint);
+			if (users.empty())
+				return;
+
+			vector<uptr<ledger::transaction_message>> transactions;
+			new_unsigned_attestations_from_block(block, transactions);
+			if (!transactions.empty())
+			{
+				for (auto& user : users)
+					user.nonce = user.wallet.get_latest_nonce().or_else(0);
+
+				new_signed_attestations_from_transactions(transactions, users);
+				for (auto& transaction : transactions)
+					consensus_service.accept_transaction(nullptr, transaction.reset());
+			}
+		};
 
 		service_control control;
 		control.bind(discovery_service.get_entrypoint());

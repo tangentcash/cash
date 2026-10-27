@@ -1525,6 +1525,18 @@ namespace tangent
 			truncate_or_throw(result, false);
 			return result;
 		}
+		decimal real320_repr::truncate(decimal& base, uint8_t length)
+		{
+			if (length > kernel::params().message.decimal_precision)
+			{
+				contract::throw_ptr(exception_repr(exception_repr::category::memory(), stringify::text("fixed point overflow of number \"%s\" (sp: %i, fp: %i) when truncating to %i", base.to_string().c_str(), base.integer_size(), base.decimal_size(), (int)length)));
+				return base;
+			}
+
+			decimal result = decimal(base).truncate(length);
+			truncate_or_throw(result, false);
+			return result;
+		}
 		decimal& real320_repr::mul_eq(decimal& base, const decimal& v)
 		{
 			truncate_or_throw(base *= v, false);
@@ -6093,6 +6105,7 @@ namespace tangent
 			real320_type->set_operator_address("real320 opAdd(const real320&in) const", WRAP_OBJ_FIRST(real320_repr::add), convention::generic_call);
 			real320_type->set_operator_address("real320 opSub(const real320&in) const", WRAP_OBJ_FIRST(real320_repr::sub), convention::generic_call);
 			real320_type->set_operator_address("real320 opNeg() const", WRAP_OBJ_FIRST(real320_repr::negate), convention::generic_call);
+			real320_type->set_operator_address("real320 trim(uint8) const", WRAP_OBJ_FIRST(real320_repr::truncate), convention::generic_call);
 			real320_type->set_method_static_address("real320 enan()", WRAP_FN(decimal::nan), convention::generic_call);
 			real320_type->set_method_static_address("real320 from(const string&in, uint8)", WRAP_FN(real320_repr::from), convention::generic_call);
 			payable_type->set_behaviour_address("void f()", behaviours::construct, WRAP_CON(payable_repr, ()), convention::generic_call);

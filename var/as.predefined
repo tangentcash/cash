@@ -232,6 +232,7 @@ class real320
 	real320 opAdd(const real320&in) const;
 	real320 opSub(const real320&in) const;
 	real320 opNeg() const;
+	real320 trim(uint8) const;
 }
 class payable
 {

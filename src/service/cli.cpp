@@ -151,7 +151,7 @@ namespace tangent
 				return storage.error();
 
 			auto storage_status = executor->apply_witness_program(*storage);
-			if (!storage_status)
+			if (!storage_status && !stringify::find(storage_status.error().message(), "exists").found)
 				return storage_status.error();
 
 			auto hashcode_status = executor->apply_account_program(env.to, algorithm::hashing::ppc512(*file));
