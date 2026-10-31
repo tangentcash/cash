@@ -2,7 +2,12 @@
   "name": "tangentcash",
   "version": "1.0.0",
   "dependencies": [
-    "secp256k1",
+    {
+      "name": "secp256k1",
+      "features": [
+        "recovery"
+      ]
+    },
     "gmp",
     "libsodium",
     "rocksdb",
@@ -10,5 +15,5 @@
     "openssl",
     "zlib"
   ],
-  "builtin-baseline": "96d5fb3de135b86d7222c53f2352ca92827a156b"
+  "builtin-baseline": "9a5dfef5d1a0438a7d24856a85bd60f309d355e9"
 }
