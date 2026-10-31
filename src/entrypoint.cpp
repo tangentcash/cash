@@ -2,12 +2,21 @@
 #include "service/discovery.h"
 #include "service/rpc.h"
 #include "service/cli.h"
-#include <vitex/vitex.h>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
 
 using namespace tangent;
 
 int main(int argc, char* argv[])
 {
+#ifdef _WIN32
+	SIZE_T decommit_threshold = 64ull * 1024 * 1024;
+	HeapSetInformation(GetProcessHeap(), (HEAP_INFORMATION_CLASS)3 /* HeapDeCommitFreeBlockThreshold */, &decommit_threshold, sizeof(decommit_threshold));
+#endif
+
 	auto scope = vitex::runtime();
 	auto args = os::process::parse_args(argc, argv, (size_t)args_format::key | (size_t)args_format::key_value);
 	auto params = kernel(&args);

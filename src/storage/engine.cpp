@@ -14,7 +14,12 @@ namespace tangent
 		}
 		static const rocksdb::WriteOptions& get_blob_write_options()
 		{
-			static rocksdb::WriteOptions options;
+			static const rocksdb::WriteOptions options = []
+			{
+				rocksdb::WriteOptions result;
+				result.disableWAL = kernel::params().user.storage.optimization == tangent::storage_optimization::speed;
+				return result;
+			}();
 			return options;
 		}
 
@@ -39,13 +44,13 @@ namespace tangent
 		}
 		sqlite::expects_db<void> storage_util::multi_tx_commit(const std::string_view& operation, multi_storage_index_ptr&& ptr)
 		{
-			std::atomic<bool> successful = true;
-			parallel::wait_all(parallel::for_each_sequential(ptr.begin(), ptr.end(), ptr.size(), DB_BATCH, [&](storage_index_ptr* connection)
+			bool successful = true;
+			for (auto& connection : ptr)
 			{
 				auto result = connection->tx_commit(operation);
 				if (!result)
 					successful = false;
-			}));
+			}
 			if (successful)
 			{
 				ptr.clear();
@@ -62,13 +67,13 @@ namespace tangent
 		}
 		sqlite::expects_db<void> storage_util::multi_tx_rollback(const std::string_view& operation, multi_storage_index_ptr&& ptr)
 		{
-			std::atomic<bool> successful = true;
-			parallel::wait_all(parallel::for_each_sequential(ptr.begin(), ptr.end(), ptr.size(), DB_BATCH, [&](storage_index_ptr* connection)
+			bool successful = true;
+			for (auto& connection : ptr)
 			{
 				auto result = connection->tx_rollback(operation);
 				if (!result)
 					successful = false;
-			}));
+			}
 			ptr.clear();
 			if (successful)
 				return expectation::met;

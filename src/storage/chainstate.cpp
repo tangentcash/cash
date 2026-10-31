@@ -65,6 +65,26 @@ namespace tangent
 			ledger::storage_index_ptr* storage;
 		};
 
+		static bool multiform_row_has_pending(uint32_t type, const std::string_view& row, ledger::block_changelog* changelog)
+		{
+			if (changelog == nullptr)
+				return false;
+
+			auto check = [&](const btree_map<string, ledger::block_state::state_change>& state)
+			{
+				for (auto& [index, change] : state)
+				{
+					if (change.state->as_level() != ledger::state_level::multiform || change.state->as_type() != type)
+						continue;
+
+					if (((ledger::multiform_state*)*change.state)->as_row() == row)
+						return true;
+				}
+
+				return false;
+			};
+			return check(changelog->outgoing.finalized) || check(changelog->outgoing.pending);
+		}
 		static void fill_multiform_writer_from_block_state(vector<multiform_blob>* blobs, uint32_t type, const ledger::block_state::log& state)
 		{
 			for (auto& [index, change] : state)
@@ -719,7 +739,6 @@ namespace tangent
 
 			vector<promise<void>> queue;
 			vector<transaction_blob> transactions;
-			size_t concurrency = std::max<size_t>(1, parallel::get_threads());
 			bool transaction_history = kernel::params().user.storage.transaction_history;
 			if (!reorganization)
 			{
@@ -762,7 +781,6 @@ namespace tangent
 
 			for (auto& [type, writer] : uniform_writers)
 			{
-				vector<state_result> state_cache(concurrency);
 				for (auto& task : parallel::for_each(writer.blobs.begin(), writer.blobs.end(), ELEMENTS_FEW, [&](uniform_blob& item)
 				{
 					item.index = item.context->as_index();
@@ -773,7 +791,6 @@ namespace tangent
 
 			for (auto& [type, writer] : multiform_writers)
 			{
-				vector<state_result> state_cache(concurrency);
 				for (auto& task : parallel::for_each(writer.blobs.begin(), writer.blobs.end(), ELEMENTS_FEW, [&](multiform_blob& item)
 				{
 					item.column = item.context->as_column();
@@ -1292,6 +1309,7 @@ namespace tangent
 				auto cursor = multiform_storage.prepared_query(__func__, *find_column_and_row);
 				if (!cursor || cursor->error())
 					return expects_lr<multiform_location>(layer_exception(ledger::storage_util::error_of(cursor)));
+
 
 				column_location = (*cursor)["column_number"].get().get_integer();
 				row_location = (*cursor)["row_number"].get().get_integer();
@@ -2364,7 +2382,7 @@ namespace tangent
 			auto& response = cursor->first();
 			vector<state_result> values;
 			values.resize(response.size());
-			parallel::wait_all(parallel::for_loop(values.size(), ELEMENTS_FEW, [&](size_t i)
+			parallel::wait_all(parallel::for_loop(values.size(), changelog != nullptr ? std::numeric_limits<size_t>::max() : ELEMENTS_FEW, [&](size_t i)
 			{
 				auto next = response[i];
 				auto row = next["row_hash"].get().get_blob();
@@ -2452,7 +2470,7 @@ namespace tangent
 			auto& response = cursor->first();
 			vector<state_result> values;
 			values.resize(response.size());
-			parallel::wait_all(parallel::for_loop(values.size(), ELEMENTS_FEW, [&](size_t i)
+			parallel::wait_all(parallel::for_loop(values.size(), changelog != nullptr ? std::numeric_limits<size_t>::max() : ELEMENTS_FEW, [&](size_t i)
 			{
 				auto next = response[i];
 				auto row = next["row_hash"].get().get_blob();
@@ -2535,7 +2553,7 @@ namespace tangent
 			auto& response = cursor->first();
 			vector<state_result> values;
 			values.resize(response.size());
-			parallel::wait_all(parallel::for_loop(values.size(), ELEMENTS_FEW, [&](size_t i)
+			parallel::wait_all(parallel::for_loop(values.size(), changelog != nullptr ? std::numeric_limits<size_t>::max() : ELEMENTS_FEW, [&](size_t i)
 			{
 				auto next = response[i];
 				auto column = next["column_hash"].get().get_blob();
@@ -2623,7 +2641,7 @@ namespace tangent
 			auto& response = cursor->first();
 			vector<state_result> values;
 			values.resize(response.size());
-			parallel::wait_all(parallel::for_loop(values.size(), ELEMENTS_FEW, [&](size_t i)
+			parallel::wait_all(parallel::for_loop(values.size(), changelog != nullptr ? std::numeric_limits<size_t>::max() : ELEMENTS_FEW, [&](size_t i)
 			{
 				auto next = response[i];
 				auto column = next["column_hash"].get().get_blob();
@@ -2666,6 +2684,110 @@ namespace tangent
 					return index_a < index_b;
 				});
 			}
+
+			return values;
+		}
+		expects_lr<vector<state_multiform_view>> chainstate::get_multiform_views_by_row(uint32_t type, ledger::block_changelog* changelog, const std::string_view& row, const result_filter& filter, uint64_t block_number)
+		{
+			auto temporary = resolve_temporary_state(type, changelog, optional::none, row, block_number);
+			if (!temporary)
+				return temporary.error();
+
+			auto location = resolve_multiform_location(type, optional::none, row);
+			if (!location)
+				return expects_lr<vector<state_multiform_view>>(vector<state_multiform_view>());
+
+			auto row_number = location->row.or_else(0);
+			auto use_live = block_number == 0;
+			if (!use_live && !multiform_row_has_pending(type, row, changelog))
+			{
+				auto max_block = temporary->storage->prepare_statement(__func__, "SELECT MAX(block_number) AS block_number FROM snapshots WHERE row_number = ?");
+				if (!max_block)
+					return expects_lr<vector<state_multiform_view>>(layer_exception(std::move(max_block.error().message())));
+
+				temporary->storage->ptr()->bind_int64(*max_block, 0, row_number);
+				auto probe = temporary->storage->prepared_query(__func__, *max_block);
+				if (!probe || probe->error())
+					return expects_lr<vector<state_multiform_view>>(vector<state_multiform_view>());
+
+				use_live = (uint64_t)(*probe)["block_number"].get().get_integer() < block_number;
+			}
+
+			auto command = stringify::text(!use_live ?
+				"SELECT cq.column_hash, sq.block_number, (id - 1) AS id FROM (SELECT ROW_NUMBER() OVER (ORDER BY rank %s, column_number ASC) AS id, column_number, block_number FROM (SELECT column_number, row_number, rank, hidden, MAX(block_number) AS block_number FROM snapshots WHERE row_number = ? AND block_number < ? GROUP BY column_number) AS fq WHERE hidden = FALSE AND rank %s ?) AS sq JOIN columns AS cq ON cq.column_number = sq.column_number ORDER BY sq.id ASC" :
+				"SELECT cq.column_hash, sq.block_number, (id - 1) AS id FROM (SELECT ROW_NUMBER() OVER (ORDER BY rank %s, column_number ASC) AS id, column_number, block_number FROM multiforms WHERE row_number = ? AND rank %s ?) AS sq JOIN columns AS cq ON cq.column_number = sq.column_number ORDER BY sq.id ASC", filter.as_order().data(), filter.as_condition().data());
+			auto fetch = temporary->storage->prepare_statement(__func__, command);
+			if (!fetch)
+				return expects_lr<vector<state_multiform_view>>(layer_exception(std::move(fetch.error().message())));
+
+			auto rank = filter.as_value();
+			temporary->storage->ptr()->bind_int64(*fetch, 0, row_number);
+			if (!use_live)
+			{
+				temporary->storage->ptr()->bind_int64(*fetch, 1, block_number);
+				temporary->storage->ptr()->bind_blob(*fetch, 2, rank);
+			}
+			else
+				temporary->storage->ptr()->bind_blob(*fetch, 1, rank);
+
+			auto cursor = temporary->storage->prepared_query(__func__, *fetch);
+			if (!cursor || cursor->error())
+				return expects_lr<vector<state_multiform_view>>(vector<state_multiform_view>());
+
+			auto& response = cursor->first();
+			vector<state_multiform_view> values;
+			values.resize(response.size());
+			for (size_t i = 0; i < response.size(); i++)
+			{
+				auto next = response[i];
+				values[i].id = (uint64_t)next["id"].get().get_integer();
+				values[i].column_hash = next["column_hash"].get().get_blob();
+				values[i].block_number = (uint64_t)next["block_number"].get().get_integer();
+			}
+
+			return values;
+		}
+		expects_lr<vector<state_result>> chainstate::materialize_multiform_views(uint32_t type, ledger::block_changelog* changelog, const std::string_view& row, const vector<state_multiform_view>& ranked, vector<uint64_t>& selection)
+		{
+			vector<state_result> values;
+			values.resize(selection.size());
+
+			auto& blob_storage = get_blob_storage();
+			for (size_t i = 0; i < selection.size(); i++)
+			{
+				auto& next = ranked[selection[i]];
+				if (changelog != nullptr)
+				{
+					auto candidate = changelog->outgoing.find(type, next.column_hash, row);
+					if (!candidate)
+						candidate = changelog->incoming.find(type, next.column_hash, row);
+					if (candidate)
+					{
+						values[i] = state_result(std::move(*candidate), true, next.id);
+						continue;
+					}
+				}
+
+				auto blob = blob_storage.load(__func__, get_multiform_label(type, next.column_hash, row, next.block_number)).or_else(string());
+				auto next_state = state_from_blob(next.block_number, type, next.column_hash, row, blob);
+				if (!next_state)
+					continue;
+				else if (changelog != nullptr)
+					changelog->incoming.push(*next_state, false);
+
+				values[i] = state_result(std::move(next_state), false, next.id);
+			}
+
+			values.erase(std::remove_if(values.begin(), values.end(), [](const state_result& a) { return !a.value; }), values.end());
+			hash_map<uint64_t, size_t> positions;
+			positions.reserve(selection.size());
+			for (size_t i = 0; i < selection.size(); i++)
+				positions[selection[i]] = i;
+
+			std::sort(values.begin(), values.end(), [&positions](const state_result& a, const state_result& b)
+			{
+				return positions[a.index] < positions[b.index];
+			});
 
 			return values;
 		}

@@ -12,6 +12,11 @@
 #include "../src/translation/bitcoin.h"
 #include "../src/internal/sha3.h"
 #include <vitex/vitex.h>
+#ifdef VI_MICROSOFT
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
 #define TEST_BLOCK(x, y, z) new_block_from_generator(data, users, x, #x, y, z, block_type::normal)
 #define TEST_BLOCK_FALLBACK(x, y, z) new_block_from_generator(data, users, x, #x, y, z, block_type::fallback)
 #define TEST_BLOCK_FAULTY(x, y, z) new_block_from_generator(data, users, x, #x, y, z, block_type::faulty)
@@ -2784,6 +2789,10 @@ int main(int argc, char* argv[])
 #ifdef VI_MICROSOFT
 	if (!os::process::has_debugger())
 		_set_abort_behavior(0, _WRITE_ABORT_MSG);
+#endif
+#ifdef VI_MICROSOFT
+	SIZE_T decommit_threshold = 64ull * 1024 * 1024;
+	HeapSetInformation(GetProcessHeap(), (HEAP_INFORMATION_CLASS)3 /* HeapDeCommitFreeBlockThreshold */, &decommit_threshold, sizeof(decommit_threshold));
 #endif
 	vitex::runtime scope;
 	inline_args args = os::process::parse_args(argc, argv, (size_t)args_format::key | (size_t)args_format::key_value);

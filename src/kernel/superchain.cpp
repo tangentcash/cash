@@ -2371,7 +2371,7 @@ namespace tangent
 		}
 		uint64_t bridge::get_finality_target(const algorithm::asset_id& asset)
 		{
-			if (kernel::params().is(network_type::regtest) || !has_network(asset))
+			if (!has_network(asset, kernel::params().is(network_type::regtest)))
 				return 0;
 
 			auto* implementation = get_network(asset);

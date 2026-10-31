@@ -22,6 +22,14 @@ namespace tangent
 			case tangent::storage_optimization::speed:
 				options.writable_file_max_buffer_size = 1024 * 1024 * 48;
 				options.avoid_unnecessary_blocking_io = true;
+				options.paranoid_checks = false;
+				options.max_write_buffer_number = 3;
+				options.min_write_buffer_number_to_merge = 2;
+				options.level0_slowdown_writes_trigger = 24;
+				options.level0_stop_writes_trigger = 48;
+				options.max_background_jobs = 4;
+				options.level_compaction_dynamic_level_bytes = true;
+				options.compression_per_level = { rocksdb::kNoCompression, rocksdb::kNoCompression };
 				break;
 			case tangent::storage_optimization::safety:
 			default:
@@ -40,7 +48,10 @@ namespace tangent
 					"PRAGMA temp_store = memory;"
 					"PRAGMA mmap_size = 68719476736;"
 					"PRAGMA page_size = %" PRIu64 ";"
-					"PRAGMA cache_size = %" PRIi64 ";", index_page_size, index_cache_size);
+					"PRAGMA cache_size = %" PRIi64 ";"
+					"PRAGMA wal_autocheckpoint = 10000;"
+					"PRAGMA journal_size_limit = 268435456;"
+					"PRAGMA sorted_referrals = on;", index_page_size, index_cache_size);
 			case tangent::storage_optimization::safety:
 			default:
 				return stringify::text(

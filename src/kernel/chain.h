@@ -220,9 +220,9 @@ namespace tangent
 				storage_optimization optimization = storage_optimization::speed;
 				uint64_t checkpoint_size = 128;
 				uint64_t module_cache_size = 8192;
-				uint64_t blob_cache_size = 134217728;
+				uint64_t blob_cache_size = 268435456;
 				uint64_t index_page_size = 65536;
-				int64_t index_cache_size = -2000;
+				int64_t index_cache_size = -65536;
 				double flush_threads_ratio = 0.25;
 				double compaction_threads_ratio = 0.25;
 				double computation_threads_ratio = 0.00;

@@ -1396,24 +1396,24 @@ namespace tangent
 			auto nonce = get_validation_nonce();
 			auto chain = storages::chainstate();
 			auto filter = storages::result_filter::greater(0, -1);
-			auto window = storages::result_index_window();
-			auto pool = chain.get_multiforms_count_by_row_filter(states::validator_production::as_instance_type(), changelog, states::validator_production::as_instance_row(), filter, nonce).or_else(0);
-			auto size = std::min(target_size, pool);
+			auto views = chain.get_multiform_views_by_row(states::validator_production::as_instance_type(), changelog, states::validator_production::as_instance_row(), filter, nonce).or_else(vector<storages::state_multiform_view>());
+			auto pool = (uint32_t)views.size();
+			if (pool == 0)
+				return layer_exception("committee threshold not met");
+
+			auto size = std::min(target_size, (size_t)pool);
 			auto distribution = algorithm::exponential_distribution();
 			auto indices = vector<uint64_t>();
 			indices.reserve(size);
 			while (indices.size() < size)
 			{
-				uint64_t index = (uint64_t)distribution.next(random.derive(), (uint32_t)pool);
+				uint64_t index = (uint64_t)distribution.next(random.derive(), pool);
 				auto it = std::find(indices.begin(), indices.end(), index);
 				if (it == indices.end())
-				{
-					window.indices.push_back(index);
 					indices.insert(it, index);
-				}
 			}
 
-			auto results = chain.get_multiforms_by_row_filter(states::validator_production::as_instance_type(), changelog, states::validator_production::as_instance_row(), filter, nonce, window);
+			auto results = chain.materialize_multiform_views(states::validator_production::as_instance_type(), changelog, states::validator_production::as_instance_row(), views, indices);
 			if (!results || results->empty())
 				return layer_exception("committee threshold not met");
 

@@ -59,6 +59,13 @@ namespace tangent
 			}
 		};
 
+		struct state_multiform_view
+		{
+			string column_hash;
+			uint64_t id = 0;
+			uint64_t block_number = 0;
+		};
+
 		struct result_filter
 		{
 			position_condition condition = position_condition::equal;
@@ -198,6 +205,8 @@ namespace tangent
 			expects_lr<vector<state_result>> get_multiforms_by_column_filter(uint32_t type, ledger::block_changelog* changelog, const std::string_view& column, const result_filter& filter, uint64_t block_number, const result_window& window);
 			expects_lr<vector<state_result>> get_multiforms_by_row(uint32_t type, ledger::block_changelog* changelog, const std::string_view& row, uint64_t block_number, size_t offset, size_t count);
 			expects_lr<vector<state_result>> get_multiforms_by_row_filter(uint32_t type, ledger::block_changelog* changelog, const std::string_view& row, const result_filter& filter, uint64_t block_number, const result_window& window);
+			expects_lr<vector<state_multiform_view>> get_multiform_views_by_row(uint32_t type, ledger::block_changelog* changelog, const std::string_view& row, const result_filter& filter, uint64_t block_number);
+			expects_lr<vector<state_result>> materialize_multiform_views(uint32_t type, ledger::block_changelog* changelog, const std::string_view& row, const vector<state_multiform_view>& ranked, vector<uint64_t>& selection);
 			expects_lr<size_t> get_multiforms_count_by_column(uint32_t type, ledger::block_changelog* changelog, const std::string_view& column, uint64_t block_number);
 			expects_lr<size_t> get_multiforms_count_by_column_filter(uint32_t type, ledger::block_changelog* changelog, const std::string_view& column, const result_filter& filter, uint64_t block_number);
 			expects_lr<size_t> get_multiforms_count_by_row(uint32_t type, ledger::block_changelog* changelog, const std::string_view& row, uint64_t block_number);

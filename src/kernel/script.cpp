@@ -4178,21 +4178,25 @@ namespace tangent
 			auto* caller = (const transactions::call*)p->executor->transaction;
 			if (!caller->has_feature(transactions::call::feature::require_route))
 			{
-				contract::throw_ptr(exception_repr(exception_repr::category::requirement(), "bridge::link is not permitted by the function feature flags of this transaction"));
+				contract::throw_ptr(exception_repr(exception_repr::category::requirement(), "link is not permitted by the function feature flags of this transaction"));
 				return;
 			}
-
-			if (routing_address.empty())
+			else if (!routing_address.empty())
 			{
-				contract::throw_ptr(exception_repr(exception_repr::category::argument(), "bridge::link requires a routing address"));
-				return;
+				auto* offchain = superchain::bridge::get();
+				auto result = offchain->decode_address(asset, routing_address.view());
+				if (!result)
+				{
+					contract::throw_ptr(exception_repr(exception_repr::category::argument(), "link requires a valid routing address: " + result.error().message()));
+					return;
+				}
 			}
 
 			for (auto& event : p->executor->receipt.events)
 			{
 				if (event.event == transactions::call::as_instance_type())
 				{
-					contract::throw_ptr(exception_repr(exception_repr::category::requirement(), "bridge::link can only be invoked once per transaction"));
+					contract::throw_ptr(exception_repr(exception_repr::category::requirement(), "link can only be invoked once per transaction"));
 					return;
 				}
 			}
@@ -4200,7 +4204,7 @@ namespace tangent
 			auto bridge = p->executor->get_bridge_instance(asset, bridge_hash);
 			if (!bridge)
 			{
-				contract::throw_ptr(exception_repr(exception_repr::category::requirement(), "bridge::link requires a valid bridge instance"));
+				contract::throw_ptr(exception_repr(exception_repr::category::requirement(), "link requires a valid bridge instance"));
 				return;
 			}
 
@@ -4217,19 +4221,19 @@ namespace tangent
 			auto* caller = (const transactions::call*)p->executor->transaction;
 			if (!caller->has_feature(transactions::call::feature::require_withdraw))
 			{
-				contract::throw_ptr(exception_repr(exception_repr::category::requirement(), "bridge::send is not permitted by the function feature flags of this transaction"));
+				contract::throw_ptr(exception_repr(exception_repr::category::requirement(), "send is not permitted by the function feature flags of this transaction"));
 				return;
 			}
 
 			if (routing_address.empty())
 			{
-				contract::throw_ptr(exception_repr(exception_repr::category::argument(), "bridge::send requires a destination address"));
+				contract::throw_ptr(exception_repr(exception_repr::category::argument(), "send requires a destination address"));
 				return;
 			}
 
 			if (!value.is_positive())
 			{
-				contract::throw_ptr(exception_repr(exception_repr::category::argument(), "bridge::send requires a positive value"));
+				contract::throw_ptr(exception_repr(exception_repr::category::argument(), "send requires a positive value"));
 				return;
 			}
 
@@ -4237,7 +4241,7 @@ namespace tangent
 			{
 				if (event.event == transactions::call::as_instance_type())
 				{
-					contract::throw_ptr(exception_repr(exception_repr::category::requirement(), "bridge::send can only be invoked once per transaction"));
+					contract::throw_ptr(exception_repr(exception_repr::category::requirement(), "send can only be invoked once per transaction"));
 					return;
 				}
 			}
@@ -4245,7 +4249,7 @@ namespace tangent
 			auto bridge = p->executor->get_bridge_instance(asset, bridge_hash);
 			if (!bridge)
 			{
-				contract::throw_ptr(exception_repr(exception_repr::category::requirement(), "bridge::send requires a valid bridge instance"));
+				contract::throw_ptr(exception_repr(exception_repr::category::requirement(), "send requires a valid bridge instance"));
 				return;
 			}
 

@@ -199,6 +199,8 @@ namespace tangent
 				auto transaction = transactions::call();
 				transaction.call_to(env.to, function_decl, std::move(function_args));
 				transaction.pays = env.payable.payments;
+				if (env.call_flags)
+					transaction.set_flags(env.call_flags);
 
 				auto message = transaction.as_message();
 				data = std::move(message.data);
