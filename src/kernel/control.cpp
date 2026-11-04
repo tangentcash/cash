@@ -1,5 +1,4 @@
 #include "control.h"
-#include <vitex/vitex.h>
 #include <iostream>
 #define LOCKED_TASK_ID std::numeric_limits<uint64_t>::max()
 

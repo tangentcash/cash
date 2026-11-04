@@ -401,14 +401,14 @@ namespace tangent
 				if (type != "Payment" || !amount)
 					return expects_rt<computed_transaction>(remote_exception("tx not involved"));
 
-				decimal base_value = 0.0, token_value = 0.0;
-				algorithm::asset_id token_asset = native_asset;
+				decimal base_value = 0.0;
+				option<coin_utxo::token_utxo> token = optional::none;
 				if (amount->is_map())
 				{
-					string token = amount->child_var("currency").as_blob();
+					string symbol = amount->child_var("currency").as_blob();
 					string issuer = amount->child_var("issuer").as_blob();
-					token_value = amount->child_var("value").as_decimal();
-					token_asset = algorithm::asset::id_of(algorithm::asset::blockchain_of(native_asset), token, issuer);
+					auto token_asset = algorithm::asset::id_of(algorithm::asset::blockchain_of(native_asset), symbol, issuer);
+					token = coin_utxo::token_utxo::modern(issuer, symbol, amount->child_var("value").as_decimal(), kernel::params().message.decimal_precision);
 					bridge::get()->enable_contract_address(token_asset, issuer);
 				}
 				else
@@ -432,22 +432,15 @@ namespace tangent
 				if (target_to_link != discovery->end())
 					to_link.address = address_util::encode_tag_address(to, destination_tag);
 
-				hash_map<algorithm::asset_id, decimal> inputs;
-				hash_map<algorithm::asset_id, decimal> outputs;
-				if (total_value.is_positive())
+				coin_utxo new_input = coin_utxo::account_utxo(target_from_link != discovery->end() ? target_from_link->second : wallet_link::from_address(from), native_asset, std::move(total_value), { });
+				coin_utxo new_output = coin_utxo::account_utxo(std::move(to_link), native_asset, std::move(base_value), { });
+				if (token)
 				{
-					inputs[native_asset] = total_value;
-					outputs[native_asset] = base_value;
+					new_input.add_token_value(coin_utxo::token_utxo(*token));
+					new_output.add_token_value(std::move(*token));
 				}
-				if (token_value.is_positive())
-				{
-					inputs[token_asset] = token_value;
-					outputs[token_asset] = token_value;
-				}
-				if (!inputs.empty())
-					tx.add_input(coin_utxo(target_from_link != discovery->end() ? target_from_link->second : wallet_link::from_address(from), std::move(inputs)));	
-				if (!outputs.empty())
-					tx.add_output(coin_utxo(std::move(to_link), std::move(outputs)));		
+				tx.add_input(std::move(new_input));
+				tx.add_output(std::move(new_output));	
 				return expects_rt<computed_transaction>(std::move(tx));
 			}
 			expects_promise_rt<decimal> ripple::calculate_balance(const algorithm::asset_id& for_asset, const wallet_link& link)
@@ -571,10 +564,16 @@ namespace tangent
 					auto message = tx_serialize(&buffer, true);
 					prepared_transaction result;
 					if (contract_address)
-						result.requires_account_input(algorithm::composition::type::ed25519, wallet_link(from_link), public_key, message.data(), message.size(), { { to.asset, to_value }, { native_asset, fee_value } });
+					{
+						auto token_utxo = coin_utxo::token_utxo::modern(*contract_address, algorithm::asset::token_of(to.asset), to_value, kernel::params().message.decimal_precision);
+						result.requires_input(algorithm::composition::type::ed25519, public_key, message.data(), message.size(), coin_utxo::account_utxo(wallet_link(from_link), native_asset, decimal(fee_value), { token_utxo }));
+						result.requires_output(coin_utxo::account_utxo(wallet_link::from_address(to.address), native_asset, decimal::zero(), { token_utxo }));
+					}
 					else
-						result.requires_account_input(algorithm::composition::type::ed25519, wallet_link(from_link), public_key, message.data(), message.size(), { { native_asset, total_value } });
-					result.requires_account_output(to.address, { { to.asset, to_value } });
+					{
+						result.requires_input(algorithm::composition::type::ed25519, public_key, message.data(), message.size(), coin_utxo::account_utxo(wallet_link(from_link), native_asset, decimal(total_value), { }));
+						result.requires_output(coin_utxo::account_utxo(wallet_link::from_address(to.address), native_asset, decimal(to_value), { }));
+					}
 					result.requires_abi(format::variable(contract_address.or_else(string())));
 					result.requires_abi(format::variable(buffer.sequence));
 					result.requires_abi(format::variable(buffer.last_ledger_sequence));

@@ -4083,26 +4083,34 @@ namespace tangent
 				*event_hash = proof.as_proof_hash(asset);
 			return 3;
 		}
-		void attestate::set_finalized_proof(uint64_t block_id, const std::string_view& transaction_id, const vector<superchain::value_transfer>& inputs, const vector<superchain::value_transfer>& outputs, bool reset_signatures)
+		void attestate::set_fake_proof(uint64_t block_id, const std::string_view& transaction_id, const vector<superchain::value_transfer_ext>& inputs, const vector<superchain::value_transfer_ext>& outputs, bool reset_signatures)
 		{
 			superchain::computed_transaction witness;
 			witness.transaction_id = transaction_id;
 			witness.block_id = block_id;
 			for (auto& input : inputs)
 			{
-				auto utxo = superchain::coin_utxo(superchain::wallet_link::from_address(input.address), { { input.asset, input.value } });
-				witness.inputs[utxo.as_hash()] = std::move(utxo);
+				auto asset = algorithm::asset::base_id_of(input.asset);
+				auto link = superchain::wallet_link::from_address(input.address);
+				if (asset != input.asset)
+					witness.add_input(superchain::coin_utxo::account_utxo(std::move(link), asset, decimal::zero(), { superchain::coin_utxo::token_utxo::modern(input.contract_address, algorithm::asset::token_of(input.asset), input.value, kernel::params().message.decimal_precision) }));
+				else
+					witness.add_input(superchain::coin_utxo::account_utxo(std::move(link), input.asset, decimal(input.value), { }));
 			}
 			for (auto& output : outputs)
 			{
-				auto utxo = superchain::coin_utxo(superchain::wallet_link::from_address(output.address), { { output.asset, output.value } });
-				witness.outputs[utxo.as_hash()] = std::move(utxo);
+				auto asset = algorithm::asset::base_id_of(output.asset);
+				auto link = superchain::wallet_link::from_address(output.address);
+				if (asset != output.asset)
+					witness.add_output(superchain::coin_utxo::account_utxo(std::move(link), asset, decimal::zero(), { superchain::coin_utxo::token_utxo::modern(output.contract_address, algorithm::asset::token_of(output.asset), output.value, kernel::params().message.decimal_precision) }));
+				else
+					witness.add_output(superchain::coin_utxo::account_utxo(std::move(link), output.asset, decimal(output.value), { }));
 			}
 			proof = std::move(witness);
 			if (reset_signatures)
 				commitments.clear();
 		}
-		void attestate::set_computed_proof(const uint256_t& new_commitment_hash, superchain::computed_transaction&& new_proof, btree_set<algorithm::hashsig_t>&& new_signatures)
+		void attestate::set_real_proof(const uint256_t& new_commitment_hash, superchain::computed_transaction&& new_proof, btree_set<algorithm::hashsig_t>&& new_signatures)
 		{
 			proof = std::move(new_proof);
 			commitments.clear();

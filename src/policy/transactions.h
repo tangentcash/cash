@@ -357,8 +357,8 @@ namespace tangent
 			bool load_body(format::ro_stream& stream) override;
 			void enumerate_accounts(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, const std::function<void(const algorithm::pubkeyhash_t&)>& callback) const override;
 			void enumerate_aliases(const std::function<void(const uint256_t&)>& callback) const override;
-			void set_finalized_proof(uint64_t block_id, const std::string_view& transaction_id, const vector<superchain::value_transfer>& inputs, const vector<superchain::value_transfer>& outputs, bool reset_signatures = true);
-			void set_computed_proof(const uint256_t& new_commitment_hash, superchain::computed_transaction&& new_proof, btree_set<algorithm::hashsig_t>&& new_signatures);
+			void set_fake_proof(uint64_t block_id, const std::string_view& transaction_id, const vector<superchain::value_transfer_ext>& inputs, const vector<superchain::value_transfer_ext>& outputs, bool reset_signatures = true);
+			void set_real_proof(const uint256_t& new_commitment_hash, superchain::computed_transaction&& new_proof, btree_set<algorithm::hashsig_t>&& new_signatures);
 			bool add_commitment(const algorithm::seckey_t& secret_key);
 			format::tree as_tree() const override;
 			uint64_t as_commitment(uint256_t* event_hash) const override;

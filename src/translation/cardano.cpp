@@ -190,16 +190,11 @@ namespace tangent
 					string type = tx_operation.child_var("type").as_blob();
 					decimal value = math0::abs(tx_operation.child_var("amount.value").as_decimal()) / netdata.divisibility;
 					auto* token_bundle = tx_operation.child("metadata.tokenBundle");
-					stringify::to_lower(type);
-					if (type == "output")
+					bool is_input = stringify::to_lower(type) == "input";
+					if (is_input || type == "output")
 					{
 						auto target_address = discovery->find(address);
-						coin_utxo new_output;
-						new_output.transaction_id = transaction_id;
-						new_output.link = target_address != discovery->end() ? target_address->second : wallet_link::from_address(address);
-						new_output.value = value;
-						new_output.index = index;
-
+						auto token_values = vector<coin_utxo::token_utxo>();
 						if (token_bundle != nullptr)
 						{
 							auto blockchain = algorithm::asset::blockchain_of(native_asset);
@@ -226,60 +221,22 @@ namespace tangent
 
 										decimal divisibility = decimals > 0 ? decimal("1" + string(decimals, '0')) : decimal(1);
 										decimal token_value = algorithm::arithmetic::divide(math0::abs(item.child_var("value").as_decimal()), divisibility);
-										new_output.apply_token_value(contract_address, token_symbol, token_value, decimals);
+										token_values.push_back(coin_utxo::token_utxo::modern(contract_address, token_symbol, token_value, decimals));
 										bridge::get()->enable_contract_address(token_asset, contract_address);
 									}
 								}
 							}
 						}
 
-						tx.add_output(std::move(new_output));
-					}
-					else if (type == "input")
-					{
-						auto target_address = discovery->find(address);
-						coin_utxo new_input;
-						new_input.transaction_id = transaction_id;
-						new_input.link = target_address != discovery->end() ? target_address->second : wallet_link::from_address(address);
-						new_input.value = value;
-						new_input.index = index;
-
-						if (token_bundle != nullptr)
+						coin_utxo new_utxo = coin_utxo::standard_utxo(target_address != discovery->end() ? target_address->second : wallet_link::from_address(address), transaction_id, index, std::move(value), std::move(token_values));
+						if (is_input)
 						{
-							auto blockchain = algorithm::asset::blockchain_of(native_asset);
-							for (auto& token_operation : token_bundle->childs())
-							{
-								auto* tokens = token_operation.child("tokens");
-								if (tokens != nullptr)
-								{
-									string contract_address = token_operation.child_var("policyId").as_blob();
-									for (auto& item : tokens->childs())
-									{
-										auto hex_symbol = item.child_var("currency.symbol").as_blob();
-										auto token_symbol = to_token_symbol(hex_symbol);
-										auto token_asset = algorithm::asset::id_of(blockchain, token_symbol, contract_address);
-										uint8_t decimals = item.child_var("currency.decimals").as_uint8();
-										if (!decimals)
-										{
-											auto decimals_fallback = coawait(get_token_decimals(contract_address, hex_symbol));
-											if (!decimals_fallback && (decimals_fallback.error().is_retry() || decimals_fallback.error().is_shutdown()))
-												coreturn decimals_fallback.error();
-
-											decimals = decimals_fallback.or_else(0);
-										}
-
-										decimal divisibility = decimals > 0 ? decimal("1" + string(decimals, '0')) : decimal(1);
-										decimal token_value = algorithm::arithmetic::divide(math0::abs(item.child_var("value").as_decimal()), divisibility);
-										new_input.apply_token_value(contract_address, token_symbol, token_value, decimals);
-										bridge::get()->enable_contract_address(token_asset, contract_address);
-									}
-								}
-							}
+							if (!new_utxo.link.address.empty())
+								tx.signers.insert(new_utxo.link.address);
+							tx.add_input(std::move(new_utxo));
 						}
-
-						if (!new_input.link.address.empty())
-							tx.signers.insert(new_input.link.address);
-						tx.add_input(std::move(new_input));
+						else
+							tx.add_output(std::move(new_utxo));
 					}
 				}
 
@@ -326,21 +283,28 @@ namespace tangent
 					if (!null_address)
 						coreturn expects_rt<computed_transaction>(remote_exception(std::move(null_address.error().message())));
 
-					coin_utxo new_input;
-					new_input.transaction_id = tx.transaction_id + "!";
-					new_input.index = (uint32_t)tx.inputs.size();
+					auto native_value = decimal::zero();
+					auto token_values = vector<coin_utxo::token_utxo>();
 					for (auto& [hash, input] : tx.inputs)
 					{
-						new_input.value -= input.value;
+						native_value -= input.value;
 						for (auto& [token_hash, token] : input.tokens)
-							new_input.apply_token_value(token.contract_address, token.symbol, -token.value, token.decimals);
+						{
+							auto copy = token;
+							copy.value = -copy.value;
+							token_values.push_back(std::move(copy));
+						}
 					}
 					for (auto& [hash, output] : tx.outputs)
 					{
-						new_input.value += output.value;
+						native_value += output.value;
 						for (auto& [token_hash, token] : output.tokens)
-							new_input.apply_token_value(token.contract_address, token.symbol, token.value, token.decimals);
+							token_values.push_back(token);
 					}
+					if (native_value.is_negative())
+						native_value = decimal::zero();
+
+					auto new_input = coin_utxo::standard_utxo(wallet_link(), tx.transaction_id + "!", (uint32_t)tx.inputs.size(), std::move(native_value), std::move(token_values));
 					for (auto it = new_input.tokens.begin(); it != new_input.tokens.end();)
 					{
 						if (!it->second.value.is_positive())
@@ -348,8 +312,6 @@ namespace tangent
 						else
 							++it;
 					}
-					if (new_input.value.is_negative())
-						new_input.value = decimal::zero();
 					tx.add_input(std::move(new_input));
 				}
 				else if (is_coinbase)
@@ -414,15 +376,21 @@ namespace tangent
 					}
 
 					auto possible_inputs = calculate_utxo(from_link, balance_query(additional_value ? total_value + *additional_value : total_value, total_token_value));
-					auto remaining_value = possible_inputs ? get_utxo_value(*possible_inputs, optional::none) : 0.0;
+					auto remaining_value = possible_inputs ? get_utxo_value(*possible_inputs, native_asset) : 0.0;
 					if (!possible_inputs || possible_inputs->empty())
 						return expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s (or not enough token funds)", total_value.to_string().c_str(), remaining_value.to_string().c_str())));
 
 					hash_map<algorithm::asset_id, coin_utxo::token_utxo> change_tokens;
 					for (auto& item : *possible_inputs)
 					{
+						if (item.metadata)
+							return expects_rt<prepared_transaction>(remote_exception("utxo does not have correct metadata"));
+
 						for (auto& [token_hash, token] : item.tokens)
 						{
+							if (!token.metadata)
+								return expects_rt<prepared_transaction>(remote_exception("token utxo does not have correct metadata"));
+
 							auto token_asset = token.get_asset(native_asset);
 							auto& next = change_tokens[token_asset];
 							if (next.validate())
@@ -433,21 +401,22 @@ namespace tangent
 					}
 
 					auto to_link = find_linked_addresses({ to.address });
-					auto output = coin_utxo(to_link ? std::move(to_link->begin()->second) : wallet_link::from_address(to.address), string(), (uint32_t)result.outputs.size(), to.asset == native_asset ? decimal(to_value) : std::move(min_output_value));
+					auto output = coin_utxo::standard_utxo(to_link ? std::move(to_link->begin()->second) : wallet_link::from_address(to.address), std::string_view(), (uint32_t)result.outputs.size(), to.asset == native_asset ? decimal(to_value) : std::move(min_output_value), { });
 					if (to.asset != native_asset)
 					{
 						auto& change_token = change_tokens[to.asset];
-						to_value.truncate(change_token.decimals);
-						output.apply_token_value(change_token.contract_address, change_token.symbol, to_value, change_token.decimals);
+						auto copy_token = change_token;
+						copy_token.value = to_value;
 						change_token.value -= to_value;
+						output.add_token_value(std::move(copy_token));
 					}
 					result.requires_output(std::move(output));
 
-					auto change_output = coin_utxo(wallet_link(possible_inputs->front().link), string(), (uint32_t)result.outputs.size(), decimal(remaining_value - total_value));
-					for (auto& token : change_tokens)
+					auto change_output = coin_utxo::standard_utxo(wallet_link(possible_inputs->front().link), string(), (uint32_t)result.outputs.size(), decimal(remaining_value - total_value), { });
+					for (auto& [asset, token] : change_tokens)
 					{
-						if (token.second.validate() && token.second.value.is_positive())
-							change_output.apply_token_value(token.second.contract_address, token.second.symbol, token.second.value, token.second.decimals);
+						if (token.validate() && token.value.is_positive())
+							change_output.add_token_value(std::move(token));
 					}
 
 					if (change_output.value.is_positive() || !change_output.tokens.empty())
@@ -483,7 +452,8 @@ namespace tangent
 						uint8_t dummy_private_key[XSK_LENGTH] = { 1 };
 						for (auto& finalized_input : *possible_inputs)
 						{
-							builder.Body.TransactionInput.addInput(to_unprefixed_hex(finalized_input.transaction_id), finalized_input.index);
+							auto& utxo = finalized_input.metadata.error();
+							builder.Body.TransactionInput.addInput(to_unprefixed_hex(utxo.transaction_id), utxo.index);
 							if (!fee)
 							{
 								crypto::fill_random_bytes(dummy_public_key, sizeof(dummy_public_key));
@@ -496,7 +466,7 @@ namespace tangent
 						{
 							builder.Body.TransactionOutput.addOutput(copy<std::string>(finalized_output.link.address), (uint64_t)to_lovelace(finalized_output.value));
 							for (auto& [token_hash, token] : finalized_output.tokens)
-								builder.Body.TransactionOutput.addAsset(to_unprefixed_hex(token.contract_address), copy<std::string>(token.symbol), (uint64_t)uint256_t((token.value * token.get_divisibility()).truncate(0).to_string()));
+								builder.Body.TransactionOutput.addAsset(to_unprefixed_hex(token.metadata->contract_address), copy<std::string>(token.metadata->symbol), (uint64_t)uint256_t((token.value * token.get_divisibility()).truncate(0).to_string()));
 						}
 						builder.Body.addFee((uint64_t)to_lovelace(fee_value));
 
@@ -546,14 +516,23 @@ namespace tangent
 					uint8_t dummy_private_key[XSK_LENGTH] = { 0 };
 					for (auto& input : prepared.inputs)
 					{
-						verifier.Body.TransactionInput.addInput(to_unprefixed_hex(input.utxo.transaction_id), input.utxo.index);
+						if (input.utxo.metadata)
+							return layer_exception("invalid input metadata");
+
+						auto& utxo = input.utxo.metadata.error();
+						verifier.Body.TransactionInput.addInput(to_unprefixed_hex(utxo.transaction_id), utxo.index);
 						verifier.addExtendedSigningKey(dummy_private_key);
 					}
 					for (auto& output : prepared.outputs)
 					{
 						verifier.Body.TransactionOutput.addOutput(copy<std::string>(output.link.address), (uint64_t)to_lovelace(output.value));
 						for (auto& [token_hash, token] : output.tokens)
-							verifier.Body.TransactionOutput.addAsset(to_unprefixed_hex(token.contract_address), copy<std::string>(token.symbol), (uint64_t)uint256_t((token.value * token.get_divisibility()).truncate(0).to_string()));
+						{
+							if (!token.metadata)
+								return layer_exception("invalid token output metadata");
+
+							verifier.Body.TransactionOutput.addAsset(to_unprefixed_hex(token.metadata->contract_address), copy<std::string>(token.metadata->symbol), (uint64_t)uint256_t((token.value * token.get_divisibility()).truncate(0).to_string()));
+						}
 					}
 					verifier.Body.addFee(fee_value);
 
@@ -575,16 +554,16 @@ namespace tangent
 						if (!raw_public_key)
 							return raw_public_key.error();
 
-						uint8_t signature[64] = { 0 };
+						uint8_t signature[64] = { 0 }; auto& utxo = input.utxo.metadata.error();
 						memcpy(signature, input.signature.data(), std::min(sizeof(signature), input.signature.size()));
-						builder.Body.TransactionInput.addInput(to_unprefixed_hex(input.utxo.transaction_id), input.utxo.index);
+						builder.Body.TransactionInput.addInput(to_unprefixed_hex(utxo.transaction_id), utxo.index);
 						builder.addExtendedVerifyingKey((uint8_t*)raw_public_key->data(), signature);
 					}
 					for (auto& output : prepared.outputs)
 					{
 						builder.Body.TransactionOutput.addOutput(copy<std::string>(output.link.address), (uint64_t)to_lovelace(output.value));
 						for (auto& [token_hash, token] : output.tokens)
-							builder.Body.TransactionOutput.addAsset(to_unprefixed_hex(token.contract_address), copy<std::string>(token.symbol), (uint64_t)uint256_t((token.value * token.get_divisibility()).truncate(0).to_string()));
+							builder.Body.TransactionOutput.addAsset(to_unprefixed_hex(token.metadata->contract_address), copy<std::string>(token.metadata->symbol), (uint64_t)uint256_t((token.value * token.get_divisibility()).truncate(0).to_string()));
 					}
 					builder.Body.addFee(fee_value);
 

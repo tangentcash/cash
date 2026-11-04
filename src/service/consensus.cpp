@@ -1193,7 +1193,7 @@ namespace tangent
 
 			auto* transaction = memory::init<transactions::attestate>();
 			transaction->asset = algorithm::asset::base_id_of(batch->asset);
-			transaction->set_computed_proof(best_commitment_hash, std::move(proof->second), std::move(signatures->second));
+			transaction->set_real_proof(best_commitment_hash, std::move(proof->second), std::move(signatures->second));
 			if (accept_local_transaction(&runner_descriptor->second, transaction))
 				mempool.remove_attestation(attestation_hash);
 			return expectation::met;

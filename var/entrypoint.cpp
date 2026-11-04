@@ -577,53 +577,50 @@ struct block_generator
 
 		auto* attestate_bitcoin = memory::init<transactions::attestate>();
 		attestate_bitcoin->set_asset("BTC");
-		attestate_bitcoin->set_finalized_proof(846982,
+		attestate_bitcoin->set_fake_proof(846982,
 			"57638131d9af3033a5e20b753af254e1e8321b2039f16dfd222f6b1117b5c69d",
-			{ superchain::value_transfer(attestate_bitcoin->asset, "mmtubFoJvXrBuBUQFf1RrowXUbsiPDYnYS", 12.0) },
-			{ superchain::value_transfer(attestate_bitcoin->asset, address_bitcoin->addresses.begin()->second, 12.0) });
+			{ superchain::value_transfer_ext("BTC", "mmtubFoJvXrBuBUQFf1RrowXUbsiPDYnYS", 12.0) },
+			{ superchain::value_transfer_ext("BTC", address_bitcoin->addresses.begin()->second, 12.0) });
 		transactions.push_back(attestate_bitcoin);
 		
 		auto* attestate_ethereum = memory::init<transactions::attestate>();
 		attestate_ethereum->set_asset("ETH");
-		attestate_ethereum->set_finalized_proof(14977110,
+		attestate_ethereum->set_fake_proof(14977110,
 			"0xc352abd4778007d2e4a693f569344226824900fdf17436abe4637318c9d0a618",
-			{ superchain::value_transfer(attestate_ethereum->asset, "0xCa0dfDdBb1cBD7B5A08E9173D9bbE5722138d4d5", 50) },
-			{ superchain::value_transfer(attestate_ethereum->asset, address_ethereum->addresses.begin()->second, 50) });
+			{ superchain::value_transfer_ext("ETH", "0xCa0dfDdBb1cBD7B5A08E9173D9bbE5722138d4d5", 50) },
+			{ superchain::value_transfer_ext("ETH", address_ethereum->addresses.begin()->second, 50) });
 		transactions.push_back(attestate_ethereum);
 
-		auto token_asset = algorithm::asset::id_of("ETH", "USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7");
 		attestate_ethereum = memory::init<transactions::attestate>();
 		attestate_ethereum->set_asset("ETH");
-		attestate_ethereum->set_finalized_proof(14977180,
+		attestate_ethereum->set_fake_proof(14977180,
 			"0x2bc2c98682f1b8fea2031e8f3f56494cd778da9d042da8439fb698d41bf061ea",
-			{ superchain::value_transfer(token_asset, "0xCa0dfDdBb1cBD7B5A08E9173D9bbE5722138d4d5", 1000000) },
-			{ superchain::value_transfer(token_asset, address_ethereum->addresses.begin()->second, 1000000) });
+			{ superchain::value_transfer_ext("ETH", "USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7", "0xCa0dfDdBb1cBD7B5A08E9173D9bbE5722138d4d5", 1000000) },
+			{ superchain::value_transfer_ext("ETH", "USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7", address_ethereum->addresses.begin()->second, 1000000) });
 		transactions.push_back(attestate_ethereum);
 
-		token_asset = algorithm::asset::id_of("ETH", "tBTC", "0x18084fbA666a33d37592fA2633fD49a74DD93a88");
 		attestate_ethereum = memory::init<transactions::attestate>();
 		attestate_ethereum->set_asset("ETH");
-		attestate_ethereum->set_finalized_proof(24147187,
+		attestate_ethereum->set_fake_proof(24147187,
 			"0xf3286b2f1e1d8685bd1a41124bab21bd1496a28eee38c6a87a72d6b30f8546e4",
-			{ superchain::value_transfer(token_asset, "0xCa0dfDdBb1cBD7B5A08E9173D9bbE5722138d4d5", 12) },
-			{ superchain::value_transfer(token_asset, address_ethereum->addresses.begin()->second, 12) });
+			{ superchain::value_transfer_ext("ETH", "tBTC", "0x18084fbA666a33d37592fA2633fD49a74DD93a88", "0xCa0dfDdBb1cBD7B5A08E9173D9bbE5722138d4d5", 12) },
+			{ superchain::value_transfer_ext("ETH", "tBTC", "0x18084fbA666a33d37592fA2633fD49a74DD93a88", address_ethereum->addresses.begin()->second, 12) });
 		transactions.push_back(attestate_ethereum);
 
 		auto* attestate_tron = memory::init<transactions::attestate>();
 		attestate_tron->set_asset("TRX");
-		attestate_tron->set_finalized_proof(78661331,
+		attestate_tron->set_fake_proof(78661331,
 			"b3d0d89f185b051eb4839a3f79ce227942e2e2e155b350550d5402831f48a5a6",
-			{ superchain::value_transfer(attestate_tron->asset, "TFwBey8L5swmhRGEQSCnULT7ad68KFJe6L", 4000) },
-			{ superchain::value_transfer(attestate_tron->asset, address_tron->addresses.begin()->second, 4000) });
+			{ superchain::value_transfer_ext("TRX", "TFwBey8L5swmhRGEQSCnULT7ad68KFJe6L", 4000) },
+			{ superchain::value_transfer_ext("TRX", address_tron->addresses.begin()->second, 4000) });
 		transactions.push_back(attestate_tron);
 
-		token_asset = algorithm::asset::id_of("TRX", "USDT", "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t");
 		attestate_tron = memory::init<transactions::attestate>();
 		attestate_tron->set_asset("TRX");
-		attestate_tron->set_finalized_proof(78662308,
+		attestate_tron->set_fake_proof(78662308,
 			"798926719b28355b97b079f540dff72ce8fb246c10323900c07dbbba5866189b",
-			{ superchain::value_transfer(token_asset, "TFwBey8L5swmhRGEQSCnULT7ad68KFJe6L", 400000) },
-			{ superchain::value_transfer(token_asset, address_tron->addresses.begin()->second, 400000) });
+			{ superchain::value_transfer_ext("TRX", "USDT", "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t", "TFwBey8L5swmhRGEQSCnULT7ad68KFJe6L", 400000) },
+			{ superchain::value_transfer_ext("TRX", "USDT", "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t", address_tron->addresses.begin()->second, 400000) });
 		transactions.push_back(attestate_tron);
 	}
 	static void attestate_stage_1(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users)
@@ -645,45 +642,44 @@ struct block_generator
 		VI_PANIC(address_bitcoin != owner_addresses.end(), "bitcoin bridge address not found");
 		VI_PANIC(address_monero != owner_addresses.end(), "monero bridge address not found");
 
-		auto token_asset = algorithm::asset::id_of("ETH", "USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7");
 		auto* attestate_ethereum_token = memory::init<transactions::attestate>();
 		attestate_ethereum_token->set_asset("ETH");
-		attestate_ethereum_token->set_finalized_proof(22946911,
+		attestate_ethereum_token->set_fake_proof(22946911,
 			"0xce2d48c20305ee332c071a671142953af58ca5226fcbcc219cd0b2cc4c6fe34f",
-			{ superchain::value_transfer(token_asset, "0xCa0dfDdBb1cBD7B5A08E9173D9bbE5722138d4d5", 100000) },
-			{ superchain::value_transfer(token_asset, address_ethereum->addresses.begin()->second, 100000) });
+			{ superchain::value_transfer_ext("ETH", "USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7", "0xCa0dfDdBb1cBD7B5A08E9173D9bbE5722138d4d5", 100000) },
+			{ superchain::value_transfer_ext("ETH", "USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7", address_ethereum->addresses.begin()->second, 100000) });
 		transactions.push_back(attestate_ethereum_token);
 
 		auto* attestate_ethereum = memory::init<transactions::attestate>();
 		attestate_ethereum->set_asset("ETH");
-		attestate_ethereum->set_finalized_proof(14977180,
+		attestate_ethereum->set_fake_proof(14977180,
 			"0x2bc2c98682f1b8fea2031e8f3f56494cd778da9d042da8439fb698d41bf061ea",
-			{ superchain::value_transfer(attestate_ethereum->asset, "0xCa0dfDdBb1cBD7B5A08E9173D9bbE5722138d4d5", 100) },
-			{ superchain::value_transfer(attestate_ethereum->asset, address_ethereum->addresses.begin()->second, 100) });
+			{ superchain::value_transfer_ext("ETH", "0xCa0dfDdBb1cBD7B5A08E9173D9bbE5722138d4d5", 100) },
+			{ superchain::value_transfer_ext("ETH", address_ethereum->addresses.begin()->second, 100) });
 		transactions.push_back(attestate_ethereum);
 
 		auto* attestate_ripple = memory::init<transactions::attestate>();
 		attestate_ripple->set_asset("XRP");
-		attestate_ripple->set_finalized_proof(88546830,
+		attestate_ripple->set_fake_proof(88546830,
 			"2618D20B801AF96DD060B34228E2594E30AFB7B33E335A8C60199B6CF8B0A69F",
-			{ superchain::value_transfer(attestate_ripple->asset, "rUBqz2JiRCT3gYZBnm28y5ME7e5UpSm2ok", 1000) },
-			{ superchain::value_transfer(attestate_ripple->asset, address_ripple->addresses.begin()->second, 1000) });
+			{ superchain::value_transfer_ext("XRP", "rUBqz2JiRCT3gYZBnm28y5ME7e5UpSm2ok", 1000) },
+			{ superchain::value_transfer_ext("XRP", address_ripple->addresses.begin()->second, 1000) });
 		transactions.push_back(attestate_ripple);
 
 		auto* attestate_bitcoin = memory::init<transactions::attestate>();
 		attestate_bitcoin->set_asset("BTC");
-		attestate_bitcoin->set_finalized_proof(846982,
+		attestate_bitcoin->set_fake_proof(846982,
 			"57638131d9af3033a5e20b753af254e1e8321b2039f16dfd222f6b1117b5c69d",
-			{ superchain::value_transfer(attestate_bitcoin->asset, "mmtubFoJvXrBuBUQFf1RrowXUbsiPDYnYS", 1.0) },
-			{ superchain::value_transfer(attestate_bitcoin->asset, address_bitcoin->addresses.begin()->second, 1.0) });
+			{ superchain::value_transfer_ext("BTC", "mmtubFoJvXrBuBUQFf1RrowXUbsiPDYnYS", 1.0) },
+			{ superchain::value_transfer_ext("BTC", address_bitcoin->addresses.begin()->second, 1.0) });
 		transactions.push_back(attestate_bitcoin);
 
 		auto* attestate_monero = memory::init<transactions::attestate>();
 		attestate_monero->set_asset("XMR");
-		attestate_monero->set_finalized_proof(3736523,
+		attestate_monero->set_fake_proof(3736523,
 			"e48546d0fe54eabfc28591325ebfb8175f36fe36eea991a7066837103a66c315",
-			{ superchain::value_transfer(attestate_monero->asset, "42prqAvRG2ZfQQ66W9mkgQ2hFbQdeMgmVbJBL1E9o8V5gevzNEcfnBdTS7CUx2PHfjG8WUoQTE9wcawyfPQx1h2z7tCF4hZ", 10.0) },
-			{ superchain::value_transfer(attestate_monero->asset, address_monero->addresses.begin()->second, 10.0) });
+			{ superchain::value_transfer_ext("XMR", "42prqAvRG2ZfQQ66W9mkgQ2hFbQdeMgmVbJBL1E9o8V5gevzNEcfnBdTS7CUx2PHfjG8WUoQTE9wcawyfPQx1h2z7tCF4hZ", 10.0) },
+			{ superchain::value_transfer_ext("XMR", address_monero->addresses.begin()->second, 10.0) });
 		transactions.push_back(attestate_monero);
 	}
 	static void migrate_stage_1(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users)
@@ -1326,7 +1322,7 @@ static void new_unsigned_attestations_from_block(const ledger::block_body& block
 
 		auto* attestation = memory::init<transactions::attestate>();
 		attestation->asset = algorithm::asset::base_id_of(broadcast->asset);
-		attestation->set_computed_proof(computed.as_proof_hash(attestation->asset), std::move(computed), { });
+		attestation->set_real_proof(computed.as_proof_hash(attestation->asset), std::move(computed), { });
 		transactions.push_back(std::move(attestation));
 	}
 }
@@ -1996,61 +1992,24 @@ static void test_cryptography_multichain_transaction()
 
 		auto wallet = create_wallet(asset);
 		auto input_p2pkh_hash = codec::hex_decode("0x57e30b41a6d984cdb763145f32ad9678a9b2bfd0267e12d5d0474e97f7d077d0");
-		superchain::coin_utxo input_p2pkh;
-		input_p2pkh.link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses[3]);
-		input_p2pkh.transaction_id = "382940bfc9a1fe1f09a3fb8e1fda1b25b90dc2019ff5973b1d9d616e15b29840";
-		input_p2pkh.index = 1;
-		input_p2pkh.value = 0.1;
-
 		auto input_p2sh_hash = codec::hex_decode("0xc4e23865424498b4d90c57dda4bea4718e1e6ed669cc00796afd864ac6de3606");
-		superchain::coin_utxo input_p2sh;
-		input_p2sh.link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses[2]);
-		input_p2sh.transaction_id = "3d7c1f8e03a73821517d2f0220fe3ecf82c2f55b94b724e5d5298c87070802a0";
-		input_p2sh.value = 0.1;
-
 		auto input_p2wpkh_hash_1 = codec::hex_decode("0xe79739ac82960be8bedb5175203bd65880b0c45c5c0286d54b5bc6eb4bac3898");
-		superchain::coin_utxo input_p2wpkh_1;
-		input_p2wpkh_1.link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses[6]);
-		input_p2wpkh_1.transaction_id = "5594c04289179bff0f434e5349fafbaa4d43da403b9dc7a637f5afe035b99729";
-		input_p2wpkh_1.value = 0.1;
-
 		auto input_p2tr_public_key = compositions::secp256k1_point_t(wallet.public_key);
 		auto input_p2tr_tweak = compositions::secp256k1_scalar_t(codec::hex_decode("0x04c32a8b5fae170a7a0d28332a663b96f43d24ed4c9db30dfdd9d9d053d3d3e6"));
 		auto input_p2tr_tweaked_public_key = compositions::secp256k1_schnorr_compositor::to_tweaked_public_key(input_p2tr_public_key, input_p2tr_tweak).expect("failed to tweak a public key");
 		auto input_p2tr_hash = codec::hex_decode("0x50cc324f902032625ba70fdfee889032a7ff4de1c7732dc3982b72c1ba2df8b5");
-		superchain::coin_utxo input_p2tr;
-		input_p2tr.link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses[4]);
-		input_p2tr.transaction_id = "988fcb7035c0f51688ddcfaf92ec8fdd0e9bda8b53aa3403bf096611147fb325";
-		input_p2tr.value = 0.1;
-
 		auto input_p2wpkh_hash_2 = codec::hex_decode("0x16a41f749d25f7ebae96aabd62207c2189ac3623b2ddee4560213a3563f81042");
-		superchain::coin_utxo input_p2wpkh_2;
-		input_p2wpkh_2.link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses[6]);
-		input_p2wpkh_2.transaction_id = "9b7a67a6a46f48f896c1de89d479d9d1f5b284809065671ff931c800e1041530";
-		input_p2wpkh_2.value = 0.1;
-
 		auto input_p2wsh_hash = codec::hex_decode("0x40cfd352d152929ada057d28c0e18f781a8b9ddb24df1b6381b0738c8f0ccbb9");
-		superchain::coin_utxo input_p2wsh;
-		input_p2wsh.link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses[5]);
-		input_p2wsh.transaction_id = "ccc7949d20241f04362c42e20125c83096a617b906e1d8123d1b8b08740c6025";
-		input_p2wsh.index = 1;
-		input_p2wsh.value = decimal("0.1001");
-
 		auto input_p2pk_hash = codec::hex_decode("0xe665fd68a288da956f73810db79647a59dbbd6dafb0891f97364a0dfff520b2e");
-		superchain::coin_utxo input_p2pk;
-		input_p2pk.link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses[1]);
-		input_p2pk.transaction_id = "f0b0d2386cd578677df2380361410008d260fc827282904e54bdcb9e1d8cf62f";
-		input_p2pk.index = 0;
-		input_p2pk.value = decimal("0.0999");
-
-		superchain::coin_utxo output_p2wpkh;
-		output_p2wpkh.link = superchain::wallet_link::from_address("bcrt1q9ls8q57rsktvxn6krgjktd6jyukfpenyvd2sa3");
-		output_p2wpkh.value = 0.65;
-
-		superchain::coin_utxo output_p2pkh;
-		output_p2pkh.link = input_p2pkh.link;
-		output_p2pkh.index = 1;
-		output_p2pkh.value = decimal("0.0499");
+		superchain::coin_utxo input_p2pkh = superchain::coin_utxo::standard_utxo(superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses[3]), "382940bfc9a1fe1f09a3fb8e1fda1b25b90dc2019ff5973b1d9d616e15b29840", 1, 0.1, { });
+		superchain::coin_utxo input_p2sh = superchain::coin_utxo::standard_utxo(superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses[2]), "3d7c1f8e03a73821517d2f0220fe3ecf82c2f55b94b724e5d5298c87070802a0", 0, 0.1, { });
+		superchain::coin_utxo input_p2wpkh_1 = superchain::coin_utxo::standard_utxo(superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses[6]), "5594c04289179bff0f434e5349fafbaa4d43da403b9dc7a637f5afe035b99729", 0, 0.1, { });
+		superchain::coin_utxo input_p2tr = superchain::coin_utxo::standard_utxo(superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses[4]), "988fcb7035c0f51688ddcfaf92ec8fdd0e9bda8b53aa3403bf096611147fb325", 0, 0.1, { });
+		superchain::coin_utxo input_p2wpkh_2 = superchain::coin_utxo::standard_utxo(superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses[6]), "9b7a67a6a46f48f896c1de89d479d9d1f5b284809065671ff931c800e1041530", 0, 0.1, { });
+		superchain::coin_utxo input_p2wsh = superchain::coin_utxo::standard_utxo(superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses[5]), "ccc7949d20241f04362c42e20125c83096a617b906e1d8123d1b8b08740c6025", 1, decimal("0.1001"), { });
+		superchain::coin_utxo input_p2pk = superchain::coin_utxo::standard_utxo(superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses[1]), "f0b0d2386cd578677df2380361410008d260fc827282904e54bdcb9e1d8cf62f", 0, decimal("0.0999"), { });
+		superchain::coin_utxo output_p2wpkh = superchain::coin_utxo::standard_utxo(superchain::wallet_link::from_address("bcrt1q9ls8q57rsktvxn6krgjktd6jyukfpenyvd2sa3"), "", 0, 0.65, { });
+		superchain::coin_utxo output_p2pkh = superchain::coin_utxo::standard_utxo(superchain::wallet_link(input_p2pkh.link), "", 1, decimal("0.0499"), { });
 
 		superchain::prepared_transaction prepared;
 		prepared.requires_input(algorithm::composition::type::secp256k1, wallet.public_key, (uint8_t*)input_p2pkh_hash.data(), input_p2pkh_hash.size(), std::move(input_p2pkh));
@@ -2073,16 +2032,8 @@ static void test_cryptography_multichain_transaction()
 		auto wallet = create_wallet(asset);
 
 		auto input_p2pkh_hash = codec::hex_decode("0x06da9b13756115c79c0361a083d340c75ced09ddfec9a530601d73a0021ba6a5");
-		superchain::coin_utxo input_p2pkh;
-		input_p2pkh.link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses[1]);
-		input_p2pkh.transaction_id = "8d4157a810c52d392c871867fcb5e5375df7102857eea5d770781737c67e5ed4";
-		input_p2pkh.index = 0;
-		input_p2pkh.value = 0.1;
-
-		superchain::coin_utxo output_p2pkh;
-		output_p2pkh.link = superchain::wallet_link::from_address("bchreg:qzpz97kqvz9jj6tdr6wxdt7zyh7vtm8nwyy4ajnft4");
-		output_p2pkh.index = 0;
-		output_p2pkh.value = decimal("0.099");
+		superchain::coin_utxo input_p2pkh = superchain::coin_utxo::standard_utxo(superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses[1]), "8d4157a810c52d392c871867fcb5e5375df7102857eea5d770781737c67e5ed4", 0, 0.1, { });
+		superchain::coin_utxo output_p2pkh = superchain::coin_utxo::standard_utxo(superchain::wallet_link::from_address("bchreg:qzpz97kqvz9jj6tdr6wxdt7zyh7vtm8nwyy4ajnft4"), "", 0, decimal("0.099"), { });
 
 		superchain::prepared_transaction prepared;
 		prepared.requires_input(algorithm::composition::type::secp256k1, wallet.public_key, (uint8_t*)input_p2pkh_hash.data(), input_p2pkh_hash.size(), std::move(input_p2pkh));
@@ -2098,8 +2049,8 @@ static void test_cryptography_multichain_transaction()
 		auto signable_link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses.begin()->second);
 		auto signable_message = codec::hex_decode("0x57d10c32396f3368c294f5987ff147ee4ffe3beae206678395b9531a188754fb");
 		superchain::prepared_transaction prepared;
-		prepared.requires_account_input(algorithm::composition::type::secp256k1, std::move(signable_link), wallet.public_key, (uint8_t*)signable_message.data(), signable_message.size(), { { asset, decimal("0.010021") } });
-		prepared.requires_account_output("0x92F9727Da59BE92F945a72F6eD9b5De8783e09D3", { { asset, 0.01 } });
+		prepared.requires_input(algorithm::composition::type::secp256k1, wallet.public_key, (uint8_t*)signable_message.data(), signable_message.size(), superchain::coin_utxo::account_utxo(std::move(signable_link), asset, decimal("0.010021"), { }));
+		prepared.requires_output(superchain::coin_utxo::account_utxo(superchain::wallet_link::from_address("0x92F9727Da59BE92F945a72F6eD9b5De8783e09D3"), asset, 0.01, { }));
 		prepared.requires_abi(format::variable(true));
 		prepared.requires_abi(format::variable(string()));
 		prepared.requires_abi(format::variable(decimal("1000000000000000000")));
@@ -2114,8 +2065,8 @@ static void test_cryptography_multichain_transaction()
 		signable_link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses.begin()->second);
 		signable_message = codec::hex_decode("0x430483f3812b96bfe179cd21fb18580c5ba0919c1e25090d9fd740bb238d7bdf");
 		prepared = superchain::prepared_transaction();
-		prepared.requires_account_input(algorithm::composition::type::secp256k1, std::move(signable_link), wallet.public_key, (uint8_t*)signable_message.data(), signable_message.size(), { { asset, decimal("0.000050758") }, { token_asset, decimal("503") } });
-		prepared.requires_account_output("0xBA119F26A40145b463DFcae2590b68A057E81d3D", { { token_asset, decimal("503") } });
+		prepared.requires_input(algorithm::composition::type::secp256k1, wallet.public_key, (uint8_t*)signable_message.data(), signable_message.size(), superchain::coin_utxo::account_utxo(std::move(signable_link), asset, decimal("0.000050758"), { superchain::coin_utxo::token_utxo::modern("0xDcbcBF00604Bad29E53C60ac1151866Fa0CC2920", "TT", decimal("503"), 9) }));
+		prepared.requires_output(superchain::coin_utxo::account_utxo(superchain::wallet_link::from_address("0xBA119F26A40145b463DFcae2590b68A057E81d3D"), asset, decimal::zero(), { superchain::coin_utxo::token_utxo::modern("0xDcbcBF00604Bad29E53C60ac1151866Fa0CC2920", "TT", decimal("503"), 9) }));
 		prepared.requires_abi(format::variable(true));
 		prepared.requires_abi(format::variable(string("0xDcbcBF00604Bad29E53C60ac1151866Fa0CC2920")));
 		prepared.requires_abi(format::variable(decimal("1000000000000000000")));
@@ -2129,8 +2080,8 @@ static void test_cryptography_multichain_transaction()
 		signable_link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses.begin()->second);
 		signable_message = codec::hex_decode("0xc91fa85db3a84bb26a64a81166f47113e8ea7eae1df6f8c19bd0504cb3fd39b9");
 		prepared = superchain::prepared_transaction();
-		prepared.requires_account_input(algorithm::composition::type::secp256k1, std::move(signable_link), wallet.public_key, (uint8_t*)signable_message.data(), signable_message.size(), { { asset, decimal("0.100021") } });
-		prepared.requires_account_output("0x92F9727Da59BE92F945a72F6eD9b5De8783e09D3", { { asset, 0.1 } });
+		prepared.requires_input(algorithm::composition::type::secp256k1, wallet.public_key, (uint8_t*)signable_message.data(), signable_message.size(), superchain::coin_utxo::account_utxo(std::move(signable_link), asset, decimal("0.100021"), { }));
+		prepared.requires_output(superchain::coin_utxo::account_utxo(superchain::wallet_link::from_address("0x92F9727Da59BE92F945a72F6eD9b5De8783e09D3"), asset, 0.1, { }));
 		prepared.requires_abi(format::variable(false));
 		prepared.requires_abi(format::variable(string()));
 		prepared.requires_abi(format::variable(decimal("1000000000000000000")));
@@ -2144,8 +2095,8 @@ static void test_cryptography_multichain_transaction()
 		signable_link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses.begin()->second);
 		signable_message = codec::hex_decode("0x248fffefd534b260b4950554563b956dc7838defa9c33f53865a72473558f665");
 		prepared = superchain::prepared_transaction();
-		prepared.requires_account_input(algorithm::composition::type::secp256k1, std::move(signable_link), wallet.public_key, (uint8_t*)signable_message.data(), signable_message.size(), { { asset, decimal("0.000050758") }, { token_asset, decimal("503") } });
-		prepared.requires_account_output("0xBA119F26A40145b463DFcae2590b68A057E81d3D", { { token_asset, decimal("503") } });
+		prepared.requires_input(algorithm::composition::type::secp256k1, wallet.public_key, (uint8_t*)signable_message.data(), signable_message.size(), superchain::coin_utxo::account_utxo(std::move(signable_link), asset, decimal("0.000050758"), { superchain::coin_utxo::token_utxo::modern("0xDcbcBF00604Bad29E53C60ac1151866Fa0CC2920", "TT", decimal("503"), 9) }));
+		prepared.requires_output(superchain::coin_utxo::account_utxo(superchain::wallet_link::from_address("0xBA119F26A40145b463DFcae2590b68A057E81d3D"), asset, decimal::zero(), { superchain::coin_utxo::token_utxo::modern("0xDcbcBF00604Bad29E53C60ac1151866Fa0CC2920", "TT", decimal("503"), 9) }));
 		prepared.requires_abi(format::variable(false));
 		prepared.requires_abi(format::variable(string("0xDcbcBF00604Bad29E53C60ac1151866Fa0CC2920")));
 		prepared.requires_abi(format::variable(decimal("1000000000000000000")));
@@ -2165,8 +2116,8 @@ static void test_cryptography_multichain_transaction()
 		auto signable_link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses.begin()->second);
 		auto signable_message = codec::hex_decode("0x53545800120000220000000024006115562e00000000201b006117fb614000000002b709b068400000000000000c7321ed2a994a958414a9dac047fd32001847954f89f464433cb04266fde37d6aff15448114c7f083a28227b588c13becf3f353e06d2e4f2fee8314f667b0ca50cc7709a220b0561b85e53a48461fa8");
 		superchain::prepared_transaction prepared;
-		prepared.requires_account_input(algorithm::composition::type::ed25519, std::move(signable_link), wallet.public_key, (uint8_t*)signable_message.data(), signable_message.size(), { { asset, decimal("45.550012") } });
-		prepared.requires_account_output("rPT1Sjq2YGrBMTttX4GZHjKu9dyfzbpAYe", { { asset, decimal("45.55") } });
+		prepared.requires_input(algorithm::composition::type::ed25519, wallet.public_key, (uint8_t*)signable_message.data(), signable_message.size(), superchain::coin_utxo::account_utxo(std::move(signable_link), asset, decimal("45.550012"), { }));
+		prepared.requires_output(superchain::coin_utxo::account_utxo(superchain::wallet_link::from_address("rPT1Sjq2YGrBMTttX4GZHjKu9dyfzbpAYe"), asset, decimal("45.55"), { }));
 		prepared.requires_abi(format::variable(string()));
 		prepared.requires_abi(format::variable((uint32_t)6362454));
 		prepared.requires_abi(format::variable((uint32_t)6363131));
@@ -2182,8 +2133,8 @@ static void test_cryptography_multichain_transaction()
 		auto signable_link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses.begin()->second);
 		auto signable_message = codec::hex_decode("0x1a6e7daa8fbd8aab869ebeafc8650d911a948d6e8166aec4fcec5490e359f81d");
 		superchain::prepared_transaction prepared;
-		prepared.requires_account_input(algorithm::composition::type::ed25519, std::move(signable_link), wallet.public_key, (uint8_t*)signable_message.data(), signable_message.size(), { { asset, decimal("2200.00001") } });
-		prepared.requires_account_output("GAIH3ULLFQ4DGSECF2AR555KZ4KNDGEKN4AFI4SU2M7B43MGK3QJZNSR", { { asset, decimal("2200") } });
+		prepared.requires_input(algorithm::composition::type::ed25519, wallet.public_key, (uint8_t*)signable_message.data(), signable_message.size(), superchain::coin_utxo::account_utxo(std::move(signable_link), asset, decimal("2200.00001"), { }));
+		prepared.requires_output(superchain::coin_utxo::account_utxo(superchain::wallet_link::from_address("GAIH3ULLFQ4DGSECF2AR555KZ4KNDGEKN4AFI4SU2M7B43MGK3QJZNSR"), asset, decimal("2200"), { }));
 		prepared.requires_abi(format::variable((uint64_t)1561327986278402));
 		prepared.requires_abi(format::variable(false));
 		prepared.requires_abi(format::variable(true));
@@ -2195,8 +2146,8 @@ static void test_cryptography_multichain_transaction()
 		signable_link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses.begin()->second);
 		signable_message = codec::hex_decode("0xc23a0791a11ebefd653684792b4001e294440ce67979fb7a0dc2915ca4818e22");
 		prepared = superchain::prepared_transaction();
-		prepared.requires_account_input(algorithm::composition::type::ed25519, std::move(signable_link), wallet.public_key, (uint8_t*)signable_message.data(), signable_message.size(), { { asset, decimal("100.00001") } });
-		prepared.requires_account_output("GD4QDZNYKL4VH7QGVP47DZZBEUB5KR53SI2RACPDNTHCOSAQJTN3RW2Z", { { asset, decimal("100") } });
+		prepared.requires_input(algorithm::composition::type::ed25519, wallet.public_key, (uint8_t*)signable_message.data(), signable_message.size(), superchain::coin_utxo::account_utxo(std::move(signable_link), asset, decimal("100.00001"), { }));
+		prepared.requires_output(superchain::coin_utxo::account_utxo(superchain::wallet_link::from_address("GD4QDZNYKL4VH7QGVP47DZZBEUB5KR53SI2RACPDNTHCOSAQJTN3RW2Z"), asset, decimal("100"), { }));
 		prepared.requires_abi(format::variable((uint64_t)1561327986278403));
 		prepared.requires_abi(format::variable(true));
 		prepared.requires_abi(format::variable(false));
@@ -2214,8 +2165,8 @@ static void test_cryptography_multichain_transaction()
 		auto signable_link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses.begin()->second);
 		auto signable_message = codec::hex_decode("0x80010001032a994a958414a9dac047fd32001847954f89f464433cb04266fde37d6aff15440963cbfdea28293c02cd965c46e7a6f26bc5f26da4fa00dda8c8ade49f96dcad0000000000000000000000000000000000000000000000000000000000000000b83691e4405ab95ed6264b5942eb150deb64c9d0688940be0f6548da25de783c01020200010c02000000807a77230100000000");
 		superchain::prepared_transaction prepared;
-		prepared.requires_account_input(algorithm::composition::type::ed25519, std::move(signable_link), wallet.public_key, (uint8_t*)signable_message.data(), signable_message.size(), { { asset, decimal("4.890005") } });
-		prepared.requires_account_output("devwuNsNYACyiEYxRNqMNseBpNnGfnd4ZwNHL7sphqv", { { asset, decimal("4.89") } });
+		prepared.requires_input(algorithm::composition::type::ed25519, wallet.public_key, (uint8_t*)signable_message.data(), signable_message.size(), superchain::coin_utxo::account_utxo(std::move(signable_link), asset, decimal("4.890005"), { }));
+		prepared.requires_output(superchain::coin_utxo::account_utxo(superchain::wallet_link::from_address("devwuNsNYACyiEYxRNqMNseBpNnGfnd4ZwNHL7sphqv"), asset, decimal("4.89"), { }));
 		prepared.requires_abi(format::variable((uint64_t)1000000000));
 		prepared.requires_abi(format::variable(string()));
 		prepared.requires_abi(format::variable(string()));
@@ -2228,8 +2179,8 @@ static void test_cryptography_multichain_transaction()
 		signable_link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses.begin()->second);
 		signable_message = codec::hex_decode("0x80010001052a994a958414a9dac047fd32001847954f89f464433cb04266fde37d6aff1544437b32d02edb961d6ffba969407c441a127befb1fe6885fa40f3d9e1dd7f9306d36dc35d5d43cb85d730bbf57899cb2266076f149fdf00b5491b69d1ad764df37ef41ef3474ed6a625c960cb38e5e9025a9edd6f63997d6c4c28f761dc23b67006ddf6e1d765a193d9cbe146ceeb79ac1cb485ed5f5b37913a8cf5857eff00a95abee248b8b08441f683b2e58d6b7c62bfa977bb775f0ef37facee593d0b1269010404010302000a0c50a50500000000000200");
 		prepared = superchain::prepared_transaction();
-		prepared.requires_account_input(algorithm::composition::type::ed25519, std::move(signable_link), wallet.public_key, (uint8_t*)signable_message.data(), signable_message.size(), { { asset, decimal("0.000015") }, { token_asset, decimal("3700") } });
-		prepared.requires_account_output("4Bs1nFL71Yaq2HJ3pSk3WHdbhkWeqnrLYQZDhqjDfb53", { { token_asset, decimal("3700") } });
+		prepared.requires_input(algorithm::composition::type::ed25519, wallet.public_key, (uint8_t*)signable_message.data(), signable_message.size(), superchain::coin_utxo::account_utxo(std::move(signable_link), asset, decimal("0.000015"), { superchain::coin_utxo::token_utxo::modern("9YaGkvrR1fjXSAm7LTcQYXZiZfub2EuWvVxBmRSHcwHZ", algorithm::asset::token_of(token_asset), decimal("3700"), 2) }));
+		prepared.requires_output(superchain::coin_utxo::account_utxo(superchain::wallet_link::from_address("4Bs1nFL71Yaq2HJ3pSk3WHdbhkWeqnrLYQZDhqjDfb53"), asset, decimal::zero(), { superchain::coin_utxo::token_utxo::modern("9YaGkvrR1fjXSAm7LTcQYXZiZfub2EuWvVxBmRSHcwHZ", algorithm::asset::token_of(token_asset), decimal("3700"), 2) }));
 		prepared.requires_abi(format::variable((uint64_t)100));
 		prepared.requires_abi(format::variable(string("9YaGkvrR1fjXSAm7LTcQYXZiZfub2EuWvVxBmRSHcwHZ")));
 		prepared.requires_abi(format::variable(string("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")));
@@ -2241,8 +2192,8 @@ static void test_cryptography_multichain_transaction()
 		signable_link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses.begin()->second);
 		signable_message = codec::hex_decode("0x80010002082a994a958414a9dac047fd32001847954f89f464433cb04266fde37d6aff1544437b32d02edb961d6ffba969407c441a127befb1fe6885fa40f3d9e1dd7f9306d36dc35d5d43cb85d730bbf57899cb2266076f149fdf00b5491b69d1ad764df37ef41ef3474ed6a625c960cb38e5e9025a9edd6f63997d6c4c28f761dc23b67006ddf6e1d765a193d9cbe146ceeb79ac1cb485ed5f5b37913a8cf5857eff00a92f5b6b548541c59c6580cdff889e30c53e19cb10241170ae041eaed436420aa200000000000000000000000000000000000000000000000000000000000000008c97258f4e2489f1bb3d1029148e0d830b5a1399daff1084048e7bd8dbe9f8595abee248b8b08441f683b2e58d6b7c62bfa977bb775f0ef37facee593d0b126902070600020503060401010404010302000a0c50a50500000000000200");
 		prepared = superchain::prepared_transaction();
-		prepared.requires_account_input(algorithm::composition::type::ed25519, std::move(signable_link), wallet.public_key, (uint8_t*)signable_message.data(), signable_message.size(), { { asset, decimal("0.000015") }, { token_asset, decimal("3700") } });
-		prepared.requires_account_output("4Bs1nFL71Yaq2HJ3pSk3WHdbhkWeqnrLYQZDhqjDfb53", { { token_asset, decimal("3700") } });
+		prepared.requires_input(algorithm::composition::type::ed25519, wallet.public_key, (uint8_t*)signable_message.data(), signable_message.size(), superchain::coin_utxo::account_utxo(std::move(signable_link), asset, decimal("0.000015"), { superchain::coin_utxo::token_utxo::modern("9YaGkvrR1fjXSAm7LTcQYXZiZfub2EuWvVxBmRSHcwHZ", algorithm::asset::token_of(token_asset), decimal("3700"), 2) }));
+		prepared.requires_output(superchain::coin_utxo::account_utxo(superchain::wallet_link::from_address("4Bs1nFL71Yaq2HJ3pSk3WHdbhkWeqnrLYQZDhqjDfb53"), asset, decimal::zero(), { superchain::coin_utxo::token_utxo::modern("9YaGkvrR1fjXSAm7LTcQYXZiZfub2EuWvVxBmRSHcwHZ", algorithm::asset::token_of(token_asset), decimal("3700"), 2) }));
 		prepared.requires_abi(format::variable((uint64_t)100));
 		prepared.requires_abi(format::variable(string("9YaGkvrR1fjXSAm7LTcQYXZiZfub2EuWvVxBmRSHcwHZ")));
 		prepared.requires_abi(format::variable(string("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")));
@@ -2258,21 +2209,9 @@ static void test_cryptography_multichain_transaction()
 		auto wallet = create_wallet(asset);
 
 		auto input_hash = codec::hex_decode("0x14b33fbdd10c0931057b2c66e56b08cf01523480769153e3433050c571dc23e6");
-		superchain::coin_utxo input;
-		input.link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses[1]);
-		input.transaction_id = "f887787271fa3538f574bb0a95f1178377dd70a98813657764241fdf4e0ca7b7";
-		input.index = 1;
-		input.value = decimal("9965.667678");
-
-		superchain::coin_utxo output_1;
-		output_1.link = superchain::wallet_link::from_address("addr_test1vqeux7xwusdju9dvsj8h7mca9aup2k439kfmwy773xxc2hcu7zy99");
-		output_1.index = 0;
-		output_1.value = decimal("2100");
-
-		superchain::coin_utxo output_2;
-		output_2.link = input.link;
-		output_2.index = 1;
-		output_2.value = decimal("7865.501517");
+		superchain::coin_utxo input = superchain::coin_utxo::standard_utxo(superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses[1]), "f887787271fa3538f574bb0a95f1178377dd70a98813657764241fdf4e0ca7b7", 1, decimal("9965.667678"), { });
+		superchain::coin_utxo output_1 = superchain::coin_utxo::standard_utxo(superchain::wallet_link::from_address("addr_test1vqeux7xwusdju9dvsj8h7mca9aup2k439kfmwy773xxc2hcu7zy99"), "", 0, decimal("2100"), { });
+		superchain::coin_utxo output_2 = superchain::coin_utxo::standard_utxo(superchain::wallet_link(input.link), "", 1, decimal("7865.501517"), { });
 
 		superchain::prepared_transaction prepared;
 		prepared.requires_input(algorithm::composition::type::ed25519, wallet.public_key, (uint8_t*)input_hash.data(), input_hash.size(), std::move(input));
@@ -2284,24 +2223,12 @@ static void test_cryptography_multichain_transaction()
 		auto token_contract = "bd976e131cfc3956b806967b06530e48c20ed5498b46a5eb836b61c2";
 		auto token_symbol = "tMILKv2";
 		input_hash = codec::hex_decode("0x66bb498dd4f2840ef018b8392c58fd198f334474b5c9b96d7412b1b4cee39b0b");
-		input = superchain::coin_utxo();
-		input.link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses[1]);
-		input.transaction_id = "0f7cad6020aaf0c462cfb6cba2b5f4102910b7bf7101ed609eb887188b19ad6f";
-		input.index = 1;
-		input.value = decimal("9940.752346");
-		input.apply_token_value(token_contract, token_symbol, decimal("999995689"), 0);
-
-		output_1 = superchain::coin_utxo();
-		output_1.link = superchain::wallet_link::from_address("addr_test1vzpkkthr9azvuagxcf0m27qvzdad7n95jutgcdtglgmhdns998vsz");
-		output_1.index = 0;
-		output_1.value = decimal("1.655136");
-		output_1.apply_token_value(token_contract, token_symbol, decimal("65483"), 0);
-
-		output_2 = superchain::coin_utxo();
-		output_2.link = input.link;
-		output_2.index = 1;
-		output_2.value = decimal("9938.927089");
-		output_2.apply_token_value(token_contract, token_symbol, decimal("999930206"), 0);
+		input = superchain::coin_utxo::standard_utxo(superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses[1]), "0f7cad6020aaf0c462cfb6cba2b5f4102910b7bf7101ed609eb887188b19ad6f", 1, decimal("9940.752346"), { });
+		input.add_token_value(superchain::coin_utxo::token_utxo::modern(token_contract, token_symbol, decimal("999995689"), 0));
+		output_1 = superchain::coin_utxo::standard_utxo(superchain::wallet_link::from_address("addr_test1vzpkkthr9azvuagxcf0m27qvzdad7n95jutgcdtglgmhdns998vsz"), "", 0, decimal("1.655136"), { });
+		output_1.add_token_value(superchain::coin_utxo::token_utxo::modern(token_contract, token_symbol, decimal("65483"), 0));
+		output_2 = superchain::coin_utxo::standard_utxo(superchain::wallet_link(input.link), "", 1, decimal("9938.927089"), {  });
+		output_2.add_token_value(superchain::coin_utxo::token_utxo::modern(token_contract, token_symbol, decimal("999930206"), 0));
 
 		prepared = superchain::prepared_transaction();
 		prepared.requires_input(algorithm::composition::type::ed25519, wallet.public_key, (uint8_t*)input_hash.data(), input_hash.size(), std::move(input));
@@ -2319,8 +2246,8 @@ static void test_cryptography_multichain_transaction()
 		auto signable_link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses.begin()->second);
 		auto signable_message = codec::hex_decode("0x6c30ab9d12ae48c5c6800533451ef201dcc807980ea18739301ac48c2ddef3ce");
 		superchain::prepared_transaction prepared;
-		prepared.requires_account_input(algorithm::composition::type::secp256k1, std::move(signable_link), wallet.public_key, (uint8_t*)signable_message.data(), signable_message.size(), { { asset, decimal("22.4") } });
-		prepared.requires_account_output("TXNE2M4GSw6tjVsGeux9nbVEhihGU6hBeV", { { asset, 14 } });
+		prepared.requires_input(algorithm::composition::type::secp256k1, wallet.public_key, (uint8_t*)signable_message.data(), signable_message.size(), superchain::coin_utxo::account_utxo(std::move(signable_link), asset, decimal("22.4"), { }));
+		prepared.requires_output(superchain::coin_utxo::account_utxo(superchain::wallet_link::from_address("TXNE2M4GSw6tjVsGeux9nbVEhihGU6hBeV"), asset, 14, { }));
 		prepared.requires_abi(format::variable(string()));
 		prepared.requires_abi(format::variable("091a"));
 		prepared.requires_abi(format::variable("844ba957b61a108b"));
@@ -2334,8 +2261,8 @@ static void test_cryptography_multichain_transaction()
 		signable_link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses.begin()->second);
 		signable_message = codec::hex_decode("0xf070bae36536973c5ca2956768882d2b9144ec74cff4673ffc418b8d2b0da9b0");
 		prepared = superchain::prepared_transaction();
-		prepared.requires_account_input(algorithm::composition::type::secp256k1, std::move(signable_link), wallet.public_key, (uint8_t*)signable_message.data(), signable_message.size(), { { asset, decimal("14.0228") }, { token_asset, decimal("8") } });
-		prepared.requires_account_output("TXNE2M4GSw6tjVsGeux9nbVEhihGU6hBeV", { { token_asset, decimal("8") } });
+		prepared.requires_input(algorithm::composition::type::secp256k1, wallet.public_key, (uint8_t*)signable_message.data(), signable_message.size(), superchain::coin_utxo::account_utxo(std::move(signable_link), asset, decimal("14.0228"), { superchain::coin_utxo::token_utxo::modern("TUiyUe3uqtiT8cFkfhW6Q28Z99sY7o82Xr", "GFC", decimal("8"), 6) }));
+		prepared.requires_output(superchain::coin_utxo::account_utxo(superchain::wallet_link::from_address("TXNE2M4GSw6tjVsGeux9nbVEhihGU6hBeV"), asset, decimal::zero(), { superchain::coin_utxo::token_utxo::modern("TUiyUe3uqtiT8cFkfhW6Q28Z99sY7o82Xr", "GFC", decimal("8"), 6) }));
 		prepared.requires_abi(format::variable("TUiyUe3uqtiT8cFkfhW6Q28Z99sY7o82Xr"));
 		prepared.requires_abi(format::variable("08ca"));
 		prepared.requires_abi(format::variable("9dd563feb883a59e"));
@@ -2351,22 +2278,11 @@ static void test_cryptography_multichain_transaction()
 		auto state = storages::superchainstate(asset);
 		auto wallet = create_wallet(asset);
 
-		superchain::coin_utxo input;
-		input.link = superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses.begin()->second);
-		input.transaction_id = "102";
-		input.index = 0;
-		input.value = 0.01;
+		superchain::coin_utxo input = superchain::coin_utxo::standard_utxo(superchain::wallet_link(seed, wallet.encoded_public_key, wallet.encoded_addresses.begin()->second), "102", 0, 0.01, { });
 		input.extra = codec::hex_decode("0xd8705e0f3e2decea48fae350b23010a948e871cc95c54834004313c10b3b9b0d8c9b7e994d98d6c3593ab23f30a732b559294a2e353b49250dc1fabd41c6dd066600000000000000");
 
-		superchain::coin_utxo output1;
-		output1.link = superchain::wallet_link::from_address("887gyyu7y4LbLDY6QUcrgDGYMRJN1FKL8QUTwuL7HxosENMymJJEj7bZqBjiFU46ExMdjCNh3yUWHSVzHvKfMAvrLkYdyNF");
-		output1.value = 0.005;
-		output1.index = 0;
-
-		superchain::coin_utxo output2;
-		output2.link = superchain::wallet_link(algorithm::encoding::decode_0xhex256("0x9ef466bbda9be2a13d50c46bbd53c75a70607a4a3b5c67959b50234fa04f190c"), "1b25d81c9eb85ee5dd471f1e47d9c967ce6587bbca71462b4fd47c38bf11cbae:30ddcfeaca93e2e159e81145179b1eb9b9a140afd17ae70772308fe6f78f1f8a", "42en54HJ9KbfSyPoMWQCHvJN3vyruyqLR8FBPNXowEMYW8sSwgSiTboehBxTjFwg5jY4mSmhWEYKY2FEh4TQnLm4GdiJDwp");
-		output2.value = decimal("0.0031436");
-		output2.index = 1;
+		superchain::coin_utxo output1 = superchain::coin_utxo::standard_utxo(superchain::wallet_link::from_address("887gyyu7y4LbLDY6QUcrgDGYMRJN1FKL8QUTwuL7HxosENMymJJEj7bZqBjiFU46ExMdjCNh3yUWHSVzHvKfMAvrLkYdyNF"), "", 0, 0.005, { });
+		superchain::coin_utxo output2 = superchain::coin_utxo::standard_utxo(superchain::wallet_link(algorithm::encoding::decode_0xhex256("0x9ef466bbda9be2a13d50c46bbd53c75a70607a4a3b5c67959b50234fa04f190c"), "1b25d81c9eb85ee5dd471f1e47d9c967ce6587bbca71462b4fd47c38bf11cbae:30ddcfeaca93e2e159e81145179b1eb9b9a140afd17ae70772308fe6f78f1f8a", "42en54HJ9KbfSyPoMWQCHvJN3vyruyqLR8FBPNXowEMYW8sSwgSiTboehBxTjFwg5jY4mSmhWEYKY2FEh4TQnLm4GdiJDwp"), "", 1, decimal("0.0031436"), { });
 
 		superchain::prepared_transaction prepared;
 		prepared.requires_shared_input(algorithm::composition::type::ed25519_clsag, wallet.public_key, std::move(input));
@@ -2575,7 +2491,7 @@ static void test_blockchain_integration_coverage(const algorithm::asset_id& asse
 					{
 						auto* transaction = memory::init<transactions::attestate>();
 						transaction->asset = native_asset;
-						transaction->set_computed_proof(receipt.as_proof_hash(native_asset), std::move(receipt), { });
+						transaction->set_real_proof(receipt.as_proof_hash(native_asset), std::move(receipt), { });
 						transactions.push_back(transaction);
 					}
 
@@ -2931,10 +2847,10 @@ int main(int argc, char* argv[])
 			const decimal incoming_quantity = starting_account_balance;
 			auto* attestation = memory::init<transactions::attestate>();
 			attestation->set_asset("BTC");
-			attestation->set_finalized_proof(883669,
+			attestation->set_fake_proof(883669,
 				"222fc360affb804ad2c34bba2269b36a64a86f017d05a9a60b237e8587bfc52b",
-				{ superchain::value_transfer(attestation->asset, "mmtubFoJvXrBuBUQFf1RrowXUbsiPDYnYS", decimal(incoming_quantity)) },
-				{ superchain::value_transfer(attestation->asset, user1_bridge_address->addresses.begin()->second, decimal(incoming_quantity)) });
+				{ superchain::value_transfer_ext("BTC", "mmtubFoJvXrBuBUQFf1RrowXUbsiPDYnYS", decimal(incoming_quantity)) },
+				{ superchain::value_transfer_ext("BTC", user1_bridge_address->addresses.begin()->second, decimal(incoming_quantity)) });
 			VI_PANIC(attestation->add_commitment(user1.secret_key), "attestation failed");
 			attestation->sign(user1.secret_key, 0, decimal::zero()).expect("pre-validation failed");
 
@@ -2951,7 +2867,6 @@ int main(int argc, char* argv[])
 				parallel::wait_all(parallel::for_each(transactions.begin(), transactions.end(), ELEMENTS_FEW, [&](uptr<ledger::transaction_message>& item)
 				{
 					double balance = (double)(std::max<uint64_t>(1000, crypto::random() % 10000)) / 10000.0;
-
 					auto* transaction = memory::init<transactions::transfer>();
 					transaction->set_asset("BTC");
 					transaction->set_gas(decimal::zero(), 15000);
@@ -2974,10 +2889,10 @@ int main(int argc, char* argv[])
 			const decimal incoming_quantity = starting_account_balance * sender_count;
 			auto* attestation = memory::init<transactions::attestate>();
 			attestation->set_asset("BTC");
-			attestation->set_finalized_proof(883669,
+			attestation->set_fake_proof(883669,
 				"222fc360affb804ad2c34bba2269b36a64a86f017d05a9a60b237e8587bfc52b",
-				{ superchain::value_transfer(attestation->asset, "mmtubFoJvXrBuBUQFf1RrowXUbsiPDYnYS", decimal(incoming_quantity)) },
-				{ superchain::value_transfer(attestation->asset, user1_bridge_address->addresses.begin()->second, decimal(incoming_quantity)) });
+				{ superchain::value_transfer_ext("BTC", "mmtubFoJvXrBuBUQFf1RrowXUbsiPDYnYS", decimal(incoming_quantity)) },
+				{ superchain::value_transfer_ext("BTC", user1_bridge_address->addresses.begin()->second, decimal(incoming_quantity)) });
 			VI_PANIC(attestation->add_commitment(user1.secret_key), "attestation failed");
 			attestation->sign(user1.secret_key, 0, decimal::zero()).expect("pre-validation failed");
 
@@ -3038,10 +2953,10 @@ int main(int argc, char* argv[])
 			const decimal incoming_quantity = starting_account_balance * sender_count * 2;
 			auto* attestation = memory::init<transactions::attestate>();
 			attestation->set_asset("BTC");
-			attestation->set_finalized_proof(883669,
+			attestation->set_fake_proof(883669,
 				"222fc360affb804ad2c34bba2269b36a64a86f017d05a9a60b237e8587bfc52b",
-				{ superchain::value_transfer(attestation->asset, "mmtubFoJvXrBuBUQFf1RrowXUbsiPDYnYS", decimal(incoming_quantity)) },
-				{ superchain::value_transfer(attestation->asset, user1_bridge_address->addresses.begin()->second, decimal(incoming_quantity)) });
+				{ superchain::value_transfer_ext("BTC", "mmtubFoJvXrBuBUQFf1RrowXUbsiPDYnYS", decimal(incoming_quantity)) },
+				{ superchain::value_transfer_ext("BTC", user1_bridge_address->addresses.begin()->second, decimal(incoming_quantity)) });
 			VI_PANIC(attestation->add_commitment(user1.secret_key), "attestation failed");
 			attestation->sign(user1.secret_key, 0, decimal::zero()).expect("pre-validation failed");
 

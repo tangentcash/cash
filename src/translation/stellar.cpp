@@ -585,14 +585,22 @@ namespace tangent
 						auto to_link = target_to_link != discovery->end() ? target_to_link->second : wallet_link::from_address(transfer.to);
 						if (target_to_link != discovery->end() && metadata && !metadata->memo.empty())
 							to_link.address = address_util::encode_tag_address(transfer.to, metadata->memo);	
+
+						auto token_utxo = coin_utxo::token_utxo::modern(transfer.issuer, algorithm::asset::token_of(transfer.asset), transfer.value, (uint8_t)(netdata.divisibility.to_string().size() - 1));
 						if (!fee_included && transfer.asset == native_asset && fee_spender == transfer.from && metadata->fee.is_positive())
 						{
-							tx.add_input(coin_utxo(target_from_link != discovery->end() ? target_from_link->second : wallet_link::from_address(transfer.from), { { transfer.asset, transfer.value + metadata->fee } }));
+							tx.add_input(coin_utxo::account_utxo(target_from_link != discovery->end() ? target_from_link->second : wallet_link::from_address(transfer.from), transfer.asset, transfer.value + metadata->fee, { }));
 							fee_included = true;
 						}
+						else if (transfer.asset == native_asset)
+							tx.add_input(coin_utxo::account_utxo(target_from_link != discovery->end() ? target_from_link->second : wallet_link::from_address(transfer.from), transfer.asset, decimal(transfer.value), { }));
 						else
-							tx.add_input(coin_utxo(target_from_link != discovery->end() ? target_from_link->second : wallet_link::from_address(transfer.from), { { transfer.asset, transfer.value } }));
-						tx.add_output(coin_utxo(std::move(to_link), { { transfer.asset, transfer.value } }));
+							tx.add_input(coin_utxo::account_utxo(target_from_link != discovery->end() ? target_from_link->second : wallet_link::from_address(transfer.from), native_asset, decimal::zero(), { token_utxo }));
+
+						if (transfer.asset != native_asset)
+							tx.add_output(coin_utxo::account_utxo(std::move(to_link), transfer.asset, decimal(transfer.value), { token_utxo }));
+						else
+							tx.add_output(coin_utxo::account_utxo(std::move(to_link), native_asset, decimal::zero(), { }));
 						if (!transfer.from.empty())
 							tx.signers.insert(transfer.from);
 					}
@@ -600,7 +608,7 @@ namespace tangent
 					if (!fee_included && !fee_spender.empty() && metadata->fee.is_positive())
 					{
 						auto fee_spender_from_link = discovery->find(fee_spender);
-						tx.add_input(coin_utxo(fee_spender_from_link != discovery->end() ? fee_spender_from_link->second : wallet_link::from_address(fee_spender), { { native_asset, metadata->fee } }));
+						tx.add_input(coin_utxo::account_utxo(fee_spender_from_link != discovery->end() ? fee_spender_from_link->second : wallet_link::from_address(fee_spender), native_asset, decimal(metadata->fee), { }));
 						if (!fee_spender.empty())
 							tx.signers.insert(fee_spender);
 					}
@@ -707,32 +715,42 @@ namespace tangent
 					if (fee_value > max_fee)
 						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
 
-					hash_map<algorithm::asset_id, decimal> inputs = { { to.asset, to_value } };
-					auto& fee_input = inputs[native_asset];
-					fee_input = fee_input.is_nan() ? fee_value : (fee_input + fee_value);
-					transaction = tx_create_transaction(from_link.address, passphrase, account_info->sequence + 1, memo_id.or_else(0), !memo.empty(), accounts.size(), payments.size(), get_base_stroop_fee());
-					for (auto& [token_asset, send_value] : inputs)
+					auto total_value = fee_value;
+					if (contract_address)
 					{
-						auto& total_value = token_asset == native_asset ? inputs[native_asset] : inputs[token_asset];
-						auto balance_value = account_info->balances.find(token_asset);
-						if (balance_value == account_info->balances.end() || balance_value->second.balance < total_value)
-							coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", (balance_value != account_info->balances.end() ? balance_value->second.balance : decimal(0.0)).to_string().c_str(), total_value.to_string().c_str())));
+						auto balance_value = account_info->balances.find(to.asset);
+						if (balance_value == account_info->balances.end() || balance_value->second.balance < to_value)
+							coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", (balance_value != account_info->balances.end() ? balance_value->second.balance : decimal(0.0)).to_string().c_str(), to_value.to_string().c_str())));
 					}
-
-					auto it = account_info->balances.find(native_asset);
-					if (it == account_info->balances.end() || it->second.balance - fee_input < 1)
+					else
+						total_value += to.value;
+					
+					auto balance_value = account_info->balances.find(native_asset);
+					if (balance_value == account_info->balances.end() || balance_value->second.balance < total_value)
+						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", (balance_value != account_info->balances.end() ? balance_value->second.balance : decimal(0.0)).to_string().c_str(), total_value.to_string().c_str())));
+					else if (balance_value->second.balance - fee_value < 1)
 						coreturn expects_rt<prepared_transaction>(remote_exception("spender account must have at least 1 XLM left after this operation"));
 
 					auto signing_public_key = decode_public_key(from_link.public_key);
 					if (!signing_public_key)
 						coreturn expects_rt<prepared_transaction>(remote_exception(std::move(signing_public_key.error().message())));
 
+					transaction = tx_create_transaction(from_link.address, passphrase, account_info->sequence + 1, memo_id.or_else(0), !memo.empty(), accounts.size(), payments.size(), get_base_stroop_fee());
 					auto public_key = algorithm::composition::to_cstorage<algorithm::composition::cpubkey_t>(*signing_public_key);
 					auto token = account_info->balances.find(to.asset);
 					vector<uint8_t> raw_data = tx_data_from_signature(transaction, accounts, payments);
 					prepared_transaction result;
-					result.requires_account_input(algorithm::composition::type::ed25519, wallet_link(from_link), public_key, raw_data.data(), raw_data.size(), hash_map<algorithm::asset_id, decimal>(inputs));
-					result.requires_account_output(to.address, { { to.asset, to_value } });
+					if (contract_address)
+					{
+						auto token_utxo = coin_utxo::token_utxo::modern(*contract_address, algorithm::asset::token_of(to.asset), to_value, (uint8_t)(netdata.divisibility.to_string().size() - 1));
+						result.requires_input(algorithm::composition::type::ed25519, public_key, raw_data.data(), raw_data.size(), coin_utxo::account_utxo(wallet_link(from_link), native_asset, decimal(fee_value), { token_utxo }));
+						result.requires_output(coin_utxo::account_utxo(wallet_link::from_address(to.address), native_asset, decimal::zero(), { token_utxo }));
+					}
+					else
+					{
+						result.requires_input(algorithm::composition::type::ed25519, public_key, raw_data.data(), raw_data.size(), coin_utxo::account_utxo(wallet_link(from_link), native_asset, decimal(total_value), { }));
+						result.requires_output(coin_utxo::account_utxo(wallet_link::from_address(to.address), native_asset, decimal(to_value), { }));
+					}
 					result.requires_abi(format::variable(transaction.sequence_number));
 					result.requires_abi(format::variable(!!account));
 					result.requires_abi(format::variable(!!payment));

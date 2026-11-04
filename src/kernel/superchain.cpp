@@ -254,109 +254,134 @@ namespace tangent
 			return expectation::met;
 		}
 
-		coin_utxo::token_utxo::token_utxo() : decimals(0)
+		value_transfer_ext::value_transfer_ext() : value_transfer()
 		{
 		}
-		coin_utxo::token_utxo::token_utxo(const algorithm::asset_id& new_asset, const decimal& new_value) : contract_address(algorithm::asset::handle_of(new_asset)), value(new_value), decimals(0)
+		value_transfer_ext::value_transfer_ext(const std::string_view& new_blockchain, const std::string_view& new_address, decimal&& new_value) : value_transfer(algorithm::asset::id_of(new_blockchain), new_address, std::move(new_value))
 		{
 		}
-		coin_utxo::token_utxo::token_utxo(const std::string_view& new_contract_address, const std::string_view& new_symbol, const decimal& new_value, uint8_t new_decimals) : contract_address(new_contract_address), symbol(new_symbol), value(new_value), decimals(new_decimals)
+		value_transfer_ext::value_transfer_ext(const std::string_view& new_blockchain, const std::string_view& new_token, const std::string_view& new_contract_address, const std::string_view& new_address, decimal&& new_value) : value_transfer(algorithm::asset::id_of(new_blockchain, new_token, new_contract_address), new_address, std::move(new_value)), contract_address(new_contract_address)
+		{
+		}
+		expects_lr<void> value_transfer_ext::validate() const
+		{
+			if (!contract_address.empty() && algorithm::asset::id_of(algorithm::asset::blockchain_of(asset), algorithm::asset::token_of(asset), contract_address) != asset)
+				return layer_exception("invalid transfer asset");
+
+			return value_transfer::validate();
+		}
+
+		coin_utxo::token_utxo::token_utxo() : metadata(modern_type())
 		{
 		}
 		decimal coin_utxo::token_utxo::get_divisibility() const
 		{
-			return algorithm::arithmetic::fixed(decimals > 0 ? decimal("1" + string(decimals, '0')) : decimal(1));
+			return algorithm::arithmetic::fixed(metadata ? decimal("1" + string(metadata->decimals, '0')) : decimal(1));
 		}
 		algorithm::asset_id coin_utxo::token_utxo::get_asset(const algorithm::asset_id& base_asset) const
 		{
-			return is_account() ? algorithm::asset::id_of_handle(contract_address) : algorithm::asset::id_of(algorithm::asset::blockchain_of(base_asset), symbol, contract_address);
-		}
-		bool coin_utxo::token_utxo::is_account() const
-		{
-			return symbol.empty() && decimals == 0;
+			return metadata ? algorithm::asset::id_of(algorithm::asset::blockchain_of(base_asset), metadata->symbol, metadata->contract_address) : metadata.error().asset;
 		}
 		uint256_t coin_utxo::token_utxo::as_hash() const
 		{
 			format::wo_stream message;
-			message.write_string(contract_address);
-			message.write_string(symbol);
-			message.write_decimal(value);
-			message.write_integer(decimals);
+			if (metadata)
+			{
+				message.write_string(metadata->contract_address);
+				message.write_string(metadata->symbol);
+				message.write_decimal(value);
+				message.write_integer(metadata->decimals);
+			}
+			else
+			{
+				message.write_string(algorithm::asset::handle_of(metadata.error().asset));
+				message.write_string(std::string_view());
+				message.write_decimal(value);
+				message.write_integer(0);
+			}
 			return message.hash();
 		}
 		expects_lr<void> coin_utxo::token_utxo::validate() const
 		{
-			if (!is_account())
+			if (metadata)
 			{
-				if (contract_address.empty())
+				if (metadata->contract_address.empty())
 					return layer_exception("invalid token utxo contract address");
 
-				if (symbol.empty())
+				if (metadata->symbol.empty())
 					return layer_exception("invalid token utxo symbol");
 			}
-			else if (!algorithm::asset::id_of_handle(contract_address))
-				return layer_exception("invalid token utxo asset handle (stored in contract address)");
+			else if (algorithm::asset::is_any(metadata.error().asset, false, true))
+				return layer_exception("invalid token utxo asset handle");
 
 			if (value.is_nan() || value.is_negative())
 				return layer_exception("invalid token utxo value");
 
 			return expectation::met;
 		}
-
-		coin_utxo::coin_utxo(wallet_link&& new_link, hash_map<algorithm::asset_id, decimal>&& new_values) : link(std::move(new_link)), index(std::numeric_limits<uint32_t>::max())
+		coin_utxo::token_utxo coin_utxo::token_utxo::legacy(const algorithm::asset_id& new_asset, const decimal& new_value)
 		{
-			for (auto& [asset, asset_value] : new_values)
+			legacy_type metadata;
+			metadata.asset = new_asset;
+
+			token_utxo utxo;
+			utxo.metadata = std::move(metadata);
+			utxo.value = new_value;
+			return utxo;
+		}
+		coin_utxo::token_utxo coin_utxo::token_utxo::modern(const std::string_view& new_contract_address, const std::string_view& new_symbol, const decimal& new_value, uint8_t new_decimals)
+		{
+			modern_type metadata;
+			metadata.contract_address = new_contract_address;
+			metadata.symbol = new_symbol;
+			metadata.decimals = new_decimals;
+
+			token_utxo utxo;
+			utxo.metadata = std::move(metadata);
+			utxo.value = new_value;
+			utxo.value.truncate(utxo.metadata->decimals);
+			return utxo;
+		}
+
+		coin_utxo::coin_utxo() : metadata(account_type())
+		{
+		}
+		void coin_utxo::add_standard_metadata(const std::string_view& transaction_id, uint64_t index)
+		{
+			auto new_metadata = standard_type();
+			new_metadata.transaction_id = transaction_id;
+			new_metadata.index = index;
+			metadata = std::move(new_metadata);
+		}
+		void coin_utxo::add_account_metadata(const algorithm::asset_id& asset)
+		{
+			auto new_metadata = account_type();
+			new_metadata.asset = asset;
+			metadata = std::move(new_metadata);
+		}
+		void coin_utxo::add_token_value(token_utxo&& token)
+		{
+			auto pseudo_asset = algorithm::asset::id_of("_");
+			auto token_asset = token.get_asset(pseudo_asset);
+			for (auto& [hash, utxo] : tokens)
 			{
-				if (!algorithm::asset::token_of(asset).empty())
+				if (utxo.get_asset(pseudo_asset) == token_asset)
 				{
-					apply_token_value(algorithm::asset::handle_of(asset), std::string_view(), std::move(asset_value), 0);
-					if (transaction_id.empty())
-						transaction_id = algorithm::asset::handle_of(algorithm::asset::base_id_of(asset));
-					if (value.is_nan())
-						value = decimal::zero();
-				}
-				else
-				{
-					transaction_id = algorithm::asset::handle_of(asset);
-					value = std::move(asset_value);
+					utxo.value += token.value;
+					return;
 				}
 			}
+			tokens[token.as_hash()] = std::move(token);
 		}
-		coin_utxo::coin_utxo(wallet_link&& new_link, const std::string_view& new_transaction_id, uint64_t new_index, decimal&& new_value) : link(std::move(new_link)), transaction_id(new_transaction_id), value(std::move(new_value)), index(new_index)
+		option<decimal> coin_utxo::get_token_value(const algorithm::asset_id& asset) const
 		{
-		}
-		void coin_utxo::apply_token_value(const std::string_view& contract_address, const std::string_view& symbol, const decimal& new_value, uint8_t decimals)
-		{
-			if (!contract_address.empty())
-			{
-				for (auto& [hash, item] : tokens)
-				{
-					if (item.contract_address == contract_address)
-					{
-						if (item.value.is_nan())
-							item.value = new_value;
-						else
-							item.value += new_value;
-						return;
-					}
-				}
-
-				auto next = token_utxo(contract_address, symbol, new_value, decimals);
-				tokens[next.as_hash()] = std::move(next);
-			}
-			else if (value.is_nan())
-				value = new_value;
-			else
-				value += new_value;
-		}
-		option<decimal> coin_utxo::get_token_value(const std::string_view& contract_address)
-		{
-			if (contract_address.empty())
+			if (algorithm::asset::token_of(asset).empty())
 				return value;
 
+			auto base_asset = algorithm::asset::base_id_of(asset);
 			for (auto& [hash, item] : tokens)
 			{
-				if (item.contract_address == contract_address)
+				if (item.get_asset(base_asset) == asset)
 					return item.value;
 			}
 
@@ -373,16 +398,26 @@ namespace tangent
 				stream->write_boolean(true);
 				stream->write_string(extra);
 			}
-			stream->write_string(transaction_id);
-			stream->write_integer(index);
+			stream->write_string(metadata ? algorithm::asset::handle_of(metadata->asset) : metadata.error().transaction_id);
+			stream->write_integer(metadata ? std::numeric_limits<uint32_t>::max() : metadata.error().index);
 			stream->write_decimal(value);
 			stream->write_integer((uint32_t)tokens.size());
 			for (auto& [hash, item] : tokens)
 			{
-				stream->write_string(item.contract_address);
-				stream->write_string(item.symbol);
-				stream->write_decimal(item.value);
-				stream->write_integer(item.decimals);
+				if (item.metadata)
+				{
+					stream->write_string(item.metadata->contract_address);
+					stream->write_string(item.metadata->symbol);
+					stream->write_decimal(item.value);
+					stream->write_integer(item.metadata->decimals);
+				}
+				else
+				{
+					stream->write_string(algorithm::asset::handle_of(item.metadata.error().asset));
+					stream->write_string(std::string_view());
+					stream->write_decimal(item.value);
+					stream->write_integer(uint8_t(0));
+				}
 			}
 			return true;
 		}
@@ -406,10 +441,11 @@ namespace tangent
 			else
 				extra.clear();
 
-			if (!stream.read_string(type, &transaction_id))
+			standard_type utxo;
+			if (!stream.read_string(type, &utxo.transaction_id))
 				return false;
 
-			if (!stream.read_integer(stream.read_type(), &index))
+			if (!stream.read_integer(stream.read_type(), &utxo.index))
 				return false;
 
 			if (!stream.read_decimal(stream.read_type(), &value))
@@ -419,29 +455,43 @@ namespace tangent
 			if (!stream.read_integer(stream.read_type(), &size))
 				return false;
 
+			if (utxo.index == std::numeric_limits<uint32_t>::max())
+			{
+				account_type account;
+				account.asset = algorithm::asset::id_of_handle(utxo.transaction_id);
+				metadata = std::move(account);
+			}
+			else
+				metadata = std::move(utxo);
+
 			for (uint32_t i = 0; i < size; i++)
 			{
+				token_utxo::modern_type modern;
+				if (!stream.read_string(stream.read_type(), &modern.contract_address))
+					return false;
+
+				if (!stream.read_string(stream.read_type(), &modern.symbol))
+					return false;
+
 				token_utxo token;
-				if (!stream.read_string(stream.read_type(), &token.contract_address))
-					return false;
-
-				if (!stream.read_string(stream.read_type(), &token.symbol))
-					return false;
-
 				if (!stream.read_decimal(stream.read_type(), &token.value))
 					return false;
 
-				if (!stream.read_integer(stream.read_type(), &token.decimals))
+				if (!stream.read_integer(stream.read_type(), &modern.decimals))
 					return false;
 
+				if (modern.symbol.empty() && !modern.decimals)
+				{
+					token_utxo::legacy_type legacy;
+					legacy.asset = algorithm::asset::id_of_handle(modern.contract_address);
+					token.metadata = std::move(legacy);
+				}
+				else
+					token.metadata = std::move(modern);
 				tokens[token.as_hash()] = std::move(token);
 			}
 
 			return true;
-		}
-		bool coin_utxo::is_account() const
-		{
-			return index == std::numeric_limits<uint32_t>::max();
 		}
 		expects_lr<void> coin_utxo::validate_as_input() const
 		{
@@ -451,13 +501,13 @@ namespace tangent
 			if (!link.has_all())
 				return layer_exception("invalid utxo input link");
 
-			if (is_account())
+			if (metadata)
 			{
-				if (!algorithm::asset::id_of_handle(transaction_id))
-					return layer_exception("invalid utxo asset handle (stored in transaction id)");
+				if (!algorithm::asset::is_any(metadata->asset, true, true))
+					return layer_exception("invalid utxo asset handle");
 			}
-			else if (stringify::is_empty_or_whitespace(transaction_id))
-				return layer_exception("invalid utxo transaction id");
+			else if (stringify::is_empty_or_whitespace(metadata.error().transaction_id) || metadata.error().index == std::numeric_limits<uint32_t>::max())
+				return layer_exception("invalid utxo transaction id or index");
 
 			for (auto& [hash, token] : tokens)
 			{
@@ -479,8 +529,13 @@ namespace tangent
 			if (!link.has_public_key() && !link.has_address())
 				return layer_exception("invalid utxo output link (missing pubkey and/or address)");
 
-			if (is_account() && !algorithm::asset::id_of_handle(transaction_id))
-				return layer_exception("invalid utxo asset handle (stored in transaction id)");
+			if (metadata)
+			{
+				if (!algorithm::asset::is_any(metadata->asset, true, true))
+					return layer_exception("invalid utxo asset handle");
+			}
+			else if (!stringify::is_empty_or_whitespace(metadata.error().transaction_id) || metadata.error().index == std::numeric_limits<uint32_t>::max())
+				return layer_exception("invalid utxo transaction id or index");
 
 			for (auto& [hash, token] : tokens)
 			{
@@ -496,40 +551,37 @@ namespace tangent
 		}
 		algorithm::asset_id coin_utxo::get_asset(const algorithm::asset_id& base_asset) const
 		{
-			return is_account() ? algorithm::asset::id_of_handle(transaction_id) : base_asset;
+			return metadata ? metadata->asset : base_asset;
 		}
 		format::tree coin_utxo::as_tree() const
 		{
-			bool account = is_account();
 			format::tree data;
 			data.set("link", link.as_tree());
-			if (!account)
-			{
-				data.set("transaction_id", transaction_id.empty() ? format::variable() : format::variable(transaction_id));
-				data.set("index", format::variable(index));
-			}
-			else
-				data.set("asset", algorithm::asset::serialize(get_asset(0)));
-			data.set("value", format::variable(value));
-			data.set("type", format::variable(is_account() ? "account" : "utxo"));
 			if (!extra.empty())
 				data.set("extra", format::variable(format::util::encode_0xhex(extra)));
+			data.set("type", format::variable(metadata ? "account" : "utxo"));
+			if (!metadata)
+			{
+				auto& other = metadata.error();
+				data.set("transaction_id", other.transaction_id.empty() ? format::variable() : format::variable(other.transaction_id));
+				data.set("index", format::variable(other.index));
+			}
+			else
+				data.set("asset", algorithm::asset::serialize(metadata->asset));
+			data.set("value", format::variable(value));
 			auto* tokens_data = data.set("tokens", format::tree::list());
 			for (auto& [hash, item] : tokens)
 			{
 				auto* token_data = tokens_data->push(format::tree::map());
-				if (!item.is_account())
+				if (item.metadata)
 				{
-					token_data->set("contract_address", format::variable(item.contract_address));
-					token_data->set("symbol", format::variable(item.symbol));
-					token_data->set("value", format::variable(item.value));
-					token_data->set("decimals", format::variable(item.decimals));
+					token_data->set("contract_address", format::variable(item.metadata->contract_address));
+					token_data->set("symbol", format::variable(item.metadata->symbol));
+					token_data->set("decimals", format::variable(item.metadata->decimals));
 				}
 				else
-				{
-					token_data->set("asset", algorithm::asset::serialize(item.get_asset(0)));
-					token_data->set("value", format::variable(item.value));
-				}
+					token_data->set("asset", algorithm::asset::serialize(item.metadata.error().asset));
+				token_data->set("value", format::variable(item.value));
 			}
 			return data;
 		}
@@ -549,6 +601,68 @@ namespace tangent
 		std::string_view coin_utxo::as_instance_typename()
 		{
 			return "coin_utxo";
+		}
+		coin_utxo coin_utxo::account_utxo(wallet_link&& new_link, const algorithm::asset_id& new_asset, decimal&& new_value, vector<token_utxo>&& new_token_values)
+		{
+			account_type metadata;
+			metadata.asset = new_asset;
+
+			coin_utxo result;
+			result.link = std::move(new_link);
+			result.metadata = std::move(metadata);
+			result.value = std::move(new_value);
+			if (new_token_values.empty())
+				return result;
+
+			btree_map<algorithm::asset_id, token_utxo> token_values;
+			for (auto& token : new_token_values)
+			{
+				auto asset = token.get_asset(new_asset);
+				auto it = token_values.find(asset);
+				if (it != token_values.end())
+					it->second.value += token.value;
+				else
+					token_values[asset] = std::move(token);
+			}
+			for (auto& [asset, token] : token_values)
+			{
+				if (token.metadata)
+					token.value.truncate(token.metadata->decimals);
+				result.tokens[token.as_hash()] = std::move(token);
+			}
+			return result;
+		}
+		coin_utxo coin_utxo::standard_utxo(wallet_link&& new_link, const std::string_view& new_transaction_id, uint64_t new_index, decimal&& new_value, vector<token_utxo>&& new_token_values)
+		{
+			standard_type metadata;
+			metadata.transaction_id = new_transaction_id;
+			metadata.index = new_index;
+
+			coin_utxo result;
+			result.link = std::move(new_link);
+			result.metadata = std::move(metadata);
+			result.value = std::move(new_value);
+			if (new_token_values.empty())
+				return result;
+
+			auto pseudo_asset = algorithm::asset::id_of("_");
+			btree_map<algorithm::asset_id, token_utxo> token_values;
+			for (auto& token : new_token_values)
+			{
+				auto asset = token.get_asset(pseudo_asset);
+				auto it = token_values.find(asset);
+				if (it != token_values.end())
+					it->second.value += token.value;
+				else
+					token_values[asset] = std::move(token);
+			}
+			for (auto& [asset, token] : token_values)
+			{
+				if (token.metadata)
+					token.value.truncate(token.metadata->decimals);
+				result.tokens[token.as_hash()] = std::move(token);
+			}
+			return result;
 		}
 
 		void computed_transaction::rebuild_index()
@@ -583,6 +697,7 @@ namespace tangent
 				stream->write_boolean(true);
 				stream->write_string(memo.optimized_view());
 			}
+			
 			stream->write_integer((uint32_t)inputs.size());
 			for (auto& [hash, item] : inputs)
 			{
@@ -730,6 +845,7 @@ namespace tangent
 			else if (stringify::is_empty_or_whitespace(transaction_id))
 				return layer_exception("must have transaction id");
 
+			algorithm::asset_id pseudo_asset = algorithm::asset::id_of("_");
 			hash_map<algorithm::asset_id, decimal> balance;
 			for (auto& [hash, input] : inputs)
 			{
@@ -741,7 +857,7 @@ namespace tangent
 				balance_value = balance_value.is_nan() ? -input.value : (balance_value - input.value);
 				for (auto& [token_hash, token] : input.tokens)
 				{
-					auto& token_balance_value = balance[algorithm::asset::id_of("_", token.symbol, token.contract_address)];
+					auto& token_balance_value = balance[token.get_asset(pseudo_asset)];
 					token_balance_value = token_balance_value.is_nan() ? -token.value : (token_balance_value - token.value);
 				}
 			}
@@ -756,7 +872,7 @@ namespace tangent
 				balance_value = balance_value.is_nan() ? output.value : (balance_value + output.value);
 				for (auto& [token_hash, token] : output.tokens)
 				{
-					auto& token_balance_value = balance[algorithm::asset::id_of("_", token.symbol, token.contract_address)];
+					auto& token_balance_value = balance[token.get_asset(pseudo_asset)];
 					token_balance_value = token_balance_value.is_nan() ? token.value : (token_balance_value + token.value);
 				}
 			}
@@ -861,25 +977,15 @@ namespace tangent
 			inputs.push_back(std::move(item));
 			return *this;
 		}
-		prepared_transaction& prepared_transaction::requires_shared_input(algorithm::composition::type new_alg, const algorithm::composition::cpubkey_t& new_public_key, coin_utxo&& input)
-		{
-			uint16_t index = os::hw::to_endianness<uint16_t>(os::hw::endian::little, (uint16_t)inputs.size());
-			return requires_input(new_alg, new_public_key, (uint8_t*)&index, sizeof(index), std::move(input));
-		}
-		prepared_transaction& prepared_transaction::requires_account_input(algorithm::composition::type new_alg, wallet_link&& signer, const algorithm::composition::cpubkey_t& new_public_key, uint8_t* new_message, size_t new_message_size, hash_map<algorithm::asset_id, decimal>&& input)
-		{
-			coin_utxo item = coin_utxo(std::move(signer), std::move(input));
-			return requires_input(new_alg, new_public_key, new_message, new_message_size, std::move(item));
-		}
 		prepared_transaction& prepared_transaction::requires_output(coin_utxo&& output)
 		{
 			outputs.push_back(std::move(output));
 			return *this;
 		}
-		prepared_transaction& prepared_transaction::requires_account_output(const std::string_view& to_address, hash_map<algorithm::asset_id, decimal>&& output)
+		prepared_transaction& prepared_transaction::requires_shared_input(algorithm::composition::type new_alg, const algorithm::composition::cpubkey_t& new_public_key, coin_utxo&& input)
 		{
-			outputs.push_back(coin_utxo(wallet_link::from_address(to_address), std::move(output)));
-			return *this;
+			uint16_t index = os::hw::to_endianness<uint16_t>(os::hw::endian::little, (uint16_t)inputs.size());
+			return requires_input(new_alg, new_public_key, (uint8_t*)&index, sizeof(index), std::move(input));
 		}
 		prepared_transaction& prepared_transaction::requires_shared_message(const algorithm::composition::shared_message& shared)
 		{
@@ -1074,7 +1180,11 @@ namespace tangent
 				auto& item = outputs[i];
 				if (!item.validate_as_output())
 					return status::invalid;
-				else if (!item.is_account() && (!item.transaction_id.empty() || item.index != (uint64_t)i))
+				else if (item.metadata)
+					continue;
+
+				auto& utxo = item.metadata.error();
+				if (!utxo.transaction_id.empty() || utxo.index != (uint64_t)i)
 					return status::invalid;
 			}
 
@@ -1309,6 +1419,53 @@ namespace tangent
 
 				VI_INFO("%s", transfer_logs.c_str());
 			}
+		}
+
+		bool approved_fee::store_payload(format::wo_stream* stream) const
+		{
+			stream->write_integer(asset);
+			stream->write_integer(expiry_block_number);
+			stream->write_decimal(fee);
+			return true;
+		}
+		bool approved_fee::load_payload(format::ro_stream& stream)
+		{
+			if (!stream.read_integer(stream.read_type(), &asset))
+				return false;
+
+			if (!stream.read_integer(stream.read_type(), &expiry_block_number))
+				return false;
+
+			if (!stream.read_decimal(stream.read_type(), &fee))
+				return false;
+
+			return true;
+		}
+		format::tree approved_fee::as_tree() const
+		{
+			format::tree data;
+			data.set("signature", signature.empty() ? format::variable() : format::variable(format::util::encode_0xhex(signature.view())));
+			data.set("asset", algorithm::asset::serialize(asset));
+			data.set("expiry_block_number", format::variable(expiry_block_number));
+			data.set("fee", format::variable(fee));
+			return data;
+		}
+		uint32_t approved_fee::as_type() const
+		{
+			return as_instance_type();
+		}
+		std::string_view approved_fee::as_typename() const
+		{
+			return as_instance_typename();
+		}
+		uint32_t approved_fee::as_instance_type()
+		{
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
+		}
+		std::string_view approved_fee::as_instance_typename()
+		{
+			return "approved_fee";
 		}
 
 		decimal computed_fee::get_max_fee() const
@@ -1696,22 +1853,12 @@ namespace tangent
 			if (!outputs)
 				return expects_promise_rt<decimal>(std::move(balance));
 
-			auto contract_address = bridge::get()->get_contract_address(for_asset);
-			if (contract_address)
+			for (auto& output : *outputs)
 			{
-				for (auto& output : *outputs)
-				{
-					auto value = output.get_token_value(*contract_address);
-					if (value)
-						balance += *value;
-				}
+				auto value = output.get_token_value(for_asset);
+				if (value)
+					balance += *value;
 			}
-			else
-			{
-				for (auto& output : *outputs)
-					balance += output.value;
-			}
-
 			return expects_promise_rt<decimal>(std::move(balance));
 		}
 		expects_lr<vector<coin_utxo>> utxo_translation_unit::calculate_utxo(const wallet_link& link, option<balance_query>&& query, bool confirmed_only)
@@ -1776,20 +1923,22 @@ namespace tangent
 		{
 			for (auto& [hash, output] : computed.inputs)
 			{
-				if (output.is_account())
+				if (output.metadata)
 					continue;
 
-				auto result = spend_utxo(output.transaction_id, output.index, computed.block_id);
+				auto& utxo = output.metadata.error();
+				auto result = spend_utxo(utxo.transaction_id, utxo.index, computed.block_id);
 				if (!result)
 					return result;
 			}
 
 			for (auto& [hash, input] : computed.outputs)
 			{
-				if (input.is_account() || !input.link.has_all())
+				if (input.metadata || !input.link.has_all())
 					continue;
 
-				auto result = receive_utxo(input.transaction_id.empty() ? computed.transaction_id : input.transaction_id, input.index, computed.block_id, input);
+				auto& utxo = input.metadata.error();
+				auto result = receive_utxo(utxo.transaction_id.empty() ? computed.transaction_id : utxo.transaction_id, utxo.index, computed.block_id, input);
 				if (!result)
 					return result;
 			}
@@ -1820,21 +1969,26 @@ namespace tangent
 			if (!link)
 				return expects_lr<void>(layer_exception("transaction output is not being watched"));
 
+			coin_utxo::standard_type utxo;
+			utxo.transaction_id = transaction_id;
+			utxo.index = index;
+
 			coin_utxo copy = output;
-			copy.transaction_id = transaction_id;
-			copy.index = index;
+			copy.metadata = std::move(utxo);
 			copy.link = std::move(*link);
 			for (auto& [hash, item] : copy.tokens)
 			{
-				public_key_hash = implementation->decode_address(item.contract_address);
-				if (public_key_hash)
+				if (item.metadata)
 				{
-					address = implementation->encode_address(*public_key_hash);
-					if (address)
-						item.contract_address = std::move(*address);
+					public_key_hash = implementation->decode_address(item.metadata->contract_address);
+					if (public_key_hash)
+					{
+						address = implementation->encode_address(*public_key_hash);
+						if (address)
+							item.metadata->contract_address = std::move(*address);
+					}
 				}
 			}
-
 			return bridge::get()->receive_utxo(native_asset, transaction_id, index, receiver_block_id, copy);
 		}
 		expects_lr<void> utxo_translation_unit::spend_utxo(const std::string_view& transaction_id, uint64_t index, uint64_t spender_block_id)
@@ -1844,38 +1998,16 @@ namespace tangent
 
 			return bridge::get()->spend_utxo(native_asset, transaction_id, index, spender_block_id);
 		}
-		decimal utxo_translation_unit::get_utxo_value(const vector<coin_utxo>& values, option<string>&& contract_address)
+		decimal utxo_translation_unit::get_utxo_value(const vector<coin_utxo>& values, const algorithm::asset_id& for_asset)
 		{
-			decimal value = 0.0;
-			if (contract_address)
+			decimal result = 0.0;
+			for (auto& item : values)
 			{
-				auto* implementation = bridge::get()->get_network(native_asset);
-				if (!implementation)
-					return value;
-
-				auto public_key_hash = implementation->decode_address(*contract_address);
-				if (!public_key_hash)
-					return value;
-
-				auto address = implementation->encode_address(*public_key_hash);
-				if (!address)
-					return value;
-
-				for (auto& item : values)
-				{
-					for (auto& [hash, token] : item.tokens)
-					{
-						if (token.contract_address == *address)
-							value += token.value;
-					}
-				}
+				auto value = item.get_token_value(for_asset);
+				if (value)
+					result += *value;
 			}
-			else
-			{
-				for (auto& item : values)
-					value += item.value;
-			}
-			return value;
+			return result;
 		}
 		utxo_translation_unit* utxo_translation_unit::from(translation_unit* base)
 		{
@@ -2981,14 +3113,22 @@ namespace tangent
 			storages::superchainstate state = storages::superchainstate(asset);
 			for (auto& [input_hash, input] : computed.inputs)
 			{
-				auto result = state.revive_utxo(input.transaction_id, input.index);
+				if (input.metadata)
+					continue;
+
+				auto& utxo = input.metadata.error();
+				auto result = state.revive_utxo(utxo.transaction_id, utxo.index);
 				if (!result)
 					return result;
 			}
 
 			for (auto& [output_hash, output] : computed.outputs)
 			{
-				auto result = state.revive_utxo(computed.transaction_id, output.index);
+				if (output.metadata)
+					continue;
+
+				auto& utxo = output.metadata.error();
+				auto result = state.revive_utxo(computed.transaction_id, utxo.index);
 				if (!result)
 					return result;
 			}

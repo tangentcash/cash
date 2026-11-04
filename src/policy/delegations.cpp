@@ -1770,11 +1770,21 @@ namespace tangent
 			if (!public_key)
 				return expects_promise_rt<superchain::prepared_transaction>(remote_exception(std::move(public_key.error().message())));
 
-			auto transfers = hash_map<algorithm::asset_id, decimal>();
-			transfers[algorithm::asset::base_id_of(asset)] = decimal("0.000001");
-
-			auto& value = transfers[to.asset];
-			value = value.is_nan() ? to.value : (value + to.value);
+			auto native_asset = algorithm::asset::base_id_of(to.asset);
+			auto token_transfer = to.asset != native_asset;
+			auto fee_value = decimal("0.000001");
+			auto total_value = token_transfer ? fee_value : (fee_value + to.value);
+			auto input = superchain::coin_utxo::account_utxo(std::move(*from), native_asset, decimal(total_value), { });
+			auto output = superchain::coin_utxo::account_utxo(superchain::wallet_link::from_address(to.address), native_asset, decimal(total_value - fee_value), { });
+			if (token_transfer)
+			{
+				auto contract_address = offchain->get_contract_address(to.asset).expect("failed to get contract address");
+				auto token_utxo = superchain::coin_utxo::token_utxo::modern(contract_address, algorithm::asset::token_of(to.asset), to.value, kernel::params().message.decimal_precision);
+				input.add_token_value(superchain::coin_utxo::token_utxo(token_utxo));
+				output.add_token_value(std::move(token_utxo));
+			}
+			if (chain->composition == algorithm::composition::type::ed25519_clsag)
+				public_key->resize(65);
 
 			uint8_t message_hash[32];
 			message.write_integer(to.asset);
@@ -1783,14 +1793,8 @@ namespace tangent
 			message.hash().encode(message_hash);
 
 			superchain::prepared_transaction regtest_prepared;
-			if (chain->composition == algorithm::composition::type::ed25519_clsag)
-			{
-				public_key->resize(65);
-				regtest_prepared.requires_account_input(chain->composition, std::move(*from), *public_key, message_hash, sizeof(message_hash), std::move(transfers));
-			}
-			else
-				regtest_prepared.requires_account_input(chain->composition, std::move(*from), *public_key, message_hash, sizeof(message_hash), std::move(transfers));
-			regtest_prepared.requires_account_output(to.address, { { to.asset, to.value } });
+			regtest_prepared.requires_input(chain->composition, *public_key, message_hash, sizeof(message_hash), std::move(input));
+			regtest_prepared.requires_output(std::move(output));
 			return expects_promise_rt<superchain::prepared_transaction>(std::move(regtest_prepared));
 		}
 		expects_lr<superchain::finalized_transaction> broadcast_delegation::finalize_transaction(const algorithm::asset_id& asset, superchain::prepared_transaction&& prepared)

@@ -77,16 +77,19 @@ namespace tangent
 		expects_lr<void> superchainstate::receive_utxo(const std::string_view& transaction_id, uint64_t index, uint64_t block_id, const superchain::coin_utxo& value)
 		{
 			auto copy = value;
-			copy.transaction_id = transaction_id;
-			copy.index = index;
+			auto metadata = superchain::coin_utxo::standard_type();
+			metadata.transaction_id = transaction_id;
+			metadata.index = index;
+			copy.metadata = std::move(metadata);
 
+			auto& utxo = copy.metadata.error();
 			format::wo_stream message;
 			if (!copy.store(&message))
 				return expects_lr<void>(layer_exception("utxo serialization error"));
 
 			format::wo_stream transaction_id_index;
-			transaction_id_index.write_string(copy.transaction_id);
-			transaction_id_index.write_integer(copy.index);
+			transaction_id_index.write_string(utxo.transaction_id);
+			transaction_id_index.write_integer(utxo.index);
 
 			uint8_t hash_data[32];
 			copy.link.hash.encode(hash_data);

@@ -38,7 +38,8 @@ namespace tangent
 		consensus_challenge = 920000,
 		base_to_root_modulo = 1001000,
 		attesters_hardening = 1273450,
-		anonymous_broadcast = 1790000
+		anonymous_broadcast = 1790000,
+		broadcast_fee_quote = 1920000
 	};
 
 	enum class network_type
@@ -295,10 +296,13 @@ namespace tangent
 				uint64_t confirmation_time = 172800000;
 				uint64_t min_per_transaction = 4;
 				uint64_t max_per_transaction = 32;
+				uint64_t quote_validity_time = 300000;
 				decimal min_stake_value = std::string_view("900");
 				decimal stake_penalty_threshold = std::string_view("0.1");
 				decimal consensus_threshold = std::string_view("0.70");
 				decimal fee_rate = std::string_view("0.10");
+				decimal quote_penalty = std::string_view("0.1");
+				decimal quote_headroom = std::string_view("1.25");
 			} attestation;
 			struct
 			{

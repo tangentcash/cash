@@ -88,43 +88,75 @@ namespace tangent
 			value_transfer(value_transfer&&) noexcept = default;
 			value_transfer& operator=(const value_transfer&) = default;
 			value_transfer& operator=(value_transfer&&) noexcept = default;
-			expects_lr<void> validate() const;
+			virtual expects_lr<void> validate() const;
+		};
+
+		struct value_transfer_ext : value_transfer
+		{
+			string contract_address;
+
+			value_transfer_ext();
+			value_transfer_ext(const std::string_view& new_blockchain, const std::string_view& new_address, decimal&& new_value);
+			value_transfer_ext(const std::string_view& new_blockchain, const std::string_view& new_token, const std::string_view& new_contract_address, const std::string_view& new_address, decimal&& new_value);
+			value_transfer_ext(const value_transfer_ext&) = default;
+			value_transfer_ext(value_transfer_ext&&) noexcept = default;
+			value_transfer_ext& operator=(const value_transfer_ext&) = default;
+			value_transfer_ext& operator=(value_transfer_ext&&) noexcept = default;
+			expects_lr<void> validate() const override;
 		};
 
 		struct coin_utxo : ledger::uniform_serializer
 		{
 			struct token_utxo
 			{
-				string contract_address;
-				string symbol;
-				decimal value;
-				uint8_t decimals;
+				struct modern_type
+				{
+					string contract_address;
+					string symbol;
+					uint8_t decimals = 0;
+				};
+
+				struct legacy_type
+				{
+					algorithm::asset_id asset = 0;
+				};
+
+				expects<modern_type, legacy_type> metadata;
+				decimal value = decimal::nan();
 
 				token_utxo();
-				token_utxo(const algorithm::asset_id& new_asset, const decimal& new_value);
-				token_utxo(const std::string_view& new_contract_address, const std::string_view& new_symbol, const decimal& new_value, uint8_t new_decimals);
+				expects_lr<void> validate() const;
 				decimal get_divisibility() const;
 				algorithm::asset_id get_asset(const algorithm::asset_id& base_asset) const;
-				bool is_account() const;
 				uint256_t as_hash() const;
-				expects_lr<void> validate() const;
+				static token_utxo legacy(const algorithm::asset_id& new_asset, const decimal& new_value);
+				static token_utxo modern(const std::string_view& new_contract_address, const std::string_view& new_symbol, const decimal& new_value, uint8_t new_decimals);
+			};
+
+			struct standard_type
+			{
+				string transaction_id;
+				uint64_t index = 0;
+			};
+
+			struct account_type
+			{
+				algorithm::asset_id asset = 0;
 			};
 
 			btree_map<uint256_t, token_utxo> tokens;
+			expects<account_type, standard_type> metadata;
 			wallet_link link;
-			string transaction_id;
 			string extra;
 			decimal value;
-			uint64_t index = 0;
 
-			coin_utxo() = default;
-			coin_utxo(wallet_link&& new_link, hash_map<algorithm::asset_id, decimal>&& new_values);
-			coin_utxo(wallet_link&& new_link, const std::string_view& new_transaction_id, uint64_t new_index, decimal&& new_value);
-			void apply_token_value(const std::string_view& contract_address, const std::string_view& symbol, const decimal& value, uint8_t decimals);
-			option<decimal> get_token_value(const std::string_view& contract_address);
+			coin_utxo();
+			void add_standard_metadata(const std::string_view& transaction_id, uint64_t index);
+			void add_account_metadata(const algorithm::asset_id& asset);
+			void add_token_value(token_utxo&& token);
+			option<decimal> get_token_value(const algorithm::asset_id& asset) const;
 			bool store_payload(format::wo_stream* stream) const override;
 			bool load_payload(format::ro_stream& stream) override;
-			bool is_account() const;
 			expects_lr<void> validate_as_input() const;
 			expects_lr<void> validate_as_output() const;
 			algorithm::asset_id get_asset(const algorithm::asset_id& base_asset) const;
@@ -133,6 +165,8 @@ namespace tangent
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
+			static coin_utxo account_utxo(wallet_link&& new_link, const algorithm::asset_id& new_asset, decimal&& new_value, vector<token_utxo>&& new_token_values);
+			static coin_utxo standard_utxo(wallet_link&& new_link, const std::string_view& new_transaction_id, uint64_t new_index, decimal&& new_value, vector<token_utxo>&& new_token_values);
 		};
 
 		struct computed_transaction : ledger::uniform_serializer
@@ -198,10 +232,8 @@ namespace tangent
 
 			prepared_transaction() = default;
 			prepared_transaction& requires_input(algorithm::composition::type new_alg, const algorithm::composition::cpubkey_t& new_public_key, uint8_t* new_message, size_t new_message_size, coin_utxo&& input);
-			prepared_transaction& requires_shared_input(algorithm::composition::type new_alg, const algorithm::composition::cpubkey_t& new_public_key, coin_utxo&& input);
-			prepared_transaction& requires_account_input(algorithm::composition::type new_alg, wallet_link&& new_link, const algorithm::composition::cpubkey_t& new_public_key, uint8_t* new_message, size_t new_message_size, hash_map<algorithm::asset_id, decimal>&& input);
 			prepared_transaction& requires_output(coin_utxo&& output);
-			prepared_transaction& requires_account_output(const std::string_view& to_address, hash_map<algorithm::asset_id, decimal>&& output);
+			prepared_transaction& requires_shared_input(algorithm::composition::type new_alg, const algorithm::composition::cpubkey_t& new_public_key, coin_utxo&& input);
 			prepared_transaction& requires_shared_message(const algorithm::composition::shared_message& shared);
 			prepared_transaction& requires_abi(format::variable&& value);
 			format::variable* load_abi(size_t* ptr);
@@ -254,6 +286,21 @@ namespace tangent
 			void attach_transaction(const algorithm::asset_id& asset, computed_transaction&& computed, uint64_t confirmed_block_height);
 			void finalize_state(const algorithm::asset_id& asset);
 			void report_logs(const algorithm::asset_id& asset, const network_options& options, size_t requests);
+		};
+
+		struct approved_fee : ledger::authentic_serializer
+		{
+			algorithm::asset_id asset;
+			decimal fee = decimal::nan();
+			uint64_t expiry_block_number = 0;
+
+			bool store_payload(format::wo_stream* stream) const override;
+			bool load_payload(format::ro_stream& stream) override;
+			format::tree as_tree() const override;
+			uint32_t as_type() const override;
+			std::string_view as_typename() const override;
+			static uint32_t as_instance_type();
+			static std::string_view as_instance_typename();
 		};
 
 		struct computed_fee
@@ -433,7 +480,7 @@ namespace tangent
 			virtual expects_lr<void> update_utxo(const computed_transaction& computed, const finalized_transaction* finalized);
 			virtual expects_lr<void> receive_utxo(const std::string_view& transaction_id, uint64_t index, uint64_t receiver_block_id, const coin_utxo& output);
 			virtual expects_lr<void> spend_utxo(const std::string_view& transaction_id, uint64_t index, uint64_t spender_block_id);
-			virtual decimal get_utxo_value(const vector<coin_utxo>& values, option<string>&& contract_address);
+			virtual decimal get_utxo_value(const vector<coin_utxo>& values, const algorithm::asset_id& for_asset);
 
 		public:
 			static utxo_translation_unit* from(translation_unit* base);

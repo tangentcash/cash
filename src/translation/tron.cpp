@@ -290,8 +290,8 @@ namespace tangent
 					if (!discovery || discovery->empty())
 						coreturn expects_rt<computed_transaction>(remote_exception("tx not involved"));
 
-					hash_map<string, hash_map<algorithm::asset_id, decimal>> inputs;
-					hash_map<string, hash_map<algorithm::asset_id, decimal>> outputs;
+					hash_map<string, hash_map<algorithm::asset_id, coin_utxo::token_utxo>> inputs;
+					hash_map<string, hash_map<algorithm::asset_id, coin_utxo::token_utxo>> outputs;
 					if (!data.empty())
 					{
 						auto* logs = transaction_data.child("logs");
@@ -322,10 +322,18 @@ namespace tangent
 									to = encode_eth_address(topics->child_var(1).as_blob());
 								}
 
-								auto& token_input = inputs[from][token_asset];
-								auto& token_output = outputs[to][token_asset];
-								token_input = token_input.is_nan() ? token_value : (token_input + token_value);
-								token_output = token_output.is_nan() ? token_value : (token_output + token_value);
+								auto& token_inputs = inputs[from];
+								auto& token_outputs = outputs[to];
+								auto token_input = token_inputs.find(token_asset);
+								auto token_output = token_outputs.find(token_asset);
+								if (token_input == token_inputs.end())
+									token_inputs[token_asset] = coin_utxo::token_utxo::modern(contract_address, algorithm::asset::token_of(token_asset), token_value, (uint8_t)(divisibility.to_string().size() - 1));
+								else
+									token_input->second.value += token_value;
+								if (token_output == token_outputs.end())
+									token_outputs[token_asset] = coin_utxo::token_utxo::modern(contract_address, algorithm::asset::token_of(token_asset), token_value, (uint8_t)(divisibility.to_string().size() - 1));
+								else
+									token_output->second.value += token_value;
 								bridge::get()->enable_contract_address(token_asset, contract_address);
 							}
 						}
@@ -374,10 +382,18 @@ namespace tangent
 
 								auto owner_address = encode_eth_address(raw_owner_address);
 								auto to_address = encode_eth_address(raw_to_address);
-								auto& input_value = inputs[owner_address][native_asset];
-								auto& output_value = outputs[to_address][native_asset];
-								input_value = input_value.is_nan() ? amount : (input_value + amount);
-								output_value = output_value.is_nan() ? amount : (output_value + amount);
+								auto& token_inputs = inputs[owner_address];
+								auto& token_outputs = outputs[to_address];
+								auto token_input = token_inputs.find(native_asset);
+								auto token_output = token_outputs.find(native_asset);
+								if (token_input == token_inputs.end())
+									token_inputs[native_asset] = coin_utxo::token_utxo::modern(std::string_view(), std::string_view(), amount, 0);
+								else
+									token_input->second.value += amount;
+								if (token_output == token_outputs.end())
+									token_outputs[native_asset] = coin_utxo::token_utxo::modern(std::string_view(), std::string_view(), amount, 0);
+								else
+									token_output->second.value += amount;
 							}
 						}
 					}
@@ -389,7 +405,7 @@ namespace tangent
 					if (fee_value.is_positive())
 					{
 						auto& input_value = inputs[from][native_asset];
-						input_value = input_value.is_nan() ? fee_value : (input_value + fee_value);
+						input_value.value = input_value.value.is_nan() ? fee_value : (input_value.value + fee_value);
 					}
 
 					addresses.clear();
@@ -406,16 +422,34 @@ namespace tangent
 					result.reverted = (!receipt_result.empty() && receipt_result != "SUCCESS") || (!tx_result.empty() && tx_result != "SUCCESS");
 					for (auto& [address, values] : inputs)
 					{
+						auto native_utxo = values.find(native_asset);
+						auto native_value = native_utxo != values.end() ? native_utxo->second.value : decimal::zero();
 						auto target_link = discovery->find(address);
-						auto input = coin_utxo(target_link != discovery->end() ? target_link->second : wallet_link::from_address(address), std::move(values));
-						result.add_input(std::move(input));
+						auto link = target_link != discovery->end() ? target_link->second : wallet_link::from_address(address);
+						auto token_utxos = vector<coin_utxo::token_utxo>();
+						for (auto& [asset, token] : values)
+						{
+							if (asset != native_asset && token.value.is_positive())
+								token_utxos.push_back(std::move(token));
+						}
+						if (native_value.is_positive() || !token_utxos.empty())
+							result.add_input(coin_utxo::account_utxo(std::move(link), native_asset, std::move(native_value), std::move(token_utxos)));
 					}
 
 					for (auto& [address, values] : outputs)
 					{
+						auto native_utxo = values.find(native_asset);
+						auto native_value = native_utxo != values.end() ? native_utxo->second.value : decimal::zero();
 						auto target_link = discovery->find(address);
-						auto output = coin_utxo(target_link != discovery->end() ? target_link->second : wallet_link::from_address(address), std::move(values));
-						result.add_output(std::move(output));
+						auto link = target_link != discovery->end() ? target_link->second : wallet_link::from_address(address);
+						auto token_utxos = vector<coin_utxo::token_utxo>();
+						for (auto& [asset, token] : values)
+						{
+							if (asset != native_asset && token.value.is_positive())
+								token_utxos.push_back(std::move(token));
+						}
+						if (native_value.is_positive() || !token_utxos.empty())
+							result.add_output(coin_utxo::account_utxo(std::move(link), native_asset, std::move(native_value), std::move(token_utxos)));
 					}
 
 					auto* calldata = details->child("raw_data.data");
@@ -556,7 +590,8 @@ namespace tangent
 						coreturn expects_rt<prepared_transaction>(remote_exception(std::move(public_key.error().message())));
 
 					auto to_value = to.value;
-					to_value.truncate((uint32_t)divisibility.to_string().size() - 1);
+					auto to_decimals = (uint8_t)divisibility.to_string().size() - 1;
+					to_value.truncate(to_decimals);
 					if (!contract_address)
 						total_value = to_value + fee_value;
 
@@ -569,10 +604,16 @@ namespace tangent
 					auto transaction = tx_serialize(*block_header, eth_contract_address, eth_like_from_address, eth_like_to_address, eth_to_address, eth_value, fee_limit);
 					prepared_transaction result;
 					if (contract_address)
-						result.requires_account_input(algorithm::composition::type::secp256k1, wallet_link(from_link), *public_key, (uint8_t*)transaction.raw_transaction_id.data(), transaction.raw_transaction_id.size(), { { to.asset, to_value }, { native_asset, fee_value } });
+					{
+						auto token_utxo = coin_utxo::token_utxo::modern(*contract_address, algorithm::asset::token_of(to.asset), to_value, to_decimals);
+						result.requires_input(algorithm::composition::type::secp256k1, *public_key, (uint8_t*)transaction.raw_transaction_id.data(), transaction.raw_transaction_id.size(), coin_utxo::account_utxo(wallet_link(from_link), native_asset, decimal(fee_value), { token_utxo }));
+						result.requires_output(coin_utxo::account_utxo(wallet_link::from_address(to.address), native_asset, decimal::zero(), { token_utxo }));
+					}
 					else
-						result.requires_account_input(algorithm::composition::type::secp256k1, wallet_link(from_link), *public_key, (uint8_t*)transaction.raw_transaction_id.data(), transaction.raw_transaction_id.size(), { { native_asset, total_value } });
-					result.requires_account_output(to.address, { { to.asset, to_value } });
+					{
+						result.requires_input(algorithm::composition::type::secp256k1, *public_key, (uint8_t*)transaction.raw_transaction_id.data(), transaction.raw_transaction_id.size(), coin_utxo::account_utxo(wallet_link(from_link), native_asset, decimal(total_value), { }));
+						result.requires_output(coin_utxo::account_utxo(wallet_link::from_address(to.address), native_asset, decimal(to_value), { }));
+					}
 					result.requires_abi(format::variable(contract_address.or_else(string())));
 					result.requires_abi(format::variable(block_header->ref_block_bytes));
 					result.requires_abi(format::variable(block_header->ref_block_hash));

@@ -328,12 +328,10 @@ namespace tangent
 						uint64_t output_index = 0;
 						for (auto& output : tx_outputs->childs())
 						{
-							coin_utxo new_output;
-							new_output.transaction_id = tx.transaction_id;
-							new_output.value = output.child_var("value").as_decimal();
-							new_output.index = output.has("n") ? output.child_var("n").as_uint64() : output_index;
-							if (new_output.index > (uint64_t)tx.outputs.size())
-								new_output.index = output_index;
+							coin_utxo new_output = coin_utxo::standard_utxo(wallet_link(), tx.transaction_id, output.has("n") ? output.child_var("n").as_uint64() : output_index, output.child_var("value").as_decimal(), { });
+							auto& new_utxo = new_output.metadata.error();
+							if (new_utxo.index > (uint64_t)tx.outputs.size())
+								new_utxo.index = output_index;
 
 							bool is_standard_output = true;
 							auto receiver_addresses = get_output_addresses(output, &is_standard_output);
@@ -371,10 +369,7 @@ namespace tangent
 						if (!null_address)
 							coreturn expects_rt<computed_transaction>(remote_exception(std::move(null_address.error().message())));
 
-						coin_utxo new_input;
-						new_input.transaction_id = tx.transaction_id + "!";
-						new_input.index = (uint32_t)tx.inputs.size();
-						new_input.link = wallet_link::from_address(*null_address);
+						coin_utxo new_input = coin_utxo::standard_utxo(wallet_link::from_address(*null_address), tx.transaction_id + "!", (uint32_t)tx.inputs.size(), decimal::zero(), { });
 						for (auto& [hash, input] : tx.inputs)
 							new_input.value -= input.value;
 						for (auto& [hash, output] : tx.outputs)
@@ -409,7 +404,7 @@ namespace tangent
 			expects_promise_rt<computed_fee> bitcoin::estimate_transaction_fee(const wallet_link& from_link, const value_transfer& to)
 			{
 				auto inputs = calculate_utxo(from_link, balance_query(to.value, { }));
-				decimal input_value = inputs ? get_utxo_value(*inputs, optional::none) : 0.0;
+				decimal input_value = inputs ? get_utxo_value(*inputs, native_asset) : 0.0;
 				if (!inputs || inputs->empty())
 					return expects_promise_rt<computed_fee>(remote_exception(stringify::text("insufficient funds: %s < %s", input_value.to_string().c_str(), to.value.to_string().c_str())));
 
@@ -636,15 +631,15 @@ namespace tangent
 					auto to_value = this->to_value(to.value);
 					auto total_value = to_value + fee_value;
 					auto possible_inputs = calculate_utxo(from_link, balance_query(total_value, { }));
-					decimal input_value = possible_inputs ? get_utxo_value(*possible_inputs, optional::none) : 0.0;
+					decimal input_value = possible_inputs ? get_utxo_value(*possible_inputs, native_asset) : 0.0;
 					if (!possible_inputs || possible_inputs->empty())
 						return expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", input_value.to_string().c_str(), total_value.to_string().c_str())));
 
 					auto to_link = find_linked_addresses({ to.address });
 					prepared_transaction result;
-					result.requires_output(coin_utxo(to_link ? std::move(to_link->begin()->second) : wallet_link::from_address(to.address), string(), (uint32_t)result.outputs.size(), decimal(to_value)));
+					result.requires_output(coin_utxo::standard_utxo(to_link ? std::move(to_link->begin()->second) : wallet_link::from_address(to.address), std::string_view(), 0, decimal(to_value), { }));
 					if (input_value > total_value)
-						result.requires_output(coin_utxo(wallet_link(possible_inputs->front().link), string(), (uint32_t)result.outputs.size(), decimal(input_value - total_value)));
+						result.requires_output(coin_utxo::standard_utxo(wallet_link(possible_inputs->front().link), std::string_view(), 1, decimal(input_value - total_value), { }));
 
 					btc_tx_context context;
 					for (auto& output : result.outputs)
@@ -1227,10 +1222,10 @@ namespace tangent
 						break;
 				}
 
-				if (script_type == BTC_TX_INVALID)
+				if (script_type == BTC_TX_INVALID || output.metadata)
 					return layer_exception("invalid transaction input");
 				
-				string raw_transaction_id = codec::hex_decode(output.transaction_id);
+				string raw_transaction_id = codec::hex_decode(output.metadata.error().transaction_id);
 				std::reverse(raw_transaction_id.begin(), raw_transaction_id.end());
 				
 				context.public_keys.push_back(string((char*)public_key.pubkey, (size_t)public_key_size));
@@ -1241,7 +1236,7 @@ namespace tangent
 				btc_tx_in* input = btc_tx_in_new();
 				memcpy(input->prevout.hash, raw_transaction_id.c_str(), sizeof(input->prevout.hash));
 				input->script_sig = cstr_new_sz(128);
-				input->prevout.n = (uint32_t)output.index;
+				input->prevout.n = (uint32_t)output.metadata.error().index;
 				vector_add(context.state->vin, input);
 				return expectation::met;
 			}
@@ -1332,13 +1327,9 @@ namespace tangent
 					if (!vout)
 						return expects_rt<coin_utxo>(remote_exception("transaction does not have specified utxo"));
 
-					coin_utxo input;
-					input.transaction_id = std::move(ref_transaction_id);
-					input.value = vout->child_var("value").as_decimal();
-					input.index = index;
-
 					bool is_allowed = true;
 					auto addresses = get_output_addresses(*vout, &is_allowed);
+					auto input = coin_utxo::standard_utxo(wallet_link(), ref_transaction_id, index, vout->child_var("value").as_decimal(), { });
 					if (is_allowed && !addresses.empty())
 					{
 						auto discovery = find_linked_addresses(addresses);
@@ -1347,7 +1338,6 @@ namespace tangent
 						else
 							input.link = wallet_link::from_address(*addresses.begin());
 					}
-
 					return expects_rt<coin_utxo>(std::move(input));
 				});
 			}
@@ -1670,7 +1660,7 @@ namespace tangent
 			expects_promise_rt<computed_fee> bitcoin_sv::estimate_transaction_fee(const wallet_link& from_link, const value_transfer& to)
 			{
 				auto inputs = calculate_utxo(from_link, balance_query(to.value, { }));
-				decimal input_value = inputs ? get_utxo_value(*inputs, optional::none) : 0.0;
+				decimal input_value = inputs ? get_utxo_value(*inputs, native_asset) : 0.0;
 				if (!inputs || inputs->empty())
 					return expects_promise_rt<computed_fee>(remote_exception(stringify::text("insufficient funds: %s < %s", input_value.to_string().c_str(), to.value.to_string().c_str())));
 
@@ -1898,7 +1888,7 @@ namespace tangent
 			expects_promise_rt<computed_fee> zcash::estimate_transaction_fee(const wallet_link& from_link, const value_transfer& to)
 			{
 				auto inputs = calculate_utxo(from_link, balance_query(to.value, { }));
-				decimal input_value = inputs ? get_utxo_value(*inputs, optional::none) : 0.0;
+				decimal input_value = inputs ? get_utxo_value(*inputs, native_asset) : 0.0;
 				if (!inputs || inputs->empty())
 					return expects_promise_rt<computed_fee>(remote_exception(stringify::text("insufficient funds: %s < %s", input_value.to_string().c_str(), to.value.to_string().c_str())));
 

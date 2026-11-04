@@ -13,6 +13,12 @@ namespace tangent
 			class solana : public translation_unit
 			{
 			public:
+				struct amount_decimals
+				{
+					decimal amount = decimal::nan();
+					uint8_t decimals = 0;
+				};
+
 				struct token_account
 				{
 					string mint;

@@ -363,11 +363,7 @@ namespace tangent
 									else
 										value = from_baseline_value(output.amount);
 
-									coin_utxo new_output;
-									new_output.transaction_id = result.transaction_id;
-									new_output.link = link.second;
-									new_output.value = std::move(value);
-									new_output.index = (uint64_t)i;
+									coin_utxo new_output = coin_utxo::standard_utxo(wallet_link(link.second), result.transaction_id, (uint64_t)i, std::move(value), { });
 									pack_prev_out(new_output, out);
 									result.add_output(std::move(new_output));
 									unresolved_outputs.erase(i);
@@ -392,10 +388,11 @@ namespace tangent
 
 					for (auto& [hash, output] : result.outputs)
 					{
-						auto out = output.index < indices->size() ? unpack_prev_out(output) : option<unsigned_transaction::txin_to_key::out>(optional::none);
+						auto& utxo = output.metadata.error();
+						auto out = utxo.index < indices->size() ? unpack_prev_out(output) : option<unsigned_transaction::txin_to_key::out>(optional::none);
 						if (out)
 						{
-							out->index = indices->at(output.index);
+							out->index = indices->at(utxo.index);
 							pack_prev_out(output, *out);
 						}
 					}
@@ -408,30 +405,21 @@ namespace tangent
 						receiving_value += output.value;
 
 					uint8_t null_key[64] = { 0 };
+					auto null_link = wallet_link::from_address(encode_address(std::string_view((char*)null_key, sizeof(null_key))).or_else(string()));
 					if (sending_value < receiving_value)
 					{
-						coin_utxo new_input;
-						new_input.transaction_id = algorithm::asset::handle_of(native_asset);
-						new_input.index = std::numeric_limits<uint32_t>::max();
-						new_input.link = wallet_link::from_address(encode_address(std::string_view((char*)null_key, sizeof(null_key))).or_else(string()));
-						new_input.value = pseudo.fee + receiving_value - sending_value;
+						auto new_input = coin_utxo::standard_utxo(std::move(null_link), result.transaction_id + "!", (uint32_t)result.inputs.size(), pseudo.fee + receiving_value - sending_value, { });
 						result.add_input(std::move(new_input));
 					}
 					else if (sending_value > receiving_value)
 					{
-						coin_utxo new_output;
-						new_output.transaction_id = algorithm::asset::handle_of(native_asset);
-						new_output.index = std::numeric_limits<uint32_t>::max();
-						new_output.value = sending_value - receiving_value - pseudo.fee;
-						auto ref = offchain->load_cache(native_asset, cache_policy::lifetime_cache, string("T").append(result.transaction_id));
-						auto to_address = ref ? ref->value.as_blob() : string();
+						auto new_output = coin_utxo::standard_utxo(std::move(null_link), result.transaction_id + "!", (uint32_t)result.inputs.size(), sending_value - receiving_value - pseudo.fee, { });
+						auto to_address = offchain->load_cache(native_asset, cache_policy::lifetime_cache, string("T").append(result.transaction_id)).or_else(format::tree()).value.as_blob();
 						if (!to_address.empty() && decode_address(to_address))
 						{
 							auto to_link = find_linked_addresses({ to_address });
 							new_output.link = to_link ? std::move(to_link->begin()->second) : wallet_link::from_address(to_address);
 						}
-						else
-							new_output.link = wallet_link::from_address(encode_address(std::string_view((char*)null_key, sizeof(null_key))).or_else(string()));
 						result.add_output(std::move(new_output));
 					}
 					coreturn expects_rt<computed_transaction>(std::move(result));
@@ -516,7 +504,7 @@ namespace tangent
 					auto to_value = this->to_value(to.value);
 					auto total_value = to_value + fee_value;
 					auto possible_inputs = calculate_utxo(from_link, balance_query(total_value, { }), true);
-					decimal input_value = possible_inputs ? get_utxo_value(*possible_inputs, optional::none) : 0.0;
+					decimal input_value = possible_inputs ? get_utxo_value(*possible_inputs, native_asset) : 0.0;
 					if (!possible_inputs || possible_inputs->empty())
 					{
 						auto unconfirmed_inputs = calculate_utxo(from_link, balance_query(total_value, { }), false);
@@ -796,9 +784,9 @@ namespace tangent
 					}
 
 					auto to_link = find_linked_addresses({ to.address });
-					result.requires_output(coin_utxo(to_link ? std::move(to_link->begin()->second) : wallet_link::from_address(to.address), string(), 0, decimal(to_value)));
+					result.requires_output(coin_utxo::standard_utxo(to_link ? std::move(to_link->begin()->second) : wallet_link::from_address(to.address), std::string_view(), 0, decimal(to_value), { }));
 					if (change_value.is_positive())
-						result.requires_output(coin_utxo(wallet_link(change_link), string(), 1, decimal(change_value)));
+						result.requires_output(coin_utxo::standard_utxo(wallet_link(change_link), std::string_view(), 1, decimal(change_value), { }));
 					coreturn expects_rt<prepared_transaction>(std::move(result));
 				});
 			}
@@ -857,7 +845,7 @@ namespace tangent
 				for (size_t i = 0; i < tx.vin.size(); i++)
 				{
 					auto& utxo = result.prepared.inputs[i];
-					if (utxo.utxo.transaction_id.empty())
+					if (utxo.utxo.metadata || utxo.utxo.metadata.error().transaction_id.empty())
 						return layer_exception("invalid input utxo");
 				}
 
@@ -878,12 +866,13 @@ namespace tangent
 							for (size_t i = 0; i < tx.vin.size(); i++)
 							{
 								auto& utxo = finalized->prepared.inputs[i];
-								if (!utxo.utxo.transaction_id.empty())
+								if (!utxo.utxo.metadata && !utxo.utxo.metadata.error().transaction_id.empty())
 								{
 									auto& vin = tx.vin[i];
+									auto& utxo_m = utxo.utxo.metadata.error();
 									auto message = format::wo_stream();
-									message.write_string(utxo.utxo.transaction_id);
-									message.write_integer(utxo.utxo.index);
+									message.write_string(utxo_m.transaction_id);
+									message.write_integer(utxo_m.index);
 									offchain->store_cache(native_asset, cache_policy::lifetime_cache, string("K").append(codec::base64_encode(std::string_view((char*)vin.key_image, sizeof(vin.key_image)))), format::variable(message.data));
 								}
 							}
