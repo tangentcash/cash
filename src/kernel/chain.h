@@ -26,7 +26,7 @@ namespace tangent
 		ELEMENTS_BULK = 1 << 9,
 		ELEMENTS_MANY = 1 << 12,
 		ELEMENTS_HUGE = 1 << 17,
-		FORK_VERSION = 7,
+		FORK_VERSION = 8,
 		PATCH_VERSION = 0
 	};
 
