@@ -1626,5 +1626,86 @@ namespace tangent
 
 			return result;
 		}
+		void merkle_stream::push(const uint256_t& value)
+		{
+			auto index = leaves++;
+			entry next{value, false, true};
+			if (target != nullptr && !found && value == *target)
+			{
+				found = true;
+				target_index = index;
+				next.target = true;
+			}
+
+			uint64_t height = 0;
+			while (true)
+			{
+				if (heights.size() <= height)
+					heights.resize((size_t)height + 1);
+
+				if (!heights[(size_t)height].used)
+				{
+					heights[(size_t)height] = next;
+					break;
+				}
+
+				auto& left = heights[(size_t)height];
+				if (left.target ^ next.target)
+					branch.push_back(left.target ? next.hash : left.hash);
+
+				next.hash = hashing::sha256ci(left.hash, next.hash);
+				next.target = left.target || next.target;
+				left.used = false;
+				++height;
+			}
+		}
+		uint256_t merkle_stream::finalize()
+		{
+			size_t level = 0;
+			while (level < heights.size() && !heights[level].used)
+				level++;
+
+			if (level >= heights.size())
+				return uint256_t(0);
+
+			uint64_t remaining = 0;
+			for (size_t i = 0; i < heights.size(); i++)
+				if (heights[i].used)
+					remaining++;
+
+			entry carry = heights[level];
+			heights[level].used = false;
+			remaining--;
+
+			while (remaining)
+			{
+				if (level < heights.size() && heights[level].used)
+				{
+					auto left = heights[level];
+					heights[level].used = false;
+					remaining--;
+
+					if (left.target ^ carry.target)
+						branch.push_back(left.target ? carry.hash : left.hash);
+
+					carry.hash = hashing::sha256ci(left.hash, carry.hash);
+					carry.target = left.target || carry.target;
+				}
+				else
+				{
+					if (carry.target)
+						branch.push_back(carry.hash);
+
+					carry.hash = hashing::sha256ci(carry.hash, carry.hash);
+				}
+
+				level++;
+			}
+
+			if (found && leaves == 1)
+				target_index = std::numeric_limits<uint64_t>::max();
+
+			return carry.hash;
+		}
 	}
 }

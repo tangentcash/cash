@@ -24,10 +24,55 @@ namespace tangent
 			std::mutex mutex;
 		};
 
+		struct secp256k1_beta_state_t
+		{
+			zk_paillier_key_proof key_proof;
+			zk_paillier_range_proof k_range_proof;
+			zk_paillier_range_proof s_range_proof;
+			paillier_pubkey paillier_public_key;
+			std::condition_variable wake;
+			std::mutex lock;
+			mpz_t x_d_j, y_d_j;
+			size_t index = 0;
+			int8_t imports = -1;
+			int8_t verified_key = -1;
+			int8_t verified_k = -1;
+			int8_t verified_s = -1;
+			int8_t hom_x = -1;
+			int8_t hom_y = -1;
+			string x_out;
+			string y_out;
+		};
+
 		typedef void(*gmp_free_t)(void*, size_t);
 		static gmp_free_t gmp_free = nullptr;
 		static secp256k1_cache_t* secp256k1_cache = nullptr;
 
+		template <typename function>
+		static void secp256k1_compute(secp256k1_beta_state_t* beta, function callback)
+		{
+			if (schedule::is_available(difficulty::sync))
+			{
+				schedule::get()->set_task([beta, callback]()
+				{
+					callback();
+					if (beta != nullptr)
+					{
+						std::unique_lock<std::mutex> unique(beta->lock);
+						beta->wake.notify_one();
+					}
+				}, false);
+			}
+			else
+			{
+				callback();
+				if (beta != nullptr)
+				{
+					std::unique_lock<std::mutex> unique(beta->lock);
+					beta->wake.notify_one();
+				}
+			}
+		};
 		inline bool mpz_import_buffer(const uint8_t* data, size_t size, mpz_t value, bool le = false)
 		{
 			if (!size || size > 4096)
@@ -2395,9 +2440,10 @@ namespace tangent
 					if (secp256k1_nonce_function_rfc6979(nonce, message_hash, ask, nullptr, index_nonce, 0) == 1)
 					{
 						paillier_sha3_512n(nonce, sizeof(nonce), (uint8_t*)mask.data(), mask.size());
+						mask.front() |= 0x80;
+						mask.back() |= 0x01;
 						mpz_import(output, mask.size(), 1, 1, 1, 0, mask.data());
-						if (mpz_odd_p(output) != 0 && m_bits == (size_t)mpz_sizeinbase(output, 2))
-							break;
+						break;
 					}
 					++index;
 				}
@@ -2585,100 +2631,131 @@ namespace tangent
 
 				auto i = d_steps - 1;
 				auto& factor = factors[i];
-				auto betas = vector<beta_state>();
-				betas.reserve(factors.size());
+				auto* cache = get_secp256k1_cache();
+				auto betas = double_queue<secp256k1_beta_state_t>();
 				for (size_t j = 0; j < factors.size(); j++)
 				{
 					if (i != j || factors.size() == 1)
 						betas.emplace_back().index = j;
 				}
 
-				auto* cache = get_secp256k1_cache();
-				parallel::wait_all(parallel::for_each(betas.begin(), betas.end(), 1, [&](beta_state& state)
-				{
-					size_t j = state.index;
-					auto& jfactor = factors[j];
-					paillier_pubkey paillier_public_key;
-					paillier_pubkey_init(&paillier_public_key);
-					auto key_import = paillier_load_public_key(jfactor.setup.public_key, &paillier_public_key, n_bits);
-					if (key_import)
-					{
-						mpz_t x_d_j, y_d_j;
-						mpz_init(x_d_j);
-						mpz_init(y_d_j);
-						bool x_d_j_import = mpz_import_buffer(jfactor.setup.encrypted_k.data(), jfactor.setup.encrypted_k.size(), x_d_j);
-						bool y_d_j_import = mpz_import_buffer(jfactor.setup.encrypted_s.data(), jfactor.setup.encrypted_s.size(), y_d_j);
-						if (x_d_j_import && y_d_j_import)
-						{
-							zk_paillier_key_proof key_proof;
-							zk_paillier_range_proof k_range_proof, s_range_proof;
-							zk_paillier_key_proof_init(&key_proof);
-							zk_paillier_range_proof_init(&k_range_proof);
-							zk_paillier_range_proof_init(&s_range_proof);
-							bool key_proven = zk_paillier_load_key_proof(jfactor.setup.public_key_proof, &key_proof) && zk_paillier_verify_key(&key_proof, &paillier_public_key, &cache->zk) == 1;
-							bool k_range_proven = zk_paillier_load_range_proof(jfactor.setup.encrypted_k_proof, &k_range_proof) && zk_paillier_verify_range(&k_range_proof, x_d_j, &paillier_public_key, &cache->zk) == 1;
-							bool s_range_proven = zk_paillier_load_range_proof(jfactor.setup.encrypted_s_proof, &s_range_proof) && zk_paillier_verify_range(&s_range_proof, y_d_j, &paillier_public_key, &cache->zk) == 1;
-							zk_paillier_range_proof_clear(&s_range_proof);
-							zk_paillier_range_proof_clear(&k_range_proof);
-							zk_paillier_key_proof_clear(&key_proof);
-							if (key_proven && k_range_proven && s_range_proven)
-							{
-								format::wo_stream x_b_domain, y_b_domain;
-								x_b_domain.write_integer((uint16_t)j);
-								x_b_domain.write_string("X_BLINDING_MASK");
-								y_b_domain.write_integer((uint16_t)j);
-								y_b_domain.write_string("Y_BLINDING_MASK");
-
-								mpz_t x_b_j, y_b_j;
-								mpz_init(x_b_j);
-								mpz_init(y_b_j);
-								build_m(x_b_domain.data, m2_bits, x_b_j);
-								build_m(y_b_domain.data, m2_bits, y_b_j);
-								mpz_sub(x_b_j, paillier_public_key.n, x_b_j);
-								mpz_sub(y_b_j, paillier_public_key.n, y_b_j);
-								if (x_d_j_import && y_d_j_import)
-								{
-									paillier_homomorphic_mulc(x_d_j, x_d_j, g_mask, &paillier_public_key);
-									paillier_homomorphic_mulc(y_d_j, y_d_j, g_mask, &paillier_public_key);
-									bool x_d_j_add = paillier_homomorphic_addc(x_d_j, x_d_j, x_b_j, &paillier_public_key) == 0;
-									bool y_d_j_add = paillier_homomorphic_addc(y_d_j, y_d_j, y_b_j, &paillier_public_key) == 0;
-									if (x_d_j_add && !jfactor.aggregate.encrypted_x_d.empty())
-									{
-										x_d_j_add = x_d_j_add && mpz_import_buffer(jfactor.aggregate.encrypted_x_d.data(), jfactor.aggregate.encrypted_x_d.size(), x_b_j);
-										paillier_homomorphic_add(x_d_j, x_d_j, x_b_j, &paillier_public_key);
-									}
-									if (y_d_j_add && !jfactor.aggregate.encrypted_y_d.empty())
-									{
-										y_d_j_add = y_d_j_add && mpz_import_buffer(jfactor.aggregate.encrypted_y_d.data(), jfactor.aggregate.encrypted_y_d.size(), y_b_j);
-										paillier_homomorphic_add(y_d_j, y_d_j, y_b_j, &paillier_public_key);
-									}
-
-									auto x_d_j_export = mpz_export_buffer(x_d_j), y_d_j_export = mpz_export_buffer(y_d_j);
-									if (x_d_j_add && y_d_j_add && !x_d_j_export.empty() && !y_d_j_export.empty())
-									{
-										jfactor.aggregate.encrypted_x_d.resize(x_d_j_export.size());
-										jfactor.aggregate.encrypted_y_d.resize(y_d_j_export.size());
-										memcpy(jfactor.aggregate.encrypted_x_d.data(), x_d_j_export.data(), x_d_j_export.size());
-										memcpy(jfactor.aggregate.encrypted_y_d.data(), y_d_j_export.data(), y_d_j_export.size());
-										state.sanity_check = true;
-									}
-								}
-								mpz_clear(x_b_j);
-								mpz_clear(y_b_j);
-							}
-						}
-						mpz_clear(x_d_j);
-						mpz_clear(y_d_j);
-					}
-					paillier_pubkey_clear(&paillier_public_key);
-				}));
-
-				mpz_clear(g_mask);
 				for (auto& state : betas)
 				{
-					if (!state.sanity_check)
-						return layer_exception("invalid k/s scalars and/or range proofs, beta factors and/or paillier modulus, paillier key proof");
+					auto* beta = &state;
+					secp256k1_compute(nullptr, [&, beta]()
+					{
+						auto& jfactor = factors[beta->index];
+						mpz_init(beta->x_d_j);
+						mpz_init(beta->y_d_j);
+						paillier_pubkey_init(&beta->paillier_public_key);
+						zk_paillier_key_proof_init(&beta->key_proof);
+						zk_paillier_range_proof_init(&beta->k_range_proof);
+						zk_paillier_range_proof_init(&beta->s_range_proof);
+						beta->imports =
+							paillier_load_public_key(jfactor.setup.public_key, &beta->paillier_public_key, n_bits) &&
+							mpz_import_buffer(jfactor.setup.encrypted_k.data(), jfactor.setup.encrypted_k.size(), beta->x_d_j) &&
+							mpz_import_buffer(jfactor.setup.encrypted_s.data(), jfactor.setup.encrypted_s.size(), beta->y_d_j) &&
+							zk_paillier_load_key_proof(jfactor.setup.public_key_proof, &beta->key_proof) &&
+							zk_paillier_load_range_proof(jfactor.setup.encrypted_k_proof, &beta->k_range_proof) &&
+							zk_paillier_load_range_proof(jfactor.setup.encrypted_s_proof, &beta->s_range_proof) ? 1 : 0;
+						secp256k1_compute(beta, [&, beta]() { beta->verified_key = beta->imports == 1 && zk_paillier_verify_key(&beta->key_proof, &beta->paillier_public_key, &cache->zk) == 1 ? 1 : 0; });
+						secp256k1_compute(beta, [&, beta]() { beta->verified_k = beta->imports == 1 && zk_paillier_verify_range(&beta->k_range_proof, beta->x_d_j, &beta->paillier_public_key, &cache->zk) == 1 ? 1 : 0; });
+						secp256k1_compute(beta, [&, beta]() { beta->verified_s = beta->imports == 1 && zk_paillier_verify_range(&beta->s_range_proof, beta->y_d_j, &beta->paillier_public_key, &cache->zk) == 1 ? 1 : 0; });
+						secp256k1_compute(beta, [&, beta, j = beta->index]()
+						{
+							if (beta->imports != 1)
+							{
+								beta->hom_x = 0;
+								return;
+							}
+
+							format::wo_stream x_b_domain;
+							x_b_domain.write_integer((uint16_t)j);
+							x_b_domain.write_string("X_BLINDING_MASK");
+
+							mpz_t x_b_j, x_d_j;
+							mpz_init(x_b_j);
+							mpz_init_set(x_d_j, beta->x_d_j);
+							build_m(x_b_domain.data, m2_bits, x_b_j);
+							mpz_sub(x_b_j, beta->paillier_public_key.n, x_b_j);
+							paillier_homomorphic_mulc(x_d_j, x_d_j, g_mask, &beta->paillier_public_key);
+
+							auto& jfactor = factors[beta->index];
+							bool x_d_j_add = paillier_homomorphic_addc(x_d_j, x_d_j, x_b_j, &beta->paillier_public_key) == 0;
+							if (x_d_j_add && !jfactor.aggregate.encrypted_x_d.empty())
+							{
+								x_d_j_add = mpz_import_buffer(jfactor.aggregate.encrypted_x_d.data(), jfactor.aggregate.encrypted_x_d.size(), x_b_j);
+								if (x_d_j_add)
+									paillier_homomorphic_add(x_d_j, x_d_j, x_b_j, &beta->paillier_public_key);
+							}
+
+							beta->x_out = mpz_export_buffer(x_d_j);
+							beta->hom_x = (x_d_j_add && !beta->x_out.empty()) ? 1 : 0;
+							mpz_clear(x_b_j);
+							mpz_clear(x_d_j);
+						});
+						secp256k1_compute(beta, [&, beta, j = beta->index]()
+						{
+							if (beta->imports != 1)
+							{
+								beta->hom_y = 0;
+								return;
+							}
+
+							format::wo_stream y_b_domain;
+							y_b_domain.write_integer((uint16_t)j);
+							y_b_domain.write_string("Y_BLINDING_MASK");
+
+							mpz_t y_b_j, y_d_j;
+							mpz_init(y_b_j);
+							mpz_init_set(y_d_j, beta->y_d_j);
+							build_m(y_b_domain.data, m2_bits, y_b_j);
+							mpz_sub(y_b_j, beta->paillier_public_key.n, y_b_j);
+							paillier_homomorphic_mulc(y_d_j, y_d_j, g_mask, &beta->paillier_public_key);
+
+							auto& jfactor = factors[beta->index];
+							bool y_d_j_add = paillier_homomorphic_addc(y_d_j, y_d_j, y_b_j, &beta->paillier_public_key) == 0;
+							if (y_d_j_add && !jfactor.aggregate.encrypted_y_d.empty())
+							{
+								y_d_j_add = mpz_import_buffer(jfactor.aggregate.encrypted_y_d.data(), jfactor.aggregate.encrypted_y_d.size(), y_b_j);
+								if (y_d_j_add)
+									paillier_homomorphic_add(y_d_j, y_d_j, y_b_j, &beta->paillier_public_key);
+							}
+
+							beta->y_out = mpz_export_buffer(y_d_j);
+							beta->hom_y = (y_d_j_add && !beta->y_out.empty()) ? 1 : 0;
+							mpz_clear(y_b_j);
+							mpz_clear(y_d_j);
+						});
+					});
 				}
+
+				bool passed = true;
+				for (auto& state : betas)
+				{
+					std::unique_lock<std::mutex> unique(state.lock);
+					while (!state.wake.wait_for(unique, std::chrono::milliseconds(10), [&]()
+					{
+						return state.imports != -1 && state.verified_key != -1 && state.verified_k != -1 && state.verified_s != -1 && state.hom_x != -1 && state.hom_y != -1;
+					}));
+
+					auto& aggregate = factors[state.index].aggregate;
+					passed = passed && state.imports == 1 && state.verified_key == 1 && state.verified_k == 1 && state.verified_s == 1 && state.hom_x == 1 && state.hom_y == 1;
+					aggregate.encrypted_x_d.resize(state.x_out.size());
+					aggregate.encrypted_y_d.resize(state.y_out.size());
+					memcpy(aggregate.encrypted_x_d.data(), state.x_out.data(), state.x_out.size());
+					memcpy(aggregate.encrypted_y_d.data(), state.y_out.data(), state.y_out.size());
+					paillier_pubkey_clear(&state.paillier_public_key);
+					zk_paillier_key_proof_clear(&state.key_proof);
+					zk_paillier_range_proof_clear(&state.k_range_proof);
+					zk_paillier_range_proof_clear(&state.s_range_proof);
+					mpz_clear(state.x_d_j);
+					mpz_clear(state.y_d_j);
+				}
+
+				mpz_clear(g_mask);
+				if (!passed)
+					return layer_exception("invalid k/s scalars and/or range proofs, beta factors and/or paillier modulus, paillier key proof");
 
 				if (!--d_steps)
 				{
@@ -2724,8 +2801,11 @@ namespace tangent
 				bool order_import = mpz_import_buffer(order_buffer, sizeof(order_buffer), order);
 				bool x_d_import = mpz_import_buffer(factor.aggregate.encrypted_x_d.data(), factor.aggregate.encrypted_x_d.size(), x_d_ciphertext);
 				bool y_d_import = mpz_import_buffer(factor.aggregate.encrypted_y_d.data(), factor.aggregate.encrypted_y_d.size(), y_d_ciphertext);
-				paillier_decrypt(x_d_plaintext, x_d_ciphertext, &paillier_secret_key);
-				paillier_decrypt(y_d_plaintext, y_d_ciphertext, &paillier_secret_key);
+				parallel::wait_all(parallel::enqueue_all(
+				{
+					[&]() { paillier_decrypt(x_d_plaintext, x_d_ciphertext, &paillier_secret_key); },
+					[&]() { paillier_decrypt(y_d_plaintext, y_d_ciphertext, &paillier_secret_key); }
+				}));
 				paillier_pubkey_clear(&paillier_public_key);
 				paillier_seckey_clear(&paillier_secret_key);
 				mpz_mod(x_d_plaintext, x_d_plaintext, order);

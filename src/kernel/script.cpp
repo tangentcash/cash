@@ -13,6 +13,7 @@ extern "C"
 #define SCRIPT_QUERY_PREFETCH 16
 #define SCRIPT_TAG_MUTABLE_PROGRAM 19190
 #define SCRIPT_TAG_IMMUTABLE_PROGRAM 19191
+#define SCRIPT_TYPE_SEND_QUOTA "send_quota"
 #define SCRIPT_TYPE_PAYABLE "payable"
 #define SCRIPT_TYPE_ADDRESS "address"
 #define SCRIPT_TYPE_STRING "string"
@@ -4005,6 +4006,36 @@ namespace tangent
 			if (!status)
 				return contract::throw_ptr(exception_repr(exception_repr::category::argument(), stringify::text("event %.*s[%i] load failed", (int)name.size(), name.data(), event_index)));
 		}
+		void contract::send_quota_set_signature(void* custom_quote, const string_repr& signature)
+		{
+			auto& custom_quote_ref = *(transactions::withdraw::custom_quote*)custom_quote;
+			custom_quote_ref.signature = algorithm::hashsig_t(signature.view());
+		}
+		void contract::send_quota_set_fee_rate(void* custom_quote, const decimal& fee_rate)
+		{
+			auto& custom_quote_ref = *(transactions::withdraw::custom_quote*)custom_quote;
+			custom_quote_ref.fee_rate = fee_rate;
+		}
+		void contract::send_quota_set_block_number(void* custom_quote, uint64_t block_number)
+		{
+			auto& custom_quote_ref = *(transactions::withdraw::custom_quote*)custom_quote;
+			custom_quote_ref.block_number = block_number;
+		}
+		string_repr contract::send_quota_get_signature(const void* custom_quote)
+		{
+			auto& custom_quote_ref = *(transactions::withdraw::custom_quote*)custom_quote;
+			return custom_quote_ref.signature.view();
+		}
+		decimal contract::send_quota_get_fee_rate(const void* custom_quote)
+		{
+			auto& custom_quote_ref = *(transactions::withdraw::custom_quote*)custom_quote;
+			return custom_quote_ref.fee_rate;
+		}
+		uint64_t contract::send_quota_get_block_number(const void* custom_quote)
+		{
+			auto& custom_quote_ref = *(transactions::withdraw::custom_quote*)custom_quote;
+			return custom_quote_ref.block_number;
+		}
 		address_repr contract::block_proposer()
 		{
 			auto* p = program::fetch_immutable_or_throw();
@@ -4208,11 +4239,11 @@ namespace tangent
 				return;
 			}
 
-			auto event = transactions::call::emit_route_event(p->executor, bridge_hash, algorithm::asset::base_id_of(asset), routing_address.view());
+			auto event = transactions::route::emit_route_event(p->executor, bridge_hash, algorithm::asset::base_id_of(asset), routing_address.view());
 			if (!event)
 				contract::throw_ptr(exception_repr(exception_repr::category::storage(), std::string_view(event.error().message())));
 		}
-		void contract::bridge_send(const uint256_t& bridge_hash, const uint256_t& asset, const string_repr& routing_address, const decimal& value)
+		void contract::bridge_send(const uint256_t& bridge_hash, const uint256_t& asset, const string_repr& routing_address, const decimal& value, const void* custom_quote)
 		{
 			auto* p = bridge_internal_check("send", asset, bridge_hash);
 			if (p == nullptr)
@@ -4253,7 +4284,14 @@ namespace tangent
 				return;
 			}
 
-			auto event = transactions::call::emit_withdraw_event(p->executor, bridge_hash, asset, routing_address.view(), value);
+			auto& custom_quote_ref = *(transactions::withdraw::custom_quote*)custom_quote;
+			if (!custom_quote_ref.signature.empty() && (!custom_quote_ref.fee_rate.is_positive() || !custom_quote_ref.block_number))
+			{
+				contract::throw_ptr(exception_repr(exception_repr::category::argument(), "send requires a valid fee quote"));
+				return;
+			}
+
+			auto event = transactions::withdraw::emit_withdraw_event(p->executor, bridge_hash, asset, routing_address.view(), value, custom_quote_ref.signature.empty() ? option<transactions::withdraw::custom_quote>(optional::none) : option<transactions::withdraw::custom_quote>(custom_quote_ref));
 			if (!event)
 				contract::throw_ptr(exception_repr(exception_repr::category::storage(), std::string_view(event.error().message())));
 		}
@@ -5268,6 +5306,14 @@ namespace tangent
 						}
 						return expectation::met;
 					}
+					else if (name == SCRIPT_TYPE_SEND_QUOTA)
+					{
+						auto* quota = (transactions::withdraw::custom_quote*)value;
+						stream->write_string(quota->signature.optimized_view());
+						stream->write_integer(quota->block_number);
+						stream->write_decimal(quota->fee_rate);
+						return expectation::met;
+					}
 					else if (value_type_id & (int)vitex::scripting::type_id::script_object_t)
 					{
 						auto object = script_object((asIScriptObject*)value);
@@ -5386,6 +5432,15 @@ namespace tangent
 							if (!status)
 								return status;
 						}
+						return expectation::met;
+					}
+					else if (name == SCRIPT_TYPE_SEND_QUOTA)
+					{
+						auto* quota = (transactions::withdraw::custom_quote*)value;
+						stream = format::tree::map();
+						stream.set("signature", format::variable(quota->signature.view()));
+						stream.set("block_number", format::variable(quota->block_number));
+						stream.set("fee_rate", format::variable(quota->fee_rate));
 						return expectation::met;
 					}
 					else if (value_type_id & (int)vitex::scripting::type_id::script_object_t)
@@ -5593,6 +5648,22 @@ namespace tangent
 						unique.reset();
 						return expectation::met;
 					}
+					else if (name == SCRIPT_TYPE_SEND_QUOTA)
+					{
+						auto* data = new (value) transactions::withdraw::custom_quote();
+						if (!stream.read_optimized_view(stream.read_type(), data->signature.blob, sizeof(data->signature.blob)))
+							return layer_exception("load failed for optimized view type");
+
+						if (!stream.read_integer(stream.read_type(), &data->block_number))
+							return layer_exception("load failed for uint64 type");
+
+						if (!stream.read_decimal(stream.read_type(), &data->fee_rate))
+							return layer_exception("load failed for decimal type");
+
+						unique.reset();
+						program::request_gas_vmemory_marshall(stream, seek);
+						return expectation::met;
+					}
 					else if (value_type_id & (int)vitex::scripting::type_id::script_object_t)
 					{
 						auto object = script_object((asIScriptObject*)value);
@@ -5770,6 +5841,16 @@ namespace tangent
 						unique.reset();
 						return expectation::met;
 					}
+					else if (name == SCRIPT_TYPE_SEND_QUOTA)
+					{
+						auto* data = new (value) transactions::withdraw::custom_quote();
+						data->signature = algorithm::hashsig_t(stream.child_var("signature").as_string());
+						data->block_number = stream.child_var("block_number").as_uint64();
+						data->fee_rate = stream.child_var("fee_rate").as_decimal();
+						unique.reset();
+						program::request_gas_vmemory(sizeof(uint256_t) * 4);
+						return expectation::met;
+					}
 					else if (value_type_id & (int)vitex::scripting::type_id::script_object_t)
 					{
 						auto object = script_object((asIScriptObject*)value);
@@ -5877,6 +5958,7 @@ namespace tangent
 			auto payable_type = vm->set_struct_address("payable", sizeof(payable_repr), (size_t)object_behaviours::value | bridge::type_traits_of<payable_repr>());
 			auto address_type = vm->set_struct_address("address", sizeof(address_repr), (size_t)object_behaviours::value | bridge::type_traits_of<address_repr>());
 			auto batch_payout_type = vm->set_struct_address("batch_payout", sizeof(batch_payout_repr), (size_t)object_behaviours::value | bridge::type_traits_of<batch_payout_repr>());
+			auto send_quota_type = vm->set_struct_address("send_quota", sizeof(transactions::withdraw::custom_quote), (size_t)object_behaviours::value | bridge::type_traits_of<transactions::withdraw::custom_quote>());
 			auto abi_type = vm->set_struct_address("abi", sizeof(abi_repr), (size_t)object_behaviours::value | bridge::type_traits_of<abi_repr>());
 			auto varying_type = vm->set_template_class_address("varying<class t>", "varying<t>", sizeof(varying_repr), (size_t)object_behaviours::pattern | (size_t)object_behaviours::value | bridge::type_traits_of<varying_repr>());
 			auto mapping_type = vm->set_template_class_address("mapping<class k, class v>", "mapping<k, v>", sizeof(mapping_repr), (size_t)object_behaviours::pattern | (size_t)object_behaviours::value | bridge::type_traits_of<mapping_repr>());
@@ -6155,6 +6237,16 @@ namespace tangent
 			batch_payout_type->set_operator_copy_address(WRAP_MFN_PR(batch_payout_repr, operator=, (const batch_payout_repr&), batch_payout_repr&), convention::generic_call);
 			batch_payout_type->set_method_address("void to(const address&in, const uint256&in, const real320&in)", WRAP_MFN(batch_payout_repr, to), convention::generic_call);
 			batch_payout_type->set_method_address("void pay()", WRAP_MFN(batch_payout_repr, pay), convention::generic_call);
+			send_quota_type->set_behaviour_address("void f()", behaviours::construct, WRAP_CON(transactions::withdraw::custom_quote, ()), convention::generic_call);
+			send_quota_type->set_behaviour_address("void f(const send_quota&in)", behaviours::construct, WRAP_CON(transactions::withdraw::custom_quote, (const transactions::withdraw::custom_quote&)), convention::generic_call);
+			send_quota_type->set_behaviour_address("void f()", behaviours::destruct, WRAP_DES(transactions::withdraw::custom_quote), convention::generic_call);
+			send_quota_type->set_operator_copy_address(WRAP_MFN_PR(transactions::withdraw::custom_quote, operator=, (const transactions::withdraw::custom_quote&), transactions::withdraw::custom_quote&), convention::generic_call);
+			send_quota_type->set_method_address("void set_signature(const string&in)", WRAP_OBJ_FIRST(contract::send_quota_set_signature), convention::generic_call);
+			send_quota_type->set_method_address("void set_fee_rate(const real320&in)", WRAP_OBJ_FIRST(contract::send_quota_set_fee_rate), convention::generic_call);
+			send_quota_type->set_method_address("void set_block_number(uint64)", WRAP_OBJ_FIRST(contract::send_quota_set_block_number), convention::generic_call);
+			send_quota_type->set_method_address("string signature() const", WRAP_OBJ_FIRST(contract::send_quota_get_signature), convention::generic_call);
+			send_quota_type->set_method_address("real320 fee_rate() const", WRAP_OBJ_FIRST(contract::send_quota_get_fee_rate), convention::generic_call);
+			send_quota_type->set_method_address("uint64 block_number() const", WRAP_OBJ_FIRST(contract::send_quota_get_block_number), convention::generic_call);
 			abi_type->set_behaviour_address("void f()", behaviours::construct, WRAP_CON(abi_repr, ()), convention::generic_call);
 			abi_type->set_behaviour_address("void f(const string&in)", behaviours::construct, WRAP_CON(abi_repr, (const string_repr&)), convention::generic_call);
 			abi_type->set_behaviour_address("void f(const address&in)", behaviours::construct, WRAP_CON(abi_repr, (const abi_repr&)), convention::generic_call);
@@ -6316,7 +6408,7 @@ namespace tangent
 			vm->begin_namespace("bridge");
 			vm->set_function_address("real320 fee(const uint256&in, const uint256&in)", WRAP_FN(contract::bridge_fee), convention::generic_call);
 			vm->set_function_address("void link(const uint256&in, const uint256&in, const string&in)", WRAP_FN(contract::bridge_link), convention::generic_call);
-			vm->set_function_address("void send(const uint256&in, const uint256&in, const string&in, const real320&in)", WRAP_FN(contract::bridge_send), convention::generic_call);
+			vm->set_function_address("void send(const uint256&in, const uint256&in, const string&in, const real320&in, const send_quota&in = send_quota())", WRAP_FN(contract::bridge_send), convention::generic_call);
 			vm->set_function_address("bool requires_link()", WRAP_FN(contract::bridge_requires_link), convention::generic_call);
 			vm->set_function_address("bool requires_send()", WRAP_FN(contract::bridge_requires_send), convention::generic_call);
 			vm->end_namespace();
@@ -6593,6 +6685,16 @@ namespace tangent
 					}
 				}
 				stream << "]";
+				return stream.str();
+			});
+			debugger->add_to_string_callback("send_quota", [](string&, int depth, void* object, int)
+			{
+				auto& source = *(transactions::withdraw::custom_quote*)object;
+				string_stream stream;
+				stream << "0x" << object << " (send_quota)\n";
+				stream << " signature: " << format::util::encode_0xhex(source.signature.view()) << "\n";
+				stream << " block_number: " << source.block_number << "\n";
+				stream << " fee_rate: " << source.fee_rate.to_string();
 				return stream.str();
 			});
 			debugger->add_to_string_callback("address", [](string&, int, void* object, int)

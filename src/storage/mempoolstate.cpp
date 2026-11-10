@@ -850,6 +850,80 @@ namespace tangent
 
 			return values;
 		}
+		expects_lr<bool> mempoolstate::add_quote(const superchain::approved_fee& quote, const algorithm::pubkeyhash_t& attester)
+		{
+			format::wo_stream message;
+			if (!quote.store(&message))
+				return expects_lr<bool>(layer_exception("quote serialization error"));
+
+			uint8_t asset_hash[32];
+			quote.asset.encode(asset_hash);
+
+			schema_list map;
+			map.push_back(var::set::binary(asset_hash, sizeof(asset_hash)));
+			map.push_back(var::set::binary(attester.view()));
+			map.push_back(var::set::integer(quote.expiry_block_number));
+			map.push_back(var::set::binary(message.data));
+			map.push_back(var::set::integer(kernel::params().time.now_cpu() + kernel::params().policy.attestation.quote_validity_time * 2));
+
+			auto cursor = get_peer_storage().emplace_query(__func__,
+				"INSERT INTO quotes (asset, attester, expiry_height, message, time) VALUES (?, ?, ?, ?, ?) ON CONFLICT (asset, attester) DO UPDATE SET "
+				" expiry_height = EXCLUDED.expiry_height, message = EXCLUDED.message, time = EXCLUDED.time "
+				" WHERE EXCLUDED.expiry_height > quotes.expiry_height;", &map);
+			if (!cursor || cursor->error())
+				return expects_lr<bool>(layer_exception(ledger::storage_util::error_of(cursor)));
+
+			return expects_lr<bool>(cursor->affected_rows() > 0);
+		}
+		expects_lr<vector<superchain::approved_fee>> mempoolstate::get_quotes(const algorithm::asset_id& asset, uint64_t block_number)
+		{
+			uint8_t asset_hash[32];
+			asset.encode(asset_hash);
+
+			schema_list map;
+			map.push_back(var::set::binary(asset_hash, sizeof(asset_hash)));
+			map.push_back(var::set::integer(block_number));
+			map.push_back(var::set::integer(kernel::params().time.now_cpu()));
+
+			auto cursor = get_peer_storage().emplace_query(__func__, "SELECT message FROM quotes WHERE asset = ? AND expiry_height > ? AND time > ?", &map);
+			if (!cursor || cursor->error())
+				return expects_lr<vector<superchain::approved_fee>>(layer_exception(ledger::storage_util::error_of(cursor)));
+
+			auto& response = cursor->first();
+			size_t size = response.size();
+			vector<superchain::approved_fee> values;
+			values.reserve(size);
+
+			for (size_t i = 0; i < size; i++)
+			{
+				superchain::approved_fee quote;
+				auto quote_blob = response[i]["message"].get().get_blob();
+				auto quote_message = format::ro_stream(quote_blob);
+				if (quote.load(quote_message))
+					values.push_back(std::move(quote));
+			}
+
+			return values;
+		}
+		expects_lr<size_t> mempoolstate::expire_quotes()
+		{
+			schema_list map;
+			map.push_back(var::set::integer(kernel::params().time.now_cpu()));
+
+			auto cursor = get_peer_storage().emplace_query(__func__, "DELETE FROM quotes WHERE time < ?", &map);
+			if (!cursor || cursor->error())
+				return expects_lr<size_t>(layer_exception(ledger::storage_util::error_of(cursor)));
+
+			return cursor->affected_rows();
+		}
+		expects_lr<size_t> mempoolstate::clear_observations()
+		{
+			auto cursor = get_peer_storage().query(__func__, "DELETE FROM observations");
+			if (!cursor || cursor->error())
+				return expects_lr<size_t>(layer_exception(ledger::storage_util::error_of(cursor)));
+
+			return cursor->affected_rows();
+		}
 		expects_lr<void> mempoolstate::add_transaction(const ledger::transaction_message& value, bool bypass_cooldown)
 		{
 			format::wo_stream message;
@@ -1466,6 +1540,17 @@ namespace tangent
 					proof_hash BLOB(32) NOT NULL,
 					PRIMARY KEY (lookup_key, proof_hash)
 				) WITHOUT ROWID;
+				CREATE TABLE IF NOT EXISTS quotes
+				(
+					asset BLOB(32) NOT NULL,
+					attester BLOB(20) NOT NULL,
+					expiry_height BIGINT NOT NULL,
+					message BLOB NOT NULL,
+					time INTEGER NOT NULL,
+					PRIMARY KEY (asset, attester)
+				) WITHOUT ROWID;
+				CREATE INDEX IF NOT EXISTS quotes_asset ON quotes (asset, expiry_height DESC);
+				CREATE INDEX IF NOT EXISTS quotes_time ON quotes (time ASC);
 				CREATE TABLE IF NOT EXISTS observations
 				(
 					hash BLOB(32) NOT NULL,

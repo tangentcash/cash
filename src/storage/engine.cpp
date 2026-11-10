@@ -14,12 +14,7 @@ namespace tangent
 		}
 		static const rocksdb::WriteOptions& get_blob_write_options()
 		{
-			static const rocksdb::WriteOptions options = []
-			{
-				rocksdb::WriteOptions result;
-				result.disableWAL = kernel::params().user.storage.optimization == tangent::storage_optimization::speed;
-				return result;
-			}();
+			static rocksdb::WriteOptions options;
 			return options;
 		}
 

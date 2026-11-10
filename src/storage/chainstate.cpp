@@ -65,6 +65,16 @@ namespace tangent
 			ledger::storage_index_ptr* storage;
 		};
 
+		struct world_state_row final
+		{
+			uint32_t type = 0;
+			bool multiform = false;
+			string index;
+			string row;
+			uint64_t number = 0;
+			uint256_t hash = 0;
+		};
+
 		static bool multiform_row_has_pending(uint32_t type, const std::string_view& row, ledger::block_changelog* changelog)
 		{
 			if (changelog == nullptr)
@@ -1950,13 +1960,203 @@ namespace tangent
 
 			return expects_lr<ledger::block_state::log>(std::move(result.pending));
 		}
-		expects_lr<vector<ledger::block_transaction>> chainstate::get_block_transactions(size_t offset, size_t count)
+		expects_lr<chainstate::world_state_proof> chainstate::build_world_state(const uint256_t* target)
+		{
+			schema_list map_unused;
+			uint64_t count = 0;
+			for (auto& [uniform_storage, type] : get_uniform_multi_storage())
+			{
+				auto cursor = uniform_storage.emplace_query(__func__, "SELECT COUNT(*) AS count FROM uniforms", &map_unused);
+				if (!cursor || cursor->error())
+					return expects_lr<world_state_proof>(layer_exception(ledger::storage_util::error_of(cursor)));
+
+				count += (uint64_t)cursor->first()[0]["count"].get().get_integer();
+			}
+			for (auto& [multiform_storage, type] : get_multiform_multi_storage())
+			{
+				auto cursor = multiform_storage.emplace_query(__func__, "SELECT COUNT(*) AS count FROM multiforms", &map_unused);
+				if (!cursor || cursor->error())
+					return expects_lr<world_state_proof>(layer_exception(ledger::storage_util::error_of(cursor)));
+
+				count += (uint64_t)cursor->first()[0]["count"].get().get_integer();
+			}
+
+			static constexpr uint64_t WORLD_STATE_BATCH = 1 << 12;
+			static constexpr uint64_t WORLD_STATE_MARGIN = 256ull << 20;
+
+			auto available = os::hw::get_memory_info().available_physical;
+			auto required = (count + 1) * sizeof(uint256_t) + WORLD_STATE_MARGIN;
+			if (available != 0 && required > available)
+				return expects_lr<world_state_proof>(layer_exception(stringify::text(
+					"insufficient available memory for world state tree: %llu states require at least %llu MiB, only %llu MiB available",
+					(unsigned long long)count, (unsigned long long)(required >> 20), (unsigned long long)(available >> 20))));
+
+			auto& blob_storage = get_blob_storage();
+			vector<uint256_t> hashes;
+			hashes.reserve((size_t)count);
+
+			vector<world_state_row> rows;
+			bool failed = false;
+
+			for (auto& [uniform_storage, type] : get_uniform_multi_storage())
+			{
+				uint64_t after = 0;
+				while (true)
+				{
+					auto statement = uniform_storage.prepare_statement(__func__,
+						"SELECT (SELECT index_hash FROM indices WHERE indices.index_number = uniforms.index_number) AS index_hash, "
+						"uniforms.block_number AS block_number, uniforms.index_number AS index_number FROM uniforms "
+						"WHERE uniforms.index_number > ? ORDER BY uniforms.index_number LIMIT ?");
+					if (!statement)
+						return expects_lr<world_state_proof>(layer_exception(std::move(statement.error().message())));
+
+					uniform_storage.ptr()->bind_int64(*statement, 0, (int64_t)after);
+					uniform_storage.ptr()->bind_int64(*statement, 1, (int64_t)WORLD_STATE_BATCH);
+
+					auto cursor = uniform_storage.prepared_query(__func__, *statement);
+					if (!cursor || cursor->error())
+						return expects_lr<world_state_proof>(layer_exception(ledger::storage_util::error_of(cursor)));
+
+					auto& response = cursor->first();
+					auto size = response.size();
+					if (!size)
+						break;
+
+					after = (uint64_t)response[size - 1]["index_number"].get().get_integer();
+					rows.clear();
+					for (size_t i = 0; i < size; i++)
+					{
+						auto next = response[i];
+						auto& leaf = rows.emplace_back();
+						leaf.type = type;
+						leaf.multiform = false;
+						leaf.index = next["index_hash"].get().get_blob();
+						leaf.number = next["block_number"].get().get_integer();
+					}
+
+					parallel::wait_all(parallel::for_each(rows.begin(), rows.end(), ELEMENTS_FEW, [&](world_state_row& item)
+					{
+						auto blob = blob_storage.load(__func__, get_uniform_label(item.type, item.index, item.number)).or_else(string());
+						auto state = state_from_blob(item.number, item.type, item.index, std::string_view(), blob);
+						if (!state)
+						{
+							failed = true;
+							return;
+						}
+
+						item.hash = state->as_hash();
+					}));
+					if (failed)
+						return expects_lr<world_state_proof>(layer_exception("world state deserialization error"));
+
+					for (auto& item : rows)
+						hashes.emplace_back(item.hash);
+				}
+			}
+
+			for (auto& [multiform_storage, type] : get_multiform_multi_storage())
+			{
+				uint64_t after_column = 0, after_row = 0;
+				while (true)
+				{
+					auto statement = multiform_storage.prepare_statement(__func__,
+						"SELECT (SELECT column_hash FROM columns WHERE columns.column_number = multiforms.column_number) AS column_hash, "
+						"(SELECT row_hash FROM rows WHERE rows.row_number = multiforms.row_number) AS row_hash, "
+						"multiforms.block_number AS block_number, multiforms.column_number AS column_number, multiforms.row_number AS row_number FROM multiforms "
+						"WHERE multiforms.column_number > ? OR (multiforms.column_number = ? AND multiforms.row_number > ?) "
+						"ORDER BY multiforms.column_number, multiforms.row_number LIMIT ?");
+					if (!statement)
+						return expects_lr<world_state_proof>(layer_exception(std::move(statement.error().message())));
+
+					auto* multiform_storage_ptr = multiform_storage.ptr();
+					multiform_storage_ptr->bind_int64(*statement, 0, (int64_t)after_column);
+					multiform_storage_ptr->bind_int64(*statement, 1, (int64_t)after_column);
+					multiform_storage_ptr->bind_int64(*statement, 2, (int64_t)after_row);
+					multiform_storage_ptr->bind_int64(*statement, 3, (int64_t)WORLD_STATE_BATCH);
+
+					auto cursor = multiform_storage.prepared_query(__func__, *statement);
+					if (!cursor || cursor->error())
+						return expects_lr<world_state_proof>(layer_exception(ledger::storage_util::error_of(cursor)));
+
+					auto& response = cursor->first();
+					auto size = response.size();
+					if (!size)
+						break;
+
+					after_column = (uint64_t)response[size - 1]["column_number"].get().get_integer();
+					after_row = (uint64_t)response[size - 1]["row_number"].get().get_integer();
+					rows.clear();
+					for (size_t i = 0; i < size; i++)
+					{
+						auto next = response[i];
+						auto& leaf = rows.emplace_back();
+						leaf.type = type;
+						leaf.multiform = true;
+						leaf.index = next["column_hash"].get().get_blob();
+						leaf.row = next["row_hash"].get().get_blob();
+						leaf.number = next["block_number"].get().get_integer();
+					}
+
+					parallel::wait_all(parallel::for_each(rows.begin(), rows.end(), ELEMENTS_FEW, [&](world_state_row& item)
+					{
+						auto blob = blob_storage.load(__func__, get_multiform_label(item.type, item.index, item.row, item.number)).or_else(string());
+						auto state = state_from_blob(item.number, item.type, item.index, item.row, blob);
+						if (!state)
+						{
+							failed = true;
+							return;
+						}
+
+						item.hash = state->as_hash();
+					}));
+					if (failed)
+						return expects_lr<world_state_proof>(layer_exception("world state deserialization error"));
+
+					for (auto& item : rows)
+						hashes.emplace_back(item.hash);
+				}
+			}
+
+			VI_SORT(hashes.begin(), hashes.end(), std::less<uint256_t>());
+
+			algorithm::merkle_stream stream;
+			stream.target = target;
+			for (auto& value : hashes)
+				stream.push(value);
+
+			world_state_proof proof;
+			proof.root = stream.finalize();
+			if (target != nullptr)
+			{
+				if (!stream.found)
+					return expects_lr<world_state_proof>(layer_exception("state hash not found in world state"));
+
+				proof.path.index = (size_t)stream.target_index;
+				proof.path.branch = std::move(stream.branch);
+			}
+
+			return proof;
+		}
+		expects_lr<uint256_t> chainstate::build_world_state_root()
+		{
+			auto result = build_world_state(nullptr);
+			if (!result)
+				return result.error();
+
+			return result->root;
+		}
+		expects_lr<chainstate::world_state_proof> chainstate::prove_world_state_hash(const uint256_t& hash)
+		{
+			return build_world_state(&hash);
+		}
+		expects_lr<vector<ledger::block_transaction>> chainstate::get_block_transactions(int8_t order, size_t offset, size_t count)
 		{
 			schema_list map;
 			map.push_back(var::set::integer(count));
 			map.push_back(var::set::integer(offset));
 
-			auto cursor = get_tx_storage().emplace_query(__func__, "SELECT transaction_hash FROM transactions ORDER BY transaction_number DESC LIMIT ? OFFSET ?", &map);
+			auto query = order >= 0 ? "SELECT transaction_hash FROM transactions ORDER BY transaction_number ASC LIMIT ? OFFSET ?" : "SELECT transaction_hash FROM transactions ORDER BY transaction_number DESC LIMIT ? OFFSET ?";
+			auto cursor = get_tx_storage().emplace_query(__func__, query, &map);
 			if (!cursor || cursor->error())
 				return expects_lr<vector<ledger::block_transaction>>(layer_exception(ledger::storage_util::error_of(cursor)));
 

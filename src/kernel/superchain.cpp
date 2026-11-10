@@ -1,4 +1,5 @@
 #include "superchain.h"
+#include "block.h"
 #include "../storage/superchainstate.h"
 #include "../translation/bitcoin.h"
 #include "../translation/cardano.h"
@@ -311,7 +312,7 @@ namespace tangent
 				if (metadata->symbol.empty())
 					return layer_exception("invalid token utxo symbol");
 			}
-			else if (algorithm::asset::is_any(metadata.error().asset, false, true))
+			else if (!algorithm::asset::is_any(metadata.error().asset, false, true))
 				return layer_exception("invalid token utxo asset handle");
 
 			if (value.is_nan() || value.is_negative())
@@ -493,12 +494,17 @@ namespace tangent
 
 			return true;
 		}
-		expects_lr<void> coin_utxo::validate_as_input() const
+		expects_lr<void> coin_utxo::validate_as_input(bool allow_unknown) const
 		{
 			if (value.is_nan() || value.is_negative())
 				return layer_exception("invalid utxo value");
 
-			if (!link.has_all())
+			if (allow_unknown)
+			{
+				if (!link.has_public_key() && !link.has_address())
+					return layer_exception("invalid utxo input link (missing pubkey and/or address)");
+			}
+			else if (!link.has_all())
 				return layer_exception("invalid utxo input link");
 
 			if (metadata)
@@ -534,7 +540,7 @@ namespace tangent
 				if (!algorithm::asset::is_any(metadata->asset, true, true))
 					return layer_exception("invalid utxo asset handle");
 			}
-			else if (!stringify::is_empty_or_whitespace(metadata.error().transaction_id) || metadata.error().index == std::numeric_limits<uint32_t>::max())
+			else if (metadata.error().index == std::numeric_limits<uint32_t>::max())
 				return layer_exception("invalid utxo transaction id or index");
 
 			for (auto& [hash, token] : tokens)
@@ -547,6 +553,32 @@ namespace tangent
 			if (extra.size() > 72)
 				return layer_exception("extra data too big");
 
+			return expectation::met;
+		}
+		expects_lr<void> coin_utxo::validate_metadata(const ledger::executor_context* executor, const algorithm::asset_id& asset, uint64_t block_number) const
+		{
+			if (!kernel::params().on(fork_id::broadcast_fee_quote, block_number))
+				return expectation::met;
+
+			auto* offchain = bridge::get();
+			auto base_asset = algorithm::asset::base_id_of(asset);
+			for (auto& [hash, token] : tokens)
+			{
+				if (!token.metadata)
+					return layer_exception("legacy token metadata is no longer accepted");
+
+				auto token_asset = token.get_asset(base_asset);
+				auto registered = executor->get_witness_asset(token_asset);
+				if (!registered)
+					continue;
+				else if (token.metadata->decimals != registered->decimals)
+					return layer_exception(stringify::text("token %s decimals mismatch", algorithm::asset::handle_of(token_asset).c_str()));
+
+				auto contract1 = offchain->decode_address(base_asset, token.metadata->contract_address).or_else(token.metadata->contract_address);
+				auto contract2 = offchain->decode_address(base_asset, token.metadata->contract_address).or_else(registered->contract_address);
+				if (contract1 != contract2)
+					return layer_exception(stringify::text("token %s contract mismatch", algorithm::asset::handle_of(token_asset).c_str()));
+			}
 			return expectation::met;
 		}
 		algorithm::asset_id coin_utxo::get_asset(const algorithm::asset_id& base_asset) const
@@ -849,7 +881,7 @@ namespace tangent
 			hash_map<algorithm::asset_id, decimal> balance;
 			for (auto& [hash, input] : inputs)
 			{
-				auto status = input.validate_as_output();
+				auto status = input.validate_as_input(true);
 				if (!status)
 					return status;
 
@@ -1171,7 +1203,7 @@ namespace tangent
 
 			for (auto& item : inputs)
 			{
-				if (item.alg == algorithm::composition::type::unknown || item.public_key.empty() || item.message.empty() || !item.utxo.validate_as_input())
+				if (item.alg == algorithm::composition::type::unknown || item.public_key.empty() || item.message.empty() || !item.utxo.validate_as_input(false))
 					return status::invalid;
 			}
 
@@ -1754,6 +1786,10 @@ namespace tangent
 		expects_promise_rt<uint64_t> translation_unit::get_linked_block_height(uint64_t seen_block_height)
 		{
 			return expects_promise_rt<uint64_t>(remote_exception("not supported"));
+		}
+		expects_promise_rt<computed_fee> translation_unit::estimate_transaction_fee(const wallet_link& from_link, const value_transfer& to)
+		{
+			return expects_rt<computed_fee>(remote_exception("fee rate estimation is not supported for this network"));
 		}
 		expects_lr<algorithm::composition::cpubkey_t> translation_unit::to_composite_public_key(const std::string_view& public_key)
 		{
@@ -2611,6 +2647,29 @@ namespace tangent
 				return result;
 			});
 		}
+		expects_promise_rt<computed_fee> bridge::estimate_transaction_fee(const algorithm::asset_id& asset, const wallet_link& from_link, const value_transfer& to)
+		{
+			if (!algorithm::asset::is_aux(asset))
+				return expects_rt<computed_fee>(remote_exception("asset not found"));
+
+			if (!has_network(asset))
+				return expects_rt<computed_fee>(remote_exception("chain not active"));
+
+			auto* implementation = get_network(asset);
+			if (!implementation)
+				return expects_rt<computed_fee>(remote_exception("chain not found"));
+
+			auto normalized_to = normalize_value(implementation, to);
+			auto to_validation = normalized_to.validate();
+			if (!to_validation)
+				return expects_rt<computed_fee>(remote_exception(std::move(to_validation.error().message())));
+
+			auto normalized_from_link = normalize_link(asset, from_link);
+			if (!normalized_from_link)
+				return expects_rt<computed_fee>(remote_exception(std::move(normalized_from_link.error().message())));
+
+			return implementation->estimate_transaction_fee(*normalized_from_link, normalized_to);
+		}
 		expects_lr<finalized_transaction> bridge::finalize_transaction(const algorithm::asset_id& asset, prepared_transaction&& prepared)
 		{
 			if (!algorithm::asset::is_aux(asset))
@@ -3147,6 +3206,11 @@ namespace tangent
 
 			return utxo_implementation->update_utxo(computed, finalized);
 		}
+		expects_lr<void> bridge::reset_state(const algorithm::asset_id& asset)
+		{
+			storages::superchainstate state = storages::superchainstate(asset);
+			return state.reset_state();
+		}
 		expects_lr<coin_utxo> bridge::get_utxo(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint64_t index, bool unspent_only)
 		{
 			storages::superchainstate state = storages::superchainstate(asset);
@@ -3177,7 +3241,14 @@ namespace tangent
 			storages::superchainstate state = storages::superchainstate(asset);
 			auto value = state.get_property(token);
 			if (!value || value->childs().empty())
+			{
+				auto executor = ledger::executor_context(nullptr);
+				auto witness = executor.get_witness_asset(asset);
+				if (witness)
+					return option<string>(std::move(witness->contract_address));
+
 				return optional::none;
+			}
 
 			auto target_checksum = algorithm::asset::checksum_of(asset);
 			for (auto& item : value->childs())
@@ -3322,10 +3393,8 @@ namespace tangent
 					return "no_cache_no_throttling";
 				case cache_policy::temporary_cache:
 					return "temporary_cache";
-				case cache_policy::blob_cache:
-					return "blob_cache";
-				case cache_policy::lifetime_cache:
-					return "lifetime_cache";
+				case cache_policy::persistent_cache:
+					return "persistent_cache";
 				default:
 					return "unset";
 			}

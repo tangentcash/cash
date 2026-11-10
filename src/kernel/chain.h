@@ -191,8 +191,7 @@ namespace tangent
 			{
 				uptr<format::tree> options;
 				uint64_t polling_frequency = 90000;
-				uint32_t cache1_size = 4096;
-				uint32_t cache2_size = 16384;
+				uint32_t temporary_cache_size = 4096;
 				bool listener = false;
 				bool logging = true;
 			} superchain;
@@ -302,7 +301,7 @@ namespace tangent
 				decimal consensus_threshold = std::string_view("0.70");
 				decimal fee_rate = std::string_view("0.10");
 				decimal quote_penalty = std::string_view("0.1");
-				decimal quote_headroom = std::string_view("1.25");
+				decimal quote_headroom = std::string_view("2");
 			} attestation;
 			struct
 			{

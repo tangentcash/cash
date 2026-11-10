@@ -410,7 +410,7 @@ namespace tangent
 				executor->receipt.relative_gas_use = std::min(relative_gas_use, gas_limit);
 			});
 
-			execution = ledger::executor_context::execute_tx(&internal_executor, callable, *subtransaction->transaction, executor->receipt.transaction_hash, 0, (uint8_t)ledger::executor_context::flags::preserve_events | (uint8_t)ledger::executor_context::flags::replayable | (uint8_t)ledger::executor_context::flags::skip_pow);
+			execution = ledger::executor_context::execute_tx(&internal_executor, callable, *subtransaction->transaction, executor->receipt.transaction_hash, 0, (uint8_t)ledger::executor_context::flags::pedantic | (uint8_t)ledger::executor_context::flags::preserve_events | (uint8_t)ledger::executor_context::flags::replayable | (uint8_t)ledger::executor_context::flags::skip_pow);
 			relative_gas_use += internal_executor.receipt.relative_gas_use;
 			if (!execution)
 				return layer_exception("sub-transaction execution failed: " + execution.error().message());
@@ -619,13 +619,15 @@ namespace tangent
 				context->pow_challenge.solution = 1;
 				subtransaction = context;
 			}
-			else if (event != nullptr && event->args.size() == 5 && event->args[0].as_uint32() == withdraw::as_instance_type())
+			else if (event != nullptr && (event->args.size() == 5 || event->args.size() == 8) && event->args[0].as_uint32() == withdraw::as_instance_type())
 			{
 				auto* context = memory::init<withdraw>();
 				context->bridge_hash = event->args[1].as_uint256();
 				context->asset = event->args[2].as_uint256();
 				context->address = event->args[3].as_string();
 				context->value = event->args[4].as_decimal();
+				if (event->args.size() == 8)
+					context->set_custom_quote(algorithm::hashsig_t(event->args[5].as_string()), event->args[6].as_uint64(), event->args[7].as_decimal());
 				subtransaction = context;
 			}
 			if (!subtransaction)
@@ -695,14 +697,6 @@ namespace tangent
 		std::string_view call::as_instance_typename()
 		{
 			return "call";
-		}
-		expects_lr<void> call::emit_route_event(ledger::executor_context* executor, const uint256_t& bridge_hash, const algorithm::asset_id& asset, const std::string_view& routing_address)
-		{
-			return executor->emit_event<call>({ format::variable(route::as_instance_type()), format::variable(bridge_hash), format::variable(asset), format::variable(routing_address) });
-		}
-		expects_lr<void> call::emit_withdraw_event(ledger::executor_context* executor, const uint256_t& bridge_hash, const algorithm::asset_id& asset, const std::string_view& routing_address, const decimal& value)
-		{
-			return executor->emit_event<call>({ format::variable(withdraw::as_instance_type()), format::variable(bridge_hash), format::variable(asset), format::variable(routing_address), format::variable(value) });
 		}
 
 		rollup::rollup(const rollup& other)
@@ -1473,6 +1467,10 @@ namespace tangent
 			auto blockchain = algorithm::asset::blockchain_of(asset);
 			auto from_address = algorithm::signing::encode_address(from);
 			return stringify::text("%s:%.*s:%s:%" PRIu64, from_address.c_str(), (int)address.size(), address.data(), blockchain.c_str(), nonce);
+		}
+		expects_lr<void> route::emit_route_event(ledger::executor_context* executor, const uint256_t& bridge_hash, const algorithm::asset_id& asset, const std::string_view& routing_address)
+		{
+			return executor->emit_event<call>({ format::variable(route::as_instance_type()), format::variable(bridge_hash), format::variable(asset), format::variable(routing_address) });
 		}
 
 		expects_lr<void> bind::validate(uint64_t block_number) const
@@ -2859,6 +2857,20 @@ namespace tangent
 			if (!hash)
 				return layer_exception("invalid address: " + hash.error().message());
 
+			if (quote)
+			{
+				auto& params = kernel::params();
+				if (!params.on(fork_id::broadcast_fee_quote, block_number))
+					return layer_exception("withdrawal fee quotes are not active");
+
+				if (quote->signature.empty() || !quote->fee_rate.is_positive())
+					return layer_exception("invalid withdrawal fee quote");
+				else if (quote->block_number <= block_number)
+					return layer_exception("withdrawal fee quote expired");
+				else if (quote->block_number > block_number + params.policy.attestation.quote_validity_time / params.policy.pow.time)
+					return layer_exception("withdrawal fee quote validity too short");
+			}
+
 			return ledger::transaction_message::validate(block_number);
 		}
 		expects_lr<void> withdraw::execute(ledger::executor_context* executor) const
@@ -2873,7 +2885,24 @@ namespace tangent
 
 			btree_set<algorithm::pubkeyhash_t> exclusion;
 			auto fee_asset = algorithm::asset::base_id_of(asset);
-			auto attesters = executor->calculate_attesters(fee_asset, 1, bridge->fee_rate, exclusion);
+			decimal budget = bridge->fee_rate;
+			if (quote)
+			{
+				superchain::approved_fee approval = get_approved_fee();
+				algorithm::pubkeyhash_t publisher;
+				if (!approval.recover_hash(publisher))
+					return layer_exception("withdrawal fee quote signature invalid");
+
+				auto quote_attester = executor->get_verified_validator_attestation(fee_asset, publisher);
+				if (!quote_attester)
+					return layer_exception("withdrawal fee quote publisher is not a verified attester");
+
+				budget = committed_budget(*bridge);
+				if (!budget.is_positive())
+					return layer_exception("withdrawal fee quote produced a non-positive budget");
+			}
+
+			auto attesters = executor->calculate_attesters(fee_asset, 1, budget, exclusion);
 			if (!attesters)
 				return attesters.error();
 
@@ -2884,16 +2913,16 @@ namespace tangent
 			auto token_value = value;
 			if (fee_asset != asset)
 			{
-				auto balance_requirement = executor->verify_transfer_balance(fee_asset, bridge->fee_rate);
+				auto balance_requirement = executor->verify_transfer_balance(fee_asset, budget);
 				if (!balance_requirement)
 					return balance_requirement.error();
 
 				auto fee_balance = executor->get_bridge_balance(fee_asset, bridge_hash);
-				if (!fee_balance || fee_balance->supply < bridge->fee_rate)
-					return layer_exception(algorithm::asset::handle_of(fee_asset) + " balance is insufficient to cover base withdrawal value (value: " + bridge->fee_rate.to_string() + ")");
+				if (!fee_balance || fee_balance->supply < budget)
+					return layer_exception(algorithm::asset::handle_of(fee_asset) + " balance is insufficient to cover base withdrawal value (value: " + budget.to_string() + ")");
 			}
 			else
-				token_value += bridge->fee_rate;
+				token_value += budget;
 
 			auto balance_requirement = executor->verify_transfer_balance(asset, token_value);
 			if (!balance_requirement)
@@ -2916,7 +2945,7 @@ namespace tangent
 
 			if (fee_asset != asset)
 			{
-				auto fee_transfer = executor->apply_transfer(fee_asset, executor->receipt.from, decimal::zero(), bridge->fee_rate);
+				auto fee_transfer = executor->apply_transfer(fee_asset, executor->receipt.from, decimal::zero(), budget);
 				if (!fee_transfer)
 					return fee_transfer.error();
 			}
@@ -2934,6 +2963,13 @@ namespace tangent
 		bool withdraw::store_body(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
+			if (quote)
+			{
+				stream->write_boolean(true);
+				stream->write_string(quote->signature.optimized_view());
+				stream->write_decimal(quote->fee_rate);
+				stream->write_integer(quote->block_number);
+			}
 			stream->write_integer(bridge_hash);
 			stream->write_string(address);
 			stream->write_decimal(value);
@@ -2941,7 +2977,23 @@ namespace tangent
 		}
 		bool withdraw::load_body(format::ro_stream& stream)
 		{
-			if (!stream.read_integer(stream.read_type(), &bridge_hash))
+			auto type = stream.read_type();
+			if (type == format::viewable::true_type)
+			{
+				quote = custom_quote();
+				if (!stream.read_optimized_view(stream.read_type(), quote->signature.blob, sizeof(quote->signature)))
+					return false;
+
+				if (!stream.read_decimal(stream.read_type(), &quote->fee_rate))
+					return false;
+
+				if (!stream.read_integer(stream.read_type(), &quote->block_number))
+					return false;
+
+				type = stream.read_type();
+			}
+
+			if (!stream.read_integer(type, &bridge_hash))
 				return false;
 
 			if (!stream.read_string(stream.read_type(), &address))
@@ -2968,6 +3020,37 @@ namespace tangent
 		{
 			bridge_hash = new_bridge_hash;
 		}
+		void withdraw::set_custom_quote(const algorithm::hashsig_t& signature, uint64_t block_number, const decimal& fee)
+		{
+			custom_quote result;
+			result.signature = signature;
+			result.block_number = block_number;
+			result.fee_rate = fee;
+			quote = std::move(result);
+		}
+		bool withdraw::set_custom_quote(const algorithm::seckey_t& secret_key, uint64_t block_number, const decimal& fee)
+		{
+			set_custom_quote(algorithm::hashsig_t(), block_number, fee);
+			auto approval = get_approved_fee();
+			if (!approval.sign(secret_key))
+				return false;
+
+			quote->signature = approval.signature;
+			return true;
+		}
+		decimal withdraw::committed_budget(const states::bridge_instance& bridge) const
+		{
+			return quote ? std::min(bridge.fee_rate, quote->fee_rate) : bridge.fee_rate;
+		}
+		superchain::approved_fee withdraw::get_approved_fee() const
+		{
+			superchain::approved_fee approval;
+			approval.asset = asset;
+			approval.signature = quote->signature;
+			approval.fee = quote->fee_rate;
+			approval.expiry_block_number = quote->block_number;
+			return approval;
+		}
 		algorithm::pubkeyhash_t withdraw::get_attester(const ledger::transaction_receipt& receipt) const
 		{
 			auto* event = receipt.find_event<withdraw>();
@@ -2982,6 +3065,13 @@ namespace tangent
 			data.set("bridge_hash", algorithm::encoding::serialize_uint256(bridge_hash));
 			data.set("address", format::variable(address));
 			data.set("value", format::variable(value));
+			if (quote)
+			{
+				auto quote_data = data.set("quote", format::tree::map());
+				quote_data->set("signature", quote->signature.empty() ? format::variable() : format::variable(format::util::encode_0xhex(quote->signature.view())));
+				quote_data->set("block_number", algorithm::encoding::serialize_uint256(quote->block_number));
+				quote_data->set("fee", format::variable(quote->fee_rate));
+			}
 			return data;
 		}
 		uint32_t withdraw::as_delegation_type() const
@@ -3004,6 +3094,17 @@ namespace tangent
 		std::string_view withdraw::as_instance_typename()
 		{
 			return "withdraw";
+		}
+		expects_lr<void> withdraw::emit_withdraw_event(ledger::executor_context* executor, const uint256_t& bridge_hash, const algorithm::asset_id& asset, const std::string_view& routing_address, const decimal& value, option<custom_quote>&& custom_quote)
+		{
+			vector<format::variable> args({ format::variable(withdraw::as_instance_type()), format::variable(bridge_hash), format::variable(asset), format::variable(routing_address), format::variable(value) });
+			if (custom_quote)
+			{
+				args.push_back(format::variable(custom_quote->signature.optimized_view()));
+				args.push_back(format::variable(custom_quote->block_number));
+				args.push_back(format::variable(custom_quote->fee_rate));
+			}
+			return executor->emit_event<call>(std::move(args));
 		}
 
 		expects_lr<void> broadcast::validate(uint64_t block_number) const
@@ -3040,6 +3141,7 @@ namespace tangent
 			if (!bridge)
 				return bridge.error();
 
+			decimal budget = parent_transaction->committed_budget(*bridge);
 			if (proof)
 			{
 				auto shared = proof->prepared.as_shared_message();
@@ -3056,12 +3158,12 @@ namespace tangent
 						return status;
 				}
 
-				auto fee_transfer = executor->apply_transfer(fee_asset, parent->receipt.from, -bridge->fee_rate, -bridge->fee_rate);
+				auto fee_transfer = executor->apply_transfer(fee_asset, parent->receipt.from, -budget, -budget);
 				if (!fee_transfer)
 					return fee_transfer.error();
 
 				auto attester = parent_transaction->get_attester(parent->receipt);
-				auto attestation = executor->apply_validator_attestation_reward(fee_asset, attester, bridge->fee_rate * kernel::params().policy.attestation.fee_rate);
+				auto attestation = executor->apply_validator_attestation_reward(fee_asset, attester, budget * kernel::params().policy.attestation.fee_rate);
 				if (!attestation)
 					return attestation.error();
 
@@ -3101,14 +3203,32 @@ namespace tangent
 			}
 			else
 			{
+				if (kernel::params().on(fork_id::broadcast_fee_quote, executor->receipt.block_number) && underpaying_fee_rate())
+				{
+					if (!parent_transaction->quote || executor->receipt.from != parent_transaction->get_attester(parent->receipt))
+						return layer_exception("invalid fee failure origin");
+
+					algorithm::pubkeyhash_t publisher;
+					if (!parent_transaction->get_approved_fee().recover_hash(publisher))
+						return layer_exception("committed fee quote signature invalid");
+
+					auto quote_attester = executor->get_validator_attestation(fee_asset, publisher);
+					if (quote_attester)
+					{
+						auto slash = executor->apply_validator_attestation(fee_asset, publisher, ledger::executor_context::staker::reward_or_penalty, -kernel::params().policy.attestation.quote_penalty, quote_attester->min_fee);
+						if (!slash)
+							return slash.error();
+					}
+				}
+
 				if (fee_asset != parent_transaction->asset)
 				{
-					auto fee_transfer = executor->apply_transfer(fee_asset, parent->receipt.from, decimal::zero(), -bridge->fee_rate);
+					auto fee_transfer = executor->apply_transfer(fee_asset, parent->receipt.from, decimal::zero(), -budget);
 					if (!fee_transfer)
 						return fee_transfer.error();
 				}
 
-				auto token_value = parent_transaction->value + (fee_asset == parent_transaction->asset ? bridge->fee_rate : decimal::zero());
+				auto token_value = parent_transaction->value + (fee_asset == parent_transaction->asset ? budget : decimal::zero());
 				auto token_transfer = executor->apply_transfer(parent_transaction->asset, parent->receipt.from, decimal::zero(), -token_value);
 				if (!token_transfer)
 					return token_transfer.error();
@@ -3197,6 +3317,14 @@ namespace tangent
 			auto message = layer_exception(proof.error()).message();
 			return stringify::starts_with(message, stringify::text("(%s)", algorithm::signing::encode_address(target).c_str()));
 		}
+		bool broadcast::underpaying_fee_rate() const
+		{
+			if (proof)
+				return false;
+
+			auto message = layer_exception(proof.error()).message();
+			return stringify::starts_with(message, "(frtl)");
+		}
 		format::tree broadcast::as_tree() const
 		{
 			format::tree data = ledger::commitment_message::as_tree();
@@ -3260,6 +3388,10 @@ namespace tangent
 			value = value.is_nan() ? transaction->value : (value + transaction->value);
 			for (auto& input : prepared.inputs)
 			{
+				auto validation = input.utxo.validate_metadata(executor, base_asset, executor->receipt.block_number);
+				if (!validation)
+					return validation;
+
 				auto normalized_address = input.utxo.link.address;
 				auto status = offchain->normalize_address(base_asset, &normalized_address);
 				if (!status)
@@ -3291,8 +3423,13 @@ namespace tangent
 					token_value = token_value.is_nan() ? token.value : (token_value + token.value);
 				}
 			}
+
 			for (auto& output : prepared.outputs)
 			{
+				auto validation = output.validate_metadata(executor, base_asset, executor->receipt.block_number);
+				if (!validation)
+					return validation;
+
 				auto normalized_address = output.link.address;
 				auto status = offchain->normalize_address(base_asset, &normalized_address);
 				if (!status)
@@ -3342,6 +3479,7 @@ namespace tangent
 			if (!bridge)
 				return bridge.error();
 
+			decimal budget = transaction->committed_budget(*bridge);
 			for (auto& [input_token_asset, input_token_value_ref] : input_value)
 			{
 				decimal input_token_value = input_token_value_ref.is_nan() ? decimal::zero() : input_token_value_ref;
@@ -3357,8 +3495,8 @@ namespace tangent
 				auto delta_token_value = input_token_value - (output_token_value + change_token_value);
 				if (delta_token_value.is_negative())
 					return layer_exception("witness transaction output pays more that possible");
-				else if (input_token_asset == base_asset && delta_token_value > bridge->fee_rate)
-					return layer_exception("witness transaction fee overflow (max: " + bridge->fee_rate.to_string() + ")");
+				else if (input_token_asset == base_asset && delta_token_value > budget)
+					return layer_exception("witness transaction fee overflow (max: " + budget.to_string() + ")");
 			}
 
 			for (auto& [output_asset, actual_output_value] : output_value)
@@ -3372,10 +3510,10 @@ namespace tangent
 						continue;
 					else if (output_asset != base_asset && actual_output_value > it->second)
 						return layer_exception("witness transaction output pays unexpected token value");
-					else if (output_asset == base_asset && ((actual_output_value < it->second - bridge->fee_rate) || (actual_output_value > it->second + bridge->fee_rate)))
+					else if (output_asset == base_asset && ((actual_output_value < it->second - budget) || (actual_output_value > it->second + budget)))
 						return layer_exception("witness transaction output pays unexpected native value");
 				}
-				else if (output_asset == base_asset && actual_output_value > std::max(max_change_value, bridge->fee_rate))
+				else if (output_asset == base_asset && actual_output_value > std::max(max_change_value, budget))
 					return layer_exception("witness transaction output pays unexpected native value");
 				else if (output_asset != base_asset && actual_output_value > max_change_value)
 					return layer_exception("witness transaction output pays unexpected token value");
@@ -3674,22 +3812,37 @@ namespace tangent
 			uint256_t bridge_hash = 0;
 			decimal network_fee = decimal::zero();
 			algorithm::pubkeyhash_t depositor_account = proof.memo;
-			option<algorithm::pubkeyhash_t> withdrawer_account_maybe = optional::none;
+			option<ledger::block_transaction> withdraw_transaction_maybe = optional::none;
 			auto base_asset = algorithm::asset::base_id_of(asset);
 			bool signers_hardening = kernel::params().on(fork_id::key_bind_commitment, executor->receipt.block_number);
 			bool enforce_aliasing = kernel::params().on(fork_id::anonymous_broadcast, executor->receipt.block_number);
-			auto withdrawer_account = [&]()
+			bool enforce_metadata = kernel::params().on(fork_id::broadcast_fee_quote, executor->receipt.block_number);
+			auto build_metadata = [&](btree_map<algorithm::asset_id, std::pair<string, uint8_t>>& witnesses, const superchain::coin_utxo& utxo) -> expects_lr<void>
 			{
-				if (!withdrawer_account_maybe)
+				for (auto& [token_hash, token] : utxo.tokens)
+				{
+					auto token_asset = token.get_asset(asset);
+					auto it = witnesses.find(token_asset);
+					if (it == witnesses.end())
+						witnesses[token_asset] = std::make_pair(token.metadata->contract_address, token.metadata->decimals);
+					else if (it->second.first != token.metadata->contract_address || it->second.second != token.metadata->decimals)
+						return layer_exception(stringify::text("token metadata conflict: %s", algorithm::asset::handle_of(token_asset).c_str()));
+				}
+				return expectation::met;
+			};
+			auto withdraw_transaction = [&]() -> ledger::block_transaction*
+			{
+				if (!withdraw_transaction_maybe)
 				{
 					format::wo_stream message;
 					message.write_integer(base_asset);
 					message.write_string(proof.transaction_id);
 					auto parent = bridge_hash > 0 && enforce_aliasing ? executor->get_applied_block_transaction<broadcast>(message.hash()) : expects_lr<ledger::block_transaction>(layer_exception());
 					auto origin = parent ? executor->get_applied_block_transaction<withdraw>(((broadcast*)*parent->transaction)->withdraw_hash) : expects_lr<ledger::block_transaction>(layer_exception());
-					withdrawer_account_maybe = origin && algorithm::asset::base_id_of(parent->transaction->asset) == base_asset ? origin->receipt.from : algorithm::pubkeyhash_t();
+					if (origin && algorithm::asset::base_id_of(parent->transaction->asset) == base_asset)
+						withdraw_transaction_maybe = std::move(*origin);
 				}
-				return *withdrawer_account_maybe;
+				return withdraw_transaction_maybe ? withdraw_transaction_maybe.address() : nullptr;
 			};
 			for (auto& [hash, input] : proof.inputs)
 			{
@@ -3708,7 +3861,7 @@ namespace tangent
 				network_fee += input.value;
 			}
 
-			if (enforce_aliasing && bridge_hash > 0 && withdrawer_account().empty())
+			if (enforce_aliasing && bridge_hash > 0 && !withdraw_transaction())
 			{
 				auto front = executor->get_bridge_queue(asset, bridge_hash, 1);
 				if (front)
@@ -3798,9 +3951,9 @@ namespace tangent
 				}
 				else if (bridge_hash > 0)
 				{
-					auto source_ref_owner = source && source->is_routing_account() ? source->ref.owner : withdrawer_account();
-					if (enforce_aliasing && !withdrawer_account().empty())
-						source_ref_owner = withdrawer_account();
+					auto* origin = withdraw_transaction();
+					auto source_ref_owner = source && source->is_routing_account() ? source->ref.owner : algorithm::pubkeyhash_t();
+					source_ref_owner = origin ? origin->receipt.from : source_ref_owner;
 					if (!source_ref_owner.empty())
 					{
 						auto& subtransfers = transfers[source_ref_owner];
@@ -3840,7 +3993,9 @@ namespace tangent
 				imbalance = imbalance.is_nan() ? decimal::zero() : std::max<decimal>(imbalance - network_fee, decimal::zero());
 				if (bridge)
 				{
-					bridge_reward = std::max<decimal>(bridge->fee_rate * (1 - kernel::params().policy.attestation.fee_rate) - network_fee, decimal::zero());
+					auto* origin = enforce_metadata ? withdraw_transaction() : nullptr;
+					auto bridge_fee_rate = origin ? ((withdraw*)*origin->transaction)->committed_budget(*bridge) : bridge->fee_rate;
+					bridge_reward = std::max<decimal>(bridge_fee_rate * (1 - kernel::params().policy.attestation.fee_rate) - network_fee, decimal::zero());
 					imbalance = imbalance.is_nan() ? -bridge_reward : (imbalance - bridge_reward);
 					bridge_exists = true;
 				}
@@ -3986,6 +4141,39 @@ namespace tangent
 					auto status = executor->apply_bridge_balance(base_asset, bridge_hash, -std::min(network_fee, balance ? balance->supply : decimal::zero()));
 					if (!status)
 						return status.error();
+				}
+			}
+
+			if (enforce_metadata)
+			{
+				btree_map<algorithm::asset_id, std::pair<string, uint8_t>> witnesses;
+				for (auto& [hash, input] : proof.inputs)
+				{
+					auto validation = input.validate_metadata(executor, asset, executor->receipt.block_number);
+					if (!validation)
+						return validation;
+
+					auto build = build_metadata(witnesses, input);
+					if (!build)
+						return build;
+				}
+
+				for (auto& [hash, output] : proof.outputs)
+				{
+					auto validation = output.validate_metadata(executor, asset, executor->receipt.block_number);
+					if (!validation)
+						return validation;
+
+					auto build = build_metadata(witnesses, output);
+					if (!build)
+						return build;
+				}
+
+				for (auto& [token_asset, metadata] : witnesses)
+				{
+					auto applied = executor->apply_witness_asset(token_asset, metadata.first, metadata.second);
+					if (!applied)
+						return applied.error();
 				}
 			}
 

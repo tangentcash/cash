@@ -1885,10 +1885,10 @@ namespace tangent
 			return algorithm::hashing::ppc512(storage);
 		}
 
-		witness_event::witness_event(const uint256_t& new_parent_transaction_hash, uint64_t new_block_number) : uniform_state(new_block_number), parent_transaction_hash(new_parent_transaction_hash)
+		witness_event::witness_event(const uint256_t& new_parent_transaction_hash, uint64_t new_block_number) : uniform_state(new_block_number), parent_transaction_hash(new_parent_transaction_hash), child_transaction_hash(0)
 		{
 		}
-		witness_event::witness_event(const uint256_t& new_parent_transaction_hash, const ledger::block_header* new_block_header) : uniform_state(new_block_header), parent_transaction_hash(new_parent_transaction_hash)
+		witness_event::witness_event(const uint256_t& new_parent_transaction_hash, const ledger::block_header* new_block_header) : uniform_state(new_block_header), parent_transaction_hash(new_parent_transaction_hash), child_transaction_hash(0)
 		{
 		}
 		expects_lr<void> witness_event::transition(const transition_state* prev_state)
@@ -2239,6 +2239,100 @@ namespace tangent
 			return message.data;
 		}
 
+		witness_asset::witness_asset(const algorithm::asset_id& new_asset, const std::string_view& new_contract_address, uint8_t new_decimals, uint64_t new_block_number) : uniform_state(new_block_number), asset(new_asset), contract_address(new_contract_address), decimals(new_decimals)
+		{
+		}
+		witness_asset::witness_asset(const algorithm::asset_id& new_asset, const std::string_view& new_contract_address, uint8_t new_decimals, const ledger::block_header* new_block_header) : uniform_state(new_block_header), asset(new_asset), contract_address(new_contract_address), decimals(new_decimals)
+		{
+		}
+		expects_lr<void> witness_asset::transition(const transition_state* prev_state)
+		{
+			auto token = algorithm::asset::token_of(asset);
+			if (token.empty() || !algorithm::asset::is_aux(asset))
+				return layer_exception("invalid asset");
+
+			if (contract_address.empty() || algorithm::asset::id_of(algorithm::asset::blockchain_of(asset), token, contract_address) != asset)
+				return layer_exception("invalid contract address");
+
+			if (prev_state != nullptr && ((witness_asset*)prev_state)->asset != asset)
+				return layer_exception("invalid asset");
+
+			return expectation::met;
+		}
+		bool witness_asset::store_index(format::wo_stream* stream) const
+		{
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			stream->write_integer(asset);
+			return true;
+		}
+		bool witness_asset::load_index(format::ro_stream& stream)
+		{
+			if (!stream.read_integer(stream.read_type(), &asset))
+				return false;
+
+			return true;
+		}
+		bool witness_asset::store_data(format::wo_stream* stream) const
+		{
+			VI_ASSERT(stream != nullptr, "stream should be set");
+			auto raw_address = superchain::bridge::get()->decode_address(asset, contract_address);
+			stream->write_string(raw_address ? *raw_address : contract_address);
+			stream->write_integer(decimals);
+			return true;
+		}
+		bool witness_asset::load_data(format::ro_stream& stream)
+		{
+			string raw_address;
+			if (!stream.read_string(stream.read_type(), &raw_address))
+				return false;
+
+			if (!stream.read_integer(stream.read_type(), &decimals))
+				return false;
+
+			auto encoded_address = superchain::bridge::get()->encode_address(asset, raw_address);
+			if (encoded_address)
+				contract_address = std::move(*encoded_address);
+			else
+				contract_address = std::move(raw_address);
+
+			return true;
+		}
+		bool witness_asset::is_permanent() const
+		{
+			return true;
+		}
+		format::tree witness_asset::as_tree() const
+		{
+			auto data = uniform_state::as_tree();
+			data.set("asset", algorithm::asset::serialize(asset));
+			data.set("contract_address", format::variable(contract_address));
+			data.set("decimals", format::variable((uint64_t)decimals));
+			return data;
+		}
+		uint32_t witness_asset::as_type() const
+		{
+			return as_instance_type();
+		}
+		std::string_view witness_asset::as_typename() const
+		{
+			return as_instance_typename();
+		}
+		uint32_t witness_asset::as_instance_type()
+		{
+			static uint32_t hash = algorithm::encoding::type_of(as_instance_typename());
+			return hash;
+		}
+		std::string_view witness_asset::as_instance_typename()
+		{
+			return "witness_asset";
+		}
+		string witness_asset::as_instance_index(const algorithm::asset_id& asset)
+		{
+			format::wo_stream message;
+			witness_asset(asset, std::string_view(), (uint8_t)0, nullptr).store_index(&message);
+			return message.data;
+		}
+
 		ledger::transition_state* resolver::from_stream(format::ro_stream& stream)
 		{
 			uint32_t type; size_t seek = stream.seek;
@@ -2290,6 +2384,8 @@ namespace tangent
 				return memory::init<witness_account>(bridge_ref(), address_map(), nullptr);
 			else if (hash == witness_transaction::as_instance_type())
 				return memory::init<witness_transaction>(0, std::string_view(), nullptr);
+			else if (hash == witness_asset::as_instance_type())
+				return memory::init<witness_asset>(0, std::string_view(), (uint8_t)0, nullptr);
 			return nullptr;
 		}
 		ledger::transition_state* resolver::from_copy(const ledger::transition_state* base)
@@ -2344,6 +2440,8 @@ namespace tangent
 				*(witness_account*)to = from ? witness_account(*(const witness_account*)from) : witness_account(bridge_ref(), address_map(), nullptr);
 			else if (hash == witness_transaction::as_instance_type())
 				*(witness_transaction*)to = from ? witness_transaction(*(const witness_transaction*)from) : witness_transaction(0, std::string_view(), nullptr);
+			else if (hash == witness_asset::as_instance_type())
+				*(witness_asset*)to = from ? witness_asset(*(const witness_asset*)from) : witness_asset(0, std::string_view(), (uint8_t)0, nullptr);
 		}
 		bool resolver::will_delete(const ledger::transition_state* base, uptr<ledger::transition_state>& cache)
 		{
@@ -2414,7 +2512,8 @@ namespace tangent
 				account_uniform::as_instance_type(),
 				witness_program::as_instance_type(),
 				witness_event::as_instance_type(),
-				witness_transaction::as_instance_type()
+				witness_transaction::as_instance_type(),
+				witness_asset::as_instance_type()
 			};
 			return result;
 		}

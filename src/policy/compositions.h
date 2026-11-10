@@ -193,11 +193,6 @@ namespace tangent
 				} aggregate;
 				uint256_t k_index = 0;
 			};
-			struct beta_state
-			{
-				size_t index = 0;
-				bool sanity_check = false;
-			};
 
 			secp256k1_point_t cumulative_key;
 			secp256k1_point_t cumulative_r;

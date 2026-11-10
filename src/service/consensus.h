@@ -21,6 +21,7 @@ namespace tangent
 
 		typedef std::function<expects_rt<void>(server_node*, uref<relay>&&, const struct exchange&)> event_callback;
 		typedef std::function<expects_rt<format::variables>(server_node*, uref<relay>&&, const struct exchange&)> query_callback;
+		typedef std::function<expects_promise_rt<format::variables>(server_node*, uref<relay>&&, const struct exchange&)> async_query_callback;
 		typedef std::function<void(const algorithm::pubkey_t&, int8_t)> neighbor_callback;
 		typedef std::pair<ledger::node, ledger::wallet> relay_descriptor;
 		typedef socket_connection inbound_node;
@@ -54,6 +55,7 @@ namespace tangent
 
 			event_callback event;
 			query_callback query;
+			async_query_callback async_query;
 			std::string_view name;
 			bool guarded;
 		};
@@ -123,6 +125,7 @@ namespace tangent
 			static callable::descriptor delegate_execution();
 			static callable::descriptor broadcast_preattestation();
 			static callable::descriptor fetch_preattestation_body();
+			static callable::descriptor fetch_quotes();
 		};
 
 		class relay : public reference<relay>
@@ -268,6 +271,7 @@ namespace tangent
 			} verifier;
 
 		private:
+			hash_map<algorithm::asset_id, uint64_t> fees;
 			hash_map<algorithm::asset_id, fetch_queue> fetchers;
 			hash_map<algorithm::asset_id, uint64_t> witnesses;
 			hash_map<uint256_t, neighbor_callback> neighbors;
@@ -307,6 +311,7 @@ namespace tangent
 			expects_rt<format::variables> fetch_mempool(uref<relay>&& state, const exchange& event);
 			expects_rt<format::variables> fetch_transaction(uref<relay>&& state, const exchange& event);
 			expects_rt<format::variables> fetch_transactions(uref<relay>&& state, const exchange& event);
+			expects_promise_rt<format::variables> fetch_quotes(uref<relay>&& state, const exchange& event);
 			expects_rt<format::variables> fetch_preattestation_body(uref<relay>&& state, const exchange& event);
 			expects_rt<format::variables> delegate_execution(uref<relay>&& state, const exchange& event);
 			expects_lr<void> dispatch_transaction_logs(const algorithm::asset_id& asset, superchain::transaction_logs&& logs);
@@ -314,6 +319,7 @@ namespace tangent
 			expects_promise_rt<socket_address> find_node_from_discovery();
 			expects_promise_rt<uref<relay>> connect_to_physical_node(const socket_address& address);
 			expects_promise_rt<btree_set<algorithm::pubkeyhash_t>> connect_to_logical_nodes(btree_set<algorithm::pubkeyhash_t>&& accounts);
+			expects_promise_rt<vector<superchain::approved_fee>> query_blockchain_fee_quotes(const algorithm::asset_id& asset);
 			expects_promise_rt<uint64_t> synchronize_mempool_with(uref<relay>&& state);
 			expects_promise_rt<void> resolve_and_verify_fork(const std::pair<uint256_t, tip_header>* fork);
 			expects_promise_rt<exchange> query(uref<relay>&& state, const callable::descriptor& descriptor, format::variables&& args, uint64_t timeout_ms, bool force_call = false);
@@ -323,6 +329,7 @@ namespace tangent
 			size_t notify_all_except(uref<relay>&& exception, const callable::descriptor& descriptor, format::variables&& args);
 			void bind_event(const callable::descriptor& descriptor, event_callback&& on_event_callback, bool guarded = true);
 			void bind_query(const callable::descriptor& descriptor, query_callback&& on_query_callback, bool guarded = true);
+			void bind_async_query(const callable::descriptor& descriptor, async_query_callback&& on_query_callback, bool guarded = true);
 			bool try_acquire_checkpointer();
 			void release_checkpointer();
 			bool run_superchain_sync(const algorithm::asset_id& asset);

@@ -287,7 +287,7 @@ namespace tangent
 			expects_promise_rt<stellar::asset_info> stellar::get_asset_info(const std::string_view& address, const std::string_view& code)
 			{
 				string ref_address = string(address);
-				return execute_rest("GET", nd_call::get_assets(address, code), format::tree(), cache_policy::lifetime_cache).then<expects_rt<asset_info>>([ref_address = std::move(ref_address)](expects_rt<format::tree>&& asset_data) mutable -> expects_rt<asset_info>
+				return execute_rest("GET", nd_call::get_assets(address, code), format::tree(), cache_policy::persistent_cache).then<expects_rt<asset_info>>([ref_address = std::move(ref_address)](expects_rt<format::tree>&& asset_data) mutable -> expects_rt<asset_info>
 				{
 					if (!asset_data)
 						return expects_rt<stellar::asset_info>(std::move(asset_data.error()));
@@ -346,7 +346,7 @@ namespace tangent
 			}
 			expects_promise_rt<stellar::tx_info> stellar::get_transaction_metadata(const std::string_view& tx_id)
 			{
-				return execute_rest("GET", nd_call::get_transactions(format::util::clear_0xhex(tx_id)), format::tree(), cache_policy::blob_cache).then<expects_rt<tx_info>>([this](expects_rt<format::tree>&& tx_data) -> expects_rt<tx_info>
+				return execute_rest("GET", nd_call::get_transactions(format::util::clear_0xhex(tx_id)), format::tree(), cache_policy::temporary_cache).then<expects_rt<tx_info>>([this](expects_rt<format::tree>&& tx_data) -> expects_rt<tx_info>
 				{
 					if (!tx_data)
 						return expects_rt<tx_info>(std::move(tx_data.error()));
@@ -461,7 +461,7 @@ namespace tangent
 						size_t count = 200;
 						while (true)
 						{
-							auto block_data = coawait(execute_rest("GET", nd_call::get_ledger_operations(block_height + i, cursor, count), format::tree(), cache_policy::blob_cache));
+							auto block_data = coawait(execute_rest("GET", nd_call::get_ledger_operations(block_height + i, cursor, count), format::tree(), cache_policy::no_cache));
 							if (!block_data)
 								coreturn block_data.error();
 
@@ -713,7 +713,7 @@ namespace tangent
 					StellarSignTx transaction = tx_create_transaction(from_link.address, passphrase, account_info->sequence + 1, memo_id.or_else(0), !memo.empty(), accounts.size(), payments.size(), get_base_stroop_fee());
 					decimal fee_value = from_stroop(transaction.fee);
 					if (fee_value > max_fee)
-						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
+						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("(frtl) fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
 
 					auto total_value = fee_value;
 					if (contract_address)

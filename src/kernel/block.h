@@ -367,6 +367,7 @@ namespace tangent
 			expects_lr<states::witness_account> apply_witness_bridge_account(const algorithm::pubkeyhash_t& owner, const algorithm::asset_id& asset, const uint256_t& bridge_hash, const address_map& addresses, bool active = true);
 			expects_lr<states::witness_account> reset_witness_account(const algorithm::pubkeyhash_t& owner, const algorithm::asset_id& asset, const address_map& addresses);
 			expects_lr<states::witness_transaction> apply_witness_transaction(const algorithm::asset_id& asset, const std::string_view& transaction_id);
+			expects_lr<states::witness_asset> apply_witness_asset(const algorithm::asset_id& asset, const std::string_view& contract_address, uint8_t decimals);
 			expects_lr<states::account_nonce> get_account_nonce(const algorithm::pubkeyhash_t& owner) const;
 			expects_lr<states::account_program> get_account_program(const algorithm::pubkeyhash_t& owner) const;
 			expects_lr<states::account_uniform> get_account_uniform(const algorithm::pubkeyhash_t& owner, const std::string_view& index) const;
@@ -403,6 +404,7 @@ namespace tangent
 			expects_lr<states::witness_account> get_witness_account(const algorithm::asset_id& asset, const std::string_view& address, size_t offset) const;
 			expects_lr<states::witness_account> get_witness_account_tagged(const algorithm::asset_id& asset, const std::string_view& address, size_t offset) const;
 			expects_lr<states::witness_transaction> get_witness_transaction(const algorithm::asset_id& asset, const std::string_view& transaction_id) const;
+			expects_lr<states::witness_asset> get_witness_asset(const algorithm::asset_id& asset) const;
 			expects_lr<block_transaction> get_matching_block_transaction(uint32_t type, const uint256_t& transaction_hash, bool exclude_reverted = false, size_t offset = 0) const;
 			expects_lr<block_transaction> get_applied_block_transaction(uint32_t type, const uint256_t& transaction_hash, size_t offset = 0) const;
 			expects_lr<uint64_t> get_block_number_by_hash(const uint256_t& block_hash) const;

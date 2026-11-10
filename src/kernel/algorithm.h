@@ -486,6 +486,26 @@ namespace tangent
 			size_t size() const;
 			static merkle_tree from(vector<uint256_t>&& elements, const hash_function hasher = &hashing::sha256ci);
 		};
+
+		struct merkle_stream
+		{
+			struct entry final
+			{
+				uint256_t hash = 0;
+				bool target = false;
+				bool used = false;
+			};
+
+			vector<entry> heights;
+			vector<uint256_t> branch;
+			const uint256_t* target = nullptr;
+			uint64_t leaves = 0;
+			uint64_t target_index = std::numeric_limits<uint64_t>::max();
+			bool found = false;
+
+			void push(const uint256_t& value);
+			uint256_t finalize();
+		};
 	}
 }
 

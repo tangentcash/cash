@@ -116,6 +116,10 @@ namespace tangent
 			expects_lr<void> add_preattestation(const uint256_t& attestation_hash, const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& attester, uint64_t tip_height, const uint256_t& proof_hash, const algorithm::hashsig_t& signature, const superchain::computed_transaction& body);
 			expects_lr<superchain::uncomputed_transaction> get_preattestation_body(const uint256_t& attestation_hash, const uint256_t& proof_hash);
 			expects_lr<vector<superchain::uncomputed_transaction>> get_preattestations(const hash_set<string>& lookup_keys, size_t offset, size_t count);
+			expects_lr<bool> add_quote(const superchain::approved_fee& quote, const algorithm::pubkeyhash_t& attester);
+			expects_lr<vector<superchain::approved_fee>> get_quotes(const algorithm::asset_id& asset, uint64_t block_number);
+			expects_lr<size_t> expire_quotes();
+			expects_lr<size_t> clear_observations();
 			expects_lr<void> add_transaction(const ledger::transaction_message& value, bool bypass_cooldown = false);
 			expects_lr<void> add_transaction_observation(const uint256_t& transaction_hash);
 			expects_lr<void> remove_transactions_by_hash(const hash_set<uint256_t>& transaction_hashes);

@@ -74,12 +74,12 @@ namespace tangent
 
 						return metadata->child_var("decimals.value").as_uint8();
 					};
-					auto metadata = coawait(execute_http("GET", stringify::text("https://tokens.cardano.org/metadata/%s", subject.c_str()), std::string_view(), std::string_view(), cache_policy::lifetime_cache));
+					auto metadata = coawait(execute_http("GET", stringify::text("https://tokens.cardano.org/metadata/%s", subject.c_str()), std::string_view(), std::string_view(), cache_policy::persistent_cache));
 					auto maybe_result = try_metadata(std::move(metadata));
 					if (maybe_result)
 						coreturn expects_promise_rt<uint8_t>(std::move(maybe_result));
 
-					metadata = coawait(execute_http("GET", stringify::text("https://raw.githubusercontent.com/cardano-foundation/cardano-token-registry/refs/heads/master/mappings/%s.json", subject.c_str()), std::string_view(), std::string_view(), cache_policy::lifetime_cache));
+					metadata = coawait(execute_http("GET", stringify::text("https://raw.githubusercontent.com/cardano-foundation/cardano-token-registry/refs/heads/master/mappings/%s.json", subject.c_str()), std::string_view(), std::string_view(), cache_policy::persistent_cache));
 					coreturn expects_promise_rt<uint8_t>(try_metadata(std::move(metadata)));
 				});
 			}
@@ -109,7 +109,7 @@ namespace tangent
 						auto* block_query = args.set("block_identifier", format::tree::map());
 						block_query->set("index", format::variable(block_height + i));
 
-						auto block_data = coawait(execute_rest("POST", nd_call::block_data(), std::move(args), cache_policy::blob_cache));
+						auto block_data = coawait(execute_rest("POST", nd_call::block_data(), std::move(args), cache_policy::no_cache));
 						if (!block_data)
 							coreturn expects_rt<vector<block_log>>(block_data.error());
 
@@ -145,7 +145,7 @@ namespace tangent
 					auto* block_query = args.set("block_identifier", format::tree::map());
 					block_query->set("index", format::variable(*block_height));
 
-					auto block_data = coawait(execute_rest("POST", nd_call::block_data(), std::move(args), cache_policy::blob_cache));
+					auto block_data = coawait(execute_rest("POST", nd_call::block_data(), std::move(args), cache_policy::no_cache));
 					if (!block_data)
 						coreturn expects_rt<uint64_t>(block_data.error());
 
@@ -354,7 +354,7 @@ namespace tangent
 					decimal fee_value = fee ? fee->first.get_max_fee() : decimal::zero();
 					auto str = fee_value.to_string();
 					if (fee && fee_value > max_fee)
-						return expects_rt<prepared_transaction>(remote_exception(stringify::text("fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
+						return expects_rt<prepared_transaction>(remote_exception(stringify::text("(frtl) fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
 
 					prepared_transaction result;
 					result.requires_abi(format::variable(to_lovelace(fee_value)));

@@ -514,10 +514,32 @@ namespace tangent
 			static string as_instance_index(const algorithm::asset_id& asset, const std::string_view& transaction_id);
 		};
 
+		struct witness_asset final : ledger::uniform_state
+		{
+			algorithm::asset_id asset;
+			string contract_address;
+			uint8_t decimals = 0;
+
+			witness_asset(const algorithm::asset_id& new_asset, const std::string_view& new_contract_address, uint8_t new_decimals, uint64_t new_block_number);
+			witness_asset(const algorithm::asset_id& new_asset, const std::string_view& new_contract_address, uint8_t new_decimals, const ledger::block_header* new_block_header);
+			expects_lr<void> transition(const transition_state* prev_state) override;
+			bool store_index(format::wo_stream* stream) const override;
+			bool load_index(format::ro_stream& stream) override;
+			bool store_data(format::wo_stream* stream) const override;
+			bool load_data(format::ro_stream& stream) override;
+			bool is_permanent() const override;
+			format::tree as_tree() const override;
+			uint32_t as_type() const override;
+			std::string_view as_typename() const override;
+			static uint32_t as_instance_type();
+			static std::string_view as_instance_typename();
+			static string as_instance_index(const algorithm::asset_id& asset);
+		};
+
 		class resolver
 		{
 		public:
-			typedef std::array<uint32_t, 6> uniform_type_map;
+			typedef std::array<uint32_t, 7> uniform_type_map;
 			typedef std::array<uint32_t, 14> multiform_type_map;
 
 		public:

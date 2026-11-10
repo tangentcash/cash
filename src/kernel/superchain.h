@@ -31,8 +31,7 @@ namespace tangent
 			no_cache,
 			no_cache_no_throttling,
 			temporary_cache,
-			blob_cache,
-			lifetime_cache
+			persistent_cache
 		};
 
 		struct network_options;
@@ -157,8 +156,9 @@ namespace tangent
 			option<decimal> get_token_value(const algorithm::asset_id& asset) const;
 			bool store_payload(format::wo_stream* stream) const override;
 			bool load_payload(format::ro_stream& stream) override;
-			expects_lr<void> validate_as_input() const;
+			expects_lr<void> validate_as_input(bool allow_unknown) const;
 			expects_lr<void> validate_as_output() const;
+			expects_lr<void> validate_metadata(const ledger::executor_context* executor, const algorithm::asset_id& asset, uint64_t block_number) const;
 			algorithm::asset_id get_asset(const algorithm::asset_id& base_asset) const;
 			format::tree as_tree() const override;
 			uint32_t as_type() const override;
@@ -436,6 +436,7 @@ namespace tangent
 			virtual expects_promise_rt<decimal> calculate_balance(const algorithm::asset_id& for_asset, const wallet_link& link) = 0;
 			virtual expects_promise_rt<void> broadcast_transaction(const finalized_transaction& finalized) = 0;
 			virtual expects_promise_rt<prepared_transaction> prepare_transaction(const wallet_link& from_link, const value_transfer& to, const decimal& max_fee) = 0;
+			virtual expects_promise_rt<computed_fee> estimate_transaction_fee(const wallet_link& from_link, const value_transfer& to);
 			virtual expects_lr<finalized_transaction> finalize_transaction(prepared_transaction&& prepared) = 0;
 			virtual expects_lr<secret_box> encode_secret_key(const secret_box& secret_key) = 0;
 			virtual expects_lr<secret_box> decode_secret_key(const secret_box& secret_key) = 0;
@@ -520,6 +521,7 @@ namespace tangent
 			expects_promise_rt<decimal> calculate_balance(const algorithm::asset_id& asset, const wallet_link& link);
 			expects_promise_rt<void> broadcast_transaction(const algorithm::asset_id& asset, const uint256_t& external_id, const finalized_transaction& finalized);
 			expects_promise_rt<prepared_transaction> prepare_transaction(const algorithm::asset_id& asset, const wallet_link& from_link, const value_transfer& to, const decimal& max_fee);
+			expects_promise_rt<computed_fee> estimate_transaction_fee(const algorithm::asset_id& asset, const wallet_link& from_link, const value_transfer& to);
 			expects_lr<finalized_transaction> finalize_transaction(const algorithm::asset_id& asset, prepared_transaction&& prepared);
 			expects_lr<computed_transaction> get_computed_transaction(const algorithm::asset_id& asset, const std::string_view& transaction_id, const uint256_t& external_id, const uint256_t& optimized_id);
 			expects_lr<computed_wallet> compute_wallet(const algorithm::asset_id& asset, const uint8_t* seed, size_t seed_size);
@@ -554,6 +556,7 @@ namespace tangent
 			expects_lr<void> revive_utxo(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint64_t index);
 			expects_lr<void> revive_utxo_tree(const algorithm::asset_id& asset, const computed_transaction& computed);
 			expects_lr<void> update_utxo_tree(const algorithm::asset_id& asset, const computed_transaction& computed, const finalized_transaction* finalized = nullptr);
+			expects_lr<void> reset_state(const algorithm::asset_id& asset);
 			expects_lr<coin_utxo> get_utxo(const algorithm::asset_id& asset, const std::string_view& transaction_id, uint64_t index, bool unspent_only = true);
 			expects_lr<vector<coin_utxo>> get_utxos(const algorithm::asset_id& asset, const wallet_link& link, size_t offset, size_t count, bool confirmed_only = false);
 			expects_lr<format::tree> load_cache(const algorithm::asset_id& asset, cache_policy policy, const std::string_view& key);

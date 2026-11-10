@@ -84,6 +84,9 @@ namespace tangent
 				return uniform_location(states::witness_transaction::as_instance_type(), states::witness_transaction::as_instance_index(algorithm::asset::id_of_handle(id), transaction_id));
 			}
 
+			if (type == states::witness_asset::as_instance_typename())
+				return uniform_location(states::witness_asset::as_instance_type(), states::witness_asset::as_instance_index(algorithm::asset::id_of_handle(index.as_string())));
+
 			return layer_exception("invalid uniform type");
 		}
 		static expects_lr<multiform_location> as_multiform_location(const std::string_view& type, const format::variable& column, const format::variable& row)
@@ -325,36 +328,38 @@ namespace tangent
 			bind(0, "websocket", "unsubscribe", 0, 0, "", "void", "unsubscribe from all streams", std::bind(&server_node::web_socket_unsubscribe, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0, "utility", "encodeaddress", 1, 1, "string public_key_hash", "string", "encode public key hash", std::bind(&server_node::utility_encode_address, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0, "utility", "decodeaddress", 1, 1, "string address", "string", "decode address", std::bind(&server_node::utility_decode_address, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0, "utility", "decodemessage", 1, 1, "string message", "any[]", "decode message", std::bind(&server_node::utility_decode_message, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0, "utility", "decodetransaction", 1, 1, "string message_hex", "{ transaction: txn, signer_address: string }", "decode transaction message and convert to object", std::bind(&server_node::utility_decode_transaction, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0, "utility", "help", 0, 0, "", "{ declaration: string, method: string, description: string }[]", "get reference of all methods", std::bind(&server_node::utility_help, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "blockstate", "getblocks", 2, 2, "uint64 number, uint64 count", "uint256[]", "get block hashes", std::bind(&server_node::blockstate_get_blocks, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0, "utility", "decodemessage", 1, 1, "string message", "any[]", "decode a serialized message into its raw values", std::bind(&server_node::utility_decode_message, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0, "utility", "decodetransaction", 1, 1, "string message_hex", "{ transaction: txn, signer_message: string, signer_address: string }", "decode transaction message and convert to object, including the recoverable signer address", std::bind(&server_node::utility_decode_transaction, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0, "utility", "help", 0, 0, "", "{ converters: { name: string }, functions: { domain: { function: string, declaration: string, description: string }[] } }", "get reference of all methods with their signatures, access level and descriptions", std::bind(&server_node::utility_help, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "blockstate", "getblocks", 2, 2, "uint64 number, uint64 count", "uint256[]", "get block hashes starting from block number", std::bind(&server_node::blockstate_get_blocks, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "blockstate", "getblockcheckpointhash", 0, 0, "", "uint256", "get block checkpoint hash", std::bind(&server_node::blockstate_get_block_checkpoint_hash, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "blockstate", "getblockcheckpointnumber", 0, 0, "", "uint64", "get block checkpoint number", std::bind(&server_node::blockstate_get_block_checkpoint_number, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "blockstate", "getblocktiphash", 0, 0, "", "uint256", "get block tip hash", std::bind(&server_node::blockstate_get_block_tip_hash, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "blockstate", "getblocktipnumber", 0, 0, "", "uint64", "get block tip number", std::bind(&server_node::blockstate_get_block_tip_number, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "blockstate", "getblockbyhash", 1, 2, "uint256 hash, uint8? unrolling = 0", "block", "get block by hash", std::bind(&server_node::blockstate_get_block_by_hash, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "blockstate", "getblockbynumber", 1, 2, "uint64 number, uint8? unrolling = 0", "block", "get block by number", std::bind(&server_node::blockstate_get_block_by_number, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "blockstate", "getrawblockbyhash", 1, 1, "uint256 hash", "string", "get block by hash", std::bind(&server_node::blockstate_get_raw_block_by_hash, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "blockstate", "getrawblockbynumber", 1, 1, "uint64 number", "string", "get block by number", std::bind(&server_node::blockstate_get_raw_block_by_number, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "blockstate", "getrawblockbyhash", 1, 1, "uint256 hash", "string", "get raw (encoded) block by hash", std::bind(&server_node::blockstate_get_raw_block_by_hash, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "blockstate", "getrawblockbynumber", 1, 1, "uint64 number", "string", "get raw (encoded) block by number", std::bind(&server_node::blockstate_get_raw_block_by_number, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "blockstate", "getblockproofbyhash", 1, 4, "uint256 hash, bool? transactions, bool? receipts, bool? states", "block::proof", "get block proof by hash", std::bind(&server_node::blockstate_get_block_proof_by_hash, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "blockstate", "getblockproofbynumber", 1, 4, "uint64 number, bool? transactions, bool? receipts, bool? states", "block::proof", "get block proof by number", std::bind(&server_node::blockstate_get_block_proof_by_number, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "blockstate", "getblocknumberbyhash", 1, 1, "uint256 hash", "uint64", "get block number by hash", std::bind(&server_node::blockstate_get_block_number_by_hash, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "blockstate", "getblockhashbynumber", 1, 1, "uint64 number", "uint256", "get block hash by number", std::bind(&server_node::blockstate_get_block_hash_by_number, this, std::placeholders::_1, std::placeholders::_2));
+			bind(access_type::r | access_type::a, "blockstate", "buildworldstateroot", 0, 0, "", "uint256", "build a merkle tree over all live world state hashes and return its root; full storage scan, admin only", std::bind(&server_node::blockstate_build_world_state_root, this, std::placeholders::_1, std::placeholders::_2));
+			bind(access_type::r | access_type::a, "blockstate", "proveworldstatehash", 1, 1, "uint256 state_hash", "{ root: uint256, path_index: uint64, branch: uint256[] }", "prove inclusion of a live state hash under the world state root; full storage scan, admin only", std::bind(&server_node::blockstate_prove_world_state_hash, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "txnstate", "getblocktransactionsbyhash", 1, 2, "uint256 hash, uint8? unrolling = 0", "uint256[] | txn[] | block::txn[]", "get block transactions by hash", std::bind(&server_node::txnstate_get_block_transactions_by_hash, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "txnstate", "getblocktransactionsbynumber", 1, 2, "uint64 number, uint8? unrolling = 0", "uint256[] | txn[] | block::txn[]", "get block transactions by number", std::bind(&server_node::txnstate_get_block_transactions_by_number, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "txnstate", "getfinalizedtransactions", 2, 3, "uint64 offset, uint64 count, uint8? unrolling = 0", "uint256[] | txn[] | block::txn[]", "get latest finalized transactions", std::bind(&server_node::txnstate_get_finalized_transactions, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "txnstate", "gettransactionsbyowner", 3, 5, "string owner_address, uint64 offset, uint64 count, uint8? direction = 1, uint8? unrolling = 0", "uint256[] | txn[] | block::txn[]", "get transactions by owner(s), owner_address is a comma-separated list", std::bind(&server_node::txnstate_get_transactions_by_owner, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "txnstate", "gettransactionsbyhash", 1, 2, "uint256 hash, uint8? unrolling = 0", "txn[] | block::txn[]", "get transactions by hash including aliases", std::bind(&server_node::txnstate_get_transactions_by_hash, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "txnstate", "gettransactionbyhash", 1, 2, "uint256 hash, uint8? unrolling = 0", "txn | block::txn", "get transaction by hash including aliases", std::bind(&server_node::txnstate_get_transaction_by_hash, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "txnstate", "gettransactionsbyhash", 1, 2, "uint256 hash, uint8? unrolling = 0", "txn[] | block::txn[]", "get transactions by hash (replays and aliases excluded)", std::bind(&server_node::txnstate_get_transactions_by_hash, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "txnstate", "gettransactionbyhash", 1, 2, "uint256 hash, uint8? unrolling = 0", "txn | block::txn", "get transaction by hash", std::bind(&server_node::txnstate_get_transaction_by_hash, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "txnstate", "getrawtransactionbyhash", 1, 1, "uint256 hash", "string", "get raw transaction by hash", std::bind(&server_node::txnstate_get_raw_transaction_by_hash, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "calltransaction", 4, 32, "string asset, string from_address, string to_address, string function, any... args", "program_trace", "execute of immutable function of program assigned to to_address", std::bind(&server_node::chainstate_call_transaction, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "calltransaction", 4, 32, "string asset, string from_address, string to_address, string function, any... args", "{ ...txn_receipt, to: address, result: any }", "execute a read-only (constant) call of a program function at the current state without submitting a transaction; the function return value is in result", std::bind(&server_node::chainstate_call_transaction, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getblockstatebyhash", 1, 2, "uint256 hash, uint8? unrolling = 0", "uint256[] | (uniform|multiform)[]", "get block state by hash", std::bind(&server_node::chainstate_get_block_state_by_hash, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getblockstatebynumber", 1, 2, "uint64 number, uint8? unrolling = 0", "uint256[] | (uniform|multiform)[]", "get block state by number", std::bind(&server_node::chainstate_get_block_state_by_number, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getblockgaspricebyhash", 2, 3, "uint256 hash, string asset, double? percentile = 0.5", "decimal", "get gas price from percentile of block transactions by hash", std::bind(&server_node::chainstate_get_block_gas_price_by_hash, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getblockgaspricebynumber", 2, 3, "uint64 number, string asset, double? percentile = 0.5", "decimal", "get gas price from percentile of block transactions by number", std::bind(&server_node::chainstate_get_block_gas_price_by_number, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getblockassetpricebyhash", 3, 4, "uint256 hash, string asset_from, string asset_to, double? percentile = 0.5", "decimal", "get gas asset from percentile of block transactions by hash", std::bind(&server_node::chainstate_get_block_asset_price_by_hash, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getblockassetpricebynumber", 3, 4, "uint64 number, string asset_from, string asset_to, double? percentile = 0.5", "decimal", "get gas asset from percentile of block transactions by number", std::bind(&server_node::chainstate_get_block_asset_price_by_number, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getblockassetpricebyhash", 3, 4, "uint256 hash, string asset_from, string asset_to, double? percentile = 0.5", "decimal", "get exchange rate of asset_from priced in asset_to from percentile of block transactions by hash", std::bind(&server_node::chainstate_get_block_asset_price_by_hash, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getblockassetpricebynumber", 3, 4, "uint64 number, string asset_from, string asset_to, double? percentile = 0.5", "decimal", "get exchange rate of asset_from priced in asset_to from percentile of block transactions by number", std::bind(&server_node::chainstate_get_block_asset_price_by_number, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getuniform", 2, 2, "string type, any index", "uniform", "get uniform by type and index", std::bind(&server_node::chainstate_get_uniform, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getmultiform", 3, 3, "string type, any column, any row", "multiform", "get multiform by type, column and row", std::bind(&server_node::chainstate_get_multiform, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getmultiformsbycolumn", 4, 4, "string type, any column, uint64 offset, uint64 count", "multiform[]", "get multiform by type and column", std::bind(&server_node::chainstate_get_multiforms_by_column, this, std::placeholders::_1, std::placeholders::_2));
@@ -376,65 +381,68 @@ namespace tangent
 			bind(0 | access_type::r, "chainstate", "getvalidatorproductionwithrewards", 1, 1, "string address", "multiform", "get validator production with rewards by address", std::bind(&server_node::chainstate_get_validator_production_with_rewards, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getbestvalidatorproducers", 3, 3, "uint256 commitment, uint64 offset, uint64 count", "multiform[]", "get best validator producers (zero commitment = offline, non-zero commitment = online threshold)", std::bind(&server_node::chainstate_get_best_validator_producers, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getvalidatorproductionreward", 2, 2, "string address, string asset", "multiform", "get validator production reward by address and asset", std::bind(&server_node::chainstate_get_validator_production_reward, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getvalidatorproductionrewards", 3, 3, "string address, uint64 offset, uint64 count", "multiform", "get validator production rewards by address", std::bind(&server_node::chainstate_get_validator_production_rewards, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getvalidatorproductionrewards", 3, 3, "string address, uint64 offset, uint64 count", "multiform[]", "get validator production rewards by address", std::bind(&server_node::chainstate_get_validator_production_rewards, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getvalidatorparticipation", 1, 1, "string address", "multiform", "get validator participation by address", std::bind(&server_node::chainstate_get_validator_participation, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getvalidatorparticipationwithrewards", 1, 1, "string address", "multiform", "get validator participation with rewards by address", std::bind(&server_node::chainstate_get_validator_participation_with_rewards, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getvalidatorparticipations", 3, 3, "string address, uint64 offset, uint64 count", "multiform[]", "get validator participations by address", std::bind(&server_node::chainstate_get_validator_participations, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getbestvalidatorparticipation", 3, 3, "uint256 commitment, uint64 offset, uint64 count", "multiform[]", "get best validator participations (zero commitment = offline, non-zero commitment = online threshold)", std::bind(&server_node::chainstate_get_best_validator_participations, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getvalidatorparticipationreward", 2, 2, "string address, string asset", "multiform", "get validator participation reward by address and asset", std::bind(&server_node::chainstate_get_validator_participation_reward, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getvalidatorparticipationrewards", 3, 3, "string address, uint64 offset, uint64 count", "multiform", "get validator participation rewards by address", std::bind(&server_node::chainstate_get_validator_participation_rewards, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getvalidatorparticipationref", 2, 2, "string owner_address, string ref_owner_address, string ref_asset, uint256 ref_hash", "multiform", "get validator participation by ref", std::bind(&server_node::chainstate_get_validator_participation_ref, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getvalidatorparticipationrefs", 3, 3, "string owner_address, uint64 offset, uint64 count", "multiform", "get validator participation refs by address", std::bind(&server_node::chainstate_get_validator_participation_refs, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getvalidatorparticipationrewards", 3, 3, "string address, uint64 offset, uint64 count", "multiform[]", "get validator participation rewards by address", std::bind(&server_node::chainstate_get_validator_participation_rewards, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getvalidatorparticipationref", 4, 4, "string owner_address, string ref_owner_address, string ref_asset, uint256 ref_hash", "multiform", "get validator participation by ref", std::bind(&server_node::chainstate_get_validator_participation_ref, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getvalidatorparticipationrefs", 3, 3, "string owner_address, uint64 offset, uint64 count", "multiform[]", "get validator participation refs by address", std::bind(&server_node::chainstate_get_validator_participation_refs, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getvalidatorattestation", 2, 2, "string asset, string address", "multiform", "get validator attestation by address and asset", std::bind(&server_node::chainstate_get_validator_attestation, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getvalidatorattestationwithrewards", 2, 2, "string asset, string address", "multiform", "get validator attestation by address and asset", std::bind(&server_node::chainstate_get_validator_attestation_with_rewards, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getvalidatorattestationwithrewards", 2, 2, "string asset, string address", "multiform", "get validator attestation by asset and address with accumulated rewards", std::bind(&server_node::chainstate_get_validator_attestation_with_rewards, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getvalidatorattestations", 3, 3, "string address, uint64 offset, uint64 count", "multiform[]", "get validator attestations by address", std::bind(&server_node::chainstate_get_validator_attestations, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getvalidatorattestationswithrewards", 1, 1, "string address", "multiform[]", "get validator attestations with rewards by address", std::bind(&server_node::chainstate_get_validator_attestations_with_rewards, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getbestvalidatorattestations", 3, 3, "string asset, uint256 commitment, uint64 offset, uint64 count", "multiform[]", "get best validator attestations (zero commitment = offline, non-zero commitment = online threshold)", std::bind(&server_node::chainstate_get_best_validator_attestations, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getbestvalidatorattestations", 4, 4, "string asset, uint256 commitment, uint64 offset, uint64 count", "multiform[]", "get best validator attestations (zero commitment = offline, non-zero commitment = online threshold)", std::bind(&server_node::chainstate_get_best_validator_attestations, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getvalidatorattestationreward", 2, 2, "string address, string asset", "multiform", "get validator attestation reward by address and asset", std::bind(&server_node::chainstate_get_validator_attestation_reward, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getvalidatorattestationrewards", 3, 3, "string address, uint64 offset, uint64 count", "multiform", "get validator attestation rewards by address", std::bind(&server_node::chainstate_get_validator_attestation_rewards, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getbridgeaccount", 3, 3, "string owner_address, string asset, uint256 hash", "multiform", "get bridge account by owner addresses, asset and hash", std::bind(&server_node::chainstate_get_bridge_account, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getvalidatorattestationrewards", 3, 3, "string address, uint64 offset, uint64 count", "multiform[]", "get validator attestation rewards by address", std::bind(&server_node::chainstate_get_validator_attestation_rewards, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getbridgeaccount", 3, 3, "string asset, string owner_address, uint256 hash", "multiform", "get bridge account by asset, owner address and hash", std::bind(&server_node::chainstate_get_bridge_account, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getbridgeaccounts", 3, 3, "uint256 hash, uint64 offset, uint64 count", "multiform[]", "get bridge accounts by hash", std::bind(&server_node::chainstate_get_bridge_accounts, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getbridgeinstance", 2, 2, "string asset, uint256 hash", "multiform", "get bridge instance by asset and hash", std::bind(&server_node::chainstate_get_bridge_instance, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getbridgeinstances", 3, 3, "string asset, uint64 offset, uint64 count", "multiform[]", "get bridge balances by asset", std::bind(&server_node::chainstate_get_bridge_instances, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getbestbridgeinstances", 3, 3, "string asset, uint64 offset, uint64 count", "multiform[]", "get best bridge balances by asset", std::bind(&server_node::chainstate_get_best_bridge_instances, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getbestbridgeinstancesbysecurity", 3, 3, "string asset, uint64 offset, uint64 count", "{ instance: multiform, balance: multiform? }[]", "get best bridge instance based on security level", std::bind(&server_node::chainstate_get_best_bridge_instances_by_security, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getbestbridgeinstancesbybalance", 3, 3, "string asset, uint64 offset, uint64 count", "{ instance: multiform?, balance: multiform }[]", "get best bridge instance based on total value locked", std::bind(&server_node::chainstate_get_best_bridge_instances_by_balance, this, std::placeholders::_1, std::placeholders::_2));	
-			bind(0 | access_type::r, "chainstate", "getbridgebalance", 2, 2, " string asset, uint256 hash", "multiform", "get bridge balance by asset and hash", std::bind(&server_node::chainstate_get_bridge_balance, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getbridgeinstances", 3, 3, "string asset, uint64 offset, uint64 count", "multiform[]", "get bridge instances by asset", std::bind(&server_node::chainstate_get_bridge_instances, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getbestbridgeinstances", 3, 3, "string asset, uint64 offset, uint64 count", "multiform[]", "get bridge instances by asset ordered by rank", std::bind(&server_node::chainstate_get_best_bridge_instances, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getbestbridgeinstancesbysecurity", 3, 3, "string asset, uint64 offset, uint64 count", "{ instance: multiform, master?: multiform, balances: multiform[], queue: multiform[] }[]", "get bridge instances by asset ordered by security level, with master witness account, balances and queued withdrawals", std::bind(&server_node::chainstate_get_best_bridge_instances_by_security, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getbestbridgeinstancesbybalance", 3, 3, "string asset, uint64 offset, uint64 count", "{ instance: multiform?, master?: multiform, balances: multiform[], queue: multiform[] }[]", "get bridge instances by asset ordered by total value locked, with master witness account, balances and queued withdrawals", std::bind(&server_node::chainstate_get_best_bridge_instances_by_balance, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getbridgebalance", 2, 2, "string asset, uint256 hash", "multiform", "get bridge balance by asset and hash", std::bind(&server_node::chainstate_get_bridge_balance, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getbridgebalances", 3, 3, "uint256 hash, uint64 offset, uint64 count", "multiform[]", "get bridge balances by hash", std::bind(&server_node::chainstate_get_bridge_balances, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getbestbridgebalances", 3, 3, "string asset, uint64 offset, uint64 count", "multiform[]", "get accounts with best bridge balance", std::bind(&server_node::chainstate_get_best_bridge_balances, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getbestbridgebalances", 3, 3, "string asset, uint64 offset, uint64 count", "multiform[]", "get bridge balances by asset ordered by total locked value", std::bind(&server_node::chainstate_get_best_bridge_balances, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getwitnessprogram", 1, 1, "string hashcode", "uniform", "get witness program by hashcode (512bit number)", std::bind(&server_node::chainstate_get_witness_program, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getwitnessevent", 1, 1, "uint256 transaction_hash", "uniform", "get witness event by transaction hash", std::bind(&server_node::chainstate_get_witness_event, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getwitnessaccount", 3, 3, "string address, string asset, string wallet_address", "multiform", "get witness address by owner address, asset, wallet address", std::bind(&server_node::chainstate_get_witness_account, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getwitnessaccounttagged", 3, 3, "string asset, string wallet_address, uint64 offset", "multiform", "get witness address by asset and wallet address", std::bind(&server_node::chainstate_get_witness_account_tagged, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getwitnessaccounts", 3, 3, "string address, uint64 offset, uint64 count", "multiform[]", "get witness addresses by owner address", std::bind(&server_node::chainstate_get_witness_accounts, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "chainstate", "getwitnessaccountsbypurpose", 4, 4, "string address, string purpose = 'witness' | 'router' | 'custodian' | 'bridge', uint64 offset, uint64 count", "multiform[]", "get witness addresses by owner address", std::bind(&server_node::chainstate_get_witness_accounts_by_purpose, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getwitnessaccountsbypurpose", 4, 4, "string address, string purpose = 'witness' | 'routing' | 'bridge', uint64 offset, uint64 count", "multiform[]", "get witness addresses by owner address and purpose", std::bind(&server_node::chainstate_get_witness_accounts_by_purpose, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getwitnesstransaction", 2, 2, "string asset, string transaction_id", "uniform", "get witness transaction by asset and transaction id", std::bind(&server_node::chainstate_get_witness_transaction, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "chainstate", "getwitnessasset", 1, 1, "string asset", "uniform", "get witness asset metadata (contract address and decimals) registered on-chain by asset handle", std::bind(&server_node::chainstate_get_witness_asset, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "chainstate", "getassetholders", 2, 2, "string asset, uint256 rank", "uint64", "get amount of asset holders with rank (balance value) greater or equal some value", std::bind(&server_node::chainstate_get_asset_holders, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "mempoolstate", "getclosestnode", 0, 1, "uint64? offset", "validator", "get closest node info", std::bind(&server_node::mempoolstate_get_closest_node, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "mempoolstate", "getclosestnode", 0, 1, "uint64? offset", "{ validator: validator, wallet: wallet }", "get closest node info", std::bind(&server_node::mempoolstate_get_closest_node, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getclosestnodecount", 0, 0, "", "uint64", "get closest node count", std::bind(&server_node::mempoolstate_get_closest_node_counter, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "mempoolstate", "getnode", 1, 1, "string uri_address", "validator", "get associated node info by ip address", std::bind(&server_node::mempoolstate_get_node, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "mempoolstate", "getaddresses", 2, 3, "uint64 offset, uint64 count, string? services = 'consensus' | 'discovery' | 'superchain' | 'rpc' | 'rpc_public_access' | 'rpc_web_sockets' | 'production' | 'participation' | 'attestation'", "string[]", "get best node ip addresses with optional comma separated list of services", std::bind(&server_node::mempoolstate_get_addresses, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "mempoolstate", "getgasprice", 1, 3, "string asset, double? percentile = 0.5, bool? mempool_only", "{ price: decimal, paid: boolean }", "get gas price from percentile of pending transactions", std::bind(&server_node::mempoolstate_get_gas_price, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "mempoolstate", "getassetprice", 2, 3, "string asset_from, string asset_to, double? percentile = 0.5", "decimal", "get gas asset from percentile of pending transactions", std::bind(&server_node::mempoolstate_get_asset_price, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "mempoolstate", "simulatetransaction", 1, 1, "string message_hex", "uint256", "execute transaction with block gas limit and return the receipt", std::bind(&server_node::mempoolstate_simulate_transaction, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "mempoolstate", "getnode", 1, 1, "string uri_address", "{ validator: validator, wallet: wallet }", "get associated node info by ip address", std::bind(&server_node::mempoolstate_get_node, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "mempoolstate", "getaddresses", 2, 3, "uint64 offset, uint64 count, string? services = 'consensus' | 'discovery' | 'superchain' | 'rpc' | 'production' | 'participation' | 'attestation'", "string[]", "get best node addresses with optional comma separated list of services", std::bind(&server_node::mempoolstate_get_addresses, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "mempoolstate", "getgasprice", 1, 3, "string asset, double? percentile = 0.5, bool? mempool_only = true", "{ price: decimal, paid: bool }", "get gas price from percentile of pending transactions, optionally falling back to the latest block", std::bind(&server_node::mempoolstate_get_gas_price, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "mempoolstate", "getassetprice", 2, 3, "string asset_from, string asset_to, double? percentile = 0.5", "decimal", "get exchange rate of asset_from priced in asset_to from percentile of pending transactions", std::bind(&server_node::mempoolstate_get_asset_price, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "mempoolstate", "simulatetransaction", 1, 1, "string message_hex", "txn_receipt", "simulate transaction execution with half of the block gas limit and return the execution receipt without committing", std::bind(&server_node::mempoolstate_simulate_transaction, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getmempooltransactionbyhash", 1, 1, "uint256 hash", "txn", "get mempool transaction by hash", std::bind(&server_node::mempoolstate_get_transaction_by_hash, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getrawmempooltransactionbyhash", 1, 1, "uint256 hash", "string", "get raw mempool transaction by hash", std::bind(&server_node::mempoolstate_get_raw_transaction_by_hash, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getnextaccountnonce", 1, 1, "string owner_address", "uint64", "get account nonce for next transaction by owner", std::bind(&server_node::mempoolstate_get_next_account_nonce, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getmempooltransactions", 3, 4, "bool commitment, uint64 offset, uint64 count, uint8? unrolling", "uint256[] | txn[]", "get mempool transactions", std::bind(&server_node::mempoolstate_get_transactions, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "mempoolstate", "getmempooltransactionsbyowner", 3, 5, "const string address, uint64 offset, uint64 count, uint8? direction = 1, uint8? unrolling", "uint256[] | txn[]", "get mempool transactions by signing address", std::bind(&server_node::mempoolstate_get_transactions_by_owner, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "mempoolstate", "getmempooltransactionsbyowner", 3, 5, "string address, uint64 offset, uint64 count, uint8? direction = 1, uint8? unrolling", "uint256[] | txn[]", "get mempool transactions by signing address", std::bind(&server_node::mempoolstate_get_transactions_by_owner, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getmempoolpreattestations", 2, 5, "uint64 offset, uint64 count, string? transaction_ids, string? addresses, string? memo_accounts", "superchain::uncomputed_transaction[]", "get off-chain transactions with preattestations, optionally filtered by a comma separated list of transaction ids, addresses and/or memo accounts", std::bind(&server_node::mempoolstate_get_preattestations, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "validatorstate", "getblockchains", 0, 0, "", "superchain::asset_info[]", "get supported blockchains", std::bind(&server_node::validatorstate_get_blockchains, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "validatorstate", "status", 0, 0, "", "validator::status", "get validator status", std::bind(&server_node::validatorstate_pruned_status, this, std::placeholders::_1, std::placeholders::_2));
-			bind(access_type::r | access_type::a, "validatorstate", "getnode", 1, 1, "string uri_address", "validator", "get a node by ip address", std::bind(&server_node::validatorstate_get_node, this, std::placeholders::_1, std::placeholders::_2));
-			bind(access_type::r | access_type::a, "validatorstate", "fullstatus", 0, 0, "", "validator::status", "get full validator status", std::bind(&server_node::validatorstate_full_status, this, std::placeholders::_1, std::placeholders::_2));
-			bind(access_type::w | access_type::r, "mempoolstate", "submittransaction", 1, 1, "string message_hash", "uint256", "try to accept and relay a mempool transaction from raw data and possibly validate over latest chainstate", std::bind(&server_node::mempoolstate_submit_transaction, this, std::placeholders::_1, std::placeholders::_2, nullptr));
+			bind(0 | access_type::r, "validatorstate", "getfeequotes", 1, 1, "string asset", "{ block_number: uint64, index: uint32 | null, quotes: { asset: string, fee: decimal, expiry_block_number: uint64, publisher: address }[] }", "get active withdrawal fee quotes for a blockchain asset, collected from the validator network, normalized with the median fee", std::bind(&server_node::validatorstate_get_fee_quotes, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "validatorstate", "status", 0, 0, "", "validator::status", "get validator status", std::bind(&server_node::validatorstate_status, this, std::placeholders::_1, std::placeholders::_2));
+			bind(access_type::r | access_type::a, "validatorstate", "connections", 0, 0, "", "validator::connection[]", "get p2p connections", std::bind(&server_node::validatorstate_connections, this, std::placeholders::_1, std::placeholders::_2));
+			bind(access_type::r | access_type::a, "validatorstate", "getnode", 1, 1, "string uri_address", "{ validator: validator, wallet: wallet, network: map }", "get a connected node by ip address with live network state", std::bind(&server_node::validatorstate_get_node, this, std::placeholders::_1, std::placeholders::_2));
+			bind(access_type::w | access_type::r, "mempoolstate", "submittransaction", 1, 1, "string message_hex", "uint256", "try to accept and relay a mempool transaction from raw data and possibly validate over latest chainstate; returns the transaction hash", std::bind(&server_node::mempoolstate_submit_transaction, this, std::placeholders::_1, std::placeholders::_2, nullptr));
 			bind(access_type::w | access_type::a, "mempoolstate", "rejecttransaction", 1, 1, "uint256 hash", "void", "remove mempool transaction by hash", std::bind(&server_node::mempoolstate_reject_transaction, this, std::placeholders::_1, std::placeholders::_2));
-			bind(access_type::w | access_type::a, "mempoolstate", "simulatebridge", 4, 4, "string asset, string bridge_hash, string to_address, decimal to_value", "superchain_transaction", "build an off-chain attestation transaction payload using off-chain node", std::bind(&server_node::mempoolstate_simulate_bridge, this, std::placeholders::_1, std::placeholders::_2));
+			bind(access_type::w | access_type::a, "mempoolstate", "simulatebridgetransaction", 4, 4, "string asset, string bridge_hash, string to_address, decimal to_value", "superchain::computed_transaction", "build an off-chain broadcast (withdrawal) transaction payload using off-chain node without signing it", std::bind(&server_node::mempoolstate_simulate_bridge_transaction, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "mempoolstate", "addnode", 1, 1, "string uri_address", "void", "add node ip address to trial addresses", std::bind(&server_node::mempoolstate_add_node, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "mempoolstate", "clearnode", 1, 1, "string uri_address", "void", "remove associated node info by ip address", std::bind(&server_node::mempoolstate_clear_node, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::r | access_type::a, "validatorstate", "getwallet", 0, 0, "", "wallet", "get validator wallet", std::bind(&server_node::validatorstate_get_wallet, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::r | access_type::a, "validatorstate", "verify", 2, 3, "uint64 number, uint64 count, bool? validate", "uint256[]", "verify chain and possibly re-execute each block", std::bind(&server_node::validatorstate_verify, this, std::placeholders::_1, std::placeholders::_2));
-			bind(access_type::w | access_type::a, "validatorstate", "revert", 1, 1, "uint64 number", "{ new_tip_block_number: uint64, old_tip_block_number: uint64, block_delta: int64, transaction_delta: int64, state_delta: int64, is_fork: bool }", "revert chainstate to block number and possibly send removed transactions to mempool", std::bind(&server_node::validatorstate_revert, this, std::placeholders::_1, std::placeholders::_2));
+			bind(access_type::w | access_type::a, "validatorstate", "revert", 1, 1, "uint64 number", "{ new_tip_block_number: uint64, old_tip_block_number: uint64, transaction_delta: decimal, block_delta: decimal, state_delta: decimal, is_fork: bool }", "revert chainstate to block number and possibly send removed transactions to mempool", std::bind(&server_node::validatorstate_revert, this, std::placeholders::_1, std::placeholders::_2));
+			bind(access_type::w | access_type::a, "validatorstate", "resetbridgestates", 0, 1, "uint64? number", "uint256[]", "rebuild superchain bridge data from past attestations", std::bind(&server_node::validatorstate_reset_bridge_states, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "validatorstate", "acceptnode", 1, 1, "string uri_address", "void", "try to accept and connect to a node possibly by ip address", std::bind(&server_node::validatorstate_accept_node, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "validatorstate", "rejectnode", 1, 1, "string uri_address", "void", "reject and disconnect from a node by ip address", std::bind(&server_node::validatorstate_reject_node, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "validatorstate", "submitblock", 0, 0, "", "void", "try to propose a block from mempool transactions", std::bind(&server_node::validatorstate_submit_block, this, std::placeholders::_1, std::placeholders::_2));
@@ -1143,6 +1151,16 @@ namespace tangent
 		}
 		server_response server_node::blockstate_get_block_number_by_hash(http::connection*, format::variables&& args)
 		{
+			uint256_t hash = args[0].as_uint256();
+			auto chain = storages::chainstate();
+			auto block_number = chain.get_block_number_by_hash(hash);
+			if (!block_number)
+				return server_response().error(error_codes::not_found, "block not found");
+
+			return server_response().success(algorithm::encoding::serialize_uint256(*block_number));
+		}
+		server_response server_node::blockstate_get_block_hash_by_number(http::connection*, format::variables&& args)
+		{
 			uint64_t number = args[0].as_uint64();
 			auto chain = storages::chainstate();
 			auto block_hash = chain.get_block_hash_by_number(number);
@@ -1151,15 +1169,30 @@ namespace tangent
 
 			return server_response().success(format::variable(algorithm::encoding::encode_0xhex256(*block_hash)));
 		}
-		server_response server_node::blockstate_get_block_hash_by_number(http::connection*, format::variables&& args)
+		server_response server_node::blockstate_build_world_state_root(http::connection*, format::variables&&)
+		{
+			auto chain = storages::chainstate();
+			auto root = chain.build_world_state_root();
+			if (!root)
+				return server_response().error(error_codes::bad_request, root.error().message());
+
+			return server_response().success(format::variable(algorithm::encoding::encode_0xhex256(*root)));
+		}
+		server_response server_node::blockstate_prove_world_state_hash(http::connection*, format::variables&& args)
 		{
 			uint256_t hash = args[0].as_uint256();
 			auto chain = storages::chainstate();
-			auto block_number = chain.get_block_number_by_hash(hash);
-			if (!block_number)
-				return server_response().error(error_codes::not_found, "block not found");
+			auto proof = chain.prove_world_state_hash(hash);
+			if (!proof)
+				return server_response().error(error_codes::not_found, proof.error().message());
 
-			return server_response().success(algorithm::encoding::serialize_uint256(*block_number));
+			auto data = format::tree::map();
+			data.set("root", format::variable(algorithm::encoding::encode_0xhex256(proof->root)));
+			data.set("path_index", format::variable((uint64_t)proof->path.index));
+			auto* branch = data.set("branch", format::tree::list());
+			for (auto& item : proof->path.branch)
+				branch->push(format::variable(algorithm::encoding::encode_0xhex256(item)));
+			return server_response().success(std::move(data));
 		}
 		server_response server_node::txnstate_get_block_transactions_by_hash(http::connection*, format::variables&& args)
 		{
@@ -1345,7 +1378,7 @@ namespace tangent
 
 			uint8_t unrolling = args.size() > 2 ? args[2].as_uint8() : 0;
 			auto chain = storages::chainstate();
-			auto list = chain.get_block_transactions(offset, count);
+			auto list = chain.get_block_transactions(-1, offset, count);
 			if (!list)
 				return server_response().error(error_codes::not_found, "transactions not found");
 
@@ -2684,6 +2717,13 @@ namespace tangent
 			auto state = chain.get_uniform(states::witness_transaction::as_instance_type(), nullptr, states::witness_transaction::as_instance_index(asset, args[1].as_string()), 0);
 			return server_response().success(state ? state->value->as_tree() : format::variable());
 		}
+		server_response server_node::chainstate_get_witness_asset(http::connection*, format::variables&& args)
+		{
+			auto asset = algorithm::asset::id_of_handle(args[0].as_string());
+			auto chain = storages::chainstate();
+			auto state = chain.get_uniform(states::witness_asset::as_instance_type(), nullptr, states::witness_asset::as_instance_index(asset), 0);
+			return server_response().success(state ? state->value->as_tree() : format::variable());
+		}
 		server_response server_node::chainstate_get_asset_holders(http::connection*, format::variables&& args)
 		{
 			auto chain = storages::chainstate();
@@ -2859,7 +2899,7 @@ namespace tangent
 
 			return server_response().success(format::variable(algorithm::encoding::encode_0xhex256(candidate_hash)));
 		}
-		server_response server_node::mempoolstate_simulate_bridge(http::connection* base, format::variables&& args)
+		server_response server_node::mempoolstate_simulate_bridge_transaction(http::connection* base, format::variables&& args)
 		{
 			algorithm::asset_id asset = algorithm::asset::id_of_handle(args[0].as_string());
 			uint256_t bridge_hash = args[1].as_uint256();
@@ -3073,6 +3113,49 @@ namespace tangent
 				return server_response().success(std::move(data));
 			}
 		}
+		server_response server_node::validatorstate_reset_bridge_states(http::connection* base, format::variables&& args)
+		{
+			auto* offchain = superchain::bridge::get();
+			auto assets = hash_map<algorithm::asset_id, uint64_t>();
+			for (auto& asset : offchain->get_assets())
+				offchain->reset_state(asset).report("failed to reset the off-chain state");
+
+			size_t offset = 0;
+			uint64_t block_number = args.size() > 0 ? args[0].as_uint64() : 0;
+			auto chain = storages::chainstate();
+			auto executor = ledger::executor_context(nullptr);
+			auto data = format::tree::list();
+			while (true)
+			{
+				auto list = chain.get_block_transactions(1, offset, ELEMENTS_MANY);
+				if (!list || list->empty())
+					break;
+
+				for (auto& item : *list)
+				{
+					if (item.receipt.block_number >= block_number && item.transaction->as_type() == transactions::attestate::as_instance_type())
+					{
+						auto* target = (transactions::attestate*)*item.transaction;
+						if (!target->proof.reverted)
+						{
+							offchain->update_utxo_tree(target->asset, target->proof).report("failed to update the off-chain utxo set");
+							data.push(format::variable(algorithm::encoding::encode_0xhex256(item.receipt.transaction_hash)));
+							if (assets.find(target->asset) == assets.end())
+								assets[target->asset] = target->proof.block_id;
+						}
+					}
+				}
+
+				offset += list->size();
+				if (list->size() != ELEMENTS_MANY)
+					break;
+			}
+
+			for (auto& [asset, block_id] : assets)
+				offchain->scan_from_block_height(asset, std::max<uint64_t>(block_id > 0 ? block_id - 1 : 1, 1)).report("failed to reset the off-chain block id");
+
+			return server_response().success(std::move(data));
+		}
 		server_response server_node::validatorstate_revert(http::connection*, format::variables&& args)
 		{
 			auto chain = storages::chainstate();
@@ -3268,6 +3351,38 @@ namespace tangent
 			}
 			return server_response().success(std::move(data));
 		}
+		server_response server_node::validatorstate_get_fee_quotes(http::connection*, format::variables&& args)
+		{
+			if (!consensus_service)
+				return server_response().error(error_codes::bad_request, "validator node disabled");
+
+			algorithm::asset_id asset = algorithm::asset::id_of_handle(args[0].as_string());
+			if (!algorithm::asset::is_aux(asset))
+				return server_response().error(error_codes::bad_params, "asset not supported");
+
+			auto quotes = consensus_service->query_blockchain_fee_quotes(asset).get();
+			if (!quotes)
+				return server_response().error(error_codes::bad_request, quotes.what());
+
+			auto data = format::tree::list();
+			std::sort(quotes->begin(), quotes->end(), [](const superchain::approved_fee& left, const superchain::approved_fee& right) { return left.fee < right.fee; });
+			for (auto& quote : *quotes)
+				data.push(quote.as_tree());
+
+			size_t index = quotes->size() / 2;
+			if (quotes->size() > 1)
+			{
+				auto& highest_quote = quotes->back();
+				auto& median_quote = quotes->at(index);
+				if (median_quote.fee.is_positive() && (highest_quote.fee - median_quote.fee) / median_quote.fee <= 1)
+					index = quotes->size() - 1;
+			}
+
+			auto result = format::tree::map();
+			result.set("index", quotes->empty() ? format::variable() : format::variable(index));
+			result.set("quotes", std::move(data));
+			return server_response().success(std::move(result));
+		}
 		server_response server_node::validatorstate_get_wallet(http::connection*, format::variables&&)
 		{
 			if (!consensus_service)
@@ -3276,15 +3391,7 @@ namespace tangent
 			auto& [validator, wallet] = *consensus_service->runner_descriptor;
 			return server_response().success(wallet.as_tree());
 		}
-		server_response server_node::validatorstate_pruned_status(http::connection* base, format::variables&& args)
-		{
-			return validatorstate_status(base, std::move(args), true);
-		}
-		server_response server_node::validatorstate_full_status(http::connection* base, format::variables&& args)
-		{
-			return validatorstate_status(base, std::move(args), false);
-		}
-		server_response server_node::validatorstate_status(http::connection*, format::variables&&, bool pruned)
+		server_response server_node::validatorstate_status(http::connection*, format::variables&& args)
 		{
 			if (!consensus_service)
 				return server_response().error(error_codes::bad_request, "validator node disabled");
@@ -3305,12 +3412,21 @@ namespace tangent
 				discovery->set("port", format::variable(kernel::params().user.discovery.port));
 			}
 
-			if (!pruned && kernel::params().user.superchain.listener)
+			if (kernel::params().user.superchain.listener)
 			{
-				auto* superchain = data.set("superchain", format::tree::map());
-				auto array = superchain->set("listeners", format::tree::list());
-				for (auto& asset : superchain::bridge::get()->get_assets())
-					array->push(algorithm::asset::serialize(asset));
+				auto* offchain = superchain::bridge::get();
+				auto* superchain_data = data.set("superchain", format::tree::map());
+				auto array = superchain_data->set("networks", format::tree::list());
+				for (auto& asset : offchain->get_assets())
+				{
+					if (!offchain->has_network(asset, true))
+						continue;
+
+					auto tip = offchain->get_latest_known_block_height(asset);
+					auto* network = array->push(format::tree::map());
+					network->set("asset", algorithm::asset::serialize(asset));
+					network->set("tip", tip ? format::variable(*tip) : format::variable());
+				}
 			}
 
 			if (kernel::params().user.rpc.server)
@@ -3340,20 +3456,6 @@ namespace tangent
 			}
 			else
 				data.set("tip", format::variable());
-
-			if (!pruned)
-			{
-				auto* connections = data.set("connections", format::tree::list());
-				for (auto& connection : consensus_service->get_nodes())
-				{
-					auto* descriptor = connection.second->as_descriptor();
-					auto node_data = format::tree::map();
-					node_data.set("validator", descriptor ? descriptor->first.as_tree() : format::variable());
-					node_data.set("wallet", descriptor ? descriptor->second.as_tree() : format::variable());
-					node_data.set("network", connection.second->as_tree());
-					connections->push(std::move(node_data));
-				}
-			}
 
 			auto* tips = data.set("tips", format::tree::list());
 			for (auto& tip : consensus_service->tips)
@@ -3385,6 +3487,24 @@ namespace tangent
 			version->set("fork", format::variable((uint32_t)FORK_VERSION));
 			version->set("patch", format::variable((uint32_t)PATCH_VERSION));
 			data.set("checkpoint", algorithm::encoding::serialize_uint256(chain.get_checkpoint_block_number().or_else(0)));
+			return server_response().success(std::move(data));
+		}
+		server_response server_node::validatorstate_connections(http::connection*, format::variables&& args)
+		{
+			if (!consensus_service)
+				return server_response().error(error_codes::bad_request, "validator node disabled");
+
+			umutex<std::recursive_mutex> unique(consensus_service->get_mutex());
+			auto data = format::tree::list();
+			for (auto& connection : consensus_service->get_nodes())
+			{
+				auto* descriptor = connection.second->as_descriptor();
+				auto node_data = format::tree::map();
+				node_data.set("validator", descriptor ? descriptor->first.as_tree() : format::variable());
+				node_data.set("wallet", descriptor ? descriptor->second.as_tree() : format::variable());
+				node_data.set("network", connection.second->as_tree());
+				data.push(std::move(node_data));
+			}
 			return server_response().success(std::move(data));
 		}
 		server_response server_node::validatorstate_submit_block(http::connection*, format::variables&&)

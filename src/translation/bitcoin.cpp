@@ -209,7 +209,7 @@ namespace tangent
 					for (uint64_t i = 0; i < block_count; i++)
 						hashes_map.push(format::tree::list())->push(format::variable(block_height + i));
 
-					auto block_ids = coawait(execute_rpc_multi(nd_call::get_block_hash(), std::move(hashes_map), cache_policy::blob_cache));
+					auto block_ids = coawait(execute_rpc_multi(nd_call::get_block_hash(), std::move(hashes_map), cache_policy::no_cache));
 					if (!block_ids)
 						coreturn block_ids.error();
 
@@ -222,7 +222,7 @@ namespace tangent
 						map.push(std::move(block_map));
 					}
 
-					auto block_data = coawait(execute_rpc_multi(nd_call::get_block(), std::move(map), cache_policy::temporary_cache));
+					auto block_data = coawait(execute_rpc_multi(nd_call::get_block(), std::move(map), cache_policy::no_cache));
 					if (!block_data)
 						coreturn block_data.error();
 
@@ -578,7 +578,7 @@ namespace tangent
 								format::tree hash_map;
 								hash_map.push(format::variable(prev_block_height));
 
-								auto block_id = coawait(execute_rpc(nd_call::get_block_hash(), std::move(hash_map), cache_policy::blob_cache));
+								auto block_id = coawait(execute_rpc(nd_call::get_block_hash(), std::move(hash_map), cache_policy::no_cache));
 								if (!block_id)
 									continue;
 
@@ -626,7 +626,7 @@ namespace tangent
 
 					decimal fee_value = std::max(fee->get_max_fee(), get_min_relay_fee(fee->fee.byte_rate).get_max_fee());
 					if (fee_value > max_fee)
-						return expects_rt<prepared_transaction>(remote_exception(stringify::text("fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
+						return expects_rt<prepared_transaction>(remote_exception(stringify::text("(frtl) fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
 
 					auto to_value = this->to_value(to.value);
 					auto total_value = to_value + fee_value;
@@ -1294,14 +1294,14 @@ namespace tangent
 					transaction_map.push(format::variable(format::util::clear_0xhex(ref_transaction_id)));
 					transaction_map.push(legacy.get_raw_transaction ? format::variable(true) : format::variable((uint8_t)2));
 
-					auto tx_data = coawait(execute_rpc(nd_call::get_raw_transaction(), std::move(transaction_map), cache_policy::blob_cache));
+					auto tx_data = coawait(execute_rpc(nd_call::get_raw_transaction(), std::move(transaction_map), cache_policy::persistent_cache));
 					if (!tx_data)
 					{
 						format::tree legacy_transaction_map;
 						legacy_transaction_map.push(format::variable(format::util::clear_0xhex(ref_transaction_id)));
 						legacy_transaction_map.push(format::variable(true));
 
-						tx_data = coawait(execute_rpc(nd_call::get_raw_transaction(), std::move(legacy_transaction_map), cache_policy::blob_cache));
+						tx_data = coawait(execute_rpc(nd_call::get_raw_transaction(), std::move(legacy_transaction_map), cache_policy::persistent_cache));
 						if (tx_data)
 							legacy.get_raw_transaction = 1;
 					}

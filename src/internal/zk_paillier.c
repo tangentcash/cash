@@ -350,10 +350,10 @@ static int zk_range_proof_prove(zk_paillier_range_proof* proof, const mpz_t n, c
 	mpz_mul(proof->z, proof->z, t);
 	mpz_mod(proof->z, proof->z, setup->ntilde);
 
-	/* u = (1+n)^alpha * beta^n mod n^2 */
-	mpz_add_ui(t, n, 1);
-	mpz_powm(u, t, alpha, n2);
-	mpz_powm(t, beta, n, n2);
+	/* u = (1+n)^alpha * beta^n mod n^2, via (1+n)^k = 1 + k*n (mod n^2) */
+	mpz_powm(u, beta, n, n2);
+	mpz_mul(t, alpha, n);
+	mpz_add_ui(t, t, 1);
 	mpz_mul(u, u, t);
 	mpz_mod(u, u, n2);
 
@@ -399,10 +399,10 @@ static int zk_range_proof_verify(const zk_paillier_range_proof* proof, const mpz
 
 	if (ok)
 	{
-		/* u = (1+n)^s1 * s^n * c^{-e} mod n^2 */
-		mpz_add_ui(t, n, 1);
-		mpz_powm(u, t, proof->s1, n2);
-		mpz_powm(t, proof->s, n, n2);
+		/* u = (1+n)^s1 * s^n * c^{-e} mod n^2, via (1+n)^k = 1 + k*n (mod n^2) */
+		mpz_powm(u, proof->s, n, n2);
+		mpz_mul(t, proof->s1, n);
+		mpz_add_ui(t, t, 1);
 		mpz_mul(u, u, t);
 		mpz_mod(u, u, n2);
 		if (mpz_invert(inv, c, n2) == 0)

@@ -126,6 +126,8 @@ namespace tangent
 			server_response blockstate_get_block_proof_by_number(http::connection* base, format::variables&& args);
 			server_response blockstate_get_block_number_by_hash(http::connection* base, format::variables&& args);
 			server_response blockstate_get_block_hash_by_number(http::connection* base, format::variables&& args);
+			server_response blockstate_build_world_state_root(http::connection* base, format::variables&& args);
+			server_response blockstate_prove_world_state_hash(http::connection* base, format::variables&& args);
 			server_response txnstate_get_block_transactions_by_hash(http::connection* base, format::variables&& args);
 			server_response txnstate_get_block_transactions_by_number(http::connection* base, format::variables&& args);
 			server_response txnstate_get_pending_transactions(http::connection* base, format::variables&& args);
@@ -195,6 +197,7 @@ namespace tangent
 			server_response chainstate_get_witness_accounts(http::connection* base, format::variables&& args);
 			server_response chainstate_get_witness_accounts_by_purpose(http::connection* base, format::variables&& args);
 			server_response chainstate_get_witness_transaction(http::connection* base, format::variables&& args);
+			server_response chainstate_get_witness_asset(http::connection* base, format::variables&& args);
 			server_response chainstate_get_asset_holders(http::connection* base, format::variables&& args);
 			server_response mempoolstate_add_node(http::connection* base, format::variables&& args);
 			server_response mempoolstate_clear_node(http::connection* base, format::variables&& args);
@@ -207,23 +210,24 @@ namespace tangent
 			server_response mempoolstate_simulate_transaction(http::connection* base, format::variables&& args);
 			server_response mempoolstate_submit_transaction(http::connection* base, format::variables&& args, ledger::transaction_message* prebuilt);
 			server_response mempoolstate_reject_transaction(http::connection* base, format::variables&& args);
-			server_response mempoolstate_simulate_bridge(http::connection* base, format::variables&& args);
+			server_response mempoolstate_simulate_bridge_transaction(http::connection* base, format::variables&& args);
 			server_response mempoolstate_get_transaction_by_hash(http::connection* base, format::variables&& args);
 			server_response mempoolstate_get_raw_transaction_by_hash(http::connection* base, format::variables&& args);
 			server_response mempoolstate_get_next_account_nonce(http::connection* base, format::variables&& args);
 			server_response mempoolstate_get_transactions(http::connection* base, format::variables&& args);
 			server_response mempoolstate_get_transactions_by_owner(http::connection* base, format::variables&& args);
 			server_response mempoolstate_get_preattestations(http::connection* base, format::variables&& args);
+			server_response validatorstate_reset_bridge_states(http::connection* base, format::variables&& args);
 			server_response validatorstate_revert(http::connection* base, format::variables&& args);
 			server_response validatorstate_verify(http::connection* base, format::variables&& args);
 			server_response validatorstate_accept_node(http::connection* base, format::variables&& args);
 			server_response validatorstate_reject_node(http::connection* base, format::variables&& args);
 			server_response validatorstate_get_node(http::connection* base, format::variables&& args);
 			server_response validatorstate_get_blockchains(http::connection* base, format::variables&& args);
+			server_response validatorstate_get_fee_quotes(http::connection* base, format::variables&& args);
 			server_response validatorstate_get_wallet(http::connection* base, format::variables&& args);
-			server_response validatorstate_pruned_status(http::connection* base, format::variables&& args);
-			server_response validatorstate_full_status(http::connection* base, format::variables&& args);
-			server_response validatorstate_status(http::connection* base, format::variables&& args, bool pruned);
+			server_response validatorstate_status(http::connection* base, format::variables&& args);
+			server_response validatorstate_connections(http::connection* base, format::variables&& args);
 			server_response validatorstate_submit_block(http::connection* base, format::variables&& args);
 		};
 	}

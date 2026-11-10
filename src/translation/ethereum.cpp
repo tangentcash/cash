@@ -484,7 +484,7 @@ namespace tangent
 				format::tree map;
 				map.push(format::variable(format::util::assign_0xhex(transaction_id)));
 
-				return execute_rpc(nd_call::get_transaction_receipt(), std::move(map), cached ? cache_policy::blob_cache : cache_policy::no_cache_no_throttling, evm_rpc_path).then<expects_rt<format::tree>>([](expects_rt<format::tree>&& tx_data) -> expects_rt<format::tree>
+				return execute_rpc(nd_call::get_transaction_receipt(), std::move(map), cached ? cache_policy::temporary_cache : cache_policy::no_cache_no_throttling, evm_rpc_path).then<expects_rt<format::tree>>([](expects_rt<format::tree>&& tx_data) -> expects_rt<format::tree>
 				{
 					return tx_data && tx_data.is_none() ? expects_rt<format::tree>(remote_exception("receipt not found")) : expects_rt<format::tree>(std::move(tx_data));
 				});
@@ -520,7 +520,7 @@ namespace tangent
 			}
 			expects_promise_rt<uint256_t> ethereum::get_chain_id()
 			{
-				return execute_rpc(nd_call::get_chain_id(), format::tree::list(), cache_policy::lifetime_cache, evm_rpc_path).then<expects_rt<uint256_t>>([this](expects_rt<format::tree>&& hex_chain_id) -> expects_rt<uint256_t>
+				return execute_rpc(nd_call::get_chain_id(), format::tree::list(), cache_policy::persistent_cache, evm_rpc_path).then<expects_rt<uint256_t>>([this](expects_rt<format::tree>&& hex_chain_id) -> expects_rt<uint256_t>
 				{
 					return hex_chain_id ? expects_rt<uint256_t>(hex_to_uint256(hex_chain_id->value.as_blob())) : expects_rt<uint256_t>(std::move(hex_chain_id.error()));
 				});
@@ -535,7 +535,7 @@ namespace tangent
 				map.push(std::move(params));
 				map.push(format::variable("latest"));
 
-				return execute_rpc(nd_call::call(), std::move(map), cache_policy::lifetime_cache, evm_rpc_path).then<expects_rt<string>>([](expects_rt<format::tree>&& symbol) -> expects_rt<string>
+				return execute_rpc(nd_call::call(), std::move(map), cache_policy::persistent_cache, evm_rpc_path).then<expects_rt<string>>([](expects_rt<format::tree>&& symbol) -> expects_rt<string>
 				{
 					if (!symbol)
 						return expects_rt<string>(std::move(symbol.error()));
@@ -565,7 +565,7 @@ namespace tangent
 				map.push(std::move(params));
 				map.push(format::variable("latest"));
 
-				return execute_rpc(nd_call::call(), std::move(map), cache_policy::lifetime_cache, evm_rpc_path).then<expects_rt<decimal>>([this](expects_rt<format::tree>&& decimals) -> expects_rt<decimal>
+				return execute_rpc(nd_call::call(), std::move(map), cache_policy::persistent_cache, evm_rpc_path).then<expects_rt<decimal>>([this](expects_rt<format::tree>&& decimals) -> expects_rt<decimal>
 				{
 					return decimals ? expects_rt<decimal>(algorithm::arithmetic::range((uint64_t)hex_to_uint256(decimals->value.as_blob()))) : expects_rt<decimal>(std::move(decimals.error()));
 				});
@@ -590,7 +590,7 @@ namespace tangent
 						map.push(std::move(block_map));
 					}
 
-					auto block_data = coawait(execute_rpc_multi(nd_call::get_block_by_number(), std::move(map), cache_policy::temporary_cache, evm_rpc_path));
+					auto block_data = coawait(execute_rpc_multi(nd_call::get_block_by_number(), std::move(map), cache_policy::no_cache, evm_rpc_path));
 					if (!block_data)
 						coreturn block_data.error();
 
@@ -616,7 +616,7 @@ namespace tangent
 						map.push(std::move(logs_map));
 					}
 
-					auto logs_batch = map.childs().empty() ? expects_rt<format::tree>(remote_exception::shutdown()) : coawait(execute_rpc_multi(nd_call::get_logs(), std::move(map), cache_policy::temporary_cache, evm_rpc_path));
+					auto logs_batch = map.childs().empty() ? expects_rt<format::tree>(remote_exception::shutdown()) : coawait(execute_rpc_multi(nd_call::get_logs(), std::move(map), cache_policy::no_cache, evm_rpc_path));
 					if (logs_batch)
 					{
 						hash_map<string, format::tree*> indices;
@@ -671,8 +671,9 @@ namespace tangent
 					hash_map<string, hash_map<algorithm::asset_id, coin_utxo::token_utxo>> outputs;
 					if (total_value.is_positive())
 					{
-						inputs[signer][native_asset] = coin_utxo::token_utxo::modern(std::string_view(), std::string_view(), total_value, 0);
-						outputs[to][native_asset] = coin_utxo::token_utxo::modern(std::string_view(), std::string_view(), base_value, 0);
+						uint8_t decimals = (uint8_t)(netdata.divisibility.to_string().size() - 1);
+						inputs[signer][native_asset] = coin_utxo::token_utxo::modern(std::string_view(), std::string_view(), total_value, decimals);
+						outputs[to][native_asset] = coin_utxo::token_utxo::modern(std::string_view(), std::string_view(), base_value, decimals);
 					}
 
 					hash_set<string> addresses;
@@ -839,7 +840,7 @@ namespace tangent
 							map.push(format::variable(uint256_to_hex(*block_number)));
 							map.push(format::variable(false));
 
-							auto block_data = coawait(execute_rpc(nd_call::get_block_by_number(), std::move(map), cache_policy::temporary_cache, evm_rpc_path));
+							auto block_data = coawait(execute_rpc(nd_call::get_block_by_number(), std::move(map), cache_policy::no_cache, evm_rpc_path));
 							if (!block_data)
 								coreturn expects_rt<computed_fee>(std::move(block_data.error()));
 
@@ -972,7 +973,7 @@ namespace tangent
 
 					decimal fee_value = fee->get_max_fee();
 					if (fee_value > max_fee)
-						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
+						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("(frtl) fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
 
 					if (contract_address)
 					{

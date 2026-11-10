@@ -143,6 +143,20 @@ namespace tangent
 
 			return expectation::met;
 		}
+		expects_lr<void> superchainstate::reset_state()
+		{
+			auto cursor = get_storage().query(__func__,
+				"DELETE FROM transactions;"
+				"DELETE FROM unconfirmed_transactions;"
+				"DELETE FROM coins;"
+				"DELETE FROM properties;"
+				"DELETE FROM cache0;"
+				"DELETE FROM cache1");
+			if (!cursor || cursor->error())
+				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
+
+			return expectation::met;
+		}
 		expects_lr<superchain::coin_utxo> superchainstate::get_utxo(const std::string_view& transaction_id, uint64_t index, bool unspent_only)
 		{
 			format::wo_stream transaction_id_index;
@@ -630,13 +644,11 @@ namespace tangent
 		{
 			switch (policy)
 			{
-				case superchain::cache_policy::lifetime_cache:
+				case superchain::cache_policy::persistent_cache:
 					return "cache0";
 				case superchain::cache_policy::temporary_cache:
 				default:
 					return "cache1";
-				case superchain::cache_policy::blob_cache:
-					return "cache2";
 			}
 		}
 		uint32_t superchainstate::get_queries() const
@@ -711,19 +723,8 @@ namespace tangent
 			);
 			CREATE TRIGGER IF NOT EXISTS cache1_capacity AFTER INSERT ON cache1 BEGIN
 				DELETE FROM cache1 WHERE id = (SELECT id FROM cache1 ORDER BY id ASC) AND (SELECT COUNT(1) FROM cache1) > max_cache1_capacity;
-			END;
-			CREATE TABLE IF NOT EXISTS cache2
-			(
-				id INTEGER PRIMARY KEY,
-				key BLOB NOT NULL,
-				message BLOB NOT NULL,
-				UNIQUE (key)
-			);
-			CREATE TRIGGER IF NOT EXISTS cache2_capacity AFTER INSERT ON cache2 BEGIN
-				DELETE FROM cache2 WHERE id = (SELECT id FROM cache2 ORDER BY id ASC) AND (SELECT COUNT(1) FROM cache2) > max_cache2_capacity;
 			END;);
-			stringify::replace(command, "max_cache1_capacity", to_string(kernel::params().user.superchain.cache1_size));
-			stringify::replace(command, "max_cache2_capacity", to_string(kernel::params().user.superchain.cache2_size));
+			stringify::replace(command, "max_cache1_capacity", to_string(kernel::params().user.superchain.temporary_cache_size));
 
 			auto cursor = connection->query(command);
 			cursor.report("superchainstate configuration failed");

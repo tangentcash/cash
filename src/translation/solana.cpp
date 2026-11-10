@@ -201,7 +201,7 @@ namespace tangent
 					map.push(std::move(submap));
 				}
 
-				return execute_rpc_multi(nd_call::get_block(), std::move(map), cache_policy::blob_cache).then<expects_rt<vector<block_log>>>([block_height, block_count](expects_rt<format::tree>&& block_data) -> expects_rt<vector<block_log>>
+				return execute_rpc_multi(nd_call::get_block(), std::move(map), cache_policy::no_cache).then<expects_rt<vector<block_log>>>([block_height, block_count](expects_rt<format::tree>&& block_data) -> expects_rt<vector<block_log>>
 				{
 					if (!block_data && block_data.error().message().find("was skipped, or missing") == std::string::npos)
 						return block_data.error();
@@ -664,7 +664,7 @@ namespace tangent
 					auto fee = computed_fee::flat_fee(from_baseline_value(fee_constant));
 					decimal fee_value = fee.get_max_fee();
 					if (fee_value > max_fee)
-						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
+						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("(frtl) fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
 
 					auto native_balance = coawait(get_balance(from_link.address));
 					if (!native_balance)
@@ -903,7 +903,7 @@ namespace tangent
 					map.push(format::variable(ref_mint_address));
 					map.push(config);
 
-					auto account_info = coawait(execute_rpc(nd_call::get_account_info(), std::move(map), cache_policy::lifetime_cache));
+					auto account_info = coawait(execute_rpc(nd_call::get_account_info(), std::move(map), cache_policy::persistent_cache));
 					if (account_info)
 					{
 						auto* token_extensions = account_info->child("value.data.parsed.info.extensions");
@@ -947,7 +947,7 @@ namespace tangent
 					map.push(format::variable(meta_address));
 					map.push(std::move(config));
 
-					account_info = coawait(execute_rpc(nd_call::get_account_info(), std::move(map), cache_policy::lifetime_cache));
+					account_info = coawait(execute_rpc(nd_call::get_account_info(), std::move(map), cache_policy::persistent_cache));
 					if (!account_info)
 						coreturn expects_rt<string>(std::move(account_info.error()));
 
@@ -1068,7 +1068,7 @@ namespace tangent
 				format::tree map;
 				map.push(format::variable(signature));
 				map.push(std::move(config));
-				return execute_rpc(nd_call::get_transaction(), std::move(map), cache_policy::blob_cache);
+				return execute_rpc(nd_call::get_transaction(), std::move(map), cache_policy::temporary_cache);
 			}
 			expects_promise_rt<string> solana::get_recent_block_hash()
 			{

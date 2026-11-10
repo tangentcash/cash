@@ -130,12 +130,20 @@ namespace tangent
 				uint32_t type;
 			};
 
-			typedef std::array<state_local_storage, 6> uniform_storage_map;
+			typedef std::array<state_local_storage, 7> uniform_storage_map;
 			typedef std::array<state_local_storage, 14> multiform_storage_map;
 			static_assert(std::tuple_size_v<states::resolver::uniform_type_map> == std::tuple_size_v<uniform_storage_map>, "uniform storage size mismatch");
 			static_assert(std::tuple_size_v<states::resolver::multiform_type_map> == std::tuple_size_v<multiform_storage_map>, "multiform storage size mismatch");
 
+		public:
+			struct world_state_proof
+			{
+				uint256_t root = 0;
+				algorithm::merkle_tree::branch_path path;
+			};
+
 		private:
+			expects_lr<world_state_proof> build_world_state(const uint256_t* target);
 			struct multiform_location
 			{
 				option<uint64_t> column = optional::none;
@@ -191,7 +199,9 @@ namespace tangent
 			expects_lr<vector<ledger::block_body>> get_blocks(uint64_t block_number, uint64_t count, const uint256_t& gas_limit, bool include_transactions = true);
 			expects_lr<vector<ledger::block_header>> get_block_headers(uint64_t block_number, size_t count);
 			expects_lr<ledger::block_state::log> get_block_state_by_number(uint64_t block_number);
-			expects_lr<vector<ledger::block_transaction>> get_block_transactions(size_t offset, size_t count);
+			expects_lr<uint256_t> build_world_state_root();
+			expects_lr<world_state_proof> prove_world_state_hash(const uint256_t& hash);
+			expects_lr<vector<ledger::block_transaction>> get_block_transactions(int8_t order, size_t offset, size_t count);
 			expects_lr<vector<ledger::block_transaction>> get_block_transactions_by_number(uint64_t block_number, size_t offset, size_t count);
 			expects_lr<vector<ledger::block_transaction>> get_block_transactions_by_owner(uint64_t block_number, const algorithm::pubkeyhash_t& owner, int8_t direction, size_t offset, size_t count);
 			expects_lr<vector<ledger::block_transaction>> get_block_transactions_by_owners(uint64_t block_number, const vector<algorithm::pubkeyhash_t>& owners, int8_t direction, size_t offset, size_t count);

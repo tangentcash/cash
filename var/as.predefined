@@ -286,6 +286,19 @@ class batch_payout
 	void to(const address&in, const uint256&in, const real320&in);
 	void pay();
 }
+class send_quota
+{
+	~send_quota();
+	send_quota();
+	send_quota(const send_quota&in);
+	send_quota& opAssign(const send_quota&in);
+	void set_signature(const string&in);
+	void set_fee_rate(const real320&in);
+	void set_block_number(uint64);
+	string signature() const;
+	real320 fee_rate() const;
+	uint64 block_number() const;
+}
 class abi
 {
 	~abi();
@@ -454,7 +467,7 @@ namespace tx { block::tx self(); }
 namespace tx { bool pipelined(); }
 namespace bridge { real320 fee(const uint256&in, const uint256&in); }
 namespace bridge { void link(const uint256&in, const uint256&in, const string&in); }
-namespace bridge { void send(const uint256&in, const uint256&in, const string&in, const real320&in); }
+namespace bridge { void send(const uint256&in, const uint256&in, const string&in, const real320&in, const send_quota&in = send_quota()); }
 namespace bridge { bool requires_link(); }
 namespace bridge { bool requires_send(); }
 namespace coin { bool valid(const uint256&in); }

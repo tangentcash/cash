@@ -1441,7 +1441,7 @@ namespace tangent
 
 			auto front = executor->get_bridge_queue(withdraw->asset, withdraw->bridge_hash, 1);
 			if (front && front->transaction_hash != executor->receipt.transaction_hash)
-				return expects_promise_rt<void>(remote_exception::retry_after(1, "bridge busy"));
+				return expects_promise_rt<void>(remote_exception::retry_later("bridge busy"));
 
 			return coasync<expects_rt<void>>([this, withdraw]() mutable -> expects_promise_rt<void>
 			{
@@ -1466,7 +1466,7 @@ namespace tangent
 
 				if (chain->transaction_expires || !message)
 				{
-					auto maybe_message = coawait(prepare_transaction(algorithm::asset::base_id_of(withdraw->asset), superchain::wallet_link::from_hash(withdraw->bridge_hash), superchain::value_transfer(withdraw->asset, withdraw->address, decimal(withdraw->value)), bridge->fee_rate));
+					auto maybe_message = coawait(prepare_transaction(algorithm::asset::base_id_of(withdraw->asset), superchain::wallet_link::from_hash(withdraw->bridge_hash), superchain::value_transfer(withdraw->asset, withdraw->address, decimal(withdraw->value)), withdraw->committed_budget(*bridge)));
 					if (!maybe_message)
 						coreturn maybe_message.error().is_retry() || maybe_message.error().is_shutdown() ? expects_rt<void>(std::move(maybe_message.error())) : cancel(algorithm::pubkeyhash_t(), std::move(maybe_message.error()));
 					else if (maybe_message->inputs.size() > std::numeric_limits<uint8_t>::max())
@@ -1645,9 +1645,8 @@ namespace tangent
 			if (!accumulation)
 				return layer_exception(std::move(accumulation.error().message()));
 
-			auto* offchain = superchain::bridge::get();
 			bool may_mockup = kernel::params().is(network_type::regtest);
-			if (may_mockup && !offchain->has_network(withdraw->asset, true))
+			if (may_mockup && !superchain::bridge::get()->has_network(withdraw->asset, true))
 			{
 				for (auto& output : message->outputs)
 				{
@@ -1747,6 +1746,10 @@ namespace tangent
 		{
 			return "0xbad0000000000000000000000000000000000004";
 		}
+		string broadcast_delegation::mockup_target_broadcast_underpays()
+		{
+			return "0xbad0000000000000000000000000000000000005";
+		}
 		expects_promise_rt<superchain::prepared_transaction> broadcast_delegation::prepare_transaction(const algorithm::asset_id& asset, const superchain::wallet_link& from_link, const superchain::value_transfer& to, const decimal& max_fee)
 		{
 			auto* offchain = superchain::bridge::get();
@@ -1773,6 +1776,13 @@ namespace tangent
 			auto native_asset = algorithm::asset::base_id_of(to.asset);
 			auto token_transfer = to.asset != native_asset;
 			auto fee_value = decimal("0.000001");
+			if (to.address == mockup_target_broadcast_underpays())
+			{
+				fee_value = decimal("0.0001");
+				if (fee_value > max_fee)
+					return expects_promise_rt<superchain::prepared_transaction>(remote_exception(stringify::text("(frtl) fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
+			}
+
 			auto total_value = token_transfer ? fee_value : (fee_value + to.value);
 			auto input = superchain::coin_utxo::account_utxo(std::move(*from), native_asset, decimal(total_value), { });
 			auto output = superchain::coin_utxo::account_utxo(superchain::wallet_link::from_address(to.address), native_asset, decimal(total_value - fee_value), { });

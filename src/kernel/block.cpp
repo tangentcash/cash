@@ -2219,6 +2219,44 @@ namespace tangent
 
 			return new_state;
 		}
+		expects_lr<states::witness_asset> executor_context::apply_witness_asset(const algorithm::asset_id& asset, const std::string_view& contract_address, uint8_t decimals)
+		{
+			auto* chain = superchain::bridge::get()->get_network(asset);
+			if (!chain)
+				return layer_exception("invalid operation");
+
+			states::witness_asset new_state = states::witness_asset(asset, contract_address, decimals, block);
+			auto hash = chain->decode_address(new_state.contract_address);
+			if (hash)
+			{
+				auto canonical_contract_address = chain->encode_address(*hash);
+				if (canonical_contract_address)
+					new_state.contract_address = std::move(*canonical_contract_address);
+			}
+
+			auto status = store(&new_state, meter::paid);
+			if (!status)
+				return status.error();
+
+			status = emit_event<states::witness_asset>({ format::variable(asset), format::variable(new_state.as_hash()) });
+			if (!status)
+				return status.error();
+
+			return new_state;
+		}
+		expects_lr<states::witness_asset> executor_context::get_witness_asset(const algorithm::asset_id& asset) const
+		{
+			auto chain = storages::chainstate();
+			auto state = chain.get_uniform(states::witness_asset::as_instance_type(), changelog, states::witness_asset::as_instance_index(asset), get_validation_nonce());
+			if (!state)
+				return layer_exception("witness asset required but not applicable (" + state.what() + ")");
+
+			auto status = ((executor_context*)this)->load(state->ptr(), state->cached ? meter::unpaid : meter::paid);
+			if (!status)
+				return status.error();
+
+			return states::witness_asset(std::move(*state->as<states::witness_asset>()));
+		}
 		expects_lr<states::account_nonce> executor_context::get_account_nonce(const algorithm::pubkeyhash_t& owner) const
 		{
 			auto chain = storages::chainstate();
@@ -3100,8 +3138,8 @@ namespace tangent
 			{
 				auto* offchain = superchain::bridge::get();
 				auto* runner = get_runner_wallet();
-				uint64_t blocks_to_update = kernel::params().policy.attestation.confirmation_time / kernel::params().policy.pow.time;
-				uint64_t blocks_to_unlock = kernel::params().policy.pow.adjustment_time / kernel::params().policy.pow.time;
+				uint64_t retry_block_number = block_number + 1;
+				uint64_t late_retry_block_number = retry_block_number + (kernel::params().policy.attestation.confirmation_time / kernel::params().policy.pow.time);
 				dispatcher_result result;
 				while (runner != nullptr)
 				{
@@ -3120,8 +3158,8 @@ namespace tangent
 						uptr<delegation_contract> delegation = delegation_type > 0 ? delegations::resolver::from_type(delegation_type, this, &executor, runner->public_key_hash) : nullptr;
 						if (!delegation)
 						{
-							auto& error = result.errors[executor.receipt.transaction_hash] = remote_exception::retry_after(block_number + blocks_to_update, "unrecognized delegation type");
-							storages::chainstate().dispatch(executor.receipt.transaction_hash, error.retry_after_timestamp());
+							auto& error = result.errors[executor.receipt.transaction_hash] = remote_exception::retry_later("unrecognized delegation type");
+							storages::chainstate().dispatch(executor.receipt.transaction_hash, late_retry_block_number);
 							continue;
 						}
 
@@ -3131,8 +3169,8 @@ namespace tangent
 							auto subtransaction = executor.get_applied_block_transaction(delegation->as_transaction_type(), executor.receipt.transaction_hash);
 							if (!subtransaction)
 							{
-								auto& error = result.errors[executor.receipt.transaction_hash] = remote_exception::retry_after(block_number + blocks_to_update, "unrecognized transaction type");
-								storages::chainstate().dispatch(executor.receipt.transaction_hash, error.retry_after_timestamp());
+								auto& error = result.errors[executor.receipt.transaction_hash] = remote_exception::retry_later("unrecognized transaction type");
+								storages::chainstate().dispatch(executor.receipt.transaction_hash, late_retry_block_number);
 								continue;
 							}
 
@@ -3154,8 +3192,8 @@ namespace tangent
 						auto status = coawait(delegation->execute_transition());
 						if (!status)
 						{
-							next_block_number = status.error().is_retry() || status.error().is_shutdown() ? block_number + (status.error().is_retry_after() ? status.error().retry_after_timestamp() : blocks_to_unlock) : 0;
-							result.errors[executor.receipt.transaction_hash] = next_block_number > 0 ? remote_exception::retry_after(next_block_number, status.what()) : std::move(status.error());
+							next_block_number = status.error().is_retry() || status.error().is_shutdown() ? retry_block_number : 0;
+							result.errors[executor.receipt.transaction_hash] = next_block_number > 0 ? remote_exception::retry_later(status.what()) : std::move(status.error());
 						}
 						storages::chainstate().dispatch(executor.receipt.transaction_hash, next_block_number);
 					}
@@ -3894,6 +3932,8 @@ namespace tangent
 					if (!validation)
 						return validation.error();
 				}
+
+				mempool.clear_observations();
 			}
 
 			auto status = chain.checkpoint(solution, false, cache ? &cache->checkpoint_block_number : nullptr);

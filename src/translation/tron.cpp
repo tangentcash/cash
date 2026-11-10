@@ -342,11 +342,11 @@ namespace tangent
 					auto args = format::tree::map();
 					args.set("value", format::variable(tx_hash.starts_with("0x") ? std::string_view(tx_hash).substr(2) : std::string_view(tx_hash)));
 
-					auto info = coawait(execute_rest("POST", trx_nd_call::get_transaction_info_by_id(), format::tree(args), cache_policy::blob_cache));
+					auto info = coawait(execute_rest("POST", trx_nd_call::get_transaction_info_by_id(), format::tree(args), cache_policy::temporary_cache));
 					if (!info)
 						coreturn expects_rt<computed_transaction>(remote_exception("tx not found"));
 
-					auto details = coawait(execute_rest("POST", trx_nd_call::get_transaction_by_id(), std::move(args), cache_policy::blob_cache));
+					auto details = coawait(execute_rest("POST", trx_nd_call::get_transaction_by_id(), std::move(args), cache_policy::temporary_cache));
 					if (!details)
 						coreturn expects_rt<computed_transaction>(remote_exception("tx not found"));
 
@@ -387,11 +387,11 @@ namespace tangent
 								auto token_input = token_inputs.find(native_asset);
 								auto token_output = token_outputs.find(native_asset);
 								if (token_input == token_inputs.end())
-									token_inputs[native_asset] = coin_utxo::token_utxo::modern(std::string_view(), std::string_view(), amount, 0);
+									token_inputs[native_asset] = coin_utxo::token_utxo::modern(std::string_view(), std::string_view(), amount, (uint8_t)(netdata.divisibility.to_string().size() - 1));
 								else
 									token_input->second.value += amount;
 								if (token_output == token_outputs.end())
-									token_outputs[native_asset] = coin_utxo::token_utxo::modern(std::string_view(), std::string_view(), amount, 0);
+									token_outputs[native_asset] = coin_utxo::token_utxo::modern(std::string_view(), std::string_view(), amount, (uint8_t)(netdata.divisibility.to_string().size() - 1));
 								else
 									token_output->second.value += amount;
 							}
@@ -559,7 +559,7 @@ namespace tangent
 					fee->gas.gas_limit = fee->gas.gas_limit - (fee->gas.gas_limit % 1000) + 1000;
 					decimal fee_value = fee->get_max_fee();
 					if (fee_value > max_fee)
-						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
+						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("(frtl) fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
 
 					if (contract_address)
 					{

@@ -95,7 +95,7 @@ namespace tangent
 			expects_promise_rt<vector<uint64_t>> monero::get_output_indices(const std::string_view& transaction_id)
 			{
 				string request = codec::hex_decode(stringify::text("0111010101010201010404747869640a80%.*s", (int)transaction_id.size(), transaction_id.data()));
-				return execute_http("POST", nd_call::get_o_indexes(), "application/octet-stream", request, cache_policy::blob_cache).then<expects_rt<vector<uint64_t>>>([](expects_rt<format::tree>&& response) -> expects_rt<vector<uint64_t>>
+				return execute_http("POST", nd_call::get_o_indexes(), "application/octet-stream", request, cache_policy::temporary_cache).then<expects_rt<vector<uint64_t>>>([](expects_rt<format::tree>&& response) -> expects_rt<vector<uint64_t>>
 				{
 					if (!response)
 						return expects_rt<vector<uint64_t>>(response.error());
@@ -157,7 +157,7 @@ namespace tangent
 						map.push(std::move(args));
 					}
 
-					auto block_data = coawait(execute_rpc_multi(nd_call::get_block(), std::move(map), cache_policy::temporary_cache, nd_call::json_rpc()));
+					auto block_data = coawait(execute_rpc_multi(nd_call::get_block(), std::move(map), cache_policy::no_cache, nd_call::json_rpc()));
 					if (!block_data)
 						coreturn block_data.error();
 
@@ -184,7 +184,7 @@ namespace tangent
 							args.set("decode_as_json", format::variable(true));
 							args.set("prune", format::variable(true));
 
-							auto transactions = coawait(execute_rest("POST", nd_call::get_transactions(), std::move(args), cache_policy::blob_cache));
+							auto transactions = coawait(execute_rest("POST", nd_call::get_transactions(), std::move(args), cache_policy::no_cache));
 							if (transactions)
 							{
 								auto* list = transactions->child("txs");
@@ -241,7 +241,7 @@ namespace tangent
 						if (input.is_coinbase)
 							continue;
 
-						auto ref = offchain->load_cache(native_asset, cache_policy::lifetime_cache, string("K").append(codec::base64_encode(std::string_view((char*)input.key_image, sizeof(input.key_image)))));
+						auto ref = offchain->load_cache(native_asset, cache_policy::persistent_cache, string("K").append(codec::base64_encode(std::string_view((char*)input.key_image, sizeof(input.key_image)))));
 						if (!ref)
 							continue;
 
@@ -414,7 +414,7 @@ namespace tangent
 					else if (sending_value > receiving_value)
 					{
 						auto new_output = coin_utxo::standard_utxo(std::move(null_link), result.transaction_id + "!", (uint32_t)result.inputs.size(), sending_value - receiving_value - pseudo.fee, { });
-						auto to_address = offchain->load_cache(native_asset, cache_policy::lifetime_cache, string("T").append(result.transaction_id)).or_else(format::tree()).value.as_blob();
+						auto to_address = offchain->load_cache(native_asset, cache_policy::persistent_cache, string("T").append(result.transaction_id)).or_else(format::tree()).value.as_blob();
 						if (!to_address.empty() && decode_address(to_address))
 						{
 							auto to_link = find_linked_addresses({ to_address });
@@ -499,7 +499,7 @@ namespace tangent
 					uint256_t fee_per_tx = fee_per_byte * uint256_t(776 + inputs_count * 771);
 					decimal fee_value = from_atomic(fee_per_tx);
 					if (fee_value > max_fee)
-						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
+						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("(frtl) fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
 
 					auto to_value = this->to_value(to.value);
 					auto total_value = to_value + fee_value;
@@ -873,10 +873,10 @@ namespace tangent
 									auto message = format::wo_stream();
 									message.write_string(utxo_m.transaction_id);
 									message.write_integer(utxo_m.index);
-									offchain->store_cache(native_asset, cache_policy::lifetime_cache, string("K").append(codec::base64_encode(std::string_view((char*)vin.key_image, sizeof(vin.key_image)))), format::variable(message.data));
+									offchain->store_cache(native_asset, cache_policy::persistent_cache, string("K").append(codec::base64_encode(std::string_view((char*)vin.key_image, sizeof(vin.key_image)))), format::variable(message.data));
 								}
 							}
-							offchain->store_cache(native_asset, cache_policy::lifetime_cache, string("T").append(finalized->hashdata), format::variable(finalized->prepared.outputs.front().link.address));
+							offchain->store_cache(native_asset, cache_policy::persistent_cache, string("T").append(finalized->hashdata), format::variable(finalized->prepared.outputs.front().link.address));
 						}
 					}
 				}

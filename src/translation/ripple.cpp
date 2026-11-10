@@ -377,7 +377,7 @@ namespace tangent
 						params->set("transactions", format::variable(true));
 						params->set("expand", format::variable(true));
 
-						auto block_data = coawait(execute_rpc(nd_call::ledger(), std::move(map), cache_policy::blob_cache));
+						auto block_data = coawait(execute_rpc(nd_call::ledger(), std::move(map), cache_policy::no_cache));
 						if (!block_data)
 							coreturn block_data.error();
 
@@ -520,7 +520,7 @@ namespace tangent
 					auto fee = computed_fee::flat_fee(base_constant_fee * load_factor * fee_cushion);
 					decimal fee_value = fee.get_max_fee();
 					if (fee_value > max_fee)
-						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
+						coreturn expects_rt<prepared_transaction>(remote_exception(stringify::text("(frtl) fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
 
 					auto to_value = this->to_value(to.value);
 					if (contract_address)

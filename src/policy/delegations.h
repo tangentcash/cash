@@ -103,6 +103,7 @@ namespace tangent
 			static string mockup_target_broadcast_underflow();
 			static string mockup_target_attestate_error();
 			static string mockup_target_attestate_absent();
+			static string mockup_target_broadcast_underpays();
 			static expects_promise_rt<superchain::prepared_transaction> prepare_transaction(const algorithm::asset_id& asset, const superchain::wallet_link& from_link, const superchain::value_transfer& to, const decimal& max_fee);
 			static expects_lr<superchain::finalized_transaction> finalize_transaction(const algorithm::asset_id& asset, superchain::prepared_transaction&& prepared);
 			static expects_promise_rt<void> broadcast_transaction(const algorithm::asset_id& asset, const uint256_t& external_id, superchain::finalized_transaction&& finalized);

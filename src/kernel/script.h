@@ -772,6 +772,12 @@ namespace tangent
 			static void log_event_into(asIScriptGeneric* generic);
 			static void log_get(asIScriptGeneric* generic);
 			static void log_get_event(asIScriptGeneric* generic);
+			static void send_quota_set_signature(void* custom_quote, const string_repr& signature);
+			static void send_quota_set_fee_rate(void* custom_quote, const decimal& fee_rate);
+			static void send_quota_set_block_number(void* custom_quote, uint64_t block_number);
+			static string_repr send_quota_get_signature(const void* custom_quote);
+			static decimal send_quota_get_fee_rate(const void* custom_quote);
+			static uint64_t send_quota_get_block_number(const void* custom_quote);
 			static address_repr block_proposer();
 			static uint256_t block_parent_hash();
 			static uint256_t block_gas_use();
@@ -801,7 +807,7 @@ namespace tangent
 			static program* bridge_internal_check(const char* name, const algorithm::asset_id& asset, const uint256_t& bridge_hash);
 			static decimal bridge_fee(const uint256_t& bridge_hash, const uint256_t& asset);
 			static void bridge_link(const uint256_t& bridge_hash, const uint256_t& asset, const string_repr& routing_address);
-			static void bridge_send(const uint256_t& bridge_hash, const uint256_t& asset, const string_repr& routing_address, const decimal& value);
+			static void bridge_send(const uint256_t& bridge_hash, const uint256_t& asset, const string_repr& routing_address, const decimal& value, const void* custom_quote);
 			static bool bridge_requires_link();
 			static bool bridge_requires_send();
 			static uint256_t coin_native();

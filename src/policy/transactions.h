@@ -91,8 +91,6 @@ namespace tangent
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
-			static expects_lr<void> emit_route_event(ledger::executor_context* executor, const uint256_t& bridge_hash, const algorithm::asset_id& asset, const std::string_view& routing_address);
-			static expects_lr<void> emit_withdraw_event(ledger::executor_context* executor, const uint256_t& bridge_hash, const algorithm::asset_id& asset, const std::string_view& routing_address, const decimal& value);
 		};
 
 		struct rollup final : ledger::transaction_message
@@ -156,6 +154,7 @@ namespace tangent
 			static std::string_view as_instance_typename();
 			static void challenge(const uint256_t& route_hash, uint8_t message_hash[32]);
 			static string as_ownership_challenge(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& from, const std::string_view& address, uint64_t nonce);
+			static expects_lr<void> emit_route_event(ledger::executor_context* executor, const uint256_t& bridge_hash, const algorithm::asset_id& asset, const std::string_view& routing_address);
 		};
 
 		struct bind final : ledger::commitment_message
@@ -279,6 +278,14 @@ namespace tangent
 
 		struct withdraw final : ledger::transaction_message
 		{
+			struct custom_quote
+			{
+				algorithm::hashsig_t signature;
+				decimal fee_rate = decimal::nan();
+				uint64_t block_number = 0;
+			};
+
+			option<custom_quote> quote = optional::none;
 			uint256_t bridge_hash = 0;
 			decimal value = decimal::nan();
 			string address;
@@ -290,6 +297,10 @@ namespace tangent
 			void enumerate_accounts(const ledger::executor_context* executor, const ledger::transaction_receipt& receipt, const std::function<void(const algorithm::pubkeyhash_t&)>& callback) const override;
 			void set_routing_target(const std::string_view& address, const decimal& value);
 			void set_bridge_hash(const uint256_t& new_bridge_hash);
+			void set_custom_quote(const algorithm::hashsig_t& signature, uint64_t block_number, const decimal& fee);
+			bool set_custom_quote(const algorithm::seckey_t& secret_key, uint64_t block_number, const decimal& fee);
+			decimal committed_budget(const states::bridge_instance& bridge) const;
+			superchain::approved_fee get_approved_fee() const;
 			algorithm::pubkeyhash_t get_attester(const ledger::transaction_receipt& receipt) const;
 			format::tree as_tree() const override;
 			uint32_t as_delegation_type() const override;
@@ -297,6 +308,7 @@ namespace tangent
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
+			static expects_lr<void> emit_withdraw_event(ledger::executor_context* executor, const uint256_t& bridge_hash, const algorithm::asset_id& asset, const std::string_view& routing_address, const decimal& value, option<custom_quote>&& custom_quote = optional::none);
 		};
 
 		struct broadcast final : ledger::commitment_message
@@ -312,6 +324,7 @@ namespace tangent
 			void enumerate_aliases(const std::function<void(const uint256_t&)>& callback) const override;
 			void set_proof(const uint256_t& new_withdraw_hash, expects_lr<superchain::finalized_transaction>&& new_proof);
 			bool eligible_migration_target(const algorithm::pubkeyhash_t& target) const;
+			bool underpaying_fee_rate() const;
 			format::tree as_tree() const override;
 			uint64_t as_commitment(uint256_t* event_hash) const override;
 			uint32_t as_type() const override;

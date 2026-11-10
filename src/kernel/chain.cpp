@@ -3,6 +3,7 @@
 #include "superchain.h"
 #include <rocksdb/db.h>
 #include <rocksdb/table.h>
+#include <rocksdb/filter_policy.h>
 #define KEY_FRONT 32
 #define KEY_BACK 32
 #define KEY_SIZE 2048
@@ -16,7 +17,6 @@ namespace tangent
 
 		rocksdb::Options options;
 		options.create_if_missing = true;
-		options.table_factory.reset(rocksdb::NewBlockBasedTableFactory(table_options));
 		switch (type)
 		{
 			case tangent::storage_optimization::speed:
@@ -25,16 +25,25 @@ namespace tangent
 				options.paranoid_checks = false;
 				options.max_write_buffer_number = 3;
 				options.min_write_buffer_number_to_merge = 2;
+				options.level0_file_num_compaction_trigger = 8;
 				options.level0_slowdown_writes_trigger = 24;
 				options.level0_stop_writes_trigger = 48;
-				options.max_background_jobs = 4;
 				options.level_compaction_dynamic_level_bytes = true;
-				options.compression_per_level = { rocksdb::kNoCompression, rocksdb::kNoCompression };
+				options.track_and_verify_wals_in_manifest = true;
+				options.info_log_level = rocksdb::InfoLogLevel::WARN_LEVEL;
+				options.keep_log_file_num = 4;
+				table_options.filter_policy.reset(rocksdb::NewRibbonFilterPolicy(0.0));
+				table_options.optimize_filters_for_memory = true;
+				table_options.cache_index_and_filter_blocks = true;
+				table_options.pin_l0_filter_and_index_blocks_in_cache = true;
+				table_options.partition_filters = true;
+				table_options.metadata_block_size = 16 * 1024;
 				break;
 			case tangent::storage_optimization::safety:
 			default:
 				break;
 		}
+		options.table_factory.reset(rocksdb::NewBlockBasedTableFactory(table_options));
 		return options;
 	}
 	static string index_storage_configuration(storage_optimization type, uint64_t index_page_size, int64_t index_cache_size)
@@ -718,13 +727,9 @@ namespace tangent
 			if (value != nullptr && value->value.is_integer())
 				user.superchain.polling_frequency = value->value.as_uint64();
 
-			value = config->child("superchain.cache1_size");
+			value = config->child("superchain.temporary_cache_size");
 			if (value != nullptr && value->value.is_integer())
-				user.superchain.cache1_size = value->value.as_uint32();
-
-			value = config->child("superchain.cache2_size");
-			if (value != nullptr && value->value.is_integer())
-				user.superchain.cache2_size = value->value.as_uint32();
+				user.superchain.temporary_cache_size = value->value.as_uint32();
 
 			value = config->child("superchain.listener");
 			if (value != nullptr && value->value.is_boolean())

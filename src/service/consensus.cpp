@@ -812,6 +812,10 @@ namespace tangent
 		{
 			return callable::descriptor(__func__, 16);
 		}
+		callable::descriptor descriptors::fetch_quotes()
+		{
+			return callable::descriptor(__func__, 17);
+		}
 
 		server_node::server_node() noexcept : socket_server(), control_sys("consensus-node"), runner_descriptor(nullptr)
 		{
@@ -1194,8 +1198,12 @@ namespace tangent
 			auto* transaction = memory::init<transactions::attestate>();
 			transaction->asset = algorithm::asset::base_id_of(batch->asset);
 			transaction->set_real_proof(best_commitment_hash, std::move(proof->second), std::move(signatures->second));
-			if (accept_local_transaction(&runner_descriptor->second, transaction))
-				mempool.remove_attestation(attestation_hash);
+
+			auto status = accept_local_transaction(&runner_descriptor->second, transaction);
+			if (!status)
+				return remote_exception(status.what());
+
+			mempool.remove_attestation(attestation_hash);
 			return expectation::met;
 		}
 		expects_rt<void> server_node::accept_committed_attestation(const algorithm::asset_id& asset, const superchain::computed_transaction& proof, const btree_set<algorithm::hashsig_t>& signatures)
@@ -1211,6 +1219,7 @@ namespace tangent
 				if (!status)
 					return remote_exception(std::move(status.error().message()));
 			}
+
 			return accept_attestation(proof.as_attestation_hash(), nullptr);
 		}
 		expects_lr<void> server_node::broadcast_transaction(uref<relay>&& from, uptr<ledger::transaction_message>&& candidate_tx, const algorithm::pubkeyhash_t& owner, bool bypass_cooldown)
@@ -1791,6 +1800,125 @@ namespace tangent
 
 			return format::variables();
 		}
+		expects_promise_rt<format::variables> server_node::fetch_quotes(uref<relay>&& from, const exchange& event)
+		{
+			if (event.args.size() != 1)
+				return expects_promise_rt<format::variables>(remote_exception("invalid arguments"));
+
+			algorithm::asset_id asset = event.args[0].as_uint256();
+			if (!algorithm::asset::is_aux(asset))
+				return expects_promise_rt<format::variables>(remote_exception("invalid fee query"));
+
+			auto quotes = storages::mempoolstate().get_quotes(asset, storages::chainstate().get_latest_block_number().or_else(0));
+			if (!quotes)
+				return expects_promise_rt<format::variables>(remote_exception(std::move(quotes.error().message())));
+
+			format::variables results;
+			results.reserve(quotes->size());
+			for (auto& quote : *quotes)
+			{
+				format::wo_stream envelope;
+				if (quote.store(&envelope))
+					results.push_back(format::variable(envelope.data));
+			}
+			if (!results.empty())
+				return expects_promise_rt<format::variables>(std::move(results));
+
+			auto blockchain = algorithm::asset::base_id_of(asset);
+			{
+				umutex<std::mutex> unique(sync.fetcher);
+				auto it = fees.find(blockchain);
+				auto time = kernel::params().time.now_cpu();
+				if (it != fees.end() && it->second >= time)
+					return expects_promise_rt<format::variables>(std::move(results));
+				
+				fees[blockchain] = time + kernel::params().policy.attestation.quote_validity_time;
+			}
+
+			return coasync<expects_rt<format::variables>>([this, from, blockchain, asset]() -> expects_promise_rt<format::variables>
+			{
+				vector<ledger::wallet*> attesters;
+				auto executor = ledger::executor_context(nullptr);
+				for (auto& [account, descriptor] : descriptors)
+				{
+					if (descriptor.first.services.has_attestation && executor.get_verified_validator_attestation(blockchain, account))
+						attesters.push_back(&descriptor.second);
+				}
+
+				auto quotes = hash_map<string, superchain::approved_fee>();
+				auto* offchain = superchain::bridge::get();
+				if (!attesters.empty() && offchain->has_network(blockchain, true))
+				{
+					auto filter = storages::result_filter::greater(0, -1);
+					auto candidates = storages::chainstate().get_multiforms_by_column_filter(states::bridge_balance::as_instance_type(), nullptr, states::bridge_balance::as_instance_column(asset), filter, 0, storages::result_range_window(0, 1));
+					if (candidates && !candidates->empty())
+					{
+						auto* from_bridge = (states::bridge_balance*)candidates->front().ptr();
+						auto to_wallet = offchain->compute_wallet(blockchain, (uint8_t*)"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 32);
+						if (from_bridge && to_wallet && !to_wallet->encoded_addresses.empty())
+						{
+							auto from_link = superchain::wallet_link::from_hash(from_bridge->bridge_hash);
+							auto transfer = superchain::value_transfer(asset, to_wallet->encoded_addresses.begin()->second, decimal(std::min(decimal(1), from_bridge->supply)));
+							auto estimate = transfer.value.position() ? coawait(offchain->estimate_transaction_fee(blockchain, from_link, transfer)) : expects_rt<superchain::computed_fee>(remote_exception());
+							if (estimate)
+							{
+								superchain::approved_fee quote;
+								quote.asset = blockchain;
+								quote.fee = estimate->get_max_fee() * kernel::params().policy.attestation.quote_headroom;
+								quote.expiry_block_number = storages::chainstate().get_latest_block_number().or_else(0) + kernel::params().policy.attestation.quote_validity_time / kernel::params().policy.pow.time;
+								if (quote.sign(attesters[(size_t)crypto::random() % attesters.size()]->secret_key))
+									quotes[quote.fee.to_string()] = std::move(quote);
+							}
+						}
+					}
+				}
+
+				auto receivers = vector<uref<relay>>();
+				{
+					umutex<std::recursive_mutex> unique(exclusive);
+					receivers.reserve(nodes.size());
+					for (auto& node : nodes)
+					{
+						if (*from != *node.second)
+							receivers.push_back(node.second);
+					}
+				}
+				vector<expects_promise_rt<exchange>> tasks;
+				tasks.reserve(receivers.size());
+				for (auto& node : receivers)
+					tasks.push_back(query(uref(node), descriptors::fetch_quotes(), { format::variable(asset) }, kernel::params().user.tcp.timeout));
+				
+				for (auto& task : tasks)
+				{
+					auto result = coawait(std::move(task));
+					if (!result)
+						continue;
+
+					for (auto& item : result->args)
+					{
+						superchain::approved_fee quote;
+						format::ro_stream message = format::ro_stream(item.as_string());
+						if (quote.load(message))
+							quotes[quote.fee.to_string()] = std::move(quote);
+					}
+				}
+
+				storages::mempoolstate mempool;
+				format::variables results;
+				results.reserve(quotes.size());
+				for (auto& [fee, quote] : quotes)
+				{
+					algorithm::pubkeyhash_t attester;
+					if (quote.recover_hash(attester) && executor.get_verified_validator_attestation(blockchain, attester) && mempool.add_quote(quote, attester))
+					{
+						format::wo_stream envelope;
+						if (quote.store(&envelope))
+							results.push_back(format::variable(envelope.data));
+					}		
+				}
+				coreturn expects_rt<format::variables>(std::move(results));
+			});
+		}
 		expects_rt<format::variables> server_node::delegate_execution(uref<relay>&&, const exchange& event)
 		{
 			auto sender = algorithm::pubkeyhash_t();
@@ -2216,6 +2344,26 @@ namespace tangent
 				goto exit;
 			});
 		}
+		expects_promise_rt<vector<superchain::approved_fee>> server_node::query_blockchain_fee_quotes(const algorithm::asset_id& asset)
+		{
+			exchange event;
+			event.args.push_back(format::variable(asset));
+			return fetch_quotes(nullptr, event).then<expects_rt<vector<superchain::approved_fee>>>([](expects_rt<format::variables>&& results) -> expects_rt<vector<superchain::approved_fee>>
+			{
+				if (!results)
+					return results.error();
+
+				auto quotes = vector<superchain::approved_fee>();
+				for (auto& result : *results)
+				{
+					superchain::approved_fee quote;
+					format::ro_stream message = format::ro_stream(result.as_string());
+					if (quote.load(message))
+						quotes.push_back(std::move(quote));
+				}
+				return expects_rt<vector<superchain::approved_fee>>(std::move(quotes));
+			});
+		}
 		expects_promise_rt<uint64_t> server_node::synchronize_mempool_with(uref<relay>&& from)
 		{
 			return coasync<expects_rt<uint64_t>>([this, from]() -> expects_promise_rt<uint64_t>
@@ -2637,6 +2785,13 @@ namespace tangent
 			callable.query = std::move(on_query_callback);
 			callable.guarded = guarded;
 		}
+		void server_node::bind_async_query(const callable::descriptor& descriptor, async_query_callback&& on_query_callback, bool guarded)
+		{
+			auto& callable = callables[descriptor.id];
+			callable.name = descriptor.name;
+			callable.async_query = std::move(on_query_callback);
+			callable.guarded = guarded;
+		}
 		void server_node::pull_messages(uref<relay>&& from)
 		{
 			VI_ASSERT(from, "state should be set");
@@ -2730,23 +2885,47 @@ namespace tangent
 						case exchange::side::query:
 						{
 							auto it = callables.find(message.descriptor);
-							if (it == callables.end() || !it->second.query || !message.session || (it->second.guarded && !from->as_descriptor()))
+							if (it == callables.end() || (!it->second.query && !it->second.async_query) || !message.session || (it->second.guarded && !from->as_descriptor()))
 								goto abort;
 
-							auto result = it->second.query(this, uref(from), message);
-							if (!result && kernel::params().user.consensus.logging)
-								VI_WARN("node %s query \"%.*s\" error out: %s", from->peer_address().c_str(), (int)it->second.name.size(), it->second.name.data(), result.what().c_str());
-							else if (result && kernel::params().user.consensus.logging)
-								VI_DEBUG("node %s query \"%.*s\" result out: %s", from->peer_address().c_str(), (int)it->second.name.size(), it->second.name.data(), result ? result->empty() ? "OK" : stringify::text("[%i values]", (int)result->size()).c_str() : "RETRY");
+							if (it->second.query)
+							{
+								auto result = it->second.query(this, uref(from), message);
+								if (!result && kernel::params().user.consensus.logging)
+									VI_WARN("node %s query \"%.*s\" error out: %s", from->peer_address().c_str(), (int)it->second.name.size(), it->second.name.data(), result.what().c_str());
+								else if (result && kernel::params().user.consensus.logging)
+									VI_DEBUG("node %s query \"%.*s\" result out: %s", from->peer_address().c_str(), (int)it->second.name.size(), it->second.name.data(), result ? result->empty() ? "OK" : stringify::text("[%i values]", (int)result->size()).c_str() : "RETRY");
 
-							from->push_event(message.session, pack_query_result(result));
-							push_messages(uref(from));
+								from->push_event(message.session, pack_query_result(result));
+								push_messages(uref(from));
+							}
+							else if (it->second.async_query)
+							{
+								auto name = it->second.name;
+								it->second.async_query(this, uref(from), message).when([this, name, message_latency, next_pull_time, from = std::move(from), message = std::move(message)](expects_rt<format::variables>&& result) mutable
+								{
+									if (!result && kernel::params().user.consensus.logging)
+										VI_WARN("node %s async-query \"%.*s\" error out: %s", from->peer_address().c_str(), (int)name.size(), name.data(), result.what().c_str());
+									else if (result && kernel::params().user.consensus.logging)
+										VI_DEBUG("node %s async-query \"%.*s\" result out: %s", from->peer_address().c_str(), (int)name.size(), name.data(), result ? result->empty() ? "OK" : stringify::text("[%i values]", (int)result->size()).c_str() : "RETRY");
+
+									from->push_event(message.session, pack_query_result(result));
+									push_messages(uref(from));
+									from->report_call(1, message_latency);
+									from->deferred_pull = schedule::get()->set_timeout(next_pull_time, [this, from]() mutable
+									{
+										from->deferred_pull = INVALID_TASK_ID;
+										pull_messages(std::move(from));
+									});
+								});
+								return;
+							}
 							break;
 						}
 						case exchange::side::forward:
 						{
 							auto it = callables.find(message.descriptor);
-							if (it == callables.end() || !it->second.query || !message.session || (it->second.guarded && !from->as_descriptor()))
+							if (it == callables.end() || (!it->second.query && !it->second.async_query) || !message.session || (it->second.guarded && !from->as_descriptor()))
 								goto abort;
 
 							auto account = message.args.empty() ? algorithm::pubkeyhash_t() : algorithm::pubkeyhash_t(message.args[0].as_string());
@@ -2760,14 +2939,39 @@ namespace tangent
 							if (forward_descriptor)
 							{
 								message.callee = forward_descriptor;
-								auto result = it->second.query(this, uref(from), message);
-								if (!result && kernel::params().user.consensus.logging)
-									VI_WARN("node %s forward query \"%.*s\" error out: %s", from->peer_address().c_str(), (int)it->second.name.size(), it->second.name.data(), result.what().c_str());
-								else if (result && kernel::params().user.consensus.logging)
-									VI_DEBUG("node %s forward query \"%.*s\" result out: %s", from->peer_address().c_str(), (int)it->second.name.size(), it->second.name.data(), result ? result->empty() ? "OK" : stringify::text("[%i values]", (int)result->size()).c_str() : "RETRY");
 
-								from->push_event(message.session, pack_query_result(result));
-								push_messages(uref(from));
+								if (it->second.query)
+								{
+									auto result = it->second.query(this, uref(from), message);
+									if (!result && kernel::params().user.consensus.logging)
+										VI_WARN("node %s forward query \"%.*s\" error out: %s", from->peer_address().c_str(), (int)it->second.name.size(), it->second.name.data(), result.what().c_str());
+									else if (result && kernel::params().user.consensus.logging)
+										VI_DEBUG("node %s forward query \"%.*s\" result out: %s", from->peer_address().c_str(), (int)it->second.name.size(), it->second.name.data(), result ? result->empty() ? "OK" : stringify::text("[%i values]", (int)result->size()).c_str() : "RETRY");
+
+									from->push_event(message.session, pack_query_result(result));
+									push_messages(uref(from));
+								}
+								else if (it->second.async_query)
+								{
+									auto name = it->second.name;
+									it->second.async_query(this, uref(from), message).when([this, message_latency, next_pull_time, name, from = std::move(from), message = std::move(message)](expects_rt<format::variables>&& result) mutable
+									{
+										if (!result && kernel::params().user.consensus.logging)
+											VI_WARN("node %s forward async-query \"%.*s\" error out: %s", from->peer_address().c_str(), (int)name.size(), name.data(), result.what().c_str());
+										else if (result && kernel::params().user.consensus.logging)
+											VI_DEBUG("node %s forward async-query \"%.*s\" result out: %s", from->peer_address().c_str(), (int)name.size(), name.data(), result ? result->empty() ? "OK" : stringify::text("[%i values]", (int)result->size()).c_str() : "RETRY");
+
+										from->push_event(message.session, pack_query_result(result));
+										push_messages(uref(from));
+										from->report_call(1, message_latency);
+										from->deferred_pull = schedule::get()->set_timeout(next_pull_time, [this, from]() mutable
+										{
+											from->deferred_pull = INVALID_TASK_ID;
+											pull_messages(std::move(from));
+										});
+									});
+									return;
+								}
 							}
 							else if (forward_state)
 							{
@@ -3111,6 +3315,11 @@ namespace tangent
 				expirations.report("mempool tx vacuum failure");
 				if (deletions > 0 && kernel::params().user.consensus.logging)
 					VI_INFO("mempool transaction vacuum: OK (transactions: %i)", (int)deletions);
+
+				auto quote_expirations = mempool.expire_quotes();
+				quote_expirations.report("mempool quote vacuum failure");
+				if (quote_expirations.or_else(0) > 0 && kernel::params().user.consensus.logging)
+					VI_INFO("mempool quote vacuum: OK (quotes: %i)", (int)*quote_expirations);
 			});
 		}
 		bool server_node::run_mempool_sync()
@@ -3416,7 +3625,7 @@ namespace tangent
 				if (kernel::params().user.consensus.logging)
 				{
 					for (auto& [transaction_hash, error] : execution.errors)
-						VI_WARN("transaction %s dispatch: %s%s", algorithm::encoding::encode_0xhex256(transaction_hash).c_str(), error.what(), error.is_retry_after() ? stringify::text(" (retry: after block %" PRIu64 ")", error.retry_after_timestamp()).c_str() : (error.is_retry() || error.is_shutdown() ? " (retry: later)" : ""));
+						VI_WARN("transaction %s dispatch: %s (retry: %s)", algorithm::encoding::encode_0xhex256(transaction_hash).c_str(), error.what(), error.is_retry() || error.is_shutdown() ? "later" : "never");
 					if (execution.dispatches > 0 || !adapter.emissions.empty() || !execution.errors.empty())
 						VI_INFO("block dispatch (number: %" PRIu64", txns: -%" PRIu64 " / +%" PRIu64 ", reverted: %" PRIu64 ")", dispatch_number, (uint64_t)execution.dispatches, (uint64_t)adapter.emissions.size(), (uint64_t)execution.errors.size());
 				}
@@ -3515,6 +3724,7 @@ namespace tangent
 			bind_query(descriptors::fetch_mempool(), std::bind(&server_node::fetch_mempool, this, std::placeholders::_2, std::placeholders::_3));
 			bind_query(descriptors::fetch_transaction(), std::bind(&server_node::fetch_transaction, this, std::placeholders::_2, std::placeholders::_3));
 			bind_query(descriptors::fetch_transactions(), std::bind(&server_node::fetch_transactions, this, std::placeholders::_2, std::placeholders::_3));
+			bind_async_query(descriptors::fetch_quotes(), std::bind(&server_node::fetch_quotes, this, std::placeholders::_2, std::placeholders::_3));
 			bind_query(descriptors::fetch_preattestation_body(), std::bind(&server_node::fetch_preattestation_body, this, std::placeholders::_2, std::placeholders::_3));
 			bind_query(descriptors::delegate_execution(), std::bind(&server_node::delegate_execution, this, std::placeholders::_2, std::placeholders::_3));
 			control_sys.interval_if_none(TASK_TOPOLOGY_OPTIMIZATION "_runner", 180000, std::bind(&server_node::run_topology_optimization, this));
