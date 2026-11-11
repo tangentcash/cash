@@ -114,14 +114,18 @@ namespace tangent
 			string index_of(uint32_t type, const std::string_view& column, const std::string_view& row) const;
 			void revert(bool fully = false);
 			void commit();
-			void cache();
 		};
 
 		struct block_changelog
 		{
+			struct topic_ptr
+			{
+				void* ptr = nullptr;
+				bool owns = false;
+			};
 			struct
 			{
-				hash_map<uint32_t, void*> topics;
+				hash_map<uint32_t, topic_ptr> topics;
 				hash_map<string, string> effects;
 			} temporary_state;
 			struct
@@ -565,7 +569,7 @@ namespace tangent
 			static expects_lr<void> verify_solved_block(const block_header* parent_block, const block_evaluation& solution, const algorithm::pubkeyhash_t& recovered_producer = algorithm::pubkeyhash_t(), bool verify_pow = true);
 			static expects_lr<void> validate_solved_block(solver_context& solver, const block_header* parent_block, const block_body& child_block, block_evaluation* evaluated_result = nullptr, bool verify_pow = true, tip_cache* cache = nullptr);
 			static expects_lr<void> validate_solved_empty_block(solver_context& solver, const block_header& parent_block, const block_body& child_block, const algorithm::pubkeyhash_t& recovered_producer, block_evaluation* evaluated_result = nullptr, bool verify_pow = true);
-			static expects_lr<block_checkpoint> checkpoint_solved_block(solver_context& solver, block_evaluation& solution, tip_cache* cache = nullptr);
+			static expects_lr<block_checkpoint> checkpoint_solved_block(solver_context& solver, block_evaluation& solution, tip_cache* cache = nullptr, const std::function<bool(const ledger::block_body&, uint64_t)>& progress_callback = nullptr);
 			static queued_transaction precompute_transaction_element(uptr<transaction_message>&& candidate);
 			static void precompute_transaction_list(vector<queued_transaction>& candidates);
 			static bool requires_reorganization(const block_evaluation& solution, tip_cache* cache = nullptr);

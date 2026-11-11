@@ -259,6 +259,7 @@ namespace tangent
 			{
 				ledger::solver_context solver;
 				ledger::solver_context::tip_cache cache;
+				std::function<bool(const ledger::block_body&, uint64_t)> regress_callback;
 				option<ledger::block_header> tip_cache = optional::none;
 				uint64_t progress_time = 0;
 				uint64_t progress_block_number = 0;

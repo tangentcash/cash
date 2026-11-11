@@ -229,6 +229,30 @@ namespace tangent
 			++invocations; ++thread_invocations;
 			return cursor;
 		}
+		sqlite::expects_db<void> storage_index_ptr::tx_savepoint(const std::string_view& operation, const std::string_view& savepoint_name)
+		{
+			VI_ASSERT(connection, "connection not initialized (transaction savepoint)");
+			auto cursor = connection->query(stringify::text("SAVEPOINT %.*s", (int)savepoint_name.size(), savepoint_name.data()));
+#ifdef DB_IMMATURE
+			string error = storage_util::error_of(cursor);
+			if (!error.empty())
+				VI_ERR("index storage operation %.*s error (transaction savepoint): %s", (int)operation.size(), operation.data(), error.c_str());
+#endif
+			++invocations; ++thread_invocations;
+			return cursor ? sqlite::expects_db<void>(expectation::met) : sqlite::expects_db<void>(cursor.error());
+		}
+		sqlite::expects_db<void> storage_index_ptr::tx_rollback_to(const std::string_view& operation, const std::string_view& savepoint_name)
+		{
+			VI_ASSERT(connection, "connection not initialized (transaction rollback to savepoint)");
+			auto cursor = connection->query(stringify::text("ROLLBACK TO %.*s", (int)savepoint_name.size(), savepoint_name.data()));
+#ifdef DB_IMMATURE
+			string error = storage_util::error_of(cursor);
+			if (!error.empty())
+				VI_ERR("index storage operation %.*s error (transaction rollback to savepoint): %s", (int)operation.size(), operation.data(), error.c_str());
+#endif
+			++invocations; ++thread_invocations;
+			return cursor ? sqlite::expects_db<void>(expectation::met) : sqlite::expects_db<void>(cursor.error());
+		}
 		sqlite::expects_db<sqlite::cursor> storage_index_ptr::query(const std::string_view& operation, const std::string_view& command, size_t query_ops)
 		{
 			VI_ASSERT(connection, "connection not initialized (operation: %.*s)", (int)operation.size(), operation.data());

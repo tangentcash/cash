@@ -176,7 +176,7 @@ namespace tangent
 			chainstate& operator=(chainstate&&) noexcept = delete;
 			~chainstate() noexcept;
 			expects_lr<bool> compact(uint64_t block_number, uint64_t* last_checkpoint_block_number = nullptr);
-			expects_lr<void> revert(uint64_t block_number, int64_t* block_delta = nullptr, int64_t* transaction_delta = nullptr, int64_t* state_delta = nullptr);
+			expects_lr<void> revert(uint64_t block_number, int64_t* block_delta = nullptr, int64_t* transaction_delta = nullptr, int64_t* state_delta = nullptr, const std::function<bool(const ledger::block_body&, uint64_t)>& progress_callback = nullptr);
 			expects_lr<void> checkpoint(const ledger::block_evaluation& evaluation, bool reorganization = false, uint64_t* checkpoint_block_number = nullptr);
 			expects_lr<void> dispatch(const uint256_t& transaction_hash, uint64_t retry_after_block_number_or_zero);
 			expects_lr<uint64_t> get_checkpoint_block_number();
@@ -241,8 +241,8 @@ namespace tangent
 			uint32_t get_queries() const;
 
 		private:
-			expects_lr<void> revert_internal(uint64_t block_number, int64_t* block_delta, int64_t* transaction_delta, int64_t* state_delta);
-			expects_lr<void> revert_reorganize_internal(int64_t* block_delta, int64_t* transaction_delta, int64_t* state_delta);
+			expects_lr<void> revert_fast_internal(uint64_t block_number, int64_t* block_delta, int64_t* transaction_delta, int64_t* state_delta, const std::function<bool(const ledger::block_body&, uint64_t)>& progress_callback);
+			expects_lr<void> revert_slow_internal(int64_t* block_delta, int64_t* transaction_delta, int64_t* state_delta, const std::function<bool(const ledger::block_body&, uint64_t)>& progress_callback);
 			expects_lr<void> checkpoint_internal(const ledger::block_evaluation& evaluation, bool reorganization, uint64_t* checkpoint_block_number);
 			expects_lr<bool> compact_internal(uint64_t block_number, uint64_t* last_checkpoint_block_number);
 

@@ -432,6 +432,7 @@ namespace tangent
 			bind(0 | access_type::r, "validatorstate", "getblockchains", 0, 0, "", "superchain::asset_info[]", "get supported blockchains", std::bind(&server_node::validatorstate_get_blockchains, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "validatorstate", "getfeequotes", 1, 1, "string asset", "{ block_number: uint64, index: uint32 | null, quotes: { asset: string, fee: decimal, expiry_block_number: uint64, publisher: address }[] }", "get active withdrawal fee quotes for a blockchain asset, collected from the validator network, normalized with the median fee", std::bind(&server_node::validatorstate_get_fee_quotes, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "validatorstate", "status", 0, 0, "", "validator::status", "get validator status", std::bind(&server_node::validatorstate_status, this, std::placeholders::_1, std::placeholders::_2));
+			bind(access_type::r | access_type::a, "chainstate", "worldstateroot", 0, 1, "uint256? state_hash_to_prove", "uint256 | merkle_proof", "compute the world state root hash", std::bind(&server_node::chainstate_world_state_root, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::r | access_type::a, "validatorstate", "connections", 0, 0, "", "validator::connection[]", "get p2p connections", std::bind(&server_node::validatorstate_connections, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::r | access_type::a, "validatorstate", "getnode", 1, 1, "string uri_address", "{ validator: validator, wallet: wallet, network: map }", "get a connected node by ip address with live network state", std::bind(&server_node::validatorstate_get_node, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::r, "mempoolstate", "submittransaction", 1, 1, "string message_hex", "uint256", "try to accept and relay a mempool transaction from raw data and possibly validate over latest chainstate; returns the transaction hash", std::bind(&server_node::mempoolstate_submit_transaction, this, std::placeholders::_1, std::placeholders::_2, nullptr));
@@ -2731,6 +2732,34 @@ namespace tangent
 			auto count = chain.get_multiforms_count_by_row_filter(states::account_balance::as_instance_type(), nullptr, states::account_balance::as_instance_row(asset), storages::result_filter::greater_equal(args[1].as_uint256(), -1), 0);
 			return server_response().success(format::variable(count.or_else(0)));
 		}
+		server_response server_node::chainstate_world_state_root(http::connection* base, format::variables&& args)
+		{
+			auto chain = storages::chainstate();
+			if (!args.empty())
+			{
+				auto world_state_proof = chain.prove_world_state_hash(args[0].as_uint256());
+				if (!world_state_proof)
+					return server_response().error(error_codes::bad_params, world_state_proof.what());
+
+				auto path = format::tree::list();
+				for (auto& hash : world_state_proof->path.branch)
+					path.push(format::variable(algorithm::encoding::encode_0xhex256(hash)));
+
+				auto data = format::tree::map();
+				data.set("index", format::variable(world_state_proof->path.index));
+				data.set("root", format::variable(algorithm::encoding::encode_0xhex256(world_state_proof->root)));
+				data.set("path", std::move(path));
+				return server_response().success(std::move(data));
+			}
+			else
+			{
+				auto world_state_root = chain.build_world_state_root();
+				if (!world_state_root)
+					return server_response().error(error_codes::bad_params, world_state_root.what());
+
+				return server_response().success(format::variable(algorithm::encoding::encode_0xhex256(*world_state_root)));
+			}
+		}
 		server_response server_node::mempoolstate_add_node(http::connection*, format::variables&& args)
 		{
 			auto endpoint = system_endpoint(args[0].as_string());
@@ -3170,14 +3199,26 @@ namespace tangent
 			if (consensus_service != nullptr && !consensus_service->try_acquire_checkpointer())
 				return server_response().error(error_codes::not_found, "checkpointer busy");
 
+			auto reset_progress = [&]()
+			{
+				if (consensus_service != nullptr)
+				{
+					consensus_service->verifier.progress_time = 0;
+					consensus_service->verifier.progress_block_number = 0;
+					consensus_service->verifier.progress_bps = 0.0;
+					consensus_service->verifier.progress = -1;
+				}
+			};
 			ledger::solver_context solver;
 			ledger::block_evaluation evaluation;
 			evaluation.block = std::move(*block);
 			evaluation.state = std::move(*state);
+			reset_progress();
 
-			auto checkpoint = ledger::solver_context::checkpoint_solved_block(solver, evaluation);
+			auto checkpoint = ledger::solver_context::checkpoint_solved_block(solver, evaluation, nullptr, consensus_service ? consensus_service->verifier.regress_callback : [this](const ledger::block_body&, uint64_t) { return is_active(); });
 			if (consensus_service != nullptr)
 			{
+				reset_progress();
 				consensus_service->verifier.cache = ledger::solver_context::tip_cache();
 				consensus_service->verifier.tip_cache = optional::none;
 				consensus_service->release_checkpointer();

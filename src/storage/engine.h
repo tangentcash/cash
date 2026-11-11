@@ -44,6 +44,8 @@ namespace tangent
 			sqlite::expects_db<void> tx_begin(const std::string_view& operation, sqlite::isolation type);
 			sqlite::expects_db<void> tx_commit(const std::string_view& operation);
 			sqlite::expects_db<void> tx_rollback(const std::string_view& operation);
+			sqlite::expects_db<void> tx_savepoint(const std::string_view& operation, const std::string_view& savepoint_name);
+			sqlite::expects_db<void> tx_rollback_to(const std::string_view& operation, const std::string_view& savepoint_name);
 			sqlite::expects_db<sqlite::cursor> query(const std::string_view& operation, const std::string_view& command, size_t query_ops = 0);
 			sqlite::expects_db<sqlite::cursor> emplace_query(const std::string_view& operation, const std::string_view& command, schema_list* map, size_t query_ops = 0);
 			sqlite::expects_db<sqlite::cursor> prepared_query(const std::string_view& operation, sqlite::tstatement* statement);

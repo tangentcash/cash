@@ -3897,7 +3897,7 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<block_checkpoint> solver_context::checkpoint_solved_block(solver_context& solver, block_evaluation& solution, tip_cache* cache)
+		expects_lr<block_checkpoint> solver_context::checkpoint_solved_block(solver_context& solver, block_evaluation& solution, tip_cache* cache, const std::function<bool(const ledger::block_body&, uint64_t)>& progress_callback)
 		{
 			auto chain = storages::chainstate();
 			auto mempool = storages::mempoolstate();
@@ -3921,7 +3921,7 @@ namespace tangent
 			mutation.is_fork = mutation.old_tip_block_number > 0 && mutation.old_tip_block_number >= mutation.new_tip_block_number;
 			if (mutation.is_fork)
 			{
-				auto status = chain.revert(mutation.new_tip_block_number - 1, &mutation.block_delta, &mutation.transaction_delta, &mutation.state_delta);
+				auto status = chain.revert(mutation.new_tip_block_number - 1, &mutation.block_delta, &mutation.transaction_delta, &mutation.state_delta, progress_callback);
 				if (!status)
 					return status.error();
 

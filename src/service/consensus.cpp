@@ -819,6 +819,27 @@ namespace tangent
 
 		server_node::server_node() noexcept : socket_server(), control_sys("consensus-node"), runner_descriptor(nullptr)
 		{
+			verifier.regress_callback = [this](const ledger::block_body& block, uint64_t tip_number)
+			{
+				if (kernel::params().user.consensus.logging)
+				{
+					int64_t precision = 5000;
+					int64_t progress = (int64_t)((double)precision * (double)block.number / (double)tip_number);
+					verifier.size += (uint64_t)((double)(uint64_t)block.gas_limit / (double)ledger::gas_cost::write_byte);
+					if (progress >= precision || verifier.progress < progress)
+					{
+						uint64_t time = kernel::params().time.now_cpu();
+						double bps = verifier.progress_time > 0 ? 1000.0 * (double)(block.number - verifier.progress_block_number) / (double)std::max<uint64_t>(1, time - verifier.progress_time) : 0.0;
+						VI_INFO("block %s (number: %" PRIu64 ", regress: %.2f%%, size: %.2f kb, bps: %.1f)", uint256_to_label(block.as_hash()).c_str(), block.number, (double)progress / ((double)precision / 100), (double)verifier.size.load() / 1000.0, bps);
+						verifier.progress_bps = verifier.progress_bps > 1.0 ? verifier.progress_bps * 0.75 + bps * 0.25 : bps;
+						verifier.progress_block_number = block.number;
+						verifier.progress_time = time;
+						verifier.progress = progress;
+						verifier.size = 0;
+					}
+				}
+				return is_active();
+			};
 		}
 		server_node::~server_node() noexcept
 		{
@@ -3930,7 +3951,7 @@ namespace tangent
 			if (reorganization && kernel::params().user.consensus.logging)
 				VI_WARN("block %s: running chain reorganization now (number: %" PRIu64 ")", uint256_to_label(candidate_hash).c_str(), candidate.block.number);
 
-			auto mutation = ledger::solver_context::checkpoint_solved_block(verifier.solver, candidate, &verifier.cache);
+			auto mutation = ledger::solver_context::checkpoint_solved_block(verifier.solver, candidate, &verifier.cache, verifier.regress_callback);
 			if (mutation)
 			{
 				verifier.tip_cache = ledger::block_header(candidate.block);

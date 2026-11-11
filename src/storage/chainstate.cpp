@@ -3,6 +3,7 @@
 #define BLOB_BLOCK 'b'
 #define BLOB_TRANSACTION 't'
 #define BLOB_STATE 'u'
+#define INDEX_SAVEPOINT "topic"
 #undef NULL
 
 namespace tangent
@@ -336,14 +337,14 @@ namespace tangent
 			if (parent_chainstate == this)
 				parent_chainstate = nullptr;
 		}
-		expects_lr<void> chainstate::revert(uint64_t block_number, int64_t* block_delta, int64_t* transaction_delta, int64_t* state_delta)
+		expects_lr<void> chainstate::revert(uint64_t block_number, int64_t* block_delta, int64_t* transaction_delta, int64_t* state_delta, const std::function<bool(const ledger::block_body&, uint64_t)>& progress_callback)
 		{
 			auto state = get_multi_storage();
 			auto begin = ledger::storage_util::multi_tx_begin(__func__, sqlite::isolation::default_isolation, state);
 			if (!begin)
 				return layer_exception(std::move(begin.error().message()));
 
-			auto status = revert_internal(block_number, block_delta, transaction_delta, state_delta);
+			auto status = revert_fast_internal(block_number, block_delta, transaction_delta, state_delta, progress_callback);
 			if (!status)
 			{
 				ledger::storage_util::multi_tx_rollback(__func__, std::move(state)).report("state rollback failed");
@@ -356,30 +357,24 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<void> chainstate::revert_internal(uint64_t block_number, int64_t* block_delta, int64_t* transaction_delta, int64_t* state_delta)
+		expects_lr<void> chainstate::revert_fast_internal(uint64_t block_number, int64_t* block_delta, int64_t* transaction_delta, int64_t* state_delta, const std::function<bool(const ledger::block_body&, uint64_t)>& progress_callback)
 		{
 			schema_list map;
 			map.push_back(var::set::integer(block_number));
 			map.push_back(var::set::integer(block_number));
 			
 			auto checkpoint_number = get_checkpoint_block_number();
-			auto cursor = get_block_storage().emplace_query(__func__,
-				"DELETE FROM blocks WHERE block_number > ? RETURNING block_hash;"
-				"DELETE FROM checkpoints WHERE block_number > ?;", &map);
+			auto block_cursor = get_block_storage().emplace_query(__func__, "DELETE FROM blocks WHERE block_number > ? RETURNING block_hash", &map);
+			if (!block_cursor || block_cursor->error())
+				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(block_cursor)));
+
+			auto cursor = get_block_storage().emplace_query(__func__, "DELETE FROM checkpoints WHERE block_number > ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 
-			auto block_response = cursor->first();
-			map.clear();
-			map.push_back(var::set::integer(block_number));
-
-			cursor = get_tx_storage().emplace_query(__func__, "DELETE FROM transactions WHERE block_number > ? RETURNING transaction_hash", &map);
-			if (!cursor || cursor->error())
-				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
-
-			auto transaction_response = cursor->first();
-			map.clear();
-			map.push_back(var::set::integer(block_number));
+			auto transaction_cursor = get_tx_storage().emplace_query(__func__, "DELETE FROM transactions WHERE block_number > ? RETURNING transaction_hash", &map);
+			if (!transaction_cursor || transaction_cursor->error())
+				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(transaction_cursor)));
 
 			cursor = get_account_storage().emplace_query(__func__, "DELETE FROM accounts WHERE block_number > ?", &map);
 			if (!cursor || cursor->error())
@@ -393,135 +388,130 @@ namespace tangent
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 
-			bool reorganized = false;
-			if (checkpoint_number && *checkpoint_number > block_number)
+			auto& blob_storage = get_blob_storage();
+			if (!checkpoint_number || *checkpoint_number <= block_number)
 			{
-				auto reorganization_result = revert_reorganize_internal(block_delta, transaction_delta, state_delta);
+				for (auto& [uniform_storage, type] : get_uniform_multi_storage())
+				{
+					size_t offset = 0, count = ELEMENTS_HUGE;
+					map.clear();
+					map.push_back(var::set::integer(block_number));
+					map.push_back(var::set::integer(count));
+					map.push_back(var::set::integer(offset));
+
+					while (true)
+					{
+						map.back()->value = var::integer(offset);
+						cursor = uniform_storage.emplace_query(__func__, "SELECT (SELECT index_hash FROM indices WHERE indices.index_number = snapshots.index_number) AS index_hash, block_number FROM snapshots WHERE block_number > ? LIMIT ? OFFSET ?", &map);
+						if (!cursor || cursor->error())
+							return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
+
+						auto response = cursor->first();
+						parallel::wait_all(parallel::for_each_sequential(response.begin(), response.end(), response.size(), ELEMENTS_FEW, [&](sqlite::row row)
+						{
+							string index = row["index_hash"].get().get_blob();
+							uint64_t number = row["block_number"].get().get_integer();
+							blob_storage.store(__func__, get_uniform_label(type, index, number), std::string_view());
+						}));
+
+						size_t results = cursor->first().size();
+						offset += results;
+						if (state_delta != nullptr)
+							*state_delta += results;
+						if (results < count)
+							break;
+					}
+
+					map.clear();
+					map.push_back(var::set::integer(block_number));
+					map.push_back(var::set::integer(block_number));
+					map.push_back(var::set::integer(block_number));
+					map.push_back(var::set::integer(block_number));
+
+					cursor = uniform_storage.emplace_query(__func__,
+						"DELETE FROM snapshots WHERE block_number > ?;"
+						"DELETE FROM uniforms WHERE block_number > ?;"
+						"INSERT OR REPLACE INTO uniforms (index_number, block_number) SELECT index_number, block_number FROM (SELECT index_number, hidden, MAX(block_number) AS block_number FROM snapshots WHERE block_number <= ? GROUP BY index_number) WHERE hidden = FALSE;"
+						"DELETE FROM indices WHERE block_number > ?;", &map);
+					if (!cursor || cursor->error())
+						return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
+				}
+
+				for (auto& [multiform_storage, type] : get_multiform_multi_storage())
+				{
+					size_t offset = 0, count = ELEMENTS_HUGE;
+					map.clear();
+					map.push_back(var::set::integer(block_number));
+					map.push_back(var::set::integer(count));
+					map.push_back(var::set::integer(offset));
+
+					while (true)
+					{
+						map.back()->value = var::integer(offset);
+						cursor = multiform_storage.emplace_query(__func__, "SELECT (SELECT column_hash FROM columns WHERE columns.column_number = snapshots.column_number) AS column_hash, (SELECT row_hash FROM rows WHERE rows.row_number = snapshots.row_number) AS row_hash, block_number FROM snapshots WHERE block_number > ? LIMIT ? OFFSET ?", &map);
+						if (!cursor || cursor->error())
+							return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
+
+						auto response = cursor->first();
+						parallel::wait_all(parallel::for_each_sequential(response.begin(), response.end(), response.size(), ELEMENTS_FEW, [&](sqlite::row next)
+						{
+							string column = next["column_hash"].get().get_blob();
+							string row = next["row_hash"].get().get_blob();
+							uint64_t number = next["block_number"].get().get_integer();
+							blob_storage.store(__func__, get_multiform_label(type, column, row, number), std::string_view());
+						}));
+
+						size_t results = cursor->first().size();
+						offset += results;
+						if (state_delta != nullptr)
+							*state_delta += results;
+						if (results < count)
+							break;
+					}
+
+					map.clear();
+					map.push_back(var::set::integer(block_number));
+					map.push_back(var::set::integer(block_number));
+					map.push_back(var::set::integer(block_number));
+					map.push_back(var::set::integer(block_number));
+					map.push_back(var::set::integer(block_number));
+
+					cursor = multiform_storage.emplace_query(__func__,
+						"DELETE FROM snapshots WHERE block_number > ?;"
+						"DELETE FROM multiforms WHERE block_number > ?;"
+						"INSERT OR REPLACE INTO multiforms (column_number, row_number, rank, block_number) SELECT column_number, row_number, rank, block_number FROM (SELECT column_number, row_number, rank, hidden, MAX(block_number) AS block_number FROM snapshots WHERE block_number <= ? GROUP BY column_number, row_number) WHERE hidden = FALSE;"
+						"DELETE FROM columns WHERE block_number > ?;"
+						"DELETE FROM rows WHERE block_number > ?;", &map);
+					if (!cursor || cursor->error())
+						return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
+				}
+			}
+			else
+			{
+				auto reorganization_result = revert_slow_internal(block_delta, transaction_delta, state_delta, progress_callback);
 				if (!reorganization_result)
 					return reorganization_result.error();
-
-				reorganized = true;
 			}
 
-			auto& blob_storage = get_blob_storage();
-			parallel::wait_all(parallel::for_each_sequential(block_response.begin(), block_response.end(), block_response.size(), ELEMENTS_FEW, [&](sqlite::row row)
+			if (block_delta != nullptr)
+				*block_delta -= (int64_t)block_cursor->affected_rows();
+
+			if (transaction_delta != nullptr)
+				*transaction_delta -= (int64_t)transaction_cursor->affected_rows();
+
+			parallel::wait_all(parallel::for_each_sequential(block_cursor->first().begin(), block_cursor->first().end(), block_cursor->first().size(), ELEMENTS_FEW, [&](sqlite::row row)
 			{
 				auto block_hash = row["block_hash"].get();
 				blob_storage.store(__func__, get_block_label(block_hash.get_binary()), std::string_view());
 			}));
-			parallel::wait_all(parallel::for_each_sequential(transaction_response.begin(), transaction_response.end(), transaction_response.size(), ELEMENTS_FEW, [&](sqlite::row row)
+			parallel::wait_all(parallel::for_each_sequential(transaction_cursor->first().begin(), transaction_cursor->first().end(), transaction_cursor->first().size(), ELEMENTS_FEW, [&](sqlite::row row)
 			{
 				auto transaction_hash = row["transaction_hash"].get();
 				blob_storage.store(__func__, get_block_transaction_label(transaction_hash.get_binary()), std::string_view());
 			}));
-
-			if (block_delta != nullptr)
-				*block_delta -= block_response.size();
-			
-			if (transaction_delta != nullptr)
-				*transaction_delta -= transaction_response.size();
-
-			if (reorganized)
-				return expectation::met;
-
-			for (auto& [uniform_storage, type] : get_uniform_multi_storage())
-			{
-				size_t offset = 0, count = ELEMENTS_HUGE;
-				map.clear();
-				map.push_back(var::set::integer(block_number));
-				map.push_back(var::set::integer(count));
-				map.push_back(var::set::integer(offset));
-
-				while (true)
-				{
-					map.back()->value = var::integer(offset);
-					cursor = uniform_storage.emplace_query(__func__, "SELECT (SELECT index_hash FROM indices WHERE indices.index_number = snapshots.index_number) AS index_hash, block_number FROM snapshots WHERE block_number > ? LIMIT ? OFFSET ?", &map);
-					if (!cursor || cursor->error())
-						return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
-
-					auto response = cursor->first();
-					parallel::wait_all(parallel::for_each_sequential(response.begin(), response.end(), response.size(), ELEMENTS_FEW, [&](sqlite::row row)
-					{
-						string index = row["index_hash"].get().get_blob();
-						uint64_t number = row["block_number"].get().get_integer();
-						blob_storage.store(__func__, get_uniform_label(type, index, number), std::string_view());
-					}));
-
-					size_t results = cursor->first().size();
-					offset += results;
-					if (state_delta != nullptr)
-						*state_delta += results;
-					if (results < count)
-						break;
-				}
-
-				map.clear();
-				map.push_back(var::set::integer(block_number));
-				map.push_back(var::set::integer(block_number));
-				map.push_back(var::set::integer(block_number));
-				map.push_back(var::set::integer(block_number));
-
-				cursor = uniform_storage.emplace_query(__func__,
-					"DELETE FROM snapshots WHERE block_number > ?;"
-					"DELETE FROM uniforms WHERE block_number > ?;"
-					"INSERT OR REPLACE INTO uniforms (index_number, block_number) SELECT index_number, block_number FROM (SELECT index_number, hidden, MAX(block_number) AS block_number FROM snapshots WHERE block_number <= ? GROUP BY index_number) WHERE hidden = FALSE;"
-					"DELETE FROM indices WHERE block_number > ?;", &map);
-				if (!cursor || cursor->error())
-					return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
-			}
-
-			for (auto& [multiform_storage, type] : get_multiform_multi_storage())
-			{
-				size_t offset = 0, count = ELEMENTS_HUGE;
-				map.clear();
-				map.push_back(var::set::integer(block_number));
-				map.push_back(var::set::integer(count));
-				map.push_back(var::set::integer(offset));
-
-				while (true)
-				{
-					map.back()->value = var::integer(offset);
-					cursor = multiform_storage.emplace_query(__func__, "SELECT (SELECT column_hash FROM columns WHERE columns.column_number = snapshots.column_number) AS column_hash, (SELECT row_hash FROM rows WHERE rows.row_number = snapshots.row_number) AS row_hash, block_number FROM snapshots WHERE block_number > ? LIMIT ? OFFSET ?", &map);
-					if (!cursor || cursor->error())
-						return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
-
-					auto response = cursor->first();
-					parallel::wait_all(parallel::for_each_sequential(response.begin(), response.end(), response.size(), ELEMENTS_FEW, [&](sqlite::row next)
-					{
-						string column = next["column_hash"].get().get_blob();
-						string row = next["row_hash"].get().get_blob();
-						uint64_t number = next["block_number"].get().get_integer();
-						blob_storage.store(__func__, get_multiform_label(type, column, row, number), std::string_view());
-					}));
-
-					size_t results = cursor->first().size();
-					offset += results;
-					if (state_delta != nullptr)
-						*state_delta += results;
-					if (results < count)
-						break;
-				}
-
-				map.clear();
-				map.push_back(var::set::integer(block_number));
-				map.push_back(var::set::integer(block_number));
-				map.push_back(var::set::integer(block_number));
-				map.push_back(var::set::integer(block_number));
-				map.push_back(var::set::integer(block_number));
-
-				cursor = multiform_storage.emplace_query(__func__,
-					"DELETE FROM snapshots WHERE block_number > ?;"
-					"DELETE FROM multiforms WHERE block_number > ?;"
-					"INSERT OR REPLACE INTO multiforms (column_number, row_number, rank, block_number) SELECT column_number, row_number, rank, block_number FROM (SELECT column_number, row_number, rank, hidden, MAX(block_number) AS block_number FROM snapshots WHERE block_number <= ? GROUP BY column_number, row_number) WHERE hidden = FALSE;"
-					"DELETE FROM columns WHERE block_number > ?;"
-					"DELETE FROM rows WHERE block_number > ?;", &map);
-				if (!cursor || cursor->error())
-					return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
-			}
-
 			return expectation::met;
 		}
-		expects_lr<void> chainstate::revert_reorganize_internal(int64_t* block_delta, int64_t* transaction_delta, int64_t* state_delta)
+		expects_lr<void> chainstate::revert_slow_internal(int64_t* block_delta, int64_t* transaction_delta, int64_t* state_delta, const std::function<bool(const ledger::block_body&, uint64_t)>& progress_callback)
 		{
 			auto cursor = get_block_storage().query(__func__, "DELETE FROM checkpoints");
 			if (!cursor || cursor->error())
@@ -548,12 +538,11 @@ namespace tangent
 					return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 			}
 
-			int64_t precision = 5000, prev_progress = 0;
-			uint64_t prev_size = 0, prev_progress_time = 0, prev_progress_block_number = 0;
 			uint64_t checkpoint_number = get_checkpoint_block_number().or_else(0);
 			uint64_t tip_number = get_latest_block_number().or_else(0);
 			uint256_t gas_limit = kernel::params().message.blocks_size_per_query * (uint64_t)ledger::gas_cost::reserved_byte;
-			size_t block_count = (size_t)(uint64_t)(gas_limit / ledger::block_header::get_block_gas_cost());
+			size_t block_count = (size_t)(uint64_t)(gas_limit / ledger::block_header::get_block_gas_cost()), blocks_processed = 0;
+			auto commit_threshold = kernel::params().policy.participation.referencing_time / kernel::params().policy.pow.time;
 			auto solver = ledger::solver_context();
 			auto tip_cache = ledger::solver_context::tip_cache();
 			auto parent_block = expects_lr<ledger::block_header>(layer_exception());
@@ -578,22 +567,20 @@ namespace tangent
 					if (!finalization)
 						return layer_exception("block " + to_string(candidate_block.number) + " checkpoint failed: " + finalization.error().message());
 
-					if (kernel::params().user.consensus.logging)
+					if (progress_callback && !progress_callback(candidate_block, tip_number))
+						return layer_exception("block " + to_string(candidate_block.number) + " reorganization failed: shutdown requested");
+
+					if (++blocks_processed == commit_threshold)
 					{
-						int64_t progress = (int64_t)((double)precision * (double)candidate_block.number / tip_number);
-						prev_size += (uint64_t)((double)(uint64_t)candidate_block.gas_limit / (double)ledger::gas_cost::write_byte);
-						if (progress >= precision || prev_progress < progress)
-						{
-							uint64_t time = kernel::params().time.now_cpu();
-							VI_INFO("block %s (number: %" PRIu64 ", reorg: %.2f%%, size: %.2f kb, bps: %.1f)",
-								algorithm::encoding::encode_0xhex256(candidate_block.as_hash()).c_str(),
-								candidate_block.number, (double)progress / ((double)precision / 100), (double)prev_size / 1000.0,
-								prev_progress_time > 0 ? 1000.0 * (double)(candidate_block.number - prev_progress_block_number) / (double)std::max<uint64_t>(1, time - prev_progress_time) : 0.0);
-							prev_progress_block_number = candidate_block.number;
-							prev_progress_time = time;
-							prev_progress = progress;
-							prev_size = 0;
-						}
+						blocks_processed = 0;
+						auto commit = ledger::storage_util::multi_tx_commit(__func__, get_multi_storage());
+						if (!commit)
+							return layer_exception(std::move(commit.error().message()));
+
+						auto state = get_multi_storage();
+						auto begin = ledger::storage_util::multi_tx_begin(__func__, sqlite::isolation::default_isolation, state);
+						if (!begin)
+							return layer_exception(std::move(begin.error().message()));
 					}
 
 					if (block_delta != nullptr)
@@ -1983,13 +1970,10 @@ namespace tangent
 
 			static constexpr uint64_t WORLD_STATE_BATCH = 1 << 12;
 			static constexpr uint64_t WORLD_STATE_MARGIN = 256ull << 20;
-
 			auto available = os::hw::get_memory_info().available_physical;
 			auto required = (count + 1) * sizeof(uint256_t) + WORLD_STATE_MARGIN;
 			if (available != 0 && required > available)
-				return expects_lr<world_state_proof>(layer_exception(stringify::text(
-					"insufficient available memory for world state tree: %llu states require at least %llu MiB, only %llu MiB available",
-					(unsigned long long)count, (unsigned long long)(required >> 20), (unsigned long long)(available >> 20))));
+				return expects_lr<world_state_proof>(layer_exception(stringify::text("insufficient available memory for world state tree: %llu states require at least %llu MiB, only %llu MiB available", (uint64_t)count, (uint64_t)(required >> 20), (unsigned long long)(available >> 20))));
 
 			auto& blob_storage = get_blob_storage();
 			vector<uint256_t> hashes;
@@ -3113,46 +3097,49 @@ namespace tangent
 				return result;
 
 			auto uses = multiform_storage.uses();
-			auto storage = changelog->temporary_state.topics.find(type);
-			auto temporary = storage != changelog->temporary_state.topics.end();
-			if (temporary)
-				multiform_storage = ledger::storage_index_ptr((sqlite::connection*)storage->second);
+			auto parent_topic = changelog->temporary_state.topics.find(type);
+			auto parent_topic_exists = parent_topic != changelog->temporary_state.topics.end();
+			auto multiform_storage_normalization = uscope([&]()
+			{
+				result.in_use = parent_topic_exists;
+				multiform_storage.set_uses(uses);
+			});
+			if (parent_topic_exists)
+				multiform_storage = ledger::storage_index_ptr((sqlite::connection*)parent_topic->second.ptr);
 
 			multiform_writer writer;
 			fill_multiform_writer_from_block_changelog(&writer.blobs, type, column, row, changelog);
-			result.in_use = temporary;
 			if (writer.blobs.empty())
-			{
-				multiform_storage.set_uses(uses);
-				if (temporary)
-					multiform_storage.ptr()->add_ref();
 				return result;
-			}
 
 			auto status = fill_multiform_writer_from_storage(&writer, &multiform_storage);
 			if (!status)
-			{
-				multiform_storage.set_uses(uses);
 				return status.error();
-			}
-			else if (!multiform_storage.in_transaction())
+
+			auto* storage_ptr = multiform_storage.ptr();
+			bool requires_normalization = true, owns = false;
+			if (!parent_topic_exists)
 			{
-				auto transaction = multiform_storage.tx_begin(__func__, sqlite::isolation::default_isolation);
+				auto& topic = changelog->temporary_state.topics[type];
+				topic.owns = owns = !multiform_storage.in_transaction();
+				topic.ptr = storage_ptr;
+
+				auto transaction = topic.owns ? multiform_storage.tx_begin(__func__, sqlite::isolation::default_isolation) : multiform_storage.tx_savepoint(__func__, INDEX_SAVEPOINT);
 				if (!transaction)
-				{
-					multiform_storage.set_uses(uses);
 					return layer_exception(ledger::storage_util::error_of(transaction));
-				}
 			}
 
 			sqlite::expects_db<sqlite::cursor> cursor = sqlite::database_exception(string());
-			auto* storage_ptr = multiform_storage.ptr();
-			auto rollback_temporary_state = [&]()
+			auto temporary_state_normalization = uscope([&]()
 			{
+				if (!requires_normalization)
+					return;
+				else if (!parent_topic_exists)
+					(owns ? multiform_storage.tx_rollback(__func__) : multiform_storage.tx_rollback_to(__func__, INDEX_SAVEPOINT)).report("temporary state rollback failed");
+
+				changelog->temporary_state.topics.erase(type);
 				changelog->temporary_state.effects.clear();
-				multiform_storage.tx_rollback(__func__);
-				multiform_storage.set_uses(uses);
-			};
+			});
 			for (auto& item : writer.blobs)
 			{
 				auto* statement = writer.commit_multiform_column_data;
@@ -3161,10 +3148,7 @@ namespace tangent
 
 				cursor = multiform_storage.prepared_query(__func__, statement);
 				if (!cursor || cursor->error_or_empty())
-				{
-					rollback_temporary_state();
 					return layer_exception(cursor->empty() ? "multiform state column not linked" : ledger::storage_util::error_of(cursor));
-				}
 
 				statement = writer.commit_multiform_row_data;
 				storage_ptr->bind_blob(statement, 0, item.row);
@@ -3173,10 +3157,7 @@ namespace tangent
 				uint64_t column_number = cursor->first().front().get_column(0).get().get_integer();
 				cursor = multiform_storage.prepared_query(__func__, statement);
 				if (!cursor || cursor->error_or_empty())
-				{
-					rollback_temporary_state();
 					return layer_exception(cursor->empty() ? "multiform state row not linked" : ledger::storage_util::error_of(cursor));
-				}
 
 				uint64_t row_number = cursor->first().front().get_column(0).get().get_integer();
 				if (block_number > 0)
@@ -3205,34 +3186,28 @@ namespace tangent
 
 				cursor = multiform_storage.prepared_query(__func__, statement);
 				if (!cursor || cursor->error())
-				{
-					rollback_temporary_state();
 					return layer_exception(ledger::storage_util::error_of(cursor));
-				}
+
+				changelog->temporary_state.effects[item.message.data] = string((char*)item.rank, sizeof(item.rank));
 			}
 
-			multiform_storage.set_uses(uses);
 			storage_ptr->add_ref();
-			changelog->temporary_state.topics[type] = storage_ptr;
-			for (auto& item : writer.blobs)
-				changelog->temporary_state.effects[item.message.data] = string((char*)item.rank, sizeof(item.rank));
-
+			requires_normalization = false;
 			return result;
 		}
 		expects_lr<void> chainstate::clear_temporary_state(ledger::block_changelog* changelog)
 		{
 			VI_ASSERT(changelog != nullptr, "changelog should be set");
 			expects_lr<void> result = expectation::met;
-			for (auto& topic : changelog->temporary_state.topics)
+			for (auto& [type, topic] : changelog->temporary_state.topics)
 			{
-				auto storage = ledger::storage_index_ptr((sqlite::connection*)topic.second);
+				auto storage = ledger::storage_index_ptr((sqlite::connection*)topic.ptr);
 				if (storage.in_transaction())
 				{
-					auto status = storage.tx_rollback(__func__);
+					auto status = topic.owns ? storage.tx_rollback(__func__) : storage.tx_rollback_to(__func__, INDEX_SAVEPOINT);
 					if (!status)
 						result = layer_exception(ledger::storage_util::error_of(status));
 				}
-				storage.~storage_index_ptr();
 			}
 			changelog->temporary_state.topics.clear();
 			changelog->temporary_state.effects.clear();
