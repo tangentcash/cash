@@ -268,27 +268,16 @@ namespace tangent
 		block_changelog::block_changelog(block_changelog&& other) noexcept : outgoing(std::move(other.outgoing)), incoming(std::move(other.incoming))
 		{
 		}
-		block_changelog::~block_changelog() noexcept
-		{
-			clear_temporary_state();
-		}
 		block_changelog& block_changelog::operator=(block_changelog&& other) noexcept
 		{
 			if (this == &other)
 				return *this;
 
-			temporary_state.topics = std::move(temporary_state.topics);
-			temporary_state.effects = std::move(temporary_state.effects);
 			effects.pending = std::move(effects.pending);
 			effects.finalized = std::move(effects.finalized);
 			outgoing = std::move(other.outgoing);
 			incoming = std::move(other.incoming);
 			return *this;
-		}
-		void block_changelog::clear_temporary_state()
-		{
-			auto chain = storages::chainstate();
-			chain.clear_temporary_state(this);
 		}
 		void block_changelog::clear()
 		{
@@ -296,7 +285,6 @@ namespace tangent
 			effects.finalized.clear();
 			outgoing.revert(true);
 			incoming.revert(true);
-			clear_temporary_state();
 		}
 		void block_changelog::revert()
 		{
@@ -3610,7 +3598,6 @@ namespace tangent
 					transactions.errors[item.hash] = execution.error();
 					state.changelog.revert();
 				}
-				state.changelog.clear_temporary_state();
 			}
 
 			state.executor.transaction = nullptr;

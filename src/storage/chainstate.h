@@ -7,6 +7,13 @@ namespace tangent
 {
 	namespace storages
 	{
+		enum class temporary_condition
+		{
+			none,
+			in_transaction,
+			in_subtransaction
+		};
+
 		enum class position_condition
 		{
 			greater,
@@ -121,6 +128,19 @@ namespace tangent
 			}
 		};
 
+		struct temporary_state_resolution
+		{
+			ledger::storage_index_ptr* storage;
+			temporary_condition condition;
+
+			temporary_state_resolution() noexcept;
+			temporary_state_resolution(const temporary_state_resolution&) noexcept = delete;
+			temporary_state_resolution(temporary_state_resolution&& other) noexcept;
+			~temporary_state_resolution();
+			temporary_state_resolution& operator= (const temporary_state_resolution&) noexcept = delete;
+			temporary_state_resolution& operator= (temporary_state_resolution&& other) noexcept;
+		};
+
 		struct chainstate final
 		{
 		public:
@@ -143,17 +163,10 @@ namespace tangent
 			};
 
 		private:
-			expects_lr<world_state_proof> build_world_state(const uint256_t* target);
 			struct multiform_location
 			{
 				option<uint64_t> column = optional::none;
 				option<uint64_t> row = optional::none;
-			};
-
-			struct temporary_state_resolution
-			{
-				ledger::storage_index_ptr* storage;
-				bool in_use;
 			};
 
 		private:
@@ -226,7 +239,6 @@ namespace tangent
 			expects_lr<uint64_t> resolve_uniform_location(uint32_t type, const std::string_view& index);
 			expects_lr<multiform_location> resolve_multiform_location(uint32_t type, const option<std::string_view>& column, const option<std::string_view>& row);
 			expects_lr<uint64_t> resolve_account_location(const algorithm::pubkeyhash_t& account);
-			expects_lr<void> clear_temporary_state(ledger::block_changelog* changelog);
 			ledger::storage_index_ptr& get_uniform_storage(uint32_t type);
 			ledger::storage_index_ptr& get_multiform_storage(uint32_t type);
 			ledger::storage_index_ptr& get_block_storage();
@@ -241,6 +253,7 @@ namespace tangent
 			uint32_t get_queries() const;
 
 		private:
+			expects_lr<world_state_proof> build_world_state_internal(const uint256_t* target);
 			expects_lr<void> revert_fast_internal(uint64_t block_number, int64_t* block_delta, int64_t* transaction_delta, int64_t* state_delta, const std::function<bool(const ledger::block_body&, uint64_t)>& progress_callback);
 			expects_lr<void> revert_slow_internal(int64_t* block_delta, int64_t* transaction_delta, int64_t* state_delta, const std::function<bool(const ledger::block_body&, uint64_t)>& progress_callback);
 			expects_lr<void> checkpoint_internal(const ledger::block_evaluation& evaluation, bool reorganization, uint64_t* checkpoint_block_number);

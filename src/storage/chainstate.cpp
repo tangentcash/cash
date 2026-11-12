@@ -111,45 +111,38 @@ namespace tangent
 		}
 		static void fill_multiform_writer_from_block_changelog(vector<multiform_blob>* blobs, uint32_t type, const option<std::string_view>& column, const option<std::string_view>& row, const ledger::block_changelog* changelog)
 		{
-			auto fill_filter = [&](const btree_map<string, ledger::block_state::state_change>& state)
+			auto fill = [&](const std::pair<const string, ledger::block_state::state_change>& item)
 			{
-				for (auto& [index, change] : state)
+				auto& change = item.second;
+				if (change.state->as_level() != ledger::state_level::multiform || change.state->as_type() != type)
+					return;
+
+				multiform_blob blob;
+				blob.change = &change;
+				blob.context = (ledger::multiform_state*)*change.state;
+				if (column)
 				{
-					if (change.state->as_level() != ledger::state_level::multiform || change.state->as_type() != type)
-						continue;
+					blob.column = blob.context->as_column();
+					if (blob.column != *column)
+						return;
 
-					multiform_blob blob;
-					blob.change = &change;
-					blob.context = (ledger::multiform_state*)*change.state;
-					if (column)
-					{
-						blob.column = blob.context->as_column();
-						if (blob.column != *column)
-							continue;
-
-						blob.row = blob.context->as_row();
-					}
-					else if (row)
-					{
-						blob.row = blob.context->as_row();
-						if (blob.row != *row)
-							continue;
-
-						blob.column = blob.context->as_column();
-					}
-					blob.message.write_typeless(blob.column.c_str(), blob.column.size());
-					blob.message.write_typeless(blob.row.c_str(), blob.row.size());
-					blob.context->as_rank().encode(blob.rank);
-
-					auto it = changelog->temporary_state.effects.find(blob.message.data);
-					if (it != changelog->temporary_state.effects.end() && it->second == std::string_view((char*)blob.rank, sizeof(blob.rank)))
-						continue;
-
-					blobs->emplace_back(std::move(blob));
+					blob.row = blob.context->as_row();
 				}
+				else if (row)
+				{
+					blob.row = blob.context->as_row();
+					if (blob.row != *row)
+						return;
+
+					blob.column = blob.context->as_column();
+				}
+				blob.message.write_typeless(blob.column.c_str(), blob.column.size());
+				blob.message.write_typeless(blob.row.c_str(), blob.row.size());
+				blob.context->as_rank().encode(blob.rank);
+				blobs->emplace_back(std::move(blob));
 			};
-			fill_filter(changelog->outgoing.finalized);
-			fill_filter(changelog->outgoing.pending);
+			std::for_each(changelog->outgoing.finalized.begin(), changelog->outgoing.finalized.end(), fill);
+			std::for_each(changelog->outgoing.pending.begin(), changelog->outgoing.pending.end(), fill);
 		}
 		static expects_lr<void> fill_multiform_writer_from_storage(multiform_writer* writer, ledger::storage_index_ptr* multiform_storage)
 		{
@@ -312,6 +305,44 @@ namespace tangent
 			else if (query == "lte" || query == "<=")
 				return less_equal(value, order);
 			return equal(value, order);
+		}
+
+		temporary_state_resolution::temporary_state_resolution() noexcept : storage(nullptr), condition(temporary_condition::none)
+		{
+		}
+		temporary_state_resolution::temporary_state_resolution(temporary_state_resolution&& other) noexcept : storage(other.storage), condition(other.condition)
+		{
+			other.storage = nullptr;
+			other.condition = temporary_condition::none;
+		}
+		temporary_state_resolution::~temporary_state_resolution()
+		{
+			switch (condition)
+			{
+				case temporary_condition::in_transaction:
+					if (storage != nullptr && storage->in_transaction())
+						storage->tx_rollback(__func__).report("failed to rollback a temporary state");
+					break;
+				case temporary_condition::in_subtransaction:
+					if (storage != nullptr && storage->in_transaction())
+						storage->tx_rollback_to(__func__, INDEX_SAVEPOINT).report("failed to rollback a temporary state");
+					break;
+				default:
+					break;
+			}
+			storage = nullptr;
+			condition = temporary_condition::none;
+		}
+		temporary_state_resolution& temporary_state_resolution::operator= (temporary_state_resolution&& other) noexcept
+		{
+			if (this == &other)
+				return *this;
+			
+			storage = other.storage;
+			condition = other.condition;
+			other.storage = nullptr;
+			other.condition = temporary_condition::none;
+			return *this;
 		}
 
 		static thread_local chainstate* parent_chainstate = nullptr;
@@ -1947,7 +1978,7 @@ namespace tangent
 
 			return expects_lr<ledger::block_state::log>(std::move(result.pending));
 		}
-		expects_lr<chainstate::world_state_proof> chainstate::build_world_state(const uint256_t* target)
+		expects_lr<chainstate::world_state_proof> chainstate::build_world_state_internal(const uint256_t* target)
 		{
 			schema_list map_unused;
 			uint64_t count = 0;
@@ -2123,7 +2154,7 @@ namespace tangent
 		}
 		expects_lr<uint256_t> chainstate::build_world_state_root()
 		{
-			auto result = build_world_state(nullptr);
+			auto result = build_world_state_internal(nullptr);
 			if (!result)
 				return result.error();
 
@@ -2131,7 +2162,7 @@ namespace tangent
 		}
 		expects_lr<chainstate::world_state_proof> chainstate::prove_world_state_hash(const uint256_t& hash)
 		{
-			return build_world_state(&hash);
+			return build_world_state_internal(&hash);
 		}
 		expects_lr<vector<ledger::block_transaction>> chainstate::get_block_transactions(int8_t order, size_t offset, size_t count)
 		{
@@ -3087,59 +3118,34 @@ namespace tangent
 			size_t count = (*cursor)["multiform_count"].get().get_integer();
 			return expects_lr<size_t>(count);
 		}
-		expects_lr<chainstate::temporary_state_resolution> chainstate::resolve_temporary_state(uint32_t type, ledger::block_changelog* changelog, const option<std::string_view>& column, const option<std::string_view>& row, uint64_t block_number)
+		expects_lr<temporary_state_resolution> chainstate::resolve_temporary_state(uint32_t type, ledger::block_changelog* changelog, const option<std::string_view>& column, const option<std::string_view>& row, uint64_t block_number)
 		{
 			auto& multiform_storage = get_multiform_storage(type);
 			temporary_state_resolution result;
 			result.storage = &multiform_storage;
-			result.in_use = false;
+			result.condition = temporary_condition::none;
 			if (!changelog)
-				return result;
-
-			auto uses = multiform_storage.uses();
-			auto parent_topic = changelog->temporary_state.topics.find(type);
-			auto parent_topic_exists = parent_topic != changelog->temporary_state.topics.end();
-			auto multiform_storage_normalization = uscope([&]()
-			{
-				result.in_use = parent_topic_exists;
-				multiform_storage.set_uses(uses);
-			});
-			if (parent_topic_exists)
-				multiform_storage = ledger::storage_index_ptr((sqlite::connection*)parent_topic->second.ptr);
+				return expects_lr<temporary_state_resolution>(std::move(result));
 
 			multiform_writer writer;
 			fill_multiform_writer_from_block_changelog(&writer.blobs, type, column, row, changelog);
 			if (writer.blobs.empty())
-				return result;
+				return expects_lr<temporary_state_resolution>(std::move(result));
 
+			auto uses = multiform_storage.uses();
+			auto query_normalization = uscope([&]() { multiform_storage.set_uses(uses); });
 			auto status = fill_multiform_writer_from_storage(&writer, &multiform_storage);
 			if (!status)
 				return status.error();
 
 			auto* storage_ptr = multiform_storage.ptr();
-			bool requires_normalization = true, owns = false;
-			if (!parent_topic_exists)
-			{
-				auto& topic = changelog->temporary_state.topics[type];
-				topic.owns = owns = !multiform_storage.in_transaction();
-				topic.ptr = storage_ptr;
-
-				auto transaction = topic.owns ? multiform_storage.tx_begin(__func__, sqlite::isolation::default_isolation) : multiform_storage.tx_savepoint(__func__, INDEX_SAVEPOINT);
-				if (!transaction)
-					return layer_exception(ledger::storage_util::error_of(transaction));
-			}
+			bool owns = !multiform_storage.in_transaction();
+			auto transaction = owns ? multiform_storage.tx_begin(__func__, sqlite::isolation::default_isolation) : multiform_storage.tx_savepoint(__func__, INDEX_SAVEPOINT);
+			if (!transaction)
+				return layer_exception(ledger::storage_util::error_of(transaction));
 
 			sqlite::expects_db<sqlite::cursor> cursor = sqlite::database_exception(string());
-			auto temporary_state_normalization = uscope([&]()
-			{
-				if (!requires_normalization)
-					return;
-				else if (!parent_topic_exists)
-					(owns ? multiform_storage.tx_rollback(__func__) : multiform_storage.tx_rollback_to(__func__, INDEX_SAVEPOINT)).report("temporary state rollback failed");
-
-				changelog->temporary_state.topics.erase(type);
-				changelog->temporary_state.effects.clear();
-			});
+			result.condition = owns ? temporary_condition::in_transaction : temporary_condition::in_subtransaction;
 			for (auto& item : writer.blobs)
 			{
 				auto* statement = writer.commit_multiform_column_data;
@@ -3187,31 +3193,8 @@ namespace tangent
 				cursor = multiform_storage.prepared_query(__func__, statement);
 				if (!cursor || cursor->error())
 					return layer_exception(ledger::storage_util::error_of(cursor));
-
-				changelog->temporary_state.effects[item.message.data] = string((char*)item.rank, sizeof(item.rank));
 			}
-
-			storage_ptr->add_ref();
-			requires_normalization = false;
-			return result;
-		}
-		expects_lr<void> chainstate::clear_temporary_state(ledger::block_changelog* changelog)
-		{
-			VI_ASSERT(changelog != nullptr, "changelog should be set");
-			expects_lr<void> result = expectation::met;
-			for (auto& [type, topic] : changelog->temporary_state.topics)
-			{
-				auto storage = ledger::storage_index_ptr((sqlite::connection*)topic.ptr);
-				if (storage.in_transaction())
-				{
-					auto status = topic.owns ? storage.tx_rollback(__func__) : storage.tx_rollback_to(__func__, INDEX_SAVEPOINT);
-					if (!status)
-						result = layer_exception(ledger::storage_util::error_of(status));
-				}
-			}
-			changelog->temporary_state.topics.clear();
-			changelog->temporary_state.effects.clear();
-			return result;
+			return expects_lr<temporary_state_resolution>(std::move(result));
 		}
 		ledger::storage_index_ptr& chainstate::get_uniform_storage(uint32_t type)
 		{

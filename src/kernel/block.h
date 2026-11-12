@@ -118,16 +118,6 @@ namespace tangent
 
 		struct block_changelog
 		{
-			struct topic_ptr
-			{
-				void* ptr = nullptr;
-				bool owns = false;
-			};
-			struct
-			{
-				hash_map<uint32_t, topic_ptr> topics;
-				hash_map<string, string> effects;
-			} temporary_state;
 			struct
 			{
 				vector<task_callback> finalized;
@@ -141,8 +131,7 @@ namespace tangent
 			block_changelog(block_changelog&& other) noexcept;
 			block_changelog& operator=(const block_changelog&) = delete;
 			block_changelog& operator=(block_changelog&& other) noexcept;
-			~block_changelog() noexcept;
-			void clear_temporary_state();
+			~block_changelog() = default;
 			void clear();
 			void revert();
 			void commit();
