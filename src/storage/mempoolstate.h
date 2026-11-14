@@ -119,9 +119,7 @@ namespace tangent
 			expects_lr<vector<superchain::uncomputed_transaction>> get_preattestations(const hash_set<string>& lookup_keys, size_t offset, size_t count);
 			expects_lr<bool> add_quote(const superchain::approved_fee& quote, const algorithm::pubkeyhash_t& attester);
 			expects_lr<vector<superchain::approved_fee>> get_quotes(const algorithm::asset_id& asset, uint64_t block_number);
-			expects_lr<size_t> expire_quotes();
 			expects_lr<size_t> clear_observations();
-			// known_owner: caller already recovered the signer (e.g. accept_transaction); skips the redundant signature recovery.
 			expects_lr<void> add_transaction(const ledger::transaction_message& value, bool bypass_cooldown = false, const algorithm::pubkeyhash_t* known_owner = nullptr);
 			expects_lr<void> add_transaction_observation(const uint256_t& transaction_hash);
 			expects_lr<void> remove_transactions_by_hash(const hash_set<uint256_t>& transaction_hashes);

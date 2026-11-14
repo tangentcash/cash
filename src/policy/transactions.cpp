@@ -2900,6 +2900,8 @@ namespace tangent
 				budget = committed_budget(*bridge);
 				if (!budget.is_positive())
 					return layer_exception("withdrawal fee quote produced a non-positive budget");
+				else if (budget < quote_attester->min_fee)
+					return layer_exception("withdrawal fee quote is lower than acceptable by the publishing attester");
 			}
 
 			auto attesters = executor->calculate_attesters(fee_asset, 1, budget, exclusion);

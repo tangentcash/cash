@@ -1847,17 +1847,18 @@ namespace tangent
 				if (it != fees.end() && it->second >= time)
 					return expects_promise_rt<format::variables>(std::move(results));
 
-				fees[blockchain] = time + kernel::params().policy.attestation.quote_validity_time;
+				fees[blockchain] = time + kernel::params().policy.attestation.quote_validity_time / 2;
 			}
 
 			return coasync<expects_rt<format::variables>>([this, from, blockchain, asset]() -> expects_promise_rt<format::variables>
 			{
-				vector<ledger::wallet*> attesters;
+				vector<std::pair<ledger::wallet*, decimal>> attesters;
 				auto executor = ledger::executor_context(nullptr);
 				for (auto& [account, descriptor] : descriptors)
 				{
-					if (descriptor.first.services.has_attestation && executor.get_verified_validator_attestation(blockchain, account))
-						attesters.push_back(&descriptor.second);
+					auto attestation = executor.get_verified_validator_attestation(blockchain, account);
+					if (descriptor.first.services.has_attestation && attestation)
+						attesters.push_back({ &descriptor.second, attestation->min_fee });
 				}
 
 				auto quotes = hash_map<string, superchain::approved_fee>();
@@ -1877,11 +1878,14 @@ namespace tangent
 							auto estimate = transfer.value.position() ? coawait(offchain->estimate_transaction_fee(blockchain, from_link, transfer)) : expects_rt<superchain::computed_fee>(remote_exception());
 							if (estimate)
 							{
+								auto& [signer, min_fee] = attesters[(size_t)crypto::random() % attesters.size()];
 								superchain::approved_fee quote;
 								quote.asset = blockchain;
 								quote.fee = estimate->get_max_fee() * kernel::params().policy.attestation.quote_headroom;
 								quote.expiry_block_number = storages::chainstate().get_latest_block_number().or_else(0) + kernel::params().policy.attestation.quote_validity_time / kernel::params().policy.pow.time;
-								if (quote.sign(attesters[(size_t)crypto::random() % attesters.size()]->secret_key))
+								if (!min_fee.is_nan() && min_fee > quote.fee)
+									quote.fee = min_fee;					
+								if (quote.sign(signer->secret_key))
 									quotes[quote.fee.to_string()] = std::move(quote);
 							}
 						}
@@ -3339,11 +3343,6 @@ namespace tangent
 				expirations.report("mempool tx vacuum failure");
 				if (deletions > 0 && kernel::params().user.consensus.logging)
 					VI_INFO("mempool transaction vacuum: OK (transactions: %i)", (int)deletions);
-
-				auto quote_expirations = mempool.expire_quotes();
-				quote_expirations.report("mempool quote vacuum failure");
-				if (quote_expirations.or_else(0) > 0 && kernel::params().user.consensus.logging)
-					VI_INFO("mempool quote vacuum: OK (quotes: %i)", (int)*quote_expirations);
 			});
 		}
 		bool server_node::run_mempool_sync()

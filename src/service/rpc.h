@@ -218,15 +218,15 @@ namespace tangent
 			server_response mempoolstate_get_transactions(http::connection* base, format::variables&& args);
 			server_response mempoolstate_get_transactions_by_owner(http::connection* base, format::variables&& args);
 			server_response mempoolstate_get_preattestations(http::connection* base, format::variables&& args);
-			server_response validatorstate_reset_bridge_states(http::connection* base, format::variables&& args);
+			server_response validatorstate_restore_bridges(http::connection* base, format::variables&& args);
 			server_response validatorstate_revert(http::connection* base, format::variables&& args);
 			server_response validatorstate_verify(http::connection* base, format::variables&& args);
 			server_response validatorstate_accept_node(http::connection* base, format::variables&& args);
 			server_response validatorstate_reject_node(http::connection* base, format::variables&& args);
 			server_response validatorstate_get_node(http::connection* base, format::variables&& args);
 			server_response validatorstate_get_blockchains(http::connection* base, format::variables&& args);
-			server_response validatorstate_get_fee_quotes(http::connection* base, format::variables&& args);
 			server_response validatorstate_get_wallet(http::connection* base, format::variables&& args);
+			server_response validatorstate_estimate_bridge_fee(http::connection* base, format::variables&& args);
 			server_response validatorstate_status(http::connection* base, format::variables&& args);
 			server_response validatorstate_connections(http::connection* base, format::variables&& args);
 			server_response validatorstate_submit_block(http::connection* base, format::variables&& args);

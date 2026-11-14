@@ -884,8 +884,11 @@ namespace tangent
 			map.push_back(var::set::binary(asset_hash, sizeof(asset_hash)));
 			map.push_back(var::set::integer(block_number));
 			map.push_back(var::set::integer(kernel::params().time.now_cpu()));
+			map.push_back(var::set::integer(block_number));
 
-			auto cursor = get_peer_storage().emplace_query(__func__, "SELECT message FROM quotes WHERE asset = ? AND expiry_height > ? AND time > ?", &map);
+			auto cursor = get_peer_storage().emplace_query(__func__,
+				"SELECT message FROM quotes WHERE asset = ? AND expiry_height > ? AND time > ?;"
+				"DELETE FROM quotes WHERE expiry_height < ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<vector<superchain::approved_fee>>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -904,17 +907,6 @@ namespace tangent
 			}
 
 			return values;
-		}
-		expects_lr<size_t> mempoolstate::expire_quotes()
-		{
-			schema_list map;
-			map.push_back(var::set::integer(kernel::params().time.now_cpu()));
-
-			auto cursor = get_peer_storage().emplace_query(__func__, "DELETE FROM quotes WHERE time < ?", &map);
-			if (!cursor || cursor->error())
-				return expects_lr<size_t>(layer_exception(ledger::storage_util::error_of(cursor)));
-
-			return cursor->affected_rows();
 		}
 		expects_lr<size_t> mempoolstate::clear_observations()
 		{

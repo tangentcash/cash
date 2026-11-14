@@ -295,7 +295,7 @@ namespace tangent
 				uint64_t confirmation_time = 172800000;
 				uint64_t min_per_transaction = 4;
 				uint64_t max_per_transaction = 32;
-				uint64_t quote_validity_time = 300000;
+				uint64_t quote_validity_time = 600000;
 				decimal min_stake_value = std::string_view("900");
 				decimal stake_penalty_threshold = std::string_view("0.1");
 				decimal consensus_threshold = std::string_view("0.70");

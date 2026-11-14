@@ -430,7 +430,7 @@ namespace tangent
 			bind(0 | access_type::r, "mempoolstate", "getmempooltransactionsbyowner", 3, 5, "string address, uint64 offset, uint64 count, uint8? direction = 1, uint8? unrolling", "uint256[] | txn[]", "get mempool transactions by signing address", std::bind(&server_node::mempoolstate_get_transactions_by_owner, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getmempoolpreattestations", 2, 5, "uint64 offset, uint64 count, string? transaction_ids, string? addresses, string? memo_accounts", "superchain::uncomputed_transaction[]", "get off-chain transactions with preattestations, optionally filtered by a comma separated list of transaction ids, addresses and/or memo accounts", std::bind(&server_node::mempoolstate_get_preattestations, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "validatorstate", "getblockchains", 0, 0, "", "superchain::asset_info[]", "get supported blockchains", std::bind(&server_node::validatorstate_get_blockchains, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "validatorstate", "getfeequotes", 1, 1, "string asset", "{ block_number: uint64, index: uint32 | null, quotes: { asset: string, fee: decimal, expiry_block_number: uint64, publisher: address }[] }", "get active withdrawal fee quotes for a blockchain asset, collected from the validator network, normalized with the median fee", std::bind(&server_node::validatorstate_get_fee_quotes, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "validatorstate", "estimatebridgefee", 1, 1, "string asset", "{ tip: uint64, index: uint32 | null, quotes: { asset: string, fee: decimal, expiry_block_number: uint64, publisher: address }[] }", "get active withdrawal fee quotes for a blockchain asset, collected from the validator network, normalized with the median fee", std::bind(&server_node::validatorstate_estimate_bridge_fee, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "validatorstate", "status", 0, 0, "", "validator::status", "get validator status", std::bind(&server_node::validatorstate_status, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::r | access_type::a, "chainstate", "worldstateroot", 0, 1, "uint256? state_hash_to_prove", "uint256 | merkle_proof", "compute the world state root hash", std::bind(&server_node::chainstate_world_state_root, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::r | access_type::a, "validatorstate", "connections", 0, 0, "", "validator::connection[]", "get p2p connections", std::bind(&server_node::validatorstate_connections, this, std::placeholders::_1, std::placeholders::_2));
@@ -443,7 +443,7 @@ namespace tangent
 			bind(access_type::r | access_type::a, "validatorstate", "getwallet", 0, 0, "", "wallet", "get validator wallet", std::bind(&server_node::validatorstate_get_wallet, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::r | access_type::a, "validatorstate", "verify", 2, 3, "uint64 number, uint64 count, bool? validate", "uint256[]", "verify chain and possibly re-execute each block", std::bind(&server_node::validatorstate_verify, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "validatorstate", "revert", 1, 1, "uint64 number", "{ new_tip_block_number: uint64, old_tip_block_number: uint64, transaction_delta: decimal, block_delta: decimal, state_delta: decimal, is_fork: bool }", "revert chainstate to block number and possibly send removed transactions to mempool", std::bind(&server_node::validatorstate_revert, this, std::placeholders::_1, std::placeholders::_2));
-			bind(access_type::w | access_type::a, "validatorstate", "resetbridgestates", 0, 1, "uint64? number", "uint256[]", "rebuild superchain bridge data from past attestations", std::bind(&server_node::validatorstate_reset_bridge_states, this, std::placeholders::_1, std::placeholders::_2));
+			bind(access_type::w | access_type::a, "validatorstate", "restorebridges", 0, 1, "uint64? number", "uint256[]", "rebuild superchain bridge data from past attestations", std::bind(&server_node::validatorstate_restore_bridges, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "validatorstate", "acceptnode", 1, 1, "string uri_address", "void", "try to accept and connect to a node possibly by ip address", std::bind(&server_node::validatorstate_accept_node, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "validatorstate", "rejectnode", 1, 1, "string uri_address", "void", "reject and disconnect from a node by ip address", std::bind(&server_node::validatorstate_reject_node, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "validatorstate", "submitblock", 0, 0, "", "void", "try to propose a block from mempool transactions", std::bind(&server_node::validatorstate_submit_block, this, std::placeholders::_1, std::placeholders::_2));
@@ -3144,7 +3144,7 @@ namespace tangent
 				return server_response().success(std::move(data));
 			}
 		}
-		server_response server_node::validatorstate_reset_bridge_states(http::connection* base, format::variables&& args)
+		server_response server_node::validatorstate_restore_bridges(http::connection* base, format::variables&& args)
 		{
 			auto* offchain = superchain::bridge::get();
 			auto assets = hash_map<algorithm::asset_id, uint64_t>();
@@ -3394,7 +3394,7 @@ namespace tangent
 			}
 			return server_response().success(std::move(data));
 		}
-		server_response server_node::validatorstate_get_fee_quotes(http::connection*, format::variables&& args)
+		server_response server_node::validatorstate_estimate_bridge_fee(http::connection*, format::variables&& args)
 		{
 			if (!consensus_service)
 				return server_response().error(error_codes::bad_request, "validator node disabled");
@@ -3422,6 +3422,7 @@ namespace tangent
 			}
 
 			auto result = format::tree::map();
+			result.set("tip", format::variable(storages::chainstate().get_latest_block_number().or_else(0)));
 			result.set("index", quotes->empty() ? format::variable() : format::variable(index));
 			result.set("quotes", std::move(data));
 			return server_response().success(std::move(result));
