@@ -1,13 +1,5 @@
 #include <cstdlib>
-#include <cstdio>
 #include <mutex>
-#ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
-#include <windows.h>
-#include <io.h>
-#include <fcntl.h>
-#endif
 #include "../src/service/cli.h"
 #include "../src/service/consensus.h"
 #include "../src/service/discovery.h"
@@ -2833,32 +2825,6 @@ int main(int argc, char* argv[])
 	kernel params = kernel(&args);
 	auto* term = console::get();
 	term->show();
-
-	if (const char* log_file = std::getenv("TAN_LOG_FILE"); log_file != nullptr && log_file[0] != '\0')
-	{
-		static FILE* sink = nullptr;
-		static std::mutex sink_lock;
-		vitex::core::error_handling::set_callback([log_file](vitex::core::error_handling::details& data) noexcept
-		{
-			std::lock_guard<std::mutex> guard(sink_lock);
-			if (sink == nullptr)
-			{
-				HANDLE handle = CreateFileA(log_file, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-				if (handle != INVALID_HANDLE_VALUE)
-				{
-					SetFilePointer(handle, 0, nullptr, FILE_END);
-					int fd = _open_osfhandle((intptr_t)handle, _O_APPEND | _O_WRONLY);
-					sink = _fdopen(fd, "a");
-				}
-			}
-			if (sink == nullptr)
-				return;
-			auto text = vitex::core::error_handling::get_message_text(data);
-			fwrite(text.data(), 1, text.size(), sink);
-			fputc('\n', sink);
-			fflush(sink);
-		});
-	}
 
 	int bad_entrypoint_exit_code = 0x39ce8025;
 	int exit_code = bad_entrypoint_exit_code;

@@ -4479,7 +4479,7 @@ namespace tangent
 					results.insert(validator);
 			}
 			if (kernel::params().user.consensus.logging)
-				VI_INFO("%s delegation: use local %i/%i validators (stack: %i)", contract->as_typename().data(), (int)results.size(), (int)targets.size(), (int)steps_left);
+				VI_DEBUG("%s delegation: use local %i/%i validators (stack: %i)", contract->as_typename().data(), (int)results.size(), (int)targets.size(), (int)steps_left);
 			return expects_promise_rt<btree_set<algorithm::pubkeyhash_t>>(std::move(results));
 		}
 		expects_promise_rt<format::wo_stream> local_delegation_adapter::execute_on_validator(ledger::delegation_contract* contract, const algorithm::pubkeyhash_t& target, const format::wo_stream& wo_message)
