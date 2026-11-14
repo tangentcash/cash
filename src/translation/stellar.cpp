@@ -642,6 +642,10 @@ namespace tangent
 					return expects_rt<void>(expectation::met);
 				});
 			}
+			expects_promise_rt<computed_fee> stellar::estimate_transaction_fee(const wallet_link&, const value_transfer&)
+			{
+				return expects_promise_rt<computed_fee>(computed_fee::flat_fee(from_stroop(uint64_t(2) * get_base_stroop_fee())));
+			}
 			expects_promise_rt<prepared_transaction> stellar::prepare_transaction(const wallet_link& from_link, const value_transfer& to, const decimal& max_fee)
 			{
 				return coasync<expects_rt<prepared_transaction>>([this, from_link, to, max_fee]() -> expects_promise_rt<prepared_transaction>

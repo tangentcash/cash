@@ -479,6 +479,39 @@ namespace tangent
 					return expects_rt<void>(expectation::met);
 				});
 			}
+			expects_promise_rt<computed_fee> monero::estimate_transaction_fee(const wallet_link& from_link, const value_transfer& to)
+			{
+				format::tree args;
+				args.set("grace_blocks", format::variable((uint8_t)10));
+
+				return execute_rpc(nd_call::get_fee_estimate(), std::move(args), cache_policy::no_cache_no_throttling, nd_call::json_rpc()).then<expects_rt<computed_fee>>([this, from_link, to](expects_rt<format::tree>&& fee_estimate) -> expects_rt<computed_fee>
+				{
+					if (!fee_estimate)
+						return expects_rt<computed_fee>(fee_estimate.error());
+
+					size_t inputs_count = 0;
+					uint256_t avg_fee_per_byte = fee_estimate->child_var("fee").as_uint256();
+					uint256_t slow_fee_per_byte = fee_estimate->child_var("fees.0").as_uint256();
+					uint256_t normal_fee_per_byte = fee_estimate->child_var("fees.1").as_uint256();
+					uint256_t fee_per_byte = std::max(std::max(avg_fee_per_byte, slow_fee_per_byte), normal_fee_per_byte);
+				recalculate_fee:
+					uint256_t fee_per_tx = fee_per_byte * uint256_t(776 + inputs_count * 771);
+					decimal fee_value = from_atomic(fee_per_tx);
+
+					auto to_value = this->to_value(to.value);
+					auto possible_inputs = calculate_utxo(from_link, balance_query(to_value + fee_value, { }), (uint8_t)utxo_filter::never_fail);
+					if (!possible_inputs || possible_inputs->empty())
+						return expects_rt<computed_fee>(remote_exception(stringify::text("insufficient funds: %s < %s", (possible_inputs ? get_utxo_value(*possible_inputs, native_asset) : decimal(0.0)).to_string().c_str(), (to_value + fee_value).to_string().c_str())));
+
+					if (inputs_count != possible_inputs->size())
+					{
+						inputs_count = possible_inputs->size();
+						goto recalculate_fee;
+					}
+
+					return expects_rt<computed_fee>(computed_fee::flat_fee(fee_value));
+				});
+			}
 			expects_promise_rt<prepared_transaction> monero::prepare_transaction(const wallet_link& from_link, const value_transfer& to, const decimal& max_fee)
 			{
 				return coasync<expects_rt<prepared_transaction>>([this, from_link, to, max_fee]() -> expects_promise_rt<prepared_transaction>
@@ -503,11 +536,11 @@ namespace tangent
 
 					auto to_value = this->to_value(to.value);
 					auto total_value = to_value + fee_value;
-					auto possible_inputs = calculate_utxo(from_link, balance_query(total_value, { }), true);
+					auto possible_inputs = calculate_utxo(from_link, balance_query(total_value, { }), (uint8_t)utxo_filter::confirmed_only);
 					decimal input_value = possible_inputs ? get_utxo_value(*possible_inputs, native_asset) : 0.0;
 					if (!possible_inputs || possible_inputs->empty())
 					{
-						auto unconfirmed_inputs = calculate_utxo(from_link, balance_query(total_value, { }), false);
+						auto unconfirmed_inputs = calculate_utxo(from_link, balance_query(total_value, { }), (uint8_t)utxo_filter::none);
 						bool pending_confirmations = unconfirmed_inputs && !unconfirmed_inputs->empty();
 						coreturn expects_rt<prepared_transaction>(pending_confirmations ? remote_exception::retry_later("awaiting utxo confirmation") : remote_exception(stringify::text("insufficient funds: %s < %s", input_value.to_string().c_str(), total_value.to_string().c_str())));
 					}

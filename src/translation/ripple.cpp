@@ -468,6 +468,28 @@ namespace tangent
 					return expects_rt<void>(remote_exception(std::move(error_message)));
 				});
 			}
+			expects_promise_rt<computed_fee> ripple::estimate_transaction_fee(const wallet_link&, const value_transfer&)
+			{
+				format::tree map;
+				map.push(format::tree::map());
+
+				return execute_rpc(nd_call::server_info(), std::move(map), cache_policy::no_cache).then<expects_rt<computed_fee>>([this](expects_rt<format::tree>&& server_info) -> expects_rt<computed_fee>
+				{
+					if (!server_info)
+						return expects_rt<computed_fee>(server_info.error());
+
+					decimal fee_cushion = 1.2;
+					decimal base_constant_fee = server_info->child_var("info.validated_ledger.base_fee_xrp").as_decimal();
+					if (!base_constant_fee.is_positive())
+						base_constant_fee = get_base_fee_xrp();
+
+					decimal load_factor = server_info->child_var("info.load_factor").as_decimal();
+					if (!load_factor.is_positive())
+						load_factor = 1.0;
+
+					return expects_rt<computed_fee>(computed_fee::flat_fee(base_constant_fee * load_factor * fee_cushion));
+				});
+			}
 			expects_promise_rt<prepared_transaction> ripple::prepare_transaction(const wallet_link& from_link, const value_transfer& to, const decimal& max_fee)
 			{
 				return coasync<expects_rt<prepared_transaction>>([this, from_link, to, max_fee]() -> expects_promise_rt<prepared_transaction>

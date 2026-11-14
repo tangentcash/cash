@@ -34,6 +34,13 @@ namespace tangent
 			persistent_cache
 		};
 
+		enum class utxo_filter : uint8_t
+		{
+			none = 0,
+			confirmed_only = 1 << 1,
+			never_fail = 1 << 2
+		};
+
 		struct network_options;
 
 		class translation_unit;
@@ -436,7 +443,7 @@ namespace tangent
 			virtual expects_promise_rt<computed_transaction> link_transaction(uint64_t block_height, const std::string_view& block_hash, format::tree& transaction_data) = 0;
 			virtual expects_promise_rt<void> broadcast_transaction(const finalized_transaction& finalized) = 0;
 			virtual expects_promise_rt<prepared_transaction> prepare_transaction(const wallet_link& from_link, const value_transfer& to, const decimal& max_fee) = 0;
-			virtual expects_promise_rt<computed_fee> estimate_transaction_fee(const wallet_link& from_link, const value_transfer& to);
+			virtual expects_promise_rt<computed_fee> estimate_transaction_fee(const wallet_link& from_link, const value_transfer& to) = 0;
 			virtual expects_lr<finalized_transaction> finalize_transaction(prepared_transaction&& prepared) = 0;
 			virtual expects_lr<secret_box> encode_secret_key(const secret_box& secret_key) = 0;
 			virtual expects_lr<secret_box> decode_secret_key(const secret_box& secret_key) = 0;
@@ -475,7 +482,7 @@ namespace tangent
 			utxo_translation_unit(const algorithm::asset_id& new_asset) noexcept;
 			virtual ~utxo_translation_unit() = default;
 			virtual expects_promise_rt<coin_utxo> get_transaction_output(const std::string_view& transaction_id, uint64_t index) = 0;
-			virtual expects_lr<vector<coin_utxo>> calculate_utxo(const wallet_link& link, const balance_query& query, bool confirmed_only = false);
+			virtual expects_lr<vector<coin_utxo>> calculate_utxo(const wallet_link& link, const balance_query& query, uint8_t flags);
 			virtual expects_lr<coin_utxo> get_utxo(const std::string_view& transaction_id, uint64_t index, bool unspent_only = true);
 			virtual expects_lr<void> update_utxo(const computed_transaction& computed, const finalized_transaction* finalized);
 			virtual expects_lr<void> receive_utxo(const std::string_view& transaction_id, uint64_t index, uint64_t receiver_block_id, const coin_utxo& output);

@@ -129,33 +129,6 @@ namespace tangent
 
 				return expects_promise_rt<coin_utxo>(std::move(*result));
 			}
-			expects_promise_rt<uint64_t> cardano::get_latest_block_slot()
-			{
-				return coasync<expects_rt<uint64_t>>([this]() -> expects_promise_rt<uint64_t>
-				{
-					auto block_height = coawait(cardano::get_latest_block_height());
-					if (!block_height)
-						coreturn expects_rt<uint64_t>(block_height.error());
-
-					auto args = format::tree::map();
-					args.childs().reserve(2);
-					auto* network_query = args.set("network_identifier", format::tree::map());
-					network_query->set("blockchain", format::variable(get_blockchain()));
-					network_query->set("network", format::variable(get_network()));
-					auto* block_query = args.set("block_identifier", format::tree::map());
-					block_query->set("index", format::variable(*block_height));
-
-					auto block_data = coawait(execute_rest("POST", nd_call::block_data(), std::move(args), cache_policy::no_cache));
-					if (!block_data)
-						coreturn expects_rt<uint64_t>(block_data.error());
-
-					uint64_t block_slot = block_data->child_var("block.metadata.slotNo").as_uint64();
-					if (!block_slot)
-						coreturn expects_rt<uint64_t>(remote_exception("failed to fetch current slot"));
-
-					coreturn expects_rt<uint64_t>(block_slot);
-				});
-			}
 			expects_promise_rt<computed_transaction> cardano::link_transaction(uint64_t, const std::string_view&, format::tree& transaction_data)
 			{
 				auto* operations_data = transaction_data.child("operations");
@@ -319,6 +292,15 @@ namespace tangent
 
 				coreturn expects_rt<computed_transaction>(std::move(tx));
 			}
+			expects_promise_rt<computed_fee> cardano::estimate_transaction_fee(const wallet_link& from_link, const value_transfer& to)
+			{
+				auto result = computed_fee();
+				auto prepared = prepare_transaction_internal(from_link, to, netdata.divisibility, &result);
+				if (!prepared)
+					return expects_promise_rt<computed_fee>(std::move(prepared.error()));
+
+				return expects_promise_rt<computed_fee>(std::move(result));
+			}
 			expects_promise_rt<void> cardano::broadcast_transaction(const finalized_transaction& finalized)
 			{
 				Cardano::CborSerialize rosetta_transaction;
@@ -346,162 +328,165 @@ namespace tangent
 			}
 			expects_promise_rt<prepared_transaction> cardano::prepare_transaction(const wallet_link& from_link, const value_transfer& to, const decimal& max_fee)
 			{
-				return get_latest_block_slot().then<expects_rt<prepared_transaction>>([this, from_link, to, max_fee](expects_rt<uint64_t>&& block_slot) -> expects_rt<prepared_transaction>
+				return expects_promise_rt<prepared_transaction>(prepare_transaction_internal(from_link, to, max_fee, nullptr));
+			}
+			expects_rt<prepared_transaction> cardano::prepare_transaction_internal(const wallet_link& from_link, const value_transfer& to, const decimal& max_fee, computed_fee* out_fee)
+			{
+				option<std::pair<computed_fee, size_t>> fee = optional::none;
+				option<decimal> additional_value = optional::none;
+			retry_with_fee:
+				decimal fee_value = fee ? fee->first.get_max_fee() : decimal::zero();
+				if (fee && fee_value > max_fee)
+					return expects_rt<prepared_transaction>(remote_exception(stringify::text("(frtl) fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
+
+				prepared_transaction result;
+				result.requires_abi(format::variable(to_lovelace(fee_value)));
+
+				hash_map<algorithm::asset_id, decimal> total_token_value; decimal total_value = fee_value;
+				auto min_output_value = get_min_protocol_value_per_output(to.asset != native_asset ? 1 : 0);
+				auto to_value = this->to_value(to.value);
+				if (to.asset == native_asset)
 				{
-					option<std::pair<computed_fee, size_t>> fee = optional::none;
-					option<decimal> additional_value = optional::none;
-				retry_with_fee:
-					decimal fee_value = fee ? fee->first.get_max_fee() : decimal::zero();
-					auto str = fee_value.to_string();
-					if (fee && fee_value > max_fee)
-						return expects_rt<prepared_transaction>(remote_exception(stringify::text("(frtl) fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
+					total_value += to_value;
+					if (to.asset == native_asset && to_value < min_output_value)
+						return expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s (value is less than minimum required by protocol)", to_value.to_string().c_str(), min_output_value.to_string().c_str())));
+				}
+				else
+				{
+					auto& value = total_token_value[to.asset];
+					value = value.is_nan() ? to_value : (value + to_value);
+					total_value += min_output_value;
+				}
 
-					prepared_transaction result;
-					result.requires_abi(format::variable(to_lovelace(fee_value)));
+				auto possible_inputs = calculate_utxo(from_link, balance_query(additional_value ? total_value + *additional_value : total_value, total_token_value), out_fee ? (uint8_t)utxo_filter::never_fail : (uint8_t)utxo_filter::none);
+				auto remaining_value = possible_inputs ? get_utxo_value(*possible_inputs, native_asset) : 0.0;
+				if (!possible_inputs || possible_inputs->empty())
+					return expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s (or not enough token funds)", total_value.to_string().c_str(), remaining_value.to_string().c_str())));
 
-					hash_map<algorithm::asset_id, decimal> total_token_value; decimal total_value = fee_value;
-					auto min_output_value = get_min_protocol_value_per_output(to.asset != native_asset ? 1 : 0);
-					auto to_value = this->to_value(to.value);
-					if (to.asset == native_asset)
+				hash_map<algorithm::asset_id, coin_utxo::token_utxo> change_tokens;
+				for (auto& item : *possible_inputs)
+				{
+					if (item.metadata)
+						return expects_rt<prepared_transaction>(remote_exception("utxo does not have correct metadata"));
+
+					for (auto& [token_hash, token] : item.tokens)
 					{
-						total_value += to_value;
-						if (to.asset == native_asset && to_value < min_output_value)
-							return expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s (value is less than minimum required by protocol)", to_value.to_string().c_str(), min_output_value.to_string().c_str())));
+						if (!token.metadata)
+							return expects_rt<prepared_transaction>(remote_exception("token utxo does not have correct metadata"));
+
+						auto token_asset = token.get_asset(native_asset);
+						auto& next = change_tokens[token_asset];
+						if (next.validate())
+							next.value += token.value;
+						else
+							next = token;
+					}
+				}
+
+				auto to_link = find_linked_addresses({ to.address });
+				auto output = coin_utxo::standard_utxo(to_link ? std::move(to_link->begin()->second) : wallet_link::from_address(to.address), std::string_view(), (uint32_t)result.outputs.size(), to.asset == native_asset ? decimal(to_value) : std::move(min_output_value), { });
+				if (to.asset != native_asset)
+				{
+					auto& change_token = change_tokens[to.asset];
+					auto copy_token = change_token;
+					copy_token.value = to_value;
+					change_token.value -= to_value;
+					output.add_token_value(std::move(copy_token));
+				}
+				result.requires_output(std::move(output));
+
+				auto change_output = coin_utxo::standard_utxo(wallet_link(possible_inputs->front().link), string(), (uint32_t)result.outputs.size(), decimal(remaining_value - total_value), { });
+				for (auto& [asset, token] : change_tokens)
+				{
+					if (token.validate() && token.value.is_positive())
+						change_output.add_token_value(std::move(token));
+				}
+
+				if (change_output.value.is_positive() || !change_output.tokens.empty())
+				{
+					auto min_change_output_value = get_min_protocol_value_per_output(change_output.tokens.size());
+					if (change_output.value < min_change_output_value)
+					{
+						if (!change_output.tokens.empty())
+						{
+							if (!additional_value)
+							{
+								additional_value = min_change_output_value - change_output.value;
+								goto retry_with_fee;
+							}
+
+							return expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s (change value is less than minimum required by protocol)", change_output.value.to_string().c_str(), min_change_output_value.to_string().c_str())));
+						}
+
+						fee_value += change_output.value;
+						if (fee_value > max_fee)
+							return expects_rt<prepared_transaction>(remote_exception(stringify::text("(frtl) fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
 					}
 					else
+						result.requires_output(std::move(change_output));
+				}
+
+				try
+				{
+					Cardano::Transaction builder = Cardano::Transaction();
+					uint8_t dummy_signature[XVK_LENGTH] = { 1 };
+					uint8_t dummy_public_key[BLAKE256_LENGTH] = { 1 };
+					uint8_t dummy_private_key[XSK_LENGTH] = { 1 };
+					for (auto& finalized_input : *possible_inputs)
 					{
-						auto& value = total_token_value[to.asset];
-						value = value.is_nan() ? to_value : (value + to_value);
-						total_value += min_output_value;
-					}
-
-					auto possible_inputs = calculate_utxo(from_link, balance_query(additional_value ? total_value + *additional_value : total_value, total_token_value));
-					auto remaining_value = possible_inputs ? get_utxo_value(*possible_inputs, native_asset) : 0.0;
-					if (!possible_inputs || possible_inputs->empty())
-						return expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s (or not enough token funds)", total_value.to_string().c_str(), remaining_value.to_string().c_str())));
-
-					hash_map<algorithm::asset_id, coin_utxo::token_utxo> change_tokens;
-					for (auto& item : *possible_inputs)
-					{
-						if (item.metadata)
-							return expects_rt<prepared_transaction>(remote_exception("utxo does not have correct metadata"));
-
-						for (auto& [token_hash, token] : item.tokens)
+						auto& utxo = finalized_input.metadata.error();
+						builder.Body.TransactionInput.addInput(to_unprefixed_hex(utxo.transaction_id), utxo.index);
+						if (!fee)
 						{
-							if (!token.metadata)
-								return expects_rt<prepared_transaction>(remote_exception("token utxo does not have correct metadata"));
-
-							auto token_asset = token.get_asset(native_asset);
-							auto& next = change_tokens[token_asset];
-							if (next.validate())
-								next.value += token.value;
-							else
-								next = token;
-						}
-					}
-
-					auto to_link = find_linked_addresses({ to.address });
-					auto output = coin_utxo::standard_utxo(to_link ? std::move(to_link->begin()->second) : wallet_link::from_address(to.address), std::string_view(), (uint32_t)result.outputs.size(), to.asset == native_asset ? decimal(to_value) : std::move(min_output_value), { });
-					if (to.asset != native_asset)
-					{
-						auto& change_token = change_tokens[to.asset];
-						auto copy_token = change_token;
-						copy_token.value = to_value;
-						change_token.value -= to_value;
-						output.add_token_value(std::move(copy_token));
-					}
-					result.requires_output(std::move(output));
-
-					auto change_output = coin_utxo::standard_utxo(wallet_link(possible_inputs->front().link), string(), (uint32_t)result.outputs.size(), decimal(remaining_value - total_value), { });
-					for (auto& [asset, token] : change_tokens)
-					{
-						if (token.validate() && token.value.is_positive())
-							change_output.add_token_value(std::move(token));
-					}
-
-					if (change_output.value.is_positive() || !change_output.tokens.empty())
-					{
-						auto min_change_output_value = get_min_protocol_value_per_output(change_output.tokens.size());
-						if (change_output.value < min_change_output_value)
-						{
-							if (!change_output.tokens.empty())
-							{
-								if (!additional_value)
-								{
-									additional_value = min_change_output_value - change_output.value;
-									goto retry_with_fee;
-								}
-
-								return expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s (change value is less than minimum required by protocol)", change_output.value.to_string().c_str(), min_change_output_value.to_string().c_str())));
-							}
-
-							fee_value += change_output.value;
-							if (fee_value > max_fee)
-								return expects_rt<prepared_transaction>(remote_exception(stringify::text("(frtl) fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
+							crypto::fill_random_bytes(dummy_public_key, sizeof(dummy_public_key));
+							builder.addExtendedVerifyingKey(dummy_public_key, dummy_signature);
 						}
 						else
-							result.requires_output(std::move(change_output));
+							builder.addExtendedSigningKey(dummy_private_key);
 					}
-
-					try
+					for (auto& finalized_output : result.outputs)
 					{
-						Cardano::Transaction builder = Cardano::Transaction();
-						uint8_t dummy_signature[XVK_LENGTH] = { 1 };
-						uint8_t dummy_public_key[BLAKE256_LENGTH] = { 1 };
-						uint8_t dummy_private_key[XSK_LENGTH] = { 1 };
-						for (auto& finalized_input : *possible_inputs)
-						{
-							auto& utxo = finalized_input.metadata.error();
-							builder.Body.TransactionInput.addInput(to_unprefixed_hex(utxo.transaction_id), utxo.index);
-							if (!fee)
-							{
-								crypto::fill_random_bytes(dummy_public_key, sizeof(dummy_public_key));
-								builder.addExtendedVerifyingKey(dummy_public_key, dummy_signature);
-							}
-							else
-								builder.addExtendedSigningKey(dummy_private_key);
-						}
-						for (auto& finalized_output : result.outputs)
-						{
-							builder.Body.TransactionOutput.addOutput(copy<std::string>(finalized_output.link.address), (uint64_t)to_lovelace(finalized_output.value));
-							for (auto& [token_hash, token] : finalized_output.tokens)
-								builder.Body.TransactionOutput.addAsset(to_unprefixed_hex(token.metadata->contract_address), copy<std::string>(token.metadata->symbol), (uint64_t)uint256_t((token.value * token.get_divisibility()).truncate(0).to_string()));
-						}
-						builder.Body.addFee((uint64_t)to_lovelace(fee_value));
-
-						std::vector<Cardano::Transaction::Digest> digests;
-						auto& raw_tx_data = builder.build(&digests);
-						uint64_t tx_size = raw_tx_data.size() + 8;
-						if (!fee || fee->second < tx_size)
-						{
-							uint64_t lovelace_fee = PROTOCOL_FEE_FIXED + PROTOCOL_FEE_PER_BYTE * tx_size;
-							fee = std::make_pair(computed_fee::flat_fee(lovelace_fee / netdata.divisibility), tx_size);
-							goto retry_with_fee;
-						}
-
-						for (size_t i = 0; i < digests.size(); i++)
-						{
-							auto& digest = digests[i];
-							auto& input = possible_inputs->at(i);
-							auto signing_public_key = decode_public_key(input.link.public_key);
-							if (!signing_public_key)
-								return expects_rt<prepared_transaction>(remote_exception(std::move(signing_public_key.error().message())));
-
-							auto public_key = algorithm::composition::to_cstorage<algorithm::composition::cpubkey_t>(*signing_public_key);
-							result.requires_input(algorithm::composition::type::ed25519, public_key, digest.Hash, sizeof(digest.Hash), std::move(input));
-						}
-
-						return expects_rt<prepared_transaction>(std::move(result));
+						builder.Body.TransactionOutput.addOutput(copy<std::string>(finalized_output.link.address), (uint64_t)to_lovelace(finalized_output.value));
+						for (auto& [token_hash, token] : finalized_output.tokens)
+							builder.Body.TransactionOutput.addAsset(to_unprefixed_hex(token.metadata->contract_address), copy<std::string>(token.metadata->symbol), (uint64_t)uint256_t((token.value * token.get_divisibility()).truncate(0).to_string()));
 					}
-					catch (const std::invalid_argument& error)
+					builder.Body.addFee((uint64_t)to_lovelace(fee_value));
+
+					std::vector<Cardano::Transaction::Digest> digests;
+					auto& raw_tx_data = builder.build(&digests);
+					uint64_t tx_size = raw_tx_data.size() + 8;
+					if (!fee || fee->second < tx_size)
 					{
-						return expects_rt<prepared_transaction>(remote_exception("tx serialization error: " + string(error.what())));
+						uint64_t lovelace_fee = PROTOCOL_FEE_FIXED + PROTOCOL_FEE_PER_BYTE * tx_size;
+						fee = std::make_pair(computed_fee::flat_fee(lovelace_fee / netdata.divisibility), tx_size);
+						goto retry_with_fee;
 					}
-					catch (...)
+
+					for (size_t i = 0; i < digests.size(); i++)
 					{
-						return expects_rt<prepared_transaction>(remote_exception("tx serialization error"));
+						auto& digest = digests[i];
+						auto& input = possible_inputs->at(i);
+						auto signing_public_key = decode_public_key(input.link.public_key);
+						if (!signing_public_key)
+							return expects_rt<prepared_transaction>(remote_exception(std::move(signing_public_key.error().message())));
+
+						auto public_key = algorithm::composition::to_cstorage<algorithm::composition::cpubkey_t>(*signing_public_key);
+						result.requires_input(algorithm::composition::type::ed25519, public_key, digest.Hash, sizeof(digest.Hash), std::move(input));
 					}
-				});
+
+					if (out_fee != nullptr)
+						*out_fee = std::move(fee->first);
+
+					return expects_rt<prepared_transaction>(std::move(result));
+				}
+				catch (const std::invalid_argument& error)
+				{
+					return expects_rt<prepared_transaction>(remote_exception("tx serialization error: " + string(error.what())));
+				}
+				catch (...)
+				{
+					return expects_rt<prepared_transaction>(remote_exception("tx serialization error"));
+				}
 			}
 			expects_lr<finalized_transaction> cardano::finalize_transaction(superchain::prepared_transaction&& prepared)
 			{

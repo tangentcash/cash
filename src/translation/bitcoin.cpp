@@ -403,7 +403,7 @@ namespace tangent
 			}
 			expects_promise_rt<computed_fee> bitcoin::estimate_transaction_fee(const wallet_link& from_link, const value_transfer& to)
 			{
-				auto inputs = calculate_utxo(from_link, balance_query(to.value, { }));
+				auto inputs = calculate_utxo(from_link, balance_query(to.value, { }), (uint8_t)utxo_filter::never_fail);
 				decimal input_value = inputs ? get_utxo_value(*inputs, native_asset) : 0.0;
 				if (!inputs || inputs->empty())
 					return expects_promise_rt<computed_fee>(remote_exception(stringify::text("insufficient funds: %s < %s", input_value.to_string().c_str(), to.value.to_string().c_str())));
@@ -634,7 +634,7 @@ namespace tangent
 						return expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s (value is less than minimum required by protocol)", to_value.to_string().c_str(), min_utxo_value.to_string().c_str())));
 					
 					auto total_value = to_value + fee_value;
-					auto possible_inputs = calculate_utxo(from_link, balance_query(total_value, { }));
+					auto possible_inputs = calculate_utxo(from_link, balance_query(total_value, { }), (uint8_t)utxo_filter::none);
 					decimal input_value = possible_inputs ? get_utxo_value(*possible_inputs, native_asset) : 0.0;
 					if (!possible_inputs || possible_inputs->empty())
 						return expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s", input_value.to_string().c_str(), total_value.to_string().c_str())));
@@ -1677,7 +1677,7 @@ namespace tangent
 			}
 			expects_promise_rt<computed_fee> bitcoin_sv::estimate_transaction_fee(const wallet_link& from_link, const value_transfer& to)
 			{
-				auto inputs = calculate_utxo(from_link, balance_query(to.value, { }));
+				auto inputs = calculate_utxo(from_link, balance_query(to.value, { }), (uint8_t)utxo_filter::none);
 				decimal input_value = inputs ? get_utxo_value(*inputs, native_asset) : 0.0;
 				if (!inputs || inputs->empty())
 					return expects_promise_rt<computed_fee>(remote_exception(stringify::text("insufficient funds: %s < %s", input_value.to_string().c_str(), to.value.to_string().c_str())));
@@ -1917,7 +1917,7 @@ namespace tangent
 			}
 			expects_promise_rt<computed_fee> zcash::estimate_transaction_fee(const wallet_link& from_link, const value_transfer& to)
 			{
-				auto inputs = calculate_utxo(from_link, balance_query(to.value, { }));
+				auto inputs = calculate_utxo(from_link, balance_query(to.value, { }), (uint8_t)utxo_filter::none);
 				decimal input_value = inputs ? get_utxo_value(*inputs, native_asset) : 0.0;
 				if (!inputs || inputs->empty())
 					return expects_promise_rt<computed_fee>(remote_exception(stringify::text("insufficient funds: %s < %s", input_value.to_string().c_str(), to.value.to_string().c_str())));

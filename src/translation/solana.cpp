@@ -605,6 +605,16 @@ namespace tangent
 					return result ? expects_rt<void>(expectation::met) : expects_rt<void>(std::move(result.error()));
 				});
 			}
+			expects_promise_rt<computed_fee> solana::estimate_transaction_fee(const wallet_link&, const value_transfer& to)
+			{
+				auto contract_address = bridge::get()->get_contract_address(to.asset);
+				if (!contract_address && !algorithm::asset::token_of(to.asset).empty())
+					return expects_promise_rt<computed_fee>(remote_exception("failed to find a token contract address"));
+
+				uint64_t token_constant = 2039280;
+				uint64_t fee_constant = contract_address ? 15000 + token_constant : 5000;
+				return expects_promise_rt<computed_fee>(computed_fee::flat_fee(from_baseline_value(fee_constant)));
+			}
 			expects_promise_rt<prepared_transaction> solana::prepare_transaction(const wallet_link& from_link, const value_transfer& to, const decimal& max_fee)
 			{
 				return coasync<expects_rt<prepared_transaction>>([this, from_link, to, max_fee]() -> expects_promise_rt<prepared_transaction>

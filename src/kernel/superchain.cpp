@@ -1797,10 +1797,6 @@ namespace tangent
 		{
 			return expects_promise_rt<uint64_t>(remote_exception("not supported"));
 		}
-		expects_promise_rt<computed_fee> translation_unit::estimate_transaction_fee(const wallet_link& from_link, const value_transfer& to)
-		{
-			return expects_rt<computed_fee>(remote_exception("fee rate estimation is not supported for this network"));
-		}
 		expects_lr<algorithm::composition::cpubkey_t> translation_unit::to_composite_public_key(const std::string_view& public_key)
 		{
 			auto result = decode_public_key(public_key);
@@ -1892,7 +1888,7 @@ namespace tangent
 		utxo_translation_unit::utxo_translation_unit(const algorithm::asset_id& new_asset) noexcept : translation_unit(new_asset)
 		{
 		}
-		expects_lr<vector<coin_utxo>> utxo_translation_unit::calculate_utxo(const wallet_link& link, const balance_query& query, bool confirmed_only)
+		expects_lr<vector<coin_utxo>> utxo_translation_unit::calculate_utxo(const wallet_link& link, const balance_query& query, uint8_t flags)
 		{
 			auto leftover = query;
 			auto results = vector<coin_utxo>();
@@ -1907,7 +1903,7 @@ namespace tangent
 			};
 			while (has_leftover())
 			{
-				auto candidates = bridge::get()->get_utxos(native_asset, link, results.size(), ELEMENTS_MANY, confirmed_only);
+				auto candidates = bridge::get()->get_utxos(native_asset, link, results.size(), ELEMENTS_MANY, flags & (uint8_t)utxo_filter::confirmed_only);
 				if (candidates && !candidates->empty())
 				{
 					VI_SORT(candidates->begin(), candidates->end(), [](const coin_utxo& lhs, const coin_utxo& rhs) { return lhs.value > rhs.value; });
@@ -1924,7 +1920,7 @@ namespace tangent
 
 						results.emplace_back(std::move(output));
 						if (results.size() > 255)
-							return layer_exception("too many inputs");
+							return flags & (uint8_t)utxo_filter::never_fail ? expects_lr<vector<coin_utxo>>(std::move(results)) : expects_lr<vector<coin_utxo>>(layer_exception("too many inputs"));
 						else if (!has_leftover())
 							return expects_lr<vector<coin_utxo>>(std::move(results));
 					}
@@ -1932,6 +1928,9 @@ namespace tangent
 				if (!candidates || candidates->size() != ELEMENTS_MANY)
 					break;
 			}
+			if (flags & (uint8_t)utxo_filter::never_fail)
+				return expects_lr<vector<coin_utxo>>(std::move(results));
+
 			return expects_lr<vector<coin_utxo>>(layer_exception("insufficient funds"));
 		}
 		expects_lr<coin_utxo> utxo_translation_unit::get_utxo(const std::string_view& transaction_id, uint64_t index, bool unspent_only)

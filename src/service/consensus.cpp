@@ -1559,13 +1559,23 @@ namespace tangent
 				quote.asset = asset;
 				quote.fee = estimate ? std::max(estimate->get_max_fee() * kernel::params().policy.attestation.quote_headroom, min_fee) : decimal::nan();
 				quote.expiry_block_number = storages::chainstate().get_latest_block_number().or_else(0) + kernel::params().policy.attestation.quote_validity_time / kernel::params().policy.pow.time;
-				if (!quote.fee.is_positive() || !quote.sign(signer->secret_key))
-					return;
+				if (quote.fee.is_positive() && quote.sign(signer->secret_key))
+				{
+					auto mempool = storages::mempoolstate();
+					size_t notifications = mempool.add_quote(quote, signer->public_key_hash) ? notify_all(descriptors::broadcast_quote(), { format::variable(quote.as_message().data) }) : 0;
+					if (notifications > 0 && kernel::params().user.consensus.logging)
+						VI_DEBUG("%s quote broadcasted to %i nodes", algorithm::asset::blockchain_of(asset).c_str(), (int)notifications);
+				}
+				else if (estimate)
+					estimate = remote_exception("failed to attest");
 
-				auto mempool = storages::mempoolstate();
-				size_t notifications = mempool.add_quote(quote, signer->public_key_hash) ? notify_all(descriptors::broadcast_quote(), { format::variable(quote.as_message().data) }) : 0;
-				if (notifications > 0 && kernel::params().user.consensus.logging)
-					VI_DEBUG("%s quote broadcasted to %i nodes", algorithm::asset::blockchain_of(asset).c_str(), (int)notifications);
+				if (kernel::params().user.consensus.logging)
+				{
+					if (estimate)
+						VI_INFO("%s bridge fee attestation: %s %s (block: %" PRIu64 ")", algorithm::asset::blockchain_of(asset).c_str(), quote.fee.to_string().c_str(), algorithm::asset::blockchain_of(asset).c_str(), quote.expiry_block_number);
+					else
+						VI_WARN("%s bridge fee attestation failed: %s", algorithm::asset::blockchain_of(asset).c_str(), estimate.what().c_str());
+				}
 			});
 			return expects_rt<void>(expectation::met);
 		}
