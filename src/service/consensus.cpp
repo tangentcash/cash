@@ -1555,9 +1555,10 @@ namespace tangent
 			offchain->estimate_transaction_fee(asset, from_link, transfer).when([this, asset, attester = std::move(attester)](expects_rt<superchain::computed_fee>&& estimate) mutable
 			{
 				auto& [signer, min_fee] = attester;
+				auto network_fee = estimate ? estimate->get_max_fee() * kernel::params().policy.attestation.quote_headroom : decimal::nan();
 				superchain::approved_fee quote;
 				quote.asset = asset;
-				quote.fee = estimate ? std::max(estimate->get_max_fee() * kernel::params().policy.attestation.quote_headroom, min_fee) : decimal::nan();
+				quote.fee = network_fee.is_positive() ? std::max(network_fee, min_fee) : decimal::nan();
 				quote.expiry_block_number = storages::chainstate().get_latest_block_number().or_else(0) + kernel::params().policy.attestation.quote_validity_time / kernel::params().policy.pow.time;
 				if (quote.fee.is_positive() && quote.sign(signer->secret_key))
 				{
@@ -1571,10 +1572,11 @@ namespace tangent
 
 				if (kernel::params().user.consensus.logging)
 				{
+					auto symbol = algorithm::asset::blockchain_of(asset);
 					if (estimate)
-						VI_INFO("%s bridge fee attestation: %s %s (block: %" PRIu64 ")", algorithm::asset::blockchain_of(asset).c_str(), quote.fee.to_string().c_str(), algorithm::asset::blockchain_of(asset).c_str(), quote.expiry_block_number);
+						VI_INFO("%s bridge fee attestation: %s %s (block: %" PRIu64 ", network: %s)", symbol.c_str(), quote.fee.to_string().c_str(), symbol.c_str(), quote.expiry_block_number, network_fee.to_string().c_str());
 					else
-						VI_WARN("%s bridge fee attestation failed: %s", algorithm::asset::blockchain_of(asset).c_str(), estimate.what().c_str());
+						VI_WARN("%s bridge fee attestation failed: %s", symbol.c_str(), estimate.what().c_str());
 				}
 			});
 			return expects_rt<void>(expectation::met);
