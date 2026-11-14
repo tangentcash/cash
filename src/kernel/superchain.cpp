@@ -1136,6 +1136,16 @@ namespace tangent
 			abi.clear();
 			return format::variables_util::deserialize_merge_from(stream, &abi);
 		}
+		size_t prepared_transaction::signatures_left() const
+		{
+			size_t count = 0;
+			for (auto& item : inputs)
+			{
+				if (item.signature.empty())
+					++count;
+			}
+			return count;
+		}
 		prepared_transaction::signable_coin_utxo* prepared_transaction::next_input_for_aggregation()
 		{
 			for (auto& item : inputs)
@@ -1882,74 +1892,47 @@ namespace tangent
 		utxo_translation_unit::utxo_translation_unit(const algorithm::asset_id& new_asset) noexcept : translation_unit(new_asset)
 		{
 		}
-		expects_promise_rt<decimal> utxo_translation_unit::calculate_balance(const algorithm::asset_id& for_asset, const wallet_link& link)
+		expects_lr<vector<coin_utxo>> utxo_translation_unit::calculate_utxo(const wallet_link& link, const balance_query& query, bool confirmed_only)
 		{
-			decimal balance = 0.0;
-			auto outputs = calculate_utxo(link, optional::none);
-			if (!outputs)
-				return expects_promise_rt<decimal>(std::move(balance));
-
-			for (auto& output : *outputs)
+			auto leftover = query;
+			auto results = vector<coin_utxo>();
+			auto has_leftover = [&]()
 			{
-				auto value = output.get_token_value(for_asset);
-				if (value)
-					balance += *value;
-			}
-			return expects_promise_rt<decimal>(std::move(balance));
-		}
-		expects_lr<vector<coin_utxo>> utxo_translation_unit::calculate_utxo(const wallet_link& link, option<balance_query>&& query, bool confirmed_only)
-		{
-			vector<coin_utxo> values;
-			decimal current_value = decimal::zero();
-			auto continue_accumulation = [&]()
-			{
-				if (!query)
-					return true;
-
-				for (auto& current_token_value : query->min_token_values)
+				for (auto& current_token_value : leftover.min_token_values)
 				{
 					if (current_token_value.second.is_positive())
 						return true;
 				}
-
-				return current_value < query->min_native_value;
+				return leftover.min_native_value.is_positive();
 			};
-			while (continue_accumulation())
+			while (has_leftover())
 			{
-				const size_t count = 64;
-				auto outputs = bridge::get()->get_utxos(native_asset, link, values.size(), count, confirmed_only);
-				if (!outputs || outputs->empty())
-					break;
-
-				bool eof_value = false;
-				bool eof_utxo = outputs->size() < count;
-				values.reserve(values.size() + outputs->size());
-				for (auto& output : *outputs)
+				auto candidates = bridge::get()->get_utxos(native_asset, link, results.size(), ELEMENTS_MANY, confirmed_only);
+				if (candidates && !candidates->empty())
 				{
-					if (query)
+					VI_SORT(candidates->begin(), candidates->end(), [](const coin_utxo& lhs, const coin_utxo& rhs) { return lhs.value > rhs.value; });
+					results.reserve(results.size() + candidates->size());
+					for (auto& output : *candidates)
 					{
-						current_value += output.value;
+						leftover.min_native_value -= output.value;
 						for (auto& [hash, token] : output.tokens)
 						{
-							auto current_token_value = query->min_token_values.find(token.get_asset(native_asset));
-							if (current_token_value != query->min_token_values.end())
+							auto current_token_value = leftover.min_token_values.find(token.get_asset(native_asset));
+							if (current_token_value != leftover.min_token_values.end())
 								current_token_value->second -= token.value;
 						}
-					}
 
-					eof_value = !continue_accumulation();
-					values.emplace_back(std::move(output));
-					if (eof_value)
-						break;
+						results.emplace_back(std::move(output));
+						if (results.size() > 255)
+							return layer_exception("too many inputs");
+						else if (!has_leftover())
+							return expects_lr<vector<coin_utxo>>(std::move(results));
+					}
 				}
-				if (eof_utxo || eof_value)
+				if (!candidates || candidates->size() != ELEMENTS_MANY)
 					break;
 			}
-
-			if (continue_accumulation() && query)
-				return expects_lr<vector<coin_utxo>>(layer_exception("insufficient funds"));
-
-			return expects_lr<vector<coin_utxo>>(std::move(values));
+			return expects_lr<vector<coin_utxo>>(layer_exception("insufficient funds"));
 		}
 		expects_lr<coin_utxo> utxo_translation_unit::get_utxo(const std::string_view& transaction_id, uint64_t index, bool unspent_only)
 		{
@@ -1957,17 +1940,6 @@ namespace tangent
 		}
 		expects_lr<void> utxo_translation_unit::update_utxo(const computed_transaction& computed, const finalized_transaction* finalized)
 		{
-			for (auto& [hash, output] : computed.inputs)
-			{
-				if (output.metadata)
-					continue;
-
-				auto& utxo = output.metadata.error();
-				auto result = spend_utxo(utxo.transaction_id, utxo.index, computed.block_id);
-				if (!result)
-					return result;
-			}
-
 			for (auto& [hash, input] : computed.outputs)
 			{
 				if (input.metadata || !input.link.has_all())
@@ -1975,6 +1947,17 @@ namespace tangent
 
 				auto& utxo = input.metadata.error();
 				auto result = receive_utxo(utxo.transaction_id.empty() ? computed.transaction_id : utxo.transaction_id, utxo.index, computed.block_id, input);
+				if (!result)
+					return result;
+			}
+
+			for (auto& [hash, output] : computed.inputs)
+			{
+				if (output.metadata)
+					continue;
+
+				auto& utxo = output.metadata.error();
+				auto result = spend_utxo(utxo.transaction_id, utxo.index, computed.block_id);
 				if (!result)
 					return result;
 			}
@@ -2545,24 +2528,6 @@ namespace tangent
 			auto* implementation = get_network(asset);
 			return implementation ? std::max<uint64_t>(implementation->get_chainparams().sync_latency, 1) : 1;
 		}
-		expects_promise_rt<decimal> bridge::calculate_balance(const algorithm::asset_id& asset, const wallet_link& link)
-		{
-			if (!algorithm::asset::is_aux(asset))
-				return expects_rt<decimal>(remote_exception("asset not found"));
-
-			auto normalized_link = normalize_link(asset, link);
-			if (!normalized_link)
-				return expects_rt<decimal>(remote_exception(std::move(normalized_link.error().message())));
-
-			if (!has_network(asset))
-				return expects_rt<decimal>(remote_exception("chain not active"));
-
-			auto* implementation = get_network(asset);
-			if (!implementation)
-				return expects_rt<decimal>(remote_exception("chain not found"));
-
-			return implementation->calculate_balance(asset, *normalized_link);
-		}
 		expects_promise_rt<void> bridge::broadcast_transaction(const algorithm::asset_id& asset, const uint256_t& external_id, const finalized_transaction& finalized)
 		{
 			if (!algorithm::asset::is_aux(asset))
@@ -2596,7 +2561,15 @@ namespace tangent
 			if (kernel::params().user.superchain.logging)
 				VI_INFO("%s broadcast transaction: %s (ref: %s)", algorithm::asset::blockchain_of(asset).c_str(), finalized.as_tree().as_json().c_str(), algorithm::encoding::encode_0xhex256(external_id).c_str());
 
-			return implementation->broadcast_transaction(finalized);
+			return implementation->broadcast_transaction(finalized).then<expects_rt<void>>([asset, transaction_id = new_transaction.transaction_id, external_id](expects_rt<void>&& result) -> expects_rt<void>
+			{
+				if (result)
+					return result;
+
+				storages::superchainstate state = storages::superchainstate(asset);
+				state.erase_outgoing_transaction(transaction_id, external_id).report("failed to retract an undelivered outgoing transaction");
+				return result;
+			});
 		}
 		expects_promise_rt<prepared_transaction> bridge::prepare_transaction(const algorithm::asset_id& asset, const wallet_link& from_link, const value_transfer& to, const decimal& max_fee)
 		{

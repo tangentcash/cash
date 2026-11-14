@@ -3046,9 +3046,9 @@ namespace tangent
 		{
 			superchain::approved_fee approval;
 			approval.asset = asset;
-			approval.signature = quote->signature;
-			approval.fee = quote->fee_rate;
-			approval.expiry_block_number = quote->block_number;
+			approval.signature = quote ? quote->signature : algorithm::hashsig_t();
+			approval.fee = quote ? quote->fee_rate : decimal::nan();
+			approval.expiry_block_number = quote ? quote->block_number : 0;
 			return approval;
 		}
 		algorithm::pubkeyhash_t withdraw::get_attester(const ledger::transaction_receipt& receipt) const
@@ -3196,6 +3196,7 @@ namespace tangent
 				}
 
 				auto proof_copy = *proof;
+				proof_computed.block_id = 0;
 				executor->defer_side_effect([proof_asset, proof_computed = std::move(proof_computed), proof_copy = std::move(proof_copy)]() mutable
 				{
 					superchain::bridge::get()->update_utxo_tree(proof_asset, proof_computed, &proof_copy).report("failed to update the pending off-chain utxo set");
@@ -3205,19 +3206,16 @@ namespace tangent
 			{
 				if (kernel::params().on(fork_id::broadcast_fee_quote, executor->receipt.block_number) && underpaying_fee_rate())
 				{
-					if (!parent_transaction->quote || executor->receipt.from != parent_transaction->get_attester(parent->receipt))
-						return layer_exception("invalid fee failure origin");
-
-					algorithm::pubkeyhash_t publisher;
-					if (!parent_transaction->get_approved_fee().recover_hash(publisher))
-						return layer_exception("committed fee quote signature invalid");
-
-					auto quote_attester = executor->get_validator_attestation(fee_asset, publisher);
-					if (quote_attester)
+					algorithm::pubkeyhash_t attester;
+					if (parent_transaction->quote && parent_transaction->get_approved_fee().recover_hash(attester))
 					{
-						auto slash = executor->apply_validator_attestation(fee_asset, publisher, ledger::executor_context::staker::reward_or_penalty, -kernel::params().policy.attestation.quote_penalty, quote_attester->min_fee);
-						if (!slash)
-							return slash.error();
+						auto quote_attester = executor->get_validator_attestation(fee_asset, attester);
+						if (quote_attester)
+						{
+							auto slash = executor->apply_validator_attestation(fee_asset, attester, ledger::executor_context::staker::reward_or_penalty, -kernel::params().policy.attestation.quote_penalty, quote_attester->min_fee);
+							if (!slash)
+								return slash.error();
+						}
 					}
 				}
 

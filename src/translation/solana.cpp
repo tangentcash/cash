@@ -595,31 +595,6 @@ namespace tangent
 					coreturn expects_rt<computed_transaction>(std::move(tx));
 				});
 			}
-			expects_promise_rt<decimal> solana::calculate_balance(const algorithm::asset_id& asset, const wallet_link& link)
-			{
-				if (algorithm::asset::token_of(asset).empty())
-				{
-					format::tree map;
-					map.push(format::variable(link.address));
-					map.push(format::variable());
-
-					return execute_rpc(nd_call::get_balance(), std::move(map), cache_policy::no_cache).then<expects_rt<decimal>>([this](expects_rt<format::tree>&& balance) -> expects_rt<decimal>
-					{
-						return balance ? expects_rt<decimal>(to_value(algorithm::arithmetic::divide(balance->child_var("value").as_decimal(), netdata.divisibility))) : expects_rt<decimal>(std::move(balance.error()));
-					});
-				}
-				else
-				{
-					auto contract_address = bridge::get()->get_contract_address(asset);
-					if (!contract_address)
-						return expects_rt<decimal>(remote_exception("contract address not found"));
-
-					return get_token_balance(*contract_address, link.address).then<expects_rt<decimal>>([this](expects_rt<token_account>&& token_balance) -> expects_rt<decimal>
-					{
-						return token_balance ? expects_rt<decimal>(std::move(token_balance->balance)) : expects_rt<decimal>(std::move(token_balance.error()));
-					});
-				}
-			}
 			expects_promise_rt<void> solana::broadcast_transaction(const finalized_transaction& finalized)
 			{
 				format::tree map;

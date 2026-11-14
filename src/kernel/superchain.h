@@ -239,6 +239,7 @@ namespace tangent
 			format::variable* load_abi(size_t* ptr);
 			bool store_payload(format::wo_stream* stream) const override;
 			bool load_payload(format::ro_stream& stream) override;
+			size_t signatures_left() const;
 			signable_coin_utxo* next_input_for_aggregation();
 			option<algorithm::composition::shared_message> as_shared_message() const;
 			status as_status() const;
@@ -433,7 +434,6 @@ namespace tangent
 			virtual expects_promise_rt<uint64_t> get_latest_block_height() = 0;
 			virtual expects_promise_rt<vector<block_log>> get_block_transactions(uint64_t block_height, uint64_t block_count) = 0;
 			virtual expects_promise_rt<computed_transaction> link_transaction(uint64_t block_height, const std::string_view& block_hash, format::tree& transaction_data) = 0;
-			virtual expects_promise_rt<decimal> calculate_balance(const algorithm::asset_id& for_asset, const wallet_link& link) = 0;
 			virtual expects_promise_rt<void> broadcast_transaction(const finalized_transaction& finalized) = 0;
 			virtual expects_promise_rt<prepared_transaction> prepare_transaction(const wallet_link& from_link, const value_transfer& to, const decimal& max_fee) = 0;
 			virtual expects_promise_rt<computed_fee> estimate_transaction_fee(const wallet_link& from_link, const value_transfer& to);
@@ -475,8 +475,7 @@ namespace tangent
 			utxo_translation_unit(const algorithm::asset_id& new_asset) noexcept;
 			virtual ~utxo_translation_unit() = default;
 			virtual expects_promise_rt<coin_utxo> get_transaction_output(const std::string_view& transaction_id, uint64_t index) = 0;
-			virtual expects_promise_rt<decimal> calculate_balance(const algorithm::asset_id& for_asset, const wallet_link& link) override;
-			virtual expects_lr<vector<coin_utxo>> calculate_utxo(const wallet_link& link, option<balance_query>&& query, bool confirmed_only = false);
+			virtual expects_lr<vector<coin_utxo>> calculate_utxo(const wallet_link& link, const balance_query& query, bool confirmed_only = false);
 			virtual expects_lr<coin_utxo> get_utxo(const std::string_view& transaction_id, uint64_t index, bool unspent_only = true);
 			virtual expects_lr<void> update_utxo(const computed_transaction& computed, const finalized_transaction* finalized);
 			virtual expects_lr<void> receive_utxo(const std::string_view& transaction_id, uint64_t index, uint64_t receiver_block_id, const coin_utxo& output);
@@ -518,7 +517,6 @@ namespace tangent
 			expects_promise_rt<vector<transaction_logs>> link_transactions(const algorithm::asset_id& asset);
 			expects_promise_rt<void> finalize_transactions(const algorithm::asset_id& asset, translation_unit* implementation, network_options* options, uint64_t confirmed_block_height, vector<transaction_logs>* logs);
 			expects_promise_rt<computed_transaction> link_transaction(const algorithm::asset_id& asset, uint64_t block_height, const std::string_view& block_hash, format::tree& transaction_data);
-			expects_promise_rt<decimal> calculate_balance(const algorithm::asset_id& asset, const wallet_link& link);
 			expects_promise_rt<void> broadcast_transaction(const algorithm::asset_id& asset, const uint256_t& external_id, const finalized_transaction& finalized);
 			expects_promise_rt<prepared_transaction> prepare_transaction(const algorithm::asset_id& asset, const wallet_link& from_link, const value_transfer& to, const decimal& max_fee);
 			expects_promise_rt<computed_fee> estimate_transaction_fee(const algorithm::asset_id& asset, const wallet_link& from_link, const value_transfer& to);

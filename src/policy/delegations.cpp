@@ -134,7 +134,7 @@ namespace tangent
 					compositor = std::move(*maybe_compositor);
 				}
 
-				auto delegates = coawait(convene_delegates(group));
+				auto delegates = coawait(convene_delegates(group, 1));
 				if (!delegates)
 					coreturn delegates.error();
 
@@ -622,7 +622,7 @@ namespace tangent
 					auto retweaking_participant = *group.begin();
 					group.insert(new_participant);
 
-					auto delegates = coawait(convene_delegates(group));
+					auto delegates = coawait(convene_delegates(group, (size_t)std::distance(migration_it, migrations->end())));
 					if (!delegates)
 						coreturn delegates.error();
 
@@ -1491,7 +1491,7 @@ namespace tangent
 					if (!account)
 						coreturn cancel(algorithm::pubkeyhash_t(), remote_exception(std::move(account.error().message())));
 
-					auto delegates = coawait(convene_delegates(account->group));
+					auto delegates = coawait(convene_delegates(account->group, message->signatures_left()));
 					if (!delegates)
 						coreturn delegates.error().is_retry() || delegates.error().is_shutdown() ? expects_rt<void>(std::move(delegates.error())) : cancel(algorithm::pubkeyhash_t(), std::move(delegates.error()));
 

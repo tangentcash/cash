@@ -443,23 +443,6 @@ namespace tangent
 				tx.add_output(std::move(new_output));	
 				return expects_rt<computed_transaction>(std::move(tx));
 			}
-			expects_promise_rt<decimal> ripple::calculate_balance(const algorithm::asset_id& for_asset, const wallet_link& link)
-			{
-				if (!algorithm::asset::token_of(for_asset).empty())
-				{
-					return get_account_token_info(for_asset, link.address).then<expects_rt<decimal>>([](expects_rt<account_token_info>&& account) -> expects_rt<decimal>
-					{
-						return account ? expects_rt<decimal>(std::move(account->balance)) : expects_rt<decimal>(std::move(account.error()));
-					});
-				}
-				else
-				{
-					return get_account_info(link.address).then<expects_rt<decimal>>([](expects_rt<account_info>&& account) -> expects_rt<decimal>
-					{
-						return account ? expects_rt<decimal>(std::move(account->balance)) : expects_rt<decimal>(std::move(account.error()));
-					});
-				}
-			}
 			expects_promise_rt<void> ripple::broadcast_transaction(const finalized_transaction& finalized)
 			{
 				auto params = format::tree::map();

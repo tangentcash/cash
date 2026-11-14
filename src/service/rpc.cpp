@@ -3082,15 +3082,17 @@ namespace tangent
 		}
 		server_response server_node::mempoolstate_get_transactions(http::connection*, format::variables&& args)
 		{
-			uint8_t flags = args[0].as_boolean() ? (uint8_t)storages::transaction_queue::commitment : 0;
+			bool commitment = args[0].as_boolean();
+			uint8_t flags = commitment ? (uint8_t)storages::transaction_queue::commitment : (uint8_t)storages::transaction_queue::standard_all;
 			uint64_t offset = args[1].as_uint64(), count = args[2].as_uint64();
 			if (!count || count > kernel::params().message.pages_per_query)
 				return server_response().error(error_codes::bad_params, "count not valid");
 
+			size_t offsets[2] = { commitment ? 0 : (size_t)offset, commitment ? (size_t)offset : 0 };
 			uint8_t unrolling = args.size() > 3 ? args[3].as_uint8() : 0;
 			auto mempool = storages::mempoolstate();
 			auto data = format::tree::list();
-			auto list = mempool.get_best_transactions_from_queue(flags, offset, count);
+			auto list = mempool.get_transactions_by_quality(flags, offsets, count);
 			if (!list)
 				return server_response().error(error_codes::not_found, "transactions not found");
 

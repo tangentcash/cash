@@ -1,4 +1,13 @@
 #include <cstdlib>
+#include <cstdio>
+#include <mutex>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#include <io.h>
+#include <fcntl.h>
+#endif
 #include "../src/service/cli.h"
 #include "../src/service/consensus.h"
 #include "../src/service/discovery.h"
@@ -344,7 +353,7 @@ struct block_generator
 		setup_user1->allocate_attestation_stake(algorithm::asset::id_of("TRX"), decimal::zero(), 0);
 		setup_user1->allocate_attestation_stake(algorithm::asset::id_of("XLM"), decimal::zero(), 0);
 		setup_user1->allocate_attestation_stake(algorithm::asset::id_of("XMR"), decimal::zero(), 0);
-		setup_user1->allocate_bridge(algorithm::asset::id_of("BTC"), (uint8_t)kernel::params().policy.participation.min_per_account, 0.000025);
+		setup_user1->allocate_bridge(algorithm::asset::id_of("BTC"), (uint8_t)kernel::params().policy.participation.min_per_account, 0.0001);
 		setup_user1->allocate_bridge(algorithm::asset::id_of("ETH"), (uint8_t)kernel::params().policy.participation.min_per_account, 0.0005);
 		setup_user1->allocate_bridge(algorithm::asset::id_of("SOL"), (uint8_t)kernel::params().policy.participation.min_per_account, 0.05);
 		setup_user1->allocate_bridge(algorithm::asset::id_of("TRX"), (uint8_t)kernel::params().policy.participation.min_per_account, 15);
@@ -1425,8 +1434,8 @@ static ledger::block_body new_block_from_list(format::tree* results, vector<bloc
 	auto included_count = solver.try_include_unwrapped_transactions(std::move(transactions), true);
 	if (expected_inclusion != included_count)
 	{
-		for (auto& [excluded_hash, exclusion] : solver.transactions.errors)
-			VI_WARN("transaction %s excluded: %s", algorithm::encoding::encode_0xhex256(excluded_hash).c_str(), std::string(exclusion.message()).c_str());
+		for (auto& [excluded_hash, exclusion] : solver.transactions.dropped)
+			VI_WARN("transaction %s excluded: %s", algorithm::encoding::encode_0xhex256(excluded_hash).c_str(), std::string(exclusion.error.message()).c_str());
 	}
 	VI_PANIC(expected_inclusion == included_count, "some transactions were excluded");
 
@@ -1449,9 +1458,9 @@ static ledger::block_body new_block_from_list(format::tree* results, vector<bloc
 	for (auto& [user, user_nonce] : users)
 		validators.push_back(user);
 
-	for (auto& [transaction_hash, error] : solver.transactions.errors)
+	for (auto& [transaction_hash, exclusion] : solver.transactions.dropped)
 	{
-		VI_PANIC(type == block_type::faulty || type == block_type::faulty_unattested, "%s", error.what());
+		VI_PANIC(type == block_type::faulty || type == block_type::faulty_unattested, "%s", exclusion.error.what());
 		if (results != nullptr)
 		{
 			auto* errors_data = results->child("errors");
@@ -1462,7 +1471,7 @@ static ledger::block_body new_block_from_list(format::tree* results, vector<bloc
 			error_data.push(algorithm::encoding::serialize_uint256(transaction_hash));
 			error_data.push(format::variable(proposal.block.number));
 			error_data.push(format::variable("execution"));
-			error_data.push(format::variable(error.what()));
+			error_data.push(format::variable(exclusion.error.what()));
 			errors_data->push(std::move(error_data));
 		}
 	}
@@ -2482,9 +2491,9 @@ static void test_blockchain_bridge_coverage(vector<block_account>* userdata)
 
 		format::tree results;
 		format::tree* data = userdata ? nullptr : &results;
-		TEST_BLOCK(&block_generator::setup_stage_2, "0xdca263ad5328457af99f36924672232ee63e8307effb242acbabfc55acc6fad5", 1);
-		TEST_BLOCK(&block_generator::route_stage_4, "0x3e75c46bfd49f72b624adf09a0469ea7acfc2e96cf0195f6b7477b30c95b33e2", 2);
-		TEST_STATE("0x827a83507fc1ee8365b1167b2efd6e8aec570c430c390316f6965a80bd4ca63f");
+		TEST_BLOCK(&block_generator::setup_stage_2, "0x2050c95fee13dd902ecdfe32d9b9247455ff10f4041114094c78bd64b9f865b8", 1);
+		TEST_BLOCK(&block_generator::route_stage_4, "0xdd351871daacbe09d9dc5550b5f2fee7845ac8621b0bb58d54ee182d68f2dd6c", 2);
+		TEST_STATE("0x037a900b259464109f5a993c75f690c064270b020f34e8cfbaf4b3021b7ac47a");
 		if (userdata != nullptr)
 			*userdata = std::move(users);
 		else
@@ -2824,6 +2833,32 @@ int main(int argc, char* argv[])
 	kernel params = kernel(&args);
 	auto* term = console::get();
 	term->show();
+
+	if (const char* log_file = std::getenv("TAN_LOG_FILE"); log_file != nullptr && log_file[0] != '\0')
+	{
+		static FILE* sink = nullptr;
+		static std::mutex sink_lock;
+		vitex::core::error_handling::set_callback([log_file](vitex::core::error_handling::details& data) noexcept
+		{
+			std::lock_guard<std::mutex> guard(sink_lock);
+			if (sink == nullptr)
+			{
+				HANDLE handle = CreateFileA(log_file, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+				if (handle != INVALID_HANDLE_VALUE)
+				{
+					SetFilePointer(handle, 0, nullptr, FILE_END);
+					int fd = _open_osfhandle((intptr_t)handle, _O_APPEND | _O_WRONLY);
+					sink = _fdopen(fd, "a");
+				}
+			}
+			if (sink == nullptr)
+				return;
+			auto text = vitex::core::error_handling::get_message_text(data);
+			fwrite(text.data(), 1, text.size(), sink);
+			fputc('\n', sink);
+			fflush(sink);
+		});
+	}
 
 	int bad_entrypoint_exit_code = 0x39ce8025;
 	int exit_code = bad_entrypoint_exit_code;

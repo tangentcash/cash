@@ -995,6 +995,7 @@ namespace tangent
 				policy.participation.min_stake_value = decimal::zero();
 				policy.production.min_network_congestion = 2000000;
 				policy.production.min_stake_value = decimal::zero();
+				policy.commitments_per_block = 2048;
 				message.packet_magic = 0xe249c307;
 				account.secret_key_prefix = "secrt";
 				account.public_key_prefix = "pubrt";

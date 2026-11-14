@@ -54,7 +54,8 @@ namespace tangent
 		enum class transaction_queue : uint8_t
 		{
 			commitment = 1 << 0,
-			congestion = 1 << 1
+			standard_paid = 1 << 1,
+			standard_all = 1 << 2
 		};
 
 		class routing_util
@@ -120,11 +121,13 @@ namespace tangent
 			expects_lr<vector<superchain::approved_fee>> get_quotes(const algorithm::asset_id& asset, uint64_t block_number);
 			expects_lr<size_t> expire_quotes();
 			expects_lr<size_t> clear_observations();
-			expects_lr<void> add_transaction(const ledger::transaction_message& value, bool bypass_cooldown = false);
+			// known_owner: caller already recovered the signer (e.g. accept_transaction); skips the redundant signature recovery.
+			expects_lr<void> add_transaction(const ledger::transaction_message& value, bool bypass_cooldown = false, const algorithm::pubkeyhash_t* known_owner = nullptr);
 			expects_lr<void> add_transaction_observation(const uint256_t& transaction_hash);
 			expects_lr<void> remove_transactions_by_hash(const hash_set<uint256_t>& transaction_hashes);
 			expects_lr<void> remove_transactions_by_commitment_hash(const hash_set<uint256_t>& commitment_hashes);
 			expects_lr<bool> has_transaction_commitment_hash(const uint256_t& commitment_hash);
+			expects_lr<uptr<ledger::transaction_message>> get_transaction_by_commitment_hash(const uint256_t& commitment_hash);
 			expects_lr<size_t> expire_transactions(const std::function<uint64_t(const algorithm::pubkeyhash_t&)>& nonce_callback);
 			expects_lr<size_t> get_transactions_count();
 			expects_lr<void> apply_key(const algorithm::pubkeyhash_t& participant, const ledger::distribution_key& entropy);
@@ -135,7 +138,7 @@ namespace tangent
 			expects_lr<uint64_t> get_lowest_transaction_nonce(const algorithm::pubkeyhash_t& owner);
 			expects_lr<uint64_t> get_highest_transaction_nonce(const algorithm::pubkeyhash_t& owner);
 			expects_lr<uptr<ledger::transaction_message>> get_transaction_by_hash(const uint256_t& transaction_hash);
-			expects_lr<vector<uptr<ledger::transaction_message>>> get_best_transactions_from_queue(uint8_t transaction_queue_flags, size_t offset, size_t count);
+			expects_lr<vector<uptr<ledger::transaction_message>>> get_transactions_by_quality(uint8_t transaction_queue_flags, size_t offsets[2], size_t count, hash_set<uint256_t>* hashes = nullptr);
 			expects_lr<vector<uptr<ledger::transaction_message>>> get_transactions_by_owner(const algorithm::pubkeyhash_t& owner, int8_t direction, size_t offset, size_t count);
 			expects_lr<vector<uint256_t>> get_transaction_hashset(size_t offset, size_t count);
 			ledger::storage_index_ptr& get_peer_storage();

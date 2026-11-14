@@ -27,7 +27,7 @@ namespace tangent
 		ELEMENTS_MANY = 1 << 12,
 		ELEMENTS_HUGE = 1 << 17,
 		FORK_VERSION = 8,
-		PATCH_VERSION = 0
+		PATCH_VERSION = 1
 	};
 
 	enum class fork_id
@@ -332,9 +332,9 @@ namespace tangent
 				decimal min_coinbase_value = std::string_view("0.0002");
 			} emission;
 			string token = "TAN";
-			uint64_t account_nonce_step_limit = 1048576;
+			uint64_t account_nonce_step_limit = 256;
 			uint64_t block_gas_limit = 40'000'000;
-			uint64_t commitments_per_block = 20;
+			uint64_t commitments_per_block = 32;
 			uint64_t zero_gas_price_size_limit = 640;
 		} policy;
 

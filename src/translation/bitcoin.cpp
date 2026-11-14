@@ -629,6 +629,10 @@ namespace tangent
 						return expects_rt<prepared_transaction>(remote_exception(stringify::text("(frtl) fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
 
 					auto to_value = this->to_value(to.value);
+					auto min_utxo_value = get_min_utxo_value();
+					if (to_value < min_utxo_value)
+						return expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s (value is less than minimum required by protocol)", to_value.to_string().c_str(), min_utxo_value.to_string().c_str())));
+					
 					auto total_value = to_value + fee_value;
 					auto possible_inputs = calculate_utxo(from_link, balance_query(total_value, { }));
 					decimal input_value = possible_inputs ? get_utxo_value(*possible_inputs, native_asset) : 0.0;
@@ -639,7 +643,17 @@ namespace tangent
 					prepared_transaction result;
 					result.requires_output(coin_utxo::standard_utxo(to_link ? std::move(to_link->begin()->second) : wallet_link::from_address(to.address), std::string_view(), 0, decimal(to_value), { }));
 					if (input_value > total_value)
-						result.requires_output(coin_utxo::standard_utxo(wallet_link(possible_inputs->front().link), std::string_view(), 1, decimal(input_value - total_value), { }));
+					{
+						auto change_value = decimal(input_value - total_value);
+						if (change_value < min_utxo_value)
+						{
+							fee_value += change_value;
+							if (fee_value > max_fee)
+								return expects_rt<prepared_transaction>(remote_exception(stringify::text("(frtl) fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
+						}
+						else
+							result.requires_output(coin_utxo::standard_utxo(wallet_link(possible_inputs->front().link), std::string_view(), 1, decimal(change_value), { }));
+					}
 
 					btc_tx_context context;
 					for (auto& output : result.outputs)
@@ -1554,6 +1568,10 @@ namespace tangent
 			{
 				return computed_fee::fee_per_byte(decimal(1) / netdata.divisibility, size);
 			}
+			decimal bitcoin::get_min_utxo_value() const
+			{
+				return decimal("0.000006");
+			}
 			const sc_chainparams_* bitcoin::get_chain()
 			{
 				switch (kernel::params().user.network)
@@ -1805,6 +1823,10 @@ namespace tangent
 				return (address_format)((size_t)address_format::pay2_public_key_hash | (size_t)address_format::pay2_witness_public_key_hash);
 			}
 
+			decimal digibyte::get_min_utxo_value() const
+			{
+				return decimal("0.00006");
+			}
 			dogecoin::dogecoin(const algorithm::asset_id& new_asset) noexcept : bitcoin(new_asset)
 			{
 				legacy.get_block_stats = 1;
@@ -1829,6 +1851,10 @@ namespace tangent
 				return (address_format)((size_t)address_format::pay2_public_key_hash);
 			}
 
+			decimal dogecoin::get_min_utxo_value() const
+			{
+				return decimal("0.01");
+			}
 			ecash::ecash(const algorithm::asset_id& new_asset) noexcept : bitcoin(new_asset)
 			{
 				netdata.divisibility = algorithm::arithmetic::fixed(100);
@@ -1880,6 +1906,10 @@ namespace tangent
 			{
 				return (address_format)((size_t)address_format::pay2_public_key_hash | (size_t)address_format::pay2_witness_public_key_hash | (size_t)address_format::pay2_taproot);
 			}
+			decimal litecoin::get_min_utxo_value() const
+			{
+				return decimal("0.00006");
+			}
 
 			zcash::zcash(const algorithm::asset_id& new_asset) noexcept : bitcoin(new_asset)
 			{
@@ -1913,6 +1943,10 @@ namespace tangent
 			zcash::address_format zcash::get_address_type()
 			{
 				return (address_format)((size_t)address_format::pay2_public_key_hash | (size_t)address_format::pay2_unified_public_key_hash);
+			}
+			decimal zcash::get_min_utxo_value() const
+			{
+				return decimal("0.00005");
 			}
 		}
 	}

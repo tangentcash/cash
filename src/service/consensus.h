@@ -1,5 +1,6 @@
 #ifndef TAN_SERVICE_CONSENSUS_H
 #define TAN_SERVICE_CONSENSUS_H
+#include <condition_variable>
 #include "../kernel/block.h"
 #include "../kernel/superchain.h"
 #include "../kernel/control.h"
@@ -232,12 +233,14 @@ namespace tangent
 		public:
 			struct
 			{
+				std::condition_variable pool_cv;
 				std::recursive_mutex account;
 				std::recursive_mutex attestation;
 				std::recursive_mutex neighbor;
+				std::recursive_mutex fetcher;
 				std::recursive_mutex tip;
 				std::mutex inventory;
-				std::mutex fetcher;
+				std::mutex pool;
 			} sync;
 
 			struct
@@ -248,11 +251,12 @@ namespace tangent
 
 			struct
 			{
+				hash_set<uint256_t> hashes;
 				ledger::solver_context solver;
 				ledger::block_evaluation solution;
 				ledger::block_rewards rewards;
-				hash_set<uint256_t> hashes;
 				std::atomic<bool> queued = false;
+				std::atomic<bool> pooled = false;
 			} prover;
 
 			struct
@@ -272,6 +276,7 @@ namespace tangent
 			} verifier;
 
 		private:
+			hash_map<algorithm::pubkeyhash_t, uint64_t> nonces;
 			hash_map<algorithm::asset_id, uint64_t> fees;
 			hash_map<algorithm::asset_id, fetch_queue> fetchers;
 			hash_map<algorithm::asset_id, uint64_t> witnesses;
@@ -293,10 +298,9 @@ namespace tangent
 			virtual ~server_node() noexcept override;
 			expects_lr<void> accept_local_accounts(const vector<ledger::wallet>& accounts);
 			expects_lr<void> accept_local_transaction(const ledger::wallet* signer_wallet, uptr<ledger::transaction_message>&& candidate_tx, uint256_t* output_hash = nullptr);
-			expects_lr<void> accept_transaction(uref<relay>&& from, uptr<ledger::transaction_message>&& candidate_t);
-			expects_rt<void> accept_attestation(const uint256_t& attestation_hash, storages::attestation_tree* out);
-			expects_rt<void> accept_committed_attestation(const algorithm::asset_id& asset, const superchain::computed_transaction& proof, const btree_set<algorithm::hashsig_t>& signatures);
+			expects_lr<void> accept_transaction(uref<relay>&& from, uptr<ledger::transaction_message>&& candidate, const algorithm::pubkeyhash_t* local_signer = nullptr, uint256_t* output_hash = nullptr);
 			expects_lr<void> broadcast_transaction(uref<relay>&& from, uptr<ledger::transaction_message>&& candidate_tx, const algorithm::pubkeyhash_t& owner, bool bypass_cooldown = false);
+			expects_rt<bool> accept_attestation(const storages::attestation_tree& attestation, bool save_to_storage);
 			expects_rt<void> check_socket(uref<relay>&& state, const exchange& event);
 			expects_rt<void> broadcast_block_hash(uref<relay>&& state, const exchange& event);
 			expects_rt<void> broadcast_transaction_hash(uref<relay>&& state, const exchange& event);
@@ -359,6 +363,7 @@ namespace tangent
 			size_t get_connections();
 			bool is_active();
 			bool is_syncing();
+			bool has_production();
 			double get_sync_progress(uint64_t current_number);
 			double get_sync_progress(uint64_t current_number, relay* state);
 			service_control::service_node get_entrypoint();
@@ -402,7 +407,7 @@ namespace tangent
 			server_delegation_adapter(server_delegation_adapter&&) noexcept = default;
 			server_delegation_adapter& operator=(const server_delegation_adapter& other) noexcept;
 			server_delegation_adapter& operator=(server_delegation_adapter&&) noexcept = default;
-			expects_promise_rt<btree_set<algorithm::pubkeyhash_t>> require_validators(ledger::delegation_contract* contract, const btree_set<algorithm::pubkeyhash_t>& validators) override;
+			expects_promise_rt<btree_set<algorithm::pubkeyhash_t>> require_validators(ledger::delegation_contract* contract, const btree_set<algorithm::pubkeyhash_t>& validators, size_t steps_left) override;
 			expects_promise_rt<format::wo_stream> execute_on_validator(ledger::delegation_contract* contract, const algorithm::pubkeyhash_t& target, const format::wo_stream& message) override;
 			expects_promise_rt<format::wo_stream> execute_on_validator_internal(ledger::delegation_contract* contract, const algorithm::pubkeyhash_t& target, const format::wo_stream& message);
 			algorithm::pubkey_t get_public_key(const algorithm::pubkeyhash_t& validator) const override;
@@ -419,7 +424,7 @@ namespace tangent
 			local_delegation_adapter(local_delegation_adapter&&) noexcept = default;
 			local_delegation_adapter& operator=(const local_delegation_adapter& other) noexcept;
 			local_delegation_adapter& operator=(local_delegation_adapter&&) noexcept = default;
-			expects_promise_rt<btree_set<algorithm::pubkeyhash_t>> require_validators(ledger::delegation_contract* contract, const btree_set<algorithm::pubkeyhash_t>& validators) override;
+			expects_promise_rt<btree_set<algorithm::pubkeyhash_t>> require_validators(ledger::delegation_contract* contract, const btree_set<algorithm::pubkeyhash_t>& validators, size_t steps_left) override;
 			expects_promise_rt<format::wo_stream> execute_on_validator(ledger::delegation_contract* contract, const algorithm::pubkeyhash_t& target, const format::wo_stream& message) override;
 			algorithm::pubkey_t get_public_key(const algorithm::pubkeyhash_t& validator) const override;
 			const ledger::wallet* get_runner_wallet(const algorithm::pubkeyhash_t& validator) const override;

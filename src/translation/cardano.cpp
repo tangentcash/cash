@@ -435,10 +435,9 @@ namespace tangent
 								return expects_rt<prepared_transaction>(remote_exception(stringify::text("insufficient funds: %s < %s (change value is less than minimum required by protocol)", change_output.value.to_string().c_str(), min_change_output_value.to_string().c_str())));
 							}
 
-							if (change_output.value > fee_value)
-								fee_value = std::move(change_output.value);
-							else
-								fee_value += change_output.value;
+							fee_value += change_output.value;
+							if (fee_value > max_fee)
+								return expects_rt<prepared_transaction>(remote_exception(stringify::text("(frtl) fee limit overflow: %s (max: %s)", fee_value.to_string().c_str(), max_fee.to_string().c_str())));
 						}
 						else
 							result.requires_output(std::move(change_output));

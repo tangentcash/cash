@@ -615,24 +615,6 @@ namespace tangent
 					coreturn expects_rt<computed_transaction>(std::move(tx));
 				});
 			}
-			expects_promise_rt<decimal> stellar::calculate_balance(const algorithm::asset_id& for_asset, const wallet_link& link)
-			{
-				return get_account_info(link.address).then<expects_rt<decimal>>([for_asset](expects_rt<account_info>&& account) -> expects_rt<decimal>
-				{
-					if (!account)
-						return expects_rt<decimal>(std::move(account.error()));
-
-					auto balance = account->balances.find(for_asset);
-					if (balance == account->balances.end())
-						return expects_rt<decimal>(decimal::zero());
-
-					auto contract_address = bridge::get()->get_contract_address(for_asset);
-					if (contract_address && balance->second.info.issuer != *contract_address)
-						return expects_rt<decimal>(decimal::zero());
-
-					return expects_rt<decimal>(balance->second.balance);
-				});
-			}
 			expects_promise_rt<void> stellar::broadcast_transaction(const finalized_transaction& finalized)
 			{
 				uptr<http::query> args = new http::query();

@@ -111,6 +111,7 @@ namespace tangent
 				virtual string serialize_transaction_id(btc_tx_context& context);
 				virtual address_format parse_address(const std::string_view& address, uint8_t* data_out = nullptr, size_t* data_size_out = nullptr);
 				virtual computed_fee get_min_relay_fee(size_t size);
+				virtual decimal get_min_utxo_value() const;
 				virtual const sc_chainparams_* get_chain();
 				virtual address_format get_address_type();
 				virtual uint32_t get_sig_hash_type();
@@ -163,6 +164,7 @@ namespace tangent
 				virtual ~digibyte() override = default;
 				virtual const sc_chainparams_* get_chain() override;
 				virtual address_format get_address_type() override;
+				virtual decimal get_min_utxo_value() const override;
 			};
 
 			class dogecoin : public bitcoin
@@ -172,6 +174,7 @@ namespace tangent
 				virtual ~dogecoin() override = default;
 				virtual const sc_chainparams_* get_chain() override;
 				virtual address_format get_address_type() override;
+				virtual decimal get_min_utxo_value() const override;
 			};
 
 			class ecash : public bitcoin
@@ -191,6 +194,7 @@ namespace tangent
 				virtual ~litecoin() override = default;
 				virtual const sc_chainparams_* get_chain() override;
 				virtual address_format get_address_type() override;
+				virtual decimal get_min_utxo_value() const override;
 			};
 
 			class zcash : public bitcoin
@@ -201,6 +205,7 @@ namespace tangent
 				virtual expects_promise_rt<computed_fee> estimate_transaction_fee(const wallet_link& from_link, const value_transfer& to) override;
 				virtual const sc_chainparams_* get_chain() override;
 				virtual address_format get_address_type() override;
+				virtual decimal get_min_utxo_value() const override;
 			};
 		}
 	}

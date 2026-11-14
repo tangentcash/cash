@@ -3009,6 +3009,14 @@ namespace tangent
 				*out_receipt = std::move(executor.receipt);
 			return gas;
 		}
+		expects_lr<void> executor_context::simulate_tx(const transaction_message* transaction, const uint256_t& gas_limit, transaction_receipt* out_receipt)
+		{
+			auto result = calculate_tx_gas(transaction, gas_limit, out_receipt);
+			if (!result)
+				return result.error();
+
+			return expectation::met;
+		}
 		expects_lr<void> executor_context::validate_tx(const transaction_message* new_transaction, const uint256_t& new_transaction_hash, algorithm::pubkeyhash_t& owner)
 		{
 			VI_ASSERT(new_transaction, "transaction should be set");
@@ -3272,10 +3280,10 @@ namespace tangent
 		{
 			adapter->emissions.emplace_back(std::make_pair(runner, uptr(transaction)));
 		}
-		expects_promise_rt<btree_set<algorithm::pubkeyhash_t>> delegation_contract::convene_delegates(const btree_set<algorithm::pubkeyhash_t>& targets)
+		expects_promise_rt<btree_set<algorithm::pubkeyhash_t>> delegation_contract::convene_delegates(const btree_set<algorithm::pubkeyhash_t>& targets, size_t steps_left)
 		{
 			VI_ASSERT(adapter != nullptr, "adapter should be set");
-			return adapter->require_validators(this, targets);
+			return adapter->require_validators(this, targets, steps_left);
 		}
 		expects_promise_rt<void> delegation_contract::yield_to_delegate(const algorithm::pubkeyhash_t& target, uint32_t delegate)
 		{
@@ -3386,9 +3394,9 @@ namespace tangent
 		option<uint64_t> solver_context::apply_validator_state(const std::function<ledger::wallet* (size_t)>& try_producer, option<const block_header*>&& parent_block, tip_cache* cache)
 		{
 			nonces.clear();
-			transactions.errors.clear();
-			transactions.pending.clear();
-			transactions.queued = 0;
+			transactions.dropped.clear();
+			transactions.queued.clear();
+			transactions.queued_size = 0;
 			state.public_key_hash.clear();
 			state.secret_key.clear();
 			state.changelog.clear();
@@ -3466,11 +3474,11 @@ namespace tangent
 
 			return optional::none;
 		}
-		size_t solver_context::try_include_transactions(vector<uptr<transaction_message>>&& candidates, hash_set<uint256_t>* hashes)
+		size_t solver_context::try_include_transactions(vector<uptr<transaction_message>>&& candidates)
 		{
-			return try_include_unwrapped_transactions(std::move(candidates), false, hashes);
+			return try_include_unwrapped_transactions(std::move(candidates), false);
 		}
-		size_t solver_context::try_include_unwrapped_transactions(vector<uptr<transaction_message>>&& candidates, bool requires_sorting, hash_set<uint256_t>* hashes)
+		size_t solver_context::try_include_unwrapped_transactions(vector<uptr<transaction_message>>&& candidates, bool requires_sorting)
 		{
 			if (candidates.empty())
 				return 0;
@@ -3482,41 +3490,42 @@ namespace tangent
 			precompute_transaction_list(precomputed);
 			if (requires_sorting && precomputed.size() > 1)
 				std::stable_sort(precomputed.begin(), precomputed.end(), [](const queued_transaction& a, const queued_transaction& b) { return a.owner == b.owner && a.candidate->nonce < b.candidate->nonce; });
-			return try_include_precomputed_transactions(std::move(precomputed), hashes);
+			return try_include_precomputed_transactions(std::move(precomputed));
 		}
-		size_t solver_context::try_include_precomputed_transactions(vector<queued_transaction>&& candidates, hash_set<uint256_t>* hashes)
+		size_t solver_context::try_include_precomputed_transactions(vector<queued_transaction>&& candidates)
 		{
 			if (candidates.empty())
 				return 0;
 
-			auto prev_pending_size = transactions.pending.size();
+			auto prev_queued_size = transactions.queued.size();
 			auto gas_limit = block_header::get_gas_limit();
-			transactions.pending.reserve(transactions.pending.size() + candidates.size());
+			transactions.queued.reserve(transactions.queued.size() + candidates.size());
 			for (auto& item : candidates)
 			{
-				auto decision = hashes && hashes->find(item.hash) != hashes->end() ? include_decision::not_includable : decide_on_inclusion(item);
-				if (hashes != nullptr && decision != include_decision::not_includable)
-					hashes->insert(item.hash);
+				auto decision = decide_on_inclusion(item);
 				if (decision == include_decision::include_in_block)
 				{
 					auto& nonce = nonces[algorithm::pubkeyhash_t(item.owner)];
 					nonce = std::max(item.candidate->nonce, nonce);
 					state.gas_usage += item.candidate->gas_limit;
 					state.commitments += item.candidate->as_commitment(nullptr) ? 1 : 0;
-					transactions.pending.emplace_back(std::move(item));
-					++transactions.queued;
+					transactions.queued.emplace_back(std::move(item));
+					++transactions.queued_size;
 				}
-				else if (decision == include_decision::not_executable)
-					transactions.errors[item.hash] = layer_exception("block inclusion denied");
+				else
+				{
+					auto& dropped = transactions.dropped[item.hash];
+					dropped.transaction = std::move(item.candidate);
+					dropped.error = decision == include_decision::not_executable ? remote_exception("block inclusion denied") : remote_exception::retry_later();
+				}
 			}
-			if (state.gas_usage >= gas_limit - gas_limit / 100)
-				state.gas_usage = gas_limit;
-			return transactions.pending.size() - prev_pending_size;
+			state.gas_usage = state.gas_usage >= gas_limit - gas_limit / 100 ? gas_limit : state.gas_usage;
+			return transactions.queued.size() - prev_queued_size;
 		}
 		solver_context::queued_transaction& solver_context::force_include_transaction(uptr<transaction_message>&& candidate)
 		{
 			VI_ASSERT(candidate, "candidate should be set");
-			auto& info = transactions.pending.emplace_back();
+			auto& info = transactions.queued.emplace_back();
 			info.candidate = std::move(candidate);
 			return info;
 		}
@@ -3546,6 +3555,14 @@ namespace tangent
 					return include_decision::not_executable;
 				else if (item.candidate->nonce >= nonce + kernel::params().policy.account_nonce_step_limit)
 					return include_decision::not_includable;
+
+				if (item.candidate->nonce != nonce)
+				{
+					auto mempool = storages::mempoolstate();
+					auto lowest = mempool.get_lowest_transaction_nonce(algorithm::pubkeyhash_t(item.owner));
+					if (lowest && *lowest < item.candidate->nonce)
+						return include_decision::not_includable;
+				}
 			}
 			else if (item.candidate->nonce != map_nonce->second + 1)
 				return include_decision::not_includable;
@@ -3570,14 +3587,14 @@ namespace tangent
 		}
 		expects_lr<void> solver_context::block_evalution_update(block_evaluation& solution, block_rewards& rewards)
 		{
-			if (transactions.queued != transactions.pending.size())
+			if (transactions.queued_size != transactions.queued.size())
 			{
-				precompute_transaction_list(transactions.pending);
-				transactions.queued = transactions.pending.size();
+				precompute_transaction_list(transactions.queued);
+				transactions.queued_size = transactions.queued.size();
 			}
 
 			uint8_t state_options = state.executor.options;
-			for (auto& item : transactions.pending)
+			for (auto& item : transactions.queued)
 			{
 				uint8_t tx_options = item.candidate->as_commitment(nullptr) ? (uint8_t)executor_context::flags::pedantic : 0;
 				auto execution = executor_context::execute_tx(&state.executor, item.owner, *item.candidate, item.hash, item.size, state_options | tx_options);
@@ -3595,15 +3612,17 @@ namespace tangent
 				}
 				else
 				{
-					transactions.errors[item.hash] = execution.error();
+					auto& dropped = transactions.dropped[item.hash];
+					dropped.transaction = std::move(item.candidate);
+					dropped.error = remote_exception(std::move(execution.error().message()));
 					state.changelog.revert();
 				}
 			}
 
 			state.executor.transaction = nullptr;
 			state.executor.options = state_options;
-			transactions.queued = 0;
-			transactions.pending.clear();
+			transactions.queued_size = 0;
+			transactions.queued.clear();
 			return expectation::met;
 		}
 		expects_lr<void> solver_context::block_evalution_finalize(block_evaluation& solution, block_rewards& rewards)
@@ -3707,17 +3726,30 @@ namespace tangent
 		}
 		expects_lr<void> solver_context::erase_failed_transactions()
 		{
-			if (transactions.errors.empty())
+			if (transactions.dropped.empty())
 				return expectation::met;
 
+			size_t retrying_transactions = 0;
 			auto hashes = hash_set<uint256_t>();
-			hashes.reserve(transactions.errors.size());
-			for (auto& [transaction_hash, error] : transactions.errors)
+			hashes.reserve(transactions.dropped.size());
+			for (auto& [transaction_hash, dropped] : transactions.dropped)
 			{
-				hashes.insert(transaction_hash);
-				if (kernel::params().user.consensus.logging)
-					VI_WARN("transaction %s dropped: %s", algorithm::encoding::encode_0xhex256(transaction_hash).c_str(), error.what());
+				if (!dropped.error.is_retry() && !dropped.error.is_shutdown())
+				{
+					hashes.insert(transaction_hash);
+					if (kernel::params().user.consensus.logging)
+						VI_WARN("transaction %s dropped: %s (type: %.*s, nonce: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(transaction_hash).c_str(), dropped.error.what(), (int)dropped.transaction->as_typename().size(), dropped.transaction->as_typename().data(), (uint64_t)dropped.transaction->nonce);
+				}
+				else
+				{
+					++retrying_transactions;
+					if (kernel::params().user.consensus.logging)
+						VI_DEBUG("transaction %s skipped: retrying layer (type: %.*s, nonce: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(transaction_hash).c_str(), (int)dropped.transaction->as_typename().size(), dropped.transaction->as_typename().data(), (uint64_t)dropped.transaction->nonce);
+				}
 			}
+
+			if (retrying_transactions > 0 && kernel::params().user.consensus.logging)
+				VI_INFO("mempool transaction queue: retrying %" PRIu64 " transaction(s) later", (uint64_t)retrying_transactions);
 
 			auto mempool = storages::mempoolstate();
 			return mempool.remove_transactions_by_hash(hashes);
@@ -3765,7 +3797,7 @@ namespace tangent
 
 			size_t commitments = 0;
 			hash_map<uint256_t, std::pair<const block_transaction*, const solver_context::queued_transaction*>> childs;
-			solver.transactions.pending.reserve(child_block.transactions.size());
+			solver.transactions.queued.reserve(child_block.transactions.size());
 			for (auto& transaction : child_block.transactions)
 			{
 				if (!transaction.transaction)

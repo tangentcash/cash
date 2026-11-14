@@ -699,8 +699,8 @@ namespace tangent
 			auto cursor = get_peer_storage().emplace_query(__func__,
 				"DELETE FROM proofs WHERE hash = ?;"
 				"DELETE FROM commitments WHERE hash = ?;"
-				"DELETE FROM preatestations WHERE hash = ?;"
-				"DELETE FROM preatestation_keys WHERE NOT EXISTS (SELECT TRUE FROM preatestations WHERE preatestations.proof_hash = preatestation_keys.proof_hash);", &map);
+				"DELETE FROM preattestations WHERE hash = ?;"
+				"DELETE FROM preattestation_keys WHERE NOT EXISTS (SELECT TRUE FROM preattestations WHERE preattestations.proof_hash = preattestation_keys.proof_hash);", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -716,8 +716,8 @@ namespace tangent
 			auto cursor = get_peer_storage().emplace_query(__func__,
 				"DELETE FROM proofs WHERE time < ?;"
 				"DELETE FROM commitments WHERE NOT EXISTS (SELECT TRUE FROM proofs WHERE proofs.hash = commitments.hash AND proofs.commitment = commitments.commitment);"
-				"DELETE FROM preatestations WHERE time < ?;"
-				"DELETE FROM preatestation_keys WHERE NOT EXISTS (SELECT TRUE FROM preatestations WHERE preatestations.proof_hash = preatestation_keys.proof_hash);", &map);
+				"DELETE FROM preattestations WHERE time < ?;"
+				"DELETE FROM preattestation_keys WHERE NOT EXISTS (SELECT TRUE FROM preattestations WHERE preattestations.proof_hash = preattestation_keys.proof_hash);", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<size_t>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -744,13 +744,13 @@ namespace tangent
 				lookup_keys.insert(memo_lookup_key(body.memo));
 
 			string sql =
-				"INSERT INTO preatestations (hash, asset, attester, proof_hash, tip_height, signature, message, time) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (hash, attester) DO UPDATE SET "
-				" asset = CASE WHEN EXCLUDED.tip_height > preatestations.tip_height THEN EXCLUDED.asset ELSE preatestations.asset END, "
-				" proof_hash = CASE WHEN EXCLUDED.tip_height > preatestations.tip_height THEN EXCLUDED.proof_hash ELSE preatestations.proof_hash END, "
-				" tip_height = CASE WHEN EXCLUDED.tip_height > preatestations.tip_height THEN EXCLUDED.tip_height ELSE preatestations.tip_height END, "
-				" signature = CASE WHEN EXCLUDED.tip_height > preatestations.tip_height THEN EXCLUDED.signature ELSE preatestations.signature END, "
-				" message = CASE WHEN EXCLUDED.tip_height > preatestations.tip_height THEN EXCLUDED.message ELSE preatestations.message END; "
-				"INSERT OR IGNORE INTO preatestation_keys (lookup_key, proof_hash) VALUES ";
+				"INSERT INTO preattestations (hash, asset, attester, proof_hash, tip_height, signature, message, time) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (hash, attester) DO UPDATE SET "
+				" asset = CASE WHEN EXCLUDED.tip_height > preattestations.tip_height THEN EXCLUDED.asset ELSE preattestations.asset END, "
+				" proof_hash = CASE WHEN EXCLUDED.tip_height > preattestations.tip_height THEN EXCLUDED.proof_hash ELSE preattestations.proof_hash END, "
+				" tip_height = CASE WHEN EXCLUDED.tip_height > preattestations.tip_height THEN EXCLUDED.tip_height ELSE preattestations.tip_height END, "
+				" signature = CASE WHEN EXCLUDED.tip_height > preattestations.tip_height THEN EXCLUDED.signature ELSE preattestations.signature END, "
+				" message = CASE WHEN EXCLUDED.tip_height > preattestations.tip_height THEN EXCLUDED.message ELSE preattestations.message END; "
+				"INSERT OR IGNORE INTO preattestation_keys (lookup_key, proof_hash) VALUES ";
 
 			schema_list map;
 			map.push_back(var::set::binary(hash, sizeof(hash)));
@@ -788,7 +788,7 @@ namespace tangent
 			map.push_back(var::set::binary(hash, sizeof(hash)));
 			map.push_back(var::set::binary(body, sizeof(body)));
 
-			auto cursor = get_peer_storage().emplace_query(__func__, "SELECT message, tip_height FROM preatestations WHERE hash = ? AND proof_hash = ? AND message IS NOT NULL LIMIT 1", &map);
+			auto cursor = get_peer_storage().emplace_query(__func__, "SELECT message, tip_height FROM preattestations WHERE hash = ? AND proof_hash = ? AND message IS NOT NULL LIMIT 1", &map);
 			if (!cursor || cursor->error_or_empty())
 				return expects_lr<superchain::uncomputed_transaction>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -809,7 +809,7 @@ namespace tangent
 			schema_list map;
 			if (!lookup_keys.empty())
 			{
-				command = "SELECT c.message, MAX(c.tip_height) AS tip_height FROM preatestations c INNER JOIN preatestation_keys k ON k.proof_hash = c.proof_hash WHERE k.lookup_key IN (";
+				command = "SELECT c.message, MAX(c.tip_height) AS tip_height FROM preattestations c INNER JOIN preattestation_keys k ON k.proof_hash = c.proof_hash WHERE k.lookup_key IN (";
 				bool first = true;
 				for (auto& lookup_key : lookup_keys)
 				{
@@ -820,7 +820,7 @@ namespace tangent
 				command += ") AND c.message IS NOT NULL AND c.tip_height != ? GROUP BY c.proof_hash ORDER BY MIN(c.time) ASC LIMIT ? OFFSET ?";
 			}
 			else
-				command = "SELECT message, MAX(tip_height) AS tip_height FROM preatestations WHERE message IS NOT NULL AND tip_height != ? GROUP BY proof_hash ORDER BY MIN(time) ASC LIMIT ? OFFSET ?";
+				command = "SELECT message, MAX(tip_height) AS tip_height FROM preattestations WHERE message IS NOT NULL AND tip_height != ? GROUP BY proof_hash ORDER BY MIN(time) ASC LIMIT ? OFFSET ?";
 			map.push_back(var::set::integer(superchain::uncomputed_transaction::erased_confirmed_block_id()));
 			map.push_back(var::set::integer(count));
 			map.push_back(var::set::integer(offset));
@@ -924,14 +924,16 @@ namespace tangent
 
 			return cursor->affected_rows();
 		}
-		expects_lr<void> mempoolstate::add_transaction(const ledger::transaction_message& value, bool bypass_cooldown)
+		expects_lr<void> mempoolstate::add_transaction(const ledger::transaction_message& value, bool bypass_cooldown, const algorithm::pubkeyhash_t* known_owner)
 		{
 			format::wo_stream message;
 			if (!value.store(&message))
 				return layer_exception("transaction serialization error");
 
 			algorithm::pubkeyhash_t owner;
-			if (!value.recover_hash(owner))
+			if (known_owner != nullptr)
+				owner = *known_owner;
+			else if (!value.recover_hash(owner))
 				return layer_exception("transaction owner recovery error");
 
 			uint256_t commitment_hash = 0;
@@ -1053,6 +1055,29 @@ namespace tangent
 				return expects_lr<bool>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 			return expects_lr<bool>(!cursor->empty());
+		}
+		expects_lr<uptr<ledger::transaction_message>> mempoolstate::get_transaction_by_commitment_hash(const uint256_t& commitment_hash)
+		{
+			uint8_t hash[32];
+			commitment_hash.encode(hash);
+
+			schema_list map;
+			map.push_back(var::set::binary(hash, sizeof(hash)));
+
+			auto cursor = get_peer_storage().emplace_query(__func__, "SELECT message, hash FROM transactions WHERE commitment_hash = ? LIMIT 1", &map);
+			if (!cursor || cursor->error())
+				return expects_lr<uptr<ledger::transaction_message>>(layer_exception(ledger::storage_util::error_of(cursor)));
+			else if (cursor->empty())
+				return expects_lr<uptr<ledger::transaction_message>>(layer_exception("transaction not found"));
+
+			auto blob = (*cursor)["message"].get().get_blob();
+			auto message = format::ro_stream(blob);
+			uptr<ledger::transaction_message> value = transactions::resolver::from_stream(message);
+			if (!value || !value->load(message))
+				return expects_lr<uptr<ledger::transaction_message>>(layer_exception("transaction deserialization error"));
+
+			finalize_checksum(**value, (*cursor)["hash"].get());
+			return expects_lr<uptr<ledger::transaction_message>>(std::move(value));
 		}
 		expects_lr<size_t> mempoolstate::expire_transactions(const std::function<uint64_t(const algorithm::pubkeyhash_t&)>& nonce_callback)
 		{
@@ -1264,46 +1289,90 @@ namespace tangent
 			finalize_checksum(**value, (*cursor)["hash"].get());
 			return value;
 		}
-		expects_lr<vector<uptr<ledger::transaction_message>>> mempoolstate::get_best_transactions_from_queue(uint8_t flags, size_t offset, size_t count)
+		expects_lr<vector<uptr<ledger::transaction_message>>> mempoolstate::get_transactions_by_quality(uint8_t flags, size_t offsets[2], size_t count, hash_set<uint256_t>* hashes)
 		{
-			if (offset == std::numeric_limits<size_t>::max())
+			VI_ASSERT(offsets != nullptr, "offsets should be set");
+			if (offsets[0] == std::numeric_limits<size_t>::max() && offsets[1] == std::numeric_limits<size_t>::max())
 				return layer_exception("end of stream");
 
 			schema_list map;
 			map.push_back(var::set::integer(count));
-			map.push_back(var::set::integer(offset));
+			map.push_back(var::set::integer(offsets[0]));
 
-			std::string_view command;
-			if (flags & (uint8_t)transaction_queue::commitment)
-				command = "SELECT message FROM transactions WHERE quality < 0 ORDER BY epoch ASC, quality ASC NULLS LAST LIMIT ? OFFSET ?";
-			else if (flags & (uint8_t)transaction_queue::congestion)
-				command = "SELECT message FROM transactions WHERE quality > 0 ORDER BY epoch ASC, quality DESC NULLS LAST LIMIT ? OFFSET ?";
-			else
-				command = "SELECT message FROM transactions WHERE quality >= 0 ORDER BY epoch ASC, quality DESC NULLS LAST LIMIT ? OFFSET ?";
-
-			auto cursor = get_peer_storage().emplace_query(__func__, command, &map);
-			if (!cursor || cursor->error())
-				return expects_lr<vector<uptr<ledger::transaction_message>>>(layer_exception(ledger::storage_util::error_of(cursor)));
-
-			auto& response = cursor->first();
-			size_t size = response.size();
-			vector<uptr<ledger::transaction_message>> values;
-			values.reserve(size);
-
-			for (size_t i = 0; i < size; i++)
+			std::array<option<sqlite::response>, 2> responses = { option<sqlite::response>(optional::none), option<sqlite::response>(optional::none) };
+			if (offsets[0] != std::numeric_limits<size_t>::max() && (flags & (uint8_t)transaction_queue::standard_paid))
 			{
-				auto row = response[i];
-				auto blob = row["message"].get().get_blob();
-				auto message = format::ro_stream(blob);
-				uptr<ledger::transaction_message> value = transactions::resolver::from_stream(message);
-				if (value && value->load(message))
-				{
-					finalize_checksum(**value, row["hash"].get());
-					values.emplace_back(std::move(value));
-				}
+				auto cursor = get_peer_storage().emplace_query(__func__, "SELECT hash, message FROM transactions WHERE quality > 0 ORDER BY epoch ASC, quality DESC NULLS LAST LIMIT ? OFFSET ?", &map);
+				if (!cursor || cursor->error())
+					return expects_lr<vector<uptr<ledger::transaction_message>>>(layer_exception(ledger::storage_util::error_of(cursor)));
+				else if (!cursor->base.empty())
+					responses[0] = std::move(cursor->base.front());
+			}
+			else if (offsets[0] != std::numeric_limits<size_t>::max() && (flags & (uint8_t)transaction_queue::standard_all))
+			{
+				auto cursor = get_peer_storage().emplace_query(__func__, "SELECT hash, message FROM transactions WHERE quality >= 0 ORDER BY epoch ASC, quality DESC NULLS LAST LIMIT ? OFFSET ?", &map);
+				if (!cursor || cursor->error())
+					return expects_lr<vector<uptr<ledger::transaction_message>>>(layer_exception(ledger::storage_util::error_of(cursor)));
+				else if (!cursor->base.empty())
+					responses[0] = std::move(cursor->base.front());
+			}
+			if (offsets[1] != std::numeric_limits<size_t>::max() && (flags & (uint8_t)transaction_queue::commitment))
+			{
+				map.back() = var::set::integer(offsets[1]);
+				auto cursor = get_peer_storage().emplace_query(__func__, "SELECT hash, message FROM transactions WHERE quality < 0 ORDER BY epoch ASC, quality ASC NULLS LAST LIMIT ? OFFSET ?", &map);
+				if (!cursor || cursor->error())
+					return expects_lr<vector<uptr<ledger::transaction_message>>>(layer_exception(ledger::storage_util::error_of(cursor)));
+				else if (!cursor->base.empty())
+					responses[1] = std::move(cursor->base.front());
 			}
 
-			return values;
+			size_t results = 0, split = 0;
+			for (size_t i = 0; i < responses.size(); i++)
+			{
+				auto& response = responses[i];
+				if (response)
+				{
+					size_t size = response->size();
+					offsets[i] = (size == count ? offsets[i] + size : std::numeric_limits<size_t>::max());
+					split = i > 0 ? split : size;
+					results += size;
+				}
+				else
+					offsets[i] = std::numeric_limits<size_t>::max();
+			}
+			if (!results)
+				return expects_lr<vector<uptr<ledger::transaction_message>>>(vector<uptr<ledger::transaction_message>>());
+
+			vector<uptr<ledger::transaction_message>> queue; queue.resize(results);
+			parallel::wait_all(parallel::for_loop(queue.size(), ELEMENTS_FEW, [&](size_t j)
+			{
+				auto row = j < split ? (*responses[0])[j] : (*responses[1])[j - split];
+				auto hash = row["hash"].get();
+				auto transaction_hash = uint256_t(0);
+				if (hash.size() == sizeof(uint256_t))
+				{
+					transaction_hash.decode(hash.get_binary());
+					if (!hashes || hashes->find(transaction_hash) == hashes->end())
+					{
+						auto blob = row["message"].get().get_blob();
+						auto message = format::ro_stream(blob);
+						uptr<ledger::transaction_message> value = transactions::resolver::from_stream(message);
+						if (value && value->load(message))
+						{
+							value->checksum = transaction_hash;
+							queue[j] = std::move(value);
+						}
+					}
+				}
+			}));
+			
+			queue.erase(std::remove_if(queue.begin(), queue.end(), [](const uptr<ledger::transaction_message>& a) { return !a; }), queue.end());
+			if (hashes != nullptr)
+			{
+				for (auto& item : queue)
+					hashes->insert(item->checksum);
+			}
+			return expects_lr<vector<uptr<ledger::transaction_message>>>(std::move(queue));
 		}
 		expects_lr<vector<uptr<ledger::transaction_message>>> mempoolstate::get_transactions_by_owner(const algorithm::pubkeyhash_t& owner, int8_t direction, size_t offset, size_t count)
 		{
@@ -1313,7 +1382,7 @@ namespace tangent
 			map.push_back(var::set::integer(count));
 			map.push_back(var::set::integer(offset));
 
-			auto cursor = get_peer_storage().emplace_query(__func__, "SELECT message FROM transactions WHERE owner = ? ORDER BY nonce $? LIMIT ? OFFSET ?", &map);
+			auto cursor = get_peer_storage().emplace_query(__func__, "SELECT hash, message FROM transactions WHERE owner = ? ORDER BY nonce $? LIMIT ? OFFSET ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<vector<uptr<ledger::transaction_message>>>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -1519,7 +1588,7 @@ namespace tangent
 					signature BLOB(65) NOT NULL,
 					PRIMARY KEY (hash, commitment, signature)
 				);
-				CREATE TABLE IF NOT EXISTS preatestations
+				CREATE TABLE IF NOT EXISTS preattestations
 				(
 					hash BLOB(32) NOT NULL,
 					asset BLOB(32) NOT NULL,
@@ -1531,10 +1600,10 @@ namespace tangent
 					time INTEGER NOT NULL,
 					PRIMARY KEY (hash, attester)
 				) WITHOUT ROWID;
-				CREATE INDEX IF NOT EXISTS preatestations_body ON preatestations (hash, proof_hash);
-				CREATE INDEX IF NOT EXISTS preatestations_time ON preatestations (time ASC);
-				CREATE INDEX IF NOT EXISTS preatestations_proof ON preatestations (proof_hash);
-				CREATE TABLE IF NOT EXISTS preatestation_keys
+				CREATE INDEX IF NOT EXISTS preattestations_body ON preattestations (hash, proof_hash);
+				CREATE INDEX IF NOT EXISTS preattestations_time ON preattestations (time ASC);
+				CREATE INDEX IF NOT EXISTS preattestations_proof ON preattestations (proof_hash);
+				CREATE TABLE IF NOT EXISTS preattestation_keys
 				(
 					lookup_key BLOB NOT NULL,
 					proof_hash BLOB(32) NOT NULL,

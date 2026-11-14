@@ -103,7 +103,7 @@ namespace tangent
 			map.push_back(var::set::string(copy.link.address));
 			map.push_back(var::set::binary(message.data));
 			
-			auto cursor = get_storage().emplace_query(__func__, "INSERT OR REPLACE INTO coins (transaction_id_index, receiver_block_id, spent, hash, public_key, address, message) VALUES (?, ?, ?, ?, ?, ?, ?)", &map);
+			auto cursor = get_storage().emplace_query(__func__, "INSERT INTO coins (transaction_id_index, receiver_block_id, spent, hash, public_key, address, message) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (transaction_id_index) DO UPDATE SET receiver_block_id = (CASE WHEN spent = TRUE THEN receiver_block_id ELSE EXCLUDED.receiver_block_id END), spent = spent, hash = EXCLUDED.hash, public_key = EXCLUDED.public_key, address = EXCLUDED.address, message = EXCLUDED.message", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 
@@ -120,6 +120,21 @@ namespace tangent
 			map.push_back(var::set::binary(transaction_id_index.data));
 
 			auto cursor = get_storage().emplace_query(__func__, "UPDATE coins SET spender_block_id = ?, spent = TRUE WHERE transaction_id_index = ?", &map);
+			if (!cursor || cursor->error())
+				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
+
+			return expectation::met;
+		}
+		expects_lr<void> superchainstate::erase_outgoing_transaction(const std::string_view& transaction_id, const uint256_t& external_id)
+		{
+			uint8_t external_hash[32];
+			external_id.encode(external_hash);
+
+			schema_list map;
+			map.push_back(var::set::string(transaction_id));
+			map.push_back(var::set::binary(external_hash, sizeof(external_hash)));
+
+			auto cursor = get_storage().emplace_query(__func__, "DELETE FROM transactions WHERE transaction_id = ? AND external_id = ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 

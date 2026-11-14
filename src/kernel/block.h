@@ -428,6 +428,7 @@ namespace tangent
 
 		public:
 			static expects_lr<uint256_t> calculate_tx_gas(const transaction_message* transaction, const uint256_t& gas_limit = block_header::get_gas_limit(), transaction_receipt* out_receipt = nullptr);
+			static expects_lr<void> simulate_tx(const transaction_message* transaction, const uint256_t& gas_limit = block_header::get_gas_limit(), transaction_receipt* out_receipt = nullptr);
 			static expects_lr<void> validate_tx(const transaction_message* new_transaction, const uint256_t& new_transaction_hash, algorithm::pubkeyhash_t& owner);
 			static expects_lr<void> execute_tx(executor_context* context, const algorithm::pubkeyhash_t& owner, const transaction_message* new_transaction, const uint256_t& new_transaction_hash, size_t transaction_size, uint8_t execution_flags);
 		};
@@ -447,7 +448,7 @@ namespace tangent
 			delegation_adapter(delegation_adapter&&) noexcept = default;
 			delegation_adapter& operator=(const delegation_adapter& other) noexcept;
 			delegation_adapter& operator=(delegation_adapter&&) noexcept = default;
-			virtual expects_promise_rt<btree_set<algorithm::pubkeyhash_t>> require_validators(delegation_contract* contract, const btree_set<algorithm::pubkeyhash_t>& targets) = 0;
+			virtual expects_promise_rt<btree_set<algorithm::pubkeyhash_t>> require_validators(delegation_contract* contract, const btree_set<algorithm::pubkeyhash_t>& targets, size_t steps_left) = 0;
 			virtual expects_promise_rt<format::wo_stream> execute_on_validator(delegation_contract* contract, const algorithm::pubkeyhash_t& target, const format::wo_stream& message) = 0;
 			virtual algorithm::pubkey_t get_public_key(const algorithm::pubkeyhash_t& target) const = 0;
 			virtual const wallet* get_runner_wallet(const algorithm::pubkeyhash_t& target) const = 0;
@@ -471,7 +472,7 @@ namespace tangent
 			virtual void emit_transaction(ledger::transaction_message* transaction);
 			virtual expects_promise_rt<void> execute_transition() = 0;
 			virtual expects_lr<void> validate_transition(delegation_contract* parent, const ledger::wallet& yielding_runner) const = 0;
-			virtual expects_promise_rt<btree_set<algorithm::pubkeyhash_t>> convene_delegates(const btree_set<algorithm::pubkeyhash_t>& targets);
+			virtual expects_promise_rt<btree_set<algorithm::pubkeyhash_t>> convene_delegates(const btree_set<algorithm::pubkeyhash_t>& targets, size_t steps_left);
 			virtual expects_promise_rt<void> yield_to_delegate(const algorithm::pubkeyhash_t& target, uint32_t delegate);
 			virtual expects_lr<format::wo_stream> yield_to_self(const algorithm::pubkeyhash_t& target, uint32_t delegate, bool requires_validation);
 			virtual delegate_ptr as_delegate_ptr(uint32_t hash) const = 0;
@@ -501,6 +502,12 @@ namespace tangent
 				uint64_t checkpoint_block_number = 0;
 			};
 
+			struct dropped_transaction
+			{
+				uptr<transaction_message> transaction;
+				remote_exception error;
+			};
+
 			struct queued_transaction
 			{
 				uint256_t hash = 0;
@@ -528,9 +535,9 @@ namespace tangent
 			} state;
 			struct transaction_queue
 			{
-				btree_map<uint256_t, layer_exception> errors;
-				vector<queued_transaction> pending;
-				size_t queued = 0;
+				btree_map<uint256_t, dropped_transaction> dropped;
+				vector<queued_transaction> queued;
+				size_t queued_size = 0;
 			} transactions;
 			option<block_header> tip = optional::none;
 			btree_map<algorithm::pubkeyhash_t, uint64_t> nonces;
@@ -538,9 +545,9 @@ namespace tangent
 
 			void apply_temporary_state(block_header* abstract_block, const transaction_message* abstract_transaction, transaction_receipt&& abstract_receipt);
 			option<uint64_t> apply_validator_state(const std::function<ledger::wallet* (size_t)>& try_producer, option<const block_header*>&& parent_block = optional::none, tip_cache* cache = nullptr);
-			size_t try_include_transactions(vector<uptr<transaction_message>>&& candidates, hash_set<uint256_t>* hashes = nullptr);
-			size_t try_include_unwrapped_transactions(vector<uptr<transaction_message>>&& candidates, bool requires_sorting, hash_set<uint256_t>* hashes = nullptr);
-			size_t try_include_precomputed_transactions(vector<queued_transaction>&& candidates, hash_set<uint256_t>* hashes = nullptr);
+			size_t try_include_transactions(vector<uptr<transaction_message>>&& candidates);
+			size_t try_include_unwrapped_transactions(vector<uptr<transaction_message>>&& candidates, bool requires_sorting);
+			size_t try_include_precomputed_transactions(vector<queued_transaction>&& candidates);
 			queued_transaction& force_include_transaction(uptr<transaction_message>&& candidate);
 			include_decision decide_on_inclusion(const queued_transaction& candidate) const;
 			expects_lr<void> block_evalution_prepare(block_evaluation& solution);
