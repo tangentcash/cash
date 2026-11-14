@@ -126,7 +126,8 @@ namespace tangent
 			static callable::descriptor delegate_execution();
 			static callable::descriptor broadcast_preattestation();
 			static callable::descriptor fetch_preattestation_body();
-			static callable::descriptor fetch_quotes();
+			static callable::descriptor broadcast_quote_ask();
+			static callable::descriptor broadcast_quote();
 		};
 
 		class relay : public reference<relay>
@@ -173,7 +174,7 @@ namespace tangent
 			void resolve_query(exchange&& result);
 			void cancel_queries();
 			void open_channel(relay_descriptor&& target);
-			void close_channel(const std::string_view& message);
+			void close_channel(const std::string_view& message, server_node* server);
 			bool private_network() const;
 			bool partially_valid() const;
 			bool fully_valid() const;
@@ -306,8 +307,10 @@ namespace tangent
 			expects_rt<void> broadcast_transaction_hash(uref<relay>&& state, const exchange& event);
 			expects_rt<void> broadcast_attestation(uref<relay>&& state, const exchange& event);
 			expects_rt<void> broadcast_preattestation(uref<relay>&& state, const exchange& event);
-			expects_rt<void> announce_neighbor(uref<relay>&& state, const exchange& event);
 			expects_rt<void> broadcast_intermediary(uref<relay>&& state, const exchange& event);
+			expects_rt<void> broadcast_quote_ask(uref<relay>&& state, const exchange& event);
+			expects_rt<void> broadcast_quote(uref<relay>&& state, const exchange& event);
+			expects_rt<void> announce_neighbor(uref<relay>&& state, const exchange& event);
 			expects_rt<format::variables> perform_handshake(uref<relay>&& state, const exchange& event, bool is_acknowledgement);
 			expects_rt<format::variables> perform_discovery(uref<relay>&& state, const exchange& event, bool is_acknowledgement);
 			expects_rt<format::variables> fetch_headers(uref<relay>&& state, const exchange& event);
@@ -316,15 +319,14 @@ namespace tangent
 			expects_rt<format::variables> fetch_mempool(uref<relay>&& state, const exchange& event);
 			expects_rt<format::variables> fetch_transaction(uref<relay>&& state, const exchange& event);
 			expects_rt<format::variables> fetch_transactions(uref<relay>&& state, const exchange& event);
-			expects_promise_rt<format::variables> fetch_quotes(uref<relay>&& state, const exchange& event);
 			expects_rt<format::variables> fetch_preattestation_body(uref<relay>&& state, const exchange& event);
 			expects_rt<format::variables> delegate_execution(uref<relay>&& state, const exchange& event);
 			expects_lr<void> dispatch_transaction_logs(const algorithm::asset_id& asset, superchain::transaction_logs&& logs);
+			expects_rt<vector<superchain::approved_fee>> query_bridge_fee_estimates(const algorithm::asset_id& asset);
 			expects_lr<socket_address> find_node_from_mempool();
 			expects_promise_rt<socket_address> find_node_from_discovery();
 			expects_promise_rt<uref<relay>> connect_to_physical_node(const socket_address& address);
 			expects_promise_rt<btree_set<algorithm::pubkeyhash_t>> connect_to_logical_nodes(btree_set<algorithm::pubkeyhash_t>&& accounts);
-			expects_promise_rt<vector<superchain::approved_fee>> query_blockchain_fee_quotes(const algorithm::asset_id& asset);
 			expects_promise_rt<uint64_t> synchronize_mempool_with(uref<relay>&& state);
 			expects_promise_rt<void> resolve_and_verify_fork(const std::pair<uint256_t, tip_header>* fork);
 			expects_promise_rt<exchange> query(uref<relay>&& state, const callable::descriptor& descriptor, format::variables&& args, uint64_t timeout_ms, bool force_call = false);

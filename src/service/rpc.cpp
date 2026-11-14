@@ -430,7 +430,7 @@ namespace tangent
 			bind(0 | access_type::r, "mempoolstate", "getmempooltransactionsbyowner", 3, 5, "string address, uint64 offset, uint64 count, uint8? direction = 1, uint8? unrolling", "uint256[] | txn[]", "get mempool transactions by signing address", std::bind(&server_node::mempoolstate_get_transactions_by_owner, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getmempoolpreattestations", 2, 5, "uint64 offset, uint64 count, string? transaction_ids, string? addresses, string? memo_accounts", "superchain::uncomputed_transaction[]", "get off-chain transactions with preattestations, optionally filtered by a comma separated list of transaction ids, addresses and/or memo accounts", std::bind(&server_node::mempoolstate_get_preattestations, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "validatorstate", "getblockchains", 0, 0, "", "superchain::asset_info[]", "get supported blockchains", std::bind(&server_node::validatorstate_get_blockchains, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "validatorstate", "estimatebridgefee", 1, 1, "string asset", "{ tip: uint64, index: uint32 | null, quotes: { asset: string, fee: decimal, expiry_block_number: uint64, publisher: address }[] }", "get active withdrawal fee quotes for a blockchain asset, collected from the validator network, normalized with the median fee", std::bind(&server_node::validatorstate_estimate_bridge_fee, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "validatorstate", "estimatebridgefee", 1, 1, "string asset", "{ tip: uint64, index: uint32 | null, quotes: { asset: string, fee: decimal, expiry_block_number: uint64, publisher: address }[] } | null", "get active withdrawal fee quotes for a blockchain asset, collected from the validator network, normalized with the median fee", std::bind(&server_node::validatorstate_estimate_bridge_fee, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "validatorstate", "status", 0, 0, "", "validator::status", "get validator status", std::bind(&server_node::validatorstate_status, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::r | access_type::a, "chainstate", "worldstateroot", 0, 1, "uint256? state_hash_to_prove", "uint256 | merkle_proof", "compute the world state root hash", std::bind(&server_node::chainstate_world_state_root, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::r | access_type::a, "validatorstate", "connections", 0, 0, "", "validator::connection[]", "get p2p connections", std::bind(&server_node::validatorstate_connections, this, std::placeholders::_1, std::placeholders::_2));
@@ -3403,9 +3403,9 @@ namespace tangent
 			if (!algorithm::asset::is_aux(asset))
 				return server_response().error(error_codes::bad_params, "asset not supported");
 
-			auto quotes = consensus_service->query_blockchain_fee_quotes(asset).get();
+			auto quotes = consensus_service->query_bridge_fee_estimates(asset);
 			if (!quotes)
-				return server_response().error(error_codes::bad_request, quotes.what());
+				return quotes.error().is_retry() ? server_response().success(format::variable()) : server_response().error(error_codes::not_found, quotes.what());
 
 			auto data = format::tree::list();
 			std::sort(quotes->begin(), quotes->end(), [](const superchain::approved_fee& left, const superchain::approved_fee& right) { return left.fee < right.fee; });

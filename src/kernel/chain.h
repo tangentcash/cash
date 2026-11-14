@@ -27,7 +27,7 @@ namespace tangent
 		ELEMENTS_MANY = 1 << 12,
 		ELEMENTS_HUGE = 1 << 17,
 		FORK_VERSION = 8,
-		PATCH_VERSION = 1
+		PATCH_VERSION = 2
 	};
 
 	enum class fork_id

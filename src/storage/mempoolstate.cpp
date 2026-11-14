@@ -883,11 +883,10 @@ namespace tangent
 			schema_list map;
 			map.push_back(var::set::binary(asset_hash, sizeof(asset_hash)));
 			map.push_back(var::set::integer(block_number));
-			map.push_back(var::set::integer(kernel::params().time.now_cpu()));
 			map.push_back(var::set::integer(block_number));
 
 			auto cursor = get_peer_storage().emplace_query(__func__,
-				"SELECT message FROM quotes WHERE asset = ? AND expiry_height > ? AND time > ?;"
+				"SELECT message FROM quotes WHERE asset = ? AND expiry_height > ?;"
 				"DELETE FROM quotes WHERE expiry_height < ?", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<vector<superchain::approved_fee>>(layer_exception(ledger::storage_util::error_of(cursor)));
@@ -1211,6 +1210,22 @@ namespace tangent
 			map.push_back(var::set::binary(hash, sizeof(hash)));
 
 			auto cursor = get_peer_storage().emplace_query(__func__, "SELECT TRUE FROM transactions WHERE hash = ?", &map);
+			if (!cursor || cursor->error())
+				return expects_lr<bool>(layer_exception(ledger::storage_util::error_of(cursor)));
+
+			return expects_lr<bool>(!cursor->empty());
+		}
+		expects_lr<bool> mempoolstate::has_quote(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& attester, uint64_t block_number)
+		{
+			uint8_t asset_hash[32];
+			asset.encode(asset_hash);
+
+			schema_list map;
+			map.push_back(var::set::binary(asset_hash, sizeof(asset_hash)));
+			map.push_back(var::set::binary(attester.view()));
+			map.push_back(var::set::integer(block_number));
+
+			auto cursor = get_peer_storage().emplace_query(__func__, "SELECT TRUE FROM quotes WHERE asset = ? AND attester = ? AND expiry_height > ?;", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<bool>(layer_exception(ledger::storage_util::error_of(cursor)));
 

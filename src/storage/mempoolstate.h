@@ -132,6 +132,7 @@ namespace tangent
 			expects_lr<ledger::distribution_key> get_key(const algorithm::pubkeyhash_t& participant, const algorithm::pubkeyhash_t& owner, const algorithm::asset_id& asset, const uint256_t& instance);
 			expects_lr<ledger::distribution_key> get_key(const algorithm::pubkeyhash_t& participant, size_t index);
 			expects_lr<bool> has_transaction(const uint256_t& transaction_hash);
+			expects_lr<bool> has_quote(const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& attester, uint64_t block_number);
 			expects_lr<void> verify_transaction_uniqueness(const uint256_t& transaction_hash);
 			expects_lr<uint64_t> get_lowest_transaction_nonce(const algorithm::pubkeyhash_t& owner);
 			expects_lr<uint64_t> get_highest_transaction_nonce(const algorithm::pubkeyhash_t& owner);

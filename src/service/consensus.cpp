@@ -365,7 +365,7 @@ namespace tangent
 		}
 		relay::~relay()
 		{
-			close_channel("deferred shutdown");
+			close_channel("deferred shutdown", nullptr);
 		}
 		expects_promise_rt<exchange> relay::push_query(const callable::descriptor& subject, format::variables&& args, uint64_t timeout_ms, bool forwarded)
 		{
@@ -529,19 +529,17 @@ namespace tangent
 				socket->set_keep_alive_params((int)kernel::params().user.tcp.keep_alive, (int)kernel::params().user.tcp.keep_alive, 5);
 			}
 		}
-		void relay::close_channel(const std::string_view& message)
+		void relay::close_channel(const std::string_view& message, server_node* server)
 		{
 			auto* socket = as_socket();
-			bool graceful_shutdown = instance != nullptr && descriptor;
-			if (graceful_shutdown)
+			if (!aborted && kernel::params().user.consensus.logging)
 			{
-				report_call(0, 0, true);
-				if (!aborted && kernel::params().user.consensus.logging)
-				{
-					std::string_view shutdown_message = message.empty() ? std::string_view("abnormal shutdown") : message;
-					VI_INFO("node %s channel close (%.*s)", peer_address().c_str(), (int)shutdown_message.size(), shutdown_message.data());
-				}
+				std::string_view shutdown_message = message.empty() ? std::string_view("abnormal shutdown") : message;
+				VI_INFO("node %s channel close (%.*s)", peer_address().c_str(), (int)shutdown_message.size(), shutdown_message.data());
 			}
+
+			if (descriptor && instance != nullptr && server != nullptr && server->is_active())
+				report_call(0, 0, true);
 
 			aborted = true;
 			cancel_queries();
@@ -812,9 +810,13 @@ namespace tangent
 		{
 			return callable::descriptor(__func__, 16);
 		}
-		callable::descriptor descriptors::fetch_quotes()
+		callable::descriptor descriptors::broadcast_quote_ask()
 		{
 			return callable::descriptor(__func__, 17);
+		}
+		callable::descriptor descriptors::broadcast_quote()
+		{
+			return callable::descriptor(__func__, 18);
 		}
 
 		server_node::server_node() noexcept : socket_server(), control_sys("consensus-node"), runner_descriptor(nullptr)
@@ -977,7 +979,7 @@ namespace tangent
 				current_nodes.swap(nodes);
 				unique.unlock();
 				for (auto& node : current_nodes)
-					node.second->close_channel("server shutdown");
+					node.second->close_channel("server shutdown", this);
 			}
 			unique.lock();
 			if (!nodes.empty())
@@ -1485,12 +1487,111 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_rt<void> server_node::check_socket(uref<relay>&&, const exchange& event)
+		expects_rt<void> server_node::broadcast_quote_ask(uref<relay>&& from, const exchange& event)
 		{
-			if (!event.args.empty())
-				return remote_exception("invalid args");
+			if (event.args.size() != 1)
+				return expects_rt<void>(remote_exception("invalid arguments"));
 
-			return expectation::met;
+			algorithm::asset_id asset = event.args[0].as_uint256();
+			if (!algorithm::asset::is_aux(asset))
+				return expects_rt<void>(remote_exception("invalid fee query"));
+
+			auto blockchain = algorithm::asset::base_id_of(asset);
+			{
+				umutex<std::recursive_mutex> unique(sync.fetcher);
+				auto it = fees.find(blockchain);
+				auto time = kernel::params().time.now_cpu();
+				if (it != fees.end() && it->second >= time)
+					return expects_rt<void>(expectation::met);
+
+				fees[blockchain] = time + kernel::params().policy.attestation.quote_validity_time / 10;
+			}
+
+			size_t notifications = notify_all_except(uref(from), descriptors::broadcast_quote_ask(), format::variables(event.args));
+			if (notifications > 0 && kernel::params().user.consensus.logging)
+				VI_DEBUG("%s quote ask broadcasted to %i nodes", algorithm::asset::blockchain_of(asset).c_str(), (int)notifications);
+
+			auto attester = std::pair<ledger::wallet*, decimal>(nullptr, decimal::zero());
+			auto executor = ledger::executor_context(nullptr);
+			for (auto& [account, descriptor] : descriptors)
+			{
+				if (descriptor.first.services.has_attestation)
+				{
+					auto attestation = executor.get_verified_validator_attestation(blockchain, account);
+					if (attestation)
+					{
+						attester.first = &descriptor.second;
+						if (attestation->min_fee.is_positive())
+							attester.second = std::move(attestation->min_fee);
+						break;
+					}
+				}
+			}
+
+			auto* offchain = superchain::bridge::get();
+			if (!attester.first || !offchain->has_network(blockchain, true))
+				return expects_rt<void>(expectation::met);
+
+			auto chain = storages::chainstate();
+			auto mempool = storages::mempoolstate();
+			if (mempool.has_quote(asset, attester.first->public_key_hash, chain.get_latest_block_number().or_else(0)).or_else(false))
+				return expects_rt<void>(expectation::met);
+
+			auto filter = storages::result_filter::greater(0, -1);
+			auto candidates = storages::chainstate().get_multiforms_by_column_filter(states::bridge_balance::as_instance_type(), nullptr, states::bridge_balance::as_instance_column(asset), filter, 0, storages::result_range_window(0, 1));
+			if (!candidates || candidates->empty())
+				return expects_rt<void>(expectation::met);
+
+			auto* from_bridge = (states::bridge_balance*)candidates->front().ptr();
+			auto to_wallet = offchain->compute_wallet(blockchain, (uint8_t*)"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 32);
+			if (!from_bridge || !to_wallet || to_wallet->encoded_addresses.empty())
+				return expects_rt<void>(expectation::met);
+
+			auto transfer = superchain::value_transfer(asset, to_wallet->encoded_addresses.begin()->second, decimal(std::min(decimal(1), from_bridge->supply)));
+			if (!transfer.value.is_positive())
+				return expects_rt<void>(expectation::met);
+
+			auto from_link = superchain::wallet_link::from_hash(from_bridge->bridge_hash);
+			offchain->estimate_transaction_fee(asset, from_link, transfer).when([this, asset, attester = std::move(attester)](expects_rt<superchain::computed_fee>&& estimate) mutable
+			{
+				auto& [signer, min_fee] = attester;
+				superchain::approved_fee quote;
+				quote.asset = asset;
+				quote.fee = estimate ? std::max(estimate->get_max_fee() * kernel::params().policy.attestation.quote_headroom, min_fee) : decimal::nan();
+				quote.expiry_block_number = storages::chainstate().get_latest_block_number().or_else(0) + kernel::params().policy.attestation.quote_validity_time / kernel::params().policy.pow.time;
+				if (!quote.fee.is_positive() || !quote.sign(signer->secret_key))
+					return;
+
+				auto mempool = storages::mempoolstate();
+				size_t notifications = mempool.add_quote(quote, signer->public_key_hash) ? notify_all(descriptors::broadcast_quote(), { format::variable(quote.as_message().data) }) : 0;
+				if (notifications > 0 && kernel::params().user.consensus.logging)
+					VI_DEBUG("%s quote broadcasted to %i nodes", algorithm::asset::blockchain_of(asset).c_str(), (int)notifications);
+			});
+			return expects_rt<void>(expectation::met);
+		}
+		expects_rt<void> server_node::broadcast_quote(uref<relay>&& from, const exchange& event)
+		{
+			if (event.args.size() != 1)
+				return expects_rt<void>(remote_exception("invalid arguments"));
+
+			superchain::approved_fee quote;
+			format::ro_stream message = format::ro_stream(event.args[0].as_string());
+			if (!quote.load(message))
+				return expects_rt<void>(remote_exception("invalid message"));
+
+			algorithm::pubkeyhash_t attester;
+			if (!quote.recover_hash(attester))
+				return expects_rt<void>(remote_exception("invalid publisher"));
+
+			auto executor = ledger::executor_context(nullptr);
+			if (!executor.get_verified_validator_attestation(quote.asset, attester))
+				return expects_rt<void>(remote_exception("invalid attester"));
+
+			auto mempool = storages::mempoolstate();
+			size_t notifications = mempool.add_quote(quote, attester) ? notify_all_except(std::move(from), descriptors::broadcast_quote(), format::variables(event.args)) : 0;
+			if (notifications > 0 && kernel::params().user.consensus.logging)
+				VI_DEBUG("%s quote broadcasted to %i nodes", algorithm::asset::blockchain_of(quote.asset).c_str(), (int)notifications);
+			return expects_rt<void>(expectation::met);
 		}
 		expects_rt<void> server_node::announce_neighbor(uref<relay>&& from, const exchange& event)
 		{
@@ -1528,6 +1629,13 @@ namespace tangent
 			umutex<std::recursive_mutex> unique(sync.neighbor);
 			for (auto& [id, neighbor] : neighbors)
 				neighbor(public_key, address ? 1 : -1);
+
+			return expectation::met;
+		}
+		expects_rt<void> server_node::check_socket(uref<relay>&&, const exchange& event)
+		{
+			if (!event.args.empty())
+				return remote_exception("invalid args");
 
 			return expectation::met;
 		}
@@ -1815,129 +1923,6 @@ namespace tangent
 
 			return format::variables();
 		}
-		expects_promise_rt<format::variables> server_node::fetch_quotes(uref<relay>&& from, const exchange& event)
-		{
-			if (event.args.size() != 1)
-				return expects_promise_rt<format::variables>(remote_exception("invalid arguments"));
-
-			algorithm::asset_id asset = event.args[0].as_uint256();
-			if (!algorithm::asset::is_aux(asset))
-				return expects_promise_rt<format::variables>(remote_exception("invalid fee query"));
-
-			auto quotes = storages::mempoolstate().get_quotes(asset, storages::chainstate().get_latest_block_number().or_else(0));
-			if (!quotes)
-				return expects_promise_rt<format::variables>(remote_exception(std::move(quotes.error().message())));
-
-			format::variables results;
-			results.reserve(quotes->size());
-			for (auto& quote : *quotes)
-			{
-				format::wo_stream envelope;
-				if (quote.store(&envelope))
-					results.push_back(format::variable(envelope.data));
-			}
-			if (!results.empty())
-				return expects_promise_rt<format::variables>(std::move(results));
-
-			auto blockchain = algorithm::asset::base_id_of(asset);
-			{
-				umutex<std::recursive_mutex> unique(sync.fetcher);
-				auto it = fees.find(blockchain);
-				auto time = kernel::params().time.now_cpu();
-				if (it != fees.end() && it->second >= time)
-					return expects_promise_rt<format::variables>(std::move(results));
-
-				fees[blockchain] = time + kernel::params().policy.attestation.quote_validity_time / 2;
-			}
-
-			return coasync<expects_rt<format::variables>>([this, from, blockchain, asset]() -> expects_promise_rt<format::variables>
-			{
-				vector<std::pair<ledger::wallet*, decimal>> attesters;
-				auto executor = ledger::executor_context(nullptr);
-				for (auto& [account, descriptor] : descriptors)
-				{
-					auto attestation = executor.get_verified_validator_attestation(blockchain, account);
-					if (descriptor.first.services.has_attestation && attestation)
-						attesters.push_back({ &descriptor.second, attestation->min_fee });
-				}
-
-				auto quotes = hash_map<string, superchain::approved_fee>();
-				auto* offchain = superchain::bridge::get();
-				if (!attesters.empty() && offchain->has_network(blockchain, true))
-				{
-					auto filter = storages::result_filter::greater(0, -1);
-					auto candidates = storages::chainstate().get_multiforms_by_column_filter(states::bridge_balance::as_instance_type(), nullptr, states::bridge_balance::as_instance_column(asset), filter, 0, storages::result_range_window(0, 1));
-					if (candidates && !candidates->empty())
-					{
-						auto* from_bridge = (states::bridge_balance*)candidates->front().ptr();
-						auto to_wallet = offchain->compute_wallet(blockchain, (uint8_t*)"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 32);
-						if (from_bridge && to_wallet && !to_wallet->encoded_addresses.empty())
-						{
-							auto from_link = superchain::wallet_link::from_hash(from_bridge->bridge_hash);
-							auto transfer = superchain::value_transfer(asset, to_wallet->encoded_addresses.begin()->second, decimal(std::min(decimal(1), from_bridge->supply)));
-							auto estimate = transfer.value.position() ? coawait(offchain->estimate_transaction_fee(blockchain, from_link, transfer)) : expects_rt<superchain::computed_fee>(remote_exception());
-							if (estimate)
-							{
-								auto& [signer, min_fee] = attesters[(size_t)crypto::random() % attesters.size()];
-								superchain::approved_fee quote;
-								quote.asset = blockchain;
-								quote.fee = estimate->get_max_fee() * kernel::params().policy.attestation.quote_headroom;
-								quote.expiry_block_number = storages::chainstate().get_latest_block_number().or_else(0) + kernel::params().policy.attestation.quote_validity_time / kernel::params().policy.pow.time;
-								if (!min_fee.is_nan() && min_fee > quote.fee)
-									quote.fee = min_fee;					
-								if (quote.sign(signer->secret_key))
-									quotes[quote.fee.to_string()] = std::move(quote);
-							}
-						}
-					}
-				}
-
-				auto receivers = vector<uref<relay>>();
-				{
-					umutex<std::recursive_mutex> unique(exclusive);
-					receivers.reserve(nodes.size());
-					for (auto& node : nodes)
-					{
-						if (*from != *node.second)
-							receivers.push_back(node.second);
-					}
-				}
-				vector<expects_promise_rt<exchange>> tasks;
-				tasks.reserve(receivers.size());
-				for (auto& node : receivers)
-					tasks.push_back(query(uref(node), descriptors::fetch_quotes(), { format::variable(asset) }, kernel::params().user.tcp.timeout));
-
-				for (auto& task : tasks)
-				{
-					auto result = coawait(std::move(task));
-					if (!result)
-						continue;
-
-					for (auto& item : result->args)
-					{
-						superchain::approved_fee quote;
-						format::ro_stream message = format::ro_stream(item.as_string());
-						if (quote.load(message))
-							quotes[quote.fee.to_string()] = std::move(quote);
-					}
-				}
-
-				storages::mempoolstate mempool;
-				format::variables results;
-				results.reserve(quotes.size());
-				for (auto& [fee, quote] : quotes)
-				{
-					algorithm::pubkeyhash_t attester;
-					if (quote.recover_hash(attester) && executor.get_verified_validator_attestation(blockchain, attester) && mempool.add_quote(quote, attester))
-					{
-						format::wo_stream envelope;
-						if (quote.store(&envelope))
-							results.push_back(format::variable(envelope.data));
-					}
-				}
-				coreturn expects_rt<format::variables>(std::move(results));
-			});
-		}
 		expects_rt<format::variables> server_node::delegate_execution(uref<relay>&&, const exchange& event)
 		{
 			auto sender = algorithm::pubkeyhash_t();
@@ -1991,6 +1976,22 @@ namespace tangent
 				return remote_exception(std::move(execution.error().message()));
 
 			return pack_private_result({ format::variable(execution->data) }, yielding_delegator.public_key, event.callee->second.secret_key);
+		}
+		expects_rt<vector<superchain::approved_fee>> server_node::query_bridge_fee_estimates(const algorithm::asset_id& asset)
+		{
+			auto quotes = storages::mempoolstate().get_quotes(asset, storages::chainstate().get_latest_block_number().or_else(0));
+			if (!quotes)
+				return expects_rt<vector<superchain::approved_fee>>(remote_exception(std::move(quotes.error().message())));
+			else if (!quotes->empty())
+				return expects_rt<vector<superchain::approved_fee>>(std::move(*quotes));
+
+			exchange message;
+			message.args.push_back(format::variable(asset));
+			auto status = broadcast_quote_ask(nullptr, message);
+			if (!status)
+				return expects_rt<vector<superchain::approved_fee>>(std::move(status.error()));
+
+			return expects_rt<vector<superchain::approved_fee>>(remote_exception::retry_later());
 		}
 		expects_lr<void> server_node::dispatch_transaction_logs(const algorithm::asset_id& asset, superchain::transaction_logs&& logs)
 		{
@@ -2183,7 +2184,7 @@ namespace tangent
 
 				auto abort = [&](remote_exception&& exception) -> remote_exception&&
 				{
-					next->close_channel(exception.message());
+					next->close_channel(exception.message(), this);
 					return std::move(exception);
 				};
 				cospawn([this, next]() mutable { pull_messages(std::move(next)); });
@@ -2373,26 +2374,6 @@ namespace tangent
 				unique.lock();
 				neighbors.erase(id);
 				goto exit;
-			});
-		}
-		expects_promise_rt<vector<superchain::approved_fee>> server_node::query_blockchain_fee_quotes(const algorithm::asset_id& asset)
-		{
-			exchange event;
-			event.args.push_back(format::variable(asset));
-			return fetch_quotes(nullptr, event).then<expects_rt<vector<superchain::approved_fee>>>([](expects_rt<format::variables>&& results) -> expects_rt<vector<superchain::approved_fee>>
-			{
-				if (!results)
-					return results.error();
-
-				auto quotes = vector<superchain::approved_fee>();
-				for (auto& result : *results)
-				{
-					superchain::approved_fee quote;
-					format::ro_stream message = format::ro_stream(result.as_string());
-					if (quote.load(message))
-						quotes.push_back(std::move(quote));
-				}
-				return expects_rt<vector<superchain::approved_fee>>(std::move(quotes));
 			});
 		}
 		expects_promise_rt<uint64_t> server_node::synchronize_mempool_with(uref<relay>&& from)
@@ -3063,7 +3044,7 @@ namespace tangent
 			umutex<std::recursive_mutex> unique(exclusive);
 			auto* inbound_node = from->as_inbound_node();
 			auto* outbound_node = from->as_outbound_node();
-			from->close_channel(message);
+			from->close_channel(message, this);
 			if (inbound_node != nullptr)
 			{
 				inbound_node->abort();
@@ -3737,6 +3718,8 @@ namespace tangent
 			bind_event(descriptors::broadcast_attestation(), std::bind(&server_node::broadcast_attestation, this, std::placeholders::_2, std::placeholders::_3));
 			bind_event(descriptors::broadcast_preattestation(), std::bind(&server_node::broadcast_preattestation, this, std::placeholders::_2, std::placeholders::_3));
 			bind_event(descriptors::broadcast_intermediary(), std::bind(&server_node::broadcast_intermediary, this, std::placeholders::_2, std::placeholders::_3));
+			bind_event(descriptors::broadcast_quote_ask(), std::bind(&server_node::broadcast_quote_ask, this, std::placeholders::_2, std::placeholders::_3));
+			bind_event(descriptors::broadcast_quote(), std::bind(&server_node::broadcast_quote, this, std::placeholders::_2, std::placeholders::_3));
 			bind_event(descriptors::announce_neighbor(), std::bind(&server_node::announce_neighbor, this, std::placeholders::_2, std::placeholders::_3));
 			bind_query(descriptors::perform_handshake(), std::bind(&server_node::perform_handshake, this, std::placeholders::_2, std::placeholders::_3, false), false);
 			bind_query(descriptors::perform_discovery(), std::bind(&server_node::perform_discovery, this, std::placeholders::_2, std::placeholders::_3, false));
@@ -3746,7 +3729,6 @@ namespace tangent
 			bind_query(descriptors::fetch_mempool(), std::bind(&server_node::fetch_mempool, this, std::placeholders::_2, std::placeholders::_3));
 			bind_query(descriptors::fetch_transaction(), std::bind(&server_node::fetch_transaction, this, std::placeholders::_2, std::placeholders::_3));
 			bind_query(descriptors::fetch_transactions(), std::bind(&server_node::fetch_transactions, this, std::placeholders::_2, std::placeholders::_3));
-			bind_async_query(descriptors::fetch_quotes(), std::bind(&server_node::fetch_quotes, this, std::placeholders::_2, std::placeholders::_3));
 			bind_query(descriptors::fetch_preattestation_body(), std::bind(&server_node::fetch_preattestation_body, this, std::placeholders::_2, std::placeholders::_3));
 			bind_query(descriptors::delegate_execution(), std::bind(&server_node::delegate_execution, this, std::placeholders::_2, std::placeholders::_3));
 			control_sys.interval_if_none(TASK_TOPOLOGY_OPTIMIZATION "_runner", 180000, std::bind(&server_node::run_topology_optimization, this));
