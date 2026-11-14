@@ -1547,7 +1547,7 @@ namespace tangent
 			if (!from_bridge || !to_wallet || to_wallet->encoded_addresses.empty())
 				return expects_rt<void>(expectation::met);
 
-			auto transfer = superchain::value_transfer(asset, to_wallet->encoded_addresses.begin()->second, decimal(std::min(decimal(1), from_bridge->supply)));
+			auto transfer = superchain::value_transfer(asset, to_wallet->encoded_addresses.begin()->second, from_bridge->supply * 0.25);
 			if (!transfer.value.is_positive())
 				return expects_rt<void>(expectation::met);
 
