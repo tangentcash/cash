@@ -499,7 +499,7 @@ namespace tangent
 			if (def == nullptr)
 			{
 				outcome result = util::fail("usage", "unknown command: " + args[0] + " (type help for the command list)");
-				return respond(command_def { args[0], "internal", "", "", render::scalar, {} }, (uint64_t)(date_time().milliseconds() - time), result, force_machine);
+				return respond(command_def { args[0], "internal", "", "", render::scalar, { } }, (uint64_t)(date_time().milliseconds() - time), result, force_machine);
 			}
 
 			auto result = def->run(*this, args, directory);

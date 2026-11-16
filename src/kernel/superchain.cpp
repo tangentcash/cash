@@ -1463,6 +1463,9 @@ namespace tangent
 			}
 		}
 
+		approved_fee::approved_fee(const algorithm::asset_id& new_asset, decimal&& new_fee, uint64_t new_expiry_block_number) : asset(new_asset), fee(std::move(new_fee)), expiry_block_number(new_expiry_block_number)
+		{
+		}
 		bool approved_fee::store_payload(format::wo_stream* stream) const
 		{
 			stream->write_integer(asset);
@@ -1508,6 +1511,24 @@ namespace tangent
 		std::string_view approved_fee::as_instance_typename()
 		{
 			return "approved_fee";
+		}
+		uint8_t approved_fee::level_of_amount(const decimal& amount)
+		{
+			uint8_t level = 1;
+			decimal cap = decimal(1) / decimal(10);
+			while (amount > cap && level < 255)
+			{
+				cap = cap * decimal(10);
+				level++;
+			}
+			return level;
+		}
+		decimal approved_fee::cap_of_level(uint8_t level)
+		{
+			decimal cap = decimal(1) / decimal(10);
+			for (uint8_t i = 1; i < level; i++)
+				cap = cap * decimal(10);
+			return cap;
 		}
 
 		decimal computed_fee::get_max_fee() const

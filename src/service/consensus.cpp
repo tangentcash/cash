@@ -10,9 +10,11 @@
 #define TASK_FORK_RESOLUTION "fork_resolution"
 #define TASK_SUPERCHAIN_SYNC "superchain_sync"
 #define TASK_ATTESTATION_RESOLUTION "attestation_resolution"
-#define TASK_BLOCK_DISPATCH_RETRIAL "block_dispatch_retrial"
 #define TASK_BLOCK_PRODUCTION "block_production"
 #define TASK_BLOCK_DISPATCHER "block_dispatcher"
+#define TASK_BLOCK_DISPATCHER_LATE "block_dispatcher_late"
+#define OUTGOING_QUEUE_SIZE 8192
+#define MEMPOOL_RETRY_SIZE 64
 
 namespace tangent
 {
@@ -25,6 +27,24 @@ namespace tangent
 			uint32_t length;
 		};
 
+		static void mask_set(string& mask, slot_t bit)
+		{
+			size_t byte = bit >> 3;
+			if (mask.size() <= byte)
+				mask.resize(byte + 1);
+			mask[byte] = (char)(mask[byte] | (1 << (bit & 7)));
+		}
+		static bool mask_test(const string& mask, slot_t bit)
+		{
+			size_t byte = bit >> 3;
+			return byte < mask.size() && (((unsigned char)mask[byte] >> (bit & 7)) & 1) != 0;
+		}
+		static void mask_clear(string& mask, slot_t bit)
+		{
+			size_t byte = bit >> 3;
+			if (byte < mask.size())
+				mask[byte] = (char)(mask[byte] & ~(char)(1 << (bit & 7)));
+		}
 		static string uint256_to_label(const uint256_t& hash, size_t margin = 11)
 		{
 			string result = algorithm::encoding::encode_0xhex256(hash);
@@ -236,9 +256,11 @@ namespace tangent
 			if (!stream.read_integer(stream.read_type(), &descriptor))
 				return false;
 
-			if (!stream.read_integer(stream.read_type(), (uint8_t*)&type))
+			uint8_t raw_type = 0;
+			if (!stream.read_integer(stream.read_type(), &raw_type) || raw_type > (uint8_t)side::forward)
 				return false;
 
+			type = (side)raw_type;
 			args.clear();
 			return format::variables_util::deserialize_merge_from(stream, &args);
 		}
@@ -251,12 +273,16 @@ namespace tangent
 		{
 			return as_instance_type();
 		}
-		uint256_t exchange::as_inventory_hash() const
+		uint256_t exchange::as_inventory_hash(bool renew) const
 		{
-			format::wo_stream stream;
-			stream.write_integer(descriptor);
-			format::variables_util::serialize_merge_into(args, &stream);
-			return stream.hash();
+			if (renew || !inventory_checksum)
+			{
+				format::wo_stream stream;
+				stream.write_integer(descriptor);
+				format::variables_util::serialize_merge_into(args, &stream);
+				((exchange*)this)->inventory_checksum = stream.hash();
+			}
+			return inventory_checksum;
 		}
 		std::string_view exchange::as_typename() const
 		{
@@ -282,37 +308,130 @@ namespace tangent
 			return "exchange";
 		}
 
-		bool forwarder::insert(const uint256_t& message_hash)
+		forwarder::forwarder() : capacity((size_t)kernel::params().user.consensus.inventory_size)
+		{		
+			if (capacity > 0)
+			{
+				entries.resize(capacity + capacity / 4);
+				queue.resize(capacity);
+			}
+		}
+		bool forwarder::insert(const uint256_t& message_hash, slot_t peer)
 		{
-			if (messages.find(message_hash) != messages.end())
-				return false;
+			if (peer == NULL_SLOT || !capacity)
+				return true;
 
 			auto& config = kernel::params();
 			auto time = config.time.now_cpu();
-			if (messages.size() + 1 > config.user.consensus.inventory_size)
+			umutex<std::mutex> unique(guard);
+			if (count >= capacity)
 			{
-				auto oldest_it = messages.end();
-				for (auto it = messages.begin(); it != messages.end();)
+				size_t limit = capacity;
+				while (limit-- > 0 && queue_head != queue_tail)
 				{
-					if (it->second >= time)
+					auto& victim = entries[queue[queue_head]];
+					queue_head = (queue_head + 1) % (uint32_t)capacity;
+					if (victim.expiry != 0)
 					{
-						if (oldest_it == messages.end() || oldest_it->second > it->second)
-							oldest_it = it;
-						++it;
+						victim.expiry = 0;
+						--count;
+						break;
 					}
-					else
-						it = messages.erase(it);
 				}
-				if (oldest_it != messages.end())
-					messages.erase(oldest_it);
 			}
-			messages[message_hash] = time + config.user.consensus.inventory_timeout;
-			return true;
+
+			for (size_t probe = (uint64_t)message_hash % entries.size();; probe = (probe + 1) % entries.size())
+			{
+				auto& target = entries[probe];
+				if (target.expiry <= time)
+				{
+					if (target.expiry == 0)
+					{
+						++count;
+						queue[queue_tail] = (uint32_t)probe;
+						queue_tail = (queue_tail + 1) % (uint32_t)capacity;
+					}
+
+					target.hash = message_hash;
+					target.expiry = time + config.user.consensus.inventory_timeout;
+					target.peers.clear();
+					mask_set(target.peers, peer);
+					return true;
+				}
+				else if (target.hash == message_hash)
+				{
+					target.expiry = time + config.user.consensus.inventory_timeout;
+					mask_set(target.peers, peer);
+					break;
+				}
+			}
+			return false;
 		}
-		bool forwarder::contains(const uint256_t& message_hash) const
+		bool forwarder::mark(const uint256_t& message_hash, slot_t peer)
 		{
-			auto it = messages.find(message_hash);
-			return it != messages.end() && it->second > kernel::params().time.now_cpu();
+			if (peer == NULL_SLOT || !capacity)
+				return true;
+
+			auto& config = kernel::params();
+			auto time = config.time.now_cpu();
+			umutex<std::mutex> unique(guard);
+			if (count >= capacity)
+			{
+				size_t limit = capacity;
+				while (limit-- > 0 && queue_head != queue_tail)
+				{
+					auto& victim = entries[queue[queue_head]];
+					queue_head = (queue_head + 1) % (uint32_t)capacity;
+					if (victim.expiry != 0)
+					{
+						victim.expiry = 0;
+						--count;
+						break;
+					}
+				}
+			}
+
+			for (size_t probe = (uint64_t)message_hash % entries.size();; probe = (probe + 1) % entries.size())
+			{
+				auto& target = entries[probe];
+				if (target.expiry <= time)
+				{
+					if (target.expiry == 0)
+					{
+						++count;
+						queue[queue_tail] = (uint32_t)probe;
+						queue_tail = (queue_tail + 1) % (uint32_t)capacity;
+					}
+
+					target.hash = message_hash;
+					target.expiry = time + config.user.consensus.inventory_timeout;
+					target.peers.clear();
+					mask_set(target.peers, peer);
+					return true;
+				}
+				else if (target.hash == message_hash)
+				{
+					if (mask_test(target.peers, peer))
+						break;
+
+					mask_set(target.peers, peer);
+					target.expiry = time + config.user.consensus.inventory_timeout;
+					return true;
+				}
+			}
+			return false;
+		}
+		void forwarder::forget(slot_t peer)
+		{
+			if (peer == NULL_SLOT)
+				return;
+
+			umutex<std::mutex> unique(guard);
+			for (auto& target : entries)
+			{
+				if (target.expiry != 0)
+					mask_clear(target.peers, peer);
+			}
 		}
 
 		pacemaker::pacemaker(size_t bits_per_window, uint64_t window_ms) : max_bytes_per_window(bits_per_window / 8), window_size(window_ms), bytes_used_in_window(0), window_start_time(0)
@@ -347,7 +466,7 @@ namespace tangent
 			bytes_used_in_window += bytes;
 		}
 
-		relay::relay(node_type new_type, void* new_instance) : aborted(false), type(new_type), instance(new_instance), counter(0), bandwidth(1000 * 1000 * kernel::params().user.tcp.mbps_per_socket), handshake_time(kernel::params().time.now()), deferred_pull(INVALID_TASK_ID)
+		relay::relay(node_type new_type, void* new_instance, forwarder* new_inventory, slot_t new_slot) : aborted(false), inventory(new_inventory), inventory_slot(new_slot), type(new_type), instance(new_instance), counter(0), bandwidth(1000 * 1000 * kernel::params().user.tcp.mbps_per_socket), handshake_time(kernel::params().time.now()), deferred_pull(INVALID_TASK_ID)
 		{
 			VI_ASSERT(instance != nullptr, "instance should be set");
 			switch (type)
@@ -369,6 +488,9 @@ namespace tangent
 		}
 		expects_promise_rt<exchange> relay::push_query(const callable::descriptor& subject, format::variables&& args, uint64_t timeout_ms, bool forwarded)
 		{
+			if (queued_overflow())
+				return expects_promise_rt<exchange>(remote_exception::retry_later());
+
 			exchange message;
 			message.descriptor = subject.id;
 			message.type = forwarded ? exchange::side::forward : exchange::side::query;
@@ -396,17 +518,20 @@ namespace tangent
 		}
 		bool relay::push_event(const callable::descriptor& subject, format::variables&& args)
 		{
+			if (queued_overflow())
+				return false;
+
 			exchange message;
 			message.descriptor = subject.id;
 			message.type = exchange::side::event;
 			message.args = std::move(args);
-			if (!inventory.insert(message.as_inventory_hash()))
+			if (inventory != nullptr && !inventory->mark(message.as_inventory_hash(), inventory_slot))
 				return false;
 
 			push_outgoing(std::move(message));
 			return true;
 		}
-		void relay::push_event(uint32_t session, format::variables&& args)
+		void relay::push_query_response(uint32_t session, format::variables&& args)
 		{
 			exchange message;
 			message.descriptor = 0;
@@ -431,7 +556,19 @@ namespace tangent
 				VI_DEBUG("node %s message out: %s", peer_address().c_str(), message.as_tree().as_json().substr(0, 2048).c_str());
 
 			umutex<std::recursive_mutex> unique(mutex);
+			if (outgoing_count >= OUTGOING_QUEUE_SIZE)
+			{
+				aborted = true;
+				return;
+			}
+
+			++outgoing_count;
 			outgoing_messages.push(std::move(message));
+		}
+		bool relay::queued_overflow()
+		{
+			umutex<std::recursive_mutex> unique(mutex);
+			return outgoing_count >= OUTGOING_QUEUE_SIZE;
 		}
 		void relay::erase_incoming(size_t starting_bytes_to_erase)
 		{
@@ -451,6 +588,7 @@ namespace tangent
 				auto body = format::wo_stream();
 				message.store_payload(&body);
 				outgoing_messages.pop();
+				--outgoing_count;
 
 				size_t size = std::min(body.data.size(), max_size);
 				message_header header;
@@ -589,10 +727,10 @@ namespace tangent
 		}
 		const string& relay::peer_address()
 		{
+			umutex<std::recursive_mutex> unique(mutex);
 			if (!address.empty())
 				return address;
 
-			umutex<std::recursive_mutex> unique(mutex);
 			auto* stream = as_socket();
 			if (!stream)
 			{
@@ -614,10 +752,10 @@ namespace tangent
 		}
 		const string& relay::peer_service()
 		{
+			umutex<std::recursive_mutex> unique(mutex);
 			if (!service.empty())
 				return service;
 
-			umutex<std::recursive_mutex> unique(mutex);
 			auto* stream = as_socket();
 			if (!stream)
 			{
@@ -637,10 +775,6 @@ namespace tangent
 			service = to_string(*result);
 			return service;
 		}
-		forwarder& relay::get_inventory()
-		{
-			return inventory;
-		}
 		const uint8_t* relay::incoming_buffer()
 		{
 			return (const uint8_t*)incoming_data.data();
@@ -648,6 +782,10 @@ namespace tangent
 		const uint8_t* relay::outgoing_buffer()
 		{
 			return (const uint8_t*)outgoing_data.data();
+		}
+		slot_t relay::inventory_slot_id() const
+		{
+			return inventory_slot;
 		}
 		size_t relay::incoming_size()
 		{
@@ -821,6 +959,7 @@ namespace tangent
 
 		server_node::server_node() noexcept : socket_server(), control_sys("consensus-node"), runner_descriptor(nullptr)
 		{
+			VI_PANIC(kernel::params().user.consensus.max_inbound_connections + kernel::params().user.consensus.max_outbound_connections < NULL_SLOT, "reserving too many connections");
 			verifier.regress_callback = [this](const ledger::block_body& block, uint64_t tip_number)
 			{
 				if (kernel::params().user.consensus.logging)
@@ -919,6 +1058,7 @@ namespace tangent
 		{
 			control_sys.deactivate(false);
 			clear_tip(nullptr, nullptr);
+			clear_pending_neighbors();
 			{
 				single_queue<fetch_target> cancellations;
 				umutex<std::recursive_mutex> unique(sync.fetcher);
@@ -941,6 +1081,7 @@ namespace tangent
 					cancellations.pop();
 				}
 			}
+
 			umutex<std::recursive_mutex> unique(exclusive);
 		retry:
 			{
@@ -1160,6 +1301,8 @@ namespace tangent
 		}
 		expects_rt<bool> server_node::accept_attestation(const storages::attestation_tree& attestation, bool save_to_storage)
 		{
+			option<uint256_t> reannounce_hash = optional::none;
+			transactions::attestate* attestate_tx = nullptr;
 			umutex<std::recursive_mutex> unique(sync.attestation);
 			auto executor = ledger::executor_context(nullptr);
 			for (auto& [commitment_hash, proof] : attestation.proofs)
@@ -1217,25 +1360,228 @@ namespace tangent
 				auto simulation = ledger::executor_context::calculate_tx_gas(**existing);
 				auto existing_hash = (*existing)->as_hash();
 				if (simulation)
-				{
-					size_t notifications = notify_all(descriptors::broadcast_transaction_hash(), { format::variable(existing_hash) });
-					if (notifications > 0 && kernel::params().user.consensus.logging)
-						VI_DEBUG("transaction %s re-announced to %i nodes (attestate for commitment %s)", uint256_to_label(existing_hash).c_str(), (int)notifications, uint256_to_label(best_commitment_hash).c_str());
-					return false;
-				}
-
-				mempool.remove_transactions_by_hash({ existing_hash }).report("failed to remove stale attestate");
+					reannounce_hash = existing_hash;
+				else
+					mempool.remove_transactions_by_hash({ existing_hash }).report("failed to remove stale attestate");
 			}
 
-			auto* transaction = memory::init<transactions::attestate>();
-			transaction->asset = algorithm::asset::base_id_of(batch.asset);
-			transaction->set_real_proof(best_commitment_hash, std::move(proof->second), std::move(signatures->second));
+			if (!reannounce_hash)
+			{
+				auto* transaction = memory::init<transactions::attestate>();
+				transaction->asset = algorithm::asset::base_id_of(batch.asset);
+				transaction->set_real_proof(best_commitment_hash, std::move(proof->second), std::move(signatures->second));
+				attestate_tx = transaction;
+			}
+			
+			unique.unlock();
+			if (reannounce_hash)
+			{
+				size_t notifications = notify_all(descriptors::broadcast_transaction_hash(), { format::variable((uint256_t)*reannounce_hash) });
+				if (notifications > 0 && kernel::params().user.consensus.logging)
+					VI_DEBUG("transaction %s re-announced to %i nodes (attestate for commitment %s)", uint256_to_label(*reannounce_hash).c_str(), (int)notifications, uint256_to_label(best_commitment_hash).c_str());
+				return false;
+			}
 
-			auto status = accept_local_transaction(&runner_descriptor->second, transaction);
-			if (!status)
-				return status.error().message().find("attestate later") != std::string::npos ? remote_exception::retry_later() : remote_exception(status.what());
+			if (attestate_tx)
+			{
+				auto status = accept_local_transaction(&runner_descriptor->second, attestate_tx);
+				if (!status)
+					return status.error().message().find("attestate later") != std::string::npos ? remote_exception::retry_later() : remote_exception(status.what());
+			}
 
 			return false;
+		}
+		expects_lr<void> server_node::accept_block(uref<relay>&& from, ledger::block_evaluation& candidate, const ledger::block_header* fork_tip, bool verify_pow)
+		{
+			uint256_t candidate_hash = candidate.block.as_hash();
+			auto chain = storages::chainstate();
+			if (!fork_tip && chain.get_block_header_by_hash(candidate_hash))
+				return expectation::met;
+
+			option<ledger::block_header> cached_header = optional::none;
+			{
+				umutex<std::recursive_mutex> tip_unique(sync.tip);
+				if (verifier.tip_cache && verifier.tip_cache->as_hash() == candidate_hash)
+					cached_header = *verifier.tip_cache;
+			}
+
+			bool fork_branch = fork_tip != nullptr;
+			auto tip_block = fork_branch ? expects_lr<ledger::block_header>(*fork_tip) : chain.get_latest_block_header();
+			auto tip_hash = tip_block ? tip_block->as_hash() : (uint256_t)0;
+			auto best_tip_work = tip_block ? tip_block->absolute_work : (uint256_t)0;
+			auto parent_block = tip_hash == candidate.block.parent_hash ? tip_block : (cached_header ? ledger::block_header(std::move(*cached_header)) : chain.get_block_header_by_hash(candidate.block.parent_hash));
+			int64_t branch_length = (int64_t)candidate.block.number - (int64_t)(tip_block ? tip_block->number : 0);
+			branch_length = fork_branch ? std::abs(branch_length) : branch_length;
+			if (branch_length < 0 || (!fork_branch && candidate.block.absolute_work < best_tip_work))
+			{
+				/*
+													  <+> - <+> - <+> = ignore (weaker branch)
+													 /
+					<+> - <+> - <+> - <+> - <+> - <+> - <+>
+											   \
+												<+> = ignore (smaller branch)
+				*/
+				return layer_exception(stringify::text("block %s rejected: inferior fork %s (length: %" PRIi64 ")", uint256_to_label(candidate_hash).c_str(), branch_length < 0 ? "branch" : "work", branch_length));
+			}
+			else if (branch_length == 0 && tip_block && tip_hash != candidate_hash && candidate.block < *tip_block)
+			{
+				/*
+													  <+> = ignore (weaker branch)
+													 /
+					<+> - <+> - <+> - <+> - <+> - <+> - <+>
+				*/
+				return layer_exception(stringify::text("block %s rejected: inferior fork", uint256_to_label(candidate_hash).c_str()));
+			}
+			else if (!parent_block && candidate.block.number > 1)
+			{
+				auto verification = from ? candidate.block.verify_validity(parent_block.address()) : expects_lr<void>(layer_exception("unexpected orphan"));
+				if (!verification)
+					return layer_exception(stringify::text("block %s rejected: %s", uint256_to_label(candidate_hash).c_str(), verification.error().what()));
+
+				umutex<std::recursive_mutex> unique(sync.tip);
+				if (tips.find(candidate_hash) != tips.end())
+					return expectation::met;
+
+				/*
+															   <+> = better orphan (possibly)
+															  /
+					<+> - <+> - <+> - <+> - <+> - <+> ------------
+														  \
+														   <+> = weaker orphan
+				*/
+				bool better_than_prev_fork = tips.empty();
+				for (auto& fork_candidate_tip : tips)
+				{
+					if (fork_candidate_tip.second.header < candidate.block)
+					{
+						better_than_prev_fork = true;
+						break;
+					}
+				}
+				if (!better_than_prev_fork)
+					return layer_exception(stringify::text("block %s rejected: inferior fork orphan", uint256_to_label(candidate_hash).c_str()));
+
+				/*
+					<+> - <+> - <+> - <+> - <+> - <+> ----
+														  \
+														   <+> = better orphan (possibly)
+				*/
+				accept_tip(uref(from), candidate_hash, ledger::block_header(candidate.block));
+				run_fork_resolution();
+				if (kernel::params().user.consensus.logging)
+				{
+					auto distance = (uint64_t)std::abs((int64_t)(tip_block ? tip_block->number : 0) - (int64_t)candidate.block.number);
+					VI_INFO("block %s %s ahead (number: %" PRIu64 ", eta: %s)",
+						uint256_to_label(candidate_hash).c_str(), seconds_to_duration(distance * kernel::params().policy.pow.time / 1000).c_str(),
+						candidate.block.number, verifier.progress_bps > 0.1 ? seconds_to_duration(std::max<uint64_t>((uint64_t)((double)distance / verifier.progress_bps), 1)).c_str() : "N/A");
+				}
+				return expectation::met;
+			}
+
+			/*
+				<+> - <+> - <+> - <+> - <+> - <+> = possible extension
+											\
+											<+> - <+> = possible reorganization
+			*/
+			if (!try_acquire_checkpointer())
+				return layer_exception(stringify::text("block %s checkpoint skipped: checkpointer busy", uint256_to_label(candidate_hash).c_str()));
+
+			bool may_broadcast_early = from && !fork_tip;
+			bool may_broadcast_lately = !from && !fork_tip;
+			if (may_broadcast_early)
+				append_pending_tip(uref(from), candidate_hash, &candidate.block);
+
+			auto reorganization = ledger::solver_context::requires_reorganization(candidate, &verifier.cache);
+			auto validation = fork_branch && reorganization ? expects_lr<void>(expectation::met) : ledger::solver_context::validate_solved_block(verifier.solver, parent_block.address(), candidate.block, &candidate, verify_pow, &verifier.cache);
+			if (!validation)
+			{
+				release_checkpointer();
+				return layer_exception(stringify::text("block %s rejected: %s", uint256_to_label(candidate_hash).c_str(), validation.error().what()));
+			}
+			else if (reorganization && !kernel::params().user.consensus.reorganizable)
+			{
+				release_checkpointer();
+				return layer_exception(stringify::text("block %s rejected: requires deep chain reorganization (disabled)", uint256_to_label(candidate_hash).c_str()));
+			}
+
+			if (reorganization && kernel::params().user.consensus.logging)
+				VI_WARN("block %s: running chain reorganization now (number: %" PRIu64 ")", uint256_to_label(candidate_hash).c_str(), candidate.block.number);
+
+			auto mutation = ledger::solver_context::checkpoint_solved_block(verifier.solver, candidate, &verifier.cache, verifier.regress_callback);
+			if (mutation)
+			{
+				umutex<std::recursive_mutex> tip_unique(sync.tip);
+				verifier.tip_cache = ledger::block_header(candidate.block);
+				verifier.tip_cache->checksum = candidate_hash;
+			}
+
+			release_checkpointer();
+			if (may_broadcast_early)
+				erase_pending_tip(candidate_hash);
+
+			if (!mutation)
+				return layer_exception(stringify::text("block %s checkpoint failed: %s", uint256_to_label(candidate_hash).c_str(), mutation.error().what()));
+
+			if (kernel::params().user.consensus.logging)
+			{
+				int64_t precision = 5000;
+				int64_t progress = (int64_t)((double)precision * get_sync_progress(candidate.block.number, *from));
+				verifier.size += (uint64_t)((double)(uint64_t)candidate.block.gas_limit / (double)ledger::gas_cost::write_byte);
+				if (progress >= precision || verifier.progress < progress || mutation->is_fork)
+				{
+					if (mutation->is_fork)
+					{
+						VI_INFO("block %s (number: %" PRIu64 ", sync: %.2f%%, size: %.2f kb, depth: %" PRIi64 ", txns: %" PRIi64 ", state: %" PRIi64 ")\n",
+							uint256_to_label(candidate_hash).c_str(), candidate.block.number, (double)progress / ((double)precision / 100), (double)verifier.size.load() / 1000.0,
+							mutation->block_delta, mutation->transaction_delta, mutation->state_delta);
+					}
+					else if (progress < precision)
+					{
+						uint64_t time = kernel::params().time.now_cpu();
+						double bps = verifier.progress_time > 0 ? 1000.0 * (double)(candidate.block.number - verifier.progress_block_number) / (double)std::max<uint64_t>(1, time - verifier.progress_time) : 0.0;
+						VI_INFO("block %s (number: %" PRIu64 ", sync: %.2f%%, size: %.2f kb, bps: %.1f)",
+							uint256_to_label(candidate_hash).c_str(), candidate.block.number, (double)progress / ((double)precision / 100), (double)verifier.size.load() / 1000.0, bps);
+						verifier.progress_bps = verifier.progress_bps > 1.0 ? verifier.progress_bps * 0.75 + bps * 0.25 : bps;
+						verifier.progress_block_number = candidate.block.number;
+						verifier.progress_time = time;
+					}
+					else
+					{
+						VI_INFO("block %s (number: %" PRIu64 ", sync: %.2f%%, size: %.2f kb)",
+							uint256_to_label(candidate_hash).c_str(), candidate.block.number, (double)progress / ((double)precision / 100), (double)verifier.size.load() / 1000.0);
+					}
+					verifier.progress = progress;
+					verifier.size = 0;
+				}
+			}
+
+			if (events.accept_block)
+				events.accept_block(candidate_hash, candidate.block, *mutation);
+
+			for (auto& transaction : candidate.block.transactions)
+			{
+				if (transaction.receipt.successful && transaction.transaction->as_type() == transactions::attestate::as_instance_type())
+					storages::mempoolstate().remove_attestation(((transactions::attestate*)*transaction.transaction)->proof.as_attestation_hash());
+				if (find_descriptor(transaction.receipt.from))
+					accept_proposal_transaction(transaction);
+			}
+
+			if (!candidate.block.witnesses.empty())
+			{
+				umutex<std::recursive_mutex> unique(sync.tip);
+				for (auto& [asset, block_height] : candidate.block.witnesses)
+				{
+					auto it = witnesses.find(asset);
+					if (it != witnesses.end())
+						it->second = std::min(it->second, block_height);
+					else
+						witnesses[asset] = block_height;
+				}
+			}
+
+			if (may_broadcast_early || may_broadcast_lately)
+				finalize_pending_tip(std::move(from), may_broadcast_lately ? candidate_hash : uint256_t((uint8_t)0), may_broadcast_lately ? candidate.block.number : 0);
+			return expectation::met;
 		}
 		expects_lr<void> server_node::broadcast_transaction(uref<relay>&& from, uptr<ledger::transaction_message>&& candidate_tx, const algorithm::pubkeyhash_t& owner, bool bypass_cooldown)
 		{
@@ -1489,23 +1835,23 @@ namespace tangent
 		}
 		expects_rt<void> server_node::broadcast_quote_ask(uref<relay>&& from, const exchange& event)
 		{
-			if (event.args.size() != 1)
+			if (event.args.size() != 2)
 				return expects_rt<void>(remote_exception("invalid arguments"));
 
 			algorithm::asset_id asset = event.args[0].as_uint256();
 			if (!algorithm::asset::is_aux(asset))
 				return expects_rt<void>(remote_exception("invalid fee query"));
 
-			auto blockchain = algorithm::asset::base_id_of(asset);
-			{
-				umutex<std::recursive_mutex> unique(sync.fetcher);
-				auto it = fees.find(blockchain);
-				auto time = kernel::params().time.now_cpu();
-				if (it != fees.end() && it->second >= time)
-					return expects_rt<void>(expectation::met);
+			uint64_t interval = kernel::params().policy.attestation.quote_validity_time / kernel::params().policy.pow.time;
+			uint64_t known_block_number = event.args[1].as_uint64();
+			if (interval == 0 || known_block_number % interval != 0)
+				return expects_rt<void>(remote_exception("misaligned quote ask"));
 
-				fees[blockchain] = time + kernel::params().policy.attestation.quote_validity_time / 10;
-			}
+			auto chain = storages::chainstate();
+			uint64_t tip_number = chain.get_latest_block_number().or_else(0);
+			uint64_t aligned_tip = tip_number / interval * interval;
+			if (known_block_number + interval < aligned_tip || known_block_number > aligned_tip + interval)
+				return expects_rt<void>(remote_exception("stale quote ask"));
 
 			size_t notifications = notify_all_except(uref(from), descriptors::broadcast_quote_ask(), format::variables(event.args));
 			if (notifications > 0 && kernel::params().user.consensus.logging)
@@ -1517,7 +1863,7 @@ namespace tangent
 			{
 				if (descriptor.first.services.has_attestation)
 				{
-					auto attestation = executor.get_verified_validator_attestation(blockchain, account);
+					auto attestation = executor.get_verified_validator_attestation(asset, account);
 					if (attestation)
 					{
 						attester.first = &descriptor.second;
@@ -1529,62 +1875,75 @@ namespace tangent
 			}
 
 			auto* offchain = superchain::bridge::get();
-			if (!attester.first || !offchain->has_network(blockchain, true))
+			if (!attester.first || !offchain->has_network(asset, true))
 				return expects_rt<void>(expectation::met);
 
-			auto chain = storages::chainstate();
 			auto mempool = storages::mempoolstate();
 			if (mempool.has_quote(asset, attester.first->public_key_hash, chain.get_latest_block_number().or_else(0)).or_else(false))
 				return expects_rt<void>(expectation::met);
 
 			auto filter = storages::result_filter::greater(0, -1);
-			auto candidates = storages::chainstate().get_multiforms_by_column_filter(states::bridge_balance::as_instance_type(), nullptr, states::bridge_balance::as_instance_column(asset), filter, 0, storages::result_range_window(0, 1));
+			auto candidates = chain.get_multiforms_by_column_filter(states::bridge_balance::as_instance_type(), nullptr, states::bridge_balance::as_instance_column(asset), filter, 0, storages::result_range_window(0, 1));
 			if (!candidates || candidates->empty())
 				return expects_rt<void>(expectation::met);
 
 			auto* from_bridge = (states::bridge_balance*)candidates->front().ptr();
-			auto to_wallet = offchain->compute_wallet(blockchain, (uint8_t*)"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 32);
-			if (!from_bridge || !to_wallet || to_wallet->encoded_addresses.empty())
+			auto to_wallet = offchain->compute_wallet(asset, (uint8_t*)"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 32);
+			if (!from_bridge || !to_wallet || to_wallet->encoded_addresses.empty() || !from_bridge->supply.is_positive())
 				return expects_rt<void>(expectation::met);
 
-			auto transfer = superchain::value_transfer(asset, to_wallet->encoded_addresses.begin()->second, from_bridge->supply * 0.25);
-			if (!transfer.value.is_positive())
-				return expects_rt<void>(expectation::met);
-
+			auto supply = std::move(from_bridge->supply);
 			auto from_link = superchain::wallet_link::from_hash(from_bridge->bridge_hash);
-			offchain->estimate_transaction_fee(asset, from_link, transfer).when([this, asset, attester = std::move(attester)](expects_rt<superchain::computed_fee>&& estimate) mutable
+			auto address = to_wallet->encoded_addresses.begin()->second;
+			auto expiry_block_number = chain.get_latest_block_number().or_else(0) + kernel::params().policy.attestation.quote_validity_time / kernel::params().policy.pow.time;
+			coasync<void>([this, offchain, asset, expiry_block_number, from_link = std::move(from_link), address = std::move(address), supply = std::move(supply), attester = std::move(attester)]() mutable -> promise<void>
 			{
 				auto& [signer, min_fee] = attester;
-				auto network_fee = estimate ? estimate->get_max_fee() * kernel::params().policy.attestation.quote_headroom : decimal::nan();
-				superchain::approved_fee quote;
-				quote.asset = asset;
-				quote.fee = network_fee.is_positive() ? std::max(network_fee, min_fee) : decimal::nan();
-				quote.expiry_block_number = storages::chainstate().get_latest_block_number().or_else(0) + kernel::params().policy.attestation.quote_validity_time / kernel::params().policy.pow.time;
-				if (quote.fee.is_positive() && quote.sign(signer->secret_key))
+				bool cascade = superchain::utxo_translation_unit::from(offchain->get_network(asset)) != nullptr;
+				uint8_t level = cascade ? superchain::approved_fee::level_of_amount(supply) : 0;
+				do
 				{
-					auto mempool = storages::mempoolstate();
-					size_t notifications = mempool.add_quote(quote, signer->public_key_hash) ? notify_all(descriptors::broadcast_quote(), { format::variable(quote.as_message().data) }) : 0;
-					if (notifications > 0 && kernel::params().user.consensus.logging)
-						VI_DEBUG("%s quote broadcasted to %i nodes", algorithm::asset::blockchain_of(asset).c_str(), (int)notifications);
-				}
-				else if (estimate)
-					estimate = remote_exception("failed to attest");
+					auto estimate = coawait(offchain->estimate_transaction_fee(asset, from_link, superchain::value_transfer(asset, address, decimal(cascade ? std::min(superchain::approved_fee::cap_of_level(level), supply) : supply))));
+					auto network_fee = estimate ? estimate->get_max_fee() * kernel::params().policy.attestation.quote_headroom : decimal::nan();
+					auto quote = superchain::approved_fee(asset, decimal(network_fee.is_positive() ? std::move(std::max(network_fee, min_fee)) : decimal::nan()), expiry_block_number);
+					bool floored = estimate && network_fee.is_positive() && min_fee >= network_fee;
+					if (quote.fee.is_positive() && quote.sign(signer->secret_key))
+					{
+						auto mempool = storages::mempoolstate();
+						uint8_t min_level = cascade && floored ? 1 : level;
+						for (uint16_t i = min_level; i <= level; i++)
+							mempool.add_quote(quote, signer->public_key_hash, (uint8_t)i).report("failed to add a fee quote");
 
-				if (kernel::params().user.consensus.logging)
-				{
-					auto symbol = algorithm::asset::blockchain_of(asset);
-					if (estimate)
-						VI_INFO("%s bridge fee attestation: %s %s (block: %" PRIu64 ", network: %s)", symbol.c_str(), quote.fee.to_string().c_str(), symbol.c_str(), quote.expiry_block_number, network_fee.to_string().c_str());
-					else
-						VI_WARN("%s bridge fee attestation failed: %s", symbol.c_str(), estimate.what().c_str());
-				}
+						size_t notifications = notify_all(descriptors::broadcast_quote(), { format::variable(quote.as_message().data), format::variable(min_level), format::variable(level) });
+						if (notifications > 0 && kernel::params().user.consensus.logging)
+							VI_DEBUG("%s quote broadcasted to %i nodes (levels: %i-%i)", algorithm::asset::blockchain_of(asset).c_str(), (int)notifications, (int)min_level, (int)level);
+					}
+					else if (estimate)
+						estimate = remote_exception("failed to attest");
+
+					if (kernel::params().user.consensus.logging)
+					{
+						auto symbol = algorithm::asset::blockchain_of(asset);
+						if (estimate)
+							VI_INFO("%s bridge fee attestation: %s %s (block: %" PRIu64 ", level: %i, network: %s)", symbol.c_str(), quote.fee.to_string().c_str(), symbol.c_str(), quote.expiry_block_number, (int)level, network_fee.to_string().c_str());
+						else
+							VI_WARN("%s bridge fee attestation failed: %s (level: %i)", symbol.c_str(), estimate.what().c_str(), (int)level);
+					}
+
+					level = floored || !cascade ? 0 : (level - 1);
+				} while (level > 0);
+				coreturn_void;
 			});
 			return expects_rt<void>(expectation::met);
 		}
 		expects_rt<void> server_node::broadcast_quote(uref<relay>&& from, const exchange& event)
 		{
-			if (event.args.size() != 1)
+			if (event.args.size() != 3)
 				return expects_rt<void>(remote_exception("invalid arguments"));
+
+			uint8_t min_level = event.args[1].as_uint8(), max_level = event.args[2].as_uint8();
+			if (min_level > max_level)
+				return expects_rt<void>(remote_exception("invalid quote levels"));
 
 			superchain::approved_fee quote;
 			format::ro_stream message = format::ro_stream(event.args[0].as_string());
@@ -1599,8 +1958,11 @@ namespace tangent
 			if (!executor.get_verified_validator_attestation(quote.asset, attester))
 				return expects_rt<void>(remote_exception("invalid attester"));
 
-			auto mempool = storages::mempoolstate();
-			size_t notifications = mempool.add_quote(quote, attester) ? notify_all_except(std::move(from), descriptors::broadcast_quote(), format::variables(event.args)) : 0;
+			auto mempool = storages::mempoolstate(); bool propagate = false;
+			for (uint16_t i = min_level; i <= max_level; i++)
+				propagate = mempool.add_quote(quote, attester, (uint8_t)i) || propagate;
+
+			size_t notifications = propagate ? notify_all_except(std::move(from), descriptors::broadcast_quote(), format::variables(event.args)) : 0;
 			if (notifications > 0 && kernel::params().user.consensus.logging)
 				VI_DEBUG("%s quote broadcasted to %i nodes", algorithm::asset::blockchain_of(quote.asset).c_str(), (int)notifications);
 			return expects_rt<void>(expectation::met);
@@ -1713,7 +2075,7 @@ namespace tangent
 		}
 		expects_rt<format::variables> server_node::perform_discovery(uref<relay>&& from, const exchange& event, bool is_acknowledgement)
 		{
-			if (event.args.size() < 3)
+			if (event.args.size() < 3 || event.args.size() > 3 + kernel::params().message.hashes_per_query)
 				return remote_exception("invalid arguments");
 
 			auto block_handle = exchange();
@@ -1726,13 +2088,18 @@ namespace tangent
 
 			auto mempool = storages::mempoolstate();
 			auto address = text_address_to_socket_address(event.args[0].as_string(), false);
-			if (address)
+			if (address && from->type_of() == node_type::inbound)
 			{
-				for (auto& [account, descriptor] : descriptors)
+				auto observed = text_address_to_socket_address(from->peer_address(), false);
+				auto claimed_ip = address->get_ip_address().or_else(string());
+				if (observed && !claimed_ip.empty() && claimed_ip == observed->get_ip_address().or_else(string()))
 				{
-					bool runner = runner_descriptor == &descriptor;
-					descriptor.first.address = std::move(*address);
-					accept_node(mempool, descriptor, runner ? node_category::runner : node_category::neighbor).report("mempool local node save failed");
+					for (auto& [account, descriptor] : descriptors)
+					{
+						bool runner = runner_descriptor == &descriptor;
+						descriptor.first.address = *address;
+						accept_node(mempool, descriptor, runner ? node_category::runner : node_category::neighbor).report("mempool local node save failed");
+					}
 				}
 			}
 
@@ -1948,9 +2315,9 @@ namespace tangent
 			if (yielding_delegator.public_key_hash.empty() || yielding_delegator.public_key_hash != sender)
 				return remote_exception("invalid delegator");
 
+			auto chain = storages::chainstate();
 			auto block_number = packed->at(1).as_uint64();
-			auto chainstate = storages::chainstate();
-			if (chainstate.get_latest_block_number().or_else(1) < block_number)
+			if (chain.get_latest_block_number().or_else(1) < block_number)
 				return remote_exception::retry_later();
 
 			uint32_t delegation_type;
@@ -1989,21 +2356,174 @@ namespace tangent
 
 			return pack_private_result({ format::variable(execution->data) }, yielding_delegator.public_key, event.callee->second.secret_key);
 		}
-		expects_rt<vector<superchain::approved_fee>> server_node::query_bridge_fee_estimates(const algorithm::asset_id& asset)
+		expects_rt<vector<std::pair<superchain::approved_fee, uint8_t>>> server_node::query_bridge_fee_estimates(const algorithm::asset_id& asset, const option<decimal>& amount)
 		{
-			auto quotes = storages::mempoolstate().get_quotes(asset, storages::chainstate().get_latest_block_number().or_else(0));
+			auto chain = storages::chainstate();
+			auto quotes = storages::mempoolstate().get_quotes(asset, chain.get_latest_block_number().or_else(0));
 			if (!quotes)
-				return expects_rt<vector<superchain::approved_fee>>(remote_exception(std::move(quotes.error().message())));
-			else if (!quotes->empty())
-				return expects_rt<vector<superchain::approved_fee>>(std::move(*quotes));
+				return expects_rt<vector<std::pair<superchain::approved_fee, uint8_t>>>(remote_exception(std::move(quotes.error().message())));
 
+			if (amount && amount->is_positive())
+			{
+				auto level = superchain::approved_fee::level_of_amount(*amount);
+				quotes->erase(std::remove_if(quotes->begin(), quotes->end(), [&](const std::pair<superchain::approved_fee, uint8_t>& x) { return x.second != level && x.second != 0; }), quotes->end());
+				if (quotes->empty())
+				{
+					auto filter = storages::result_filter::greater(0, -1);
+					auto candidates = chain.get_multiforms_by_column_filter(states::bridge_balance::as_instance_type(), nullptr, states::bridge_balance::as_instance_column(asset), filter, 0, storages::result_range_window(0, 1));
+					auto* bridge = candidates && !candidates->empty() ? (states::bridge_balance*)candidates->front().ptr() : nullptr;
+					if (!bridge || level > superchain::approved_fee::level_of_amount(bridge->supply))
+						return expects_rt<vector<std::pair<superchain::approved_fee, uint8_t>>>(remote_exception("excessive estimation amount"));
+				}
+			}
+			if (!quotes->empty())
+				return expects_rt<vector<std::pair<superchain::approved_fee, uint8_t>>>(std::move(*quotes));
+
+			uint64_t interval = kernel::params().policy.attestation.quote_validity_time / kernel::params().policy.pow.time;
+			uint64_t block_number = chain.get_latest_block_number().or_else(0);
 			exchange message;
 			message.args.push_back(format::variable(asset));
+			message.args.push_back(format::variable(interval > 0 ? (block_number / interval) * interval : block_number));
+			
 			auto status = broadcast_quote_ask(nullptr, message);
 			if (!status)
-				return expects_rt<vector<superchain::approved_fee>>(std::move(status.error()));
+				return expects_rt<vector<std::pair<superchain::approved_fee, uint8_t>>>(std::move(status.error()));
 
-			return expects_rt<vector<superchain::approved_fee>>(remote_exception::retry_later());
+			return expects_rt<vector<std::pair<superchain::approved_fee, uint8_t>>>(remote_exception::retry_later());
+		}
+		expects_rt<ledger::block_body> server_node::produce_block()
+		{
+			if (!has_production())
+				return remote_exception("no active block producer account; send a setup transaction to enable block production");
+			else if (is_syncing() || !sync.producer.try_lock())
+				return remote_exception::retry_later();
+
+			std::lock_guard<std::mutex> guard(sync.producer, std::adopt_lock);
+			auto chain = storages::chainstate();
+			auto mempool = storages::mempoolstate();
+			auto accounts = [this](size_t index)
+			{
+				if (index == 0)
+					return &runner_descriptor->second;
+
+				auto it = descriptors.begin();
+				std::advance(it, std::min(descriptors.size(), index - 1));
+				if (it != descriptors.end() && it->second.second.public_key_hash == runner_descriptor->second.public_key_hash)
+					++it;
+
+				return it != descriptors.end() ? &it->second.second : nullptr;
+			};
+			auto tip = chain.get_latest_block_header();
+			prover.solver = ledger::solver_context();
+			prover.rewards.clear();
+			prover.hashes.clear();
+
+			auto priority = prover.solver.apply_validator_state(accounts, tip.address());
+			auto position = priority.or_else(kernel::params().policy.production.max_per_block);
+			if (tip && position > 0)
+			{
+				auto current_solution_time = std::max<int64_t>(((int64_t)kernel::params().time.now() - (int64_t)tip->evaluation_time) - (int64_t)kernel::params().policy.pow.time * 2, 0);
+				for (uint64_t i = 0; i <= position; i++)
+				{
+					auto other_node_solution_time = (int64_t)((double)kernel::params().policy.pow.time * algorithm::wesolowski::adjustment_scaling(i).to_double());
+					if (current_solution_time < other_node_solution_time)
+						return remote_exception::retry_after((uint64_t)(other_node_solution_time - current_solution_time));
+				}
+			}
+
+			auto span = (double)(tip ? tip->get_slot_proof_duration_average() : 0) * algorithm::wesolowski::adjustment_scaling(position).to_double();
+			if (kernel::params().user.consensus.logging && position > 0)
+				VI_WARN("block solver: performing %s (number: %" PRIu64 ", leader: %" PRIu64 ", work: <%.2f sec.)", position < kernel::params().policy.production.max_per_block ? "leader fallback" : "network recovery", tip ? tip->number + 1 : 1, position + 1, span / 1000.0);
+
+			auto evaluation = prover.solver.block_evalution_prepare(prover.solution);
+			if (!evaluation)
+			{
+				if (kernel::params().user.consensus.logging)
+					VI_WARN("block %s dropped: %s (number: %" PRIu64", txns: %" PRIu64 ", pos: %" PRIu64 ", work: <%.2f sec.)", uint256_to_label(prover.solution.block.as_hash()).c_str(), evaluation.error().what(), prover.solution.block.number, (uint64_t)prover.solution.block.transactions.size(), position + 1, span / 1000.0);
+				return remote_exception(std::move(evaluation.error().message()));
+			}
+
+			bool queue_wait = false;
+			auto queue_paid = prover.solver.state.executor.options & (uint8_t)ledger::executor_context::flags::congestion;
+			auto queue_flags = (uint8_t)storages::transaction_queue::commitment | (uint8_t)(queue_paid ? storages::transaction_queue::standard_paid : storages::transaction_queue::standard_all);
+			auto solution_account = prover.solver.state.public_key_hash;
+			auto solution_challenge = ledger::block_header(prover.solution.block);
+			auto solution_task = expects_promise_lr<ledger::block_header>();
+			schedule::get()->set_task([this, solution_task, solution_account, solution_challenge = std::move(solution_challenge)]() mutable
+			{
+				{
+					auto result = solution_challenge.solve(solution_account) ? expects_lr<ledger::block_header>(std::move(solution_challenge)) : expects_lr<ledger::block_header>(layer_exception("failed to solve a block"));
+					std::lock_guard<std::mutex> barrier(sync.pool);
+					solution_task.set(std::move(result));
+				}
+				sync.pool_cv.notify_all();
+			}, false);
+			while (evaluation && is_active() && solution_task.is_pending())
+			{
+				std::unique_lock<std::mutex> unique(sync.pool);
+				if (queue_wait)
+					sync.pool_cv.wait_for(unique, std::chrono::milliseconds(100), [this, &solution_task]() { return !is_active() || !solution_task.is_pending() || prover.pooled; });
+				else
+					queue_wait = true;
+				prover.pooled = false;
+				unique.unlock();
+
+				size_t offsets[2] = { 0, 0 };
+				while (prover.solver.can_accept_more_transactions())
+				{
+					auto queue = mempool.get_transactions_by_quality(queue_flags, offsets, ELEMENTS_BULK, &prover.hashes);
+					if (!queue)
+						break;
+
+					prover.solver.try_include_transactions(std::move(*queue));
+				}
+
+				evaluation = prover.solver.block_evalution_update(prover.solution, prover.rewards);
+				if (evaluation && position > 0 && ledger::solver_context().apply_validator_state(accounts, (tip = chain.get_latest_block_header()).address()).or_else(kernel::params().policy.production.max_per_block) == 0)
+				{
+					evaluation = layer_exception("orphaned");
+					break;
+				}
+			}
+
+			auto solution = !evaluation || solution_task.is_pending() ? expects_lr<ledger::block_header>(layer_exception("orphaned")) : solution_task.get();
+			if (solution)
+			{
+				prover.solution.block.proof = std::move(solution->proof);
+				prover.solution.block.evaluation_time = solution->evaluation_time;
+			}
+
+			tip = chain.get_latest_block_header();
+			bool outpaced = !is_active() || (tip && prover.solution.block.number <= tip->number && (prover.solution.block.number != tip->number || prover.solution.block.priority > tip->priority));
+			if (outpaced || !solution || !evaluation)
+			{
+				auto error = outpaced ? remote_exception::retry_later() : remote_exception(evaluation ? std::move(solution.error().message()) : std::move(evaluation.error().message()));
+				if (kernel::params().user.consensus.logging)
+					VI_WARN("block %s dropped: %s (number: %" PRIu64", txns: %" PRIu64 ", pos: %" PRIu64 ", work: <%.2f sec.)", uint256_to_label(prover.solution.block.as_hash()).c_str(), error.what(), prover.solution.block.number, (uint64_t)prover.solution.block.transactions.size(), position + 1, span / 1000.0);
+				return error;
+			}
+
+			evaluation = prover.solver.block_evalution_finalize(prover.solution, prover.rewards);
+			evaluation = evaluation ? prover.solver.block_solution_sign(prover.solution) : evaluation;
+			if (!evaluation)
+			{
+				if (kernel::params().user.consensus.logging && evaluation.error().message() != "block producer must be active")
+					VI_WARN("block %s dropped: %s (number: %" PRIu64", txns: %" PRIu64 ", pos: %" PRIu64 ", work: <%.2f sec.)", uint256_to_label(prover.solution.block.as_hash()).c_str(), evaluation.error().what(), prover.solution.block.number, (uint64_t)prover.solution.block.transactions.size(), position + 1, span / 1000.0);
+				return remote_exception(std::move(evaluation.error().message()));
+			}
+
+			auto verification = accept_block(nullptr, prover.solution, 0);
+			if (!verification)
+			{
+				if (kernel::params().user.consensus.logging)
+					VI_WARN("%s", verification.error().what());
+				return remote_exception(std::move(verification.error().message()));
+			}
+			else if (kernel::params().user.consensus.logging)
+				VI_INFO("block %s solved (number: %" PRIu64", txns: %" PRIu64 ", pos: %" PRIu64 ", work: <%.2f sec.)", uint256_to_label(prover.solution.block.as_hash()).c_str(), prover.solution.block.number, (uint64_t)prover.solution.block.transactions.size(), position + 1, span / 1000.0);
+
+			prover.solver.erase_failed_transactions();
+			return expects_rt<ledger::block_body>(std::move(prover.solution.block));
 		}
 		expects_lr<void> server_node::dispatch_transaction_logs(const algorithm::asset_id& asset, superchain::transaction_logs&& logs)
 		{
@@ -2078,7 +2598,7 @@ namespace tangent
 		}
 		expects_lr<socket_address> server_node::find_node_from_mempool()
 		{
-			size_t offset = 0;
+			size_t offset = 0, unknown_misses = 0;
 			auto mempool = storages::mempoolstate();
 		retry_known_node:
 			auto known_node = mempool.get_closest_node(offset);
@@ -2088,9 +2608,15 @@ namespace tangent
 				auto unknown_node = mempool.sample_connectable_unknown_node();
 				if (!unknown_node)
 					return layer_exception("no candidate found in mempool");
-				else if (connected_to_ip_address(*unknown_node))
+				
+				if (connected_to_ip_address(*unknown_node))
+				{
+					if (++unknown_misses >= MEMPOOL_RETRY_SIZE)
+						return layer_exception("no candidate found in mempool");
 					goto retry_unknown_node;
+				}
 
+				unknown_misses = 0;
 				if (kernel::params().user.consensus.logging)
 					VI_INFO("node %s:%i channel: try unknown", unknown_node->get_ip_address().or_else(string("[bad_address]")).c_str(), (int)unknown_node->get_ip_port().or_else(0));
 
@@ -2191,16 +2717,17 @@ namespace tangent
 				if (!algorithm::signing::sign(handshake_proof(node, system_time, &node_message), wallet.secret_key, signature))
 					coreturn remote_exception("proof generation error");
 
-				uref<relay> next = new relay(node_type::outbound, candidate.reset());
+				umutex<std::recursive_mutex> unique(exclusive);
+				uref<relay> next = new relay(node_type::outbound, candidate.reset(), &inventory, claim_peer_index());
 				append_node(uref(next));
+				unique.unlock();
+				cospawn([this, next]() mutable { pull_messages(std::move(next)); });
 
 				auto abort = [&](remote_exception&& exception) -> remote_exception&&
 				{
 					next->close_channel(exception.message(), this);
 					return std::move(exception);
 				};
-				cospawn([this, next]() mutable { pull_messages(std::move(next)); });
-
 				auto result = coawait(query(uref(next), descriptors::perform_handshake(), { format::variable(node_message), format::variable(system_time), format::variable(signature.optimized_view()) }, kernel::params().user.tcp.timeout, true));
 				if (!result)
 					coreturn abort(std::move(result.error()));
@@ -2374,11 +2901,10 @@ namespace tangent
 				neighbors[id] = resolver;
 				unique.unlock();
 
-				task_id timeout = INVALID_TASK_ID;
 				if (notify_all(descriptors::broadcast_intermediary(), std::move(args)) > 0)
 				{
 					auto* queue = schedule::get();
-					timeout = queue->set_timeout(kernel::params().user.tcp.timeout, std::bind(resolver, algorithm::pubkey_t(), 0));
+					task_id timeout = queue->set_timeout(kernel::params().user.tcp.timeout, std::bind(resolver, algorithm::pubkey_t(), 0));
 					coawait(std::move(task));
 					queue->clear_timeout(timeout);
 				}
@@ -2856,6 +3382,7 @@ namespace tangent
 					header.checksum = os::hw::to_endianness(os::hw::endian::little, header.checksum);
 					if (header.magic != kernel::params().message.packet_magic || header.length > kernel::params().message.max_body_size)
 					{
+						unique.unlock();
 					abort:
 						from->report_call(-1, message_latency);
 						disconnect_node(std::move(from), "invalid message header");
@@ -2893,12 +3420,10 @@ namespace tangent
 							if (it == callables.end() || !it->second.event || (it->second.guarded && !from->as_descriptor()))
 								goto abort;
 
-							uint256_t hash = message.as_inventory_hash();
-							umutex<std::mutex> unique_inventory(sync.inventory);
-							if (!inventory.insert(hash) || !from->get_inventory().insert(hash))
+							auto slot = from->inventory_slot_id();
+							if (slot != NULL_SLOT && !inventory.insert(message.as_inventory_hash(true), slot))
 								break;
 
-							unique_inventory.unlock();
 							auto result = it->second.event(this, uref(from), message);
 							if (!result && kernel::params().user.consensus.logging)
 								VI_WARN("node %s event \"%.*s\" error: %s", from->peer_address().c_str(), (int)it->second.name.size(), it->second.name.data(), result.what().c_str());
@@ -2920,7 +3445,7 @@ namespace tangent
 								else if (result && kernel::params().user.consensus.logging)
 									VI_DEBUG("node %s query \"%.*s\" result out: %s", from->peer_address().c_str(), (int)it->second.name.size(), it->second.name.data(), result ? result->empty() ? "OK" : stringify::text("[%i values]", (int)result->size()).c_str() : "RETRY");
 
-								from->push_event(message.session, pack_query_result(result));
+								from->push_query_response(message.session, pack_query_result(result));
 								push_messages(uref(from));
 							}
 							else if (it->second.async_query)
@@ -2933,7 +3458,7 @@ namespace tangent
 									else if (result && kernel::params().user.consensus.logging)
 										VI_DEBUG("node %s async-query \"%.*s\" result out: %s", from->peer_address().c_str(), (int)name.size(), name.data(), result ? result->empty() ? "OK" : stringify::text("[%i values]", (int)result->size()).c_str() : "RETRY");
 
-									from->push_event(message.session, pack_query_result(result));
+									from->push_query_response(message.session, pack_query_result(result));
 									push_messages(uref(from));
 									from->report_call(1, message_latency);
 									from->deferred_pull = schedule::get()->set_timeout(next_pull_time, [this, from]() mutable
@@ -2972,7 +3497,7 @@ namespace tangent
 									else if (result && kernel::params().user.consensus.logging)
 										VI_DEBUG("node %s forward query \"%.*s\" result out: %s", from->peer_address().c_str(), (int)it->second.name.size(), it->second.name.data(), result ? result->empty() ? "OK" : stringify::text("[%i values]", (int)result->size()).c_str() : "RETRY");
 
-									from->push_event(message.session, pack_query_result(result));
+									from->push_query_response(message.session, pack_query_result(result));
 									push_messages(uref(from));
 								}
 								else if (it->second.async_query)
@@ -2985,7 +3510,7 @@ namespace tangent
 										else if (result && kernel::params().user.consensus.logging)
 											VI_DEBUG("node %s forward async-query \"%.*s\" result out: %s", from->peer_address().c_str(), (int)name.size(), name.data(), result ? result->empty() ? "OK" : stringify::text("[%i values]", (int)result->size()).c_str() : "RETRY");
 
-										from->push_event(message.session, pack_query_result(result));
+										from->push_query_response(message.session, pack_query_result(result));
 										push_messages(uref(from));
 										from->report_call(1, message_latency);
 										from->deferred_pull = schedule::get()->set_timeout(next_pull_time, [this, from]() mutable
@@ -3007,13 +3532,13 @@ namespace tangent
 									else if (result && kernel::params().user.consensus.logging)
 										VI_DEBUG("node %s forward query \"%.*s\" result in: %s", from->peer_address().c_str(), (int)method.name.size(), method.name.data(), result ? result->args.empty() ? "OK" : stringify::text("[%i values]", (int)result->args.size()).c_str() : "RETRY");
 
-									from->push_event(session, pack_query_result(result ? expects_rt<format::variables>(std::move(result->args)) : expects_rt<format::variables>(result.error())));
+									from->push_query_response(session, pack_query_result(result ? expects_rt<format::variables>(std::move(result->args)) : expects_rt<format::variables>(result.error())));
 									push_messages(std::move(from));
 								});
 							}
 							else
 							{
-								from->push_event(session, pack_query_result(remote_exception::retry_later()));
+								from->push_query_response(session, pack_query_result(remote_exception::retry_later()));
 								push_messages(std::move(from));
 							}
 							break;
@@ -3119,6 +3644,7 @@ namespace tangent
 				return;
 
 			uref<relay> from = std::move(it->second);
+			inventory.forget(from->inventory_slot_id());
 			nodes.erase(it);
 			unique.unlock();
 			clear_tip(*from, nullptr);
@@ -3145,8 +3671,10 @@ namespace tangent
 				return pull_messages(std::move(from));
 
 			node->stream->set_io_timeout(kernel::params().user.tcp.timeout);
-			from = new relay(node_type::inbound, node);
+			umutex<std::recursive_mutex> unique(exclusive);
+			from = new relay(node_type::inbound, node, &inventory, claim_peer_index());
 			append_node(uref(from));
+			unique.unlock();
 			pull_messages(std::move(from));
 		}
 		bool server_node::try_acquire_checkpointer()
@@ -3281,7 +3809,7 @@ namespace tangent
 					passed_candidates.insert(ip_address);
 				}
 
-				control_sys.upsert_timeout(TASK_BLOCK_DISPATCHER "_runner", kernel::params().policy.pow.time, [this]() { run_block_dispatcher(); });
+				finalize_pending_tip(nullptr, uint256_t(0), 0);
 				coreturn_void;
 			});
 		}
@@ -3397,7 +3925,6 @@ namespace tangent
 				for (auto& [account, descriptor] : descriptors)
 					fill_node_services(descriptor);
 
-				run_block_production();
 				coreturn_void;
 			});
 		}
@@ -3420,7 +3947,7 @@ namespace tangent
 						VI_INFO("mempool attestation vacuum: OK (attestations: %i)", (int)*expirations);
 				}
 				else if (kernel::params().user.consensus.logging)
-					VI_ERR("mempool attestation vacuum failed: ", expirations.what().c_str());
+					VI_ERR("mempool attestation vacuum failed: %s", expirations.what().c_str());
 
 			next_attestation:
 				auto attestation_hash = mempool.pull_best_attestation_hash(offset);
@@ -3478,130 +4005,23 @@ namespace tangent
 
 			return control_sys.task_if_none(TASK_BLOCK_PRODUCTION, [this](system_task&&)
 			{
-				auto chain = storages::chainstate();
-				auto mempool = storages::mempoolstate();
-				auto accounts = [this](size_t index)
-				{
-					if (index == 0)
-						return &runner_descriptor->second;
-
-					auto it = descriptors.begin();
-					std::advance(it, std::min(descriptors.size(), index - 1));
-					if (it != descriptors.end() && it->second.second.public_key_hash == runner_descriptor->second.public_key_hash)
-						++it;
-
-					return it != descriptors.end() ? &it->second.second : nullptr;
-				};
 			next_block:
-				if (!is_active() || (kernel::params().is(network_type::regtest) && !mempool.get_transactions_count().or_else(0)))
+				if (!is_active() || (kernel::params().is(network_type::regtest) && !storages::mempoolstate().get_transactions_count().or_else(0)))
 					return;
 
-				auto tip = chain.get_latest_block_header();
-				prover.solver = ledger::solver_context();
-				prover.rewards.clear();
-				prover.hashes.clear();
-
-				auto priority = prover.solver.apply_validator_state(accounts, tip.address());
-				auto position = priority.or_else(kernel::params().policy.production.max_per_block);
-				if (position > 0 && tip)
-				{
-					auto current_solution_time = std::max<int64_t>(((int64_t)kernel::params().time.now() - (int64_t)tip->evaluation_time) - (int64_t)kernel::params().policy.pow.time * 2, 0);
-					for (uint64_t i = 0; i <= position; i++)
-					{
-						auto other_node_solution_time = (int64_t)((double)kernel::params().policy.pow.time * algorithm::wesolowski::adjustment_scaling(i).to_double());
-						if (current_solution_time >= other_node_solution_time)
-							continue;
-
-						prover.queued = true;
-						control_sys.upsert_timeout(TASK_BLOCK_PRODUCTION, (uint64_t)(other_node_solution_time - current_solution_time), [this]()
-						{
-							control_sys.clear_timeout(TASK_BLOCK_PRODUCTION);
-							run_block_production();
-						});
-						return;
-					}
-				}
-
-				auto span = (double)(tip ? tip->get_slot_proof_duration_average() : 0) * algorithm::wesolowski::adjustment_scaling(position).to_double();
-				if (kernel::params().user.consensus.logging && position > 0)
-					VI_WARN("block solver: performing %s (number: %" PRIu64 ", leader: %" PRIu64 ", work: <%.2f sec.)", position < kernel::params().policy.production.max_per_block ? "leader fallback" : "network recovery", tip ? tip->number + 1 : 1, position + 1, span / 1000.0);
-
-				auto evaluation = prover.solver.block_evalution_prepare(prover.solution);
-				if (!evaluation)
+				auto produced_block = produce_block();
+				if (produced_block)
 					goto next_block;
 
-				bool queue_wait = false;
-				auto queue_paid = prover.solver.state.executor.options & (uint8_t)ledger::executor_context::flags::congestion;
-				auto queue_flags = (uint8_t)storages::transaction_queue::commitment | (uint8_t)(queue_paid ? storages::transaction_queue::standard_paid : storages::transaction_queue::standard_all);
-				auto solution_account = prover.solver.state.public_key_hash;
-				auto solution_challenge = ledger::block_header(prover.solution.block);
-				auto solution_task = cotask<expects_lr<ledger::block_header>>([solution_challenge = std::move(solution_challenge), solution_account, this]() mutable -> expects_lr<ledger::block_header>
+				auto& action = produced_block.error();
+				if (!action.is_retry_after())
+					return;
+
+				prover.queued = control_sys.upsert_timeout(TASK_BLOCK_PRODUCTION, action.retry_after_timestamp(), [this]()
 				{
-					auto result = solution_challenge.solve(solution_account) ? expects_lr<ledger::block_header>(std::move(solution_challenge)) : expects_lr<ledger::block_header>(layer_exception("failed to solve a block"));
-					sync.pool_cv.notify_all();
-					return result;
-				}, false);
-				while (evaluation && is_active() && solution_task.is_pending())
-				{
-					std::unique_lock<std::mutex> unique(sync.pool);
-					if (queue_wait)
-						sync.pool_cv.wait_for(unique, std::chrono::milliseconds(100), [this, &solution_task]() { return !is_active() || !solution_task.is_pending() || prover.pooled; });		
-					queue_wait = true;
-					prover.pooled = false;
-					unique.unlock();
-
-					size_t offsets[2] = { 0, 0 };
-					while (prover.solver.can_accept_more_transactions())
-					{
-						auto queue = mempool.get_transactions_by_quality(queue_flags, offsets, ELEMENTS_BULK, &prover.hashes);
-						if (!queue)
-							break;
-
-						prover.solver.try_include_transactions(std::move(*queue));
-					}
-
-					evaluation = prover.solver.block_evalution_update(prover.solution, prover.rewards);
-					if (evaluation && position > 0 && ledger::solver_context().apply_validator_state(accounts, (tip = chain.get_latest_block_header()).address()).or_else(kernel::params().policy.production.max_per_block) == 0)
-					{
-						evaluation = layer_exception("orphaned");
-						break;
-					}
-				}
-
-				auto solution = !evaluation || solution_task.is_pending() ? expects_lr<ledger::block_header>(layer_exception("orphaned")) : solution_task.get();
-				if (solution)
-				{
-					prover.solution.block.proof = std::move(solution->proof);
-					prover.solution.block.evaluation_time = solution->evaluation_time;
-				}
-
-				tip = chain.get_latest_block_header();
-				if (is_active() && solution && evaluation && (!tip || prover.solution.block.number > tip->number || (prover.solution.block.number == tip->number && prover.solution.block.priority < tip->priority)))
-				{
-					evaluation = prover.solver.block_evalution_finalize(prover.solution, prover.rewards);
-					evaluation = evaluation ? prover.solver.block_solution_sign(prover.solution) : evaluation;
-					auto verification = evaluation ? accept_block(nullptr, prover.solution, 0) : evaluation;
-					if (evaluation && verification)
-					{
-						if (kernel::params().user.consensus.logging)
-							VI_INFO("block %s solved (number: %" PRIu64", txns: %" PRIu64 ", pos: %" PRIu64 ", work: <%.2f sec.)", uint256_to_label(prover.solution.block.as_hash()).c_str(), prover.solution.block.number, (uint64_t)prover.solution.block.transactions.size(), position + 1, span / 1000.0);
-
-						prover.solver.erase_failed_transactions();
-						goto next_block;
-					}
-					else if (kernel::params().user.consensus.logging)
-					{
-						if (!evaluation)
-						{
-							if (evaluation.error().message() != "block producer must be active")
-								VI_WARN("block %s dismissed: %s (number: %" PRIu64", txns: %" PRIu64 ", pos: %" PRIu64 ", work: <%.2f sec.)", uint256_to_label(prover.solution.block.as_hash()).c_str(), evaluation.error().what(), prover.solution.block.number, (uint64_t)prover.solution.block.transactions.size(), position + 1, span / 1000.0);
-						}
-						else
-							VI_WARN("%s", verification.error().what());
-					}
-				}
-				else if (kernel::params().user.consensus.logging)
-					VI_WARN("block %s dismissed: %s (number: %" PRIu64", txns: %" PRIu64 ", pos: %" PRIu64 ", work: <%.2f sec.)", uint256_to_label(prover.solution.block.as_hash()).c_str(), evaluation ? (solution ? "cancelled" : solution.error().what()) : evaluation.error().what(), prover.solution.block.number, (uint64_t)prover.solution.block.transactions.size(), position + 1, span / 1000.0);
+					control_sys.clear_timeout(TASK_BLOCK_PRODUCTION);
+					run_block_production();
+				});
 			});
 		}
 		bool server_node::run_block_dispatcher()
@@ -3658,7 +4078,6 @@ namespace tangent
 					witnesses.clear();
 				}
 				unique.unlock();
-				run_block_production();
 			});
 		}
 		void server_node::startup()
@@ -3744,7 +4163,8 @@ namespace tangent
 			bind_query(descriptors::fetch_preattestation_body(), std::bind(&server_node::fetch_preattestation_body, this, std::placeholders::_2, std::placeholders::_3));
 			bind_query(descriptors::delegate_execution(), std::bind(&server_node::delegate_execution, this, std::placeholders::_2, std::placeholders::_3));
 			control_sys.interval_if_none(TASK_TOPOLOGY_OPTIMIZATION "_runner", 180000, std::bind(&server_node::run_topology_optimization, this));
-			control_sys.interval_if_none(TASK_BLOCK_DISPATCH_RETRIAL "_runner", 120000, std::bind(&server_node::run_block_dispatcher, this));
+			control_sys.interval_if_none(TASK_BLOCK_PRODUCTION "_runner", std::max<uint64_t>(kernel::params().policy.pow.time / 2, 3000), std::bind(&server_node::run_block_production, this));
+			control_sys.interval_if_none(TASK_BLOCK_DISPATCHER_LATE "_runner", std::max<uint64_t>(kernel::params().policy.pow.time * 3, 9000), std::bind(&server_node::run_block_dispatcher, this));
 			control_sys.interval_if_none(TASK_ATTESTATION_RESOLUTION "_runner", 300000, std::bind(&server_node::run_attestation_resolution, this));
 			control_sys.interval_if_none(TASK_MEMPOOL_VACUUM "_runner", 240000, std::bind(&server_node::run_mempool_vacuum, this));
 			control_sys.interval_if_none(TASK_MEMPOOL_SYNC "_runner", 240000, std::bind(&server_node::run_mempool_sync, this));
@@ -3837,190 +4257,6 @@ namespace tangent
 			fork.state = from;
 			verifier.stale = true;
 		}
-		expects_lr<void> server_node::accept_block(uref<relay>&& from, ledger::block_evaluation& candidate, const ledger::block_header* fork_tip, bool verify_pow)
-		{
-			uint256_t candidate_hash = candidate.block.as_hash();
-			auto chain = storages::chainstate();
-			if (!fork_tip && chain.get_block_header_by_hash(candidate_hash))
-				return expectation::met;
-
-			bool fork_branch = fork_tip != nullptr;
-			auto tip_block = fork_branch ? expects_lr<ledger::block_header>(*fork_tip) : chain.get_latest_block_header();
-			auto tip_hash = tip_block ? tip_block->as_hash() : (uint256_t)0;
-			auto best_tip_work = tip_block ? tip_block->absolute_work : (uint256_t)0;
-			auto parent_block = tip_hash == candidate.block.parent_hash ? tip_block : (verifier.tip_cache && verifier.tip_cache->as_hash() == candidate_hash ? *verifier.tip_cache : chain.get_block_header_by_hash(candidate.block.parent_hash));
-			int64_t branch_length = (int64_t)candidate.block.number - (int64_t)(tip_block ? tip_block->number : 0);
-			branch_length = fork_branch ? std::abs(branch_length) : branch_length;
-			if (branch_length < 0 || (!fork_branch && candidate.block.absolute_work < best_tip_work))
-			{
-				/*
-													  <+> - <+> - <+> = ignore (weaker branch)
-													 /
-					<+> - <+> - <+> - <+> - <+> - <+> - <+>
-											   \
-												<+> = ignore (smaller branch)
-				*/
-				return layer_exception(stringify::text("block %s rejected: inferior fork %s (length: %" PRIi64 ")", uint256_to_label(candidate_hash).c_str(), branch_length < 0 ? "branch" : "work", branch_length));
-			}
-			else if (branch_length == 0 && tip_block && tip_hash != candidate_hash && candidate.block < *tip_block)
-			{
-				/*
-													  <+> = ignore (weaker branch)
-													 /
-					<+> - <+> - <+> - <+> - <+> - <+> - <+>
-				*/
-				return layer_exception(stringify::text("block %s rejected: inferior fork", uint256_to_label(candidate_hash).c_str()));
-			}
-			else if (!parent_block && candidate.block.number > 1)
-			{
-				auto verification = from ? candidate.block.verify_validity(parent_block.address()) : expects_lr<void>(layer_exception("unexpected orphan"));
-				if (!verification)
-					return layer_exception(stringify::text("block %s rejected: %s", uint256_to_label(candidate_hash).c_str(), verification.error().what()));
-
-				umutex<std::recursive_mutex> unique(sync.tip);
-				if (tips.find(candidate_hash) != tips.end())
-					return expectation::met;
-
-				/*
-															   <+> = better orphan (possibly)
-															  /
-					<+> - <+> - <+> - <+> - <+> - <+> ------------
-														  \
-														   <+> = weaker orphan
-				*/
-				bool better_than_prev_fork = tips.empty();
-				for (auto& fork_candidate_tip : tips)
-				{
-					if (fork_candidate_tip.second.header < candidate.block)
-					{
-						better_than_prev_fork = true;
-						break;
-					}
-				}
-				if (!better_than_prev_fork)
-					return layer_exception(stringify::text("block %s rejected: inferior fork orphan", uint256_to_label(candidate_hash).c_str()));
-
-				/*
-					<+> - <+> - <+> - <+> - <+> - <+> ----
-														  \
-														   <+> = better orphan (possibly)
-				*/
-				accept_tip(uref(from), candidate_hash, ledger::block_header(candidate.block));
-				run_fork_resolution();
-				if (kernel::params().user.consensus.logging)
-				{
-					auto distance = (uint64_t)std::abs((int64_t)(tip_block ? tip_block->number : 0) - (int64_t)candidate.block.number);
-					VI_INFO("block %s %s ahead (number: %" PRIu64 ", eta: %s)",
-						uint256_to_label(candidate_hash).c_str(), seconds_to_duration(distance * kernel::params().policy.pow.time / 1000).c_str(),
-						candidate.block.number, verifier.progress_bps > 0.1 ? seconds_to_duration(std::max<uint64_t>((uint64_t)((double)distance / verifier.progress_bps), 1)).c_str() : "N/A");
-				}
-				return expectation::met;
-			}
-
-			/*
-				<+> - <+> - <+> - <+> - <+> - <+> = possible extension
-											\
-											<+> - <+> = possible reorganization
-			*/
-			if (!try_acquire_checkpointer())
-				return layer_exception(stringify::text("block %s checkpoint skipped: checkpointer busy", uint256_to_label(candidate_hash).c_str()));
-
-			bool may_broadcast_early = from && !fork_tip;
-			bool may_broadcast_lately = !from && !fork_tip;
-			if (may_broadcast_early)
-				append_pending_tip(uref(from), candidate_hash, &candidate.block);
-
-			auto reorganization = ledger::solver_context::requires_reorganization(candidate, &verifier.cache);
-			auto validation = fork_branch && reorganization ? expects_lr<void>(expectation::met) : ledger::solver_context::validate_solved_block(verifier.solver, parent_block.address(), candidate.block, &candidate, verify_pow, &verifier.cache);
-			if (!validation)
-			{
-				release_checkpointer();
-				return layer_exception(stringify::text("block %s rejected: %s", uint256_to_label(candidate_hash).c_str(), validation.error().what()));
-			}
-			else if (reorganization && !kernel::params().user.consensus.reorganizable)
-			{
-				release_checkpointer();
-				return layer_exception(stringify::text("block %s rejected: requires deep chain reorganization (disabled)", uint256_to_label(candidate_hash).c_str()));
-			}
-
-			if (reorganization && kernel::params().user.consensus.logging)
-				VI_WARN("block %s: running chain reorganization now (number: %" PRIu64 ")", uint256_to_label(candidate_hash).c_str(), candidate.block.number);
-
-			auto mutation = ledger::solver_context::checkpoint_solved_block(verifier.solver, candidate, &verifier.cache, verifier.regress_callback);
-			if (mutation)
-			{
-				verifier.tip_cache = ledger::block_header(candidate.block);
-				verifier.tip_cache->checksum = candidate_hash;
-			}
-
-			release_checkpointer();
-			if (may_broadcast_early)
-				erase_pending_tip(candidate_hash);
-
-			if (!mutation)
-				return layer_exception(stringify::text("block %s checkpoint failed: %s", uint256_to_label(candidate_hash).c_str(), mutation.error().what()));
-
-			if (kernel::params().user.consensus.logging)
-			{
-				int64_t precision = 5000;
-				int64_t progress = (int64_t)((double)precision * get_sync_progress(candidate.block.number, *from));
-				verifier.size += (uint64_t)((double)(uint64_t)candidate.block.gas_limit / (double)ledger::gas_cost::write_byte);
-				if (progress >= precision || verifier.progress < progress || mutation->is_fork)
-				{
-					if (mutation->is_fork)
-					{
-						VI_INFO("block %s (number: %" PRIu64 ", sync: %.2f%%, size: %.2f kb, depth: %" PRIi64 ", txns: %" PRIi64 ", state: %" PRIi64 ")\n",
-							uint256_to_label(candidate_hash).c_str(), candidate.block.number, (double)progress / ((double)precision / 100), (double)verifier.size.load() / 1000.0,
-							mutation->block_delta, mutation->transaction_delta, mutation->state_delta);
-					}
-					else if (progress < precision)
-					{
-						uint64_t time = kernel::params().time.now_cpu();
-						double bps = verifier.progress_time > 0 ? 1000.0 * (double)(candidate.block.number - verifier.progress_block_number) / (double)std::max<uint64_t>(1, time - verifier.progress_time) : 0.0;
-						VI_INFO("block %s (number: %" PRIu64 ", sync: %.2f%%, size: %.2f kb, bps: %.1f)",
-							uint256_to_label(candidate_hash).c_str(), candidate.block.number, (double)progress / ((double)precision / 100), (double)verifier.size.load() / 1000.0, bps);
-						verifier.progress_bps = verifier.progress_bps > 1.0 ? verifier.progress_bps * 0.75 + bps * 0.25 : bps;
-						verifier.progress_block_number = candidate.block.number;
-						verifier.progress_time = time;
-					}
-					else
-					{
-						VI_INFO("block %s (number: %" PRIu64 ", sync: %.2f%%, size: %.2f kb)",
-							uint256_to_label(candidate_hash).c_str(), candidate.block.number, (double)progress / ((double)precision / 100), (double)verifier.size.load() / 1000.0);
-					}
-					verifier.progress = progress;
-					verifier.size = 0;
-				}
-			}
-
-			if (events.accept_block)
-				events.accept_block(candidate_hash, candidate.block, *mutation);
-
-			for (auto& transaction : candidate.block.transactions)
-			{
-				if (transaction.receipt.successful && transaction.transaction->as_type() == transactions::attestate::as_instance_type())
-					storages::mempoolstate().remove_attestation(((transactions::attestate*)*transaction.transaction)->proof.as_attestation_hash());
-				if (find_descriptor(transaction.receipt.from))
-					accept_proposal_transaction(transaction);
-			}
-
-			if (!candidate.block.witnesses.empty())
-			{
-				umutex<std::recursive_mutex> unique(sync.tip);
-				for (auto& [asset, block_height] : candidate.block.witnesses)
-				{
-					auto it = witnesses.find(asset);
-					if (it != witnesses.end())
-						it->second = std::min(it->second, block_height);
-					else
-						witnesses[asset] = block_height;
-				}
-			}
-
-			if (may_broadcast_early || may_broadcast_lately)
-				finalize_pending_tip(std::move(from), may_broadcast_lately ? candidate_hash : uint256_t((uint8_t)0), may_broadcast_lately ? candidate.block.number : 0);
-			return expectation::met;
-		}
 		void server_node::append_pending_tip(uref<relay>&& from, const uint256_t& block_hash, ledger::block_body* tip)
 		{
 			VI_ASSERT(tip != nullptr, "tip should be set");
@@ -4046,7 +4282,7 @@ namespace tangent
 		}
 		void server_node::finalize_pending_tip(uref<relay>&& from, const uint256_t& block_hash, uint64_t block_number)
 		{
-			control_sys.upsert_timeout(TASK_BLOCK_DISPATCHER "_runner", kernel::params().policy.pow.time / 2, [this]() { run_block_dispatcher(); });
+			control_sys.upsert_timeout(TASK_BLOCK_DISPATCHER "_runner", kernel::params().policy.pow.time, [this]() { run_block_dispatcher(); });
 			if (block_hash > 0 && block_number > 0)
 				broadcast_pending_tip(uref(from), block_hash, block_number);
 
@@ -4092,8 +4328,7 @@ namespace tangent
 			if (kernel::params().user.consensus.miner && !node.services.has_production)
 				node.services.has_production = executor.calculate_producers_size().or_else(0) == 0;
 
-			size_t count = 64;
-			size_t offset = 0;
+			size_t count = 64, offset = 0;
 			while (true)
 			{
 				auto attestations = executor.get_validator_attestations(wallet.public_key_hash, offset, count);
@@ -4147,10 +4382,34 @@ namespace tangent
 			}
 			return false;
 		}
+		slot_t server_node::claim_peer_index()
+		{
+			umutex<std::recursive_mutex> unique(exclusive);
+			uint8_t slots[(NULL_SLOT + 7) / 8] = {0};
+			for (auto& node : nodes)
+			{
+				slot_t slot = node.second->inventory_slot_id();
+				if (slot != NULL_SLOT)
+					slots[slot >> 3] = slots[slot >> 3] | (uint8_t)(1 << (slot & 7));
+			}
+			for (size_t byte = 0; byte < sizeof(slots); byte++)
+			{
+				if (slots[byte] != 0xFF)
+				{
+					for (uint8_t bit = 0; bit < 8; bit++)
+					{
+						slot_t slot = (slot_t)((byte << 3) | bit);
+						if (!(slots[byte] & (1 << bit)) && slot != NULL_SLOT)
+							return slot;
+					}
+				}
+			}
+			return NULL_SLOT;
+		}
 		double server_node::get_sync_progress(uint64_t current_number)
 		{
 			auto best = get_best_tip_header();
-			if (best)
+			if (best && best->second.header.number)
 				return (current_number <= best->second.header.number ? (double)current_number / (double)best->second.header.number : 1.0);
 
 			return 1.0;
@@ -4163,7 +4422,7 @@ namespace tangent
 			umutex<std::recursive_mutex> unique(sync.tip);
 			for (auto& fork_candidate_tip : tips)
 			{
-				if (*fork_candidate_tip.second.state == from)
+				if (*fork_candidate_tip.second.state == from && fork_candidate_tip.second.header.number)
 					return (current_number <= fork_candidate_tip.second.header.number ? (double)current_number / (double)fork_candidate_tip.second.header.number : 1.0);
 			}
 
@@ -4217,14 +4476,16 @@ namespace tangent
 
 			for (auto& listener : listeners)
 			{
-				if (*listener->address.get_ip_address() == *ip_address)
+				auto listener_ip = listener->address.get_ip_address();
+				if (listener_ip && *listener_ip == *ip_address)
 					return true;
 			}
 
 			for (auto& [account, descriptor] : descriptors)
 			{
 				auto& [node, wallet] = descriptor;
-				if (*node.address.get_ip_address() == *ip_address)
+				auto node_ip = node.address.get_ip_address();
+				if (node_ip && *node_ip == *ip_address)
 					return true;
 			}
 
@@ -4269,26 +4530,35 @@ namespace tangent
 		}
 		uref<relay> server_node::find_with_neighbor_account(const algorithm::pubkeyhash_t& account)
 		{
-			umutex<std::recursive_mutex> unique(exclusive);
-			for (auto& node : nodes)
+			uref<relay> candidate = nullptr;
+			algorithm::pubkeyhash_t matched;
 			{
-				auto* peer_descriptor = node.second->as_descriptor();
-				if (peer_descriptor != nullptr)
+				umutex<std::recursive_mutex> unique(exclusive);
+				for (auto& node : nodes)
 				{
-					for (auto& public_key : peer_descriptor->first.availability.neighbors)
+					auto* peer_descriptor = node.second->as_descriptor();
+					if (peer_descriptor != nullptr)
 					{
-						if (public_key == peer_descriptor->second.public_key)
-							continue;
+						for (auto& public_key : peer_descriptor->first.availability.neighbors)
+						{
+							if (public_key == peer_descriptor->second.public_key)
+								continue;
 
-						algorithm::pubkeyhash_t neighbor;
-						algorithm::signing::derive_public_key_hash(public_key, neighbor);
-						if (neighbor == account && !find_descriptor(neighbor))
-							return node.second;
+							algorithm::pubkeyhash_t neighbor;
+							algorithm::signing::derive_public_key_hash(public_key, neighbor);
+							if (neighbor == account)
+							{
+								candidate = node.second;
+								matched = neighbor;
+								break;
+							}
+						}
 					}
+					if (candidate)
+						break;
 				}
 			}
-
-			return nullptr;
+			return candidate && !find_descriptor(matched) ? candidate : nullptr;
 		}
 		option<algorithm::pubkey_t> server_node::find_public_key(const algorithm::pubkeyhash_t& account)
 		{
@@ -4342,7 +4612,8 @@ namespace tangent
 			VI_ASSERT(server != nullptr, "server should be set");
 		}
 		server_delegation_adapter::server_delegation_adapter(const server_delegation_adapter& other) noexcept : ledger::delegation_adapter(other), server(other.server)
-		{}
+		{
+		}
 		server_delegation_adapter& server_delegation_adapter::operator=(const server_delegation_adapter& other) noexcept
 		{
 			if (this == &other)
@@ -4451,7 +4722,8 @@ namespace tangent
 				validators[algorithm::pubkeyhash_t(target.public_key_hash)] = target;
 		}
 		local_delegation_adapter::local_delegation_adapter(const local_delegation_adapter& other) noexcept : ledger::delegation_adapter(other), validators(other.validators)
-		{}
+		{
+		}
 		local_delegation_adapter& local_delegation_adapter::operator=(const local_delegation_adapter& other) noexcept
 		{
 			if (this == &other)

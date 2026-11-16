@@ -27,6 +27,13 @@ namespace tangent
 		typedef std::pair<ledger::node, ledger::wallet> relay_descriptor;
 		typedef socket_connection inbound_node;
 
+		typedef uint16_t slot_t;
+
+		enum : slot_t
+		{
+			NULL_SLOT = 65535
+		};
+
 		enum class node_type
 		{
 			inbound,
@@ -70,6 +77,7 @@ namespace tangent
 				forward
 			};
 
+			uint256_t inventory_checksum = 0;
 			relay_descriptor* callee = nullptr;
 			format::variables args;
 			uint64_t time = kernel::params().time.now_cpu();
@@ -81,7 +89,7 @@ namespace tangent
 			bool load_payload(format::ro_stream& stream) override;
 			uint64_t calculate_latency();
 			uint32_t as_type() const override;
-			uint256_t as_inventory_hash() const;
+			uint256_t as_inventory_hash(bool renew = false) const;
 			std::string_view as_typename() const override;
 			format::tree as_tree() const override;
 			static uint32_t as_instance_type();
@@ -90,10 +98,25 @@ namespace tangent
 
 		struct forwarder
 		{
-			hash_map<uint256_t, uint64_t> messages;
+			struct entry
+			{
+				uint256_t hash;
+				uint64_t expiry = 0;
+				string peers;
+			};
 
-			bool insert(const uint256_t& message_hash);
-			bool contains(const uint256_t& message_hash) const;
+			vector<entry> entries;
+			vector<uint32_t> queue;
+			uint32_t queue_head = 0;
+			uint32_t queue_tail = 0;
+			size_t count = 0;
+			size_t capacity = 0;
+			std::mutex guard;
+
+			forwarder();
+			bool insert(const uint256_t& message_hash, slot_t peer);
+			bool mark(const uint256_t& message_hash, slot_t peer);
+			void forget(slot_t peer);
 		};
 
 		struct pacemaker
@@ -142,9 +165,11 @@ namespace tangent
 		private:
 			hash_map<uint32_t, query_exchange> queries;
 			single_queue<exchange> outgoing_messages;
+			size_t outgoing_count = 0;
 			uptr<relay_descriptor> descriptor;
 			std::atomic<bool> aborted;
-			forwarder inventory;
+			forwarder* inventory = nullptr;
+			slot_t inventory_slot = NULL_SLOT;
 			string incoming_data;
 			string outgoing_data;
 			string address;
@@ -160,13 +185,14 @@ namespace tangent
 			task_id deferred_pull;
 
 		public:
-			relay(node_type new_type, void* new_instance);
+			relay(node_type new_type, void* new_instance, forwarder* new_inventory, slot_t new_slot);
 			~relay();
 			expects_promise_rt<exchange> push_query(const callable::descriptor& descriptor, format::variables&& args, uint64_t timeout_ms, bool forwarded);
 			bool push_event(const callable::descriptor& descriptor, format::variables&& args);
-			void push_event(uint32_t session, format::variables&& args);
+			void push_query_response(uint32_t session, format::variables&& args);
 			void push_incoming(const uint8_t* buffer, size_t size);
 			void push_outgoing(exchange&& message);
+			bool queued_overflow();
 			void erase_incoming(size_t starting_bytes_to_erase);
 			bool prepare_outgoing();
 			void clear_outgoing();
@@ -180,9 +206,9 @@ namespace tangent
 			bool fully_valid() const;
 			const string& peer_address();
 			const string& peer_service();
-			forwarder& get_inventory();
 			const uint8_t* incoming_buffer();
 			const uint8_t* outgoing_buffer();
+			slot_t inventory_slot_id() const;
 			node_type type_of();
 			size_t incoming_size();
 			size_t outgoing_size();
@@ -240,7 +266,7 @@ namespace tangent
 				std::recursive_mutex neighbor;
 				std::recursive_mutex fetcher;
 				std::recursive_mutex tip;
-				std::mutex inventory;
+				std::mutex producer;
 				std::mutex pool;
 			} sync;
 
@@ -278,7 +304,6 @@ namespace tangent
 
 		private:
 			hash_map<algorithm::pubkeyhash_t, uint64_t> nonces;
-			hash_map<algorithm::asset_id, uint64_t> fees;
 			hash_map<algorithm::asset_id, fetch_queue> fetchers;
 			hash_map<algorithm::asset_id, uint64_t> witnesses;
 			hash_map<uint256_t, neighbor_callback> neighbors;
@@ -286,8 +311,8 @@ namespace tangent
 			hash_map<void*, uref<relay>> nodes;
 			hash_map<uint256_t, format::wo_stream> maybe_tips;
 			hash_set<outbound_node*> pending_nodes;
-			forwarder inventory;
 			system_control control_sys;
+			forwarder inventory;
 
 		public:
 			btree_map<algorithm::pubkeyhash_t, relay_descriptor> descriptors;
@@ -322,7 +347,8 @@ namespace tangent
 			expects_rt<format::variables> fetch_preattestation_body(uref<relay>&& state, const exchange& event);
 			expects_rt<format::variables> delegate_execution(uref<relay>&& state, const exchange& event);
 			expects_lr<void> dispatch_transaction_logs(const algorithm::asset_id& asset, superchain::transaction_logs&& logs);
-			expects_rt<vector<superchain::approved_fee>> query_bridge_fee_estimates(const algorithm::asset_id& asset);
+			expects_rt<vector<std::pair<superchain::approved_fee, uint8_t>>> query_bridge_fee_estimates(const algorithm::asset_id& asset, const option<decimal>& amount = option<decimal>(optional::none));
+			expects_rt<ledger::block_body> produce_block();
 			expects_lr<socket_address> find_node_from_mempool();
 			expects_promise_rt<socket_address> find_node_from_discovery();
 			expects_promise_rt<uref<relay>> connect_to_physical_node(const socket_address& address);
@@ -380,6 +406,7 @@ namespace tangent
 			expects_system<void> on_after_unlisten() override;
 			expects_lr<void> accept_node(storages::mempoolstate& mempool, relay_descriptor& descriptor, node_category category);
 			uref<relay> find_node_by_instance(void* instance);
+			slot_t claim_peer_index();
 			format::variables build_state_exchange(uref<relay>&& state);
 			void announce_peer(uref<relay>&& state, bool available);
 			void fill_node_services(relay_descriptor& descriptor);

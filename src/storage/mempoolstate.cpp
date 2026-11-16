@@ -850,7 +850,7 @@ namespace tangent
 
 			return values;
 		}
-		expects_lr<bool> mempoolstate::add_quote(const superchain::approved_fee& quote, const algorithm::pubkeyhash_t& attester)
+		expects_lr<bool> mempoolstate::add_quote(const superchain::approved_fee& quote, const algorithm::pubkeyhash_t& attester, uint8_t level)
 		{
 			format::wo_stream message;
 			if (!quote.store(&message))
@@ -862,20 +862,20 @@ namespace tangent
 			schema_list map;
 			map.push_back(var::set::binary(asset_hash, sizeof(asset_hash)));
 			map.push_back(var::set::binary(attester.view()));
+			map.push_back(var::set::integer(level));
 			map.push_back(var::set::integer(quote.expiry_block_number));
 			map.push_back(var::set::binary(message.data));
-			map.push_back(var::set::integer(kernel::params().time.now_cpu() + kernel::params().policy.attestation.quote_validity_time * 2));
 
 			auto cursor = get_peer_storage().emplace_query(__func__,
-				"INSERT INTO quotes (asset, attester, expiry_height, message, time) VALUES (?, ?, ?, ?, ?) ON CONFLICT (asset, attester) DO UPDATE SET "
-				" expiry_height = EXCLUDED.expiry_height, message = EXCLUDED.message, time = EXCLUDED.time "
+				"INSERT INTO quotes (asset, attester, level, expiry_height, message) VALUES (?, ?, ?, ?, ?) ON CONFLICT (asset, attester, level) DO UPDATE SET "
+				" expiry_height = EXCLUDED.expiry_height, message = EXCLUDED.message "
 				" WHERE EXCLUDED.expiry_height > quotes.expiry_height;", &map);
 			if (!cursor || cursor->error())
 				return expects_lr<bool>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 			return expects_lr<bool>(cursor->affected_rows() > 0);
 		}
-		expects_lr<vector<superchain::approved_fee>> mempoolstate::get_quotes(const algorithm::asset_id& asset, uint64_t block_number)
+		expects_lr<vector<std::pair<superchain::approved_fee, uint8_t>>> mempoolstate::get_quotes(const algorithm::asset_id& asset, uint64_t block_number)
 		{
 			uint8_t asset_hash[32];
 			asset.encode(asset_hash);
@@ -886,14 +886,14 @@ namespace tangent
 			map.push_back(var::set::integer(block_number));
 
 			auto cursor = get_peer_storage().emplace_query(__func__,
-				"SELECT message FROM quotes WHERE asset = ? AND expiry_height > ?;"
+				"SELECT message, level FROM quotes WHERE asset = ? AND expiry_height > ?;"
 				"DELETE FROM quotes WHERE expiry_height < ?", &map);
 			if (!cursor || cursor->error())
-				return expects_lr<vector<superchain::approved_fee>>(layer_exception(ledger::storage_util::error_of(cursor)));
+				return expects_lr<vector<std::pair<superchain::approved_fee, uint8_t>>>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 			auto& response = cursor->first();
 			size_t size = response.size();
-			vector<superchain::approved_fee> values;
+			vector<std::pair<superchain::approved_fee, uint8_t>> values;
 			values.reserve(size);
 
 			for (size_t i = 0; i < size; i++)
@@ -902,7 +902,7 @@ namespace tangent
 				auto quote_blob = response[i]["message"].get().get_blob();
 				auto quote_message = format::ro_stream(quote_blob);
 				if (quote.load(quote_message))
-					values.push_back(std::move(quote));
+					values.push_back(std::make_pair(std::move(quote), (uint8_t)response[i]["level"].get().get_integer()));
 			}
 
 			return values;
@@ -1554,6 +1554,23 @@ namespace tangent
 			string command;
 			if (name == "peerdata")
 			{
+				auto info = connection->query("PRAGMA table_info(quotes)");
+				bool level_present = false;
+				bool time_present = false;
+				if (info && !info->error_or_empty())
+				{
+					for (auto row : info->first())
+					{
+						auto column = row["name"].get().get_string();
+						if (column == "level")
+							level_present = true;
+						else if (column == "time")
+							time_present = true;
+					}
+				}
+				if (!level_present || time_present)
+					connection->query("DROP TABLE IF EXISTS quotes");
+
 				command = VI_STRINGIFY(
 				CREATE TABLE IF NOT EXISTS nodes
 				(
@@ -1620,13 +1637,12 @@ namespace tangent
 				(
 					asset BLOB(32) NOT NULL,
 					attester BLOB(20) NOT NULL,
+					level TINYINT NOT NULL DEFAULT 0,
 					expiry_height BIGINT NOT NULL,
 					message BLOB NOT NULL,
-					time INTEGER NOT NULL,
-					PRIMARY KEY (asset, attester)
+					PRIMARY KEY (asset, attester, level)
 				) WITHOUT ROWID;
 				CREATE INDEX IF NOT EXISTS quotes_asset ON quotes (asset, expiry_height DESC);
-				CREATE INDEX IF NOT EXISTS quotes_time ON quotes (time ASC);
 				CREATE TABLE IF NOT EXISTS observations
 				(
 					hash BLOB(32) NOT NULL,

@@ -302,6 +302,8 @@ namespace tangent
 			decimal fee = decimal::nan();
 			uint64_t expiry_block_number = 0;
 
+			approved_fee() = default;
+			approved_fee(const algorithm::asset_id& new_asset, decimal&& new_fee, uint64_t new_expiry_block_number);
 			bool store_payload(format::wo_stream* stream) const override;
 			bool load_payload(format::ro_stream& stream) override;
 			format::tree as_tree() const override;
@@ -309,6 +311,9 @@ namespace tangent
 			std::string_view as_typename() const override;
 			static uint32_t as_instance_type();
 			static std::string_view as_instance_typename();
+
+			static uint8_t level_of_amount(const decimal& amount);
+			static decimal cap_of_level(uint8_t level);
 		};
 
 		struct computed_fee

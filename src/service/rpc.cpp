@@ -430,7 +430,7 @@ namespace tangent
 			bind(0 | access_type::r, "mempoolstate", "getmempooltransactionsbyowner", 3, 5, "string address, uint64 offset, uint64 count, uint8? direction = 1, uint8? unrolling", "uint256[] | txn[]", "get mempool transactions by signing address", std::bind(&server_node::mempoolstate_get_transactions_by_owner, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "mempoolstate", "getmempoolpreattestations", 2, 5, "uint64 offset, uint64 count, string? transaction_ids, string? addresses, string? memo_accounts", "superchain::uncomputed_transaction[]", "get off-chain transactions with preattestations, optionally filtered by a comma separated list of transaction ids, addresses and/or memo accounts", std::bind(&server_node::mempoolstate_get_preattestations, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "validatorstate", "getblockchains", 0, 0, "", "superchain::asset_info[]", "get supported blockchains", std::bind(&server_node::validatorstate_get_blockchains, this, std::placeholders::_1, std::placeholders::_2));
-			bind(0 | access_type::r, "validatorstate", "estimatebridgefee", 1, 1, "string asset", "{ tip: uint64, index: uint32 | null, quotes: { asset: string, fee: decimal, expiry_block_number: uint64, publisher: address }[] } | null", "get active withdrawal fee quotes for a blockchain asset, collected from the validator network, normalized with the median fee", std::bind(&server_node::validatorstate_estimate_bridge_fee, this, std::placeholders::_1, std::placeholders::_2));
+			bind(0 | access_type::r, "validatorstate", "estimatebridgefee", 1, 2, "string asset, decimal amount?", "{ tip: uint64, index: uint32 | null, quotes: { asset: string, fee: decimal, expiry_block_number: uint64, publisher: address }[] } | null", "get active withdrawal fee quotes for a blockchain asset, collected from the validator network, normalized with the median fee; when amount is set, quotes matching the amount magnitude level are preferred", std::bind(&server_node::validatorstate_estimate_bridge_fee, this, std::placeholders::_1, std::placeholders::_2));
 			bind(0 | access_type::r, "validatorstate", "status", 0, 0, "", "validator::status", "get validator status", std::bind(&server_node::validatorstate_status, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::r | access_type::a, "chainstate", "worldstateroot", 0, 1, "uint256? state_hash_to_prove", "uint256 | merkle_proof", "compute the world state root hash", std::bind(&server_node::chainstate_world_state_root, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::r | access_type::a, "validatorstate", "connections", 0, 0, "", "validator::connection[]", "get p2p connections", std::bind(&server_node::validatorstate_connections, this, std::placeholders::_1, std::placeholders::_2));
@@ -446,7 +446,7 @@ namespace tangent
 			bind(access_type::w | access_type::a, "validatorstate", "restorebridges", 0, 1, "uint64? number", "uint256[]", "rebuild superchain bridge data from past attestations", std::bind(&server_node::validatorstate_restore_bridges, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "validatorstate", "acceptnode", 1, 1, "string uri_address", "void", "try to accept and connect to a node possibly by ip address", std::bind(&server_node::validatorstate_accept_node, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "validatorstate", "rejectnode", 1, 1, "string uri_address", "void", "reject and disconnect from a node by ip address", std::bind(&server_node::validatorstate_reject_node, this, std::placeholders::_1, std::placeholders::_2));
-			bind(access_type::w | access_type::a, "validatorstate", "submitblock", 0, 0, "", "void", "try to propose a block from mempool transactions", std::bind(&server_node::validatorstate_submit_block, this, std::placeholders::_1, std::placeholders::_2));
+			bind(access_type::w | access_type::a, "validatorstate", "submitblock", 0, 2, "uint16? count = 1, uint8? unrolling = 0", "uint256[] | block[]", "attempt to produce a block(s) immediately", std::bind(&server_node::validatorstate_submit_block, this, std::placeholders::_1, std::placeholders::_2));
 		}
 		void server_node::shutdown()
 		{
@@ -3403,20 +3403,28 @@ namespace tangent
 			if (!algorithm::asset::is_aux(asset))
 				return server_response().error(error_codes::bad_params, "asset not supported");
 
-			auto quotes = consensus_service->query_bridge_fee_estimates(asset);
+			option<decimal> amount = optional::none;
+			if (args.size() > 1)
+			{
+				auto value = args[1].as_decimal();
+				if (value.is_positive())
+					amount = value;
+			}
+
+			auto quotes = consensus_service->query_bridge_fee_estimates(asset, amount);
 			if (!quotes)
 				return quotes.error().is_retry() ? server_response().success(format::variable()) : server_response().error(error_codes::not_found, quotes.what());
 
 			auto data = format::tree::list();
-			std::sort(quotes->begin(), quotes->end(), [](const superchain::approved_fee& left, const superchain::approved_fee& right) { return left.fee < right.fee; });
-			for (auto& quote : *quotes)
+			std::sort(quotes->begin(), quotes->end(), [](const std::pair<superchain::approved_fee, uint8_t>& left, const std::pair<superchain::approved_fee, uint8_t>& right) { return left.first.fee < right.first.fee; });
+			for (auto& [quote, level] : *quotes)
 				data.push(quote.as_tree());
 
 			size_t index = quotes->size() / 2;
 			if (quotes->size() > 1)
 			{
-				auto& highest_quote = quotes->back();
-				auto& median_quote = quotes->at(index);
+				auto& [highest_quote, highest_level] = quotes->back();
+				auto& [median_quote, median_level] = quotes->at(index);
 				if (median_quote.fee.is_positive() && (highest_quote.fee - median_quote.fee) / median_quote.fee <= 1)
 					index = quotes->size() - 1;
 			}
@@ -3551,13 +3559,30 @@ namespace tangent
 			}
 			return server_response().success(std::move(data));
 		}
-		server_response server_node::validatorstate_submit_block(http::connection*, format::variables&&)
+		server_response server_node::validatorstate_submit_block(http::connection*, format::variables&& args)
 		{
 			if (!consensus_service)
 				return server_response().error(error_codes::bad_request, "validator node disabled");
 
-			consensus_service->run_block_production();
-			return server_response().success(format::variable());
+			uint16_t count = std::min<uint16_t>(args.size() > 0 ? args[0].as_uint16() : 1, std::numeric_limits<uint16_t>::max() - 1);
+			uint8_t unrolling = args.size() > 1 ? args[1].as_uint8() : 0;
+			format::tree data = format::tree::list();
+			for (uint16_t i = 0; i < count; i++)
+			{
+				auto result = consensus_service->produce_block();
+				if (result)
+				{
+					if (unrolling == 0)
+						data.push(format::variable(algorithm::encoding::encode_0xhex256(result->as_hash())));
+					else if (unrolling == 1)
+						data.push(result->as_header().as_tree());
+					else
+						data.push(result->as_tree());
+				}
+				else
+					data.push(format::tree::map())->set("error", format::variable(result.what()));
+			}
+			return server_response().success(std::move(data));
 		}
 	}
 }
