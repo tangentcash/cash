@@ -2,10 +2,8 @@
 #include "../internal/cardano.h"
 extern "C"
 {
-#include "../internal/ed25519.h"
-#include "../internal/sha2.h"
+#include "../internal/bitcoin.h"
 }
-#include <cctype>
 
 namespace tangent
 {
@@ -13,15 +11,196 @@ namespace tangent
 	{
 		namespace translations
 		{
+			enum class address_type
+			{
+				invalid,
+				base,
+				pointer,
+				enterprise,
+				reward,
+				byron
+			};
+
+			static uint32_t byron_crc32(const std::string_view& data)
+			{
+				uint32_t crc = 0xFFFFFFFFu;
+				for (const char byte : data)
+				{
+					crc ^= static_cast<uint8_t>(byte);
+					for (uint8_t bit = 0; bit < 8; bit++)
+						crc = (crc & 1u) ? ((crc >> 1) ^ 0xEDB88320u) : (crc >> 1);
+				}
+				return crc ^ 0xFFFFFFFFu;
+			}
+			static bool byron_network_ok(const uint32_t magic)
+			{
+				return kernel::params().is(network_type::mainnet) ? (magic == 0 || magic == 0x2D70C1A1) : (magic == 0x4170CB17);
+			}
+			static bool byron_payload_offset(const std::string_view& raw, size_t& offset)
+			{
+				const uint8_t header = static_cast<uint8_t>(raw[3]);
+				if ((header >> 5) != 2)
+					return false;
+
+				offset = ((header & 0x1F) < 24) ? 4 : 5;
+				return true;
+			}
+			static bool parse_byron_payload(const std::string_view& raw, uint32_t* magic)
+			{
+				if (magic != nullptr)
+					*magic = 0;
+
+				if (raw.size() < 40 || raw.size() > 127 || raw[0] != (char)0x82 || raw[1] != (char)0xD8 || raw[2] != (char)0x18)
+					return false;
+
+				size_t offset = 0;
+				if (!byron_payload_offset(raw, offset))
+					return false;
+
+				uint64_t payload_size = static_cast<uint8_t>(raw[3]) & 0x1F;
+				if (payload_size >= 24)
+					payload_size = static_cast<uint8_t>(raw[4]);
+
+				if (offset + payload_size != raw.size() || payload_size < 32)
+					return false;
+
+				size_t cursor = offset;
+				uint8_t major = 0; uint64_t value = 0;
+				auto read_head = [&raw, &cursor, &major, &value](void) -> bool
+				{
+					if (cursor >= raw.size())
+						return false;
+
+					const uint8_t byte = static_cast<uint8_t>(raw[cursor++]);
+					major = byte >> 5;
+					const uint8_t index = byte & 0x1F;
+					if (index == 24)
+					{
+						if (cursor >= raw.size())
+							return false;
+
+						value = static_cast<uint8_t>(raw[cursor++]);
+					}
+					else if (index < 24)
+						value = index;
+					else
+						return false;
+
+					return true;
+				};
+
+				if (!read_head() || major != 4 || value != 3)
+					return false;
+
+				if (!read_head() || major != 2 || value != 28)
+					return false;
+
+				cursor += 28;
+				if (!read_head() || major != 5 || value > 2)
+					return false;
+
+				uint64_t discriminant = 0;
+				uint64_t previous_key = 0;
+				const uint64_t entries = value;
+				for (uint64_t entry = 0; entry < entries; entry++)
+				{
+					uint64_t key = 0;
+					if (!read_head() || major != 0 || (key = value) == 0 || key > 2 || key <= previous_key)
+						return false;
+
+					previous_key = key;
+					if (!read_head() || major != 2 || value < 1 || value > 30 || cursor + value > raw.size())
+						return false;
+
+					const std::string_view attribute = raw.substr(cursor, static_cast<size_t>(value));
+					cursor += static_cast<size_t>(value);
+					if (key != 1)
+					{
+						if (attribute.size() != 5 || attribute[0] != (char)0x1A)
+							return false;
+
+						discriminant = (static_cast<uint32_t>(static_cast<uint8_t>(attribute[1])) << 24) | (static_cast<uint32_t>(static_cast<uint8_t>(attribute[2])) << 16) | (static_cast<uint32_t>(static_cast<uint8_t>(attribute[3])) << 8) | static_cast<uint32_t>(static_cast<uint8_t>(attribute[4]));
+					}
+					else if (attribute.size() != 30 || attribute[0] != (char)0x58 || static_cast<uint8_t>(attribute[1]) != 28)
+						return false;
+				}
+
+				if (!read_head() || major != 0 || (value != 0 && value != 2) || cursor != raw.size())
+					return false;
+
+				if (magic != nullptr)
+					*magic = static_cast<uint32_t>(discriminant);
+
+				return true;
+			}
+			static address_type parse_address_type(const std::string_view& raw)
+			{
+				if (!raw.empty() && raw[0] == (char)0x82)
+					return parse_byron_payload(raw, nullptr) ? address_type::byron : address_type::invalid;
+
+				if (raw.size() < 29)
+					return address_type::invalid;
+
+				const uint8_t header = static_cast<uint8_t>(raw[0]);
+				const uint8_t type = header >> 4;
+				if ((header & 0x0F) > 0x1)
+					return address_type::invalid;
+
+				switch (type)
+				{
+					case 0x0: case 0x1: case 0x2: case 0x3:
+						return raw.size() == 57 ? address_type::base : address_type::invalid;
+					case 0x4: case 0x5:
+					{
+						if (raw.size() < 32)
+							return address_type::invalid;
+
+						size_t integers = 0, bytes = 0;
+						for (size_t offset = 29; offset < raw.size(); offset++)
+						{
+							if (++bytes > 10)
+								return address_type::invalid;
+
+							if ((static_cast<uint8_t>(raw[offset]) & 0x80) == 0)
+							{
+								integers++;
+								bytes = 0;
+							}
+						}
+						return integers == 3 && bytes == 0 ? address_type::pointer : address_type::invalid;
+					}
+					case 0x6: case 0x7:
+						return raw.size() == 29 ? address_type::enterprise : address_type::invalid;
+					case 0xE: case 0xF:
+						return raw.size() == 29 ? address_type::reward : address_type::invalid;
+					default:
+						return address_type::invalid;
+				}
+			}
+			static const char* address_hrp(const address_type type)
+			{
+				switch (type)
+				{
+					case address_type::reward: return kernel::params().is(network_type::mainnet) ? "stake" : "stake_test";
+					case address_type::base: case address_type::pointer: case address_type::enterprise: return kernel::params().is(network_type::mainnet) ? "addr" : "addr_test";
+					default: return nullptr;
+				}
+			}
+			static uint8_t address_network_tag()
+			{
+				return kernel::params().is(network_type::mainnet) ? 0x1 : 0x0;
+			}
 			static std::string to_unprefixed_hex(const std::string_view& value)
 			{
 				return stringify::starts_with(value, "0x") ? std::string(value.substr(2)) : std::string(value);
 			}
-			static string to_token_symbol(const std::string_view& data)
+			static string to_token_symbol(const std::string_view& data, bool hex_decode)
 			{
 				string token_symbol = string(data);
-				if (format::util::is_hex_encoding(token_symbol))
+				if (hex_decode && format::util::is_hex_encoding(token_symbol))
 					token_symbol = codec::hex_decode(token_symbol);
+				token_symbol.erase(std::remove_if(token_symbol.begin(), token_symbol.end(), [](char v) { return static_cast<uint8_t>(v) < 0x20 || static_cast<uint8_t>(v) >= 0x7F; }), token_symbol.end());
+				stringify::trim(token_symbol);
 				return token_symbol;
 			}
 
@@ -180,7 +359,10 @@ namespace tangent
 									for (auto& item : tokens->childs())
 									{
 										auto hex_symbol = item.child_var("currency.symbol").as_blob();
-										auto token_symbol = to_token_symbol(hex_symbol);
+										auto hex_symbol_processed = to_token_symbol(hex_symbol, true);
+										auto text_symbol = item.child_var("currency.metadata.ticker").as_blob();
+										auto text_symbol_processed = to_token_symbol(text_symbol, false);
+										auto token_symbol = text_symbol_processed.empty() ? hex_symbol_processed : text_symbol_processed;
 										auto token_asset = algorithm::asset::id_of(blockchain, token_symbol.empty() ? contract_address : token_symbol, contract_address);
 										uint8_t decimals = item.child_var("currency.decimals").as_uint8();
 										if (!decimals)
@@ -613,8 +795,49 @@ namespace tangent
 			}
 			expects_lr<string> cardano::encode_address(const std::string_view& public_key_hash)
 			{
+				auto type = parse_address_type(public_key_hash);
+				if (type == address_type::byron)
+				{
+					uint32_t magic = 0;
+					if (!parse_byron_payload(public_key_hash, &magic))
+						return layer_exception("invalid decoded public key hash");
+
+					if (!byron_network_ok(magic))
+						return layer_exception("address network mismatch");
+
+					size_t offset = 0;
+					byron_payload_offset(public_key_hash, offset);
+
+					uint32_t crc = byron_crc32(public_key_hash.substr(offset));
+					std::string payload(public_key_hash);
+					payload.push_back((char)0x1A);
+					payload.push_back((char)((crc >> 24) & 0xFF));
+					payload.push_back((char)((crc >> 16) & 0xFF));
+					payload.push_back((char)((crc >> 8) & 0xFF));
+					payload.push_back((char)(crc & 0xFF));
+
+					char encoded[256]; size_t encoded_size = sizeof(encoded);
+					if (!btc_base58_encode(encoded, &encoded_size, payload.data(), payload.size()) || encoded_size < 2)
+						return layer_exception("invalid decoded public key hash");
+
+					return string(encoded);
+				}
+
+				auto hrp = address_hrp(type);
+				if (hrp == nullptr)
+					return layer_exception("invalid decoded public key hash");
+
+				if ((static_cast<uint8_t>(public_key_hash[0]) & 0x0F) != address_network_tag())
+					return layer_exception("address network mismatch");
+
 				std::string encoded_address;
-				if (!Cardano::bech32_encode(kernel::params().is(network_type::mainnet) ? "addr" : "addr_test", (uint8_t*)public_key_hash.data(), (uint16_t)public_key_hash.size(), encoded_address))
+				if (!Cardano::bech32_encode(hrp, (uint8_t*)public_key_hash.data(), (uint16_t)public_key_hash.size(), encoded_address))
+					return layer_exception("invalid decoded public key hash");
+
+				uint8_t data[256]; uint16_t data_size = sizeof(data);
+				if (!Cardano::bech32_decode_extended(encoded_address.c_str(), data, &data_size, sizeof(data))
+					|| data_size != public_key_hash.size()
+					|| memcmp(data, public_key_hash.data(), data_size) != 0)
 					return layer_exception("invalid decoded public key hash");
 
 				return copy<string>(encoded_address);
@@ -623,7 +846,47 @@ namespace tangent
 			{
 				uint8_t data[256]; uint16_t data_size = sizeof(data); auto copy = string(address);
 				if (!Cardano::bech32_decode_extended(copy.c_str(), data, &data_size, sizeof(data)))
+				{
+					uint8_t buffer[128]; size_t buffer_size = sizeof(buffer);
+					if (!btc_base58_decode(buffer, &buffer_size, copy.c_str()) || buffer_size < 42 || buffer_size > sizeof(buffer))
+						return layer_exception("invalid address");
+
+					const uint8_t* decoded = buffer + (sizeof(buffer) - buffer_size);
+					if (decoded[buffer_size - 5] != 0x1A)
+						return layer_exception("invalid address");
+
+					const std::string_view body((char*)decoded, buffer_size - 5);
+					uint32_t magic = 0;
+					if (!parse_byron_payload(body, &magic))
+						return layer_exception("invalid address");
+
+					const uint32_t stored_crc = (static_cast<uint32_t>(decoded[buffer_size - 4]) << 24) |
+						(static_cast<uint32_t>(decoded[buffer_size - 3]) << 16) |
+						(static_cast<uint32_t>(decoded[buffer_size - 2]) << 8) |
+						static_cast<uint32_t>(decoded[buffer_size - 1]);
+
+					size_t offset = 0;
+					byron_payload_offset(body, offset);
+					if (byron_crc32(body.substr(offset)) != stored_crc)
+						return layer_exception("invalid address");
+
+					if (!byron_network_ok(magic))
+						return layer_exception("address network mismatch");
+
+					return string(body);
+				}
+
+				auto type = parse_address_type(std::string_view((char*)data, data_size));
+				auto hrp = address_hrp(type);
+				if (hrp == nullptr)
 					return layer_exception("invalid address");
+
+				auto separator = copy.rfind('1');
+				if (separator == string::npos || copy.substr(0, separator) != hrp)
+					return layer_exception("address network mismatch");
+
+				if ((data[0] & 0x0F) != address_network_tag())
+					return layer_exception("address network mismatch");
 
 				return string((char*)data, data_size);
 			}

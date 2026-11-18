@@ -3869,7 +3869,6 @@ namespace tangent
 			}
 
 			btree_map<uint256_t, btree_map<algorithm::asset_id, decimal>> balances;
-			btree_map<algorithm::pubkeyhash_t, btree_map<algorithm::asset_id, internal_transfer>> transfers;
 			btree_map<algorithm::asset_id, decimal> imbalances;
 			btree_set<algorithm::pubkeyhash_t> participants;
 			for (auto it = bridge_hash > 0 ? proof.inputs.begin() : proof.inputs.end(); it != proof.inputs.end(); it++)
@@ -3907,6 +3906,7 @@ namespace tangent
 					depositor_account = source->ref.owner;
 			}
 
+			btree_map<algorithm::pubkeyhash_t, btree_map<algorithm::asset_id, internal_transfer>> transfers;
 			for (auto& [hash, output] : proof.outputs)
 			{
 				auto source = bridge_hash > 0 ? executor->get_witness_account_tagged(asset, output.link.address, 0) : executor->get_witness_account(asset, output.link.address, 0);
@@ -3996,6 +3996,19 @@ namespace tangent
 					auto* origin = enforce_metadata ? withdraw_transaction() : nullptr;
 					auto bridge_fee_rate = origin ? ((withdraw*)*origin->transaction)->committed_budget(*bridge) : bridge->fee_rate;
 					bridge_reward = std::max<decimal>(bridge_fee_rate * (1 - kernel::params().policy.attestation.fee_rate) - network_fee, decimal::zero());
+					if (!proof.reverted && origin != nullptr && origin->transaction->asset != base_asset)
+					{
+						auto& withdrawer = origin->receipt.from;
+						auto transfer = transfers.find(withdrawer);
+						auto subtransfer = transfer != transfers.end() ? transfer->second.find(base_asset) : btree_map<algorithm::asset_id, internal_transfer>::iterator();
+						if (transfer != transfers.end() && subtransfer != transfer->second.end() && (subtransfer->second.supply.is_negative() || subtransfer->second.reserve.is_negative()))
+						{
+							auto deficit = std::min(-std::min(std::max(subtransfer->second.supply, subtransfer->second.reserve), decimal::zero()), bridge_reward);
+							subtransfer->second.supply += deficit;
+							subtransfer->second.reserve += deficit;
+							bridge_reward -= deficit;
+						}
+					}
 					imbalance = imbalance.is_nan() ? -bridge_reward : (imbalance - bridge_reward);
 					bridge_exists = true;
 				}
