@@ -11,7 +11,6 @@
 #include "../src/policy/delegations.h"
 #include "../src/policy/transactions.h"
 #include "../src/translation/bitcoin.h"
-#include "../src/translation/cardano.h"
 #include "../src/internal/sha3.h"
 #include <vitex/vitex.h>
 #define TEST_BLOCK(x, y, z) new_block_from_generator(data, users, x, #x, y, z, block_type::normal)
@@ -2949,7 +2948,7 @@ int main(int argc, char* argv[])
 #if defined(_MSC_VER)
 	if (!os::process::has_debugger())
 		_set_abort_behavior(0, _WRITE_ABORT_MSG);
-	setvbuf(stdout, nullptr, _IONBF, 0); /* temporary p2p-test: live log flush to files */
+	setvbuf(stdout, nullptr, _IONBF, 0);
 	setvbuf(stderr, nullptr, _IONBF, 0);
 #endif
 	vitex::runtime scope;

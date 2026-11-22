@@ -76,6 +76,46 @@ namespace tangent
 
 		struct mempoolstate
 		{
+		public:
+			class keystore : public singleton<keystore>
+			{
+			public:
+				enum class db_id : uint8_t
+				{
+					peers = 0,
+					secrets = 1
+				};
+
+			private:
+				struct db_state
+				{
+					secret_box key;
+					secret_box wrap_key;
+					bool ready = false;
+				};
+
+			private:
+				db_state dbs[2];
+				mutable std::recursive_mutex mutex;
+
+			public:
+				std::unique_lock<std::recursive_mutex> sync() const;
+				void store(db_id db, const secret_box& key, const secret_box& wrap_key);
+				bool ready(db_id db) const;
+				bool is_wrapped(db_id db) const;
+				secret_box key_of(db_id db) const;
+				secret_box wrap_key_of(db_id db) const;
+				bool current_key(db_id db, secret_box& key) const;
+				expects_lr<string> encrypt(db_id db, const std::string_view& data) const;
+				expects_lr<string> decrypt(db_id db, const std::string_view& data) const;
+				static secret_box derive_wrap_key(const std::string_view& password);
+				static expects_lr<string> wrap(const secret_box& key, const secret_box& wrap_key, db_id db, string& out_salt);
+				static expects_lr<string> unwrap(const std::string_view& wrapped, const std::string_view& salt, const secret_box& wrap_key, db_id db);
+				static expects_lr<string> row_encrypt(const secret_box& key, const std::string_view& data);
+				static expects_lr<string> row_decrypt(const secret_box& key, const std::string_view& data);
+				static const std::string_view name_of(db_id db);
+			};
+
 		private:
 			ledger::storage_index_ptr peer_local_storage;
 			ledger::storage_index_ptr secret_local_storage;
@@ -89,6 +129,9 @@ namespace tangent
 			mempoolstate& operator=(const mempoolstate&) = delete;
 			mempoolstate& operator=(mempoolstate&&) noexcept = delete;
 			~mempoolstate() noexcept;
+			expects_lr<void> setup_keys(option<string>&& password = optional::none);
+			expects_lr<void> rotate_keys();
+			expects_lr<void> seal_keys(option<string>&& password = optional::none);
 			expects_lr<void> apply_cooldown_node(const socket_address& address, bool cooldown, bool reset);
 			expects_lr<void> apply_unknown_node(const socket_address& address, bool allow_reserved);
 			expects_lr<void> apply_node(const node_pair& node, node_peer type);

@@ -1,7 +1,6 @@
 #include "engine.h"
 #include <rocksdb/db.h>
 #define DB_IMMATURE 1
-#define DB_BATCH 8
 
 namespace tangent
 {
@@ -448,5 +447,6 @@ namespace tangent
 		{
 			return connection != nullptr;
 		}
+
 	}
 }

@@ -3,12 +3,34 @@
 #define TRANSACTION_EXPIRATION (8 * 3600 * 1000)
 #define OBSERVATION_EXPIRATION (36 * 3600 * 1000)
 #define ATTESTATION_EXPIRATION (96 * 3600 * 1000)
+#define KEY_SIZE 32
+#define WRAP_SALT_SIZE 16
+#define GCM_IV_SIZE 12
 #undef NULL
 
 namespace tangent
 {
 	namespace storages
 	{
+		static string derive_iv(const std::string_view& salt, mempoolstate::keystore::db_id db)
+		{
+			return string(*crypto::hash(digests::sha256(), string(salt).append(mempoolstate::keystore::name_of(db)).append("mempool-iv")), 0, GCM_IV_SIZE);
+		}
+		string read_password_line(const std::string_view& prompt, bool allow_empty = false)
+		{
+			auto* terminal = console::get();
+			VI_PANIC(terminal != nullptr, "keystore password required but no terminal is available; run with an attached terminal or pipe the password on stdin");
+
+			terminal->write(prompt);
+			string password;
+			terminal->echo_off([&]() { password = terminal->read(1024); });
+			while (!password.empty() && (password.back() == '\n' || password.back() == '\r'))
+				password.pop_back();
+
+			if (password.empty() && !allow_empty)
+				VI_PANIC(false, "keystore password required but stdin delivered nothing (attach a terminal or pipe the password, e.g. 'printf %%s \"$PASS\" | docker attach <node>')");
+			return password;
+		}
 		static void finalize_checksum(ledger::authentic_serializer& message, const variant& column)
 		{
 			if (column.size() == sizeof(uint256_t))
@@ -112,6 +134,128 @@ namespace tangent
 			return is_address_reserved(address) || is_address_private(address);
 		}
 
+		const std::string_view mempoolstate::keystore::name_of(db_id db)
+		{
+			switch (db)
+			{
+				case db_id::peers:
+					return "peerdata";
+				case db_id::secrets:
+					return "secretdata";
+				default:
+					VI_PANIC(false, "invalid keystore db id");
+					return "";
+			}
+		}
+		std::unique_lock<std::recursive_mutex> mempoolstate::keystore::sync() const
+		{
+			return std::unique_lock<std::recursive_mutex>(mutex);
+		}
+		void mempoolstate::keystore::store(db_id db, const secret_box& key, const secret_box& wrap_key)
+		{
+			umutex<std::recursive_mutex> unique(mutex);
+			auto& state = dbs[(uint8_t)db];
+			state.key = key;
+			state.wrap_key = wrap_key;
+			state.ready = true;
+		}
+		bool mempoolstate::keystore::ready(db_id db) const
+		{
+			umutex<std::recursive_mutex> unique(mutex);
+			return dbs[(uint8_t)db].ready;
+		}
+		bool mempoolstate::keystore::is_wrapped(db_id db) const
+		{
+			umutex<std::recursive_mutex> unique(mutex);
+			return dbs[(uint8_t)db].ready && !dbs[(uint8_t)db].wrap_key.empty();
+		}
+		secret_box mempoolstate::keystore::key_of(db_id db) const
+		{
+			umutex<std::recursive_mutex> unique(mutex);
+			return dbs[(uint8_t)db].key;
+		}
+		secret_box mempoolstate::keystore::wrap_key_of(db_id db) const
+		{
+			umutex<std::recursive_mutex> unique(mutex);
+			return dbs[(uint8_t)db].wrap_key;
+		}
+		bool mempoolstate::keystore::current_key(db_id db, secret_box& key) const
+		{
+			umutex<std::recursive_mutex> unique(mutex);
+			if (!dbs[(uint8_t)db].ready)
+				return false;
+			key = dbs[(uint8_t)db].key;
+			return true;
+		}
+		expects_lr<string> mempoolstate::keystore::encrypt(db_id db, const std::string_view& data) const
+		{
+			secret_box key;
+			if (!current_key(db, key))
+				return expects_lr<string>(layer_exception("keystore is not initialized"));
+
+			return row_encrypt(key, data);
+		}
+		expects_lr<string> mempoolstate::keystore::decrypt(db_id db, const std::string_view& data) const
+		{
+			secret_box key;
+			if (!current_key(db, key))
+				return expects_lr<string>(layer_exception("keystore is not initialized"));
+
+			return row_decrypt(key, data);
+		}
+		secret_box mempoolstate::keystore::derive_wrap_key(const std::string_view& password)
+		{
+			uint8_t seed[KEY_SIZE] = { 0 };
+			bool acquired = algorithm::signing::derive_seed_from_high_entropy_password((uint8_t*)password.data(), password.size(), seed, sizeof(seed));
+			VI_PANIC(acquired, "keystore password derivation failed");
+			return secret_box::secure(std::string_view((char*)seed, sizeof(seed)));
+		}
+		expects_lr<string> mempoolstate::keystore::wrap(const secret_box& key, const secret_box& wrap_key, db_id db, string& out_salt)
+		{
+			auto salt = *crypto::random_bytes(WRAP_SALT_SIZE);
+			auto iv = derive_iv(salt, db);
+			auto result = crypto::encrypt(ciphers::aes_256_gcm(), key.heap(), wrap_key, secret_box::view(iv));
+			if (!result)
+				return expects_lr<string>(layer_exception("keystore wrap failed"));
+
+			out_salt = salt;
+			return *result;
+		}
+		expects_lr<string> mempoolstate::keystore::unwrap(const std::string_view& wrapped, const std::string_view& salt, const secret_box& wrap_key, db_id db)
+		{
+			auto iv = derive_iv(salt, db);
+			auto result = crypto::decrypt(ciphers::aes_256_gcm(), wrapped, wrap_key, secret_box::view(iv));
+			if (!result || result->size() != KEY_SIZE)
+				return expects_lr<string>(layer_exception("keystore unwrap failed"));
+
+			return *result;
+		}
+		expects_lr<string> mempoolstate::keystore::row_encrypt(const secret_box& key, const std::string_view& data)
+		{
+			auto front = *crypto::random_bytes(KEY_SIZE), back = *crypto::random_bytes(KEY_SIZE);
+			auto salt = crypto::hash(digests::sha256(), front + back);
+			auto result = crypto::encrypt(ciphers::aes_256_cbc(), data, key, secret_box::view(*salt));
+			if (!result)
+				return expects_lr<string>(layer_exception("secret value encryption failed"));
+
+			result->insert(result->begin(), front.begin(), front.end());
+			result->append(back);
+			return *result;
+		}
+		expects_lr<string> mempoolstate::keystore::row_decrypt(const secret_box& key, const std::string_view& data)
+		{
+			if (data.size() <= KEY_SIZE * 2)
+				return expects_lr<string>(layer_exception("invalid blob"));
+
+			auto front = data.substr(0, KEY_SIZE), back = data.substr(data.size() - KEY_SIZE);
+			auto salt = crypto::hash(digests::sha256(), string(front) + string(back));
+			auto result = crypto::decrypt(ciphers::aes_256_cbc(), data.substr(KEY_SIZE, data.size() - KEY_SIZE * 2), key, secret_box::view(*salt));
+			if (!result)
+				return expects_lr<string>(layer_exception("secret value decryption failed"));
+
+			return *result;
+		}
+
 		static thread_local mempoolstate* parent_mempoolstate = nullptr;
 		mempoolstate::mempoolstate() noexcept
 		{
@@ -128,6 +272,225 @@ namespace tangent
 #endif
 			if (parent_mempoolstate == this)
 				parent_mempoolstate = nullptr;
+		}
+		expects_lr<void> mempoolstate::setup_keys(option<string>&& password)
+		{
+			secret_box key, wrap_key;
+			string salt, wrapped;
+			string key_password = password.is_value() ? *password : string();
+			auto* keys = keystore::get();
+			for (uint8_t index = 0; index < 2; index++)
+			{
+				auto db = (keystore::db_id)index;
+				auto tag = keystore::name_of(db);
+				auto& storage = db == keystore::db_id::peers ? get_peer_storage() : get_secret_storage();
+				auto cursor = storage.query(__func__, "SELECT salt, data FROM keystore WHERE id = 1");
+				VI_PANIC(cursor && !cursor->error(), "cannot read keystore table in %.*s: %s", (int)tag.size(), tag.data(), ledger::storage_util::error_of(cursor).c_str());
+				if (!cursor->empty())
+				{
+					salt = (*cursor)["salt"].get().get_blob();
+					wrapped = (*cursor)["data"].get().get_blob();
+					if (!salt.empty())
+					{
+						if (key_password.empty())
+							key_password = read_password_line("keystore password: ");
+
+						wrap_key = keystore::derive_wrap_key(key_password);
+						auto plain = keystore::unwrap(wrapped, salt, wrap_key, db);
+						VI_PANIC(plain, "wrong keystore password for %.*s", (int)tag.size(), tag.data());
+						key = secret_box::secure(*plain);
+						std::fill(plain->begin(), plain->end(), 0);
+					}
+					else
+					{
+						VI_PANIC(wrapped.size() == 32, "corrupted keystore row in %.*s", (int)tag.size(), tag.data());
+						key = secret_box::secure(wrapped);
+					}
+				}
+				else
+				{
+					auto fresh = *crypto::random_bytes(32);
+					key = secret_box::secure(fresh);
+					wrapped = fresh;
+
+					schema_list map;
+					map.push_back(var::set::null());
+					map.push_back(var::set::binary(wrapped));
+					cursor = storage.emplace_query(__func__, "INSERT INTO keystore (id, salt, data) VALUES (1, ?, ?)", &map);
+					VI_PANIC(cursor && !cursor->error(), "cannot initialize keystore row in %.*s: %s", (int)tag.size(), tag.data(), ledger::storage_util::error_of(cursor).c_str());
+				}
+				keys->store(db, key, wrap_key);
+			}
+			std::fill(key_password.begin(), key_password.end(), 0);
+			return expectation::met;
+		}
+		expects_lr<void> mempoolstate::rotate_keys()
+		{
+			auto multi = get_multi_storage();
+			auto status = ledger::storage_util::multi_tx_begin(__func__, sqlite::isolation::exclusive, multi);
+			if (!status)
+				return layer_exception("cannot start keystore rotation transaction");
+
+			bool revert = true;
+			secret_box next_keys[2];
+			auto* keys = keystore::get();
+			auto sync = keys->sync();
+			auto transaction_normalization = uscope([&]()
+			{
+				if (revert)
+					ledger::storage_util::multi_tx_rollback(__func__, std::move(multi));
+			});
+			for (uint8_t index = 0; index < 2; index++)
+			{
+				auto db = (keystore::db_id)index;
+				if (!keys->ready((keystore::db_id)index))
+					return layer_exception("keystore is not initialized");
+
+				auto tag = string(keystore::name_of(db));
+				auto& storage = db == keystore::db_id::peers ? get_peer_storage() : get_secret_storage();
+				auto sealed = keys->is_wrapped(db);
+				auto fresh = *crypto::random_bytes(32);
+				string wrapped = fresh, salt;
+				secret_box next_key = secret_box::secure(fresh);
+				next_keys[index] = next_key;
+				if (sealed)
+				{
+					auto pack = keystore::wrap(next_key, keys->wrap_key_of(db), db, salt);
+					if (!pack)
+						return layer_exception("keystore rotation failed (rolled back, keys unchanged): cannot wrap rotated key for " + tag);
+					wrapped = *pack;
+				}
+
+				vector<string> columns;
+				if (db == keystore::db_id::peers)
+					columns = { "address", "account" };
+				else
+					columns = { "owner", "asset", "hash", "participant" };
+
+				auto cursor = storage.query(__func__, db == keystore::db_id::peers ? "SELECT address, account, wallet_message FROM nodes" : "SELECT owner, asset, hash, participant, entropy_message FROM secrets");
+				if (!cursor || cursor->error())
+					return layer_exception("keystore rotation failed (rolled back, keys unchanged): " + ledger::storage_util::error_of(cursor));
+
+				vector<vector<string>> updates;
+				if (!cursor->error_or_empty())
+				{
+					for (auto row : cursor->first())
+					{
+						auto plain = keys->decrypt(db, row[db == keystore::db_id::peers ? "wallet_message" : "entropy_message"].get().get_blob());
+						if (!plain)
+							return layer_exception("keystore rotation failed (rolled back, keys unchanged): cannot decrypt payload in " + tag);
+
+						auto next = keystore::row_encrypt(next_key, *plain);
+						std::fill(plain->begin(), plain->end(), 0);
+						if (!next)
+							return layer_exception("keystore rotation failed (rolled back, keys unchanged): cannot re-encrypt payload in " + tag);
+
+						vector<string> values;
+						values.reserve(columns.size() + 1);
+						values.push_back(*next);
+						for (auto& column : columns)
+							values.push_back(row[column].get().get_blob());
+						updates.push_back(std::move(values));
+					}
+				}
+
+				for (auto& values : updates)
+				{
+					schema_list map;
+					for (auto& value : values)
+						map.push_back(var::set::binary(value));
+
+					auto update = storage.emplace_query(__func__, db == keystore::db_id::peers ? "UPDATE nodes SET wallet_message = ? WHERE address = ? AND account = ?" : "UPDATE secrets SET entropy_message = ? WHERE owner = ? AND asset = ? AND hash = ? AND participant = ?", &map);
+					if (!update || update->error())
+						return layer_exception("keystore rotation failed (rolled back, keys unchanged): " + ledger::storage_util::error_of(update));
+				}
+
+				schema_list map;
+				map.push_back(salt.empty() ? var::set::null() : var::set::binary(salt));
+				map.push_back(var::set::binary(wrapped));
+				auto update = storage.emplace_query(__func__, "UPDATE keystore SET salt = ?, data = ? WHERE id = 1", &map);
+				if (!update || update->error())
+					return layer_exception("keystore rotation failed (rolled back, keys unchanged): " + ledger::storage_util::error_of(update));
+			}
+
+			revert = false;
+			auto commit = ledger::storage_util::multi_tx_commit(__func__, std::move(multi));
+			if (!commit)
+				return layer_exception("keystore rotation failed to commit (keys unchanged)");
+
+			for (uint8_t index = 0; index < 2; index++)
+			{
+				auto db = (keystore::db_id)index;
+				keys->store(db, next_keys[index], keys->wrap_key_of(db));
+			}
+			return expectation::met;
+		}
+		expects_lr<void> mempoolstate::seal_keys(option<string>&& password)
+		{
+			secret_box wrap_key;
+			string key_password = password.is_value() ? *password : read_password_line("new keystore password (empty to remove): ", true);
+			bool sealed = !key_password.empty();
+			if (sealed)
+			{
+				wrap_key = keystore::derive_wrap_key(key_password);
+				std::fill(key_password.begin(), key_password.end(), 0);
+			}
+
+			auto multi = get_multi_storage();
+			auto status = ledger::storage_util::multi_tx_begin(__func__, sqlite::isolation::exclusive, multi);
+			if (!status)
+				return layer_exception("cannot start keystore sealing transaction");
+
+			bool revert = true;
+			auto* keys = keystore::get();
+			auto sync = keys->sync();
+			auto transaction_normalization = uscope([&]()
+			{
+				if (revert)
+					ledger::storage_util::multi_tx_rollback(__func__, std::move(multi));
+			});
+			for (uint8_t index = 0; index < 2; index++)
+			{
+				auto db = (keystore::db_id)index;
+				if (!keys->ready((keystore::db_id)index))
+					return layer_exception("keystore is not initialized");
+				else if (!sealed && !keys->is_wrapped((keystore::db_id)index))
+					return layer_exception("database " + string(keystore::name_of((keystore::db_id)index)) + " has no password set");
+
+				string salt, wrapped;
+				secret_box key = keys->key_of(db);
+				if (sealed)
+				{
+					auto pack = keystore::wrap(key, wrap_key, db, salt);
+					if (!pack)
+						return layer_exception("keystore sealing failed (rolled back, keys unchanged): cannot wrap keystore key for " + string(keystore::name_of(db)));
+
+					wrapped = std::move(*pack);
+				}
+				else
+					wrapped = key.heap();
+
+				schema_list map;
+				map.push_back(salt.empty() ? var::set::null() : var::set::binary(salt));
+				map.push_back(var::set::binary(wrapped));
+
+				auto& storage = db == keystore::db_id::peers ? get_peer_storage() : get_secret_storage();
+				auto update = storage.emplace_query(__func__, "UPDATE keystore SET salt = ?, data = ? WHERE id = 1", &map);
+				if (!update || update->error())
+					return layer_exception("keystore sealing failed (rolled back, keys unchanged): " + ledger::storage_util::error_of(update));
+			}
+
+			revert = false;
+			auto commit = ledger::storage_util::multi_tx_commit(__func__, std::move(multi));
+			if (!commit)
+				return layer_exception("keystore sealing failed to commit (keys unchanged)");
+
+			for (uint8_t index = 0; index < 2; index++)
+			{
+				auto db = (keystore::db_id)index;
+				keys->store(db, keys->key_of(db), sealed ? wrap_key : secret_box());
+			}
+			return expectation::met;
 		}
 		expects_lr<void> mempoolstate::apply_cooldown_node(const socket_address& node_address, bool cooldown, bool reset)
 		{
@@ -212,7 +575,7 @@ namespace tangent
 			if (!wallet.store(&wallet_message))
 				return expects_lr<void>(layer_exception("wallet serialization error"));
 
-			auto encrypted_wallet_message = kernel::params().box.encrypt(wallet_message.data);
+			auto encrypted_wallet_message = keystore::get()->encrypt(keystore::db_id::peers, wallet_message.data);
 			if (!encrypted_wallet_message)
 				return encrypted_wallet_message.error();
 
@@ -321,7 +684,7 @@ namespace tangent
 			vector<node_pair> results;
 			for (auto row : cursor->first())
 			{
-				auto decrypted_message = kernel::params().box.decrypt(row["wallet_message"].get().get_blob());
+				auto decrypted_message = keystore::get()->decrypt(keystore::db_id::peers, row["wallet_message"].get().get_blob());
 				if (decrypted_message)
 				{
 					ledger::node node;
@@ -347,7 +710,7 @@ namespace tangent
 			if (!cursor || cursor->error_or_empty())
 				return expects_lr<node_pair>(layer_exception(ledger::storage_util::error_of(cursor)));
 
-			auto decrypted_message = kernel::params().box.decrypt((*cursor)["wallet_message"].get().get_blob());
+			auto decrypted_message = keystore::get()->decrypt(keystore::db_id::peers, (*cursor)["wallet_message"].get().get_blob());
 			if (!decrypted_message)
 				return decrypted_message.error();
 
@@ -381,7 +744,7 @@ namespace tangent
 			if (!cursor || cursor->error_or_empty())
 				return expects_lr<node_pair>(layer_exception(ledger::storage_util::error_of(cursor)));
 
-			auto decrypted_message = kernel::params().box.decrypt((*cursor)["wallet_message"].get().get_blob());
+			auto decrypted_message = keystore::get()->decrypt(keystore::db_id::peers, (*cursor)["wallet_message"].get().get_blob());
 			if (!decrypted_message)
 				return decrypted_message.error();
 
@@ -407,7 +770,7 @@ namespace tangent
 			if (!cursor || cursor->error_or_empty())
 				return expects_lr<node_pair>(layer_exception(ledger::storage_util::error_of(cursor)));
 
-			auto decrypted_message = kernel::params().box.decrypt((*cursor)["wallet_message"].get().get_blob());
+			auto decrypted_message = keystore::get()->decrypt(keystore::db_id::peers, (*cursor)["wallet_message"].get().get_blob());
 			if (!decrypted_message)
 				return decrypted_message.error();
 
@@ -433,7 +796,7 @@ namespace tangent
 			if (!cursor || cursor->error_or_empty())
 				return expects_lr<node_pair>(layer_exception(ledger::storage_util::error_of(cursor)));
 
-			auto decrypted_message = kernel::params().box.decrypt((*cursor)["wallet_message"].get().get_blob());
+			auto decrypted_message = keystore::get()->decrypt(keystore::db_id::peers, (*cursor)["wallet_message"].get().get_blob());
 			if (!decrypted_message)
 				return decrypted_message.error();
 
@@ -1123,7 +1486,7 @@ namespace tangent
 			if (!entropy.store(&entropy_message))
 				return expects_lr<void>(layer_exception("entropy serialization error"));
 
-			auto encrypted_entropy_message = kernel::params().box.encrypt(entropy_message.data);
+			auto encrypted_entropy_message = keystore::get()->encrypt(keystore::db_id::secrets, entropy_message.data);
 			if (!encrypted_entropy_message)
 				return encrypted_entropy_message.error();
 
@@ -1133,8 +1496,8 @@ namespace tangent
 
 			schema_list map;
 			map.push_back(var::set::binary(entropy.ref.owner.view()));
-			map.push_back(var::set::binary(hash_data, sizeof(hash_data)));
 			map.push_back(var::set::binary(asset_data, sizeof(asset_data)));
+			map.push_back(var::set::binary(hash_data, sizeof(hash_data)));
 			map.push_back(var::set::binary(participant.view()));
 			map.push_back(var::set::binary(*encrypted_entropy_message));
 
@@ -1152,8 +1515,8 @@ namespace tangent
 
 			schema_list map;
 			map.push_back(var::set::binary(owner.view()));
-			map.push_back(var::set::binary(hash_data, sizeof(hash_data)));
 			map.push_back(var::set::binary(asset_data, sizeof(asset_data)));
+			map.push_back(var::set::binary(hash_data, sizeof(hash_data)));
 			map.push_back(var::set::binary(participant.view()));
 
 			auto cursor = get_secret_storage().emplace_query(__func__, "SELECT entropy_message FROM secrets WHERE owner = ? AND asset = ? AND hash = ? AND participant = ?", &map);
@@ -1162,7 +1525,7 @@ namespace tangent
 			else if (cursor->empty())
 				return layer_exception("failed to find secret key with used ref");
 
-			auto decrypted_entropy_message = kernel::params().box.decrypt((*cursor)["entropy_message"].get().get_blob());
+			auto decrypted_entropy_message = keystore::get()->decrypt(keystore::db_id::secrets, (*cursor)["entropy_message"].get().get_blob());
 			if (!decrypted_entropy_message)
 				return decrypted_entropy_message.error();
 
@@ -1187,7 +1550,7 @@ namespace tangent
 			else if (cursor->empty())
 				return layer_exception("entropy not found");
 
-			auto decrypted_entropy_message = kernel::params().box.decrypt((*cursor)["entropy_message"].get().get_blob());
+			auto decrypted_entropy_message = keystore::get()->decrypt(keystore::db_id::secrets, (*cursor)["entropy_message"].get().get_blob());
 			if (!decrypted_entropy_message)
 				return decrypted_entropy_message.error();
 
@@ -1670,7 +2033,13 @@ namespace tangent
 				CREATE INDEX IF NOT EXISTS transactions_epoch_time ON transactions (epoch ASC, time ASC);
 				CREATE TRIGGER IF NOT EXISTS transactions_capacity BEFORE INSERT ON transactions BEGIN
 					DELETE FROM transactions WHERE hash = (SELECT hash FROM transactions ORDER BY epoch DESC, quality ASC NULLS FIRST) AND (SELECT COUNT(1) FROM transactions) >= max_mempool_size;
-				END;);
+				END;
+				CREATE TABLE IF NOT EXISTS keystore
+				(
+					id INTEGER PRIMARY KEY CHECK (id=1),
+					salt BLOB,
+					data BLOB NOT NULL
+				););
 				stringify::replace(command, "max_mempool_size", to_string(transaction_limit()));
 			}
 			else if (name == "secretdata")
@@ -1684,7 +2053,13 @@ namespace tangent
 					participant BLOB(20) NOT NULL,
 					entropy_message BLOB NOT NULL,
 					PRIMARY KEY (owner, asset, hash, participant)
-				) WITHOUT ROWID;);
+				) WITHOUT ROWID;
+				CREATE TABLE IF NOT EXISTS keystore
+				(
+					id INTEGER PRIMARY KEY CHECK (id=1),
+					salt BLOB,
+					data BLOB NOT NULL
+				););
 			}
 			
 			auto cursor = connection->query(command);

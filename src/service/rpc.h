@@ -212,6 +212,8 @@ namespace tangent
 			server_response mempoolstate_submit_transaction(http::connection* base, format::variables&& args, ledger::transaction_message* prebuilt);
 			server_response mempoolstate_reject_transaction(http::connection* base, format::variables&& args);
 			server_response mempoolstate_simulate_bridge_transaction(http::connection* base, format::variables&& args);
+			server_response mempoolstate_rotate_keys(http::connection* base, format::variables&& args);
+			server_response mempoolstate_seal_keys(http::connection* base, format::variables&& args);
 			server_response mempoolstate_get_transaction_by_hash(http::connection* base, format::variables&& args);
 			server_response mempoolstate_get_raw_transaction_by_hash(http::connection* base, format::variables&& args);
 			server_response mempoolstate_get_next_account_nonce(http::connection* base, format::variables&& args);

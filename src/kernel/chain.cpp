@@ -1,6 +1,7 @@
 #include "chain.h"
 #include "script.h"
 #include "superchain.h"
+#include "../storage/mempoolstate.h"
 #include <rocksdb/db.h>
 #include <rocksdb/table.h>
 #include <rocksdb/filter_policy.h>
@@ -380,102 +381,6 @@ namespace tangent
 		return target_path;
 	}
 
-	string keystate::init(const std::string_view& maybe_data, bool encrypted)
-	{
-		VI_PANIC(maybe_data.empty() || maybe_data.size() == KEY_SIZE + 32, "base keystate must be either empty or unencrypted")
-		auto entropy = maybe_data.empty() ? *crypto::random_bytes(KEY_SIZE) : string(maybe_data.substr(0, KEY_SIZE));
-		auto commitment = *crypto::hash(digests::sha256(), entropy);
-		VI_PANIC(maybe_data.empty() || commitment == maybe_data.substr(maybe_data.size() - 32), "base keystate checksum validation failed");
-		if (encrypted)
-		{
-			string password;
-			auto* terminal = console::get();
-			terminal->write("keystate password requires high initial entropy");
-			terminal->fwrite("%s keystate password: ", maybe_data.empty() ? "new" : "attach");
-			terminal->echo_off([&]() { password = terminal->read(1024); });
-			terminal->write("verify keystate password: ");
-			terminal->echo_off([&]() { VI_PANIC(!password.empty() && terminal->read(1024) == password, "password verification failed"); });
-
-			uint8_t encryption_key[32] = { 0 }, encryption_salt[16] = { 0 };
-			bool seed_acquired = algorithm::signing::derive_seed_from_high_entropy_password((uint8_t*)password.data(), password.size(), encryption_key, sizeof(encryption_key));
-			VI_PANIC(seed_acquired, "encryption key derivation failed");
-			crypto::fill_random_bytes(encryption_salt, sizeof(encryption_salt)).expect("encryption salt generation failed");
-
-			auto encryption_key_view = secret_box::view(std::string_view((char*)encryption_key, sizeof(encryption_key)));
-			auto encryption_salt_view = secret_box::view(std::string_view((char*)encryption_salt, sizeof(encryption_salt)));
-			entropy = crypto::encrypt(ciphers::aes_256_cbc(), entropy, encryption_key_view, encryption_salt_view).expect("keystate encryption failed");
-			entropy.append(std::string_view((char*)encryption_salt, sizeof(encryption_salt)));
-		}
-		entropy.append(commitment);
-		return entropy;
-	}
-	void keystate::use(network_type type, const std::string_view& data, bool encrypted)
-	{
-		VI_PANIC(encrypted ? data.size() >= KEY_SIZE + 48 : (data.size() == KEY_SIZE + 32), "invalid keystate size");
-		auto calculate = [&](const std::string_view& entropy)
-		{
-			string blob = to_string((uint8_t)type).append(entropy);
-			for (size_t i = 0; i < entropy.size(); i++)
-				blob = *crypto::hash(digests::sha256(), blob);
-			key = secret_box::secure(blob);
-		};
-		if (encrypted)
-		{
-			auto password = os::process::get_env("XBASE");
-			if (!password)
-			{
-				auto* terminal = console::get();
-				terminal->write("keystate password: ");
-				terminal->echo_off([&]() { password = terminal->read(1024); });
-			}
-
-			uint8_t encryption_key[32] = { 0 };
-			bool seed_acquired = algorithm::signing::derive_seed_from_high_entropy_password((uint8_t*)password->data(), password->size(), encryption_key, sizeof(encryption_key));
-			VI_PANIC(seed_acquired, "decryption key derivation failed");
-
-			auto encryption_key_view = secret_box::view(std::string_view((char*)encryption_key, sizeof(encryption_key)));
-			auto encryption_salt_view = secret_box::view(data.substr(data.size() - 48, 16));
-			auto entropy = crypto::decrypt(ciphers::aes_256_cbc(), data.substr(0, data.size() - 48), encryption_key_view, encryption_salt_view).expect("keystate decryption failed");
-			bool checksum_match = *crypto::hash(digests::sha256(), entropy) == data.substr(data.size() - 32);
-
-			VI_PANIC(checksum_match, "keystate checksum validation failed");
-			entropy.append(data.substr(data.size() - 32));
-			calculate(entropy);
-		}
-		else
-		{
-			VI_PANIC(*crypto::hash(digests::sha256(), data.substr(0, data.size() - 32)) == data.substr(data.size() - 32), "keystate checksum validation failed");
-			calculate(data);
-		}
-	}
-	expects_lr<string> keystate::encrypt(const std::string_view& data) const
-	{
-		auto front = *crypto::random_bytes(KEY_FRONT), back = *crypto::random_bytes(KEY_BACK);
-		auto salt = crypto::hash(digests::sha256(), front + back);
-		auto result = crypto::encrypt(ciphers::aes_256_cbc(), data, key, secret_box::view(*salt));
-		result.report("secret value encryption failed (keystate possibly invalid)");
-		if (!result)
-			return layer_exception(std::move(result.error().message()));
-
-		result->insert(result->begin(), front.begin(), front.end());
-		result->append(back);
-		return *result;
-	}
-	expects_lr<string> keystate::decrypt(const std::string_view& data) const
-	{
-		if (data.size() <= KEY_FRONT + KEY_BACK)
-			return layer_exception("invalid blob");
-
-		auto front = data.substr(0, KEY_FRONT), back = data.substr(data.size() - KEY_BACK);
-		auto salt = crypto::hash(digests::sha256(), string(front) + string(back));
-		auto result = crypto::decrypt(ciphers::aes_256_cbc(), data.substr(KEY_FRONT, data.size() - KEY_FRONT - KEY_BACK), key, secret_box::view(*salt));
-		result.report("secret value decryption failed (keystate possibly invalid)");
-		if (!result)
-			return layer_exception(std::move(result.error().message()));
-
-		return *result;
-	}
-
 	string timepoint::adjust(const socket_address& address, int64_t milliseconds_delta)
 	{
 		string source = address.get_ip_address().or_else("[bad_address]") + ":" + to_string(address.get_ip_port().or_else(0));
@@ -612,14 +517,6 @@ namespace tangent
 				else if (type == "regtest")
 					user.network = network_type::regtest;
 			}
-
-			value = config->child("keystate");
-			if (value != nullptr && value->value.is_string())
-				user.keystate = value->value.as_blob();
-
-			value = config->child("encrypted");
-			if (value != nullptr && value->value.is_boolean())
-				user.encrypted = value->value.as_boolean();
 
 			value = config->child("known_nodes");
 			if (value != nullptr && value->is_list())
@@ -952,30 +849,7 @@ namespace tangent
 			});
 		}
 
-		auto default_keystate_path = std::string_view("./keystate.sk");
-		auto keystate_base = user.keystate.empty() ? string(default_keystate_path) : user.keystate;
-		auto keystate_url = location(keystate_base);
-		auto keystate_host = keystate_url.protocol == "file";
-		auto keystate_path = keystate_host ? os::path::resolve(keystate_base, user.storage.path, true).or_else(keystate_base) : keystate_base;
-		auto keystate_file = os::file::read_as_string(keystate_path);
-		if (!keystate_file)
-		{
-			if (!keystate_host)
-				keystate_path = os::path::resolve(default_keystate_path, user.storage.path, true).or_else(string(default_keystate_path));
-
-			auto* value = config ? config->child("keystate_for_encryption") : nullptr;
-			if (value != nullptr && value->value.is_string())
-				keystate_file = box.init(*os::file::read_as_string(*os::path::resolve(value->value.as_string(), user.storage.path, true)), user.encrypted);
-			else
-				keystate_file = box.init(std::string_view(), user.encrypted);
-
-			VI_PANIC(location(keystate_path).protocol == "file", "cannot save keystate into %s", keystate_path.c_str());
-			os::directory::patch(os::path::get_directory(keystate_path)).expect("cannot save keystate into " + keystate_path);
-			os::file::write(keystate_path, (uint8_t*)keystate_file->data(), keystate_file->size()).expect("cannot save keystate into " + keystate_path);
-		}
-
 		instance = this;
-		box.use(user.network, *keystate_file, user.encrypted);
 		switch (user.network)
 		{
 			case tangent::network_type::regtest:
@@ -1035,10 +909,19 @@ namespace tangent
 
 		uplinks::link_instance();
 		algorithm::signing::initialize();
+		option<string> startup_password = optional::none;
+		if (environment != nullptr)
+		{
+			auto found = environment->args.find("password");
+			if (found != environment->args.end())
+				startup_password = option<string>(found->second);
+		}
+		storages::mempoolstate().setup_keys(std::move(startup_password)).expect("keystore initialization failed");
 	}
 	kernel::~kernel()
 	{
 		database.checkpoint();
+		storages::mempoolstate::keystore::cleanup_instance();
 		superchain::bridge::cleanup_instance();
 		script::factory::cleanup_instance();
 		format::tree_pool::cleanup_instance();

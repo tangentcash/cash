@@ -440,6 +440,8 @@ namespace tangent
 			bind(access_type::w | access_type::a, "mempoolstate", "simulatebridgetransaction", 4, 4, "string asset, string bridge_hash, string to_address, decimal to_value", "superchain::computed_transaction", "build an off-chain broadcast (withdrawal) transaction payload using off-chain node without signing it", std::bind(&server_node::mempoolstate_simulate_bridge_transaction, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "mempoolstate", "addnode", 1, 1, "string uri_address", "void", "add node ip address to trial addresses", std::bind(&server_node::mempoolstate_add_node, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "mempoolstate", "clearnode", 1, 1, "string uri_address", "void", "remove associated node info by ip address", std::bind(&server_node::mempoolstate_clear_node, this, std::placeholders::_1, std::placeholders::_2));
+			bind(access_type::w | access_type::a, "mempoolstate", "rotatekeys", 0, 0, "", "void", "atomically rotate the database encryption keys (peerdata and secretdata); requires the keys unlocked in session", std::bind(&server_node::mempoolstate_rotate_keys, this, std::placeholders::_1, std::placeholders::_2));
+			bind(access_type::w | access_type::a, "mempoolstate", "sealkeys", 0, 0, "", "void", "wrap the database keys with a new password read from the node's stdin (peerdata and secretdata); an empty password removes it", std::bind(&server_node::mempoolstate_seal_keys, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::r | access_type::a, "validatorstate", "getwallet", 0, 0, "", "wallet", "get validator wallet", std::bind(&server_node::validatorstate_get_wallet, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::r | access_type::a, "validatorstate", "verify", 2, 3, "uint64 number, uint64 count, bool? validate", "uint256[]", "verify chain and possibly re-execute each block", std::bind(&server_node::validatorstate_verify, this, std::placeholders::_1, std::placeholders::_2));
 			bind(access_type::w | access_type::a, "validatorstate", "revert", 1, 1, "uint64 number", "{ new_tip_block_number: uint64, old_tip_block_number: uint64, transaction_delta: decimal, block_delta: decimal, state_delta: decimal, is_fork: bool }", "revert chainstate to block number and possibly send removed transactions to mempool", std::bind(&server_node::validatorstate_revert, this, std::placeholders::_1, std::placeholders::_2));
@@ -2781,6 +2783,24 @@ namespace tangent
 
 			auto mempool = storages::mempoolstate();
 			auto status = mempool.clear_node(endpoint.address);
+			if (!status)
+				return server_response().error(error_codes::bad_request, status.error().message());
+
+			return server_response().success(format::variable());
+		}
+		server_response server_node::mempoolstate_rotate_keys(http::connection*, format::variables&& args)
+		{
+			auto mempool = storages::mempoolstate();
+			auto status = mempool.rotate_keys();
+			if (!status)
+				return server_response().error(error_codes::bad_request, status.error().message());
+
+			return server_response().success(format::variable());
+		}
+		server_response server_node::mempoolstate_seal_keys(http::connection*, format::variables&& args)
+		{
+			auto mempool = storages::mempoolstate();
+			auto status = mempool.seal_keys();
 			if (!status)
 				return server_response().error(error_codes::bad_request, status.error().message());
 

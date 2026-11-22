@@ -145,18 +145,6 @@ namespace tangent
 		uint64_t now_cpu() const;
 	};
 
-	class keystate
-	{
-	private:
-		secret_box key;
-
-	public:
-		string init(const std::string_view& maybe_data, bool encrypted);
-		void use(network_type type, const std::string_view& data, bool encrypted);
-		expects_lr<string> encrypt(const std::string_view& data) const;
-		expects_lr<string> decrypt(const std::string_view& data) const;
-	};
-
 	class kernel
 	{
 	public:
@@ -241,8 +229,6 @@ namespace tangent
 			hash_set<string> known_nodes;
 			hash_set<string> bootstrap_nodes;
 			network_type network = network_type::mainnet;
-			string keystate;
-			bool encrypted = false;
 		} user;
 		struct messaging_config
 		{
@@ -356,7 +342,6 @@ namespace tangent
 	public:
 		std::mutex mutex;
 		repository database;
-		keystate box;
 		timepoint time;
 
 	public:
