@@ -1515,7 +1515,7 @@ namespace tangent
 		uint8_t approved_fee::level_of_amount(const decimal& amount)
 		{
 			uint8_t level = 1;
-			decimal cap = decimal(1) / decimal(10);
+			decimal cap = algorithm::arithmetic::divide(1, 10).truncate(1);
 			while (amount > cap && level < 255)
 			{
 				cap = cap * decimal(10);
@@ -1525,7 +1525,7 @@ namespace tangent
 		}
 		decimal approved_fee::cap_of_level(uint8_t level)
 		{
-			decimal cap = decimal(1) / decimal(10);
+			decimal cap = algorithm::arithmetic::divide(1, 10).truncate(1);
 			for (uint8_t i = 1; i < level; i++)
 				cap = cap * decimal(10);
 			return cap;

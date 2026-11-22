@@ -295,21 +295,18 @@ namespace tangent
 		{
 			struct
 			{
-				btree_set<algorithm::pubkey_t> neighbors;
 				uint64_t latency = (uint64_t)std::numeric_limits<int64_t>::max();
 				uint64_t timestamp = 0;
 				uint64_t calls = 0;
 				uint64_t errors = 0;
 				bool reachable = false;
-			} availability;
-
+			} quality;
 			struct
 			{
 				uint16_t consensus = 0;
 				uint16_t discovery = 0;
 				uint16_t rpc = 0;
 			} ports;
-
 			struct
 			{
 				bool has_consensus = false;
@@ -320,7 +317,6 @@ namespace tangent
 				bool has_participation = false;
 				bool has_attestation = false;
 			} services;
-
 			socket_address address;
 			uint32_t fork_version = (uint32_t)FORK_VERSION;
 			uint32_t patch_version = (uint32_t)PATCH_VERSION;

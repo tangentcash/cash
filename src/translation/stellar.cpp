@@ -943,9 +943,9 @@ namespace tangent
 			{
 				return 100;
 			}
-			uint16_t stellar::calculate_checksum(const uint8_t* value, size_t size)
+			uint16_t stellar::calculate_checksum_crc16xmodem(const uint8_t* value, size_t size)
 			{
-				uint64_t hash = 0x0; // CRC16 XMODEM
+				uint64_t hash = 0x0;
 				for (size_t i = 0; i < size; i++)
 				{
 					uint8_t byte = value[i];
@@ -976,7 +976,7 @@ namespace tangent
 					return false;
 
 				uint16_t given_checksum = 0;
-				uint16_t checksum = os::hw::to_endianness(os::hw::endian::little, calculate_checksum(&key[0], key.size() - 2));
+				uint16_t checksum = os::hw::to_endianness(os::hw::endian::little, calculate_checksum_crc16xmodem(&key[0], key.size() - 2));
 				memcpy(&given_checksum, &key[key.size() - 2], sizeof(uint8_t) * 2);
 				if (given_checksum != checksum)
 					return false;
@@ -990,7 +990,7 @@ namespace tangent
 				vector<uint8_t> key(1 + size + 2, version);
 				memcpy(&key[1], value, sizeof(uint8_t) * size);
 
-				uint16_t checksum = calculate_checksum(&key[0], size + 1);
+				uint16_t checksum = calculate_checksum_crc16xmodem(&key[0], size + 1);
 				memcpy(&key[key.size() - 2], &checksum, sizeof(uint8_t) * 2);
 
 				size_t expected_size = std::max<size_t>(1, base32_encoded_length(key.size()));

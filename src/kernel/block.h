@@ -448,7 +448,7 @@ namespace tangent
 			delegation_adapter(delegation_adapter&&) noexcept = default;
 			delegation_adapter& operator=(const delegation_adapter& other) noexcept;
 			delegation_adapter& operator=(delegation_adapter&&) noexcept = default;
-			virtual expects_promise_rt<btree_set<algorithm::pubkeyhash_t>> require_validators(delegation_contract* contract, const btree_set<algorithm::pubkeyhash_t>& targets, size_t steps_left) = 0;
+			virtual expects_promise_rt<btree_set<algorithm::pubkeyhash_t>> require_validators(delegation_contract* contract, const btree_set<algorithm::pubkeyhash_t>& targets, format::variables&& args, size_t steps_left) = 0;
 			virtual expects_promise_rt<format::wo_stream> execute_on_validator(delegation_contract* contract, const algorithm::pubkeyhash_t& target, const format::wo_stream& message) = 0;
 			virtual algorithm::pubkey_t get_public_key(const algorithm::pubkeyhash_t& target) const = 0;
 			virtual const wallet* get_runner_wallet(const algorithm::pubkeyhash_t& target) const = 0;
@@ -472,7 +472,8 @@ namespace tangent
 			virtual void emit_transaction(ledger::transaction_message* transaction);
 			virtual expects_promise_rt<void> execute_transition() = 0;
 			virtual expects_lr<void> validate_transition(delegation_contract* parent, const ledger::wallet& yielding_runner) const = 0;
-			virtual expects_promise_rt<btree_set<algorithm::pubkeyhash_t>> convene_delegates(const btree_set<algorithm::pubkeyhash_t>& targets, size_t steps_left);
+			virtual expects_lr<void> validate_delegation(const algorithm::pubkeyhash_t& attester, const btree_set<algorithm::pubkeyhash_t>& accounts, const format::variables& args) const = 0;
+			virtual expects_promise_rt<btree_set<algorithm::pubkeyhash_t>> assemble_delegates(const btree_set<algorithm::pubkeyhash_t>& targets, format::variables&& args, size_t steps_left);
 			virtual expects_promise_rt<void> yield_to_delegate(const algorithm::pubkeyhash_t& target, uint32_t delegate);
 			virtual expects_lr<format::wo_stream> yield_to_self(const algorithm::pubkeyhash_t& target, uint32_t delegate, bool requires_validation);
 			virtual delegate_ptr as_delegate_ptr(uint32_t hash) const = 0;

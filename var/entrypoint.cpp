@@ -20,7 +20,7 @@
 #define TEST_BLOCK_FAULTY_UNATTESTED(x, y, z) new_block_from_generator(data, users, x, #x, y, z, block_type::faulty_unattested)
 #define TEST_BLOCK_FULLY_UNATTESTED(x, y, z) new_block_from_generator(data, users, x, #x, y, z, block_type::fully_unattested)
 #define TEST_STATE(x) new_world_state_root_check(data, x)
-#define VERIFY_STATE_ROOTS 0
+#define VERIFY_STATE_ROOTS 1
 
 using namespace tangent;
 
@@ -1482,7 +1482,7 @@ static void new_unsigned_attestations_from_block(const ledger::block_body& block
 		transactions.push_back(std::move(attestation));
 	}
 }
-static void new_signed_attestations_from_transactions(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users)
+static void new_signed_attestations_from_transactions(vector<uptr<ledger::transaction_message>>& transactions, vector<block_account>& users, bool hard_fail)
 {
 	for (size_t i = 0; i < transactions.size(); i++)
 	{
@@ -1500,13 +1500,33 @@ static void new_signed_attestations_from_transactions(vector<uptr<ledger::transa
 		}
 
 		auto& submitter = users.front();
-		attestation->sign(submitter.wallet.secret_key, submitter.nonce++, decimal::zero()).expect("pre-validation failed");
+		auto result = attestation->sign(submitter.wallet.secret_key, submitter.nonce++, decimal::zero());
+		if (!result)
+		{
+			transaction.destroy();
+			if (hard_fail)
+				result.expect("pre-validation failed");
+			else
+				result.report("fake attestation failed");
+		}
 	}
+}
+static void new_world_state_root_check(format::tree* results, const std::string_view& expected_root)
+{
+	auto root = storages::chainstate().build_world_state_root();
+	VI_PANIC(root, "world state root build failed: %s", std::string(root.error().message()).c_str());
+
+	auto hash = algorithm::encoding::encode_0xhex256(*root);
+	if (results != nullptr)
+		console::get()->fwrite_line("TEST_STATE(\"%s\");", hash.c_str());
+#if VERIFY_STATE_ROOTS
+	VI_PANIC(expected_root.empty() || expected_root == hash, "world state root deviation");
+#endif
 }
 static ledger::block_body new_block_from_list(format::tree* results, vector<block_account>& users, vector<uptr<ledger::transaction_message>>&& transactions, block_type type)
 {
 	if (type != block_type::faulty_unattested && type != block_type::fully_unattested)
-		new_signed_attestations_from_transactions(transactions, users);
+		new_signed_attestations_from_transactions(transactions, users, true);
 
 	ledger::solver_context solver;
 	uint64_t priority = solver.apply_validator_state([&](size_t index) { return index < users.size() ? &users[index].wallet : nullptr; }).or_else(std::numeric_limits<uint64_t>::max());
@@ -1608,18 +1628,6 @@ static ledger::block_body new_block_from_list(format::tree* results, vector<bloc
 
 	return proposal.block;
 }
-static void new_world_state_root_check(format::tree* results, const std::string_view& expected_root)
-{
-	auto root = storages::chainstate().build_world_state_root();
-	VI_PANIC(root, "world state root build failed: %s", std::string(root.error().message()).c_str());
-
-	auto hash = algorithm::encoding::encode_0xhex256(*root);
-	if (results != nullptr)
-		console::get()->fwrite_line("TEST_STATE(\"%s\");", hash.c_str());
-#if VERIFY_STATE_ROOTS
-	VI_PANIC(expected_root.empty() || expected_root == hash, "world state root deviation");
-#endif
-}
 static ledger::block_body new_block_from_generator(format::tree* results, vector<block_account>& users, std::function<void(vector<uptr<ledger::transaction_message>>&, vector<block_account>&)>&& test_case, const std::string_view& test_case_call, const std::string_view& state_root_hash, uint64_t block_number, block_type type)
 {
 	for (auto& user : users)
@@ -1631,7 +1639,28 @@ static ledger::block_body new_block_from_generator(format::tree* results, vector
 	auto block = new_block_from_list(results, users, std::move(transactions), type);
 	auto hash = algorithm::encoding::encode_0xhex256(block.state_root);
 	if (results != nullptr)
-		console::get()->fwrite_line("TEST_BLOCK%s(%s, \"%s\", %" PRIu64 ");", type == block_type::fallback ? "_FALLBACK" : (type == block_type::faulty ? "_FAULTY" : (type == block_type::faulty_unattested ? "_FAULTY_UNATTESTED" : "")), test_case_call.data(), hash.c_str(), block.number);
+	{
+		std::string_view test_block_type;
+		switch (type)
+		{
+			case block_type::fallback:
+				test_block_type = "_FALLBACK";
+				break;
+			case block_type::faulty:
+				test_block_type = "_FAULTY";
+				break;
+			case block_type::faulty_unattested:
+				test_block_type = "_FAULTY_UNATTESTED";
+				break;
+			case block_type::fully_unattested:
+				test_block_type = "_FULLY_UNATTESTED";
+				break;
+			case block_type::normal:
+			default:
+				break;
+		}
+		console::get()->fwrite_line("TEST_BLOCK%.*s(%s, \"%s\", %" PRIu64 ");", (int)test_block_type.size(), test_block_type.data(), test_case_call.data(), hash.c_str(), block.number);
+	}
 #if VERIFY_STATE_ROOTS
 	VI_PANIC(state_root_hash.empty() || state_root_hash == hash, "block state transition root deviation");
 	VI_PANIC(!block_number || block_number == block.number, "block number deviation");
@@ -2547,26 +2576,26 @@ static void test_blockchain_full_coverage(vector<block_account>* userdata)
 		TEST_BLOCK(&block_generator::migrate_stage_3, "0x0512cddde5b6e503910fd7fd71012b0ca9f9560c76a1a5b3f79c7cf9a93d9b69", 37);
 		TEST_BLOCK(&block_generator::migrate_stage_4, "0xfdec40ce8cadf4bdb78d299c80a621a743142fd8033823f2f21bfed2a6d84065", 38);
 		TEST_BLOCK(&block_generator::route_stage_5, "0x9f10cb82f6d3e1440f3765261098d1843f223528d732a95cb352394934b1adaa", 40);
-		TEST_BLOCK(&block_generator::attestate_stage_2, "0x09e0ed480cb8758a86ad344a3b7748c5ae1dca91cb7816da76712df3f4309d9a", 42);
-		TEST_BLOCK_FAULTY(&block_generator::withdraw_stage_0, "0x9b575700bdac7b24053ac2b2e2e84ebc8b632057acb4117c3a9705851f768afd", 43);
-		TEST_BLOCK(&block_generator::withdraw_stage_1, "0x569484e2d8aedd7100507d5a9be4b2b5527969c683314ac718f0941f15636962", 45);
-		TEST_BLOCK(&block_generator::withdraw_stage_2, "0x64898af3e467452ab2503dc2494206baeba1de57856d5875e15c6cab6beb68f3", 48);
-		TEST_BLOCK(&block_generator::withdraw_stage_3, "0x7848d30016c38295998d542c3f09ced958e51a3c1e59621fc2e918213fe40844", 51);
-		TEST_BLOCK(&block_generator::withdraw_stage_4, "0xba4d1c94f0f805cdc7c6d9fa63b19196ad11e63086a7534508f24c88427cf886", 53);
-		TEST_BLOCK(&block_generator::withdraw_stage_5, "0x7486948872a6b882f52e14a30440948d81ae105a444b850b60df76356a820a7d", 54);
-		TEST_BLOCK(&block_generator::withdraw_stage_6, "0xae7678a60a4cffe84d147cac3298d6b78003a3db0f162b32d521f4954ef1473e", 55);
-		TEST_BLOCK(&block_generator::withdraw_stage_7, "0xcbbe9a95d005f5c2d9f9dd931beaaeaf9078856deadab509764958b3259a6044", 56);
-		TEST_BLOCK(&block_generator::withdraw_stage_8, "0x0e3fc71ee6d28b27936d916444d720e3fbefc2729e0f8fbd9e34f3dac91fd76c", 57);
-		TEST_BLOCK(&block_generator::withdraw_stage_9, "0x1c6aee18b2943bbeb4055ed3eee65f79887c2147a7025148fcb3143a9d943eb7", 60);
-		TEST_BLOCK(&block_generator::withdraw_stage_10, "0xfee49f4254d099728086ca4a43eee022eb402f7ec88e5d8277109ad744c96561", 63);
-		TEST_BLOCK(&block_generator::withdraw_stage_11, "0x00282c459e63d5ceed2fd04d4fabd42d84719ac7c520b4021ea885f7e1574a01", 66);
-		TEST_BLOCK_FULLY_UNATTESTED(&block_generator::withdraw_stage_12, "0x92f3a9fb97ef5ca5b927a60e995c05849d0e0dabd29060e4300ec784cf10ece1", 67);
-		TEST_BLOCK(&block_generator::withdraw_stage_13, "0xa530d7c41ed204b8724adb7b62f94a9d77ab44180f7ba7ebf6aa34b62dc8640f", 69);
-		TEST_BLOCK(std::bind(&block_generator::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 1, 0), "0x287bfecc50649bffe3782580d03f7be2103cce4d9254a0999f592aeb3e8341a7", 70);
-		TEST_BLOCK_FALLBACK(&block_generator::production_stage_1, "0x8ff2c4cbfa6de06066286d26d3a8274531b6573022d6d04f45e32720d755921c", 71);
-		TEST_BLOCK(&block_generator::production_stage_2, "0xf6becc5c0692faa1e2ddc60205732b0ad89a95c76e36d7bccd0644761ad7f1d9", 72);
-		TEST_BLOCK(std::bind(&block_generator::bridge_probe_links_stage, std::placeholders::_1, std::placeholders::_2, &contracts, &bridge_call_hash), "0x7c9beba9275b26553164a573db6d2be04ad8a623ecd222e519f934a744845870", 73);
-		TEST_STATE("0x350e6d7eac4fac469dc782d631abc020b372f6f34dc4229180ed3018d188c8a5");
+		TEST_BLOCK(&block_generator::attestate_stage_2, "0xcdbdad32f28ea33b8ea65e3c62f1995af22c19a959462e84f7f4ca05c63e23ad", 42);
+		TEST_BLOCK_FAULTY(&block_generator::withdraw_stage_0, "0x3d4916e99ddadf1c8e03cf4b72468969cab970ec3aa634baf3b7d77c1d1fb974", 43);
+		TEST_BLOCK(&block_generator::withdraw_stage_1, "0x1a2459272a4e4167043a0d1e3356926d722a54318fd0430a76d33394bb988cfb", 45);
+		TEST_BLOCK(&block_generator::withdraw_stage_2, "0x7ab3375c4f30846a1b394417635adbe7bb81abf3e6155495d80f659375e35489", 48);
+		TEST_BLOCK(&block_generator::withdraw_stage_3, "0xf9687ec913fb85a54cd33be3fb7d298673f4907aa9cda9501a68c986885f9062", 51);
+		TEST_BLOCK(&block_generator::withdraw_stage_4, "0xdaf4930ea6f3ff11a8dee47b69d93d2d0e4e28efb370d52984055fb1288ccb1b", 53);
+		TEST_BLOCK(&block_generator::withdraw_stage_5, "0x9d3338139fbf3f1c5e042c4ad5750f4ac9b013a0ab544575ff1d1b49d648f456", 54);
+		TEST_BLOCK(&block_generator::withdraw_stage_6, "0xb1b841a54690b385f4d580baba72f8134ccc327d85448d5fb5fcdd27f6c2b37f", 55);
+		TEST_BLOCK(&block_generator::withdraw_stage_7, "0x78d2f23f5706a8e0f347560a8bc6da22b781529a6eff6310bc4f6f1c9f7c8845", 56);
+		TEST_BLOCK(&block_generator::withdraw_stage_8, "0x4cd75492b8f0f2c197b67ea62823b1a6b1bcbfe344900359d02a49a155d203c8", 57);
+		TEST_BLOCK(&block_generator::withdraw_stage_9, "0xf64e37e1125f0e6c4f09c3fc137790c0d838c708b9d7e406738e7eb6ec4ed556", 60);
+		TEST_BLOCK(&block_generator::withdraw_stage_10, "0xe64ece002eabb0052920d87f71a9d04b318c1d3cf893c553e36c87e8eec099c6", 63);
+		TEST_BLOCK(&block_generator::withdraw_stage_11, "0xf7cd0880c1c47b96031e7d4667829d89a7b540649c8c6a032bc53a38e9eb9be6", 66);
+		TEST_BLOCK_FULLY_UNATTESTED(&block_generator::withdraw_stage_12, "0xb1211bbaf8a632c34d6ff71e7c6a83f25425b469cfa4a135c194738e1f36ee8a", 67);
+		TEST_BLOCK(&block_generator::withdraw_stage_13, "0x817dccf88a6e193986740956c6644ca83c1dddd6de3c97e38249fae8b608daa5", 69);
+		TEST_BLOCK(std::bind(&block_generator::setup_custom, std::placeholders::_1, std::placeholders::_2, 2, 1, 0), "0x31b146d5130b38dbe2d903ebc56bc560bac108ede0d363a4f2e26a1250da999d", 70);
+		TEST_BLOCK_FALLBACK(&block_generator::production_stage_1, "0xbce13d6f0aa9d688146c904dce59a2647a7dc9ae5be318bbeedbb428c1a12f79", 71);
+		TEST_BLOCK(&block_generator::production_stage_2, "0x30990e58053c8e3422aa1145823cfe0ef432dfc0e2042385991925714cc304e5", 72);
+		TEST_BLOCK(std::bind(&block_generator::bridge_probe_links_stage, std::placeholders::_1, std::placeholders::_2, &contracts, &bridge_call_hash), "0x517f2c786b981ac616da529985d39b2ca42c91cd4032a57c2b118a8c79d64f5f", 73);
+		TEST_STATE("0x0277e6ae5c855bfc18efd221c1f21058dda6400321e13ddf5627ad96ce5eb568");
 		if (userdata != nullptr)
 			*userdata = std::move(users);
 		else
@@ -2920,6 +2949,8 @@ int main(int argc, char* argv[])
 #if defined(_MSC_VER)
 	if (!os::process::has_debugger())
 		_set_abort_behavior(0, _WRITE_ABORT_MSG);
+	setvbuf(stdout, nullptr, _IONBF, 0); /* temporary p2p-test: live log flush to files */
+	setvbuf(stderr, nullptr, _IONBF, 0);
 #endif
 	vitex::runtime scope;
 	inline_args args = os::process::parse_args(argc, argv, (size_t)args_format::key | (size_t)args_format::key_value);
@@ -2981,9 +3012,12 @@ int main(int argc, char* argv[])
 				for (auto& user : users)
 					user.nonce = user.wallet.get_latest_nonce().or_else(0);
 
-				new_signed_attestations_from_transactions(transactions, users);
+				new_signed_attestations_from_transactions(transactions, users, false);
 				for (auto& transaction : transactions)
-					consensus_service.accept_transaction(nullptr, transaction.reset());
+				{
+					if (transaction)
+						consensus_service.accept_transaction(nullptr, transaction.reset());
+				}
 			}
 		};
 

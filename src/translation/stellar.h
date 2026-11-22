@@ -119,7 +119,7 @@ namespace tangent
 				virtual decimal from_stroop(const uint256_t& value);
 				virtual uint256_t to_stroop(const decimal& value);
 				virtual uint64_t get_base_stroop_fee();
-				virtual uint16_t calculate_checksum(const uint8_t* value, size_t size);
+				virtual uint16_t calculate_checksum_crc16xmodem(const uint8_t* value, size_t size);
 				virtual bool decode_key(uint8_t version, const std::string_view& data, uint8_t* out_value, size_t* out_size);
 				virtual string encode_key(uint8_t version, const uint8_t* value, size_t size);
 				virtual const sc_chainparams_* get_chain();

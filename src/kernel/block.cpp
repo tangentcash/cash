@@ -3280,10 +3280,10 @@ namespace tangent
 		{
 			adapter->emissions.emplace_back(std::make_pair(runner, uptr(transaction)));
 		}
-		expects_promise_rt<btree_set<algorithm::pubkeyhash_t>> delegation_contract::convene_delegates(const btree_set<algorithm::pubkeyhash_t>& targets, size_t steps_left)
+		expects_promise_rt<btree_set<algorithm::pubkeyhash_t>> delegation_contract::assemble_delegates(const btree_set<algorithm::pubkeyhash_t>& targets, format::variables&& args, size_t steps_left)
 		{
 			VI_ASSERT(adapter != nullptr, "adapter should be set");
-			return adapter->require_validators(this, targets, steps_left);
+			return adapter->require_validators(this, targets, std::move(args), steps_left);
 		}
 		expects_promise_rt<void> delegation_contract::yield_to_delegate(const algorithm::pubkeyhash_t& target, uint32_t delegate)
 		{

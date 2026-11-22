@@ -235,7 +235,7 @@ namespace tangent
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 
-			return apply_cooldown_node(node.address, !wallet.has_secret_key() && !node.availability.reachable, false);
+			return apply_cooldown_node(node.address, !wallet.has_secret_key() && !node.quality.reachable, false);
 		}
 		expects_lr<void> mempoolstate::apply_node_quality(const socket_address& node_address, int8_t call_result, uint64_t call_latency)
 		{
@@ -253,16 +253,15 @@ namespace tangent
 			if (!node.load(node_message))
 				return expects_lr<void>(layer_exception("node deserialization error"));
 
-			node.availability.timestamp = kernel::params().time.now();
-			if (call_latency > 0)
-				node.availability.latency = call_latency;
+			node.quality.timestamp = kernel::params().time.now();
+			node.quality.latency = call_latency > 0 ? call_latency : node.quality.latency;
 			if (call_result != 0)
 			{
-				++node.availability.calls;
+				++node.quality.calls;
 				if (call_result < 0)
-					++node.availability.errors;
+					++node.quality.errors;
 			}
-
+			
 			map.clear();
 			map.push_back(var::set::integer(node.get_preference()));
 			map.push_back(var::set::binary(node.as_message().data));

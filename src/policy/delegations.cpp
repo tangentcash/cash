@@ -134,7 +134,7 @@ namespace tangent
 					compositor = std::move(*maybe_compositor);
 				}
 
-				auto delegates = coawait(convene_delegates(group, 1));
+				auto delegates = coawait(assemble_delegates(group, format::variables({ format::variable(route->asset), format::variable(route->bridge_hash), format::variable(executor->receipt.transaction_hash) }), 1));
 				if (!delegates)
 					coreturn delegates.error();
 
@@ -298,6 +298,46 @@ namespace tangent
 					if (it != prev->key_contributions.end() && it->second != share_public_key)
 						return layer_exception("invalid key contribution transition");
 				}
+			}
+
+			return expectation::met;
+		}
+		expects_lr<void> bind_delegation::validate_delegation(const algorithm::pubkeyhash_t& attester, const btree_set<algorithm::pubkeyhash_t>& accounts, const format::variables& args) const
+		{
+			if (args.size() != 3)
+				return layer_exception(stringify::text("route delegation permit expects 3 arguments (asset, bridge hash, route tx hash), received %zu", args.size()));
+
+			algorithm::asset_id asset = args[0].as_uint256();
+			uint256_t bridge_hash = args[1].as_uint256();
+			uint256_t permit_tx_hash = args[2].as_uint256();
+			if (asset == 0)
+				return layer_exception("route delegation permit is missing an asset");
+			else if (bridge_hash == 0)
+				return layer_exception("route delegation permit is missing a bridge hash");
+			else if (permit_tx_hash == 0)
+				return layer_exception("route delegation permit is missing a route transaction hash");
+
+			if (!executor->get_verified_validator_attestation(asset, attester) && !executor->get_validator_participation(attester))
+				return layer_exception(stringify::text("route delegation permit attester %s is neither a verified validator of asset 0x%s nor a participating validator", algorithm::signing::encode_address(attester).c_str(), asset.to_string(16).c_str()));
+
+			auto permit = executor->get_applied_block_transaction<transactions::route>(permit_tx_hash);
+			if (!permit)
+				return layer_exception(stringify::text("route delegation permit references a nonexistent or non-route transaction 0x%s", permit_tx_hash.to_string(16).c_str()));
+
+			if (executor->get_witness_event(permit->receipt.transaction_hash))
+				return layer_exception(stringify::text("route delegation permit references an already finalized route transaction 0x%s", permit_tx_hash.to_string(16).c_str()));
+
+			auto* route = (transactions::route*)*permit->transaction;
+			if (route->asset != asset)
+				return layer_exception(stringify::text("route transaction 0x%s binds asset 0x%s while the permit authorizes asset 0x%s", permit_tx_hash.to_string(16).c_str(), route->asset.to_string(16).c_str(), asset.to_string(16).c_str()));
+			else if (route->bridge_hash != bridge_hash)
+				return layer_exception(stringify::text("route transaction 0x%s binds bridge 0x%s while the permit authorizes bridge 0x%s", permit_tx_hash.to_string(16).c_str(), route->bridge_hash.to_string(16).c_str(), bridge_hash.to_string(16).c_str()));
+
+			auto group = route->get_participants(permit->receipt);
+			for (auto& account : accounts)
+			{
+				if (group.find(account) == group.end())
+					return layer_exception(stringify::text("route delegation permit account %s is not a participant of route transaction 0x%s", algorithm::signing::encode_address(account).c_str(), permit_tx_hash.to_string(16).c_str()));
 			}
 
 			return expectation::met;
@@ -622,7 +662,7 @@ namespace tangent
 					auto retweaking_participant = *group.begin();
 					group.insert(new_participant);
 
-					auto delegates = coawait(convene_delegates(group, (size_t)std::distance(migration_it, migrations->end())));
+					auto delegates = coawait(assemble_delegates(group, format::variables({ format::variable(migration.account.ref.asset), format::variable(migration.account.ref.owner.optimized_view()), format::variable(migration.account.ref.hash), format::variable(executor->receipt.transaction_hash) }), (size_t)std::distance(migration_it, migrations->end())));
 					if (!delegates)
 						coreturn delegates.error();
 
@@ -868,6 +908,58 @@ namespace tangent
 			}
 
 			return expectation::met;
+		}
+		expects_lr<void> rebind_delegation::validate_delegation(const algorithm::pubkeyhash_t& attester, const btree_set<algorithm::pubkeyhash_t>& accounts, const format::variables& args) const
+		{
+			if (args.size() != 4)
+				return layer_exception(stringify::text("migration delegation permit expects 4 arguments (asset, owner, bridge hash, setup tx hash), received %zu", args.size()));
+
+			algorithm::asset_id asset = args[0].as_uint256();
+			algorithm::pubkeyhash_t owner(args[1].as_string());
+			uint256_t bridge_hash = args[2].as_uint256();
+			uint256_t permit_tx_hash = args[3].as_uint256();
+			if (asset == 0)
+				return layer_exception("migration delegation permit is missing an asset");
+			else if (owner.empty())
+				return layer_exception("migration delegation permit is missing an owner");
+			else if (bridge_hash == 0)
+				return layer_exception("migration delegation permit is missing a bridge hash");
+			else if (permit_tx_hash == 0)
+				return layer_exception("migration delegation permit is missing a setup transaction hash");
+
+			if (!executor->get_verified_validator_attestation(asset, attester) && !executor->get_validator_participation(attester))
+				return layer_exception(stringify::text("migration delegation permit attester %s is neither a verified validator of asset 0x%s nor a participating validator", algorithm::signing::encode_address(attester).c_str(), asset.to_string(16).c_str()));
+
+			auto permit = executor->get_applied_block_transaction<transactions::setup>(permit_tx_hash);
+			if (!permit)
+				return layer_exception(stringify::text("migration delegation permit references a nonexistent or non-setup transaction 0x%s", permit_tx_hash.to_string(16).c_str()));
+
+			if (executor->get_witness_event(permit->receipt.transaction_hash))
+				return layer_exception(stringify::text("migration delegation permit references an already finalized setup transaction 0x%s", permit_tx_hash.to_string(16).c_str()));
+
+			auto* setup = (transactions::setup*)*permit->transaction;
+			auto migrations = setup->get_migration_refs(executor, permit->receipt);
+			if (!migrations)
+				return layer_exception(std::move(migrations.error().message()));
+
+			auto new_participant = setup->get_new_participant(permit->receipt);
+			for (auto& migration : *migrations)
+			{
+				if (migration.account.ref.asset != asset || migration.account.ref.owner != owner || migration.account.ref.hash != bridge_hash)
+					continue;
+
+				auto group = migration.account.group;
+				group.erase(migration.old_participant);
+				group.insert(new_participant);
+				for (auto& account : accounts)
+				{
+					if (group.find(account) == group.end())
+						return layer_exception(stringify::text("migration delegation permit account %s is not a replacement participant of the bridge account %s migrated by setup transaction 0x%s (expected its group without %s and with %s)", algorithm::signing::encode_address(account).c_str(), algorithm::signing::encode_address(owner).c_str(), permit_tx_hash.to_string(16).c_str(), algorithm::signing::encode_address(migration.old_participant).c_str(), algorithm::signing::encode_address(new_participant).c_str()));
+				}
+
+				return expectation::met;
+			}
+			return layer_exception(stringify::text("setup transaction 0x%s does not migrate the bridge account %s of asset 0x%s at bridge 0x%s", permit_tx_hash.to_string(16).c_str(), algorithm::signing::encode_address(owner).c_str(), asset.to_string(16).c_str(), bridge_hash.to_string(16).c_str()));
 		}
 		expects_lr<void> rebind_delegation::aggregate_encrypted_shares_and_tweak()
 		{
@@ -1491,7 +1583,7 @@ namespace tangent
 					if (!account)
 						coreturn cancel(algorithm::pubkeyhash_t(), remote_exception(std::move(account.error().message())));
 
-					auto delegates = coawait(convene_delegates(account->group, message->signatures_left()));
+					auto delegates = coawait(assemble_delegates(account->group, format::variables({ format::variable(withdraw->asset), format::variable(witness->ref.owner.optimized_view()), format::variable(witness->ref.hash), format::variable(executor->receipt.transaction_hash) }), message->signatures_left()));
 					if (!delegates)
 						coreturn delegates.error().is_retry() || delegates.error().is_shutdown() ? expects_rt<void>(std::move(delegates.error())) : cancel(algorithm::pubkeyhash_t(), std::move(delegates.error()));
 
@@ -1620,6 +1712,49 @@ namespace tangent
 			if (!validation)
 				return layer_exception(std::move(validation.error().message()));
 
+			return expectation::met;
+		}
+		expects_lr<void> broadcast_delegation::validate_delegation(const algorithm::pubkeyhash_t& attester, const btree_set<algorithm::pubkeyhash_t>& accounts, const format::variables& args) const
+		{
+			if (args.size() != 4)
+				return layer_exception(stringify::text("settlement delegation permit expects 4 arguments (asset, owner, bridge hash, withdraw tx hash), received %zu", args.size()));
+
+			algorithm::asset_id asset = args[0].as_uint256();
+			algorithm::pubkeyhash_t owner(args[1].as_string());
+			uint256_t bridge_hash = args[2].as_uint256();
+			uint256_t permit_tx_hash = args[3].as_uint256();
+			if (asset == 0)
+				return layer_exception("settlement delegation permit is missing an asset");
+			else if (owner.empty())
+				return layer_exception("settlement delegation permit is missing an owner");
+			else if (bridge_hash == 0)
+				return layer_exception("settlement delegation permit is missing a bridge hash");
+			else if (permit_tx_hash == 0)
+				return layer_exception("settlement delegation permit is missing a withdrawal transaction hash");
+
+			if (!executor->get_verified_validator_attestation(asset, attester) && !executor->get_validator_participation(attester))
+				return layer_exception(stringify::text("settlement delegation permit attester %s is neither a verified validator of asset 0x%s nor a participating validator", algorithm::signing::encode_address(attester).c_str(), asset.to_string(16).c_str()));
+
+			auto permit = executor->get_applied_block_transaction<transactions::withdraw>(permit_tx_hash);
+			if (!permit)
+				return layer_exception(stringify::text("settlement delegation permit references a nonexistent or non-withdrawal transaction 0x%s", permit_tx_hash.to_string(16).c_str()));
+
+			if (algorithm::asset::base_id_of(permit->transaction->asset) != algorithm::asset::base_id_of(asset))
+				return layer_exception(stringify::text("withdrawal transaction 0x%s settles asset 0x%s while the permit authorizes asset 0x%s", permit_tx_hash.to_string(16).c_str(), permit->transaction->asset.to_string(16).c_str(), asset.to_string(16).c_str()));
+
+			if (executor->get_witness_event(permit->receipt.transaction_hash))
+				return layer_exception(stringify::text("settlement delegation permit references an already settled withdrawal transaction 0x%s", permit_tx_hash.to_string(16).c_str()));
+
+			auto account = executor->get_bridge_account(owner, asset, bridge_hash);
+			if (!account)
+				return layer_exception(stringify::text("settlement delegation permit references a nonexistent bridge account %s of asset 0x%s at bridge 0x%s", algorithm::signing::encode_address(owner).c_str(), asset.to_string(16).c_str(), bridge_hash.to_string(16).c_str()));
+
+			for (auto& candidate : accounts)
+			{
+				if (account->group.find(candidate) == account->group.end())
+					return layer_exception(stringify::text("settlement delegation permit signer %s is not a member of the bridge account %s funding the withdrawal", algorithm::signing::encode_address(candidate).c_str(), algorithm::signing::encode_address(owner).c_str()));
+			}
+			
 			return expectation::met;
 		}
 		expects_lr<void> broadcast_delegation::aggregate_signature()

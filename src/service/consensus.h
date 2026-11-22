@@ -23,7 +23,6 @@ namespace tangent
 		typedef std::function<expects_rt<void>(server_node*, uref<relay>&&, const struct exchange&)> event_callback;
 		typedef std::function<expects_rt<format::variables>(server_node*, uref<relay>&&, const struct exchange&)> query_callback;
 		typedef std::function<expects_promise_rt<format::variables>(server_node*, uref<relay>&&, const struct exchange&)> async_query_callback;
-		typedef std::function<void(const algorithm::pubkey_t&, int8_t)> neighbor_callback;
 		typedef std::pair<ledger::node, ledger::wallet> relay_descriptor;
 		typedef socket_connection inbound_node;
 
@@ -136,8 +135,8 @@ namespace tangent
 			static callable::descriptor broadcast_block_hash();
 			static callable::descriptor broadcast_transaction_hash();
 			static callable::descriptor broadcast_attestation();
-			static callable::descriptor broadcast_intermediary();
-			static callable::descriptor announce_neighbor();
+			static callable::descriptor broadcast_delegation();
+			static callable::descriptor perform_delegation();
 			static callable::descriptor perform_handshake();
 			static callable::descriptor perform_discovery();
 			static callable::descriptor fetch_headers();
@@ -257,6 +256,18 @@ namespace tangent
 				bool busy = false;
 			};
 
+			struct account_route
+			{
+				algorithm::pubkey_t public_key;
+				void* channel_instance = nullptr;
+			};
+			
+			struct delegation_path
+			{
+				uref<relay> parent;
+				uint64_t timestamp = 0;
+			};
+
 		public:
 			struct
 			{
@@ -303,10 +314,12 @@ namespace tangent
 			} verifier;
 
 		private:
+			hash_map<uint256_t, std::function<void(const algorithm::pubkey_t&, uref<relay>&&)>> delegation_nodes;
+			hash_map<uint256_t, delegation_path> delegation_paths;
+			hash_map<algorithm::pubkeyhash_t, account_route> account_routes;
 			hash_map<algorithm::pubkeyhash_t, uint64_t> nonces;
 			hash_map<algorithm::asset_id, fetch_queue> fetchers;
 			hash_map<algorithm::asset_id, uint64_t> witnesses;
-			hash_map<uint256_t, neighbor_callback> neighbors;
 			hash_map<uint8_t, callable> callables;
 			hash_map<void*, uref<relay>> nodes;
 			hash_map<uint256_t, format::wo_stream> maybe_tips;
@@ -332,10 +345,10 @@ namespace tangent
 			expects_rt<void> broadcast_transaction_hash(uref<relay>&& state, const exchange& event);
 			expects_rt<void> broadcast_attestation(uref<relay>&& state, const exchange& event);
 			expects_rt<void> broadcast_preattestation(uref<relay>&& state, const exchange& event);
-			expects_rt<void> broadcast_intermediary(uref<relay>&& state, const exchange& event);
+			expects_rt<void> broadcast_delegation(uref<relay>&& state, const exchange& event);
 			expects_rt<void> broadcast_quote_ask(uref<relay>&& state, const exchange& event);
 			expects_rt<void> broadcast_quote(uref<relay>&& state, const exchange& event);
-			expects_rt<void> announce_neighbor(uref<relay>&& state, const exchange& event);
+			expects_rt<void> perform_delegation(uref<relay>&& state, const exchange& event);
 			expects_rt<format::variables> perform_handshake(uref<relay>&& state, const exchange& event, bool is_acknowledgement);
 			expects_rt<format::variables> perform_discovery(uref<relay>&& state, const exchange& event, bool is_acknowledgement);
 			expects_rt<format::variables> fetch_headers(uref<relay>&& state, const exchange& event);
@@ -352,7 +365,7 @@ namespace tangent
 			expects_lr<socket_address> find_node_from_mempool();
 			expects_promise_rt<socket_address> find_node_from_discovery();
 			expects_promise_rt<uref<relay>> connect_to_physical_node(const socket_address& address);
-			expects_promise_rt<btree_set<algorithm::pubkeyhash_t>> connect_to_logical_nodes(btree_set<algorithm::pubkeyhash_t>&& accounts);
+			expects_promise_rt<btree_set<algorithm::pubkeyhash_t>> connect_to_delegation_nodes(ledger::delegation_contract* contract, btree_set<algorithm::pubkeyhash_t>&& accounts, format::variables&& args);
 			expects_promise_rt<uint64_t> synchronize_mempool_with(uref<relay>&& state);
 			expects_promise_rt<void> resolve_and_verify_fork(const std::pair<uint256_t, tip_header>* fork);
 			expects_promise_rt<exchange> query(uref<relay>&& state, const callable::descriptor& descriptor, format::variables&& args, uint64_t timeout_ms, bool force_call = false);
@@ -375,7 +388,6 @@ namespace tangent
 			bool run_block_dispatcher();
 			void startup();
 			void shutdown();
-			void clear_pending_neighbors();
 			void clear_tip(relay* state, ledger::block_header* prev_best);
 			void accept_tip(uref<relay>&& state, const uint256_t& candidate_hash, ledger::block_header&& candidate_block);
 			void disconnect_node(uref<relay>&& state, const std::string_view& message);
@@ -385,8 +397,12 @@ namespace tangent
 			relay_descriptor* find_descriptor(const algorithm::pubkeyhash_t& account);
 			uref<relay> find_by_ip_address(const socket_address& address);
 			uref<relay> find_by_account(const algorithm::pubkeyhash_t& account);
-			uref<relay> find_with_neighbor_account(const algorithm::pubkeyhash_t& account);
 			option<algorithm::pubkey_t> find_public_key(const algorithm::pubkeyhash_t& account);
+			uref<relay> find_account_route(const algorithm::pubkeyhash_t& account);
+			void register_account_route(const algorithm::pubkeyhash_t& account, const algorithm::pubkey_t& public_key, uref<relay>&& channel);
+			void erase_account_routes_for(void* channel_instance);
+			string build_account_bindings() const;
+			expects_lr<size_t> apply_account_bindings(const string& blob, uref<relay>&& channel, const socket_address& advertised_address);
 			size_t size_of(node_type type);
 			size_t get_connections();
 			bool is_active();
@@ -408,9 +424,7 @@ namespace tangent
 			uref<relay> find_node_by_instance(void* instance);
 			slot_t claim_peer_index();
 			format::variables build_state_exchange(uref<relay>&& state);
-			void announce_peer(uref<relay>&& state, bool available);
 			void fill_node_services(relay_descriptor& descriptor);
-			void fill_node_neighbors(relay_descriptor& descriptor);
 			void append_pending_tip(uref<relay>&& from, const uint256_t& block_hash, ledger::block_body* tip);
 			void erase_pending_tip(const uint256_t& block_hash);
 			void broadcast_pending_tip(uref<relay>&& from, const uint256_t& block_hash, uint64_t block_number);
@@ -436,7 +450,7 @@ namespace tangent
 			server_delegation_adapter(server_delegation_adapter&&) noexcept = default;
 			server_delegation_adapter& operator=(const server_delegation_adapter& other) noexcept;
 			server_delegation_adapter& operator=(server_delegation_adapter&&) noexcept = default;
-			expects_promise_rt<btree_set<algorithm::pubkeyhash_t>> require_validators(ledger::delegation_contract* contract, const btree_set<algorithm::pubkeyhash_t>& validators, size_t steps_left) override;
+			expects_promise_rt<btree_set<algorithm::pubkeyhash_t>> require_validators(ledger::delegation_contract* contract, const btree_set<algorithm::pubkeyhash_t>& validators, format::variables&& args, size_t steps_left) override;
 			expects_promise_rt<format::wo_stream> execute_on_validator(ledger::delegation_contract* contract, const algorithm::pubkeyhash_t& target, const format::wo_stream& message) override;
 			expects_promise_rt<format::wo_stream> execute_on_validator_internal(ledger::delegation_contract* contract, const algorithm::pubkeyhash_t& target, const format::wo_stream& message);
 			algorithm::pubkey_t get_public_key(const algorithm::pubkeyhash_t& validator) const override;
@@ -453,7 +467,7 @@ namespace tangent
 			local_delegation_adapter(local_delegation_adapter&&) noexcept = default;
 			local_delegation_adapter& operator=(const local_delegation_adapter& other) noexcept;
 			local_delegation_adapter& operator=(local_delegation_adapter&&) noexcept = default;
-			expects_promise_rt<btree_set<algorithm::pubkeyhash_t>> require_validators(ledger::delegation_contract* contract, const btree_set<algorithm::pubkeyhash_t>& validators, size_t steps_left) override;
+			expects_promise_rt<btree_set<algorithm::pubkeyhash_t>> require_validators(ledger::delegation_contract* contract, const btree_set<algorithm::pubkeyhash_t>& validators, format::variables&& args, size_t steps_left) override;
 			expects_promise_rt<format::wo_stream> execute_on_validator(ledger::delegation_contract* contract, const algorithm::pubkeyhash_t& target, const format::wo_stream& message) override;
 			algorithm::pubkey_t get_public_key(const algorithm::pubkeyhash_t& validator) const override;
 			const ledger::wallet* get_runner_wallet(const algorithm::pubkeyhash_t& validator) const override;

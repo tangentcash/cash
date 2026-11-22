@@ -1011,18 +1011,15 @@ namespace tangent
 		bool node::store_payload(format::wo_stream* stream) const
 		{
 			VI_ASSERT(stream != nullptr, "stream should be set");
-			stream->write_integer((uint16_t)availability.neighbors.size());
-			for (auto& neighbor : availability.neighbors)
-				stream->write_string(neighbor.optimized_view());
 			stream->write_string(address.get_ip_address().or_else(string()));
 			stream->write_integer(address.get_ip_port().or_else(0));
 			stream->write_integer(patch_version);
 			stream->write_integer(fork_version);
-			stream->write_integer(availability.latency);
-			stream->write_integer(availability.timestamp);
-			stream->write_integer(availability.calls);
-			stream->write_integer(availability.errors);
-			stream->write_boolean(availability.reachable);
+			stream->write_integer(quality.latency);
+			stream->write_integer(quality.timestamp);
+			stream->write_integer(quality.calls);
+			stream->write_integer(quality.errors);
+			stream->write_boolean(quality.reachable);
 			stream->write_integer(ports.consensus);
 			stream->write_integer(ports.discovery);
 			stream->write_integer(ports.rpc);
@@ -1037,22 +1034,25 @@ namespace tangent
 		}
 		bool node::load_payload(format::ro_stream& stream)
 		{
-			uint16_t neighbors_size;
-			if (!stream.read_integer(stream.read_type(), &neighbors_size))
-				return false;
-
-			availability.neighbors.clear();
-			for (uint16_t i = 0; i < neighbors_size; i++)
+			auto type = stream.read_type();
+			if (!format::util::is_string(type))
 			{
-				algorithm::pubkey_t public_key;
-				if (!stream.read_optimized_view(stream.read_type(), public_key.blob, sizeof(public_key)))
+				uint16_t neighbors_size;
+				if (!stream.read_integer(type, &neighbors_size))
 					return false;
 
-				availability.neighbors.insert(public_key);
+				algorithm::pubkey_t public_key;
+				for (uint16_t i = 0; i < neighbors_size; i++)
+				{
+					if (!stream.read_optimized_view(stream.read_type(), public_key.blob, sizeof(public_key)))
+						return false;
+				}
+
+				type = stream.read_type();
 			}
 
 			string ip_address;
-			if (!stream.read_string(stream.read_type(), &ip_address))
+			if (!stream.read_string(type, &ip_address))
 				return false;
 
 			uint16_t ip_port;
@@ -1065,19 +1065,19 @@ namespace tangent
 			if (!stream.read_integer(stream.read_type(), &fork_version))
 				return false;
 
-			if (!stream.read_integer(stream.read_type(), &availability.latency))
+			if (!stream.read_integer(stream.read_type(), &quality.latency))
 				return false;
 
-			if (!stream.read_integer(stream.read_type(), &availability.timestamp))
+			if (!stream.read_integer(stream.read_type(), &quality.timestamp))
 				return false;
 
-			if (!stream.read_integer(stream.read_type(), &availability.calls))
+			if (!stream.read_integer(stream.read_type(), &quality.calls))
 				return false;
 
-			if (!stream.read_integer(stream.read_type(), &availability.errors))
+			if (!stream.read_integer(stream.read_type(), &quality.errors))
 				return false;
 
-			if (!stream.read_boolean(stream.read_type(), &availability.reachable))
+			if (!stream.read_boolean(stream.read_type(), &quality.reachable))
 				return false;
 
 			if (!stream.read_integer(stream.read_type(), &ports.consensus))
@@ -1120,10 +1120,10 @@ namespace tangent
 		uint64_t node::get_preference() const
 		{
 			const double min_step = 32.0, max_latency = 500.0;
-			double responses = std::max((double)availability.calls, min_step);
-			double errors = std::min(std::max((double)availability.errors, 0.0), responses);
-			double latency = mathd::exp(-(double)availability.latency / max_latency);
-			double reliability = availability.calls > 0 ? 1.0 - errors / responses : 1;
+			double responses = std::max((double)quality.calls, min_step);
+			double errors = std::min(std::max((double)quality.errors, 0.0), responses);
+			double latency = mathd::exp(-(double)quality.latency / max_latency);
+			double reliability = quality.calls > 0 ? 1.0 - errors / responses : 1;
 			double index = latency * 0.75 + reliability * 0.25;
 			return (uint64_t)(1000000.0 * index);
 		}
@@ -1134,22 +1134,16 @@ namespace tangent
 			auto version = data.set("version", format::tree::map());
 			version->set("fork", format::variable(fork_version));
 			version->set("patch", format::variable(patch_version));
-
-			auto* availability_data = data.set("availability", format::tree::map());
-			auto* neighbors_data = availability_data->set("neighbors", format::tree::list());
-			for (auto& public_key : availability.neighbors)
-				neighbors_data->push(algorithm::signing::serialize_public_key(public_key));
-			availability_data->set("latency", algorithm::encoding::serialize_uint256(availability.latency));
-			availability_data->set("timestamp", algorithm::encoding::serialize_uint256(availability.timestamp));
-			availability_data->set("calls", algorithm::encoding::serialize_uint256(availability.calls));
-			availability_data->set("errors", algorithm::encoding::serialize_uint256(availability.errors));
-			availability_data->set("reachable", format::variable(availability.reachable));
-
+			auto* quality_data = data.set("quality", format::tree::map());
+			quality_data->set("latency", algorithm::encoding::serialize_uint256(quality.latency));
+			quality_data->set("timestamp", algorithm::encoding::serialize_uint256(quality.timestamp));
+			quality_data->set("calls", algorithm::encoding::serialize_uint256(quality.calls));
+			quality_data->set("errors", algorithm::encoding::serialize_uint256(quality.errors));
+			quality_data->set("reachable", format::variable(quality.reachable));
 			auto* ports_data = data.set("ports", format::tree::map());
 			ports_data->set("consensus", format::variable(ports.consensus));
 			ports_data->set("discovery", format::variable(ports.discovery));
 			ports_data->set("rpc", format::variable(ports.rpc));
-
 			auto* services_data = data.set("services", format::tree::map());
 			services_data->set("consensus", format::variable(services.has_consensus));
 			services_data->set("discovery", format::variable(services.has_discovery));

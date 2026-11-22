@@ -274,7 +274,7 @@ namespace tangent
 			initializer(*result);
 
 		if (kernel::params().user.storage.logging)
-			VI_DEBUG("wal append on %s (handle: 0x%" PRIXPTR ")", address.c_str(), (uintptr_t)*result);
+			VI_DEBUG("wal append on %.*s (handle: 0x%" PRIXPTR ")", (int)address.size(), address.data(), (uintptr_t)*result);
 
 		return result;
 	}

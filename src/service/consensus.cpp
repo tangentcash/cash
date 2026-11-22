@@ -27,6 +27,10 @@ namespace tangent
 			uint32_t length;
 		};
 
+		static const uint8_t MAX_BOUND_ACCOUNTS = 64;
+		static const uint8_t MAX_FORWARD_HOPS = 16;
+		static const size_t MAX_DELEGATION_PATHS = 4096;
+		static const uint64_t DELEGATION_PATH_TTL_MS = 5 * 60 * 1000;
 		static void mask_set(string& mask, slot_t bit)
 		{
 			size_t byte = bit >> 3;
@@ -118,13 +122,13 @@ namespace tangent
 			message.write_integer(time);
 			return message.hash();
 		}
-		static uint256_t discovery_proof(const socket_address& address, const btree_set<algorithm::pubkeyhash_t>& accounts)
+		static uint256_t account_binding_proof(const algorithm::pubkey_t& account_key, const algorithm::pubkey_t& node_key, const socket_address& address)
 		{
 			format::wo_stream message;
+			message.write_string(account_key.optimized_view());
+			message.write_string(node_key.optimized_view());
 			message.write_string(address.get_ip_address().or_else(string()));
 			message.write_integer(address.get_ip_port().or_else(0));
-			for (auto& account : accounts)
-				message.write_typeless(account.view());
 			return message.hash();
 		}
 		static uint256_t preattestation_proof(const algorithm::asset_id& asset, const uint256_t& attestation_hash, uint64_t tip_height, const uint256_t& proof_hash)
@@ -134,6 +138,25 @@ namespace tangent
 			message.write_integer(attestation_hash);
 			message.write_integer(tip_height);
 			message.write_integer(proof_hash);
+			return message.hash();
+		}
+		static uint256_t delegation_input_proof(const socket_address& address, uint64_t block_number, uint32_t contract_type, const format::variables& args, const btree_set<algorithm::pubkeyhash_t>& accounts)
+		{
+			format::wo_stream message;
+			message.write_string(address.get_ip_address().or_else(string()));
+			message.write_integer(address.get_ip_port().or_else(0));
+			message.write_integer(contract_type);
+			message.write_integer(block_number);
+			for (auto& account : accounts)
+				message.write_typeless(account.view());
+			format::variables_util::serialize_flat_into(args, &message);
+			return message.hash();
+		}
+		static uint256_t delegation_output_proof(const uint256_t& delegation_id, const algorithm::pubkey_t& account_key)
+		{
+			format::wo_stream message;
+			message.write_typeless(delegation_id);
+			message.write_string(account_key.optimized_view());
 			return message.hash();
 		}
 		static format::variables pack_query_result(const expects_rt<format::variables>& result)
@@ -896,11 +919,11 @@ namespace tangent
 		{
 			return callable::descriptor(__func__, 3);
 		}
-		callable::descriptor descriptors::broadcast_intermediary()
+		callable::descriptor descriptors::broadcast_delegation()
 		{
 			return callable::descriptor(__func__, 4);
 		}
-		callable::descriptor descriptors::announce_neighbor()
+		callable::descriptor descriptors::perform_delegation()
 		{
 			return callable::descriptor(__func__, 5);
 		}
@@ -1058,7 +1081,6 @@ namespace tangent
 		{
 			control_sys.deactivate(false);
 			clear_tip(nullptr, nullptr);
-			clear_pending_neighbors();
 			{
 				single_queue<fetch_target> cancellations;
 				umutex<std::recursive_mutex> unique(sync.fetcher);
@@ -1192,7 +1214,6 @@ namespace tangent
 			{
 				auto& [node, wallet] = descriptor;
 				fill_node_services(descriptor);
-				fill_node_neighbors(descriptor);
 				node.patch_version = PATCH_VERSION;
 				node.fork_version = FORK_VERSION;
 				node.ports.consensus = kernel::params().user.consensus.port;
@@ -1214,6 +1235,9 @@ namespace tangent
 			if (it == descriptors.end())
 				return layer_exception("failed to bind runner account");
 
+			auto chain = storages::chainstate();
+			auto tip = chain.get_latest_block_header();
+			VI_INFO("tip block %s confirmed (number: %" PRIu64 ", work: 0x%s)", uint256_to_label(tip ? tip->as_hash() : uint256_t(0)).c_str(), tip ? tip->number : (uint64_t)0, tip ? tip->absolute_work.to_string(16).c_str() : "0");
 			runner_descriptor = &it->second;
 			return expectation::met;
 		}
@@ -1788,49 +1812,94 @@ namespace tangent
 			});
 			return expectation::met;
 		}
-		expects_rt<void> server_node::broadcast_intermediary(uref<relay>&& from, const exchange& event)
+		expects_rt<void> server_node::broadcast_delegation(uref<relay>&& from, const exchange& event)
 		{
-			if (event.args.size() < 3 || event.args.size() > 2 + kernel::params().policy.participation.max_per_account)
+			if (event.args.size() < 7 || event.args.size() > 11 + kernel::params().policy.participation.max_per_account)
 				return remote_exception("invalid arguments");
 
-			auto signature = algorithm::hashsig_t(event.args[0].as_string());
+			uint256_t delegation_id = event.args[0].as_uint256();
+			auto signature = algorithm::hashsig_t(event.args[1].as_string());
 			if (signature.empty())
 				return remote_exception("invalid signature");
 
-			auto address = text_address_to_socket_address(event.args[1].as_string(), false);
+			auto address = text_address_to_socket_address(event.args[2].as_string(), false);
 			if (!address)
 				return remote_exception("invalid address");
 
-			size_t accounts_size = event.args.size() - 2;
-			btree_set<algorithm::pubkeyhash_t> accounts;
-			for (size_t i = 2; i < event.args.size(); i++)
+			auto block_number = event.args[3].as_uint64();
+			auto delegation_type = event.args[4].as_uint32();
+			auto accounts_size = event.args[5].as_uint8();
+			auto args_offset = 6;
+			if (event.args.size() - args_offset < accounts_size)
+				return remote_exception("invalid arguments");
+
+			auto accounts = btree_set<algorithm::pubkeyhash_t>();
+			for (uint8_t i = 0; i < accounts_size; i++)
 			{
-				auto account = algorithm::pubkeyhash_t(event.args[i].as_string());
+				auto account = algorithm::pubkeyhash_t(event.args[args_offset + i].as_string());
+				accounts.insert(account);
 				if (account.empty())
 					return remote_exception("invalid account");
-
-				accounts.insert(account);
 			}
 			if (accounts.size() != accounts_size || accounts.empty())
-				return remote_exception("invalid accounts");
+				return remote_exception("invalid accounts size");
 
-			algorithm::pubkeyhash_t account;
-			if (!algorithm::signing::recover_hash(discovery_proof(*address, accounts), account, signature))
+			auto delegator = algorithm::pubkeyhash_t();
+			auto args = format::variables();
+			args.insert(args.begin(), event.args.begin() + (args_offset + accounts.size()), event.args.end());
+			if (!algorithm::signing::recover_hash(delegation_input_proof(*address, block_number, delegation_type, args, accounts), delegator, signature))
 				return remote_exception("invalid signature");
 
-			size_t notifications = notify_all_except(std::move(from), descriptors::broadcast_intermediary(), format::variables(event.args));
-			if (notifications > 0 && kernel::params().user.consensus.logging)
-				VI_DEBUG("representative for %s broadcasted to %i nodes", algorithm::signing::encode_address(account).c_str(), (int)notifications);
+			auto chain = storages::chainstate();
+			if (chain.get_latest_block_number().or_else(1) < block_number)
+				return remote_exception::retry_later();
 
+			auto executor = ledger::executor_context(nullptr);
+			auto adapter = server_delegation_adapter(this);
+			auto delegation = uptr(delegations::resolver::from_type(delegation_type, &adapter, &executor, runner_descriptor->second.public_key_hash));
+			if (!delegation)
+				return remote_exception("invalid delegation type");
+
+			auto validation = delegation->validate_delegation(delegator, accounts, args);
+			if (!validation)
+				return remote_exception(std::move(validation.error().message()));
+			else if (!from)
+				return expectation::met;
+
+			{
+				umutex<std::recursive_mutex> unique(sync.neighbor);
+				if (delegation_paths.find(delegation_id) != delegation_paths.end())
+					return expectation::met;
+
+				if (delegation_paths.size() > MAX_DELEGATION_PATHS)
+				{
+					uint64_t now = kernel::params().time.now_cpu();
+					for (auto it = delegation_paths.begin(); it != delegation_paths.end();)
+						it = now > it->second.timestamp + MAX_DELEGATION_PATHS ? delegation_paths.erase(it) : std::next(it);
+
+					if (delegation_paths.size() > MAX_DELEGATION_PATHS)
+						return expectation::met;
+				}
+				delegation_paths[delegation_id] = delegation_path { uref(from), kernel::params().time.now_cpu() };
+			}
+
+			size_t notifications = 0;
+			auto type = delegation->as_typename();
 			for (auto& target : accounts)
 			{
-				if (find_descriptor(target) != nullptr)
+				algorithm::hashsig_t accept_signature; auto* hosted = find_descriptor(target);
+				if (hosted && algorithm::signing::sign(delegation_output_proof(delegation_id, hosted->second.public_key), hosted->second.secret_key, accept_signature))
 				{
-					connect_to_physical_node(*address);
-					break;
+					bool sent = !!notify(uref(from), descriptors::perform_delegation(), { format::variable(delegation_id), format::variable(hosted->second.public_key.optimized_view()), format::variable(accept_signature.optimized_view()) });
+					if (sent && kernel::params().user.consensus.logging)
+						VI_INFO("delegation %s path: accept to %s (type: %.*s, delegate: %s)", uint256_to_label(delegation_id).c_str(), from->peer_address().c_str(), (int)type.size(), type.data(), algorithm::signing::encode_address(hosted->second.public_key_hash).c_str());
+					notifications += sent ? 1 : 0;
 				}
 			}
 
+			notifications += notify_all_except(uref(from), descriptors::broadcast_delegation(), format::variables(event.args));
+			if (kernel::params().user.consensus.logging && notifications > 0)
+				VI_DEBUG("delegation %s path: broadcasted to %i nodes (type: %.*s, delegate: %s)", uint256_to_label(delegation_id).c_str(), (int)notifications, (int)type.size(), type.data(), algorithm::signing::encode_address(hosted->second.public_key_hash).c_str());
 			return expectation::met;
 		}
 		expects_rt<void> server_node::broadcast_quote_ask(uref<relay>&& from, const exchange& event)
@@ -1899,7 +1968,7 @@ namespace tangent
 			coasync<void>([this, offchain, asset, expiry_block_number, from_link = std::move(from_link), address = std::move(address), supply = std::move(supply), attester = std::move(attester)]() mutable -> promise<void>
 			{
 				auto& [signer, min_fee] = attester;
-				bool cascade = superchain::utxo_translation_unit::from(offchain->get_network(asset)) != nullptr;
+				auto cascade = superchain::utxo_translation_unit::from(offchain->get_network(asset)) != nullptr;
 				uint8_t level = cascade ? superchain::approved_fee::level_of_amount(supply) : 0;
 				do
 				{
@@ -1967,43 +2036,48 @@ namespace tangent
 				VI_DEBUG("%s quote broadcasted to %i nodes", algorithm::asset::blockchain_of(quote.asset).c_str(), (int)notifications);
 			return expects_rt<void>(expectation::met);
 		}
-		expects_rt<void> server_node::announce_neighbor(uref<relay>&& from, const exchange& event)
+		expects_rt<void> server_node::perform_delegation(uref<relay>&& from, const exchange& event)
 		{
-			if (event.args.size() != 1 && event.args.size() != 2)
-				return remote_exception("invalid args");
+			if (event.args.size() != 3)
+				return remote_exception("invalid arguments");
 
-			auto public_key = algorithm::pubkey_t(event.args[0].as_string());
-			if (public_key.empty())
-				return remote_exception("invalid public key");
+			uint256_t delegation_id = event.args[0].as_uint256();
+			auto account_key = algorithm::pubkey_t(event.args[1].as_string());
+			auto accept_signature = algorithm::hashsig_t(event.args[2].as_string());
+			if (account_key.empty() || accept_signature.empty())
+				return remote_exception("invalid accept");
 
-			auto address = event.args.size() > 1 ? text_address_to_socket_address(event.args[1].as_string(), false) : option<socket_address>(optional::none);
-			if (address)
-				storages::mempoolstate().apply_unknown_node(*address, from ? from->private_network() : true);
+			algorithm::pubkey_t recovered;
+			if (!algorithm::signing::recover(delegation_output_proof(delegation_id, account_key), recovered, accept_signature) || !recovered.equals(account_key))
+				return remote_exception("invalid accept signature");
 
-			if (!from)
+			algorithm::pubkeyhash_t account;
+			algorithm::signing::derive_public_key_hash(account_key, account);
+			if (find_descriptor(account) != nullptr)
+				return expectation::met;
+
+			uref<relay> parent = nullptr;
 			{
-				umutex<std::recursive_mutex> unique(exclusive);
-				for (auto& [account, descriptor] : descriptors)
+				umutex<std::recursive_mutex> unique(sync.neighbor);
+				auto waiter = delegation_nodes.find(delegation_id);
+				if (waiter != delegation_nodes.end())
 				{
-					if (address)
-						descriptor.first.availability.neighbors.insert(public_key);
-					else
-						descriptor.first.availability.neighbors.erase(public_key);
+					waiter->second(account_key, uref(from));
+					return expectation::met;
 				}
-			}
-			else
-			{
-				umutex<std::recursive_mutex> unique(exclusive);
-				if (address)
-					from->as_descriptor()->first.availability.neighbors.insert(public_key);
-				else
-					from->as_descriptor()->first.availability.neighbors.erase(public_key);
+
+				auto path = delegation_paths.find(delegation_id);
+				if (path == delegation_paths.end() || !path->second.parent)
+					return expectation::met;
+
+				parent = uref(path->second.parent);
 			}
 
-			umutex<std::recursive_mutex> unique(sync.neighbor);
-			for (auto& [id, neighbor] : neighbors)
-				neighbor(public_key, address ? 1 : -1);
-
+			register_account_route(account, account_key, uref(from));
+			if (!notify(uref(parent), descriptors::perform_delegation(), format::variables(event.args)))
+				return expectation::met;
+			else if (kernel::params().user.consensus.logging)
+				VI_INFO("delegation %s path: hop to %s (delegate: %s)", uint256_to_label(delegation_id).c_str(), parent ? parent->peer_address().c_str() : "null", algorithm::signing::encode_address(account).c_str());
 			return expectation::met;
 		}
 		expects_rt<void> server_node::check_socket(uref<relay>&&, const exchange& event)
@@ -2015,7 +2089,7 @@ namespace tangent
 		}
 		expects_rt<format::variables> server_node::perform_handshake(uref<relay>&& from, const exchange& event, bool is_acknowledgement)
 		{
-			if (event.args.size() != (is_acknowledgement ? 4 : 3))
+			if (event.args.size() != (is_acknowledgement ? 5 : 4))
 				return remote_exception("invalid arguments");
 
 			uint64_t system_time = kernel::params().time.now_cpu();
@@ -2036,12 +2110,13 @@ namespace tangent
 				return remote_exception("invalid signature");
 
 			auto mempool = storages::mempoolstate();
-			peer_node.availability.latency = peer_latency;
-			peer_node.availability.reachable = is_acknowledgement;
+			peer_node.quality.latency = peer_latency;
+			peer_node.quality.reachable = is_acknowledgement;
 			if (!from->private_network())
 				peer_node.address = socket_address(from->peer_address(), peer_node.address.get_ip_port().or_else(kernel::params().user.consensus.port));
 
 			algorithm::signing::derive_public_key_hash(peer_wallet.public_key, peer_wallet.public_key_hash);
+			auto advertised_address = peer_node.address;
 			bool identity_check = !peer_node.is_valid() || peer_wallet.public_key_hash.empty();
 			bool uniqueness_check = identity_check || find_descriptor(peer_wallet.public_key_hash) || find_by_account(peer_wallet.public_key_hash);
 			if (identity_check || uniqueness_check)
@@ -2057,13 +2132,17 @@ namespace tangent
 
 			auto prev_descriptor = mempool.get_node(peer_node.address);
 			if (prev_descriptor)
-				peer_node.availability.reachable = peer_node.availability.reachable || prev_descriptor->first.availability.reachable;
+				peer_node.quality.reachable = peer_node.quality.reachable || prev_descriptor->first.quality.reachable;
 
 			auto status = accept_node(mempool, peer_descriptor, from->type_of() == node_type::inbound ? node_category::inbound : node_category::outbound);
 			if (!status)
 				return remote_exception(std::move(status.error().message()));
 
 			from->open_channel(std::move(peer_descriptor));
+			auto bindings = apply_account_bindings(string(event.args[is_acknowledgement ? 4 : 3].as_string()), uref(from), advertised_address);
+			if (!bindings)
+				return remote_exception(std::move(bindings.error().message()));
+
 			if (is_acknowledgement)
 				return format::variables();
 
@@ -2071,7 +2150,7 @@ namespace tangent
 			if (!event.callee || !algorithm::signing::sign(handshake_proof(event.callee->first, system_time, &node_message), event.callee->second.secret_key, peer_signature))
 				return remote_exception("proof generation error");
 
-			return format::variables({ format::variable(node_message), format::variable(system_time), format::variable(peer_signature.optimized_view()), format::variable(peer_latency) });
+			return format::variables({ format::variable(node_message), format::variable(system_time), format::variable(peer_signature.optimized_view()), format::variable(peer_latency), format::variable(build_account_bindings()) });
 		}
 		expects_rt<format::variables> server_node::perform_discovery(uref<relay>&& from, const exchange& event, bool is_acknowledgement)
 		{
@@ -2113,14 +2192,10 @@ namespace tangent
 
 			size_t self_transactions = mempool.get_transactions_count().or_else(0);
 			size_t other_transactions = (size_t)event.args[2].as_uint32();
-			announce_peer(uref(from), true);
 			if (self_transactions < other_transactions)
 				synchronize_mempool_with(uref(from));
 			if (new_nodes > 0)
 				run_topology_optimization();
-
-			for (auto& [account, descriptor] : descriptors)
-				fill_node_neighbors(descriptor);
 
 			if (is_acknowledgement)
 				return format::variables();
@@ -2327,12 +2402,12 @@ namespace tangent
 
 			auto executor = ledger::executor_context(nullptr);
 			auto adapter = server_delegation_adapter(this);
-			auto delegation = uptr(delegations::resolver::from_type(delegation_type, &adapter, &executor, event.callee->second.public_key_hash));
-			if (!delegation)
+			auto contract = uptr(delegations::resolver::from_type(delegation_type, &adapter, &executor, event.callee->second.public_key_hash));
+			if (!contract)
 				return remote_exception("invalid delegation type");
 
 			auto transaction_hash = packed->at(2).as_uint256();
-			auto context = executor.get_applied_block_transaction(delegation->as_transaction_type(), transaction_hash);
+			auto context = executor.get_applied_block_transaction(contract->as_transaction_type(), transaction_hash);
 			if (!context)
 				return remote_exception("transaction not found");
 
@@ -2341,18 +2416,22 @@ namespace tangent
 			if (!reader.read_integer(reader.read_type(), &delegation_type))
 				return remote_exception("invalid delegate");
 
-			if (!delegation->load_payload(reader))
+			if (!contract->load_payload(reader))
 				return remote_exception("delegation deserialization failed");
 
-			auto validation = delegation->validate_transition(nullptr, yielding_delegator);
+			auto validation = contract->validate_transition(nullptr, yielding_delegator);
 			if (!validation)
 				return remote_exception(std::move(validation.error().message()));
 
-			auto execution = delegation->yield_to_self(delegation->runner->public_key_hash, delegation_type, false);
-			if (kernel::params().user.consensus.logging)
-				VI_INFO("%s delegation%s: %s (delegator: %s)", delegation->as_typename().data(), execution ? "" : " failed", execution ? "OK" : execution.what().c_str(), algorithm::signing::encode_address(yielding_delegator.public_key_hash).c_str());
+			auto execution = contract->yield_to_self(contract->runner->public_key_hash, delegation_type, false);
 			if (!execution)
+			{
+				if (kernel::params().user.consensus.logging)
+					VI_WARN("%s hop-execute failed: %s (from: %s, hash: %s)", contract->as_typename().data(), execution.what().c_str(), algorithm::signing::encode_address(yielding_delegator.public_key_hash).c_str(), algorithm::encoding::encode_0xhex256(reader.hash()).c_str());
 				return remote_exception(std::move(execution.error().message()));
+			}
+			else if (kernel::params().user.consensus.logging)
+				VI_INFO("%s execute: %s (from: %s)", contract->as_typename().data(), uint256_to_label(reader.hash()).c_str(), algorithm::signing::encode_address(yielding_delegator.public_key_hash).c_str());
 
 			return pack_private_result({ format::variable(execution->data) }, yielding_delegator.public_key, event.callee->second.secret_key);
 		}
@@ -2728,7 +2807,7 @@ namespace tangent
 					next->close_channel(exception.message(), this);
 					return std::move(exception);
 				};
-				auto result = coawait(query(uref(next), descriptors::perform_handshake(), { format::variable(node_message), format::variable(system_time), format::variable(signature.optimized_view()) }, kernel::params().user.tcp.timeout, true));
+				auto result = coawait(query(uref(next), descriptors::perform_handshake(), { format::variable(node_message), format::variable(system_time), format::variable(signature.optimized_view()), format::variable(build_account_bindings()) }, kernel::params().user.tcp.timeout, true));
 				if (!result)
 					coreturn abort(std::move(result.error()));
 
@@ -2771,21 +2850,26 @@ namespace tangent
 				return result;
 			});
 		}
-		expects_promise_rt<btree_set<algorithm::pubkeyhash_t>> server_node::connect_to_logical_nodes(btree_set<algorithm::pubkeyhash_t>&& accounts)
+		expects_promise_rt<btree_set<algorithm::pubkeyhash_t>> server_node::connect_to_delegation_nodes(ledger::delegation_contract* contract, btree_set<algorithm::pubkeyhash_t>&& accounts, format::variables&& permit_args)
 		{
-			if (accounts.empty())
+			if (accounts.empty() || !contract || !contract->runner)
 				return expects_promise_rt<btree_set<algorithm::pubkeyhash_t>>(remote_exception("invalid arguments"));
+
+			auto contract_runner_descriptor = find_descriptor(contract->runner->public_key_hash);
+			if (!contract_runner_descriptor)
+				return expects_promise_rt<btree_set<algorithm::pubkeyhash_t>>(remote_exception("invalid runner"));
 
 			btree_set<algorithm::pubkeyhash_t> early_results;
 			for (auto& account : accounts)
 			{
-				if (find_descriptor(account) || find_by_account(account) || find_with_neighbor_account(account))
+				if (find_descriptor(account) || find_by_account(account) || find_account_route(account))
 					early_results.insert(account);
 			}
 			if (early_results.size() == accounts.size())
 				return expects_promise_rt<btree_set<algorithm::pubkeyhash_t>>(std::move(early_results));
 
-			return coasync<expects_rt<btree_set<algorithm::pubkeyhash_t>>>([this, accounts = std::move(accounts), early_results = std::move(early_results)]() mutable -> expects_promise_rt<btree_set<algorithm::pubkeyhash_t>>
+			uint32_t delegation_type = contract->as_type();
+			return coasync<expects_rt<btree_set<algorithm::pubkeyhash_t>>>([this, delegation_type, contract_runner_descriptor, accounts = std::move(accounts), early_results = std::move(early_results), permit_args = std::move(permit_args)]() mutable -> expects_promise_rt<btree_set<algorithm::pubkeyhash_t>>
 			{
 				hash_map<algorithm::pubkeyhash_t, expects_promise_rt<void>> directly_connected_accounts;
 				btree_set<algorithm::pubkeyhash_t> indirectly_connected_accounts;
@@ -2797,12 +2881,15 @@ namespace tangent
 						if (it == early_results.end())
 						{
 							auto target = mempool.get_node(account);
-							if (target && target->first.availability.reachable)
+							if (target && target->first.quality.reachable)
 							{
-								directly_connected_accounts[account] = connect_to_physical_node(target->first.address).then<expects_rt<void>>([](expects_rt<uref<relay>>&& result) -> expects_rt<void>
+								directly_connected_accounts[account] = connect_to_physical_node(target->first.address).then<expects_rt<void>>([this, account](expects_rt<uref<relay>>&& result) -> expects_rt<void>
 								{
 									if (!result)
 										return result.error();
+
+									if (!find_descriptor(account) && !find_by_account(account) && !find_account_route(account))
+										return remote_exception("account not hosted");
 
 									return expectation::met;
 								});
@@ -2828,7 +2915,7 @@ namespace tangent
 				if (indirectly_connected_accounts.empty())
 				{
 				exit:
-					coreturn expects_promise_rt<btree_set<algorithm::pubkeyhash_t>>(std::move(results));
+					coreturn is_active() ? expects_promise_rt<btree_set<algorithm::pubkeyhash_t>>(std::move(results)) : expects_promise_rt<btree_set<algorithm::pubkeyhash_t>>(remote_exception::shutdown());
 				}
 
 				socket_address best_address = runner_descriptor->first.address;
@@ -2858,59 +2945,64 @@ namespace tangent
 
 				algorithm::hashsig_t signature;
 				auto address = socket_address_to_text_address(best_address);
-				if (!address || !algorithm::signing::sign(discovery_proof(best_address, indirectly_connected_accounts), runner_descriptor->second.secret_key, signature))
+				auto block_number = storages::chainstate().get_latest_block_number().or_else(1);
+				if (!address || !algorithm::signing::sign(delegation_input_proof(best_address, block_number, delegation_type, permit_args, indirectly_connected_accounts), contract_runner_descriptor->second.secret_key, signature))
 					goto exit;
-
-				format::variables args;
-				args.reserve(indirectly_connected_accounts.size() + 2);
-				args.push_back(format::variable(signature.optimized_view()));
-				args.push_back(format::variable(*address));
-				for (auto& account : indirectly_connected_accounts)
-					args.push_back(format::variable(account.optimized_view()));
 
 				std::mutex mutex; promise<void> task;
 				uint256_t id = algorithm::hashing::hash256i(*crypto::random_bytes(32));
-				auto resolver = [&id, &mutex, &task, &results, &indirectly_connected_accounts](const algorithm::pubkey_t& public_key, int8_t status)
-				{
-					umutex<std::mutex> unique(mutex);
-					if (task.is_pending())
-					{
-						if (!public_key.empty())
-						{
-							algorithm::pubkeyhash_t account;
-							algorithm::signing::derive_public_key_hash(public_key, account);
-							if (indirectly_connected_accounts.find(account) != indirectly_connected_accounts.end())
-							{
-								if (status > 0)
-								{
-									indirectly_connected_accounts.erase(account);
-									results.insert(account);
-								}
-								else
-								{
-									indirectly_connected_accounts.insert(account);
-									results.erase(account);
-								}
-							}
-						}
-						if (public_key.empty() || indirectly_connected_accounts.empty())
-							task.set();
-					}
-				};
 				umutex<std::recursive_mutex> unique(sync.neighbor);
-				neighbors[id] = resolver;
+				delegation_nodes[id] = [this, &mutex, &task, &results, &indirectly_connected_accounts](const algorithm::pubkey_t& public_key, uref<relay>&& channel)
+				{
+					algorithm::pubkeyhash_t account;
+					algorithm::signing::derive_public_key_hash(public_key, account);
+					{
+						umutex<std::mutex> unique(mutex);
+						if (indirectly_connected_accounts.find(account) == indirectly_connected_accounts.end())
+							return;
+
+						indirectly_connected_accounts.erase(account);
+						results.insert(account);
+					}
+
+					register_account_route(account, public_key, std::move(channel));
+					umutex<std::mutex> unique(mutex);
+					if (task.is_pending() && (indirectly_connected_accounts.empty() || !is_active()))
+						task.set();
+				};
 				unique.unlock();
 
-				if (notify_all(descriptors::broadcast_intermediary(), std::move(args)) > 0)
-				{
-					auto* queue = schedule::get();
-					task_id timeout = queue->set_timeout(kernel::params().user.tcp.timeout, std::bind(resolver, algorithm::pubkey_t(), 0));
-					coawait(std::move(task));
-					queue->clear_timeout(timeout);
-				}
+				format::variables args;
+				args.reserve(indirectly_connected_accounts.size() + permit_args.size() + 6);
+				args.push_back(format::variable(id));
+				args.push_back(format::variable(signature.optimized_view()));
+				args.push_back(format::variable(*address));
+				args.push_back(format::variable(block_number));
+				args.push_back(format::variable(delegation_type));
+				args.push_back(format::variable((uint8_t)indirectly_connected_accounts.size()));
+				for (auto& account : indirectly_connected_accounts)
+					args.push_back(format::variable(account.optimized_view()));
+				args.insert(args.end(), permit_args.begin(), permit_args.end());
 
+				size_t notifications = notify_all(descriptors::broadcast_delegation(), std::move(args));
+				if (notifications > 0 && kernel::params().user.consensus.logging)
+					VI_DEBUG("awaiting delegation for %s broadcasted to %i nodes (type: %i, accounts: %i)", algorithm::signing::encode_address(contract_runner_descriptor->second.public_key_hash).c_str(), (int)delegation_type, (int)accounts.size(), (int)notifications);
+
+				auto* queue = schedule::get();
+				task_id timeout = queue->set_timeout(kernel::params().user.tcp.timeout, [&mutex, &task, &results, &indirectly_connected_accounts]()
+				{
+					umutex<std::mutex> unique(mutex);
+					for (auto& account : indirectly_connected_accounts)
+						results.erase(account);
+					if (task.is_pending())
+						task.set();
+				});
+				if (notifications > 0)
+					coawait(std::move(task));
+
+				queue->clear_timeout(timeout);
 				unique.lock();
-				neighbors.erase(id);
+				delegation_nodes.erase(id);
 				goto exit;
 			});
 		}
@@ -3236,13 +3328,14 @@ namespace tangent
 			if (direct_node)
 				return query(std::move(direct_node), descriptor, std::move(args), timeout_ms, force_call);
 
-			auto indirect_node = find_with_neighbor_account(account);
+			auto indirect_node = find_account_route(account);
 			if (!indirect_node)
 				return expects_promise_rt<exchange>(remote_exception::retry_later());
 
 			if (kernel::params().user.consensus.logging)
 				VI_DEBUG("node %s forward query \"%.*s\" out: %s", indirect_node->peer_address().c_str(), (int)descriptor.name.size(), descriptor.name.data(), args.empty() ? "OK" : stringify::text("[%i values]", (int)args.size()).c_str());
 
+			args.insert(args.begin(), format::variable((uint8_t)0));
 			args.insert(args.begin(), format::variable(account.view()));
 			auto result = indirect_node->push_query(descriptor, std::move(args), timeout_ms, true);
 			push_messages(std::move(indirect_node));
@@ -3306,20 +3399,6 @@ namespace tangent
 					args.push_back(format::variable(*text_address));
 			}
 			return args;
-		}
-		void server_node::announce_peer(uref<relay>&& from, bool available)
-		{
-			auto* peer_descriptor = from ? from->as_descriptor() : nullptr;
-			if (!peer_descriptor)
-				return;
-
-			exchange message;
-			message.args.reserve(2);
-			message.args.push_back(format::variable(peer_descriptor->second.public_key.view()));
-			if (available)
-				message.args.push_back(format::variable(socket_address_to_text_address(peer_descriptor->first.address).or_else("?")));
-			notify_all_except(std::move(from), descriptors::announce_neighbor(), format::variables(message.args));
-			announce_neighbor(nullptr, message);
 		}
 		void server_node::bind_event(const callable::descriptor& descriptor, event_callback&& on_event_callback, bool guarded)
 		{
@@ -3477,18 +3556,17 @@ namespace tangent
 							if (it == callables.end() || (!it->second.query && !it->second.async_query) || !message.session || (it->second.guarded && !from->as_descriptor()))
 								goto abort;
 
-							auto account = message.args.empty() ? algorithm::pubkeyhash_t() : algorithm::pubkeyhash_t(message.args[0].as_string());
+							auto account = message.args.size() < 2 ? algorithm::pubkeyhash_t() : algorithm::pubkeyhash_t(message.args[0].as_string());
+							auto hops = message.args.size() < 2 ? (uint8_t)MAX_FORWARD_HOPS : (uint8_t)message.args[1].as_uint8();
 							if (account.empty())
 								goto abort;
 
 							auto session = message.session;
-							auto forward_state = find_by_account(account);
 							auto forward_descriptor = find_descriptor(account);
-							message.args.erase(message.args.begin());
+							message.args.erase(message.args.begin(), message.args.begin() + 2);
 							if (forward_descriptor)
 							{
 								message.callee = forward_descriptor;
-
 								if (it->second.query)
 								{
 									auto result = it->second.query(this, uref(from), message);
@@ -3522,24 +3600,31 @@ namespace tangent
 									return;
 								}
 							}
-							else if (forward_state)
-							{
-								auto method = callable::descriptor(it->second.name, it->first);
-								query(uref(forward_state), method, std::move(message.args), kernel::params().user.tcp.timeout).when([this, from, forward_state, method, session](expects_rt<exchange>&& result) mutable
-								{
-									if (!result && kernel::params().user.consensus.logging)
-										VI_WARN("node %s forward query \"%.*s\" error in: %s", forward_state->peer_address().c_str(), (int)method.name.size(), method.name.data(), result.what().c_str());
-									else if (result && kernel::params().user.consensus.logging)
-										VI_DEBUG("node %s forward query \"%.*s\" result in: %s", from->peer_address().c_str(), (int)method.name.size(), method.name.data(), result ? result->args.empty() ? "OK" : stringify::text("[%i values]", (int)result->args.size()).c_str() : "RETRY");
-
-									from->push_query_response(session, pack_query_result(result ? expects_rt<format::variables>(std::move(result->args)) : expects_rt<format::variables>(result.error())));
-									push_messages(std::move(from));
-								});
-							}
 							else
 							{
-								from->push_query_response(session, pack_query_result(remote_exception::retry_later()));
-								push_messages(std::move(from));
+								auto route = hops >= MAX_FORWARD_HOPS ? uref<relay>(nullptr) : find_account_route(account);
+								if (route && route->fully_valid())
+								{
+									auto method = callable::descriptor(it->second.name, it->first);
+									message.args.insert(message.args.begin(), format::variable((uint8_t)(hops + 1)));
+									message.args.insert(message.args.begin(), format::variable(account.view()));
+									route->push_query(method, std::move(message.args), kernel::params().user.tcp.timeout, true).when([this, from, method, session](expects_rt<exchange>&& result) mutable
+									{
+										if (!result && kernel::params().user.consensus.logging)
+											VI_WARN("node %s transit query \"%.*s\" error in: %s", from->peer_address().c_str(), (int)method.name.size(), method.name.data(), result.what().c_str());
+										else if (result && kernel::params().user.consensus.logging)
+											VI_DEBUG("node %s transit query \"%.*s\" result in: %s", from->peer_address().c_str(), (int)method.name.size(), method.name.data(), result ? result->args.empty() ? "OK" : stringify::text("[%i values]", (int)result->args.size()).c_str() : "RETRY");
+
+										from->push_query_response(session, pack_query_result(result ? expects_rt<format::variables>(std::move(result->args)) : expects_rt<format::variables>(result.error())));
+										push_messages(std::move(from));
+									});
+									push_messages(uref(route));
+								}
+								else
+								{
+									from->push_query_response(session, pack_query_result(remote_exception("route unavailable")));
+									push_messages(std::move(from));
+								}
 							}
 							break;
 						}
@@ -3577,7 +3662,6 @@ namespace tangent
 		void server_node::disconnect_node(uref<relay>&& from, const std::string_view& message)
 		{
 			VI_ASSERT(from, "state should be set");
-			announce_peer(uref(from), false);
 			umutex<std::recursive_mutex> unique(exclusive);
 			auto* inbound_node = from->as_inbound_node();
 			auto* outbound_node = from->as_outbound_node();
@@ -3647,6 +3731,7 @@ namespace tangent
 			inventory.forget(from->inventory_slot_id());
 			nodes.erase(it);
 			unique.unlock();
+			erase_account_routes_for(from->as_instance());
 			clear_tip(*from, nullptr);
 			run_topology_optimization();
 		}
@@ -3760,11 +3845,11 @@ namespace tangent
 		{
 			return control_sys.async_task_if_none(TASK_TOPOLOGY_OPTIMIZATION, [this]() -> promise<void>
 			{
-				bool has_dropped_nodes = false;
+				bool has_dropped_nodes = false, has_disabled_outbounds = !kernel::params().user.consensus.max_outbound_connections;
 				auto too_many_outbound_nodes = [this]() { return size_of(node_type::outbound) >= kernel::params().user.consensus.max_outbound_connections; };
 				hash_set<uint256_t> passed_candidates;
 				expects_rt<socket_address> candidate_address = socket_address();
-				while (is_active() && candidate_address)
+				while (is_active() && !has_disabled_outbounds && candidate_address)
 				{
 					candidate_address = coawait(find_node_from_discovery());
 					if (!candidate_address || find_by_ip_address(*candidate_address))
@@ -4148,10 +4233,10 @@ namespace tangent
 			bind_event(descriptors::broadcast_transaction_hash(), std::bind(&server_node::broadcast_transaction_hash, this, std::placeholders::_2, std::placeholders::_3));
 			bind_event(descriptors::broadcast_attestation(), std::bind(&server_node::broadcast_attestation, this, std::placeholders::_2, std::placeholders::_3));
 			bind_event(descriptors::broadcast_preattestation(), std::bind(&server_node::broadcast_preattestation, this, std::placeholders::_2, std::placeholders::_3));
-			bind_event(descriptors::broadcast_intermediary(), std::bind(&server_node::broadcast_intermediary, this, std::placeholders::_2, std::placeholders::_3));
+			bind_event(descriptors::broadcast_delegation(), std::bind(&server_node::broadcast_delegation, this, std::placeholders::_2, std::placeholders::_3));
 			bind_event(descriptors::broadcast_quote_ask(), std::bind(&server_node::broadcast_quote_ask, this, std::placeholders::_2, std::placeholders::_3));
 			bind_event(descriptors::broadcast_quote(), std::bind(&server_node::broadcast_quote, this, std::placeholders::_2, std::placeholders::_3));
-			bind_event(descriptors::announce_neighbor(), std::bind(&server_node::announce_neighbor, this, std::placeholders::_2, std::placeholders::_3));
+			bind_event(descriptors::perform_delegation(), std::bind(&server_node::perform_delegation, this, std::placeholders::_2, std::placeholders::_3));
 			bind_query(descriptors::perform_handshake(), std::bind(&server_node::perform_handshake, this, std::placeholders::_2, std::placeholders::_3, false), false);
 			bind_query(descriptors::perform_discovery(), std::bind(&server_node::perform_discovery, this, std::placeholders::_2, std::placeholders::_3, false));
 			bind_query(descriptors::fetch_headers(), std::bind(&server_node::fetch_headers, this, std::placeholders::_2, std::placeholders::_3));
@@ -4199,13 +4284,6 @@ namespace tangent
 			}
 			else
 				unlisten(false);
-		}
-		void server_node::clear_pending_neighbors()
-		{
-			umutex<std::recursive_mutex> unique(sync.neighbor);
-			for (auto& [id, resolver] : neighbors)
-				resolver(algorithm::pubkey_t(), 0);
-			neighbors.clear();
 		}
 		void server_node::clear_tip(relay* from, ledger::block_header* prev_best)
 		{
@@ -4282,15 +4360,14 @@ namespace tangent
 		}
 		void server_node::finalize_pending_tip(uref<relay>&& from, const uint256_t& block_hash, uint64_t block_number)
 		{
-			control_sys.upsert_timeout(TASK_BLOCK_DISPATCHER "_runner", kernel::params().policy.pow.time, [this]() { run_block_dispatcher(); });
+			if (from && verifier.stale)
+			{
+				verifier.stale = false;
+				synchronize_mempool_with(std::move(from));
+			}
 			if (block_hash > 0 && block_number > 0)
 				broadcast_pending_tip(uref(from), block_hash, block_number);
-
-			if (!from || !verifier.stale)
-				return;
-
-			verifier.stale = false;
-			synchronize_mempool_with(std::move(from));
+			control_sys.upsert_timeout(TASK_BLOCK_DISPATCHER "_runner", std::max<uint64_t>(kernel::params().policy.pow.time, 3000), [this]() { run_block_dispatcher(); });
 		}
 		bool server_node::accept_proposal_transaction(const ledger::block_transaction& transaction)
 		{
@@ -4345,23 +4422,6 @@ namespace tangent
 				offset += attestations->size();
 				if (attestations->size() < count)
 					break;
-			}
-		}
-		void server_node::fill_node_neighbors(relay_descriptor& descriptor)
-		{
-			umutex<std::recursive_mutex> unique(exclusive);
-			descriptor.first.availability.neighbors.clear();
-			for (auto& node : nodes)
-			{
-				auto* peer_descriptor = node.second->as_descriptor();
-				if (peer_descriptor != nullptr)
-					descriptor.first.availability.neighbors.insert(peer_descriptor->second.public_key);
-			}
-			for (auto& [subaccount, subdescriptor] : descriptors)
-			{
-				auto& [node, wallet] = subdescriptor;
-				if (wallet.public_key_hash != descriptor.second.public_key_hash)
-					descriptor.first.availability.neighbors.insert(wallet.public_key);
 			}
 		}
 		bool server_node::is_active()
@@ -4528,37 +4588,132 @@ namespace tangent
 
 			return nullptr;
 		}
-		uref<relay> server_node::find_with_neighbor_account(const algorithm::pubkeyhash_t& account)
+		uref<relay> server_node::find_account_route(const algorithm::pubkeyhash_t& account)
 		{
-			uref<relay> candidate = nullptr;
-			algorithm::pubkeyhash_t matched;
+			void* instance = nullptr;
 			{
 				umutex<std::recursive_mutex> unique(exclusive);
-				for (auto& node : nodes)
-				{
-					auto* peer_descriptor = node.second->as_descriptor();
-					if (peer_descriptor != nullptr)
-					{
-						for (auto& public_key : peer_descriptor->first.availability.neighbors)
-						{
-							if (public_key == peer_descriptor->second.public_key)
-								continue;
+				auto it = account_routes.find(account);
+				if (it == account_routes.end())
+					return nullptr;
 
-							algorithm::pubkeyhash_t neighbor;
-							algorithm::signing::derive_public_key_hash(public_key, neighbor);
-							if (neighbor == account)
-							{
-								candidate = node.second;
-								matched = neighbor;
-								break;
-							}
-						}
-					}
-					if (candidate)
-						break;
-				}
+				instance = it->second.channel_instance;
 			}
-			return candidate && !find_descriptor(matched) ? candidate : nullptr;
+			return find_node_by_instance(instance);
+		}
+		void server_node::register_account_route(const algorithm::pubkeyhash_t& account, const algorithm::pubkey_t& public_key, uref<relay>&& channel)
+		{
+			if (!channel || find_descriptor(account) != nullptr)
+				return;
+
+			umutex<std::recursive_mutex> unique(exclusive);
+			auto it = account_routes.find(account);
+			if (it != account_routes.end())
+			{
+				if (it->second.channel_instance == channel->as_instance())
+					it->second.public_key = public_key;
+				else if (find_node_by_instance(it->second.channel_instance))
+					return;
+			}
+			account_routes[account] = account_route{ public_key, channel->as_instance() };
+		}
+		void server_node::erase_account_routes_for(void* channel_instance)
+		{
+			if (channel_instance == nullptr)
+				return;
+
+			umutex<std::recursive_mutex> unique(exclusive);
+			for (auto it = account_routes.begin(); it != account_routes.end();)
+			{
+				if (it->second.channel_instance == channel_instance)
+					it = account_routes.erase(it);
+				else
+					++it;
+			}
+		}
+		string server_node::build_account_bindings() const
+		{
+			if (runner_descriptor == nullptr)
+				return string();
+
+			auto bound = vector<std::tuple<algorithm::pubkey_t, algorithm::hashsig_t, algorithm::hashsig_t>>();
+			for (auto& entry : descriptors)
+			{
+				auto& wallet = entry.second.second;
+				if (wallet.public_key == runner_descriptor->second.public_key)
+					continue;
+
+				if (bound.size() == MAX_BOUND_ACCOUNTS)
+					break;
+
+				auto proof = account_binding_proof(wallet.public_key, runner_descriptor->second.public_key, runner_descriptor->first.address);
+				algorithm::hashsig_t account_signature;
+				algorithm::hashsig_t node_signature;
+				if (!algorithm::signing::sign(proof, wallet.secret_key, account_signature) ||
+					!algorithm::signing::sign(proof, runner_descriptor->second.secret_key, node_signature))
+					continue;
+
+				bound.emplace_back(wallet.public_key, account_signature, node_signature);
+			}
+			if (bound.empty())
+				return string();
+
+			format::wo_stream message;
+			message.write_integer((uint8_t)bound.size());
+			for (auto& [account_key, account_signature, node_signature] : bound)
+			{
+				message.write_string(account_key.optimized_view());
+				message.write_string(account_signature.optimized_view());
+				message.write_string(node_signature.optimized_view());
+			}
+			return string(message.data.data(), message.data.size());
+		}
+		expects_lr<size_t> server_node::apply_account_bindings(const string& blob, uref<relay>&& channel, const socket_address& advertised_address)
+		{
+			if (blob.empty() || !channel)
+				return (size_t)0;
+
+			auto* peer_descriptor = channel->as_descriptor();
+			if (peer_descriptor == nullptr)
+				return layer_exception("peer descriptor unavailable");
+
+			format::ro_stream stream(blob);
+			uint8_t count;
+			if (!stream.read_integer(stream.read_type(), &count))
+				return layer_exception("malformed account bindings");
+
+			if (count > MAX_BOUND_ACCOUNTS)
+				return layer_exception("too many account bindings");
+
+			size_t applied = 0;
+			for (uint8_t i = 0; i < count; i++)
+			{
+				string account_blob, account_signature_blob, node_signature_blob;
+				if (!stream.read_string(stream.read_type(), &account_blob) ||
+					!stream.read_string(stream.read_type(), &account_signature_blob) ||
+					!stream.read_string(stream.read_type(), &node_signature_blob))
+					return layer_exception("malformed account bindings");
+
+				algorithm::pubkey_t account_key(account_blob);
+				algorithm::hashsig_t account_signature(account_signature_blob);
+				algorithm::hashsig_t node_signature(node_signature_blob);
+				if (account_key.empty() || account_key == peer_descriptor->second.public_key)
+					return layer_exception("invalid account binding");
+
+				auto proof = account_binding_proof(account_key, peer_descriptor->second.public_key, advertised_address);
+				algorithm::pubkey_t recovered;
+				if (!algorithm::signing::recover(proof, recovered, account_signature) || !recovered.equals(account_key))
+					return layer_exception("invalid account binding signature");
+
+				if (!algorithm::signing::recover(proof, recovered, node_signature) || !recovered.equals(peer_descriptor->second.public_key))
+					return layer_exception("invalid node binding signature");
+
+				algorithm::pubkeyhash_t account;
+				algorithm::signing::derive_public_key_hash(account_key, account);
+				register_account_route(account, account_key, uref(channel));
+				++applied;
+			}
+			return applied;
 		}
 		option<algorithm::pubkey_t> server_node::find_public_key(const algorithm::pubkeyhash_t& account)
 		{
@@ -4566,23 +4721,19 @@ namespace tangent
 			if (descriptor != nullptr)
 				return descriptor->second.public_key;
 
+			{
+				umutex<std::recursive_mutex> unique(exclusive);
+				auto it = account_routes.find(account);
+				if (it != account_routes.end())
+					return it->second.public_key;
+			}
+
 			umutex<std::recursive_mutex> unique(exclusive);
 			for (auto& node : nodes)
 			{
 				auto* peer_descriptor = node.second->as_descriptor();
-				if (peer_descriptor != nullptr)
-				{
-					if (peer_descriptor->second.public_key_hash == account)
-						return peer_descriptor->second.public_key;
-
-					for (auto& public_key : peer_descriptor->first.availability.neighbors)
-					{
-						algorithm::pubkeyhash_t public_key_hash;
-						algorithm::signing::derive_public_key_hash(public_key, public_key_hash);
-						if (public_key_hash == account)
-							return public_key;
-					}
-				}
+				if (peer_descriptor != nullptr && peer_descriptor->second.public_key_hash == account)
+					return peer_descriptor->second.public_key;
 			}
 
 			return optional::none;
@@ -4625,32 +4776,32 @@ namespace tangent
 			server = other.server;
 			return *this;
 		}
-		expects_promise_rt<btree_set<algorithm::pubkeyhash_t>> server_delegation_adapter::require_validators(ledger::delegation_contract* contract, const btree_set<algorithm::pubkeyhash_t>& validators, size_t steps_left)
+		expects_promise_rt<btree_set<algorithm::pubkeyhash_t>> server_delegation_adapter::require_validators(ledger::delegation_contract* contract, const btree_set<algorithm::pubkeyhash_t>& validators, format::variables&& args, size_t steps_left)
 		{
 			if (kernel::params().user.consensus.logging)
-				VI_INFO("%s delegation: assemble %i validators (stack: %i)", contract->as_typename().data(), (int)validators.size(), (int)steps_left);
+				VI_INFO("%s assemble: %i validators (stack: %i)", contract->as_typename().data(), (int)validators.size(), (int)steps_left);
 
-			return server->connect_to_logical_nodes(btree_set<algorithm::pubkeyhash_t>(validators)).then<expects_rt<btree_set<algorithm::pubkeyhash_t>>>([contract, steps_left](expects_rt<btree_set<algorithm::pubkeyhash_t>>&& result) mutable -> expects_rt<btree_set<algorithm::pubkeyhash_t>>
+			return server->connect_to_delegation_nodes(contract, btree_set<algorithm::pubkeyhash_t>(validators), std::move(args)).then<expects_rt<btree_set<algorithm::pubkeyhash_t>>>([contract, steps_left](expects_rt<btree_set<algorithm::pubkeyhash_t>>&& result) mutable -> expects_rt<btree_set<algorithm::pubkeyhash_t>>
 			{
 				if (result && kernel::params().user.consensus.logging)
-					VI_INFO("%s delegation: found %i validators (stack: %i)", contract->as_typename().data(), (int)result->size(), (int)steps_left);
+					VI_INFO("%s assemble: acquired %i validators (stack: %i)", contract->as_typename().data(), (int)result->size(), (int)steps_left);
 				else if (!result && kernel::params().user.consensus.logging)
-					VI_ERR("%s delegation failed: %s (stack: %i)", contract->as_typename().data(), result.what().c_str(), (int)steps_left);
+					VI_WARN("%s assemble failed: %s (stack: %i)", contract->as_typename().data(), result.what().c_str(), (int)steps_left);
 				return expects_rt<btree_set<algorithm::pubkeyhash_t>>(std::move(result));
 			});
 		}
 		expects_promise_rt<format::wo_stream> server_delegation_adapter::execute_on_validator(ledger::delegation_contract* contract, const algorithm::pubkeyhash_t& target, const format::wo_stream& message)
 		{
+			uint256_t message_hash = kernel::params().user.consensus.logging ? message.hash() : uint256_t(0);
 			if (kernel::params().user.consensus.logging)
-				VI_DEBUG("%s delegation: inquiry to %s with %s", contract->as_typename().data(), algorithm::signing::encode_address(target).c_str(), message.encode().c_str());
+				VI_DEBUG("%s hop-execute: %s (message: %s)", contract->as_typename().data(), algorithm::signing::encode_address(target).c_str(), message.encode().c_str());
 
-			return execute_on_validator_internal(contract, target, message).then<expects_rt<format::wo_stream>>([contract, target](expects_rt<format::wo_stream>&& result) mutable -> expects_rt<format::wo_stream>
+			return execute_on_validator_internal(contract, target, message).then<expects_rt<format::wo_stream>>([message_hash, contract, target](expects_rt<format::wo_stream>&& result) mutable -> expects_rt<format::wo_stream>
 			{
 				if (result && kernel::params().user.consensus.logging)
-					VI_INFO("%s delegation: OK (delegate: %s)", contract->as_typename().data(), algorithm::signing::encode_address(target).c_str());
+					VI_INFO("%s hop-execute: %s (to: %s)", contract->as_typename().data(), uint256_to_label(message_hash).c_str(), algorithm::signing::encode_address(target).c_str());
 				else if (!result && kernel::params().user.consensus.logging)
-					VI_INFO("%s delegation failed: %s (delegate: %s)", contract->as_typename().data(), result.what().c_str(), algorithm::signing::encode_address(target).c_str());
-
+					VI_WARN("%s hop-execute failed: %s (to: %s, hash: %s)", contract->as_typename().data(), result.what().c_str(), algorithm::signing::encode_address(target).c_str(), algorithm::encoding::encode_0xhex256(message_hash).c_str());
 				return expects_rt<format::wo_stream>(std::move(result));
 			});
 		}
@@ -4735,7 +4886,7 @@ namespace tangent
 			validators = other.validators;
 			return *this;
 		}
-		expects_promise_rt<btree_set<algorithm::pubkeyhash_t>> local_delegation_adapter::require_validators(ledger::delegation_contract* contract, const btree_set<algorithm::pubkeyhash_t>& targets, size_t steps_left)
+		expects_promise_rt<btree_set<algorithm::pubkeyhash_t>> local_delegation_adapter::require_validators(ledger::delegation_contract* contract, const btree_set<algorithm::pubkeyhash_t>& targets, format::variables&& args, size_t steps_left)
 		{
 			btree_set<algorithm::pubkeyhash_t> results;
 			for (auto& [validator, wallet] : validators)
@@ -4744,7 +4895,7 @@ namespace tangent
 					results.insert(validator);
 			}
 			if (kernel::params().user.consensus.logging)
-				VI_DEBUG("%s delegation: use local %i/%i validators (stack: %i)", contract->as_typename().data(), (int)results.size(), (int)targets.size(), (int)steps_left);
+				VI_DEBUG("%s assemble: acquired %i/%i local validators (stack: %i)", contract->as_typename().data(), (int)results.size(), (int)targets.size(), (int)steps_left);
 			return expects_promise_rt<btree_set<algorithm::pubkeyhash_t>>(std::move(results));
 		}
 		expects_promise_rt<format::wo_stream> local_delegation_adapter::execute_on_validator(ledger::delegation_contract* contract, const algorithm::pubkeyhash_t& target, const format::wo_stream& wo_message)
