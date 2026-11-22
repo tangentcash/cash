@@ -18,17 +18,13 @@ namespace tangent
 		}
 		string read_password_line(const std::string_view& prompt, bool allow_empty = false)
 		{
-			auto* terminal = console::get();
-			VI_PANIC(terminal != nullptr, "keystore password required but no terminal is available; run with an attached terminal or pipe the password on stdin");
-
-			terminal->write(prompt);
-			string password;
+			VI_INFO("keystate pwd prompt: awaiting input...");
+			string password; auto* terminal = console::get();
 			terminal->echo_off([&]() { password = terminal->read(1024); });
-			while (!password.empty() && (password.back() == '\n' || password.back() == '\r'))
-				password.pop_back();
+			stringify::trim(password);
 
-			if (password.empty() && !allow_empty)
-				VI_PANIC(false, "keystore password required but stdin delivered nothing (attach a terminal or pipe the password, e.g. 'printf %%s \"$PASS\" | docker attach <node>')");
+			VI_PANIC(!password.empty() || allow_empty, "keystore password required but stdin delivered nothing (attach a terminal or pipe the password, e.g. 'printf \"$PASS\" | docker attach --sig-proxy=false <node>')");
+			VI_INFO("keystate pwd prompt: input received");
 			return password;
 		}
 		static void finalize_checksum(ledger::authentic_serializer& message, const variant& column)
