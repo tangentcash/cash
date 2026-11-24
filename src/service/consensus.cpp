@@ -1174,7 +1174,7 @@ namespace tangent
 
 					auto prev = mempool.get_node(node.address);
 					if (prev && find_descriptor(prev->second.public_key_hash))
-						return layer_exception("must not modify internal node");
+						mempool.clear_node(node.address);
 
 					return mempool.apply_node(descriptor, category == node_category::inbound ? storages::node_peer::inbound : storages::node_peer::outbound);
 				}
@@ -2112,22 +2112,22 @@ namespace tangent
 			auto mempool = storages::mempoolstate();
 			peer_node.quality.latency = peer_latency;
 			peer_node.quality.reachable = is_acknowledgement;
+			auto advertised_address = peer_node.address;
 			if (!from->private_network())
 				peer_node.address = socket_address(from->peer_address(), peer_node.address.get_ip_port().or_else(kernel::params().user.consensus.port));
 
 			algorithm::signing::derive_public_key_hash(peer_wallet.public_key, peer_wallet.public_key_hash);
-			auto advertised_address = peer_node.address;
-			bool identity_check = !peer_node.is_valid() || peer_wallet.public_key_hash.empty();
-			bool uniqueness_check = identity_check || find_descriptor(peer_wallet.public_key_hash) || find_by_account(peer_wallet.public_key_hash);
-			if (identity_check || uniqueness_check)
+			bool peer_authorized = peer_node.is_valid() && !peer_wallet.public_key_hash.empty();
+			bool peer_unique = !find_by_account(peer_wallet.public_key_hash);
+			bool peer_remote = !find_descriptor(peer_wallet.public_key_hash);
+			if (!peer_authorized || !peer_unique || !peer_remote)
 			{
 				auto prev = mempool.get_node(peer_descriptor.first.address);
-				if (prev)
-				{
-					if (!find_descriptor(prev->second.public_key_hash))
-						mempool.clear_node(peer_descriptor.first.address);
-				}
-				return remote_exception(!identity_check && uniqueness_check ? "node identity is not unique" : "node identity is not accepted");
+				if (prev && !find_descriptor(prev->second.public_key_hash))
+					mempool.clear_node(peer_descriptor.first.address);
+				if (peer_authorized && !peer_remote)
+					remember_self_address(peer_node.address);
+				return remote_exception(peer_authorized ? (peer_unique ? "self-connection prevented" : "duplication rejected") : "authentication rejected");
 			}
 
 			auto prev_descriptor = mempool.get_node(peer_node.address);
@@ -2701,7 +2701,7 @@ namespace tangent
 
 				return expects_lr<socket_address>(std::move(*unknown_node));
 			}
-			else if (connected_to_ip_address(known_node->first.address) || mempool.has_cooldown_on_node(known_node->first.address).or_else(false))
+			else if (connected_to_ip_address(known_node->first.address) || find_descriptor(known_node->second.public_key_hash) || mempool.has_cooldown_on_node(known_node->first.address).or_else(false))
 			{
 				++offset;
 				goto retry_known_node;
@@ -2835,10 +2835,12 @@ namespace tangent
 				params.time.adjust(peer_descriptor->first.address, (int64_t)system_time - (int64_t)varying_peer_time);
 				synchronize_mempool_with(uref(next));
 				coreturn expects_rt<uref<relay>>(std::move(next));
-			}).then<expects_rt<uref<relay>>>([address](expects_rt<uref<relay>>&& result) -> expects_rt<uref<relay>>
+			}).then<expects_rt<uref<relay>>>([this, address](expects_rt<uref<relay>>&& result) -> expects_rt<uref<relay>>
 			{
 				if (!result)
 				{
+					if (std::string_view(result.error().message()) == "self-connection prevented")
+						remember_self_address(address);
 					auto mempool = storages::mempoolstate();
 					mempool.apply_node_quality(address, -1, kernel::params().user.tcp.timeout);
 					if (kernel::params().user.consensus.logging)
@@ -4520,11 +4522,32 @@ namespace tangent
 		{
 			return exclusive;
 		}
+		void server_node::remember_self_address(const socket_address& address)
+		{
+			auto ip_value = address.get_ip_value();
+			if (!ip_value)
+				return;
+
+			umutex<std::recursive_mutex> unique(exclusive);
+			self_addresses.insert(*ip_value);
+		}
+		bool server_node::is_self_address(const socket_address& address)
+		{
+			auto ip_value = address.get_ip_value();
+			if (!ip_value)
+				return false;
+
+			umutex<std::recursive_mutex> unique(exclusive);
+			return self_addresses.find(*ip_value) != self_addresses.end();
+		}
 		bool server_node::connected_to_ip_address(const socket_address& address)
 		{
 			auto ip_address = address.get_ip_address();
 			if (!ip_address)
 				return false;
+
+			if (is_self_address(address))
+				return true;
 
 			umutex<std::recursive_mutex> unique(exclusive);
 			for (auto& node : nodes)

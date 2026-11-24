@@ -324,6 +324,7 @@ namespace tangent
 			hash_map<void*, uref<relay>> nodes;
 			hash_map<uint256_t, format::wo_stream> maybe_tips;
 			hash_set<outbound_node*> pending_nodes;
+			hash_set<uint128_t> self_addresses;
 			system_control control_sys;
 			forwarder inventory;
 
@@ -394,6 +395,8 @@ namespace tangent
 			void disconnect_node_by_account(const algorithm::pubkeyhash_t& account, const std::string_view& message);
 			expects_lr<void> accept_block(uref<relay>&& from, ledger::block_evaluation& candidate, const ledger::block_header* fork_tip, bool verify_pow = true);
 			bool connected_to_ip_address(const socket_address& address);
+			void remember_self_address(const socket_address& address);
+			bool is_self_address(const socket_address& address);
 			relay_descriptor* find_descriptor(const algorithm::pubkeyhash_t& account);
 			uref<relay> find_by_ip_address(const socket_address& address);
 			uref<relay> find_by_account(const algorithm::pubkeyhash_t& account);
