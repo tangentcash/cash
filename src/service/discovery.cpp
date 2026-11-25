@@ -138,30 +138,37 @@ namespace tangent
 			if (kernel::params().user.discovery.logging)
 				VI_INFO("peer %s discovery: %i nodes returned (time: %" PRId64 " ms, args: %s, services: %i)", base->get_peer_ip_address().or_else("[bad_address]").c_str(), (int)nodes.size(), date_time().milliseconds() - base->info.start, base->request.query.empty() ? "none" : base->request.query.c_str(), (int)services);
 
-			format::tree data;
+			hash_set<string> addresses; format::tree data;
 			for (auto& [account, address] : nodes)
-				data.push(format::variable(system_endpoint::to_uri(address)));
+			{
+				string uri = system_endpoint::to_uri(address);
+				if (addresses.find(uri) == addresses.end())
+				{
+					data.push(format::variable(uri));
+					addresses.insert(uri);
+				}
+			}
 
 			auto local_nodes = mempool.get_local_nodes();
-			if (local_nodes && !local_nodes->empty() && (storages::mempoolstate::services_of(local_nodes->front().first) & services) == services)
+			auto& local_address = kernel::params().user.discovery.hostname;
+			if (!local_address.empty() && local_nodes && !local_nodes->empty() && (storages::mempoolstate::services_of(local_nodes->front().first) & services) == services)
 			{
-				auto& local_node = local_nodes->front();
-				switch (port)
+				auto& local_node = local_nodes->front(); int network_port = -1;
+				if (port == storages::node_ports::consensus && kernel::params().user.consensus.server)
+					network_port = (int)local_node.first.ports.consensus;
+				else if (port == storages::node_ports::discovery && kernel::params().user.discovery.server)
+					network_port = (int)local_node.first.ports.discovery;
+				else if (port == storages::node_ports::rpc && kernel::params().user.rpc.server && kernel::params().user.rpc.username.empty())
+					network_port = (int)local_node.first.ports.rpc;
+
+				if (network_port != -1)
 				{
-					case storages::node_ports::consensus:
-						if (kernel::params().user.consensus.server)
-							data.push(format::variable("tcp://selfhost:" + to_string(local_node.first.ports.consensus)));
-						break;
-					case storages::node_ports::discovery:
-						if (kernel::params().user.discovery.server)
-							data.push(format::variable("tcp://selfhost:" + to_string(local_node.first.ports.discovery)));
-						break;
-					case storages::node_ports::rpc:
-						if (kernel::params().user.rpc.server && kernel::params().user.rpc.username.empty())
-							data.push(format::variable("tcp://selfhost:" + to_string(local_node.first.ports.rpc)));
-						break;
-					default:
-						break;
+					string uri = stringify::text("tcp://%s:%i", local_address.c_str(), network_port);
+					if (addresses.find(uri) == addresses.end())
+					{
+						data.push(format::variable(uri));
+						addresses.insert(uri);
+					}
 				}
 			}
 

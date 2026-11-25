@@ -2735,8 +2735,12 @@ namespace tangent
 				std::shuffle(std::begin(lists), std::end(lists), random);
 				for (auto& bootstrap_url : lists)
 				{
+					location url = location(bootstrap_url);
+					url.query.clear();
+					url.query["consensus"] = "1";
+
 					size_t results = std::numeric_limits<size_t>::max();
-					auto response = coawait(http::fetch(bootstrap_url));
+					auto response = coawait(http::fetch(url.to_url()));
 					if (response)
 					{
 						auto addresses = format::tree::from_json(std::string_view(response->content.data.data(), response->content.data.size()));

@@ -600,6 +600,10 @@ namespace tangent
 			if (value != nullptr && value->value.is_boolean())
 				user.consensus.logging = value->value.as_boolean();
 
+			value = config->child("discovery.hostname");
+			if (value != nullptr && value->value.is_string())
+				user.discovery.hostname = value->value.as_string();
+
 			value = config->child("discovery.address");
 			if (value != nullptr && value->value.is_string())
 				user.discovery.address = value->value.as_string();

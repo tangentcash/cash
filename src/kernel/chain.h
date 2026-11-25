@@ -170,6 +170,7 @@ namespace tangent
 			} consensus;
 			struct
 			{
+				string hostname = "selfhost";
 				string address = "127.0.0.1";
 				uint16_t port = 18420;
 				bool proxy = false;
