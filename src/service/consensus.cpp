@@ -1337,23 +1337,6 @@ namespace tangent
 			}
 
 			auto mempool = storages::mempoolstate();
-			if (save_to_storage)
-			{
-				for (auto& [commitment_hash, signatures] : attestation.commitments)
-				{
-					auto proof = attestation.proofs.find(commitment_hash);
-					if (proof == attestation.proofs.end())
-						continue;
-
-					for (auto& signature : signatures)
-					{
-						auto status = mempool.add_attestation(attestation.asset, proof->second, signature);
-						if (!status)
-							return remote_exception(std::move(status.error().message()));
-					}
-				}
-			}
-
 			auto batch = attestation; auto errors = vector<string>();
 			transactions::attestate::optimize_proofs_and_commitments(&executor, batch.asset, batch.proofs, batch.commitments, &errors);
 			if (batch.proofs.empty())
@@ -1362,6 +1345,23 @@ namespace tangent
 				for (size_t i = 0; i < errors.size(); i++)
 					error.append(errors[i]).append(", ", i < errors.size() - 1 ? 2 : 0);
 				return remote_exception(std::move(error));
+			}
+
+			if (save_to_storage)
+			{
+				for (auto& [commitment_hash, signatures] : batch.commitments)
+				{
+					auto proof = batch.proofs.find(commitment_hash);
+					if (proof == batch.proofs.end())
+						continue;
+
+					for (auto& signature : signatures)
+					{
+						auto status = mempool.add_attestation(batch.asset, proof->second, signature);
+						if (!status)
+							return remote_exception(std::move(status.error().message()));
+					}
+				}
 			}
 
 			uint256_t best_commitment_hash = 0;
@@ -4069,7 +4069,7 @@ namespace tangent
 							VI_INFO("attestation %s pending (proofs: %i, commitments: %i)", uint256_to_label(*attestation_hash).c_str(), (int)attestation->proofs.size(), (int)attestation->commitments.size());
 					}
 					else if (kernel::params().user.consensus.logging)
-						VI_INFO("attestation %s verification failed: %s", uint256_to_label(*attestation_hash).c_str(), status.what().c_str());
+						VI_WARN("attestation %s verification failed: %s", uint256_to_label(*attestation_hash).c_str(), status.what().c_str());
 					++offset;
 				}
 				else if (*status)

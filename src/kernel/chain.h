@@ -26,8 +26,8 @@ namespace tangent
 		ELEMENTS_BULK = 1 << 9,
 		ELEMENTS_MANY = 1 << 12,
 		ELEMENTS_HUGE = 1 << 17,
-		FORK_VERSION = 8,
-		PATCH_VERSION = 5
+		FORK_VERSION = 9,
+		PATCH_VERSION = 0
 	};
 
 	enum class fork_id
@@ -39,7 +39,8 @@ namespace tangent
 		base_to_root_modulo = 1001000,
 		attesters_hardening = 1273450,
 		anonymous_broadcast = 1790000,
-		broadcast_fee_quote = 1920000
+		broadcast_fee_quote = 1920000,
+		lean_token_metadata = 2032000
 	};
 
 	enum class network_type

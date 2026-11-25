@@ -4182,8 +4182,12 @@ namespace tangent
 						return build;
 				}
 
+				bool lean_metadata = kernel::params().on(fork_id::lean_token_metadata, executor->receipt.block_number);
 				for (auto& [token_asset, metadata] : witnesses)
 				{
+					if (lean_metadata && executor->get_witness_asset(token_asset))
+						continue;
+
 					auto applied = executor->apply_witness_asset(token_asset, metadata.first, metadata.second);
 					if (!applied)
 						return applied.error();
