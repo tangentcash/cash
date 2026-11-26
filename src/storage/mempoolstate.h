@@ -156,6 +156,7 @@ namespace tangent
 			expects_lr<uint256_t> pull_best_attestation_hash(size_t offset);
 			expects_lr<attestation_tree> get_attestation(const uint256_t& attestation_hash);
 			expects_lr<void> remove_attestation(const uint256_t& attestation_hash);
+			expects_lr<void> remove_attestations_by_hash(const std::function<bool(uint256_t&, size_t&)>& match);
 			expects_lr<size_t> expire_attestations();
 			expects_lr<void> add_preattestation(const uint256_t& attestation_hash, const algorithm::asset_id& asset, const algorithm::pubkeyhash_t& attester, uint64_t tip_height, const uint256_t& proof_hash, const algorithm::hashsig_t& signature, const superchain::computed_transaction& body);
 			expects_lr<superchain::uncomputed_transaction> get_preattestation_body(const uint256_t& attestation_hash, const uint256_t& proof_hash);
@@ -165,8 +166,8 @@ namespace tangent
 			expects_lr<size_t> clear_observations();
 			expects_lr<void> add_transaction(const ledger::transaction_message& value, bool bypass_cooldown = false, const algorithm::pubkeyhash_t* known_owner = nullptr);
 			expects_lr<void> add_transaction_observation(const uint256_t& transaction_hash);
-			expects_lr<void> remove_transactions_by_hash(const hash_set<uint256_t>& transaction_hashes);
-			expects_lr<void> remove_transactions_by_commitment_hash(const hash_set<uint256_t>& commitment_hashes);
+			expects_lr<void> remove_transactions_by_hash(const std::function<bool(uint256_t&, size_t&)>& match);
+			expects_lr<void> remove_transactions_by_commitment_hash(const std::function<bool(uint256_t&, size_t&)>& match);
 			expects_lr<bool> has_transaction_commitment_hash(const uint256_t& commitment_hash);
 			expects_lr<uptr<ledger::transaction_message>> get_transaction_by_commitment_hash(const uint256_t& commitment_hash);
 			expects_lr<size_t> expire_transactions(const std::function<uint64_t(const algorithm::pubkeyhash_t&)>& nonce_callback);

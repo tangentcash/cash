@@ -12,11 +12,32 @@ namespace tangent
 {
 	namespace storages
 	{
+		static bool append_hash_literals(string& list, const std::function<bool(uint256_t&, size_t&)>& match)
+		{
+			static constexpr char digits[] = "0123456789abcdef";
+			uint8_t hash[32], literal[64];
+			uint256_t value = uint256_t(0);
+			size_t offset = 0;
+			while (match(value, offset))
+			{
+				value.encode(hash); memset(&value, 0, sizeof(value));
+				for (size_t i = 0; i < sizeof(hash); i++)
+				{
+					literal[0 + i * 2] = digits[hash[i] >> 4];
+					literal[1 + i * 2] = digits[hash[i] & 0x0f];
+				}
+				list.append(offset > 0 ? ",x\'" : "x\'");
+				list.append((char*)literal, sizeof(literal));
+				list.append(1, '\'');
+				++offset;
+			}
+			return offset > 0;
+		}
 		static string derive_iv(const std::string_view& salt, mempoolstate::keystore::db_id db)
 		{
 			return string(*crypto::hash(digests::sha256(), string(salt).append(mempoolstate::keystore::name_of(db)).append("mempool-iv")), 0, GCM_IV_SIZE);
 		}
-		string read_password_line(const std::string_view& prompt, bool allow_empty = false)
+		static string read_password_line(const std::string_view& prompt, bool allow_empty = false)
 		{
 			VI_INFO("keystate pwd prompt: awaiting input...");
 			string password; auto* terminal = console::get();
@@ -1343,49 +1364,48 @@ namespace tangent
 
 			return expectation::met;
 		}
-		expects_lr<void> mempoolstate::remove_transactions_by_hash(const hash_set<uint256_t>& transaction_hashes)
+		expects_lr<void> mempoolstate::remove_transactions_by_hash(const std::function<bool(uint256_t&, size_t&)>& match)
 		{
-			if (transaction_hashes.empty())
+			string query = "WITH hashes AS MATERIALIZED (SELECT c.hash FROM transactions p JOIN transactions c ON c.owner = p.owner WHERE p.hash IN (";
+			bool empty = append_hash_literals(query, match);
+			query.append(") AND c.nonce <= p.nonce) DELETE FROM transactions WHERE hash IN (SELECT hash FROM hashes)");
+			if (empty)
 				return expectation::met;
 
-			uptr<schema> hash_list = var::set::array();
-			hash_list->reserve(transaction_hashes.size());
-			for (auto& item : transaction_hashes)
-			{
-				uint8_t hash[32];
-				item.encode(hash);
-				hash_list->push(var::binary(hash, sizeof(hash)));
-			}
-
-			schema_list map;
-			map.push_back(var::set::string(*sqlite::utils::inline_array(std::move(hash_list))));
-
-			auto cursor = get_peer_storage().emplace_query(__func__,
-				"WITH hashes AS MATERIALIZED (SELECT c.hash FROM transactions p JOIN transactions c ON c.owner = p.owner WHERE p.hash IN ($?) AND c.nonce <= p.nonce) "
-				"DELETE FROM transactions WHERE hash IN (SELECT hash FROM hashes)", &map);
+			auto cursor = get_peer_storage().emplace_query(__func__, query, nullptr);
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 
 			return expectation::met;
 		}
-		expects_lr<void> mempoolstate::remove_transactions_by_commitment_hash(const hash_set<uint256_t>& commitment_hashes)
+		expects_lr<void> mempoolstate::remove_transactions_by_commitment_hash(const std::function<bool(uint256_t&, size_t&)>& match)
 		{
-			if (commitment_hashes.empty())
+			string query = "DELETE FROM transactions WHERE commitment_hash IN (";
+			bool empty = append_hash_literals(query, match);
+			query.append(")");
+			if (empty)
 				return expectation::met;
 
-			uptr<schema> hash_list = var::set::array();
-			hash_list->reserve(commitment_hashes.size());
-			for (auto& item : commitment_hashes)
-			{
-				uint8_t hash[32];
-				item.encode(hash);
-				hash_list->push(var::binary(hash, sizeof(hash)));
-			}
+			auto cursor = get_peer_storage().emplace_query(__func__, query, nullptr);
+			if (!cursor || cursor->error())
+				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 
-			schema_list map;
-			map.push_back(var::set::string(*sqlite::utils::inline_array(std::move(hash_list))));
+			return expectation::met;
+		}
+		expects_lr<void> mempoolstate::remove_attestations_by_hash(const std::function<bool(uint256_t&, size_t&)>& match)
+		{
+			string list;
+			if (!append_hash_literals(list, match))
+				return expectation::met;
 
-			auto cursor = get_peer_storage().emplace_query(__func__, "DELETE FROM transactions WHERE commitment_hash IN ($?)", &map);
+			string query;
+			query.reserve(352 + list.size() * 3);
+			query.append("DELETE FROM proofs WHERE hash IN (").append(list).append(");");
+			query.append("DELETE FROM commitments WHERE hash IN (").append(list).append(");");
+			query.append("DELETE FROM preattestations WHERE hash IN (").append(list).append(");");
+			query.append("DELETE FROM preattestation_keys WHERE NOT EXISTS (SELECT TRUE FROM preattestations WHERE preattestations.proof_hash = preattestation_keys.proof_hash);");
+
+			auto cursor = get_peer_storage().emplace_query(__func__, query, nullptr);
 			if (!cursor || cursor->error())
 				return expects_lr<void>(layer_exception(ledger::storage_util::error_of(cursor)));
 

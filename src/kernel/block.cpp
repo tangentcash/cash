@@ -3730,29 +3730,32 @@ namespace tangent
 				return expectation::met;
 
 			size_t retrying_transactions = 0;
-			auto hashes = hash_set<uint256_t>();
-			hashes.reserve(transactions.dropped.size());
-			for (auto& [transaction_hash, dropped] : transactions.dropped)
+			auto mempool = storages::mempoolstate();
+			auto it = transactions.dropped.begin();
+			auto result = mempool.remove_transactions_by_hash([this, &it, &retrying_transactions](uint256_t& value, size_t&) -> bool
 			{
-				if (!dropped.error.is_retry() && !dropped.error.is_shutdown())
+				while (it != transactions.dropped.end())
 				{
-					hashes.insert(transaction_hash);
-					if (kernel::params().user.consensus.logging)
-						VI_WARN("transaction %s dropped: %s (type: %.*s, nonce: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(transaction_hash).c_str(), dropped.error.what(), (int)dropped.transaction->as_typename().size(), dropped.transaction->as_typename().data(), (uint64_t)dropped.transaction->nonce);
+					auto& [transaction_hash, dropped] = *it; ++it;
+					if (!dropped.error.is_retry() && !dropped.error.is_shutdown())
+					{
+						value = transaction_hash;
+						if (kernel::params().user.consensus.logging)
+							VI_WARN("transaction %s dropped: %s (type: %.*s, nonce: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(transaction_hash).c_str(), dropped.error.what(), (int)dropped.transaction->as_typename().size(), dropped.transaction->as_typename().data(), (uint64_t)dropped.transaction->nonce);
+						return true;
+					}
+					else
+					{
+						++retrying_transactions;
+						if (kernel::params().user.consensus.logging)
+							VI_DEBUG("transaction %s skipped: retrying layer (type: %.*s, nonce: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(transaction_hash).c_str(), (int)dropped.transaction->as_typename().size(), dropped.transaction->as_typename().data(), (uint64_t)dropped.transaction->nonce);
+					}
 				}
-				else
-				{
-					++retrying_transactions;
-					if (kernel::params().user.consensus.logging)
-						VI_DEBUG("transaction %s skipped: retrying layer (type: %.*s, nonce: %" PRIu64 ")", algorithm::encoding::encode_0xhex256(transaction_hash).c_str(), (int)dropped.transaction->as_typename().size(), dropped.transaction->as_typename().data(), (uint64_t)dropped.transaction->nonce);
-				}
-			}
-
+				return false;
+			});
 			if (retrying_transactions > 0 && kernel::params().user.consensus.logging)
 				VI_INFO("mempool transaction queue: retrying %" PRIu64 " transaction(s) later", (uint64_t)retrying_transactions);
-
-			auto mempool = storages::mempoolstate();
-			return mempool.remove_transactions_by_hash(hashes);
+			return result;
 		}
 		bool solver_context::can_accept_more_transactions()
 		{
@@ -3919,18 +3922,6 @@ namespace tangent
 		expects_lr<block_checkpoint> solver_context::checkpoint_solved_block(solver_context& solver, block_evaluation& solution, tip_cache* cache, const std::function<bool(const ledger::block_body&, uint64_t)>& progress_callback)
 		{
 			auto chain = storages::chainstate();
-			auto mempool = storages::mempoolstate();
-			hash_set<uint256_t> finalized_transactions, finalized_commitments;
-			finalized_transactions.reserve(solution.block.transactions.size());
-			for (auto& transaction : solution.block.transactions)
-			{
-				uint256_t commitment_hash;
-				finalized_transactions.insert(transaction.receipt.transaction_hash);
-				transaction.transaction->as_commitment(&commitment_hash);
-				if (commitment_hash > 0)
-					finalized_commitments.insert(commitment_hash);
-			}
-
 			block_checkpoint mutation;
 			mutation.old_tip_block_number = cache && cache->tip_block_number > 0 ? cache->tip_block_number : chain.get_latest_block_number().or_else(0);
 			mutation.new_tip_block_number = solution.block.number;
@@ -3938,6 +3929,8 @@ namespace tangent
 			mutation.transaction_delta = solution.block.transaction_count;
 			mutation.state_delta = solution.block.transition_count;
 			mutation.is_fork = mutation.old_tip_block_number > 0 && mutation.old_tip_block_number >= mutation.new_tip_block_number;
+
+			auto mempool = storages::mempoolstate();
 			if (mutation.is_fork)
 			{
 				auto status = chain.revert(mutation.new_tip_block_number - 1, &mutation.block_delta, &mutation.transaction_delta, &mutation.state_delta, progress_callback);
@@ -3958,18 +3951,40 @@ namespace tangent
 			auto status = chain.checkpoint(solution, false, cache ? &cache->checkpoint_block_number : nullptr);
 			if (!status)
 				return status.error();
+			else if (cache != nullptr)
+				cache->tip_block_number = mutation.new_tip_block_number;
 
-			mempool.remove_transactions_by_hash(finalized_transactions).report("mempool cleanup failed");
-			mempool.remove_transactions_by_commitment_hash(finalized_commitments).report("mempool cleanup failed");
+			mempool.remove_transactions_by_hash([&solution](uint256_t& value, size_t& index) -> bool
+			{
+				auto* item = index < solution.block.transactions.size() ? &solution.block.transactions[index].receipt : nullptr;
+				value = item ? item->transaction_hash : uint256_t();
+				return item != nullptr;
+			}).report("mempool transactions cleanup failed");
+			mempool.remove_transactions_by_commitment_hash([&solution](uint256_t& value, size_t& index) -> bool
+			{
+				while (index < solution.block.transactions.size() && !(solution.block.transactions[index].transaction->as_commitment(&value) ? value : value))
+					++index;
+				return !!value;
+			}).report("mempool commitments cleanup failed");
+			mempool.remove_attestations_by_hash([&solution](uint256_t& value, size_t& index) -> bool
+			{
+				while (index < solution.block.transactions.size())
+				{
+					auto* item = &solution.block.transactions[index];
+					if (item->receipt.successful && item->transaction->as_type() == transactions::attestate::as_instance_type())
+					{
+						value = ((transactions::attestate*)*item->transaction)->proof.as_attestation_hash();
+						return true;
+					}
+					++index;
+				}
+				return false;
+			}).report("mempool attestations cleanup failed");
 			for (auto& side_effect : solution.effects)
 			{
 				VI_ASSERT(side_effect, "side effect callback should be set");
 				side_effect();
 			}
-
-			if (cache != nullptr)
-				cache->tip_block_number = mutation.new_tip_block_number;
-
 			return mutation;
 		}
 		solver_context::queued_transaction solver_context::precompute_transaction_element(uptr<transaction_message>&& candidate)

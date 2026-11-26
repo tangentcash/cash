@@ -3021,7 +3021,7 @@ namespace tangent
 		{
 			uint256_t hash = args[0].as_uint256();
 			auto mempool = storages::mempoolstate();
-			auto status = mempool.remove_transactions_by_hash({ hash });
+			auto status = mempool.remove_transactions_by_hash([&hash](uint256_t& value, size_t& index) { return !!(value = index > 0 ? uint256_t(0) : hash) || !index; });
 			if (!status)
 				return server_response().error(error_codes::bad_request, status.error().message());
 

@@ -268,6 +268,12 @@ namespace tangent
 				uint64_t timestamp = 0;
 			};
 
+			struct delegation_waiter
+			{
+				std::function<void(const algorithm::pubkey_t&, uref<relay>&&)> on_response;
+				std::function<void()> on_cancel;
+			};
+
 		public:
 			struct
 			{
@@ -314,12 +320,11 @@ namespace tangent
 			} verifier;
 
 		private:
-			hash_map<uint256_t, std::function<void(const algorithm::pubkey_t&, uref<relay>&&)>> delegation_nodes;
+			hash_map<uint256_t, delegation_waiter> delegation_nodes;
 			hash_map<uint256_t, delegation_path> delegation_paths;
 			hash_map<algorithm::pubkeyhash_t, account_route> account_routes;
 			hash_map<algorithm::pubkeyhash_t, uint64_t> nonces;
 			hash_map<algorithm::asset_id, fetch_queue> fetchers;
-			hash_map<algorithm::asset_id, uint64_t> witnesses;
 			hash_map<uint8_t, callable> callables;
 			hash_map<void*, uref<relay>> nodes;
 			hash_map<uint256_t, format::wo_stream> maybe_tips;

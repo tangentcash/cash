@@ -1104,6 +1104,16 @@ namespace tangent
 				}
 			}
 
+			{
+				hash_map<uint256_t, delegation_waiter> pending;
+				umutex<std::recursive_mutex> neighbor_unique(sync.neighbor);
+				pending.swap(delegation_nodes);
+				delegation_paths.clear();
+				neighbor_unique.unlock();
+				for (auto& [id, waiter] : pending)
+					waiter.on_cancel();
+			}
+
 			umutex<std::recursive_mutex> unique(exclusive);
 		retry:
 			{
@@ -1325,8 +1335,6 @@ namespace tangent
 		}
 		expects_rt<bool> server_node::accept_attestation(const storages::attestation_tree& attestation, bool save_to_storage)
 		{
-			option<uint256_t> reannounce_hash = optional::none;
-			transactions::attestate* attestate_tx = nullptr;
 			umutex<std::recursive_mutex> unique(sync.attestation);
 			auto executor = ledger::executor_context(nullptr);
 			for (auto& [commitment_hash, proof] : attestation.proofs)
@@ -1378,23 +1386,24 @@ namespace tangent
 			if (signatures == batch.commitments.end())
 				return remote_exception::retry_later();
 
+			option<uint256_t> reannounce_hash = optional::none;
 			auto existing = mempool.get_transaction_by_commitment_hash(best_commitment_hash);
 			if (existing)
 			{
 				auto simulation = ledger::executor_context::calculate_tx_gas(**existing);
 				auto existing_hash = (*existing)->as_hash();
-				if (simulation)
-					reannounce_hash = existing_hash;
+				if (!simulation)
+					mempool.remove_transactions_by_hash([&existing_hash](uint256_t& value, size_t& index) { return !!(value = index > 0 ? uint256_t(0) : existing_hash) || !index; }).report("failed to remove stale attestate");
 				else
-					mempool.remove_transactions_by_hash({ existing_hash }).report("failed to remove stale attestate");
+					reannounce_hash = existing_hash;
 			}
 
+			uptr<transactions::attestate> attestate_tx;
 			if (!reannounce_hash)
 			{
-				auto* transaction = memory::init<transactions::attestate>();
-				transaction->asset = algorithm::asset::base_id_of(batch.asset);
-				transaction->set_real_proof(best_commitment_hash, std::move(proof->second), std::move(signatures->second));
-				attestate_tx = transaction;
+				attestate_tx = memory::init<transactions::attestate>();
+				attestate_tx->asset = algorithm::asset::base_id_of(batch.asset);
+				attestate_tx->set_real_proof(best_commitment_hash, std::move(proof->second), std::move(signatures->second));
 			}
 			
 			unique.unlock();
@@ -1403,16 +1412,13 @@ namespace tangent
 				size_t notifications = notify_all(descriptors::broadcast_transaction_hash(), { format::variable((uint256_t)*reannounce_hash) });
 				if (notifications > 0 && kernel::params().user.consensus.logging)
 					VI_DEBUG("transaction %s re-announced to %i nodes (attestate for commitment %s)", uint256_to_label(*reannounce_hash).c_str(), (int)notifications, uint256_to_label(best_commitment_hash).c_str());
-				return false;
 			}
-
-			if (attestate_tx)
+			else if (attestate_tx)
 			{
-				auto status = accept_local_transaction(&runner_descriptor->second, attestate_tx);
+				auto status = accept_local_transaction(&runner_descriptor->second, attestate_tx.reset());
 				if (!status)
 					return status.error().message().find("attestate later") != std::string::npos ? remote_exception::retry_later() : remote_exception(status.what());
 			}
-
 			return false;
 		}
 		expects_lr<void> server_node::accept_block(uref<relay>&& from, ledger::block_evaluation& candidate, const ledger::block_header* fork_tip, bool verify_pow)
@@ -1584,23 +1590,8 @@ namespace tangent
 
 			for (auto& transaction : candidate.block.transactions)
 			{
-				if (transaction.receipt.successful && transaction.transaction->as_type() == transactions::attestate::as_instance_type())
-					storages::mempoolstate().remove_attestation(((transactions::attestate*)*transaction.transaction)->proof.as_attestation_hash());
 				if (find_descriptor(transaction.receipt.from))
 					accept_proposal_transaction(transaction);
-			}
-
-			if (!candidate.block.witnesses.empty())
-			{
-				umutex<std::recursive_mutex> unique(sync.tip);
-				for (auto& [asset, block_height] : candidate.block.witnesses)
-				{
-					auto it = witnesses.find(asset);
-					if (it != witnesses.end())
-						it->second = std::min(it->second, block_height);
-					else
-						witnesses[asset] = block_height;
-				}
 			}
 
 			if (may_broadcast_early || may_broadcast_lately)
@@ -2062,7 +2053,9 @@ namespace tangent
 				auto waiter = delegation_nodes.find(delegation_id);
 				if (waiter != delegation_nodes.end())
 				{
-					waiter->second(account_key, uref(from));
+					auto on_response = waiter->second.on_response;
+					unique.unlock();
+					on_response(account_key, uref(from));
 					return expectation::met;
 				}
 
@@ -2958,23 +2951,34 @@ namespace tangent
 				std::mutex mutex; promise<void> task;
 				uint256_t id = algorithm::hashing::hash256i(*crypto::random_bytes(32));
 				umutex<std::recursive_mutex> unique(sync.neighbor);
-				delegation_nodes[id] = [this, &mutex, &task, &results, &indirectly_connected_accounts](const algorithm::pubkey_t& public_key, uref<relay>&& channel)
+				delegation_nodes[id] = delegation_waiter
 				{
-					algorithm::pubkeyhash_t account;
-					algorithm::signing::derive_public_key_hash(public_key, account);
+					[this, &mutex, &task, &results, &indirectly_connected_accounts](const algorithm::pubkey_t& public_key, uref<relay>&& channel)
+					{
+						algorithm::pubkeyhash_t account;
+						algorithm::signing::derive_public_key_hash(public_key, account);
+						{
+							umutex<std::mutex> unique(mutex);
+							if (indirectly_connected_accounts.find(account) == indirectly_connected_accounts.end())
+								return;
+
+							indirectly_connected_accounts.erase(account);
+							results.insert(account);
+						}
+
+						register_account_route(account, public_key, std::move(channel));
+						umutex<std::mutex> unique(mutex);
+						if (task.is_pending() && (indirectly_connected_accounts.empty() || !is_active()))
+							task.set();
+					},
+					[&mutex, &task, &results, &indirectly_connected_accounts]()
 					{
 						umutex<std::mutex> unique(mutex);
-						if (indirectly_connected_accounts.find(account) == indirectly_connected_accounts.end())
-							return;
-
-						indirectly_connected_accounts.erase(account);
-						results.insert(account);
+						for (auto& account : indirectly_connected_accounts)
+							results.erase(account);
+						if (task.is_pending())
+							task.set();
 					}
-
-					register_account_route(account, public_key, std::move(channel));
-					umutex<std::mutex> unique(mutex);
-					if (task.is_pending() && (indirectly_connected_accounts.empty() || !is_active()))
-						task.set();
 				};
 				unique.unlock();
 
@@ -3912,35 +3916,36 @@ namespace tangent
 					return;
 
 				auto mempool = storages::mempoolstate();
-				auto hashset = hash_set<uint256_t>();
-				size_t offsets[2] = { 0, 0 };
-				size_t deletions = 0;
+				size_t offsets[2] = { 0, 0 }, deletions = 0;
 				while (true)
 				{
 					auto queue = mempool.get_transactions_by_quality((uint8_t)storages::transaction_queue::commitment, offsets, ELEMENTS_BULK);
 					if (!queue || queue->empty())
 						break;
 
-					for (auto& candidate_tx : *queue)
+					size_t failures = 0;
+					mempool.remove_transactions_by_hash([&queue, &failures](uint256_t& value, size_t& index) -> bool
 					{
-						auto candidate_hash = candidate_tx->as_hash();
-						auto simulation = ledger::executor_context::calculate_tx_gas(*candidate_tx);
-						if (!simulation)
+						while (index < queue->size())
 						{
-							hashset.insert(candidate_hash);
-							if (kernel::params().user.consensus.logging)
+							auto& candidate_tx = (*queue)[index];
+							auto purpose = candidate_tx->as_typename();
+							auto simulation = ledger::executor_context::calculate_tx_gas(*candidate_tx);
+							if (!simulation)
 							{
-								auto purpose = candidate_tx->as_typename();
-								VI_WARN("transaction %s %.*s vacuum reason: %s", uint256_to_label(candidate_hash).c_str(), (int)purpose.size(), purpose.data(), simulation.error().what());
+								value = candidate_tx->as_hash(); ++failures;
+								if (kernel::params().user.consensus.logging)
+									VI_WARN("transaction %s %.*s vacuum reason: %s", uint256_to_label(value).c_str(), (int)purpose.size(), purpose.data(), simulation.error().what());
+								return true;
 							}
+							++index;
 						}
-					}
-				}
+						return false;
+					}).report("mempool tx vacuum failure");
 
-				if (!hashset.empty())
-				{
-					mempool.remove_transactions_by_hash(hashset).report("mempool tx vacuum failure");
-					deletions += hashset.size();
+					deletions += failures;
+					if (failures > 0 && offsets[1] != std::numeric_limits<size_t>::max())
+						offsets[1] -= failures;
 				}
 
 				auto chain = storages::chainstate();
@@ -4071,10 +4076,14 @@ namespace tangent
 						}
 						if (kernel::params().user.consensus.logging)
 							VI_INFO("attestation %s pending (proofs: %i, commitments: %i)", uint256_to_label(*attestation_hash).c_str(), (int)attestation->proofs.size(), (int)attestation->commitments.size());
+						++offset;
 					}
-					else if (kernel::params().user.consensus.logging)
-						VI_WARN("attestation %s verification failed: %s", uint256_to_label(*attestation_hash).c_str(), status.what().c_str());
-					++offset;
+					else
+					{
+						mempool.remove_attestation(*attestation_hash).report("failed to remove rejected attestation");
+						if (kernel::params().user.consensus.logging)
+							VI_WARN("attestation %s verification failed: %s", uint256_to_label(*attestation_hash).c_str(), status.what().c_str());
+					}
 				}
 				else if (*status)
 					mempool.remove_attestation(*attestation_hash).report("failed to remove attestation");
@@ -4155,20 +4164,6 @@ namespace tangent
 					if (execution.dispatches > 0 || !adapter.emissions.empty() || !execution.errors.empty())
 						VI_INFO("block dispatch (number: %" PRIu64", txns: -%" PRIu64 " / +%" PRIu64 ", reverted: %" PRIu64 ")", dispatch_number, (uint64_t)execution.dispatches, (uint64_t)adapter.emissions.size(), (uint64_t)execution.errors.size());
 				}
-
-				umutex<std::recursive_mutex> unique(sync.tip);
-				if (!witnesses.empty())
-				{
-					auto* offchain = superchain::bridge::get();
-					for (auto& [asset, block_height] : witnesses)
-					{
-						auto earlist_block_height = offchain->get_earliest_scanned_block_height(asset);
-						if (!earlist_block_height)
-							offchain->scan_from_block_height(asset, block_height);
-					}
-					witnesses.clear();
-				}
-				unique.unlock();
 			});
 		}
 		void server_node::startup()
