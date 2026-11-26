@@ -4026,12 +4026,6 @@ namespace tangent
 		}
 		bool server_node::run_attestation_resolution()
 		{
-			bool has_attestation = false;
-			for (auto& [account, descriptor] : descriptors)
-				has_attestation = has_attestation || descriptor.first.services.has_attestation;
-			if (!has_attestation || is_syncing())
-				return false;
-
 			return control_sys.task_if_none(TASK_ATTESTATION_RESOLUTION, [this](system_task&&)
 			{
 				size_t offset = 0;
@@ -4044,6 +4038,12 @@ namespace tangent
 				}
 				else if (kernel::params().user.consensus.logging)
 					VI_ERR("mempool attestation vacuum failed: %s", expirations.what().c_str());
+
+				bool has_attestation = false;
+				for (auto& [account, descriptor] : descriptors)
+					has_attestation = has_attestation || descriptor.first.services.has_attestation;
+				if (!has_attestation || is_syncing())
+					return;
 
 			next_attestation:
 				auto attestation_hash = mempool.pull_best_attestation_hash(offset);
