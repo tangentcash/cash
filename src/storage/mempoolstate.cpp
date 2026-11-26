@@ -31,7 +31,7 @@ namespace tangent
 				list.append(1, '\'');
 				++offset;
 			}
-			return offset > 0;
+			return !offset;
 		}
 		static string derive_iv(const std::string_view& salt, mempoolstate::keystore::db_id db)
 		{
