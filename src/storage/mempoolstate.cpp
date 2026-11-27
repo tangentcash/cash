@@ -1,8 +1,8 @@
 #include "mempoolstate.h"
 #include "../policy/transactions.h"
-#define TRANSACTION_EXPIRATION (8 * 3600 * 1000)
+#define TRANSACTION_EXPIRATION (12 * 3600 * 1000)
 #define OBSERVATION_EXPIRATION (36 * 3600 * 1000)
-#define ATTESTATION_EXPIRATION (96 * 3600 * 1000)
+#define ATTESTATION_EXPIRATION (48 * 3600 * 1000)
 #define KEY_SIZE 32
 #define WRAP_SALT_SIZE 16
 #define GCM_IV_SIZE 12
@@ -17,7 +17,7 @@ namespace tangent
 			static constexpr char digits[] = "0123456789abcdef";
 			uint8_t hash[32], literal[64];
 			uint256_t value = uint256_t(0);
-			size_t offset = 0;
+			size_t offset = 0, count = 0;
 			while (match(value, offset))
 			{
 				value.encode(hash); memset(&value, 0, sizeof(value));
@@ -29,9 +29,9 @@ namespace tangent
 				list.append(offset > 0 ? ",x\'" : "x\'");
 				list.append((char*)literal, sizeof(literal));
 				list.append(1, '\'');
-				++offset;
+				++offset; ++count;
 			}
-			return !offset;
+			return !count;
 		}
 		static string derive_iv(const std::string_view& salt, mempoolstate::keystore::db_id db)
 		{
@@ -1395,7 +1395,7 @@ namespace tangent
 		expects_lr<void> mempoolstate::remove_attestations_by_hash(const std::function<bool(uint256_t&, size_t&)>& match)
 		{
 			string list;
-			if (!append_hash_literals(list, match))
+			if (append_hash_literals(list, match))
 				return expectation::met;
 
 			string query;
